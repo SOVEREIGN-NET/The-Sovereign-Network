@@ -53,7 +53,7 @@ Complete documentation is available in the [docs/](docs/) folder:
 ZHTP implements cutting-edge security measures:
 
 - **Post-Quantum Cryptography** - CRYSTALS-Dilithium, Kyber, SPHINCS+
-- **Zero-Knowledge Proofs** - zk-SNARKs, Bulletproofs, Plonk
+- **Zero-Knowledge Proofs** - zk-SNARKs, BLAKE, Plonk
 - **Quantum-Safe Consensus** - Byzantine fault tolerant with economic incentives
 - **Privacy Protection** - Anonymous transactions and voting
 
