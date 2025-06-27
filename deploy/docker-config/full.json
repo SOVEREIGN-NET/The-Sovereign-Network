@@ -1,0 +1,43 @@
+{
+  "node": {
+    "name": "zhtp-full",
+    "bind_address": "0.0.0.0:8080",
+    "p2p_address": "0.0.0.0:8000",
+    "public_address": "zhtp-full:8080"
+  },
+  "network": {
+    "bootstrap_nodes": [
+      "zhtp-validator:8080",
+      "zhtp-storage:8080",
+      "zhtp-ceremony:8080"
+    ],
+    "max_peers": 50,
+    "discovery_interval": 30
+  },
+  "consensus": {
+    "validator": false,
+    "stake_amount": 0
+  },
+  "economics": {
+    "enable_mining": false,
+    "reward_address": ""
+  },
+  "storage": {
+    "data_dir": "./data",
+    "max_storage": "10GB"
+  },
+  "security": {
+    "enable_monitoring": true,
+    "log_level": "info"
+  },
+  "service_endpoints": {
+    "zhtp_port": 8080,
+    "metrics_port": 9080,
+    "api_port": 3000
+  },
+  "certificate_authority": {
+    "enabled": false,
+    "ca_cert_path": "",
+    "ca_key_path": ""
+  }
+}

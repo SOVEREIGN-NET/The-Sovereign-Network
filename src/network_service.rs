@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::fs;
 use std::path::Path;
+use std::env;
 use tokio::sync::RwLock;
 use serde::{Serialize, Deserialize};
 use anyhow::{Result, anyhow};
@@ -1252,7 +1253,26 @@ impl ZhtpNetworkService {
                                     "message_id": format!("msg_{}", chrono::Utc::now().timestamp()),
                                     "encrypted": true,
                                     "zk_proof": "proof_of_sender_identity",
-                                    "delivery_status": "sent"
+                                    "delivery_status": "sent",
+                                    "network_route": "DHT_distributed"
+                                });
+                                (200, "application/json", response.to_string())
+                            }
+                            
+                            ("GET", "/api/messages/inbox") => {
+                                // Return inbox messages for cross-machine testing
+                                let response = serde_json::json!({
+                                    "success": true,
+                                    "messages": [
+                                        {
+                                            "id": "msg_incoming_1",
+                                            "from": "network_node_bootstrap",
+                                            "content": "Welcome to ZHTP cross-machine messaging!",
+                                            "timestamp": chrono::Utc::now().timestamp(),
+                                            "encrypted": true,
+                                            "zk_verified": true
+                                        }
+                                    ]
                                 });
                                 (200, "application/json", response.to_string())
                             }
@@ -1390,14 +1410,32 @@ impl ZhtpNetworkService {
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
-      println!("ZHTP Network Service - Production Mainnet");
+    println!("ZHTP Network Service - Production Mainnet");
     println!("========================================");
     
-    // Create production configuration
-    let mut config = ProductionConfig::default();
-    config.service_endpoints.zhtp_port = 8000;  // Changed from 3000 to 8000 to avoid PostgreSQL conflict
-    config.service_endpoints.api_port = 8000;   // Use same port as ZHTP (combined server)
-    config.service_endpoints.metrics_port = 9000;
+    // Check for configuration file argument
+    let args: Vec<String> = env::args().collect();
+    
+    let config = if args.len() > 2 && args[1] == "--config" {
+        let config_path = &args[2];
+        println!("📁 Loading configuration from: {}", config_path);
+        
+        // Load configuration from JSON file
+        let config_content = fs::read_to_string(config_path)
+            .map_err(|e| anyhow!("Failed to read config file '{}': {}", config_path, e))?;
+        
+        serde_json::from_str::<ProductionConfig>(&config_content)
+            .map_err(|e| anyhow!("Failed to parse config file '{}': {}", config_path, e))?
+    } else {
+        // Create default production configuration
+        let mut config = ProductionConfig::default();
+        config.service_endpoints.zhtp_port = 8000;  // Changed from 3000 to 8000 to avoid PostgreSQL conflict
+        config.service_endpoints.api_port = 8000;   // Use same port as ZHTP (combined server)
+        config.service_endpoints.metrics_port = 9000;
+        config
+    };
+    
+    println!("🚀 Starting ZHTP service on port {}", config.service_endpoints.api_port);
     
     let service = ZhtpNetworkService::new(config).await?;
     service.start().await?;

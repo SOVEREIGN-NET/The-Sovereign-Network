@@ -32,6 +32,8 @@ pub mod consensus_engine;
 pub mod zk_proofs;
 pub mod zk_transactions;
 pub mod p2p_network;
+pub mod ceremony_participants;
+pub mod ceremony_coordinator;
 
 
 mod routing_proof_serde {
@@ -54,6 +56,14 @@ mod routing_proof_serde {
 }
 
 
+pub use ceremony_participants::{
+    CeremonyParticipantManager, ParticipantType, CeremonyParticipant, 
+    ParticipationStatus, CeremonyState, CeremonyPhase, CeremonyStats
+};
+pub use ceremony_coordinator::{
+    ZhtpCeremonyCoordinator, TrustedSetupResult, CeremonyAttestation,
+    run_zhtp_trusted_setup_ceremony
+};
 pub use contracts::WasmRuntime;
 pub use crypto::{Keypair, Signature, KeyPackage, KeyStatus};
 pub use dns::{ZhtpDNS, DomainRecord, SubdomainRecord, CertificateRecord, OwnershipProof};

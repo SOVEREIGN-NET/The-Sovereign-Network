@@ -487,11 +487,23 @@
                 <div class="onboarding-step">
                     <div class="step-title">
                         <span class="step-number">4</span>
+                        <span>Trusted Setup Ceremony</span>
+                    </div>
+                    <div class="step-description">
+                        🎭 Participating in the trusted setup ceremony to contribute to network security.
+                        Your participation enables you to earn ZHTP rewards for packet routing and storage verification.
+                        This one-time process establishes your role as a contributing network node.
+                    </div>
+                </div>
+                
+                <div class="onboarding-step">
+                    <div class="step-title">
+                        <span class="step-number">5</span>
                         <span>Wallet Creation</span>
                     </div>
                     <div class="step-description">
                         Setting up your ZHTP cryptocurrency wallet for transactions, DApp interactions, and network fees.
-                        Your wallet is secured with quantum-resistant cryptography.
+                        Your wallet is secured with quantum-resistant cryptography and enabled for earning rewards.
                     </div>
                 </div>
             </div>
@@ -611,8 +623,28 @@
             
             onboardingComplete = true;
             
-            // Register wallet with API
+            // Register wallet with API and participate in ceremony
             try {
+                // First, participate in the trusted setup ceremony
+                const ceremonyResponse = await fetch('/api/ceremony/participate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        node_type: selectedNode,
+                        wallet_address: walletAddress,
+                        ceremony_type: 'trusted_setup',
+                        enable_rewards: true
+                    })
+                });
+                
+                if (ceremonyResponse.ok) {
+                    const ceremonyResult = await ceremonyResponse.json();
+                    console.log('✅ Ceremony participation successful:', ceremonyResult);
+                }
+                
+                // Then register wallet with enhanced features
                 const response = await fetch('/api/wallet/register', {
                     method: 'POST',
                     headers: {
@@ -622,16 +654,45 @@
                         node_type: selectedNode,
                         wallet_address: walletAddress,
                         source: 'onboarding',
-                        zk_features: ['quantum_resistant', 'zero_knowledge_proofs']
+                        zk_features: ['quantum_resistant', 'zero_knowledge_proofs'],
+                        ceremony_participant: true,
+                        rewards_enabled: true,
+                        services: ['packet_routing', 'storage_verification', 'consensus_validation']
                     })
                 });
                 
                 if (response.ok) {
                     const result = await response.json();
-                    console.log('Wallet registered successfully:', result);
+                    console.log('✅ Wallet registered with ceremony benefits:', result);
+                    
+                    // Show success message about earning potential
+                    const walletDisplay = document.getElementById('walletDisplay');
+                    const successMsg = document.createElement('div');
+                    successMsg.style.cssText = 'background: rgba(0,255,0,0.2); border: 1px solid #00ff00; border-radius: 10px; padding: 15px; margin-top: 15px; text-align: center;';
+                    successMsg.innerHTML = `
+                        <h4>🎉 Ceremony Complete!</h4>
+                        <p>You can now earn ZHTP rewards for:</p>
+                        <ul style="text-align: left; margin: 10px 0;">
+                            <li>📡 Successful packet routing</li>
+                            <li>💾 Storage verification proofs</li>
+                            <li>🔒 Zero-knowledge consensus validation</li>
+                        </ul>
+                        <p><strong>Your node is now earning-enabled!</strong></p>
+                    `;
+                    walletDisplay.appendChild(successMsg);
                 }
             } catch (error) {
-                console.log('Wallet registration failed:', error);
+                console.log('Ceremony/Registration failed:', error);
+                // Show fallback message
+                const walletDisplay = document.getElementById('walletDisplay');
+                const errorMsg = document.createElement('div');
+                errorMsg.style.cssText = 'background: rgba(255,165,0,0.2); border: 1px solid #ffa500; border-radius: 10px; padding: 15px; margin-top: 15px; text-align: center;';
+                errorMsg.innerHTML = `
+                    <h4>⚠️ Ceremony Pending</h4>
+                    <p>Your wallet is created but ceremony participation is pending.<br>
+                    You can complete this later in the Network settings to enable rewards.</p>
+                `;
+                walletDisplay.appendChild(errorMsg);
             }
         }
 
@@ -660,8 +721,8 @@
                     signInMethod: 'onboarding'
                 }));
                 
-                // Redirect to main browser interface with wallet parameter
-                window.location.href = `/?wallet=${encodeURIComponent(walletAddress)}`;
+                // Redirect to main browser interface
+                window.location.href = `/browser`;
             }
         }
 
@@ -718,15 +779,15 @@
                 });
                 
                 if (response.ok) {
-                    // Successful sign in - redirect with wallet parameter
-                    window.location.href = `/?wallet=${encodeURIComponent(walletId)}`;
+                    // Successful sign in - redirect to browser
+                    window.location.href = `/browser`;
                 } else {
                     alert('Sign in failed. Please check your credentials.');
                 }
             } catch (error) {
                 console.error('Sign in error:', error);
-                // Even if API fails, redirect with stored data
-                window.location.href = `/?wallet=${encodeURIComponent(walletId)}`;
+                // Even if API fails, redirect to browser
+                window.location.href = `/browser`;
             }
         });
 

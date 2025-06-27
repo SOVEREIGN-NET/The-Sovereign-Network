@@ -14,6 +14,7 @@ use std::{
 use tokio::sync::RwLock;
 use rand::RngCore;
 use pqcrypto_traits::sign::PublicKey;
+use ark_ec::Group;
 
 /// Decentralized DNS replacement that uses zero-knowledge proofs
 #[derive(Debug, Clone)]
@@ -479,23 +480,31 @@ impl ZhtpDNS {
         // Create response by signing the challenge
         let response = keypair.sign(&challenge)?;
         
-        // Create proof data
-        let proof_data = [domain.as_bytes(), &challenge, response.as_bytes()].concat();
-        
-        // Generate zero-knowledge proof
-        let mut hasher = Sha256::new();
-        hasher.update(&proof_data);
-        let commitment = hasher.finalize();
+        // Generate secure ZK proof using UnifiedCircuit with KZG trusted setup
+        let mut circuit = crate::zhtp::zk_proofs::UnifiedCircuit::new(
+            domain.as_bytes().to_vec(),
+            b"DNS_OWNERSHIP_VERIFICATION".to_vec(),
+            vec![], // No routing path for ownership verification
+            std::collections::HashMap::new(),
+            challenge, // Use challenge as storage root
+            vec![], // No storage proof needed
+            ark_bn254::G1Projective::generator(),
+            keypair.public_key().len() as u64, // Public key length as bandwidth
+            vec![(challenge[0] as u64, true)], // Challenge-based uptime
+            vec![(response.as_bytes().len() as u64, 0.0)], // Response length as latency
+        );
+
+        // Generate secure proof using KZG trusted setup
+        let secure_proof = match circuit.generate_proof() {
+            Some(proof) => ByteRoutingProof::from(proof),
+            None => return Err(anyhow::anyhow!("Failed to generate DNS ownership proof"))
+        };
 
         // Store ownership proof
         let ownership_proof = OwnershipProof {
             domain: domain.to_string(),
-            proof_data: proof_data.clone(),
-            ownership_proof: ByteRoutingProof {
-                commitments: vec![commitment.to_vec()],
-                elements: vec![challenge.to_vec()],
-                inputs: vec![domain.as_bytes().to_vec()],
-            },
+            proof_data: [domain.as_bytes(), &challenge, response.as_bytes()].concat(),
+            ownership_proof: secure_proof.clone(),
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             signature: response,
         };
@@ -505,11 +514,7 @@ impl ZhtpDNS {
             proofs.insert(domain.to_string(), ownership_proof);
         }
 
-        Ok(ByteRoutingProof {
-            commitments: vec![commitment.to_vec()],
-            elements: vec![challenge.to_vec()],
-            inputs: vec![domain.as_bytes().to_vec()],
-        })
+        Ok(secure_proof)
     }
 
     /// Verify domain ownership proof

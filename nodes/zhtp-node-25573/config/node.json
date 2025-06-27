@@ -1,0 +1,7 @@
+{
+  "node": {
+    "name": "zhtp-node-25573",
+    "type": "validator",
+    "port": 8080
+  }
+}

@@ -1,0 +1,70 @@
+# Ignore build artifacts and non-essential files
+target/
+**/target/
+.git/
+.vscode/
+.idea/
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# Ignore documentation and examples that aren't needed for runtime
+docs/
+examples/
+README.md
+LICENSE
+
+# Ignore deployment scripts but keep config files and test scripts
+deploy/*.sh
+deploy/*.bat
+deploy/*.ps1
+deploy/README*.md
+deploy/monitoring/
+deploy/Dockerfile*
+deploy/docker-compose*.yml
+# Keep test-scripts for testing image
+!deploy/test-scripts/
+*.sh
+*.bat
+*.ps1
+
+# Ignore test files
+**/tests/
+**/*_test.rs
+**/*_tests.rs
+
+# Ignore development files
+.env
+.env.local
+.env.development
+.env.test
+
+# Ignore large binary files and databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Ignore node modules if any
+node_modules/
+
+# Ignore OS specific files
+.DS_Store
+Thumbs.db
+
+# Ignore temporary build files
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+*.exe
+*.pdb
+
+# Only keep essential files for building
+!Cargo.toml
+!Cargo.lock
+!src/
+!contracts/
+!circuits/compiled/

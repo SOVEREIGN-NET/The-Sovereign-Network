@@ -9,6 +9,7 @@ use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use ark_bn254::Fr;
+use ark_ec::Group;
 use ark_ff::PrimeField;
 use rand::RngCore;
 
@@ -172,66 +173,54 @@ impl ZkTransaction {
             return Err(anyhow::anyhow!("Amount must be positive"));
         }
         
-        // Convert transaction data to field elements
-        let amount_field = Fr::from((data.amount * 1000.0) as u64); // Scale for precision
-        let balance_field = Fr::from((sender_balance * 1000.0) as u64);
-        let nonce_field = Fr::from(data.nonce);
+        // Generate ZK proof using secure UnifiedCircuit with proper KZG trusted setup
+        let mut circuit = crate::zhtp::zk_proofs::UnifiedCircuit::new(
+            data.sender.as_bytes().to_vec(),
+            data.receiver.as_bytes().to_vec(),
+            vec![], // No routing path for balance verification
+            std::collections::HashMap::new(),
+            [0u8; 32], // No storage requirement
+            vec![], // No storage proof
+            ark_bn254::G1Projective::generator(),
+            (data.amount * 1000.0) as u64, // Bandwidth represents scaled amount
+            vec![(data.nonce, true)], // Uptime represents transaction validity
+            vec![(data.nonce, sender_balance)], // Latency represents sender balance
+        );
         
-        // Generate proof elements
-        let proof_elements = vec![amount_field, balance_field, nonce_field];
-        
-        // Generate public inputs
-        let mut hasher = Sha256::new();
-        hasher.update(data.sender.as_bytes());
-        hasher.update(data.receiver.as_bytes());
-        let tx_hash = hasher.finalize();
-        let public_input = Fr::from_le_bytes_mod_order(&tx_hash);
-        
-        let public_inputs = vec![public_input];
-        
-        // Create commitment (simplified)
-        let commitment = vec![tx_hash.to_vec()];
-        
-        Ok(ByteRoutingProof {
-            commitments: commitment,
-            elements: proof_elements.iter().map(|f| {
-                let mut bytes = Vec::new();
-                ark_serialize::CanonicalSerialize::serialize_uncompressed(f, &mut bytes).unwrap();
-                bytes
-            }).collect(),
-            inputs: public_inputs.iter().map(|f| {
-                let mut bytes = Vec::new();
-                ark_serialize::CanonicalSerialize::serialize_uncompressed(f, &mut bytes).unwrap();
-                bytes
-            }).collect(),
-        })
+        // Generate secure proof using KZG trusted setup
+        match circuit.generate_proof() {
+            Some(proof) => Ok(ByteRoutingProof::from(proof)),
+            None => Err(anyhow::anyhow!("Failed to generate validity proof"))
+        }
     }
     
     fn generate_balance_proof(sender: &str, balance: f64, amount: f64) -> Result<ByteRoutingProof> {
         // Prove that sender has sufficient balance without revealing the balance
         let has_sufficient = balance >= amount;
         
-        // Create proof elements
-        let balance_field = Fr::from((balance * 1000.0) as u64);
-        let amount_field = Fr::from((amount * 1000.0) as u64);
-        let sufficient_field = if has_sufficient { Fr::from(1u64) } else { Fr::from(0u64) };
+        if !has_sufficient {
+            return Err(anyhow::anyhow!("Insufficient balance for transaction"));
+        }
         
-        let proof_elements = vec![balance_field, amount_field, sufficient_field];
+        // Generate ZK proof using secure UnifiedCircuit with proper KZG trusted setup
+        let mut circuit = crate::zhtp::zk_proofs::UnifiedCircuit::new(
+            sender.as_bytes().to_vec(),
+            b"balance_verification".to_vec(),
+            vec![], // No routing path for balance verification
+            std::collections::HashMap::new(),
+            [0u8; 32], // No storage requirement
+            vec![], // No storage proof
+            ark_bn254::G1Projective::generator(),
+            (balance * 1000.0) as u64, // Bandwidth represents scaled balance
+            vec![(amount as u64, has_sufficient)], // Uptime represents sufficiency check
+            vec![(amount as u64, balance)], // Latency represents balance validation
+        );
         
-        // Public commitment to sender identity
-        let mut hasher = Sha256::new();
-        hasher.update(sender.as_bytes());
-        let sender_hash = hasher.finalize();
-        
-        Ok(ByteRoutingProof {
-            commitments: vec![sender_hash.to_vec()],
-            elements: proof_elements.iter().map(|f| {
-                let mut bytes = Vec::new();
-                ark_serialize::CanonicalSerialize::serialize_uncompressed(f, &mut bytes).unwrap();
-                bytes
-            }).collect(),
-            inputs: vec![sender_hash.to_vec()],
-        })
+        // Generate secure proof using KZG trusted setup
+        match circuit.generate_proof() {
+            Some(proof) => Ok(ByteRoutingProof::from(proof)),
+            None => Err(anyhow::anyhow!("Failed to generate balance proof"))
+        }
     }
     
     fn calculate_fee(amount: f64) -> f64 {

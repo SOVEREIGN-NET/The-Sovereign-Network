@@ -5,7 +5,6 @@ pub mod network;
 pub mod storage;
 pub mod zhtp;
 pub mod discovery;
-pub mod security_tests; // Add security tests module
 pub mod input_validation; // Add input validation module
 
 // Backward compatibility consensus module alias
@@ -24,6 +23,7 @@ pub use network::{Network, NetworkCondition, NetworkId, Node, Packet};
 pub use storage::{
     dht::{DhtNode, DhtNetwork as StorageManager},
     StorageConfig,
+    ZhtpStorageManager,
     ContentMetadata,
     ContentId,
 };

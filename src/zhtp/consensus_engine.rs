@@ -576,6 +576,38 @@ impl ZhtpConsensusEngine {
         }
     }
 
+    /// Get all active validators for ceremony participation
+    pub async fn get_active_validators(&self) -> Result<Vec<ZkValidator>> {
+        let validators_lock = self.validator_registry.read().await;
+        let active_validators: Vec<ZkValidator> = validators_lock
+            .iter()
+            .filter(|(_, v)| v.status == ValidatorStatus::Active)
+            .map(|(id, info)| {
+                // Convert ValidatorInfo to ZkValidator
+                ZkValidator {
+                    encrypted_identity: id.as_bytes().to_vec(),
+                    stake: info.stake,
+                    stake_proof: ByteRoutingProof {
+                        commitments: vec![],
+                        elements: vec![],
+                        inputs: vec![],
+                    },
+                    identity_commitment: {
+                        let mut commitment = [0u8; 32];
+                        let id_hash = sha2::Sha256::digest(id.as_bytes());
+                        commitment.copy_from_slice(&id_hash[..32]);
+                        commitment
+                    },
+                    metrics: info.metrics.clone(),
+                    registered_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                    last_activity: info.last_activity,
+                    status: info.status.clone(),
+                }
+            })
+            .collect();
+        Ok(active_validators)
+    }
+
     // ============================================================================
     // ENHANCED ECONOMIC METHODS (merged from zk_consensus)
     // ============================================================================

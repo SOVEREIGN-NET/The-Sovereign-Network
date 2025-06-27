@@ -1,0 +1,58 @@
+# Prometheus Configuration for ZHTP Monitoring
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "rules/*.yml"
+
+scrape_configs:
+  # ZHTP Ceremony Coordinator
+  - job_name: 'zhtp-ceremony-coordinator'
+    static_configs:
+      - targets: ['zhtp-ceremony-coordinator:9080']
+    scrape_interval: 10s
+    metrics_path: '/metrics'
+
+  # ZHTP Ceremony Participants
+  - job_name: 'zhtp-ceremony-participants'
+    static_configs:
+      - targets: 
+        - 'zhtp-ceremony-participant-1:9080'
+        - 'zhtp-ceremony-participant-2:9080'
+        - 'zhtp-ceremony-participant-3:9080'
+    scrape_interval: 10s
+    metrics_path: '/metrics'
+
+  # ZHTP Validators
+  - job_name: 'zhtp-validators'
+    static_configs:
+      - targets:
+        - 'zhtp-validator-primary:9080'
+        - 'zhtp-validator-secondary:9080'
+    scrape_interval: 5s
+    metrics_path: '/metrics'
+
+  # ZHTP Storage Node
+  - job_name: 'zhtp-storage'
+    static_configs:
+      - targets: ['zhtp-storage-node:9080']
+    scrape_interval: 10s
+    metrics_path: '/metrics'
+
+  # ZHTP Full Node
+  - job_name: 'zhtp-full-node'
+    static_configs:
+      - targets: ['zhtp-full-node:9080']
+    scrape_interval: 15s
+    metrics_path: '/metrics'
+
+  # System Metrics
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []

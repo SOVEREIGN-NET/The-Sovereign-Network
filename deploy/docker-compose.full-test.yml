@@ -1,0 +1,342 @@
+# ZHTP Complete End-to-End Testing Environment
+# This compose file runs the full ZHTP blockchain internet system including:
+# - Trusted setup ceremony
+# - Validator node registration
+# - Full blockchain operation
+# - Automated testing and verification
+
+services:
+  # =============================================================================
+  # CEREMONY INFRASTRUCTURE
+  # =============================================================================
+  
+  # Ceremony Coordinator - Orchestrates the trusted setup
+  zhtp-ceremony-coordinator:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: zhtp-ceremony-coordinator
+    ports:
+      - "8080:8080"
+      - "9080:9080"
+    environment:
+      - ZHTP_NODE_TYPE=ceremony_coordinator
+      - ZHTP_NODE_NAME=ceremony-coordinator
+      - ZHTP_NETWORK_ID=zhtp-testnet
+      - ZHTP_PORT=8080
+      - RUST_LOG=debug
+      - ZHTP_CEREMONY_PHASE=1
+      - ZHTP_MIN_PARTICIPANTS=3
+    volumes:
+      - ./data/ceremony-coordinator:/home/zhtp/data
+      - ./logs/ceremony-coordinator:/home/zhtp/logs
+      - ceremony-params:/home/zhtp/ceremony-params
+    command: ["./bin/zhtp", "--config", "./config/ceremony.json"]
+    restart: unless-stopped
+    networks:
+      - zhtp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Ceremony Participant 1
+  zhtp-ceremony-participant-1:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: zhtp-ceremony-participant-1
+    ports:
+      - "8081:8080"
+      - "9081:9080"
+    environment:
+      - ZHTP_NODE_TYPE=ceremony_participant
+      - ZHTP_NODE_NAME=participant-1
+      - ZHTP_NETWORK_ID=zhtp-testnet
+      - ZHTP_PORT=8080
+      - RUST_LOG=debug
+      - ZHTP_CEREMONY_COORDINATOR=zhtp-ceremony-coordinator:8080
+    volumes:
+      - ./data/participant-1:/home/zhtp/data
+      - ./logs/participant-1:/home/zhtp/logs
+      - ceremony-params:/home/zhtp/ceremony-params
+    command: ["./bin/zhtp", "--config", "./config/ceremony.json"]
+    restart: unless-stopped
+    networks:
+      - zhtp-network
+    depends_on:
+      zhtp-ceremony-coordinator:
+        condition: service_healthy
+
+  # Ceremony Participant 2
+  zhtp-ceremony-participant-2:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: zhtp-ceremony-participant-2
+    ports:
+      - "8082:8080"
+      - "9082:9080"
+    environment:
+      - ZHTP_NODE_TYPE=ceremony_participant
+      - ZHTP_NODE_NAME=participant-2
+      - ZHTP_NETWORK_ID=zhtp-testnet
+      - ZHTP_PORT=8080
+      - RUST_LOG=debug
+      - ZHTP_CEREMONY_COORDINATOR=zhtp-ceremony-coordinator:8080
+    volumes:
+      - ./data/participant-2:/home/zhtp/data
+      - ./logs/participant-2:/home/zhtp/logs
+      - ceremony-params:/home/zhtp/ceremony-params
+    command: ["./bin/zhtp", "--config", "./config/ceremony.json"]
+    restart: unless-stopped
+    networks:
+      - zhtp-network
+    depends_on:
+      zhtp-ceremony-coordinator:
+        condition: service_healthy
+
+  # Ceremony Participant 3
+  zhtp-ceremony-participant-3:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: zhtp-ceremony-participant-3
+    ports:
+      - "8083:8080"
+      - "9083:9080"
+    environment:
+      - ZHTP_NODE_TYPE=ceremony_participant
+      - ZHTP_NODE_NAME=participant-3
+      - ZHTP_NETWORK_ID=zhtp-testnet
+      - ZHTP_PORT=8080
+      - RUST_LOG=debug
+      - ZHTP_CEREMONY_COORDINATOR=zhtp-ceremony-coordinator:8080
+    volumes:
+      - ./data/participant-3:/home/zhtp/data
+      - ./logs/participant-3:/home/zhtp/logs
+      - ceremony-params:/home/zhtp/ceremony-params
+    command: ["./bin/zhtp", "--config", "./config/ceremony.json"]
+    restart: unless-stopped
+    networks:
+      - zhtp-network
+    depends_on:
+      zhtp-ceremony-coordinator:
+        condition: service_healthy
+
+  # =============================================================================
+  # VALIDATOR NODES
+  # =============================================================================
+
+  # Primary Validator Node
+  zhtp-validator-primary:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: zhtp-validator-primary
+    ports:
+      - "8090:8080"
+      - "9090:9080"
+    environment:
+      - ZHTP_NODE_TYPE=validator
+      - ZHTP_NODE_NAME=validator-primary
+      - ZHTP_NETWORK_ID=zhtp-testnet
+      - ZHTP_PORT=8080
+      - RUST_LOG=debug
+      - ZHTP_VALIDATOR_STAKE=1000
+      - ZHTP_AUTO_REGISTER=true
+    volumes:
+      - ./data/validator-primary:/home/zhtp/data
+      - ./logs/validator-primary:/home/zhtp/logs
+      - ceremony-params:/home/zhtp/ceremony-params:ro
+    command: ["./bin/zhtp", "--config", "./config/validator.json"]
+    restart: unless-stopped
+    networks:
+      - zhtp-network
+    depends_on:
+      - zhtp-ceremony-coordinator
+      - zhtp-ceremony-participant-1
+      - zhtp-ceremony-participant-2
+      - zhtp-ceremony-participant-3
+
+  # Secondary Validator Node
+  zhtp-validator-secondary:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: zhtp-validator-secondary
+    ports:
+      - "8091:8080"
+      - "9091:9080"
+    environment:
+      - ZHTP_NODE_TYPE=validator
+      - ZHTP_NODE_NAME=validator-secondary
+      - ZHTP_NETWORK_ID=zhtp-testnet
+      - ZHTP_PORT=8080
+      - RUST_LOG=debug
+      - ZHTP_VALIDATOR_STAKE=800
+      - ZHTP_AUTO_REGISTER=true
+    volumes:
+      - ./data/validator-secondary:/home/zhtp/data
+      - ./logs/validator-secondary:/home/zhtp/logs
+      - ceremony-params:/home/zhtp/ceremony-params:ro
+    command: ["./bin/zhtp", "--config", "./config/validator.json"]
+    restart: unless-stopped
+    networks:
+      - zhtp-network
+    depends_on:
+      - zhtp-validator-primary
+
+  # =============================================================================
+  # NETWORK INFRASTRUCTURE
+  # =============================================================================
+
+  # Storage Node
+  zhtp-storage-node:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: zhtp-storage-node
+    ports:
+      - "8092:8080"
+      - "9092:9080"
+    environment:
+      - ZHTP_NODE_TYPE=storage
+      - ZHTP_NODE_NAME=storage-node
+      - ZHTP_NETWORK_ID=zhtp-testnet
+      - ZHTP_PORT=8080
+      - RUST_LOG=debug
+      - ZHTP_STORAGE_CAPACITY=10GB
+    volumes:
+      - ./data/storage-node:/home/zhtp/data
+      - ./logs/storage-node:/home/zhtp/logs
+      - ceremony-params:/home/zhtp/ceremony-params:ro
+    command: ["./bin/zhtp", "--config", "./config/storage.json"]
+    restart: unless-stopped
+    networks:
+      - zhtp-network
+    depends_on:
+      - zhtp-validator-primary
+
+  # Full Node (Bootstrap)
+  zhtp-full-node:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: zhtp-full-node
+    ports:
+      - "8093:8080"
+      - "9093:9080"
+    environment:
+      - ZHTP_NODE_TYPE=full
+      - ZHTP_NODE_NAME=full-node
+      - ZHTP_NETWORK_ID=zhtp-testnet
+      - ZHTP_PORT=8080
+      - RUST_LOG=debug
+    volumes:
+      - ./data/full-node:/home/zhtp/data
+      - ./logs/full-node:/home/zhtp/logs
+      - ceremony-params:/home/zhtp/ceremony-params:ro
+    command: ["./bin/zhtp", "--config", "./config/full.json"]
+    restart: unless-stopped
+    networks:
+      - zhtp-network
+    depends_on:
+      - zhtp-validator-primary
+      - zhtp-storage-node
+
+  # =============================================================================
+  # TESTING AND VERIFICATION
+  # =============================================================================
+
+  # System Test Runner
+  zhtp-test-runner:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.test
+    container_name: zhtp-test-runner
+    environment:
+      - ZHTP_NETWORK_ID=zhtp-testnet
+      - RUST_LOG=debug
+      - ZHTP_TEST_MODE=full
+      - ZHTP_VALIDATOR_ENDPOINT=http://zhtp-validator-primary:8080
+      - ZHTP_STORAGE_ENDPOINT=http://zhtp-storage-node:8080
+      - ZHTP_CEREMONY_ENDPOINT=http://zhtp-ceremony-coordinator:8080
+    volumes:
+      - ./data/test-results:/home/zhtp/test-results
+      - ./logs/test-runner:/home/zhtp/logs
+      - ceremony-params:/home/zhtp/ceremony-params:ro
+    networks:
+      - zhtp-network
+    depends_on:
+      - zhtp-validator-primary
+      - zhtp-validator-secondary
+      - zhtp-storage-node
+      - zhtp-full-node
+    profiles:
+      - test
+
+  # =============================================================================
+  # MONITORING AND DASHBOARD
+  # =============================================================================
+
+  # Monitoring Dashboard
+  zhtp-monitor:
+    image: grafana/grafana:latest
+    container_name: zhtp-monitor
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=zhtp123
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning
+    networks:
+      - zhtp-network
+
+  # Metrics Collector
+  zhtp-metrics:
+    image: prom/prometheus:latest
+    container_name: zhtp-metrics
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-storage:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - zhtp-network
+
+  # Log Aggregator
+  zhtp-logs:
+    image: grafana/loki:latest
+    container_name: zhtp-logs
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki-config.yml:/etc/loki/local-config.yaml
+      - loki-storage:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - zhtp-network
+
+networks:
+  zhtp-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  ceremony-params:
+  grafana-storage:
+  prometheus-storage:
+  loki-storage:

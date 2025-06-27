@@ -25,7 +25,7 @@ cargo build --release
 cargo run --release  # Linux/macOS
 
 # Access browser
-http://localhost:3000
+http://localhost:8000
 ```
 
 ## 📚 Documentation
@@ -60,34 +60,9 @@ ZHTP implements cutting-edge security measures:
 ## 🛠️ Development
 
 Build decentralized applications on ZHTP:
+zhtp_sdk coming soon
 
-```rust
-// Smart contract example
-use zhtp_sdk::*;
-
-#[derive(Serialize, Deserialize)]
-pub struct MyContract {
-    owner: Address,
-    value: u64,
-}
-
-impl MyContract {
-    #[constructor]
-    pub fn new(initial_value: u64) -> Self {
-        Self {
-            owner: msg_sender(),
-            value: initial_value,
-        }
-    }
-    
-    pub fn update_value(&mut self, new_value: u64) -> Result<()> {
-        require!(msg_sender() == self.owner, "Not authorized");
-        self.value = new_value;
-        Ok(())
-    }
-}
-```
-
+`
 ## 🤝 Contributing
 
 We welcome contributions! Please see our [Development Guide](docs/development.md) for details on:

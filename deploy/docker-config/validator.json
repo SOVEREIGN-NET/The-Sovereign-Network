@@ -1,0 +1,30 @@
+{
+  "node": {
+    "name": "zhtp-validator",
+    "bind_address": "0.0.0.0:8080",
+    "p2p_address": "0.0.0.0:8000",
+    "public_address": "zhtp-validator:8080"
+  },
+  "network": {
+    "bootstrap_nodes": [
+      "zhtp-storage:8080",
+      "zhtp-ceremony:8080",
+      "zhtp-full:8080"
+    ],
+    "max_peers": 50,
+    "discovery_interval": 30
+  },
+  "consensus": {
+    "validator": true,
+    "stake_amount": 1000
+  },
+  "economics": {
+    "enable_mining": true,
+    "reward_address": "zhtp_validator_reward_address"
+  },
+  "certificate_authority": {
+    "enabled": false,
+    "ca_cert_path": "",
+    "ca_key_path": ""
+  }
+}

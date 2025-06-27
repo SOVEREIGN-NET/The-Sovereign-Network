@@ -1185,9 +1185,9 @@
             showToast(`Resolving ${domain} via ZHTP DNS...`, 'info');
             
             // Special handling for known domains
-            if (domain === 'whisper.zhtp' || domain === 'whisper.chat') {
+            if (domain === 'whisper.zhtp' || domain === 'whisper.chat' || domain === 'whisper') {
                 console.log('🔒 Redirecting to Whisper secure messaging...');
-                window.open('/whisper.html', '_blank');
+                window.open('/whisper', '_blank');
                 return;
             }
             
