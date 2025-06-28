@@ -1089,7 +1089,7 @@
                     );
                 }, 1000);
             } else {
-                console.log('❌ No wallet found, showing setup prompt');
+                console.log('❌ No wallet found, redirecting to proper onboarding');
                 document.getElementById('walletAddress').textContent = 'No wallet connected';
                 document.getElementById('zkIdentity').textContent = 'Setup required';
                 
@@ -1100,7 +1100,8 @@
                 statusElement.style.color = '#e74c3c';
                 statusElement.style.border = '1px solid #e74c3c';
                 
-                showWalletSetupPrompt();
+                // Redirect to proper onboarding instead of showing fake setup
+                redirectToProperOnboarding();
             }// Initialize message history
             messageHistory['bootstrap-node'] = [
                 {
@@ -1446,8 +1447,8 @@
 
             // Enhanced wallet validation
             if (!currentWallet || !validateWallet(currentWallet)) {
-                addMessageToUI('❌ No wallet connected! Please set up your wallet first.', 'received', 'System');
-                showWalletSetupPrompt();
+                addMessageToUI('❌ No wallet connected! Please complete onboarding first.', 'received', 'System');
+                redirectToProperOnboarding();
                 return;
             }
 
@@ -1610,148 +1611,55 @@
             });
         }
 
-        // Wallet Setup and Management Functions
-        function showWalletSetupPrompt() {
-            const setupHTML = `
-                <div id="walletSetupPrompt" style="
-                    position: fixed;
-                    top: 0;
-                    left: 0;
-                    width: 100%;
-                    height: 100%;
-                    background: rgba(0,0,0,0.8);
+        // Redirect to proper onboarding flow
+        function redirectToProperOnboarding() {
+            console.log('🔄 Redirecting to proper ZHTP onboarding...');
+            
+            // Show a clean message and redirect
+            document.body.innerHTML = `
+                <div style="
                     display: flex;
                     justify-content: center;
                     align-items: center;
-                    z-index: 10000;
+                    height: 100vh;
+                    background: linear-gradient(135deg, #2c3e50 0%, #34495e 50%, #2c3e50 100%);
+                    color: white;
+                    text-align: center;
+                    font-family: 'Segoe UI', sans-serif;
                 ">
-                    <div style="
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        padding: 40px;
-                        border-radius: 20px;
-                        text-align: center;
-                        max-width: 600px;
-                        box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-                        border: 1px solid rgba(255, 255, 255, 0.3);
-                    ">
-                        <h2 style="color: white; margin-bottom: 20px;">🔐 Wallet Setup Required</h2>
-                        <p style="color: rgba(255,255,255,0.9); margin-bottom: 30px; line-height: 1.5;">
-                            To use Whisper.zhtp secure messaging, you need a ZHTP wallet for your ZK Identity.
-                            Choose how you'd like to proceed:
+                    <div style="max-width: 500px; padding: 40px;">
+                        <div style="font-size: 4rem; margin-bottom: 20px;">🔐</div>
+                        <h2 style="margin-bottom: 15px;">Wallet Setup Required</h2>
+                        <p style="margin-bottom: 30px; opacity: 0.9; line-height: 1.5;">
+                            To access Whisper secure messaging, you need to complete the ZHTP wallet setup first.
                         </p>
-                        <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px;">
-                            <button onclick="createQuickWallet()" style="
-                                background: linear-gradient(45deg, #27ae60, #2ecc71);
+                        <div style="margin-bottom: 20px;">
+                            <button onclick="window.location.href='/'" style="
+                                background: linear-gradient(45deg, #3498db, #2ecc71);
                                 border: none;
                                 color: white;
-                                padding: 12px 24px;
+                                padding: 15px 30px;
                                 border-radius: 8px;
                                 cursor: pointer;
                                 font-weight: bold;
-                                font-size: 14px;
-                            ">⚡ Quick Start</button>
-                            <button onclick="redirectToWelcome()" style="
-                                background: linear-gradient(45deg, #f39c12, #e74c3c);
-                                border: none;
-                                color: white;
-                                padding: 12px 24px;
-                                border-radius: 8px;
-                                cursor: pointer;
-                                font-weight: bold;
-                                font-size: 14px;
-                            ">🚀 Full Setup</button>
-                            <button onclick="tryReloadWallet()" style="
-                                background: rgba(255,255,255,0.2);
-                                border: 1px solid rgba(255,255,255,0.3);
-                                color: white;
-                                padding: 12px 24px;
-                                border-radius: 8px;
-                                cursor: pointer;
-                                font-weight: bold;
-                                font-size: 14px;
-                            ">🔄 Check Again</button>
+                                font-size: 16px;
+                                margin-right: 10px;
+                            ">🚀 Start Onboarding</button>
                         </div>
-                        <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; margin-top: 20px;">
-                            <p style="color: rgba(255,255,255,0.8); font-size: 12px; line-height: 1.4;">
-                                <strong>Quick Start:</strong> Creates a simple wallet instantly for immediate messaging.<br>
-                                <strong>Full Setup:</strong> Complete wallet with recovery phrase and advanced features.
-                            </p>
-                        </div>
+                        <p style="font-size: 14px; opacity: 0.7;">
+                            You'll be redirected to the ZHTP welcome page to create your wallet and ZK identity.
+                        </p>
+                        <p style="font-size: 12px; opacity: 0.5; margin-top: 15px;">
+                            Redirecting automatically in 3 seconds...
+                        </p>
                     </div>
                 </div>
             `;
             
-            document.body.insertAdjacentHTML('beforeend', setupHTML);
-        }
-
-        // Quick wallet creation for direct Whisper access
-        function createQuickWallet() {
-            console.log('🚀 Creating quick wallet for Whisper...');
-              // Generate a simple wallet structure
-            const timestamp = Date.now();
-            const randomBytes = Array.from(crypto.getRandomValues(new Uint8Array(32)));
-            const walletAddress = '0x' + randomBytes.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 40);
-            
-            // Generate proper ZK Identity using the new function
-            const zkIdentity = generateZKIdentity(walletAddress);
-            
-            const quickWallet = {
-                address: walletAddress,
-                zk_identity: zkIdentity,
-                zkIdentity: zkIdentity,
-                private_key: '0x' + randomBytes.map(b => b.toString(16).padStart(2, '0')).join(''),
-                created_at: timestamp,
-                type: 'quick_wallet',
-                balance: '1000.0', // Start with some test tokens
-                network: 'zhtp_mainnet',
-                node_id: `node_${walletAddress.substring(2, 10)}_${timestamp.toString(36)}`
-            };
-            
-            // Save wallet
-            localStorage.setItem('zhtp_wallet', JSON.stringify(quickWallet));
-            sessionStorage.setItem('zhtp_session', JSON.stringify({
-                wallet: quickWallet,
-                timestamp: timestamp
-            }));
-            
-            // Update current wallet
-            currentWallet = quickWallet;
-              // Update UI
-            document.getElementById('walletAddress').textContent = quickWallet.address;
-            document.getElementById('zkIdentity').textContent = quickWallet.zk_identity;
-            
-            // Update wallet status indicator
-            const statusElement = document.getElementById('walletStatus');
-            statusElement.textContent = '✅ Connected';
-            statusElement.style.background = 'rgba(46, 204, 113, 0.3)';
-            statusElement.style.color = '#2ecc71';
-            statusElement.style.border = '1px solid #2ecc71';
-              // Remove setup prompt
-            document.getElementById('walletSetupPrompt')?.remove();
-            
-            // Show success message
-            addMessageToUI('✅ Quick wallet created successfully! You are now connected to the ZHTP network with native ZK Identity. All messages use post-quantum encryption automatically.', 'received', 'System');
-            
-            // Add wallet info to chat
+            // Auto-redirect after 3 seconds
             setTimeout(() => {
-                addMessageToUI(`🔑 Your ZK Identity: ${zkIdentity}`, 'received', 'System');
-                addMessageToUI(`📡 Node ID: ${quickWallet.node_id}`, 'received', 'System');
-                addMessageToUI('💬 You can now send secure messages to any ZHTP node or contact!', 'received', 'System');
-            }, 500);
-            
-            // Enable debug info and enhanced features
-            setTimeout(() => {
-                displayWalletDebugInfo();
-                enhanceMessageSending();
-            }, 1000);
-            
-            console.log('✅ Quick wallet created:', quickWallet.address);
-            return quickWallet;
-        }
-
-        function redirectToWelcome() {
-            console.log('🔄 Redirecting to wallet setup...');
-            window.location.href = '/';
+                window.location.href = '/';
+            }, 3000);
         }
 
         function tryReloadWallet() {

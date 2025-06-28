@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Direct Whisper Access</title>
+</head>
+<body>
+    <h1>Testing Direct Whisper Access</h1>
+    <p>This page will test what happens when accessing whisper directly without wallet setup.</p>
+    
+    <script>
+        // Clear any existing wallet data to simulate fresh user
+        localStorage.removeItem('zhtp_wallet');
+        sessionStorage.removeItem('zhtp_session');
+        
+        console.log('✅ Cleared wallet data, now redirecting to whisper...');
+        
+        // Wait a moment then redirect
+        setTimeout(() => {
+            window.location.href = '/browser/whisper.html';
+        }, 2000);
+    </script>
+    
+    <p>Clearing wallet data and redirecting to whisper in 2 seconds...</p>
+</body>
+</html>
