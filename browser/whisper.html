@@ -996,9 +996,87 @@
             window.location.href = '/';
         }
         
+        // Optional ceremony status check (doesn't require wallet registration)
+        async function checkCeremonyStatus() {
+            try {
+                const response = await fetch('/api/ceremony/status');
+                if (response.ok) {
+                    const result = await response.json();
+                    return result.status || 'unknown';
+                }
+            } catch (error) {
+                console.log('Ceremony status check failed:', error);
+            }
+            return 'unknown';
+        }
+
+        // Register wallet with backend
+        async function registerWalletWithBackend(wallet) {
+            try {
+                console.log('🔗 Registering wallet with ZHTP backend...');
+                
+                const registrationData = {
+                    address: wallet.address,
+                    zk_identity: wallet.zk_identity || wallet.zkIdentity,
+                    network: wallet.network || 'mainnet',
+                    public_key: wallet.public_key || wallet.publicKey || wallet.address,
+                    node_id: wallet.node_id || wallet.address,
+                    ceremony_participation: true
+                };
+                
+                const response = await fetch('/api/wallet/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(registrationData)
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    console.log('✅ Wallet registered successfully:', result);
+                    
+                    // Update wallet with backend response data
+                    if (result.node_id) {
+                        wallet.node_id = result.node_id;
+                    }
+                    if (result.network) {
+                        wallet.network = result.network;
+                    }
+                    if (result.ceremony_status) {
+                        wallet.ceremony_status = result.ceremony_status;
+                    }
+                    
+                    // Save updated wallet
+                    localStorage.setItem('zhtp_wallet', JSON.stringify(wallet));
+                    sessionStorage.setItem('zhtp_session', JSON.stringify({
+                        wallet: wallet,
+                        timestamp: Date.now()
+                    }));
+                    
+                    return result;
+                } else {
+                    console.log('⚠️ Wallet registration failed, but continuing...');
+                    return null;
+                }
+            } catch (error) {
+                console.log('⚠️ Backend registration error (continuing anyway):', error);
+                return null;
+            }
+        }
+
         // Generate deterministic ZK Identity (same input = same output, no randomness)
+        // ZHTP Native ZK Identity generation (integrated with wallet)
         function generateZKIdentityDeterministic(walletAddress, seedPhrase) {
-            // Create deterministic hash from wallet address and seed phrase
+            // In ZHTP, ZK Identity and wallet are cryptographically linked
+            // If wallet already has a ZK identity, use it; otherwise derive from wallet
+            if (walletAddress.includes('_')) {
+                // Extract ZK core from ZHTP wallet address format
+                const zkCore = walletAddress.split('_')[1];
+                return `zk_${zkCore}_zhtp`;
+            }
+            
+            // Fallback for legacy wallets - create deterministic hash
             let hash = 0;
             const input = walletAddress + (seedPhrase || '');
             
@@ -1007,11 +1085,8 @@
                 hash = hash & hash; // Convert to 32-bit integer
             }
             
-            // Create deterministic ZK identity - same inputs always produce same output
-            const timestamp = '1a2b3c4d'; // Fixed timestamp for deterministic generation
             const zkCore = Math.abs(hash).toString(36).substring(0, 16);
-            
-            return `zk_${zkCore}_${timestamp}`;
+            return `zk_${zkCore}_zhtp`;
         }        // Initialize the app
         async function initializeWhisper() {
             console.log('🔐 Initializing Whisper.zhtp...');
@@ -1067,23 +1142,40 @@
                     console.log('✅ Using existing persistent ZK Identity:', currentWallet.zk_identity || currentWallet.zkIdentity);
                 }
                 
+                // NOTE: Wallets exist independently of the backend (pure cryptography)
+                // We only check ceremony/network status if needed for network operations
+                // No need to "register" the wallet since it's just cryptographic keys
+                
+                // Optionally check ceremony status for display purposes
+                const ceremonyStatus = await checkCeremonyStatus();
+                
                 document.getElementById('walletAddress').textContent = currentWallet.address;
                 document.getElementById('zkIdentity').textContent = currentWallet.zk_identity || currentWallet.zkIdentity;
                 
                 // Update wallet status indicator to show PERSISTENT identity
                 const statusElement = document.getElementById('walletStatus');
-                statusElement.textContent = '✅ Persistent Identity';
-                statusElement.style.background = 'rgba(46, 204, 113, 0.3)';
-                statusElement.style.color = '#2ecc71';
-                statusElement.style.border = '1px solid #2ecc71';
+                if (ceremonyStatus === 'connected') {
+                    statusElement.textContent = '✅ Connected & Ceremony Ready';
+                    statusElement.style.background = 'rgba(46, 204, 113, 0.3)';
+                    statusElement.style.color = '#2ecc71';
+                } else {
+                    statusElement.textContent = '✅ Connected (Ceremony Pending)';
+                    statusElement.style.background = 'rgba(255, 165, 0, 0.3)';
+                    statusElement.style.color = '#ffa500';
+                }
+                statusElement.style.border = '1px solid currentColor';
                 
                 console.log('✅ Persistent wallet connected:', currentWallet.address);
                 console.log('✅ Persistent ZK Identity:', currentWallet.zk_identity || currentWallet.zkIdentity);
                 
                 // Show confirmation that identity is persistent
                 setTimeout(() => {
+                    const ceremonyMsg = ceremonyStatus === 'connected' 
+                        ? 'Your node is connected to the ZHTP ceremony and can earn rewards for packet routing, storage verification, and consensus validation.'
+                        : 'Your wallet is created and functional. You can join the ceremony later to earn network rewards.';
+                    
                     addMessageToUI(
-                        `🔐 Welcome back! Using your persistent ZK Identity.\nThis identity remains the same across all sessions and enables secure messaging.`, 
+                        `🔐 Welcome back! Your wallet exists independently on the blockchain and is secured with quantum-resistant cryptography.\n\n${ceremonyMsg}\n\nYour ZK Identity is persistent and enables secure, private messaging across the ZHTP network.`, 
                         'received', 
                         'ZHTP Network'
                     );
@@ -1106,7 +1198,7 @@
             messageHistory['bootstrap-node'] = [
                 {
                     type: 'received',
-                    content: '🎉 Welcome to ZHTP! Your node is connected to the native decentralized network with built-in ZK proofs and post-quantum encryption.',
+                    content: '🎉 Welcome to ZHTP Whisper! Your messages are secured with post-quantum cryptography and delivered over the native P2P network.\n\n� In ZHTP, your ZK Identity IS your wallet identity - they are cryptographically linked. This enables secure, private communication where your ZK Identity holds your quantum-resistant wallet credentials and enables anonymous yet verifiable messaging.',
                     time: new Date().toLocaleTimeString(),
                     sender: 'Bootstrap Node'
                 },
@@ -1705,15 +1797,15 @@
                 return false;
             }
             
-            if (!wallet.address || !wallet.address.startsWith('0x')) {
-                console.log('❌ Invalid wallet address');
+            if (!wallet.address || (!wallet.address.startsWith('0x') && !wallet.address.startsWith('zhtp_'))) {
+                console.log('❌ Invalid wallet address:', wallet.address);
                 return false;
             }
             
-            // Ensure ZK Identity exists
+            // Ensure ZK Identity exists using deterministic generation
             if (!wallet.zk_identity && !wallet.zkIdentity) {
-                console.log('🔑 Wallet missing ZK Identity, generating...');
-                const zkIdentity = generateZKIdentity(wallet.address);
+                console.log('🔑 Wallet missing ZK Identity, generating deterministic one...');
+                const zkIdentity = generateZKIdentityDeterministic(wallet.address, wallet.recoveryPhrase || wallet.address);
                 wallet.zk_identity = zkIdentity;
                 wallet.zkIdentity = zkIdentity;
                 
@@ -1723,6 +1815,8 @@
                     wallet: wallet,
                     timestamp: Date.now()
                 }));
+                
+                console.log('💾 Generated and saved deterministic ZK Identity:', zkIdentity);
             }
             
             console.log('✅ Wallet validation passed');

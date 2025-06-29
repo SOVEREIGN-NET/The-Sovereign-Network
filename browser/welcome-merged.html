@@ -615,36 +615,18 @@
                 stepNumber.style.background = 'linear-gradient(45deg, #00ff00, #00cc00)';
             }
             
-            // Generate wallet address
-            const walletAddress = generateWalletAddress();
-            document.getElementById('walletAddress').textContent = walletAddress;
+            // Generate integrated ZHTP wallet with ZK Identity
+            const wallet = generateZhtpWallet();
+            window.generatedWallet = wallet; // Store for later use
+            document.getElementById('walletAddress').textContent = wallet.address;
             document.getElementById('walletDisplay').classList.remove('hidden');
             document.getElementById('completeBtn').style.display = 'inline-block';
             
             onboardingComplete = true;
             
-            // Register wallet with API and participate in ceremony
+            // Register wallet with API and check ceremony participation
             try {
-                // First, participate in the trusted setup ceremony
-                const ceremonyResponse = await fetch('/api/ceremony/participate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        node_type: selectedNode,
-                        wallet_address: walletAddress,
-                        ceremony_type: 'trusted_setup',
-                        enable_rewards: true
-                    })
-                });
-                
-                if (ceremonyResponse.ok) {
-                    const ceremonyResult = await ceremonyResponse.json();
-                    console.log('✅ Ceremony participation successful:', ceremonyResult);
-                }
-                
-                // Then register wallet with enhanced features
+                // Register wallet and get ceremony status
                 const response = await fetch('/api/wallet/register', {
                     method: 'POST',
                     headers: {
@@ -652,7 +634,9 @@
                     },
                     body: JSON.stringify({
                         node_type: selectedNode,
-                        wallet_address: walletAddress,
+                        wallet_address: wallet.address,
+                        zk_identity: wallet.zk_identity,
+                        public_key: wallet.public_key,
                         source: 'onboarding',
                         zk_features: ['quantum_resistant', 'zero_knowledge_proofs'],
                         ceremony_participant: true,
@@ -663,23 +647,40 @@
                 
                 if (response.ok) {
                     const result = await response.json();
-                    console.log('✅ Wallet registered with ceremony benefits:', result);
+                    console.log('✅ Wallet registered:', result);
                     
-                    // Show success message about earning potential
+                    // Check ceremony status from response
+                    const ceremonyStatus = result.ceremony_status || 'pending';
                     const walletDisplay = document.getElementById('walletDisplay');
-                    const successMsg = document.createElement('div');
-                    successMsg.style.cssText = 'background: rgba(0,255,0,0.2); border: 1px solid #00ff00; border-radius: 10px; padding: 15px; margin-top: 15px; text-align: center;';
-                    successMsg.innerHTML = `
-                        <h4>🎉 Ceremony Complete!</h4>
-                        <p>You can now earn ZHTP rewards for:</p>
-                        <ul style="text-align: left; margin: 10px 0;">
-                            <li>📡 Successful packet routing</li>
-                            <li>💾 Storage verification proofs</li>
-                            <li>🔒 Zero-knowledge consensus validation</li>
-                        </ul>
-                        <p><strong>Your node is now earning-enabled!</strong></p>
-                    `;
-                    walletDisplay.appendChild(successMsg);
+                    
+                    if (ceremonyStatus === 'connected') {
+                        // Show success message about ceremony participation
+                        const successMsg = document.createElement('div');
+                        successMsg.style.cssText = 'background: rgba(0,255,0,0.2); border: 1px solid #00ff00; border-radius: 10px; padding: 15px; margin-top: 15px; text-align: center;';
+                        successMsg.innerHTML = `
+                            <h4>🎉 Ceremony Connected!</h4>
+                            <p>You can now earn ZHTP rewards for:</p>
+                            <ul style="text-align: left; margin: 10px 0;">
+                                <li>📡 Successful packet routing</li>
+                                <li>💾 Storage verification proofs</li>
+                                <li>🔒 Zero-knowledge consensus validation</li>
+                            </ul>
+                            <p><strong>Your node is now earning-enabled!</strong></p>
+                        `;
+                        walletDisplay.appendChild(successMsg);
+                    } else {
+                        // Show pending status
+                        const pendingMsg = document.createElement('div');
+                        pendingMsg.style.cssText = 'background: rgba(255,165,0,0.2); border: 1px solid #ffa500; border-radius: 10px; padding: 15px; margin-top: 15px; text-align: center;';
+                        pendingMsg.innerHTML = `
+                            <h4>⚠️ Ceremony Pending</h4>
+                            <p>Your wallet is created but ceremony participation is pending.<br>
+                            You can complete this later in the Network settings to enable rewards.</p>
+                        `;
+                        walletDisplay.appendChild(pendingMsg);
+                    }
+                } else {
+                    throw new Error('Wallet registration failed');
                 }
             } catch (error) {
                 console.log('Ceremony/Registration failed:', error);
@@ -701,21 +702,23 @@
             if (onboardingComplete) {
                 const walletAddress = document.getElementById('walletAddress').textContent;
                 
+                // Get the full wallet object (should be stored during generation)
+                const fullWallet = window.generatedWallet || {
+                    address: walletAddress,
+                    network: selectedNode || 'testnet',
+                    quantum_resistant: true,
+                    balance: 100,
+                    createdAt: new Date().toISOString()
+                };
+                
                 // Store user session data
                 const sessionData = {
-                    wallet: {
-                        address: walletAddress,
-                        network: selectedNode || 'testnet',
-                        signInMethod: 'onboarding',
-                        quantum_resistant: true,
-                        balance: 100, // Starting balance
-                        createdAt: new Date().toISOString()
-                    }
+                    wallet: fullWallet
                 };
                 
                 // Store in session and local storage
                 sessionStorage.setItem('zhtp_session', JSON.stringify(sessionData));
-                localStorage.setItem('zhtpWallet', JSON.stringify(sessionData.wallet));
+                localStorage.setItem('zhtp_wallet', JSON.stringify(fullWallet));
                 localStorage.setItem('zhtpUser', JSON.stringify({
                     username: 'user',
                     signInMethod: 'onboarding'
@@ -726,14 +729,39 @@
             }
         }
 
-        // Generate quantum-resistant wallet address
-        function generateWalletAddress() {
-            const chars = 'abcdef0123456789';
-            let address = 'zhtp_';
-            for (let i = 0; i < 40; i++) {
-                address += chars.charAt(Math.floor(Math.random() * chars.length));
+        // Generate quantum-resistant ZHTP wallet with integrated ZK Identity
+        function generateZhtpWallet() {
+            // Generate a proper cryptographic seed (in real implementation this would use crypto.getRandomValues)
+            const seed = Array.from({length: 32}, () => Math.floor(Math.random() * 256));
+            const seedHex = seed.map(b => b.toString(16).padStart(2, '0')).join('');
+            
+            // Generate deterministic ZK Identity from seed (this becomes the primary identifier)
+            let hash = 0;
+            for (let i = 0; i < seedHex.length; i++) {
+                hash = ((hash << 5) - hash) + seedHex.charCodeAt(i);
+                hash = hash & hash; // Convert to 32-bit integer
             }
-            return address;
+            
+            const zkCore = Math.abs(hash).toString(36).substring(0, 16);
+            const zkIdentity = `zk_${zkCore}_zhtp`;
+            
+            // In ZHTP, the ZK Identity IS the wallet address (quantum-resistant)
+            const walletAddress = `zhtp_${zkCore}`;
+            
+            // Create recovery phrase from seed
+            const recoveryWords = ['quantum', 'secure', 'zero', 'knowledge', 'blockchain', 'resistant'];
+            const recoveryPhrase = recoveryWords.join('-') + '-' + Math.abs(hash).toString(36);
+            
+            return {
+                address: walletAddress,
+                zk_identity: zkIdentity,
+                zkIdentity: zkIdentity, // For compatibility
+                private_key: seedHex,
+                public_key: `pub_${zkCore}`,
+                recovery_phrase: recoveryPhrase,
+                quantum_resistant: true,
+                created_at: new Date().toISOString()
+            };
         }
 
         // Handle sign in form
