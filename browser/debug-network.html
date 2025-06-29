@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZHTP Network Debug Console</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #000;
+            color: #00ff00;
+            padding: 20px;
+            margin: 0;
+        }
+        .console {
+            background: #001100;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+            height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-size: 14px;
+        }
+        .section {
+            margin: 20px 0;
+            border: 1px solid #004400;
+            border-radius: 5px;
+            background: #001a00;
+            padding: 15px;
+        }
+        .button {
+            background: #003300;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 8px 15px;
+            margin: 5px;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        .button:hover {
+            background: #006600;
+        }
+        .status-good { color: #00ff00; }
+        .status-warning { color: #ffff00; }
+        .status-error { color: #ff0000; }
+        .status-info { color: #00ffff; }
+        h1, h2 { color: #00ff00; text-shadow: 0 0 5px #00ff00; }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .peer-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #000033;
+            border: 1px solid #0066ff;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .peer-item {
+            padding: 5px;
+            margin: 2px 0;
+            background: #001133;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 ZHTP Network Debug Console</h1>
+    
+    <div class="section">
+        <h2>📡 Network Status</h2>
+        <div id="network-status" class="console"></div>
+        <button class="button" onclick="refreshNetworkStatus()">🔄 Refresh Status</button>
+        <button class="button" onclick="startAutoRefresh()">▶️ Auto Refresh (5s)</button>
+        <button class="button" onclick="stopAutoRefresh()">⏸️ Stop Auto</button>
+    </div>
+
+    <div class="grid">
+        <div class="section">
+            <h2>👥 Connected Peers</h2>
+            <div id="peer-list" class="peer-list"></div>
+            <button class="button" onclick="discoverPeers()">🔍 Discover Peers</button>
+            <button class="button" onclick="refreshPeers()">🔄 Refresh Peers</button>
+        </div>
+        
+        <div class="section">
+            <h2>📨 DHT Messages</h2>
+            <div id="dht-messages" class="console"></div>
+            <button class="button" onclick="checkDHTMessages()">📋 Check DHT</button>
+            <button class="button" onclick="clearDHT()">🗑️ Clear DHT</button>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🧪 P2P Testing</h2>
+        <div>
+            <label style="color: #00ff00;">Friend's IP Address:</label>
+            <input type="text" id="friend-ip" placeholder="192.168.1.100" style="background: #003300; color: #00ff00; border: 1px solid #00ff00; padding: 5px; margin: 5px;">
+            <button class="button" onclick="testConnection()">🔗 Test Connection</button>
+        </div>
+        <div>
+            <label style="color: #00ff00;">Friend's ZK Identity:</label>
+            <input type="text" id="friend-zk" placeholder="zk_abc123...._zhtp" style="background: #003300; color: #00ff00; border: 1px solid #00ff00; padding: 5px; margin: 5px; width: 300px;">
+            <button class="button" onclick="testMessage()">📤 Send Test Message</button>
+        </div>
+        <div id="test-results" class="console"></div>
+    </div>
+
+    <div class="section">
+        <h2>🔧 Network Diagnostics</h2>
+        <button class="button" onclick="getNetworkInfo()">🌐 Network Info</button>
+        <button class="button" onclick="checkFirewall()">🛡️ Check Firewall</button>
+        <button class="button" onclick="testPorts()">🔌 Test Ports</button>
+        <button class="button" onclick="pingBootstrap()">📡 Ping Bootstrap</button>
+        <div id="diagnostics" class="console"></div>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+        let isConnected = false;
+
+        function log(message, element = 'network-status', type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const colors = {
+                info: 'status-info',
+                good: 'status-good', 
+                warning: 'status-warning',
+                error: 'status-error'
+            };
+            
+            const output = document.getElementById(element);
+            const line = document.createElement('div');
+            line.className = colors[type] || colors.info;
+            line.textContent = `[${timestamp}] ${message}`;
+            output.appendChild(line);
+            output.scrollTop = output.scrollHeight;
+        }
+
+        async function refreshNetworkStatus() {
+            try {
+                const response = await fetch('http://localhost:8000/api/status');
+                const data = await response.json();
+                
+                log(`✅ ZHTP Network Status: ${data.status}`, 'network-status', 'good');
+                log(`🔗 Connected Nodes: ${data.connected_nodes}`, 'network-status', 'info');
+                log(`🎭 Ceremony: ${data.ceremony_status}`, 'network-status', 'info');
+                log(`🏛️ Consensus Rounds: ${data.consensus_rounds}`, 'network-status', 'info');
+                log(`⚡ ZK Transactions: ${data.zk_transactions}`, 'network-status', 'info');
+                log(`🔐 Quantum Resistant: ${data.quantum_resistant}`, 'network-status', 'good');
+                
+                isConnected = true;
+                
+                // Also get network activity
+                const activityResponse = await fetch('http://localhost:8000/api/network/activity');
+                const activityData = await activityResponse.json();
+                log(`📊 Network Activity: ${JSON.stringify(activityData)}`, 'network-status', 'info');
+                
+            } catch (error) {
+                log(`❌ Failed to connect to ZHTP service: ${error.message}`, 'network-status', 'error');
+                isConnected = false;
+            }
+        }
+
+        async function refreshPeers() {
+            try {
+                // Try to get peer information from the network
+                const response = await fetch('http://localhost:8000/api/debug/peers');
+                const peers = await response.json();
+                
+                const peerList = document.getElementById('peer-list');
+                peerList.innerHTML = '';
+                
+                if (peers && peers.length > 0) {
+                    peers.forEach(peer => {
+                        const peerDiv = document.createElement('div');
+                        peerDiv.className = 'peer-item';
+                        peerDiv.innerHTML = `
+                            <strong>${peer.id || 'Unknown'}</strong><br>
+                            IP: ${peer.address || 'N/A'}<br>
+                            Status: <span class="status-${peer.connected ? 'good' : 'error'}">${peer.connected ? 'Connected' : 'Disconnected'}</span>
+                        `;
+                        peerList.appendChild(peerDiv);
+                    });
+                } else {
+                    peerList.innerHTML = '<div class="status-warning">No peers found. You and your friend need to connect to the same network.</div>';
+                }
+            } catch (error) {
+                document.getElementById('peer-list').innerHTML = `<div class="status-error">Error loading peers: ${error.message}</div>`;
+            }
+        }
+
+        async function discoverPeers() {
+            log('🔍 Starting peer discovery...', 'network-status', 'info');
+            try {
+                const response = await fetch('http://localhost:8000/api/debug/discover', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                log(`🔍 Peer discovery result: ${JSON.stringify(result)}`, 'network-status', 'info');
+                
+                // Refresh peer list after discovery
+                setTimeout(refreshPeers, 2000);
+            } catch (error) {
+                log(`❌ Peer discovery failed: ${error.message}`, 'network-status', 'error');
+            }
+        }
+
+        async function checkDHTMessages() {
+            try {
+                const response = await fetch('http://localhost:8000/api/debug/dht');
+                const dhtData = await response.json();
+                
+                const dhtConsole = document.getElementById('dht-messages');
+                dhtConsole.innerHTML = '';
+                
+                log(`📊 DHT Status: ${dhtData.status || 'Unknown'}`, 'dht-messages', 'info');
+                log(`📝 Stored Messages: ${dhtData.message_count || 0}`, 'dht-messages', 'info');
+                
+                if (dhtData.messages && dhtData.messages.length > 0) {
+                    dhtData.messages.forEach(msg => {
+                        log(`📨 ${msg.from} -> ${msg.to}: "${msg.content.substring(0, 50)}..."`, 'dht-messages', 'warning');
+                    });
+                } else {
+                    log('📭 No messages in DHT storage', 'dht-messages', 'info');
+                }
+                
+            } catch (error) {
+                log(`❌ DHT check failed: ${error.message}`, 'dht-messages', 'error');
+            }
+        }
+
+        async function testConnection() {
+            const friendIP = document.getElementById('friend-ip').value;
+            if (!friendIP) {
+                log('❌ Please enter your friend\'s IP address', 'test-results', 'error');
+                return;
+            }
+            
+            log(`🔗 Testing connection to ${friendIP}:8000...`, 'test-results', 'info');
+            
+            try {
+                // Test if friend's ZHTP service is reachable
+                const response = await fetch(`http://${friendIP}:8000/api/status`, {
+                    method: 'GET',
+                    mode: 'no-cors' // This might be blocked by CORS, but we'll try
+                });
+                
+                log(`✅ Connection to ${friendIP}:8000 successful!`, 'test-results', 'good');
+                
+                // Try to add them as a peer
+                const addPeerResponse = await fetch('http://localhost:8000/api/debug/add-peer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        address: `${friendIP}:8000`
+                    })
+                });
+                
+                if (addPeerResponse.ok) {
+                    log(`✅ Added ${friendIP} as peer successfully!`, 'test-results', 'good');
+                } else {
+                    log(`⚠️ Connected but couldn't add as peer`, 'test-results', 'warning');
+                }
+                
+            } catch (error) {
+                log(`❌ Connection to ${friendIP}:8000 failed: ${error.message}`, 'test-results', 'error');
+                log(`💡 Make sure your friend's ZHTP service is running on port 8000`, 'test-results', 'warning');
+            }
+        }
+
+        async function testMessage() {
+            const friendZK = document.getElementById('friend-zk').value;
+            if (!friendZK) {
+                log('❌ Please enter your friend\'s ZK Identity', 'test-results', 'error');
+                return;
+            }
+            
+            log(`📤 Sending test message to ${friendZK}...`, 'test-results', 'info');
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/messages/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        to: friendZK,
+                        message: `Test message from ZHTP Debug Console at ${new Date().toLocaleTimeString()}`,
+                        from: 'debug_console',
+                        zk_identity: 'debug_zk_identity'
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    log(`✅ Message sent! ID: ${result.message_id}`, 'test-results', 'good');
+                    log(`📍 Delivery: ${result.delivery_status}`, 'test-results', 'info');
+                    log(`🔐 Encryption: ${result.encryption_algorithm}`, 'test-results', 'info');
+                } else {
+                    log(`❌ Message failed: ${result.error || 'Unknown error'}`, 'test-results', 'error');
+                }
+                
+            } catch (error) {
+                log(`❌ Message sending failed: ${error.message}`, 'test-results', 'error');
+            }
+        }
+
+        async function getNetworkInfo() {
+            log('🌐 Getting network information...', 'diagnostics', 'info');
+            
+            // Get local IP addresses
+            try {
+                const response = await fetch('https://api.ipify.org?format=json');
+                const data = await response.json();
+                log(`🌍 Public IP: ${data.ip}`, 'diagnostics', 'info');
+            } catch {
+                log('⚠️ Could not get public IP', 'diagnostics', 'warning');
+            }
+            
+            // Check local network info
+            log('💻 Local network: Check your router settings for port forwarding', 'diagnostics', 'warning');
+            log('🔌 ZHTP Port: 8000 (make sure this is open in firewall)', 'diagnostics', 'info');
+        }
+
+        async function checkFirewall() {
+            log('🛡️ Firewall Check:', 'diagnostics', 'info');
+            log('📝 Windows: Windows Defender Firewall should allow port 8000', 'diagnostics', 'warning');
+            log('📝 Router: Port forwarding may be needed for external connections', 'diagnostics', 'warning');
+            log('📝 To test locally: Use 192.168.x.x addresses on same WiFi', 'diagnostics', 'info');
+        }
+
+        async function testPorts() {
+            log('🔌 Testing ZHTP ports...', 'diagnostics', 'info');
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/status');
+                if (response.ok) {
+                    log('✅ Port 8000: Open and responding', 'diagnostics', 'good');
+                } else {
+                    log('❌ Port 8000: Responding but with errors', 'diagnostics', 'error');
+                }
+            } catch (error) {
+                log('❌ Port 8000: Not responding', 'diagnostics', 'error');
+            }
+        }
+
+        async function pingBootstrap() {
+            log('📡 Pinging bootstrap nodes...', 'diagnostics', 'info');
+            
+            const bootstrapNodes = [
+                'localhost:8000',
+                '127.0.0.1:8000'
+            ];
+            
+            for (const node of bootstrapNodes) {
+                try {
+                    const response = await fetch(`http://${node}/api/status`);
+                    if (response.ok) {
+                        log(`✅ Bootstrap node ${node}: Reachable`, 'diagnostics', 'good');
+                    } else {
+                        log(`⚠️ Bootstrap node ${node}: Responding but errors`, 'diagnostics', 'warning');
+                    }
+                } catch (error) {
+                    log(`❌ Bootstrap node ${node}: Unreachable`, 'diagnostics', 'error');
+                }
+            }
+        }
+
+        function clearDHT() {
+            document.getElementById('dht-messages').innerHTML = '';
+            log('🗑️ DHT console cleared', 'dht-messages', 'info');
+        }
+
+        function startAutoRefresh() {
+            if (autoRefreshInterval) return;
+            
+            autoRefreshInterval = setInterval(() => {
+                refreshNetworkStatus();
+                refreshPeers();
+                checkDHTMessages();
+            }, 5000);
+            
+            log('▶️ Auto-refresh started (every 5 seconds)', 'network-status', 'good');
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+                log('⏸️ Auto-refresh stopped', 'network-status', 'warning');
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            log('🔍 ZHTP Debug Console initialized', 'network-status', 'good');
+            refreshNetworkStatus();
+            refreshPeers();
+            checkDHTMessages();
+        });
+    </script>
+</body>
+</html>

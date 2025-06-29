@@ -953,12 +953,35 @@
                 </div>
                 <div class="modal-body">
                     <p style="margin-bottom: 15px; opacity: 0.9;">
-                        Add a friend or colleague by their ZK Identity or Wallet Address to start secure messaging.
+                        Add a friend to your contact list. You'll need their ZK Identity and their IP address to connect.
                     </p>
                     
+                    <div style="background: rgba(255,165,0,0.1); border: 1px solid rgba(255,165,0,0.3); border-radius: 5px; padding: 10px; margin-bottom: 15px;">
+                        <strong style="color: #ffa500;">🌐 Real P2P Networking:</strong> You need your friend's actual IP address to connect. This is how true decentralized networks work - no central servers!
+                    </div>
+                    
+                    <div style="background: rgba(0,255,255,0.1); border: 1px solid rgba(0,255,255,0.3); border-radius: 5px; padding: 10px; margin-bottom: 15px;">
+                        <strong style="color: #00ffff;">💡 How to get your friend's IP:</strong><br>
+                        • <strong>Same WiFi network:</strong> Ask them to run <code>ipconfig</code> (Windows) or <code>ifconfig</code> (Mac/Linux) and use their 192.168.x.x address<br>
+                        • <strong>Different networks:</strong> They need their public IP + port forwarding on port 8000<br>
+                        • <strong>Testing locally:</strong> Use different ports like 127.0.0.1:8001, 127.0.0.1:8002 for multiple instances
+                    </div>
+                    
                     <label for="contactZkId">ZK Identity / Wallet Address:</label>
-                    <input type="text" id="contactZkId" placeholder="0x... or zk_identity_..." 
-                           style="width: 100%; padding: 10px; margin: 5px 0 15px 0; border: 1px solid rgba(255,255,255,0.3); border-radius: 5px; background: rgba(0,0,0,0.3); color: white;">
+                    <input type="text" id="contactZkId" placeholder="Paste friend's ZK identity (zk_abc123...) or wallet address" 
+                           style="width: 100%; padding: 10px; margin: 5px 0 5px 0; border: 1px solid rgba(255,255,255,0.3); border-radius: 5px; background: rgba(0,0,0,0.3); color: white;">
+                    <small style="color: #cccccc; margin-bottom: 15px; display: block;">Example: zk_1a2b3c4d5e6f7890abcdef... or zhtp_abc123...</small>
+                    
+                    <label for="contactIpAddress">Friend's IP Address:</label>
+                    <input type="text" id="contactIpAddress" placeholder="192.168.1.100:8000 or their.domain.com:8000" 
+                           style="width: 100%; padding: 10px; margin: 5px 0 5px 0; border: 1px solid rgba(255,255,255,0.3); border-radius: 5px; background: rgba(0,0,0,0.3); color: white;">
+                    <small style="color: #cccccc; margin-bottom: 15px; display: block;">
+                        📍 <strong>Real examples:</strong><br>
+                        • Same WiFi: 192.168.1.100:8000<br>
+                        • Internet: 73.45.123.89:8000<br>
+                        • Domain: friend.example.com:8000<br>
+                        • Testing: 127.0.0.1:8001 (different port)
+                    </small>
                     
                     <label for="contactName">Display Name:</label>
                     <input type="text" id="contactName" placeholder="Friend's Name" 
@@ -1367,18 +1390,39 @@
         async function addNewContact() {
             const zkId = document.getElementById('contactZkId').value.trim();
             const displayName = document.getElementById('contactName').value.trim();
+            const ipAddress = document.getElementById('contactIpAddress').value.trim();
             const contactType = document.getElementById('contactType').value;
 
-            if (!zkId || !displayName) {
-                alert('❌ Please fill in both ZK Identity and Display Name');
+            if (!zkId || !displayName || !ipAddress) {
+                alert('❌ Please fill in all required fields (ZK Identity, Display Name, and IP Address)');
                 return;
             }
 
             // Validate ZK ID format (basic validation)
-            if (!zkId.startsWith('0x') && !zkId.startsWith('zk_') && !zkId.includes('.zhtp')) {
+            if (!zkId.startsWith('0x') && !zkId.startsWith('zk_') && !zkId.startsWith('zhtp_') && !zkId.includes('.zhtp')) {
                 if (!confirm('⚠️ The ZK Identity format looks unusual. Continue anyway?')) {
                     return;
                 }
+            }
+
+            // Validate IP address format
+            const ipPattern = /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$|^([a-zA-Z0-9.-]+)(:\d+)?$/;
+            if (!ipPattern.test(ipAddress)) {
+                alert('❌ Please enter a valid IP address (e.g., 192.168.1.100:8000 or domain.com:8000)');
+                return;
+            }
+
+            // Warn about localhost usage
+            if (ipAddress.includes('127.0.0.1') || ipAddress.includes('localhost')) {
+                if (!confirm('⚠️ Using localhost means this contact is on the same computer as you. This is only for testing. Continue?')) {
+                    return;
+                }
+            }
+
+            // Add default port if not specified
+            let peerAddress = ipAddress;
+            if (!ipAddress.includes(':')) {
+                peerAddress = `${ipAddress}:8000`;
             }
 
             // Check if contact already exists
@@ -1387,36 +1431,118 @@
                 return;
             }
 
-            const newContact = {
-                zkId: zkId,
-                displayName: displayName,
-                contactType: contactType,
-                addedAt: Date.now(),
-                lastSeen: Date.now(),
-                status: 'unknown'
-            };
+            // Show loading state
+            const addButton = event.target;
+            const originalText = addButton.textContent;
+            addButton.textContent = '� Testing connection...';
+            addButton.disabled = true;
 
-            // Add to user contacts
-            userContacts.push(newContact);
-              // Save to localStorage (ZHTP network will sync contacts across devices)
-            localStorage.setItem('zhtp_whisper_contacts', JSON.stringify(userContacts));
+            try {
+                console.log('🔍 Testing connection to peer:', peerAddress);
+                
+                let peerConnected = false;
+                
+                // Test connection to the peer
+                try {
+                    addButton.textContent = '📡 Connecting to peer...';
+                    
+                    // Try to connect to the peer's ZHTP service
+                    const testResponse = await fetch(`http://${peerAddress}/api/status`, {
+                        method: 'GET',
+                        mode: 'cors',
+                        timeout: 5000
+                    });
+                    
+                    if (testResponse.ok) {
+                        const peerStatus = await testResponse.json();
+                        console.log('✅ Peer connection successful:', peerStatus);
+                        peerConnected = true;
+                        
+                        // Verify ZK identity if possible
+                        if (peerStatus.node_id || peerStatus.zk_identity) {
+                            console.log('🔍 Peer ZK Identity:', peerStatus.zk_identity || peerStatus.node_id);
+                        }
+                    } else {
+                        console.log('⚠️ Peer connection failed:', testResponse.status);
+                    }
+                } catch (error) {
+                    console.log('⚠️ Peer connection error:', error);
+                    
+                    // Show user-friendly message about the failed connection
+                    if (!confirm(`⚠️ Could not connect to ${peerAddress}.\n\nThis might mean:\n• Your friend's ZHTP node is not running\n• The IP address is incorrect\n• Network connectivity issues\n\nAdd contact anyway? (Messages will be delivered when they come online)`)) {
+                        return;
+                    }
+                }
+                
+                // Add peer to P2P network if connection was successful
+                if (peerConnected) {
+                    try {
+                        addButton.textContent = '🔗 Adding to P2P network...';
+                        const addPeerResponse = await fetch('http://localhost:8000/api/debug/add-peer', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                peer_address: peerAddress,
+                                zk_identity: zkId 
+                            })
+                        });
+                        
+                        if (addPeerResponse.ok) {
+                            console.log('✅ Peer added to P2P network successfully');
+                        } else {
+                            console.log('⚠️ Failed to add peer to P2P network, but contact will still be saved');
+                        }
+                    } catch (error) {
+                        console.log('⚠️ Error adding peer to P2P network:', error);
+                    }
+                }
 
-            // Contacts are automatically discoverable on ZHTP network via ZK Identity
-            console.log('✅ Contact added to local storage, ZHTP will handle network discovery');
+                // Create contact record with real IP address
+                const newContact = {
+                    zkId: zkId,
+                    displayName: displayName,
+                    contactType: contactType,
+                    addedAt: Date.now(),
+                    lastSeen: Date.now(),
+                    peerAddress: peerAddress,
+                    ipAddress: peerAddress, // Store the actual IP address
+                    status: peerConnected ? 'online' : 'offline',
+                    connectionTested: true,
+                    realIP: true // Flag to indicate this uses a real IP address
+                };
 
-            // Update UI
-            renderUserContacts();
-            
-            // Initialize empty message history for new contact
-            messageHistory[zkId] = [];
+                // Add to user contacts
+                userContacts.push(newContact);
+                
+                // Save to localStorage
+                localStorage.setItem('zhtp_whisper_contacts', JSON.stringify(userContacts));
 
-            // Hide modal
-            hideAddContactModal();
+                // Update UI
+                renderUserContacts();
+                
+                // Initialize empty message history for new contact
+                messageHistory[zkId] = [];
 
-            // Show success message
-            addMessageToUI(`✅ Added ${displayName} to your contacts! You can now send them secure messages.`, 'received', 'System');
+                // Hide modal
+                hideAddContactModal();
 
-            alert(`✅ Successfully added ${displayName} to your contacts!`);
+                // Show success message based on connection status
+                if (peerConnected) {
+                    addMessageToUI(`✅ Added ${displayName} and successfully connected to ${peerAddress}! You can now send messages directly.`, 'received', 'System');
+                    alert(`✅ Successfully added ${displayName}!\n🔗 Connected to: ${peerAddress}\n💬 You can now send messages directly!`);
+                } else {
+                    addMessageToUI(`✅ Added ${displayName} (${peerAddress}). Messages will be delivered when they come online.`, 'received', 'System');
+                    alert(`✅ Successfully added ${displayName}!\n📡 Address: ${peerAddress}\n💡 Make sure they're running a ZHTP node at this address for direct messaging.`);
+                }
+
+            } catch (error) {
+                console.error('❌ Error adding contact:', error);
+                alert('❌ Error adding contact. Please try again.');
+            } finally {
+                // Restore button state
+                addButton.textContent = originalText;
+                addButton.disabled = false;
+            }
         }
 
         function loadUserContacts() {
@@ -1452,9 +1578,13 @@
                 
                 const emoji = typeEmojis[contact.contactType] || '👤';
                 
+                // Show real IP address and connection status
+                const statusIcon = contact.status === 'online' ? '🟢' : '🔴';
+                const ipDisplay = contact.ipAddress || contact.peerAddress || 'No IP';
+                
                 contactElement.innerHTML = `
                     <div class="contact-name">${emoji} ${contact.displayName}</div>
-                    <div class="contact-status">${contact.zkId.substring(0, 20)}... • ${contact.status}</div>
+                    <div class="contact-status">${statusIcon} ${ipDisplay} • ${contact.status}</div>
                 `;
                 
                 container.appendChild(contactElement);
@@ -1507,9 +1637,13 @@
                 };
                 const emoji = typeEmojis[userContact.contactType] || '👤';
                 
+                // Show real IP address and connection status
+                const statusIcon = userContact.status === 'online' ? '🟢' : '🔴';
+                const ipDisplay = userContact.ipAddress || userContact.peerAddress || 'No IP';
+                
                 contactInfo[contactId] = {
                     name: `${emoji} ${userContact.displayName}`,
-                    status: `${userContact.zkId} • Ready for encrypted messages`
+                    status: `${statusIcon} ${ipDisplay} • Ready for encrypted messages`
                 };
             }
 
@@ -1624,17 +1758,51 @@
 
                     if (response.ok) {
                         const result = await response.json();
-                        console.log('✅ Message sent via local API:', result);                        // Simulate response from bootstrap node
-                        if (currentContact === 'bootstrap-node') {
-                            setTimeout(() => {
-                                addMessageToUI('✅ Message received! Your Whisper.zhtp DApp is working perfectly with native ZHTP protocol!', 'received', 'Bootstrap Node');
-                            }, 1000);
-                        } else if (userContacts.find(c => c.zkId === currentContact)) {
-                            // For user contacts, simulate delivery confirmation
-                            const contact = userContacts.find(c => c.zkId === currentContact);
-                            setTimeout(() => {
-                                addMessageToUI(`✅ Message delivered to ${contact.displayName} via native ZHTP network!`, 'received', 'System');
-                            }, 1000);
+                        console.log('✅ Message sent via local API:', result);
+                        
+                        // For user contacts, also try direct delivery to their IP address
+                        if (userContact && userContact.ipAddress) {
+                            try {
+                                console.log('📡 Attempting direct delivery to:', userContact.ipAddress);
+                                const directResponse = await fetch(`http://${userContact.ipAddress}/api/messages/receive`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    mode: 'cors',
+                                    body: JSON.stringify({
+                                        ...messageData,
+                                        direct_delivery: true,
+                                        peer_address: userContact.ipAddress
+                                    })
+                                });
+                                
+                                if (directResponse.ok) {
+                                    console.log('✅ Message delivered directly to peer!');
+                                    setTimeout(() => {
+                                        addMessageToUI(`✅ Message delivered directly to ${userContact.displayName} at ${userContact.ipAddress}!`, 'received', 'System');
+                                    }, 500);
+                                } else {
+                                    console.log('⚠️ Direct delivery failed, using network routing');
+                                    setTimeout(() => {
+                                        addMessageToUI(`📡 Message sent to ${userContact.displayName} via ZHTP network (direct delivery unavailable)`, 'received', 'System');
+                                    }, 500);
+                                }
+                            } catch (directError) {
+                                console.log('⚠️ Direct delivery error:', directError);
+                                setTimeout(() => {
+                                    addMessageToUI(`📡 Message sent to ${userContact.displayName} via ZHTP network routing`, 'received', 'System');
+                                }, 500);
+                            }
+                        } else {
+                            // Handle bootstrap node responses
+                            if (currentContact === 'bootstrap-node') {
+                                setTimeout(() => {
+                                    addMessageToUI('✅ Message received! Your Whisper.zhtp DApp is working perfectly with native ZHTP protocol!', 'received', 'Bootstrap Node');
+                                }, 1000);
+                            } else if (userContact) {
+                                setTimeout(() => {
+                                    addMessageToUI(`✅ Message delivered to ${userContact.displayName} via native ZHTP network!`, 'received', 'System');
+                                }, 1000);
+                            }
                         }
                     } else {
                         throw new Error('Local API failed');

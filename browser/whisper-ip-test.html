@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZHTP Whisper - IP-Based Messaging Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 50%, #2c3e50 100%);
+            color: white;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 30px;
+            border-radius: 15px;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+        }
+        .test-section {
+            background: rgba(0, 255, 255, 0.1);
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 10px;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+        }
+        .success {
+            background: rgba(0, 255, 0, 0.1);
+            border-color: rgba(0, 255, 0, 0.3);
+        }
+        .warning {
+            background: rgba(255, 165, 0, 0.1);
+            border-color: rgba(255, 165, 0, 0.3);
+        }
+        .error {
+            background: rgba(255, 0, 0, 0.1);
+            border-color: rgba(255, 0, 0, 0.3);
+        }
+        button {
+            background: linear-gradient(45deg, #00ffff, #0080ff);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 255, 255, 0.3);
+        }
+        input {
+            width: 300px;
+            padding: 10px;
+            margin: 5px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 5px;
+            background: rgba(0, 0, 0, 0.3);
+            color: white;
+        }
+        .log {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            margin: 10px 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔬 ZHTP Whisper IP-Based Messaging Test</h1>
+        <p>Test the real IP-based contact and messaging system in Whisper.zhtp</p>
+
+        <div class="test-section">
+            <h3>🌐 Network Information</h3>
+            <p><strong>Your Local IP:</strong> <span id="localIP">Detecting...</span></p>
+            <p><strong>ZHTP Service:</strong> <span id="zhtpStatus">Checking...</span></p>
+            <p><strong>API Status:</strong> <span id="apiStatus">Checking...</span></p>
+            <button onclick="refreshNetworkInfo()">🔄 Refresh Network Info</button>
+        </div>
+
+        <div class="test-section">
+            <h3>📡 IP Address Testing</h3>
+            <p>Test if you can connect to specific IP addresses:</p>
+            <input type="text" id="testIP" placeholder="Enter IP:port (e.g., 192.168.1.100:8000)" value="127.0.0.1:8000">
+            <button onclick="testIPConnection()">🔍 Test Connection</button>
+            <div id="ipTestResults" class="log"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>🧪 Contact Addition Simulation</h3>
+            <p>Simulate adding a contact with real IP address:</p>
+            <input type="text" id="testZkId" placeholder="ZK Identity" value="zk_test_friend_123">
+            <input type="text" id="testName" placeholder="Display Name" value="Test Friend">
+            <input type="text" id="testContactIP" placeholder="Friend's IP:port" value="127.0.0.1:8001">
+            <button onclick="simulateContactAddition()">➕ Test Add Contact</button>
+            <div id="contactTestResults" class="log"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>📝 Instructions for Real Testing</h3>
+            <ol>
+                <li><strong>On same machine:</strong> Run multiple ZHTP instances on different ports (8001, 8002, etc.)</li>
+                <li><strong>On local network:</strong> Find friends' IP addresses using <code>ipconfig</code> or network scanner</li>
+                <li><strong>Over internet:</strong> Use public IP + port forwarding (requires router configuration)</li>
+                <li><strong>Testing locally:</strong> Use 127.0.0.1:8001, 127.0.0.1:8002, etc. for different instances</li>
+            </ol>
+        </div>
+
+        <div class="test-section">
+            <h3>🔗 Quick Links</h3>
+            <button onclick="openWhisper()">💬 Open Whisper App</button>
+            <button onclick="openOnboarding()">🚀 Open Onboarding</button>
+            <button onclick="openMainBrowser()">🌐 Open Main Browser</button>
+        </div>
+
+        <div id="testLog" class="log"></div>
+    </div>
+
+    <script>
+        function log(message) {
+            const logElement = document.getElementById('testLog');
+            const timestamp = new Date().toLocaleTimeString();
+            logElement.innerHTML += `[${timestamp}] ${message}<br>`;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(message);
+        }
+
+        async function refreshNetworkInfo() {
+            log('🔄 Refreshing network information...');
+            
+            // Detect local IP (approximation)
+            try {
+                const response = await fetch('http://localhost:8000/api/status');
+                if (response.ok) {
+                    document.getElementById('zhtpStatus').textContent = '✅ Running';
+                    document.getElementById('zhtpStatus').style.color = '#00ff00';
+                    document.getElementById('apiStatus').textContent = '✅ Accessible';
+                    document.getElementById('apiStatus').style.color = '#00ff00';
+                    log('✅ ZHTP service is running and accessible');
+                } else {
+                    throw new Error('API not accessible');
+                }
+            } catch (error) {
+                document.getElementById('zhtpStatus').textContent = '❌ Not Running';
+                document.getElementById('zhtpStatus').style.color = '#ff0000';
+                document.getElementById('apiStatus').textContent = '❌ Not Accessible';
+                document.getElementById('apiStatus').style.color = '#ff0000';
+                log('❌ ZHTP service is not running or not accessible');
+            }
+
+            // Show likely local IP
+            document.getElementById('localIP').textContent = '127.0.0.1 (localhost)';
+            log('💡 For local testing, use 127.0.0.1:8000, 127.0.0.1:8001, etc.');
+        }
+
+        async function testIPConnection() {
+            const ip = document.getElementById('testIP').value.trim();
+            const resultsDiv = document.getElementById('ipTestResults');
+            
+            if (!ip) {
+                resultsDiv.innerHTML = '❌ Please enter an IP address';
+                return;
+            }
+
+            resultsDiv.innerHTML = `🔍 Testing connection to ${ip}...`;
+            log(`🔍 Testing connection to ${ip}...`);
+
+            try {
+                const response = await fetch(`http://${ip}/api/status`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    timeout: 5000
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultsDiv.innerHTML = `✅ Connection successful!<br>Status: ${data.status || 'unknown'}<br>Node ID: ${data.node_id || 'unknown'}`;
+                    resultsDiv.className = 'log success';
+                    log(`✅ Successfully connected to ${ip}`);
+                } else {
+                    resultsDiv.innerHTML = `⚠️ Connection failed: HTTP ${response.status}`;
+                    resultsDiv.className = 'log warning';
+                    log(`⚠️ Connection to ${ip} failed with HTTP ${response.status}`);
+                }
+            } catch (error) {
+                resultsDiv.innerHTML = `❌ Connection error: ${error.message}`;
+                resultsDiv.className = 'log error';
+                log(`❌ Connection to ${ip} failed: ${error.message}`);
+            }
+        }
+
+        async function simulateContactAddition() {
+            const zkId = document.getElementById('testZkId').value.trim();
+            const name = document.getElementById('testName').value.trim();
+            const ip = document.getElementById('testContactIP').value.trim();
+            const resultsDiv = document.getElementById('contactTestResults');
+
+            if (!zkId || !name || !ip) {
+                resultsDiv.innerHTML = '❌ Please fill in all fields';
+                return;
+            }
+
+            resultsDiv.innerHTML = `🔍 Testing contact addition...<br>ZK ID: ${zkId}<br>Name: ${name}<br>IP: ${ip}`;
+            log(`🧪 Simulating contact addition: ${name} (${zkId}) at ${ip}`);
+
+            // Test IP connection first
+            try {
+                resultsDiv.innerHTML += `<br>📡 Testing IP connection...`;
+                const response = await fetch(`http://${ip}/api/status`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    timeout: 5000
+                });
+
+                if (response.ok) {
+                    resultsDiv.innerHTML += `<br>✅ IP connection successful!`;
+                    resultsDiv.innerHTML += `<br>🔗 This contact would be marked as 'online'`;
+                    resultsDiv.className = 'log success';
+                    log(`✅ Contact ${name} would be successfully added and marked as online`);
+                } else {
+                    resultsDiv.innerHTML += `<br>⚠️ IP connection failed (HTTP ${response.status})`;
+                    resultsDiv.innerHTML += `<br>💾 Contact would still be saved but marked as 'offline'`;
+                    resultsDiv.className = 'log warning';
+                    log(`⚠️ Contact ${name} would be added but marked as offline`);
+                }
+            } catch (error) {
+                resultsDiv.innerHTML += `<br>❌ IP connection error: ${error.message}`;
+                resultsDiv.innerHTML += `<br>💾 Contact would still be saved but marked as 'offline'`;
+                resultsDiv.className = 'log warning';
+                log(`❌ Contact ${name} would be added but marked as offline due to connection error`);
+            }
+        }
+
+        function openWhisper() {
+            window.open('whisper.html', '_blank');
+        }
+
+        function openOnboarding() {
+            window.open('welcome-merged.html', '_blank');
+        }
+
+        function openMainBrowser() {
+            window.open('index-merged.html', '_blank');
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            log('🔬 ZHTP IP-Based Messaging Test initialized');
+            refreshNetworkInfo();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZHTP P2P Connection Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 50%, #2c3e50 100%);
+            color: white;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(0,0,0,0.7);
+            padding: 30px;
+            border-radius: 15px;
+            border: 1px solid rgba(0,255,255,0.3);
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .info { background: rgba(0,255,255,0.1); }
+        .warning { background: rgba(255,165,0,0.1); border-color: rgba(255,165,0,0.3); }
+        .success { background: rgba(0,255,0,0.1); border-color: rgba(0,255,0,0.3); }
+        .error { background: rgba(255,0,0,0.1); border-color: rgba(255,0,0,0.3); }
+        input, button {
+            padding: 10px;
+            margin: 10px 5px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 5px;
+            background: rgba(0,0,0,0.3);
+            color: white;
+        }
+        button {
+            background: linear-gradient(45deg, #00ffff, #0080ff);
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,255,255,0.3);
+        }
+        code {
+            background: rgba(0,0,0,0.5);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Consolas', monospace;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌐 ZHTP P2P Connection Test</h1>
+        <p>Test real peer-to-peer connections between ZHTP nodes on different computers.</p>
+
+        <div class="section info">
+            <h3>📋 Setup Instructions</h3>
+            <ol>
+                <li><strong>Your computer:</strong> ZHTP is running on port 8000</li>
+                <li><strong>Friend's computer:</strong> They need to run ZHTP on port 8000 too</li>
+                <li><strong>Same WiFi network:</strong> Use 192.168.x.x addresses</li>
+                <li><strong>Different networks:</strong> Need public IP + port forwarding</li>
+            </ol>
+        </div>
+
+        <div class="section warning">
+            <h3>⚠️ Important Notes</h3>
+            <ul>
+                <li><code>localhost</code> or <code>127.0.0.1</code> only works on the same computer</li>
+                <li>For testing locally, use different ports (8001, 8002, etc.)</li>
+                <li>For internet connections, both parties need port 8000 open</li>
+                <li>Corporate/school networks may block P2P connections</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h3>🔍 Test Connection to Friend</h3>
+            <p>Enter your friend's IP address to test if you can connect:</p>
+            <input type="text" id="friendIp" placeholder="192.168.1.100:8000" style="width: 300px;">
+            <button onclick="testConnection()">Test Connection</button>
+            
+            <div id="testResult" class="test-result"></div>
+        </div>
+
+        <div class="section">
+            <h3>📍 Your Network Information</h3>
+            <p>Share this information with your friends so they can connect to you:</p>
+            <div id="networkInfo">
+                <p><strong>Your local server:</strong> http://localhost:8000</p>
+                <p><strong>Your local IP:</strong> <span id="localIp">Loading...</span></p>
+                <p><strong>Port:</strong> 8000</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>📞 How to Find Your IP Address</h3>
+            <p><strong>Windows:</strong> Open Command Prompt and run <code>ipconfig</code></p>
+            <p><strong>Mac/Linux:</strong> Open Terminal and run <code>ifconfig</code></p>
+            <p>Look for your <strong>IPv4 Address</strong> (usually starts with 192.168.x.x)</p>
+        </div>
+
+        <div class="section">
+            <h3>🚀 Ready to Message?</h3>
+            <p>Once you've tested the connection successfully, go to Whisper and add your friend:</p>
+            <button onclick="window.open('whisper.html', '_blank')">Open Whisper App</button>
+        </div>
+    </div>
+
+    <script>
+        async function testConnection() {
+            const friendIp = document.getElementById('friendIp').value.trim();
+            const resultDiv = document.getElementById('testResult');
+            
+            if (!friendIp) {
+                showResult('Please enter your friend\'s IP address', 'error');
+                return;
+            }
+
+            // Add default port if not specified
+            let testAddress = friendIp;
+            if (!friendIp.includes(':')) {
+                testAddress = `${friendIp}:8000`;
+            }
+
+            showResult('Testing connection...', 'info');
+            
+            try {
+                console.log('Testing connection to:', testAddress);
+                const response = await fetch(`http://${testAddress}/api/status`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    signal: AbortSignal.timeout(5000)
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    showResult(`✅ SUCCESS! Connected to ZHTP node at ${testAddress}
+                              Node ID: ${data.node_id || 'Unknown'}
+                              Status: ${data.status || 'Active'}
+                              
+                              You can now add this friend in Whisper!`, 'success');
+                } else {
+                    showResult(`❌ Connection failed: HTTP ${response.status}
+                              Make sure your friend is running ZHTP on port 8000`, 'error');
+                }
+            } catch (error) {
+                console.error('Connection test failed:', error);
+                showResult(`❌ Connection failed: ${error.message}
+                          
+                          Possible causes:
+                          • Friend's ZHTP is not running
+                          • Wrong IP address or port
+                          • Network firewall blocking connection
+                          • Need to enable CORS/cross-origin requests`, 'error');
+            }
+        }
+
+        function showResult(message, type) {
+            const resultDiv = document.getElementById('testResult');
+            resultDiv.className = `test-result ${type}`;
+            resultDiv.innerHTML = message.replace(/\n/g, '<br>');
+            resultDiv.style.display = 'block';
+        }
+
+        // Try to get local IP information
+        async function getLocalInfo() {
+            try {
+                const response = await fetch('http://localhost:8000/api/status');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('localIp').textContent = 'Check your router settings or run ipconfig/ifconfig';
+                }
+            } catch (error) {
+                document.getElementById('localIp').textContent = 'ZHTP service not running';
+            }
+        }
+
+        // Load local info when page loads
+        getLocalInfo();
+    </script>
+</body>
+</html>

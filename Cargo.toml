@@ -41,6 +41,7 @@ wat = "1.0"
 hyper = { version = "0.14", features = ["full"] }
 http = "0.2"
 regex = "1.10"
+reqwest = { version = "0.11", features = ["json"] }
 
 # P2P Networking for Mainnet (Basic TCP implementation)
 # libp2p = { version = "0.52", features = ["tcp", "noise", "yamux", "websocket", "ping", "identify", "kad", "gossipsub", "mdns"] }

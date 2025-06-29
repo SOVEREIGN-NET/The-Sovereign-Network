@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Network Data Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #1a1a1a; color: #fff; }
+        .data-container { background: #2a2a2a; padding: 20px; margin: 10px 0; border-radius: 8px; }
+        .status { padding: 5px 10px; border-radius: 4px; margin: 5px; }
+        .online { background: #00aa00; }
+        .connecting { background: #aa6600; }
+        .offline { background: #aa0000; }
+    </style>
+</head>
+<body>
+    <h1>ZHTP Network Data Test</h1>
+    
+    <div class="data-container">
+        <h2>Raw API Data</h2>
+        <div id="raw-status">Loading...</div>
+        <div id="raw-dht">Loading...</div>
+    </div>
+    
+    <div class="data-container">
+        <h2>Processed Network Data</h2>
+        <div id="processed-data">Loading...</div>
+    </div>
+    
+    <div class="data-container">
+        <h2>Node Status Displays</h2>
+        <div id="mainnet-test" class="status">Mainnet: <span id="mainnet-status-test">Loading...</span></div>
+        <div id="testnet-test" class="status">Testnet: <span id="testnet-status-test">Loading...</span></div>
+        <div id="local-test" class="status">Local: <span id="local-status-test">Loading...</span></div>
+        <div id="validator-test" class="status">Validator: <span id="validator-status-test">Loading...</span></div>
+        <div id="storage-test" class="status">Storage: <span id="storage-status-test">Loading...</span></div>
+    </div>
+    
+    <button onclick="refreshData()">Refresh Data</button>
+    
+    <script>
+        let networkData = {};
+        
+        async function loadNetworkData() {
+            try {
+                console.log('📡 Loading real network data...');
+                
+                // Get current network status
+                const statusResponse = await fetch('http://localhost:8000/api/status');
+                const statusData = statusResponse.ok ? await statusResponse.json() : {};
+                
+                // Get DHT and peer data
+                const dhtResponse = await fetch('http://localhost:8000/api/debug/dht');
+                const dhtData = dhtResponse.ok ? await dhtResponse.json() : {};
+                
+                // Display raw data
+                document.getElementById('raw-status').innerHTML = '<pre>' + JSON.stringify(statusData, null, 2) + '</pre>';
+                document.getElementById('raw-dht').innerHTML = '<pre>' + JSON.stringify(dhtData, null, 2) + '</pre>';
+                
+                // Store processed network data
+                networkData = {
+                    connected_nodes: statusData.connected_nodes || 0,
+                    consensus_rounds: statusData.consensus_rounds || 0,
+                    zk_transactions: statusData.zk_transactions || 0,
+                    dapp_count: statusData.dapp_count || 0,
+                    ceremony_status: statusData.ceremony_status || 'unknown',
+                    peer_nodes_detected: dhtData.peer_nodes_detected || 0,
+                    nodes_available: dhtData.nodes_available || false,
+                    network_operational: statusData.status === 'operational'
+                };
+                
+                document.getElementById('processed-data').innerHTML = '<pre>' + JSON.stringify(networkData, null, 2) + '</pre>';
+                
+                console.log('✅ Real network data loaded:', networkData);
+                updateStatusDisplays();
+                
+            } catch (error) {
+                console.error('⚠️ Failed to load network data:', error);
+                document.getElementById('processed-data').innerHTML = '<span style="color: red;">Error: ' + error.message + '</span>';
+            }
+        }
+        
+        function updateStatusDisplays() {
+            // Mainnet status
+            const mainnetClass = networkData.network_operational ? 'online' : 'offline';
+            document.getElementById('mainnet-test').className = 'status ' + mainnetClass;
+            if (networkData.network_operational) {
+                document.getElementById('mainnet-status-test').textContent = 
+                    `Online • ${networkData.connected_nodes} core nodes • ${networkData.consensus_rounds} rounds • Production`;
+            } else {
+                document.getElementById('mainnet-status-test').textContent = 'Connecting • Mainnet infrastructure starting';
+            }
+            
+            // Testnet status
+            const testnetClass = networkData.network_operational ? 'online' : 'connecting';
+            document.getElementById('testnet-test').className = 'status ' + testnetClass;
+            if (networkData.network_operational) {
+                document.getElementById('testnet-status-test').textContent = 
+                    `Online • ${networkData.connected_nodes} peers • ${networkData.zk_transactions} ZK transactions`;
+            } else {
+                document.getElementById('testnet-status-test').textContent = 'Starting • Local testnet initializing';
+            }
+            
+            // Local status
+            const localClass = networkData.peer_nodes_detected > 0 ? 'online' : 'connecting';
+            document.getElementById('local-test').className = 'status ' + localClass;
+            document.getElementById('local-status-test').textContent = 
+                `Local • ${networkData.peer_nodes_detected} peers detected • ${networkData.connected_nodes} network nodes`;
+            
+            // Validator status
+            const validatorClass = networkData.ceremony_status === 'active' ? 'online' : 'connecting';
+            document.getElementById('validator-test').className = 'status ' + validatorClass;
+            if (networkData.ceremony_status === 'active') {
+                const dailyRewards = Math.max(1, Math.floor(networkData.consensus_rounds / 10));
+                document.getElementById('validator-status-test').textContent = 
+                    `Ready • ${networkData.consensus_rounds} consensus rounds • Earn ~${dailyRewards} ZHTP/day`;
+            } else {
+                document.getElementById('validator-status-test').textContent = 'Preparing • Ceremony setup required';
+            }
+            
+            // Storage status
+            const storageClass = networkData.dapp_count > 0 ? 'online' : 'connecting';
+            document.getElementById('storage-test').className = 'status ' + storageClass;
+            if (networkData.dapp_count > 0) {
+                const storageRewards = Math.max(1, networkData.dapp_count * 2);
+                document.getElementById('storage-status-test').textContent = 
+                    `Active • ${networkData.dapp_count} DApps hosted • Earn ~${storageRewards} ZHTP/day`;
+            } else {
+                document.getElementById('storage-status-test').textContent = 'Initializing • Setting up storage infrastructure';
+            }
+        }
+        
+        function refreshData() {
+            loadNetworkData();
+        }
+        
+        // Load data on page load
+        document.addEventListener('DOMContentLoaded', loadNetworkData);
+    </script>
+</body>
+</html>

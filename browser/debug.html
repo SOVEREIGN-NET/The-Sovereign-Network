@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZHTP Network Debug Console</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0a0a;
+            color: #00ff00;
+            margin: 0;
+            padding: 20px;
+            line-height: 1.4;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #00ff00;
+            padding-bottom: 20px;
+            margin-bottom: 20px;
+        }
+        .debug-section {
+            background: rgba(0, 255, 0, 0.05);
+            border: 1px solid #00ff00;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .log-output {
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .status-card {
+            background: rgba(0, 255, 0, 0.1);
+            border: 1px solid #00ff00;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .online { color: #00ff00; }
+        .offline { color: #ff0000; }
+        .warning { color: #ffaa00; }
+        .info { color: #00aaff; }
+        button {
+            background: #003300;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #006600;
+        }
+        .peer-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .peer-item {
+            padding: 5px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+        }
+        .auto-refresh {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 255, 0, 0.2);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #00ff00;
+        }
+    </style>
+</head>
+<body>
+    <div class="auto-refresh">
+        <label>
+            <input type="checkbox" id="autoRefresh" checked> Auto-refresh (5s)
+        </label>
+    </div>
+
+    <div class="header">
+        <h1>🔍 ZHTP Network Debug Console</h1>
+        <p>Real-time P2P Network Monitoring & Debugging</p>
+        <div>
+            <button onclick="refreshAll()">🔄 Refresh All</button>
+            <button onclick="clearLogs()">🗑️ Clear Logs</button>
+            <button onclick="testP2PConnection()">🌐 Test P2P</button>
+            <button onclick="showMyIdentity()">🔑 My Identity</button>
+        </div>
+    </div>
+
+    <div class="status-grid">
+        <div class="status-card">
+            <h3>📊 Network Status</h3>
+            <div id="networkStatus">Loading...</div>
+        </div>
+        <div class="status-card">
+            <h3>👥 Connected Peers</h3>
+            <div id="peerCount">0</div>
+            <div id="peerList" class="peer-list"></div>
+        </div>
+        <div class="status-card">
+            <h3>💬 Message Queue</h3>
+            <div id="messageQueue">Loading...</div>
+        </div>
+        <div class="status-card">
+            <h3>🎭 Ceremony Status</h3>
+            <div id="ceremonyStatus">Loading...</div>
+        </div>
+    </div>
+
+    <div class="debug-section">
+        <h3>🔍 P2P Discovery Log</h3>
+        <div id="p2pLog" class="log-output"></div>
+    </div>
+
+    <div class="debug-section">
+        <h3>📤 Message Routing Log</h3>
+        <div id="messageLog" class="log-output"></div>
+    </div>
+
+    <div class="debug-section">
+        <h3>🌐 DHT Table Status</h3>
+        <div id="dhtLog" class="log-output"></div>
+    </div>
+
+    <div class="debug-section">
+        <h3>⚡ Real-time Network Events</h3>
+        <div id="networkEvents" class="log-output"></div>
+    </div>
+
+    <script>
+        let refreshInterval;
+        let myWallet = null;
+        
+        function log(message, type = 'info', targetId = 'networkEvents') {
+            const timestamp = new Date().toLocaleTimeString();
+            const colors = {
+                info: '#00aaff',
+                success: '#00ff00', 
+                error: '#ff0000',
+                warning: '#ffaa00'
+            };
+            
+            const logEntry = `[${timestamp}] ${message}\\n`;
+            const target = document.getElementById(targetId);
+            
+            const span = document.createElement('span');
+            span.style.color = colors[type] || colors.info;
+            span.textContent = logEntry;
+            
+            target.appendChild(span);
+            target.scrollTop = target.scrollHeight;
+        }
+
+        async function refreshNetworkStatus() {
+            try {
+                const response = await fetch('http://localhost:8000/api/status');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('networkStatus').innerHTML = `
+                        <div class="online">✅ ${data.status}</div>
+                        <div>Connected Nodes: ${data.connected_nodes}</div>
+                        <div>Consensus Rounds: ${data.consensus_rounds}</div>
+                        <div>ZK Transactions: ${data.zk_transactions}</div>
+                    `;
+                    log(\`Network Status: \${data.connected_nodes} nodes, \${data.consensus_rounds} rounds\`, 'success');
+                } else {
+                    document.getElementById('networkStatus').innerHTML = '<div class="offline">❌ Offline</div>';
+                    log('Network Status: API unavailable', 'error');
+                }
+            } catch (error) {
+                document.getElementById('networkStatus').innerHTML = '<div class="offline">❌ Connection Failed</div>';
+                log(\`Network Error: \${error.message}\`, 'error');
+            }
+        }
+
+        async function refreshCeremonyStatus() {
+            try {
+                const response = await fetch('http://localhost:8000/api/ceremony/status');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('ceremonyStatus').innerHTML = \`
+                        <div class="online">Status: \${data.status}</div>
+                        <div>Participants: \${data.participants}</div>
+                        <div>Coordinator: \${data.coordinator_ready ? '✅' : '❌'}</div>
+                    \`;
+                    log(\`Ceremony: \${data.participants} participants, coordinator \${data.coordinator_ready ? 'ready' : 'not ready'}\`, 'info');
+                }
+            } catch (error) {
+                log(\`Ceremony Error: \${error.message}\`, 'error');
+            }
+        }
+
+        async function refreshPeerList() {
+            try {
+                // Try to get peer information from network activity
+                const response = await fetch('http://localhost:8000/api/network/activity');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('peerCount').textContent = data.active_peers || 0;
+                    
+                    const peerListDiv = document.getElementById('peerList');
+                    if (data.peers && data.peers.length > 0) {
+                        peerListDiv.innerHTML = data.peers.map(peer => \`
+                            <div class="peer-item">
+                                <span>\${peer.id || 'Unknown'}</span>
+                                <span class="online">\${peer.status || 'Active'}</span>
+                            </div>
+                        \`).join('');
+                        log(\`Discovered \${data.peers.length} active peers\`, 'success', 'p2pLog');
+                    } else {
+                        peerListDiv.innerHTML = '<div class="warning">No peers discovered yet</div>';
+                        log('No peers discovered in DHT table', 'warning', 'p2pLog');
+                    }
+                }
+            } catch (error) {
+                log(\`Peer Discovery Error: \${error.message}\`, 'error', 'p2pLog');
+            }
+        }
+
+        async function testP2PConnection() {
+            log('🧪 Testing P2P connectivity...', 'info');
+            
+            try {
+                // Test message to a test recipient
+                const testMessage = {
+                    to: 'zk_test_debug_recipient_zhtp',
+                    message: 'P2P connectivity test from debug console',
+                    from: myWallet ? myWallet.address : 'debug_console',
+                    zk_identity: myWallet ? myWallet.zk_identity : 'debug_test_identity'
+                };
+                
+                const response = await fetch('http://localhost:8000/api/messages/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(testMessage)
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    log(\`✅ P2P Test: \${result.delivery_status}\`, 'success', 'messageLog');
+                    log(\`Message ID: \${result.message_id}\`, 'info', 'messageLog');
+                    log(\`Network Route: \${result.network_route || 'Direct'}\`, 'info', 'messageLog');
+                } else {
+                    log(\`❌ P2P Test Failed: \${response.status}\`, 'error', 'messageLog');
+                }
+            } catch (error) {
+                log(\`P2P Test Error: \${error.message}\`, 'error', 'messageLog');
+            }
+        }
+
+        async function showMyIdentity() {
+            // Try to load wallet from storage
+            try {
+                const walletData = localStorage.getItem('zhtp_wallet');
+                if (walletData) {
+                    myWallet = JSON.parse(walletData);
+                    log(\`🔑 My Wallet: \${myWallet.address}\`, 'success');
+                    log(\`🔑 My ZK Identity: \${myWallet.zk_identity || myWallet.zkIdentity}\`, 'success');
+                } else {
+                    log('⚠️ No wallet found in storage. Complete onboarding first.', 'warning');
+                }
+            } catch (error) {
+                log(\`Wallet Load Error: \${error.message}\`, 'error');
+            }
+        }
+
+        async function monitorMessageQueue() {
+            try {
+                const response = await fetch('http://localhost:8000/api/messages/inbox');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('messageQueue').innerHTML = \`
+                        <div>Inbox: \${data.messages ? data.messages.length : 0} messages</div>
+                        <div>Last Activity: \${new Date().toLocaleTimeString()}</div>
+                    \`;
+                }
+            } catch (error) {
+                log(\`Message Queue Error: \${error.message}\`, 'error');
+            }
+        }
+
+        async function debugDHTTable() {
+            log('🔍 Checking DHT routing table...', 'info', 'dhtLog');
+            
+            // This will help us see what's in the routing table
+            try {
+                const response = await fetch('http://localhost:8000/api/debug/dht');
+                if (response.ok) {
+                    const data = await response.json();
+                    log(\`DHT Nodes: \${data.node_count || 0}\`, 'info', 'dhtLog');
+                    log(\`Routing Entries: \${data.routes || 0}\`, 'info', 'dhtLog');
+                } else {
+                    log('DHT debug endpoint not available', 'warning', 'dhtLog');
+                }
+            } catch (error) {
+                log(\`DHT Debug Error: \${error.message}\`, 'warning', 'dhtLog');
+            }
+        }
+
+        function refreshAll() {
+            log('🔄 Refreshing all network data...', 'info');
+            refreshNetworkStatus();
+            refreshCeremonyStatus(); 
+            refreshPeerList();
+            monitorMessageQueue();
+            debugDHTTable();
+            showMyIdentity();
+        }
+
+        function clearLogs() {
+            ['p2pLog', 'messageLog', 'dhtLog', 'networkEvents'].forEach(id => {
+                document.getElementById(id).innerHTML = '';
+            });
+            log('🗑️ Logs cleared', 'info');
+        }
+
+        // Auto-refresh functionality
+        function startAutoRefresh() {
+            if (refreshInterval) clearInterval(refreshInterval);
+            refreshInterval = setInterval(refreshAll, 5000);
+            log('✅ Auto-refresh enabled (5s)', 'success');
+        }
+
+        function stopAutoRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+            log('⏹️ Auto-refresh disabled', 'warning');
+        }
+
+        // Event listeners
+        document.getElementById('autoRefresh').addEventListener('change', function(e) {
+            if (e.target.checked) {
+                startAutoRefresh();
+            } else {
+                stopAutoRefresh();
+            }
+        });
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            log('🔍 ZHTP Debug Console initialized', 'success');
+            refreshAll();
+            startAutoRefresh();
+        });
+
+        // Monitor network events
+        setInterval(() => {
+            const now = new Date().toLocaleTimeString();
+            if (Math.random() < 0.1) { // Random network event simulation
+                log(\`⚡ Network heartbeat - \${now}\`, 'info');
+            }
+        }, 10000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Network Data Loading</title>
+</head>
+<body>
+    <h1>ZHTP Network Data Test</h1>
+    <div id="status">Loading...</div>
+    <div id="debug"></div>
+    
+    <script>
+        async function testNetworkData() {
+            const debugDiv = document.getElementById('debug');
+            const statusDiv = document.getElementById('status');
+            
+            try {
+                console.log('📡 Testing network data loading...');
+                debugDiv.innerHTML += '<p>📡 Testing network data loading...</p>';
+                
+                // Get current network status
+                console.log('Fetching status from: http://localhost:8000/api/status');
+                const statusResponse = await fetch('http://localhost:8000/api/status');
+                console.log('Status response:', statusResponse);
+                const statusData = statusResponse.ok ? await statusResponse.json() : {};
+                console.log('Status data:', statusData);
+                debugDiv.innerHTML += '<p>✅ Status data: ' + JSON.stringify(statusData) + '</p>';
+                
+                // Get DHT and peer data
+                console.log('Fetching DHT from: http://localhost:8000/api/debug/dht');
+                const dhtResponse = await fetch('http://localhost:8000/api/debug/dht');
+                console.log('DHT response:', dhtResponse);
+                const dhtData = dhtResponse.ok ? await dhtResponse.json() : {};
+                console.log('DHT data:', dhtData);
+                debugDiv.innerHTML += '<p>✅ DHT data: ' + JSON.stringify(dhtData) + '</p>';
+                
+                // Store real network data
+                const networkData = {
+                    connected_nodes: statusData.connected_nodes || 0,
+                    consensus_rounds: statusData.consensus_rounds || 0,
+                    zk_transactions: statusData.zk_transactions || 0,
+                    dapp_count: statusData.dapp_count || 0,
+                    ceremony_status: statusData.ceremony_status || 'unknown',
+                    peer_nodes_detected: dhtData.peer_nodes_detected || 0,
+                    nodes_available: dhtData.nodes_available || false,
+                    network_operational: statusData.status === 'operational'
+                };
+                
+                console.log('✅ Real network data loaded:', networkData);
+                debugDiv.innerHTML += '<p>✅ Real network data loaded: ' + JSON.stringify(networkData) + '</p>';
+                
+                statusDiv.innerHTML = `
+                    <h2>Real Network Data:</h2>
+                    <p>Connected Nodes: ${networkData.connected_nodes}</p>
+                    <p>Consensus Rounds: ${networkData.consensus_rounds}</p>
+                    <p>ZK Transactions: ${networkData.zk_transactions}</p>
+                    <p>DApp Count: ${networkData.dapp_count}</p>
+                    <p>Ceremony Status: ${networkData.ceremony_status}</p>
+                    <p>Peer Nodes Detected: ${networkData.peer_nodes_detected}</p>
+                    <p>Network Operational: ${networkData.network_operational}</p>
+                `;
+                
+            } catch (error) {
+                console.error('⚠️ Failed to load network data:', error);
+                debugDiv.innerHTML += '<p>❌ Error: ' + error.message + '</p>';
+                statusDiv.innerHTML = 'Error loading network data: ' + error.message;
+            }
+        }
+        
+        // Test immediately when page loads
+        testNetworkData();
+    </script>
+</body>
+</html>

@@ -406,39 +406,103 @@
 
         <!-- Node Selection Screen -->
         <div id="nodeSelectionScreen" class="node-selection-screen hidden">
-            <h1 class="title">🌐 Select Network Node</h1>
-            <p class="subtitle">Choose your connection point to the ZHTP network</p>
+            <h1 class="title">🌐 Choose Your ZHTP Experience</h1>
+            <p class="subtitle">Pick what you want to do with ZHTP - it's easy to change later!</p>
+            
+            <div style="margin-bottom: 30px; padding: 20px; background: rgba(0,255,255,0.1); border-radius: 10px; border: 2px solid rgba(0,255,255,0.3);">
+                <h3 style="color: #00ffff; margin-bottom: 15px; font-size: 1.2em;">🤔 Not sure? Start here!</h3>
+                <p style="margin-bottom: 10px; font-size: 1.1em;"><strong>Most people want:</strong> Private messaging with friends</p>
+                <p style="color: #cccccc;">👇 Choose <strong>"Beginner Mode"</strong> below - it's perfect for chatting and exploring ZHTP safely!</p>
+            </div>
             
             <div id="nodeOptions">
-                <div class="node-option" onclick="selectNode('mainnet')">
-                    <h3>🚀 Mainnet Node</h3>
-                    <p>Connect to the main ZHTP production network</p>
-                    <div class="network-status">
-                        <span class="status-indicator status-online"></span>
-                        <span>Online • 1,247 peers • Low latency</span>
-                    </div>
-                </div>
-                
-                <div class="node-option" onclick="selectNode('testnet')">
-                    <h3>🧪 Testnet Node</h3>
-                    <p>Safe testing environment for development and experimentation</p>
-                    <div class="network-status">
-                        <span class="status-indicator status-online"></span>
-                        <span>Online • 156 peers • Testing environment</span>
-                    </div>
-                </div>
-                
-                <div class="node-option" onclick="selectNode('local')">
-                    <h3>💻 Local Node</h3>
-                    <p>Run your own private ZHTP node locally</p>
-                    <div class="network-status">
+                <div class="node-option" onclick="selectNode('testnet')" data-node-type="testnet" style="border: 3px solid #00ff00; background: rgba(0,255,0,0.1);">
+                    <h3>🎯 Beginner Mode (Recommended)</h3>
+                    <p style="font-size: 1.1em; margin-bottom: 15px;"><strong>Perfect for new users!</strong></p>
+                    <ul style="text-align: left; margin: 10px 0; padding-left: 20px;">
+                        <li>✅ Safe testing environment</li>
+                        <li>✅ Message friends on ZHTP</li>
+                        <li>✅ Explore all features risk-free</li>
+                        <li>✅ Get free test tokens to play with</li>
+                    </ul>
+                    <div class="network-status" id="testnet-status">
                         <span class="status-indicator status-connecting"></span>
-                        <span>Initializing • Local only • Full control</span>
+                        <span>Loading network status...</span>
+                    </div>
+                </div>
+                
+                <div class="node-option" onclick="selectNode('local')" data-node-type="local">
+                    <h3>🏠 Private Mode</h3>
+                    <p style="font-size: 1.1em; margin-bottom: 15px;"><strong>For privacy-focused users</strong></p>
+                    <ul style="text-align: left; margin: 10px 0; padding-left: 20px;">
+                        <li>✅ Your own private network</li>
+                        <li>✅ Message friends who are nearby</li>
+                        <li>✅ Maximum privacy and control</li>
+                        <li>⚠️ Only works with friends on same WiFi/network</li>
+                    </ul>
+                    <div class="network-status" id="local-status">
+                        <span class="status-indicator status-connecting"></span>
+                        <span>Loading network status...</span>
+                    </div>
+                </div>
+
+                <div class="node-option" onclick="selectNode('validator')" data-node-type="validator">
+                    <h3>💰 Earning Mode</h3>
+                    <p style="font-size: 1.1em; margin-bottom: 15px;"><strong>Make money while you sleep!</strong></p>
+                    <ul style="text-align: left; margin: 10px 0; padding-left: 20px;">
+                        <li>💰 Earn ZHTP tokens automatically</li>
+                        <li>🏛️ Help secure the network</li>
+                        <li>⚡ Process transactions for rewards</li>
+                        <li>⚠️ Requires computer to stay online</li>
+                    </ul>
+                    <div class="network-status" id="validator-status">
+                        <span class="status-indicator status-connecting"></span>
+                        <span>Loading validator requirements...</span>
+                    </div>
+                </div>
+                
+                <div class="node-option" onclick="selectNode('storage')" data-node-type="storage">
+                    <h3>� Storage Mode</h3>
+                    <p style="font-size: 1.1em; margin-bottom: 15px;"><strong>Rent out your hard drive space</strong></p>
+                    <ul style="text-align: left; margin: 10px 0; padding-left: 20px;">
+                        <li>💰 Earn tokens by storing data</li>
+                        <li>🌐 Help power the decentralized internet</li>
+                        <li>📁 Share unused disk space safely</li>
+                        <li>⚠️ Uses your internet bandwidth</li>
+                    </ul>
+                    <div class="network-status" id="storage-status">
+                        <span class="status-indicator status-connecting"></span>
+                        <span>Loading storage requirements...</span>
+                    </div>
+                </div>
+                
+                <div class="node-option" onclick="selectNode('mainnet')" data-node-type="mainnet">
+                    <h3>🚀 Production Mode</h3>
+                    <p style="font-size: 1.1em; margin-bottom: 15px;"><strong>For advanced users only!</strong></p>
+                    <ul style="text-align: left; margin: 10px 0; padding-left: 20px;">
+                        <li>🌐 Connect to the main ZHTP network</li>
+                        <li>💼 Real money transactions</li>
+                        <li>🏢 Business and commercial use</li>
+                        <li>⚠️ Real tokens with real value - be careful!</li>
+                    </ul>
+                    <div class="network-status" id="mainnet-status">
+                        <span class="status-indicator status-connecting"></span>
+                        <span>Loading network status...</span>
                     </div>
                 </div>
             </div>
             
-            <button class="btn btn-secondary" onclick="goBack('welcomeScreen')">← Back</button>
+            <div style="margin-top: 30px; padding: 20px; background: rgba(255,0,255,0.1); border-radius: 10px; border: 1px solid rgba(255,0,255,0.3);">
+                <p style="color: #ff00ff; margin-bottom: 10px; font-size: 1.1em;"><strong>💡 Advanced Users:</strong> Want to run multiple modes?</p>
+                <p style="font-size: 0.95em; color: #cccccc; margin-bottom: 15px;">You can combine modes later! For example: Private Mode + Earning Mode = messaging + earning money.</p>
+                <button class="btn btn-primary" onclick="showMultiNodeSetup()" style="background: linear-gradient(45deg, #ff00ff, #aa00aa); font-size: 0.95em; padding: 10px 20px;">
+                    🚀 Advanced Multi-Mode Setup
+                </button>
+            </div>
+            
+            <div style="margin-top: 20px; text-align: center;">
+                <button class="btn btn-secondary" onclick="goBack('welcomeScreen')">← Back to Welcome</button>
+            </div>
         </div>
 
         <!-- Onboarding Screen -->
@@ -550,14 +614,141 @@
         let selectedNode = null;
         let onboardingProgress = 0;
         let onboardingComplete = false;
+        let networkData = {}; // Store real network metrics
+
+        // Load real network data when page loads
+        async function loadNetworkData() {
+            try {
+                console.log('📡 Loading real network data...');
+                
+                // Get current network status
+                const statusResponse = await fetch('http://localhost:8000/api/status');
+                const statusData = statusResponse.ok ? await statusResponse.json() : {};
+                
+                // Get DHT and peer data
+                const dhtResponse = await fetch('http://localhost:8000/api/debug/dht');
+                const dhtData = dhtResponse.ok ? await dhtResponse.json() : {};
+                
+                // Store real network data
+                networkData = {
+                    connected_nodes: statusData.connected_nodes || 0,
+                    consensus_rounds: statusData.consensus_rounds || 0,
+                    zk_transactions: statusData.zk_transactions || 0,
+                    dapp_count: statusData.dapp_count || 0,
+                    ceremony_status: statusData.ceremony_status || 'unknown',
+                    peer_nodes_detected: dhtData.peer_nodes_detected || 0,
+                    nodes_available: dhtData.nodes_available || false,
+                    network_operational: statusData.status === 'operational'
+                };
+                
+                console.log('✅ Real network data loaded:', networkData);
+                updateNodeStatusDisplay();
+                
+            } catch (error) {
+                console.error('⚠️ Failed to load network data:', error);
+                // Use fallback data
+                networkData = {
+                    connected_nodes: 1,
+                    consensus_rounds: 0,
+                    zk_transactions: 0,
+                    dapp_count: 0,
+                    ceremony_status: 'local',
+                    peer_nodes_detected: 0,
+                    nodes_available: false,
+                    network_operational: false
+                };
+                updateNodeStatusDisplay();
+            }
+        }
+
+        // Update node status displays with real data
+        function updateNodeStatusDisplay() {
+            console.log('🔄 Updating node status displays with real data:', networkData);
+            
+            // Production Mode status (mainnet)
+            const mainnetStatus = document.getElementById('mainnet-status');
+            if (networkData.network_operational) {
+                mainnetStatus.innerHTML = `
+                    <span class="status-indicator status-online"></span>
+                    <span>✅ Ready • ${networkData.connected_nodes} global nodes • Real money mode active</span>
+                `;
+            } else {
+                mainnetStatus.innerHTML = `
+                    <span class="status-indicator status-offline"></span>
+                    <span>⏳ Starting up • Production network connecting...</span>
+                `;
+            }
+            
+            // Beginner Mode status (testnet)
+            const testnetStatus = document.getElementById('testnet-status');
+            if (networkData.network_operational) {
+                testnetStatus.innerHTML = `
+                    <span class="status-indicator status-online"></span>
+                    <span>✅ Safe & Ready • ${networkData.connected_nodes} test nodes • Free to explore!</span>
+                `;
+            } else {
+                testnetStatus.innerHTML = `
+                    <span class="status-indicator status-connecting"></span>
+                    <span>⏳ Setting up your safe testing environment...</span>
+                `;
+            }
+            
+            // Private Mode status (local)
+            const localStatus = document.getElementById('local-status');
+            if (networkData.peer_nodes_detected > 0) {
+                localStatus.innerHTML = `
+                    <span class="status-indicator status-online"></span>
+                    <span>✅ Ready • ${networkData.peer_nodes_detected} friends nearby • Private network active</span>
+                `;
+            } else {
+                localStatus.innerHTML = `
+                    <span class="status-indicator status-connecting"></span>
+                    <span>🔍 Looking for friends on your network... (${networkData.connected_nodes} base nodes)</span>
+                `;
+            }
+            
+            // Earning Mode status (validator)
+            const validatorStatus = document.getElementById('validator-status');
+            if (networkData.ceremony_status === 'active') {
+                const dailyRewards = Math.max(1, Math.floor(networkData.consensus_rounds / 10));
+                validatorStatus.innerHTML = `
+                    <span class="status-indicator status-online"></span>
+                    <span>✅ Earning Active • ${networkData.consensus_rounds} transactions processed • ~${dailyRewards} ZHTP/day</span>
+                `;
+            } else {
+                validatorStatus.innerHTML = `
+                    <span class="status-indicator status-connecting"></span>
+                    <span>⏳ Preparing to earn tokens... Setting up validator...</span>
+                `;
+            }
+            
+            // Storage Mode status
+            const storageStatus = document.getElementById('storage-status');
+            if (networkData.dapp_count > 0) {
+                const storageRewards = Math.max(1, networkData.dapp_count * 2);
+                storageStatus.innerHTML = `
+                    <span class="status-indicator status-online"></span>
+                    <span>✅ Earning Active • ${networkData.dapp_count} apps using your storage • ~${storageRewards} ZHTP/day</span>
+                `;
+            } else {
+                storageStatus.innerHTML = `
+                    <span class="status-indicator status-connecting"></span>
+                    <span>⏳ Preparing to earn tokens... Setting up storage space...</span>
+                `;
+            }
+            
+            console.log('✅ Node status displays updated with real network data');
+        }
 
         // Node selection
         function startNodeSelection() {
             hideAllScreens();
             document.getElementById('nodeSelectionScreen').classList.remove('hidden');
+            // Refresh network data when node selection screen opens
+            loadNetworkData();
         }
 
-        function selectNode(nodeType) {
+        async function selectNode(nodeType) {
             selectedNode = nodeType;
             
             // Remove selected class from all options
@@ -568,10 +759,38 @@
             // Add selected class to clicked option
             event.target.closest('.node-option').classList.add('selected');
             
+            console.log(`🌐 Selected node type: ${nodeType}`);
+            
+            // Configure the backend for the selected node type
+            try {
+                const configResponse = await fetch('http://localhost:8000/api/node/configure', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        node_type: nodeType,
+                        network: nodeType === 'local' ? 'local' : (nodeType === 'mainnet' ? 'mainnet' : 'testnet'),
+                        enable_mining: nodeType === 'validator',
+                        enable_storage: nodeType === 'storage',
+                        auto_connect: nodeType !== 'local'
+                    })
+                });
+                
+                if (configResponse.ok) {
+                    const result = await configResponse.json();
+                    console.log('✅ Node configured successfully:', result);
+                } else {
+                    console.log('⚠️ Node configuration failed, continuing with defaults');
+                }
+            } catch (error) {
+                console.log('⚠️ Node configuration error:', error);
+            }
+            
             // Auto-start onboarding after a brief delay
             setTimeout(() => {
                 startOnboarding();
-            }, 1000);
+            }, 1500);
         }
 
         // Show sign in screen
@@ -670,7 +889,8 @@
                 
                 // Store user session data
                 const sessionData = {
-                    wallet: fullWallet
+                    wallet: fullWallet,
+                    selectedNodeType: selectedNode
                 };
                 
                 // Store in session and local storage
@@ -678,11 +898,74 @@
                 localStorage.setItem('zhtp_wallet', JSON.stringify(fullWallet));
                 localStorage.setItem('zhtpUser', JSON.stringify({
                     username: 'user',
-                    signInMethod: 'onboarding'
+                    signInMethod: 'onboarding',
+                    nodeType: selectedNode
                 }));
                 
-                // Redirect to main browser interface (index page)
-                window.location.href = `http://localhost:8000/browser`;
+                // Show completion message based on selected node type
+                let completionMessage = '';
+                if (selectedNode === 'local') {
+                    completionMessage = `
+                        <div style="margin: 20px 0; padding: 15px; background: rgba(0,255,255,0.1); border-radius: 10px; border: 1px solid rgba(0,255,255,0.3);">
+                            <h3 style="color: #00ffff; margin-bottom: 10px;">🎉 Private Mode Ready!</h3>
+                            <p>Your private ZHTP network is set up for secure messaging with nearby friends.</p>
+                            <p><strong>Next:</strong> You'll go to the main browser where you can start messaging!</p>
+                        </div>
+                    `;
+                } else if (selectedNode === 'testnet') {
+                    completionMessage = `
+                        <div style="margin: 20px 0; padding: 15px; background: rgba(0,255,255,0.1); border-radius: 10px; border: 1px solid rgba(0,255,255,0.3);">
+                            <h3 style="color: #00ffff; margin-bottom: 10px;">🎉 Beginner Mode Ready!</h3>
+                            <p>Your safe testing environment is ready for messaging and exploring ZHTP!</p>
+                            <p><strong>Next:</strong> You'll go to the main browser where you can try everything safely!</p>
+                        </div>
+                    `;
+                } else if (selectedNode === 'validator') {
+                    completionMessage = `
+                        <div style="margin: 20px 0; padding: 15px; background: rgba(255,255,0,0.1); border-radius: 10px; border: 1px solid rgba(255,255,0,0.3);">
+                            <h3 style="color: #ffff00; margin-bottom: 10px;">💰 Earning Mode Activated!</h3>
+                            <p>Your validator node is ready to start earning ZHTP tokens automatically!</p>
+                            <p><strong>Next:</strong> You'll go to the main browser to monitor your earnings!</p>
+                        </div>
+                    `;
+                } else if (selectedNode === 'storage') {
+                    completionMessage = `
+                        <div style="margin: 20px 0; padding: 15px; background: rgba(255,255,0,0.1); border-radius: 10px; border: 1px solid rgba(255,255,0,0.3);">
+                            <h3 style="color: #ffff00; margin-bottom: 10px;">💰 Storage Mode Activated!</h3>
+                            <p>Your storage node is ready to earn tokens by sharing disk space!</p>
+                            <p><strong>Next:</strong> You'll go to the main browser to monitor your earnings!</p>
+                        </div>
+                    `;
+                } else if (selectedNode === 'mainnet') {
+                    completionMessage = `
+                        <div style="margin: 20px 0; padding: 15px; background: rgba(255,165,0,0.1); border-radius: 10px; border: 1px solid rgba(255,165,0,0.3);">
+                            <h3 style="color: #ffa500; margin-bottom: 10px;">🚀 Production Mode Ready!</h3>
+                            <p>You're connected to the main ZHTP network with real tokens and transactions.</p>
+                            <p><strong>Next:</strong> You'll go to the main browser - be careful, this is real money!</p>
+                        </div>
+                    `;
+                }
+                
+                if (completionMessage) {
+                    const onboardingDiv = document.getElementById('onboardingScreen');
+                    const existingMessage = onboardingDiv.querySelector('.completion-message');
+                    if (existingMessage) {
+                        existingMessage.remove();
+                    }
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'completion-message';
+                    messageDiv.innerHTML = completionMessage;
+                    onboardingDiv.insertBefore(messageDiv, onboardingDiv.querySelector('#completeBtn'));
+                    
+                    // Wait a moment for user to read, then redirect to main browser
+                    setTimeout(() => {
+                        // Go to main ZHTP browser (index-merged.html)
+                        window.location.href = `http://localhost:8000/index-merged.html`;
+                    }, 3000);
+                } else {
+                    // Go directly to main browser for other node types
+                    window.location.href = `http://localhost:8000/index-merged.html`;
+                }
             }
         }
 
@@ -733,10 +1016,14 @@
                 recovery_phrase: recoveryPhrase,
                 quantum_resistant: true,
                 algorithm: 'Dilithium5+Kyber768',
-                network: 'mainnet',
+                network: selectedNode === 'local' ? 'local' : (selectedNode === 'mainnet' ? 'mainnet' : 'testnet'),
+                node_type: selectedNode || 'testnet',
                 created_at: new Date().toISOString(),
                 node_id: `node_${hashHex.substring(0, 32)}`, // Use first 32 chars of hash
-                balance: 1000 // Initial balance for testing
+                balance: selectedNode === 'mainnet' ? 100 : 1000, // Lower balance for mainnet
+                rewards_enabled: selectedNode === 'validator' || selectedNode === 'storage',
+                mining_enabled: selectedNode === 'validator',
+                storage_enabled: selectedNode === 'storage'
             };
             
             // Register wallet with ZHTP network backend for real P2P communication
@@ -745,10 +1032,14 @@
                 const registrationData = {
                     address: walletAddress,
                     zk_identity: zkIdentity,
-                    network: 'mainnet',
+                    network: selectedNode === 'local' ? 'local' : (selectedNode === 'mainnet' ? 'mainnet' : 'testnet'),
+                    node_type: selectedNode || 'testnet',
                     public_key: baseWallet.public_key,
                     node_id: baseWallet.node_id,
-                    ceremony_participation: true
+                    ceremony_participation: true,
+                    rewards_enabled: baseWallet.rewards_enabled,
+                    mining_enabled: baseWallet.mining_enabled,
+                    storage_enabled: baseWallet.storage_enabled
                 };
                 
                 const response = await fetch('http://localhost:8000/api/wallet/register', {
@@ -829,14 +1120,14 @@
                 
                 if (response.ok) {
                     // Successful sign in - redirect to main browser index
-                    window.location.href = `http://localhost:8000/browser`;
+                    window.location.href = `http://localhost:8000/index-merged.html`;
                 } else {
                     alert('Sign in failed. Please check your credentials.');
                 }
             } catch (error) {
                 console.error('Sign in error:', error);
                 // Even if API fails, redirect to main browser index
-                window.location.href = `http://localhost:8000/browser`;
+                window.location.href = `http://localhost:8000/index-merged.html`;
             }
         });
 
@@ -852,13 +1143,24 @@
             document.getElementById(screenId).classList.remove('hidden');
         }
 
+        function showMultiNodeSetup() {
+            // Open the multi-node setup page
+            window.open('multi-node-setup.html', '_blank');
+        }
+
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
+            // Load real network data immediately
+            loadNetworkData();
+            
             // Check if user is already signed in
             const savedIdentity = localStorage.getItem('zhtp_identity');
             if (savedIdentity) {
                 document.getElementById('zkIdentityInput').value = savedIdentity;
             }
+            
+            // Refresh network data every 30 seconds to keep it current
+            setInterval(loadNetworkData, 30000);
         });
     </script>
 </body>
