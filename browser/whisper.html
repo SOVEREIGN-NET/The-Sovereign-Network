@@ -784,6 +784,8 @@
             justify-content: center;
             align-items: center;
             z-index: 1000;
+            overflow-y: auto;
+            padding: 20px;
         }
 
         .modal-content {
@@ -792,8 +794,13 @@
             padding: 0;
             max-width: 500px;
             width: 90%;
+            max-height: 80vh;
             border: 1px solid rgba(255, 255, 255, 0.2);
             backdrop-filter: blur(10px);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            margin: auto;
         }
 
         .modal-header {
@@ -810,22 +817,27 @@
         }
 
         .close-btn {
-            background: none;
-            border: none;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
             color: white;
             font-size: 18px;
             cursor: pointer;
-            padding: 5px;
-            border-radius: 3px;
-            transition: background 0.3s ease;
+            padding: 8px 12px;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            font-weight: bold;
         }
 
         .close-btn:hover {
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.2);
+            transform: scale(1.05);
         }
 
         .modal-body {
             padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+            max-height: calc(80vh - 120px);
         }
 
         .modal-body label {
@@ -844,6 +856,24 @@
             .sidebar {
                 order: 2;
                 height: 200px;
+            }
+            
+            .modal {
+                padding: 10px;
+            }
+            
+            .modal-content {
+                width: 95%;
+                max-height: 90vh;
+            }
+            
+            .modal-body {
+                max-height: calc(90vh - 120px);
+                padding: 15px;
+            }
+            
+            .modal-header {
+                padding: 15px;
             }
         }
     </style>
@@ -1379,14 +1409,16 @@
             }
         }
 
-        // Handle escape key to close modal
-        function handleEscapeKey(event) {
-            console.log('⌨️ Key pressed:', event.key);
+        // Handle keyboard events for modal
+        document.addEventListener('keydown', function(event) {
             if (event.key === 'Escape') {
-                hideAddContactModal();
+                const modal = document.getElementById('addContactModal');
+                if (modal && !modal.classList.contains('hidden')) {
+                    hideAddContactModal();
+                }
             }
-        }
-
+        });
+        
         async function addNewContact() {
             const zkId = document.getElementById('contactZkId').value.trim();
             const displayName = document.getElementById('contactName').value.trim();
