@@ -1329,24 +1329,28 @@ impl ZhtpNetworkService {
                                 
                                 println!("📝 Wallet registration body: '{}'", body);
                                 
-                                let response = if let Ok(wallet_data) = serde_json::from_str::<serde_json::Value>(body) {
-                                    println!("✅ Successfully parsed wallet data: {:?}", wallet_data);
-                                    // Generate quantum-resistant keypair for the wallet
-                                    let wallet_keypair = node.get_keypair().clone();
-                                    let wallet_address = format!("zhtp_{}", hex::encode(&wallet_keypair.public_key()[..8]));
-                                    
-                                    // Simple ceremony participation check - if coordinator is ready, wallet is connected
-                                    let ceremony_status = "connected"; // Default to connected since ceremony coordinator is running
-                                    
-                                    println!("🎭 Wallet {} automatically participates in ceremony (mainnet)", wallet_address);
-                                    
-                                    serde_json::json!({
-                                        "success": true,
-                                        "wallet_address": wallet_address,
-                                        "public_key": hex::encode(wallet_keypair.public_key()),
-                                        "quantum_resistant": true,
-                                        "network": "mainnet",
-                                        "signature_algorithm": "Dilithium5",
+                let response = if let Ok(wallet_data) = serde_json::from_str::<serde_json::Value>(body) {
+                    println!("✅ Successfully parsed wallet data: {:?}", wallet_data);
+                    // Generate quantum-resistant keypair for the wallet
+                    let wallet_keypair = node.get_keypair().clone();
+                    
+                    // Use full post-quantum public key for wallet address (not just 8 bytes)
+                    let full_public_key = wallet_keypair.public_key();
+                    let key_hash = sha2::Sha256::digest(&full_public_key);
+                    let wallet_address = format!("zhtp_{}", hex::encode(&key_hash)); // Use full 64-character hash
+                    
+                    // Simple ceremony participation check - if coordinator is ready, wallet is connected
+                    let ceremony_status = "connected"; // Default to connected since ceremony coordinator is running
+                    
+                    println!("🎭 Wallet {} automatically participates in ceremony (mainnet)", wallet_address);
+                    
+                    serde_json::json!({
+                        "success": true,
+                        "wallet_address": wallet_address,
+                        "public_key": hex::encode(full_public_key), // Full public key (1952 bytes for Dilithium5)
+                        "quantum_resistant": true,
+                        "network": "mainnet",
+                        "signature_algorithm": "Dilithium5",
                                         "key_exchange": "Kyber768",
                                         "ceremony_status": ceremony_status
                                     })

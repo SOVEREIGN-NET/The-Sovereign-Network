@@ -903,7 +903,7 @@
                 <!-- Default network contacts -->
                 <div class="contact active" onclick="selectContact('bootstrap-node')">
                     <div class="contact-name">🚀 Bootstrap Node</div>
-                    <div class="contact-status">172.56.201.218:7000 • Online</div>
+                    <div class="contact-status">172.56.201.218:8000 • Online</div>
                 </div>
                 <div class="contact" onclick="selectContact('network-dao')">
                     <div class="contact-name">🏛️ Network DAO</div>
@@ -920,7 +920,7 @@
                     <div class="chat-user-avatar">🚀</div>
                     <div class="chat-user-info">
                         <h3 id="currentChatName">Bootstrap Node</h3>
-                        <p id="currentChatStatus">172.56.201.218:7000 • Ready for messages</p>
+                        <p id="currentChatStatus">172.56.201.218:8000 • Ready for messages</p>
                     </div>
                 </div>
 
@@ -999,7 +999,7 @@
         // Optional ceremony status check (doesn't require wallet registration)
         async function checkCeremonyStatus() {
             try {
-                const response = await fetch('/api/ceremony/status');
+                const response = await fetch('http://localhost:8000/api/ceremony/status');
                 if (response.ok) {
                     const result = await response.json();
                     return result.status || 'unknown';
@@ -1024,7 +1024,7 @@
                     ceremony_participation: true
                 };
                 
-                const response = await fetch('/api/wallet/register', {
+                const response = await fetch('http://localhost:8000/api/wallet/register', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1067,26 +1067,31 @@
 
         // Generate deterministic ZK Identity (same input = same output, no randomness)
         // ZHTP Native ZK Identity generation (integrated with wallet)
-        function generateZKIdentityDeterministic(walletAddress, seedPhrase) {
+        async function generateZKIdentityDeterministic(walletAddress, seedPhrase) {
             // In ZHTP, ZK Identity and wallet are cryptographically linked
             // If wallet already has a ZK identity, use it; otherwise derive from wallet
-            if (walletAddress.includes('_')) {
-                // Extract ZK core from ZHTP wallet address format
-                const zkCore = walletAddress.split('_')[1];
-                return `zk_${zkCore}_zhtp`;
+            if (walletAddress.includes('_') && walletAddress.startsWith('zhtp_')) {
+                // Extract hash core from ZHTP wallet address format
+                const addressHash = walletAddress.replace('zhtp_', '');
+                
+                // Generate ZK identity using proper cryptographic derivation
+                const encoder = new TextEncoder();
+                const zkSeedBuffer = encoder.encode('zk_' + addressHash + (seedPhrase || ''));
+                const zkHashBuffer = await crypto.subtle.digest('SHA-256', zkSeedBuffer);
+                const zkHashArray = new Uint8Array(zkHashBuffer);
+                const zkHashHex = Array.from(zkHashArray).map(b => b.toString(16).padStart(2, '0')).join('');
+                
+                return `zk_${zkHashHex}_zhtp`;
             }
             
-            // Fallback for legacy wallets - create deterministic hash
-            let hash = 0;
+            // Fallback for legacy wallets - use proper cryptographic hash
+            const encoder = new TextEncoder();
             const input = walletAddress + (seedPhrase || '');
+            const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(input));
+            const hashArray = new Uint8Array(hashBuffer);
+            const hashHex = Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
             
-            for (let i = 0; i < input.length; i++) {
-                hash = ((hash << 5) - hash) + input.charCodeAt(i);
-                hash = hash & hash; // Convert to 32-bit integer
-            }
-            
-            const zkCore = Math.abs(hash).toString(36).substring(0, 16);
-            return `zk_${zkCore}_zhtp`;
+            return `zk_${hashHex}_zhtp`;
         }        // Initialize the app
         async function initializeWhisper() {
             console.log('🔐 Initializing Whisper.zhtp...');
@@ -1127,7 +1132,7 @@
                 // CRITICAL: Ensure ZK Identity is PERSISTENT - don't generate new one each time
                 if (!currentWallet.zk_identity && !currentWallet.zkIdentity) {
                     console.log('🔑 Generating persistent ZK Identity for wallet...');
-                    const zkIdentity = generateZKIdentityDeterministic(currentWallet.address, currentWallet.recoveryPhrase || currentWallet.address);
+                    const zkIdentity = await generateZKIdentityDeterministic(currentWallet.address, currentWallet.recoveryPhrase || currentWallet.address);
                     currentWallet.zk_identity = zkIdentity;
                     currentWallet.zkIdentity = zkIdentity;
                     
@@ -1194,7 +1199,33 @@
                 
                 // Redirect to proper onboarding instead of showing fake setup
                 redirectToProperOnboarding();
-            }// Initialize message history
+            }
+
+        // Redirect to onboarding if no wallet is found
+        function redirectToProperOnboarding() {
+            console.log('🔄 Redirecting to onboarding - no wallet found');
+            showToast('Please complete wallet setup first', 'warning');
+            setTimeout(() => {
+                window.location.href = './welcome-merged.html';
+            }, 2000);
+        }
+
+        // Show toast notification
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            // Show the toast
+            setTimeout(() => toast.classList.add('show'), 100);
+            
+            // Hide and remove the toast
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => document.body.removeChild(toast), 300);
+            }, 3000);
+        }// Initialize message history
             messageHistory['bootstrap-node'] = [
                 {
                     type: 'received',
@@ -1228,8 +1259,8 @@
 
         async function checkNetworkConnection() {
             try {
-                // Try local API first
-                const response = await fetch('/api/status');
+                // Try local API first (port 8000)
+                const response = await fetch('http://localhost:8000/api/status');
                 if (response.ok) {
                     document.getElementById('connectionStatus').textContent = 'Connected to Local ZHTP Node';
                     return;
@@ -1238,8 +1269,8 @@
             } catch (error) {
                 // Try bootstrap node with multiple protocols
                 const bootstrapMethods = [
-                    { url: 'http://172.56.201.218:7000/api/status', name: 'HTTP' },
-                    { url: 'https://172.56.201.218:7000/api/status', name: 'HTTPS' }
+                    { url: 'http://172.56.201.218:8000/api/status', name: 'HTTP' },
+                    { url: 'https://172.56.201.218:8000/api/status', name: 'HTTPS' }
                 ];
                 
                 for (const method of bootstrapMethods) {
@@ -1272,7 +1303,7 @@
         setInterval(async () => {
             // Check for new messages from the network
             try {
-                const response = await fetch('/api/messages/inbox');
+                const response = await fetch('http://localhost:8000/api/messages/inbox');
                 if (response.ok) {
                     const messages = await response.json();
                     // Process any new messages
@@ -1452,7 +1483,7 @@
             let contactInfo = {
                 'bootstrap-node': {
                     name: '🚀 Bootstrap Node',
-                    status: '172.56.201.218:7000 • Ready for messages'
+                    status: '172.56.201.218:8000 • Ready for messages'
                 },
                 'network-dao': {
                     name: '🏛️ Network DAO', 
@@ -1538,7 +1569,7 @@
             if (!message) return;
 
             // Enhanced wallet validation
-            if (!currentWallet || !validateWallet(currentWallet)) {
+            if (!currentWallet || !(await validateWallet(currentWallet))) {
                 addMessageToUI('❌ No wallet connected! Please complete onboarding first.', 'received', 'System');
                 redirectToProperOnboarding();
                 return;
@@ -1585,7 +1616,7 @@
 
                 // Try local API first
                 try {
-                    const response = await fetch('/api/messages/send', {
+                    const response = await fetch('http://localhost:8000/api/messages/send', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(messageData)
@@ -1613,7 +1644,7 @@
                     
                     // Try bootstrap node for cross-machine messaging
                     try {
-                        const bootstrapResponse = await fetch('ws://172.56.201.218:7000/api/messages/send', {
+                        const bootstrapResponse = await fetch('http://172.56.201.218:8000/api/messages/send', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             mode: 'cors',
@@ -1641,7 +1672,7 @@
                         
                         // Try HTTP as final fallback
                         try {
-                            const httpResponse = await fetch('http://172.56.201.218:7000/api/messages/send', {
+                            const httpResponse = await fetch('http://172.56.201.218:8000/api/messages/send', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 mode: 'cors',
@@ -1791,7 +1822,7 @@
         }
 
         // Enhanced wallet validation with ZK Identity check
-        function validateWallet(wallet) {
+        async function validateWallet(wallet) {
             if (!wallet || typeof wallet !== 'object') {
                 console.log('❌ Invalid wallet object');
                 return false;
@@ -1805,7 +1836,7 @@
             // Ensure ZK Identity exists using deterministic generation
             if (!wallet.zk_identity && !wallet.zkIdentity) {
                 console.log('🔑 Wallet missing ZK Identity, generating deterministic one...');
-                const zkIdentity = generateZKIdentityDeterministic(wallet.address, wallet.recoveryPhrase || wallet.address);
+                const zkIdentity = await generateZKIdentityDeterministic(wallet.address, wallet.recoveryPhrase || wallet.address);
                 wallet.zk_identity = zkIdentity;
                 wallet.zkIdentity = zkIdentity;
                 
@@ -1941,9 +1972,9 @@
             
             if (sendBtn && messageInput) {
                 // Add real-time validation feedback
-                messageInput.addEventListener('input', () => {
+                messageInput.addEventListener('input', async () => {
                     const hasMessage = messageInput.value.trim().length > 0;
-                    const hasWallet = currentWallet && validateWallet(currentWallet);
+                    const hasWallet = currentWallet && await validateWallet(currentWallet);
                     
                     sendBtn.disabled = !hasMessage || !hasWallet;
                     sendBtn.style.opacity = sendBtn.disabled ? '0.5' : '1';
@@ -1958,6 +1989,9 @@
                 });
             }
         }
+
+        // Initialize the app when the page loads
+        document.addEventListener('DOMContentLoaded', initializeWhisper);
     </script>
 </body>
 </html>
