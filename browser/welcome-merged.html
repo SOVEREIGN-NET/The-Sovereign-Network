@@ -681,8 +681,8 @@
                     signInMethod: 'onboarding'
                 }));
                 
-                // Redirect to main browser interface
-                window.location.href = `./whisper.html`;
+                // Redirect to main browser interface (index page)
+                window.location.href = `http://localhost:8000/browser`;
             }
         }
 
@@ -828,15 +828,15 @@
                 });
                 
                 if (response.ok) {
-                    // Successful sign in - redirect to browser
-                    window.location.href = `./whisper.html`;
+                    // Successful sign in - redirect to main browser index
+                    window.location.href = `http://localhost:8000/browser`;
                 } else {
                     alert('Sign in failed. Please check your credentials.');
                 }
             } catch (error) {
                 console.error('Sign in error:', error);
-                // Even if API fails, redirect to browser
-                window.location.href = `./whisper.html`;
+                // Even if API fails, redirect to main browser index
+                window.location.href = `http://localhost:8000/browser`;
             }
         });
 
