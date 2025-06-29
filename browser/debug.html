@@ -181,14 +181,14 @@
                         <div>Consensus Rounds: ${data.consensus_rounds}</div>
                         <div>ZK Transactions: ${data.zk_transactions}</div>
                     `;
-                    log(\`Network Status: \${data.connected_nodes} nodes, \${data.consensus_rounds} rounds\`, 'success');
+                    log(`Network Status: ${data.connected_nodes} nodes, ${data.consensus_rounds} rounds`, 'success');
                 } else {
                     document.getElementById('networkStatus').innerHTML = '<div class="offline">❌ Offline</div>';
                     log('Network Status: API unavailable', 'error');
                 }
             } catch (error) {
                 document.getElementById('networkStatus').innerHTML = '<div class="offline">❌ Connection Failed</div>';
-                log(\`Network Error: \${error.message}\`, 'error');
+                log(`Network Error: ${error.message}`, 'error');
             }
         }
 
@@ -197,15 +197,15 @@
                 const response = await fetch('http://localhost:8000/api/ceremony/status');
                 if (response.ok) {
                     const data = await response.json();
-                    document.getElementById('ceremonyStatus').innerHTML = \`
-                        <div class="online">Status: \${data.status}</div>
-                        <div>Participants: \${data.participants}</div>
-                        <div>Coordinator: \${data.coordinator_ready ? '✅' : '❌'}</div>
-                    \`;
-                    log(\`Ceremony: \${data.participants} participants, coordinator \${data.coordinator_ready ? 'ready' : 'not ready'}\`, 'info');
+                    document.getElementById('ceremonyStatus').innerHTML = `
+                        <div class="online">Status: ${data.status}</div>
+                        <div>Participants: ${data.participants}</div>
+                        <div>Coordinator: ${data.coordinator_ready ? '✅' : '❌'}</div>
+                    `;
+                    log(`Ceremony: ${data.participants} participants, coordinator ${data.coordinator_ready ? 'ready' : 'not ready'}`, 'info');
                 }
             } catch (error) {
-                log(\`Ceremony Error: \${error.message}\`, 'error');
+                log(`Ceremony Error: ${error.message}`, 'error');
             }
         }
 
@@ -219,20 +219,20 @@
                     
                     const peerListDiv = document.getElementById('peerList');
                     if (data.peers && data.peers.length > 0) {
-                        peerListDiv.innerHTML = data.peers.map(peer => \`
+                        peerListDiv.innerHTML = data.peers.map(peer => `
                             <div class="peer-item">
-                                <span>\${peer.id || 'Unknown'}</span>
-                                <span class="online">\${peer.status || 'Active'}</span>
+                                <span>${peer.id || 'Unknown'}</span>
+                                <span class="online">${peer.status || 'Active'}</span>
                             </div>
-                        \`).join('');
-                        log(\`Discovered \${data.peers.length} active peers\`, 'success', 'p2pLog');
+                        `).join('');
+                        log(`Discovered ${data.peers.length} active peers`, 'success', 'p2pLog');
                     } else {
                         peerListDiv.innerHTML = '<div class="warning">No peers discovered yet</div>';
                         log('No peers discovered in DHT table', 'warning', 'p2pLog');
                     }
                 }
             } catch (error) {
-                log(\`Peer Discovery Error: \${error.message}\`, 'error', 'p2pLog');
+                log(`Peer Discovery Error: ${error.message}`, 'error', 'p2pLog');
             }
         }
 
@@ -256,14 +256,14 @@
                 
                 if (response.ok) {
                     const result = await response.json();
-                    log(\`✅ P2P Test: \${result.delivery_status}\`, 'success', 'messageLog');
-                    log(\`Message ID: \${result.message_id}\`, 'info', 'messageLog');
-                    log(\`Network Route: \${result.network_route || 'Direct'}\`, 'info', 'messageLog');
+                    log(`✅ P2P Test: ${result.delivery_status}`, 'success', 'messageLog');
+                    log(`Message ID: ${result.message_id}`, 'info', 'messageLog');
+                    log(`Network Route: ${result.network_route || 'Direct'}`, 'info', 'messageLog');
                 } else {
-                    log(\`❌ P2P Test Failed: \${response.status}\`, 'error', 'messageLog');
+                    log(`❌ P2P Test Failed: ${response.status}`, 'error', 'messageLog');
                 }
             } catch (error) {
-                log(\`P2P Test Error: \${error.message}\`, 'error', 'messageLog');
+                log(`P2P Test Error: ${error.message}`, 'error', 'messageLog');
             }
         }
 
@@ -273,13 +273,13 @@
                 const walletData = localStorage.getItem('zhtp_wallet');
                 if (walletData) {
                     myWallet = JSON.parse(walletData);
-                    log(\`🔑 My Wallet: \${myWallet.address}\`, 'success');
-                    log(\`🔑 My ZK Identity: \${myWallet.zk_identity || myWallet.zkIdentity}\`, 'success');
+                    log(`🔑 My Wallet: ${myWallet.address}`, 'success');
+                    log(`🔑 My ZK Identity: ${myWallet.zk_identity || myWallet.zkIdentity}`, 'success');
                 } else {
                     log('⚠️ No wallet found in storage. Complete onboarding first.', 'warning');
                 }
             } catch (error) {
-                log(\`Wallet Load Error: \${error.message}\`, 'error');
+                log(`Wallet Load Error: ${error.message}`, 'error');
             }
         }
 
@@ -288,13 +288,13 @@
                 const response = await fetch('http://localhost:8000/api/messages/inbox');
                 if (response.ok) {
                     const data = await response.json();
-                    document.getElementById('messageQueue').innerHTML = \`
-                        <div>Inbox: \${data.messages ? data.messages.length : 0} messages</div>
-                        <div>Last Activity: \${new Date().toLocaleTimeString()}</div>
-                    \`;
+                    document.getElementById('messageQueue').innerHTML = `
+                        <div>Inbox: ${data.messages ? data.messages.length : 0} messages</div>
+                        <div>Last Activity: ${new Date().toLocaleTimeString()}</div>
+                    `;
                 }
             } catch (error) {
-                log(\`Message Queue Error: \${error.message}\`, 'error');
+                log(`Message Queue Error: ${error.message}`, 'error');
             }
         }
 
@@ -306,13 +306,13 @@
                 const response = await fetch('http://localhost:8000/api/debug/dht');
                 if (response.ok) {
                     const data = await response.json();
-                    log(\`DHT Nodes: \${data.node_count || 0}\`, 'info', 'dhtLog');
-                    log(\`Routing Entries: \${data.routes || 0}\`, 'info', 'dhtLog');
+                    log(`DHT Nodes: ${data.node_count || 0}`, 'info', 'dhtLog');
+                    log(`Routing Entries: ${data.routes || 0}`, 'info', 'dhtLog');
                 } else {
                     log('DHT debug endpoint not available', 'warning', 'dhtLog');
                 }
             } catch (error) {
-                log(\`DHT Debug Error: \${error.message}\`, 'warning', 'dhtLog');
+                log(`DHT Debug Error: ${error.message}`, 'warning', 'dhtLog');
             }
         }
 
@@ -368,7 +368,7 @@
         setInterval(() => {
             const now = new Date().toLocaleTimeString();
             if (Math.random() < 0.1) { // Random network event simulation
-                log(\`⚡ Network heartbeat - \${now}\`, 'info');
+                log(`⚡ Network heartbeat - ${now}`, 'info');
             }
         }, 10000);
     </script>
