@@ -26,7 +26,7 @@
    run-zhtp.bat
    
    # Linux/macOS
-   cargo run --release
+   cargo run --bin zhtp --release
    ```
 
 4. **Access the browser:**
