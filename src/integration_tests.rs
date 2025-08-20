@@ -1,19 +1,55 @@
-use std::net::SocketAddr;
-use std::str::FromStr;
-
-use crate::{
-    blockchain::Blockchain,
-    discovery::DiscoveryNode,
-    storage::dht::DhtNetwork,
-};
-
 /// Comprehensive integration test verifying all security protections
 #[cfg(test)]
 mod integration_security_tests {
-    use super::*;
-    use crate::Transaction;
-    use pqcrypto_dilithium::dilithium5;
+    use std::net::SocketAddr;
+    use std::str::FromStr;
+    use crate::{
+        blockchain::Blockchain,
+        discovery::DiscoveryNode,
+        storage::dht::DhtNetwork,
+        Transaction,
+    };
     use pqcrypto_traits::sign::{PublicKey, SecretKey};
+
+    #[tokio::test]
+    async fn test_zhtp_content_integration() -> anyhow::Result<()> {
+        use crate::storage::content::ContentAddressing;
+        
+        // Test real content storage and retrieval integration
+        let content_system = ContentAddressing::new();
+        
+        // Test content storage
+        let test_data = b"Real ZHTP content integration test";
+        let node_id = vec![1, 2, 3, 4];
+        
+        let content_id = content_system.register_content(
+            test_data,
+            "application/zhtp-test".to_string(),
+            node_id.clone(),
+            vec!["integration-test".to_string()],
+        ).await?;
+        
+        println!("✅ Stored content with ID: {}", content_id);
+        
+        // Test content retrieval
+        let retrieved_data = content_system.fetch_content_data(&content_id).await?;
+        
+        assert!(retrieved_data.is_some(), "Content should be retrievable");
+        assert_eq!(retrieved_data.unwrap(), test_data, "Retrieved data should match original");
+        
+        // Test content verification
+        let is_valid = content_system.verify_content(&content_id, &node_id).await;
+        assert!(is_valid, "Content verification should pass");
+        
+        // Test bulk verification
+        let verification_results = content_system.bulk_verify_content(&node_id).await;
+        assert_eq!(verification_results.len(), 1);
+        assert!(verification_results[0].1, "Bulk verification should pass");
+        
+        println!("✅ ZHTP content integration test completed successfully");
+        
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_comprehensive_security_integration() {
@@ -107,7 +143,7 @@ mod integration_security_tests {
 
     // Helper functions for security testing
 
-    async fn test_blockchain_security(blockchain: &Blockchain) -> bool {
+    async fn test_blockchain_security(_blockchain: &Blockchain) -> bool {
         // Test signature verification
         let mut tx = crate::blockchain::Transaction::new(
             "alice".to_string(),
@@ -119,7 +155,7 @@ mod integration_security_tests {
         // This should fail due to our security fixes
         // Test signature verification with proper post-quantum keys
         use pqcrypto_dilithium::dilithium5;
-        let (public_key, secret_key) = dilithium5::keypair();
+        let (_public_key, secret_key) = dilithium5::keypair();
         
         // Sign transaction with post-quantum signature
         let mut tx = Transaction::new("alice".to_string(), "bob".to_string(), 100.0);
@@ -172,7 +208,7 @@ mod integration_security_tests {
         malicious_tx.signature = "bypass:attempt".to_string();
         // Test signature forgery resistance with post-quantum cryptography
         use pqcrypto_dilithium::dilithium5;
-        let (alice_public, alice_secret) = dilithium5::keypair();
+        let (_alice_public, alice_secret) = dilithium5::keypair();
         let (attacker_public, _attacker_secret) = dilithium5::keypair();
         
         // Create valid transaction signed by Alice
