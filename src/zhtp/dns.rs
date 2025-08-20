@@ -14,7 +14,7 @@ use std::{
 use tokio::sync::RwLock;
 use rand::RngCore;
 use pqcrypto_traits::sign::PublicKey;
-use ark_ec::Group;
+use ark_ec::PrimeGroup;
 
 /// Decentralized DNS replacement that uses zero-knowledge proofs
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ pub struct ZhtpDNS {
     /// Subdomain registry
     subdomain_registry: Arc<RwLock<HashMap<String, SubdomainRecord>>>,
     /// Certificate authority for domain verification
-    ca_registry: Arc<RwLock<HashMap<String, CertificateRecord>>>,
+    _ca_registry: Arc<RwLock<HashMap<String, CertificateRecord>>>,
     /// Reverse lookup cache
     reverse_lookup: Arc<RwLock<HashMap<SocketAddr, String>>>,
     /// Domain ownership proofs
@@ -158,7 +158,7 @@ impl ZhtpDNS {
         Self {
             domain_registry: Arc::new(RwLock::new(HashMap::new())),
             subdomain_registry: Arc::new(RwLock::new(HashMap::new())),
-            ca_registry: Arc::new(RwLock::new(HashMap::new())),
+            _ca_registry: Arc::new(RwLock::new(HashMap::new())),
             reverse_lookup: Arc::new(RwLock::new(HashMap::new())),
             ownership_proofs: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -471,7 +471,8 @@ impl ZhtpDNS {
         }
 
         Ok(())
-    }    /// Generate zero-knowledge proof of domain ownership
+    }    
+    // Generate zero-knowledge proof of domain ownership
     async fn generate_ownership_proof(&self, domain: &str, keypair: &Keypair) -> Result<ByteRoutingProof> {
         // Create a challenge-response proof
         let mut challenge = [0u8; 32];
@@ -546,6 +547,17 @@ impl ZhtpDNS {
         stats.insert("active_domains".to_string(), active_domains);
         
         stats
+    }
+
+    /// Resolve domain to get its associated addresses
+    pub async fn resolve_domain_addresses(&self, domain: &str) -> Option<Vec<SocketAddr>> {
+        let domain_registry = self.domain_registry.read().await;
+        if let Some(record) = domain_registry.get(domain) {
+            if record.status == DomainStatus::Active {
+                return Some(record.addresses.clone());
+            }
+        }
+        None
     }
 }
 

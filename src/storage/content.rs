@@ -4,6 +4,9 @@ use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::path::PathBuf;
 use crate::zhtp::zk_proofs::StorageProof;
 
 /// Service type identifiers
@@ -101,10 +104,21 @@ pub struct ContentAddressing {
     tag_index: Arc<RwLock<HashMap<String, Vec<ContentId>>>>,
     services: Arc<RwLock<HashMap<ServiceType, Vec<ServiceInfo>>>>,
     access_counts: Arc<RwLock<HashMap<ContentId, u32>>>,
+    /// Real content storage backend
+    content_storage: Arc<RwLock<HashMap<ContentId, Vec<u8>>>>,
+    /// Storage directory for persistent content
+    storage_path: PathBuf,
+}
+
+impl Default for ContentAddressing {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ContentAddressing {
     pub fn new() -> Self {
+        let storage_path = PathBuf::from("./storage/content");
         Self {
             content_map: Arc::new(RwLock::new(HashMap::new())),
             type_index: Arc::new(RwLock::new(HashMap::new())),
@@ -112,10 +126,49 @@ impl ContentAddressing {
             tag_index: Arc::new(RwLock::new(HashMap::new())),
             services: Arc::new(RwLock::new(HashMap::new())),
             access_counts: Arc::new(RwLock::new(HashMap::new())),
+            content_storage: Arc::new(RwLock::new(HashMap::new())),
+            storage_path,
         }
     }
 
-    /// Register new content in the system
+    /// Create storage directory if it doesn't exist
+    async fn ensure_storage_dir(&self) -> Result<()> {
+        fs::create_dir_all(&self.storage_path).await?;
+        Ok(())
+    }
+
+    /// Get file path for content ID
+    fn get_content_path(&self, content_id: &ContentId) -> PathBuf {
+        let filename = format!("{}.dat", content_id);
+        self.storage_path.join(filename)
+    }
+
+    /// Store content data to disk
+    async fn store_content_to_disk(&self, content_id: &ContentId, data: &[u8]) -> Result<()> {
+        self.ensure_storage_dir().await?;
+        let file_path = self.get_content_path(content_id);
+        let mut file = fs::File::create(file_path).await?;
+        file.write_all(data).await?;
+        file.sync_all().await?;
+        Ok(())
+    }
+
+    /// Load content data from disk
+    async fn load_content_from_disk(&self, content_id: &ContentId) -> Result<Vec<u8>> {
+        let file_path = self.get_content_path(content_id);
+        let mut file = fs::File::open(file_path).await?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data).await?;
+        Ok(data)
+    }
+
+    /// Verify content integrity by comparing hash
+    async fn verify_content_integrity(&self, content_id: &ContentId, data: &[u8]) -> bool {
+        let computed_id = ContentId::new(data);
+        *content_id == computed_id
+    }
+
+    /// Register new content in the system with real storage
     pub async fn register_content(
         &self,
         data: &[u8],
@@ -127,6 +180,15 @@ impl ContentAddressing {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
+
+        // Store actual content data in memory and disk
+        {
+            let mut content_storage = self.content_storage.write().await;
+            content_storage.insert(content_id.clone(), data.to_vec());
+        }
+        
+        // Store content to persistent disk storage
+        self.store_content_to_disk(&content_id, data).await?;
 
         let data_size = data.len() as u64;
         let mut content_map = self.content_map.write().await;
@@ -176,6 +238,44 @@ impl ContentAddressing {
         Ok(content_id)
     }
 
+    /// Fetch actual content data by ID from storage
+    pub async fn fetch_content_data(&self, id: &ContentId) -> Result<Option<Vec<u8>>> {
+        // Try memory storage first (faster)
+        {
+            let content_storage = self.content_storage.read().await;
+            if let Some(data) = content_storage.get(id) {
+                // Verify integrity before returning
+                if self.verify_content_integrity(id, data).await {
+                    return Ok(Some(data.clone()));
+                } else {
+                    log::warn!("Content integrity check failed for {} in memory", id);
+                }
+            }
+        }
+
+        // Fall back to disk storage
+        match self.load_content_from_disk(id).await {
+            Ok(data) => {
+                // Verify integrity
+                if self.verify_content_integrity(id, &data).await {
+                    // Cache in memory for future access
+                    {
+                        let mut content_storage = self.content_storage.write().await;
+                        content_storage.insert(id.clone(), data.clone());
+                    }
+                    Ok(Some(data))
+                } else {
+                    log::error!("Content integrity check failed for {} on disk", id);
+                    Ok(None)
+                }
+            }
+            Err(e) => {
+                log::debug!("Failed to load content {} from disk: {}", id, e);
+                Ok(None)
+            }
+        }
+    }
+
     /// Find content by ID
     pub async fn find_content(&self, id: &ContentId) -> Option<ContentMetadata> {
         // Increment access count
@@ -200,21 +300,48 @@ impl ContentAddressing {
             .unwrap_or_default()
     }
 
-    /// Update content verification time
+    /// Real content verification with actual integrity checks
     pub async fn verify_content(&self, id: &ContentId, node_id: &[u8]) -> bool {
         let mut content_map = self.content_map.write().await;
         
         if let Some(metadata) = content_map.get_mut(id) {
             if metadata.locations.contains(&node_id.to_vec()) {
-                metadata.last_verified = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                true
+                // Fetch and verify actual content data
+                drop(content_map); // Release lock before async operation
+                
+                match self.fetch_content_data(id).await {
+                    Ok(Some(data)) => {
+                        // Verify content integrity
+                        let is_valid = self.verify_content_integrity(id, &data).await;
+                        
+                        if is_valid {
+                            // Update verification timestamp
+                            let mut content_map = self.content_map.write().await;
+                            if let Some(metadata) = content_map.get_mut(id) {
+                                metadata.last_verified = crate::utils::get_current_timestamp();
+                            }
+                            log::info!("Content {} verified successfully on node {}", id, hex::encode(node_id));
+                            true
+                        } else {
+                            log::error!("Content {} failed integrity check on node {}", id, hex::encode(node_id));
+                            false
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!("Content {} not found on node {}", id, hex::encode(node_id));
+                        false
+                    }
+                    Err(e) => {
+                        log::error!("Failed to fetch content {} for verification: {}", id, e);
+                        false
+                    }
+                }
             } else {
+                log::warn!("Node {} does not claim to have content {}", hex::encode(node_id), id);
                 false
             }
         } else {
+            log::warn!("Content {} not found in metadata", id);
             false
         }
     }
@@ -235,7 +362,7 @@ impl ContentAddressing {
         let content_map = self.content_map.read().await;
         
         size_idx.iter()
-            .filter(|(&size, _)| size >= min_kb && size <= max_kb)
+            .filter(|&(size, _)| *size >= min_kb && *size <= max_kb)
             .flat_map(|(_, ids)| {
                 ids.iter()
                     .filter_map(|id| content_map.get(id).map(|meta| (id.clone(), meta.clone())))
@@ -258,7 +385,7 @@ impl ContentAddressing {
     }
 
     /// Register a service
-    pub async fn register_service(&self, info: ServiceInfo, signature: Vec<u8>) -> Result<()> {
+    pub async fn register_service(&self, info: ServiceInfo, _signature: Vec<u8>) -> Result<()> {
         let mut services = self.services.write().await;
         services
             .entry(info.service_type.clone())
@@ -285,20 +412,28 @@ impl ContentAddressing {
             .collect()
     }
 
-    /// ZHTP-native content registration with DNS integration
+    /// ZHTP-native content registration with DNS integration and real content storage
     pub async fn register_content_with_dns(
         &self,
         metadata: ContentMetadata,
         dns_service: Arc<RwLock<crate::zhtp::dns::ZhtpDNS>>,
         node_keypair: &crate::zhtp::crypto::Keypair,
     ) -> Result<()> {
-        // Extract data and parameters from metadata for registration
-        let content_data = format!("content-{}", metadata.id).into_bytes(); // Placeholder data
+        // First, try to fetch the actual content data
+        let content_data = match self.fetch_content_data(&metadata.id).await? {
+            Some(data) => data,
+            None => {
+                // If content not found locally, create minimal metadata entry
+                log::warn!("Content {} not found locally, registering metadata only", metadata.id);
+                format!("metadata-only-{}", metadata.id).into_bytes()
+            }
+        };
+        
         let content_type = metadata.content_type.clone();
         let node_id = metadata.locations.first().cloned().unwrap_or_default();
         let tags = metadata.tags.clone();
         
-        // Register content in local system
+        // Register content in local system with actual data
         self.register_content(&content_data, content_type, node_id, tags).await?;
         
         // Register content domain in ZHTP DNS
@@ -312,8 +447,9 @@ impl ContentAddressing {
                 hasher.update(node_id);
                 let hash = hasher.finalize();
                 let port = u16::from_be_bytes([hash[0], hash[1]]);
-                format!("127.0.0.1:{}", port).parse().unwrap()
+                format!("127.0.0.1:{}", port).parse().ok()
             })
+            .filter_map(|addr| addr) // Filter out failed parses
             .collect();
         
         if !addresses.is_empty() {
@@ -371,21 +507,56 @@ impl ContentAddressing {
             .collect()
     }
 
-    /// Bulk content verification for ZHTP network integrity
+    /// Bulk content verification for ZHTP network integrity with real content checks
     pub async fn bulk_verify_content(&self, node_id: &[u8]) -> Vec<(ContentId, bool)> {
-        let content_map = self.content_map.read().await;
+        // First, collect all content IDs that this node claims to have
+        let content_ids_to_verify: Vec<(ContentId, ContentMetadata)> = {
+            let content_map = self.content_map.read().await;
+            content_map.iter()
+                .filter(|(_, metadata)| metadata.locations.iter().any(|loc| loc == node_id))
+                .map(|(id, metadata)| (id.clone(), metadata.clone()))
+                .collect()
+        };
+        
         let mut results = Vec::new();
         
-        for (id, metadata) in content_map.iter() {
-            // Check if this node has the content
-            if metadata.locations.iter().any(|loc| loc == node_id) {
-                // In a real implementation, we would fetch and verify the actual content
-                let is_valid = true; // Placeholder verification
-                results.push((id.clone(), is_valid));
-            }
+        for (id, metadata) in content_ids_to_verify {
+            // Perform real content verification
+            let is_valid = match self.fetch_content_data(&id).await {
+                Ok(Some(data)) => {
+                    // Verify content integrity by comparing hashes
+                    let computed_id = ContentId::new(&data);
+                    let hash_valid = id == computed_id;
+                    
+                    // Additional checks: file size consistency
+                    let size_valid = data.len() as u64 == metadata.size;
+                    
+                    if hash_valid && size_valid {
+                        log::debug!("Content {} passed verification (hash + size)", id);
+                        true
+                    } else {
+                        log::warn!("Content {} failed verification - hash_valid: {}, size_valid: {}", 
+                                 id, hash_valid, size_valid);
+                        false
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("Content {} not found during bulk verification", id);
+                    false
+                }
+                Err(e) => {
+                    log::error!("Error verifying content {}: {}", id, e);
+                    false
+                }
+            };
+            
+            results.push((id, is_valid));
         }
         
-        println!("✅ Bulk verification completed for {} content items", results.len());
+        let total_checked = results.len();
+        let valid_count = results.iter().filter(|(_, valid)| *valid).count();
+        println!("✅ Bulk verification completed: {}/{} content items valid", valid_count, total_checked);
+        
         results
     }
 
@@ -432,10 +603,10 @@ mod tests {
         let content_id = system
             .register_content(&test_data[..], "text/plain".to_string(), node_id.clone(), vec!["test".to_string()])
             .await
-            .unwrap();
+            .expect("Failed to register test content");
 
         // Find content
-        let metadata = system.find_content(&content_id).await.unwrap();
+        let metadata = system.find_content(&content_id).await.expect("Failed to find test content");
         assert_eq!(metadata.size, test_data.len() as u64);
         assert_eq!(metadata.content_type, "text/plain");
         assert!(metadata.locations.contains(&node_id));
@@ -447,5 +618,32 @@ mod tests {
         let locations = system.get_content_locations(&content_id).await;
         assert_eq!(locations.len(), 1);
         assert_eq!(locations[0], node_id);
+    }
+
+    #[tokio::test]
+    async fn test_real_content_fetching() {
+        let system = ContentAddressing::new();
+        let test_data = b"Real content fetching test";
+        let node_id = vec![5, 6, 7, 8];
+
+        // Register content with real storage
+        let content_id = system
+            .register_content(&test_data[..], "application/test".to_string(), node_id.clone(), vec!["real-test".to_string()])
+            .await
+            .expect("Failed to register test content");
+
+        // Fetch actual content data
+        let fetched_data = system.fetch_content_data(&content_id).await
+            .expect("Failed to fetch content")
+            .expect("Content not found");
+
+        // Verify the fetched data matches original
+        assert_eq!(fetched_data, test_data);
+
+        // Test bulk verification
+        let verification_results = system.bulk_verify_content(&node_id).await;
+        assert_eq!(verification_results.len(), 1);
+        assert_eq!(verification_results[0].0, content_id);
+        assert!(verification_results[0].1); // Should be valid
     }
 }

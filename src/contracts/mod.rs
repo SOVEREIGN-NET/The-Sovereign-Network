@@ -76,8 +76,8 @@ pub struct ContractExecutor {
 
 fn define_memory(linker: &mut Linker<()>, store: &mut Store<()>) -> Result<()> {
     // Define minimal memory
-    let mem_type = wasmi::MemoryType::new(1, None).unwrap();
-    let memory = wasmi::Memory::new(&mut *store, mem_type).unwrap();
+    let mem_type = wasmi::MemoryType::new(1, None).map_err(|e| anyhow::anyhow!("Memory type error: {:?}", e))?;
+    let memory = wasmi::Memory::new(&mut *store, mem_type).map_err(|e| anyhow::anyhow!("Memory creation error: {:?}", e))?;
     linker.define("env", "memory", memory)?;
 
     Ok(())
@@ -110,7 +110,7 @@ impl ContractExecutor {
 
         // Create instance
         let pre_instance = linker.instantiate(&mut self.store, &module)?;
-        let instance = pre_instance.start(&mut self.store)?;
+        let _instance = pre_instance.start(&mut self.store)?;
 
         // Store contract info
         let contract = ContractInfo {
@@ -184,6 +184,7 @@ impl ContractExecutor {
 }
 
 /// Contains token contract ABI
+#[cfg(test)]
 const TOKEN_INTERFACE: &str = include_str!("../../contracts/token.json");
 
 #[cfg(test)]

@@ -48,7 +48,7 @@ impl WasmRuntime {
         let mut results = vec![Value::I32(0)];
         func.call(&mut self.store, params, &mut results)?;
             
-        Ok(match results.get(0) {
+        Ok(match results.first() {
             Some(&Value::I32(val)) => val.to_le_bytes().to_vec(),
             _ => vec![0],
         })

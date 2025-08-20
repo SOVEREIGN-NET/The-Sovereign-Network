@@ -6,9 +6,10 @@ use pqcrypto_dilithium::dilithium5::{
 use pqcrypto_kyber::kyber768;
 use pqcrypto_traits::{
     sign::{DetachedSignature as _, PublicKey as PublicKeyTrait},
-    kem::{PublicKey as _, SecretKey as _, SharedSecret as _, Ciphertext as _},
+    kem::{PublicKey as _, SharedSecret as _, Ciphertext as _},
 };
 use serde::{Deserialize, Serialize};
+use base64::Engine as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const KEY_ROTATION_INTERVAL: u64 = 24 * 60 * 60; // 24 hours in seconds
@@ -121,13 +122,29 @@ pub struct Keypair {
     pub(crate) rotation_due: u64,
 }
 
+/// Exportable representation of a keypair (raw secrets encrypted at rest by caller)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeypairExport {
+    /// Base64 Dilithium public key
+    pub dilithium_public_b64: String,
+    /// Base64 Kyber public key
+    pub kyber_public_b64: String,
+    /// Base64 Dilithium secret key (UNENCRYPTED – encrypt before persisting)
+    pub dilithium_secret_b64: String,
+    /// Base64 Kyber secret key (UNENCRYPTED – encrypt before persisting)
+    pub kyber_secret_b64: String,
+    pub created_at: u64,
+    pub rotation_due: u64,
+    pub version: u32,
+}
+
 impl Clone for Keypair {
     fn clone(&self) -> Self {
         // WARNING: Cloning keypairs should be done sparingly for security
         // Each clone creates additional copies of secret key material in memory
         Self {
-            public: self.public.clone(),
-            kyber_public: self.kyber_public.clone(),
+            public: self.public,
+            kyber_public: self.kyber_public,
             secure_secrets: SecureSecretKey {
                 dilithium_secret_bytes: self.secure_secrets.dilithium_secret_bytes.clone(),
                 kyber_secret_bytes: self.secure_secrets.kyber_secret_bytes.clone(),
@@ -446,6 +463,76 @@ impl Keypair {
     pub fn can_sign_for(&self, public_key_bytes: &[u8]) -> bool {
         self.public_key() == public_key_bytes
     }
+
+    /// Export keypair into a serializable struct. Secrets are returned UNENCRYPTED.
+    /// Caller MUST encrypt before writing to persistent storage.
+    pub fn export_unencrypted(&self) -> KeypairExport {
+        use pqcrypto_traits::sign::PublicKey as _;
+        use pqcrypto_traits::kem::PublicKey as _;
+
+        let engine = base64::prelude::BASE64_STANDARD;
+        // Reconstruct secret keys from stored bytes
+        let dilithium_secret_b64 = engine.encode(&self.secure_secrets.dilithium_secret_bytes);
+        let kyber_secret_b64 = engine.encode(&self.secure_secrets.kyber_secret_bytes);
+
+        KeypairExport {
+            dilithium_public_b64: engine.encode(self.public.as_bytes()),
+            kyber_public_b64: engine.encode(self.kyber_public.as_bytes()),
+            dilithium_secret_b64,
+            kyber_secret_b64,
+            created_at: self.created_at,
+            rotation_due: self.rotation_due,
+            version: 1,
+        }
+    }
+
+    /// Import keypair from export struct (expects UNENCRYPTED secrets already decrypted in memory)
+    pub fn import_unencrypted(export: &KeypairExport) -> Result<Self> {
+        use pqcrypto_traits::sign::{PublicKey as _, SecretKey as _};
+        use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
+        let engine = base64::prelude::BASE64_STANDARD;
+        let dilithium_pk_bytes = engine.decode(export.dilithium_public_b64.as_bytes())
+            .map_err(|_| anyhow!("Invalid base64 dilithium public"))?;
+        let kyber_pk_bytes = engine.decode(export.kyber_public_b64.as_bytes())
+            .map_err(|_| anyhow!("Invalid base64 kyber public"))?;
+        let dilithium_sk_bytes = engine.decode(export.dilithium_secret_b64.as_bytes())
+            .map_err(|_| anyhow!("Invalid base64 dilithium secret"))?;
+        let kyber_sk_bytes = engine.decode(export.kyber_secret_b64.as_bytes())
+            .map_err(|_| anyhow!("Invalid base64 kyber secret"))?;
+
+        let public = pqcrypto_dilithium::dilithium5::PublicKey::from_bytes(&dilithium_pk_bytes)
+            .map_err(|_| anyhow!("Failed to parse dilithium public"))?;
+        let kyber_public = kyber768::PublicKey::from_bytes(&kyber_pk_bytes)
+            .map_err(|_| anyhow!("Failed to parse kyber public"))?;
+        let dilithium_secret = pqcrypto_dilithium::dilithium5::SecretKey::from_bytes(&dilithium_sk_bytes)
+            .map_err(|_| anyhow!("Failed to parse dilithium secret"))?;
+        let kyber_secret = kyber768::SecretKey::from_bytes(&kyber_sk_bytes)
+            .map_err(|_| anyhow!("Failed to parse kyber secret"))?;
+
+        Ok(Keypair {
+            public,
+            kyber_public,
+            secure_secrets: SecureSecretKey::new(dilithium_secret, kyber_secret),
+            created_at: export.created_at,
+            rotation_due: export.rotation_due,
+        })
+    }
+}
+
+/// Verify a signature given only public key bytes, message and signature bytes (Dilithium5)
+/// Returns true if verification succeeds, false otherwise.
+pub fn verify_signature_bytes(public_key_bytes: &[u8], message: &[u8], signature_bytes: &[u8]) -> bool {
+    use pqcrypto_dilithium::dilithium5::{verify_detached_signature, DetachedSignature, PublicKey};
+    use pqcrypto_traits::sign::{PublicKey as _, DetachedSignature as _};
+
+    // Basic format sanity checks to avoid panics / excessive allocations
+    if public_key_bytes.is_empty() || signature_bytes.is_empty() { return false; }
+
+    // Construct types from bytes; any failure means invalid input
+    let pk = match PublicKey::from_bytes(public_key_bytes) { Ok(pk) => pk, Err(_) => return false };
+    let sig = match DetachedSignature::from_bytes(signature_bytes) { Ok(sig) => sig, Err(_) => return false };
+
+    verify_detached_signature(&sig, message, &pk).is_ok()
 }
 
 #[cfg(test)]
@@ -468,7 +555,6 @@ mod tests {
 
     #[test]
     fn test_key_encapsulation() -> Result<()> {
-        let alice_keypair = Keypair::generate();
         let bob_keypair = Keypair::generate();
 
         // Alice encapsulates a secret for Bob

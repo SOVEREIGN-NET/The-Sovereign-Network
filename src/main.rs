@@ -1,11 +1,9 @@
 use anyhow::Result;
-use pqcrypto_traits::sign::PublicKey as PqPublicKey;
 use decentralized_network::{
     zhtp::{
         Keypair, ZhtpNode, 
-        consensus_engine::{ZhtpConsensusEngine, ZkConsensusParams},
+        consensus_engine::ZhtpConsensusEngine,
         economics::ZhtpEconomics, 
-        zk_proofs::ByteRoutingProof,
         ZhtpDao, DAppLaunchpad,
         dns::ZhtpDNS,
     },
@@ -201,18 +199,24 @@ async fn main() -> Result<()> {
     // Quick genesis setup
     info!("\nInitializing blockchain...");
     let mut genesis_tx = Transaction::new("network".to_string(), "node1".to_string(), 1000.0);
-    genesis_tx.sign(b"network");
+    if let Err(e) = genesis_tx.sign(b"network") {
+        error!("Failed to sign genesis transaction: {}", e);
+    }
     blockchain.add_transaction(genesis_tx).await;
     blockchain.create_block("genesis", 1.0, None).await;
 
     // Initial fund distribution
     info!("Initial fund distribution...");
     let mut tx1 = Transaction::new("node1".to_string(), "node2".to_string(), 300.0);
-    tx1.sign(b"node1");
+    if let Err(e) = tx1.sign(b"node1") {
+        error!("Failed to sign transaction 1: {}", e);
+    }
     blockchain.add_transaction(tx1).await;
 
     let mut tx2 = Transaction::new("node1".to_string(), "node3".to_string(), 300.0);
-    tx2.sign(b"node1");
+    if let Err(e) = tx2.sign(b"node1") {
+        error!("Failed to sign transaction 2: {}", e);
+    }
     blockchain.add_transaction(tx2).await;
     blockchain.create_block("node1", 1.0, None).await;
 
@@ -260,7 +264,9 @@ async fn main() -> Result<()> {
         println!("14. Exit");
 
         print!("\nChoice (1-14): ");
-        io::stdout().flush().unwrap();
+        if let Err(e) = io::stdout().flush() {
+            eprintln!("Failed to flush stdout: {}", e);
+        }
         
         let choice = match CliValidator::read_menu_choice("", 14) {
             Ok(c) => c.to_string(),
@@ -317,7 +323,9 @@ async fn main() -> Result<()> {
                     Ok(result) => {
                         if result {
                             let mut store_tx = Transaction::new("network".to_string(), "node1".to_string(), 0.0);
-                            store_tx.sign(b"network");
+                            if let Err(e) = store_tx.sign(b"network") {
+                                error!("Failed to sign storage transaction: {}", e);
+                            }
                             blockchain.add_transaction(store_tx).await;
                             blockchain.create_block("node1", 1.0, None).await;
                             println!("Storage operation completed with PQ signatures");
@@ -362,12 +370,18 @@ async fn main() -> Result<()> {
                     continue;
                 }
 
-                let content_id = storage.store_content(
+                let content_id = match storage.store_content(
                     content.clone(),
                     "text/plain".to_string(),
                     "node1",
                     tags,
-                ).await.unwrap();
+                ).await {
+                    Ok(id) => id,
+                    Err(e) => {
+                        eprintln!("Failed to store content: {}", e);
+                        continue;
+                    }
+                };
 
                 println!("\nContent stored successfully!");
                 println!("Content ID: {:?}", content_id);
@@ -400,9 +414,14 @@ async fn main() -> Result<()> {
                 match search_choice {
                     1 => {
                         print!("Enter content type to search (e.g., text/plain): ");
-                        io::stdout().flush().unwrap();
+                        if let Err(e) = io::stdout().flush() {
+                            eprintln!("Failed to flush stdout: {}", e);
+                        }
                         let mut content_type = String::new();
-                        io::stdin().read_line(&mut content_type).unwrap();
+                        if let Err(e) = io::stdin().read_line(&mut content_type) {
+                            eprintln!("Failed to read input: {}", e);
+                            continue;
+                        }
                         
                         println!("\nSearching for content type: {}", content_type);
                         let results = storage.search_content_by_type(&content_type).await;
@@ -560,10 +579,15 @@ async fn main() -> Result<()> {
             6 => {
                 println!("\nViewing popular content...");
                 print!("Enter minimum access count: ");
-                io::stdout().flush().unwrap();
+                if let Err(e) = io::stdout().flush() {
+                    eprintln!("Failed to flush stdout: {}", e);
+                }
                 
                 let mut min_access = String::new();
-                io::stdin().read_line(&mut min_access).unwrap();
+                if let Err(e) = io::stdin().read_line(&mut min_access) {
+                    eprintln!("Failed to read input: {}", e);
+                    continue;
+                }
                 let min_count = min_access.trim().parse().unwrap_or(100);
                 
                 let popular = storage.get_popular_content(min_count).await;
@@ -583,7 +607,10 @@ async fn main() -> Result<()> {
             7 => {
                 println!("\nCreating signed transaction...");
                 let mut tx = Transaction::new("node1".to_string(), "node2".to_string(), 50.0);
-                tx.sign(b"node1");
+                if let Err(e) = tx.sign(b"node1") {
+                    error!("Failed to sign transaction: {}", e);
+                    continue;
+                }
                 if blockchain.add_transaction(tx).await {
                     blockchain.create_block("node1", 1.0, None).await;
                     println!("\n=== Blockchain Status ===");
@@ -676,9 +703,14 @@ async fn main() -> Result<()> {
                 println!("   • Community rewards");
                 
                 print!("\nWould you like to simulate deploying a DApp? (yes/no): ");
-                io::stdout().flush().unwrap();
+                if let Err(e) = io::stdout().flush() {
+                    eprintln!("Failed to flush stdout: {}", e);
+                }
                 let mut deploy = String::new();
-                io::stdin().read_line(&mut deploy).unwrap();
+                if let Err(e) = io::stdin().read_line(&mut deploy) {
+                    eprintln!("Failed to read input: {}", e);
+                    continue;
+                }
                 
                 if deploy.trim().to_lowercase() == "yes" {
                     println!("🔧 Simulating DApp deployment...");
@@ -738,9 +770,14 @@ async fn main() -> Result<()> {
                 println!("   Early adopter program: 2x rewards for first year");
                 
                 print!("\nInterested in becoming a node operator? (yes/no): ");
-                io::stdout().flush().unwrap();
+                if let Err(e) = io::stdout().flush() {
+                    eprintln!("Failed to flush stdout: {}", e);
+                }
                 let mut interested = String::new();
-                io::stdin().read_line(&mut interested).unwrap();
+                if let Err(e) = io::stdin().read_line(&mut interested) {
+                    eprintln!("Failed to read input: {}", e);
+                    continue;
+                }
                 
                 if interested.trim().to_lowercase() == "yes" {
                     println!("\n🚀 Node Setup Process:");

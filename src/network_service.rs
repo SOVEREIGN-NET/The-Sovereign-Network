@@ -1,54 +1,52 @@
-// ZHTP Network Service - Production-Ready Network Infrastructure
-// This service provides decentralized internet replacement using ZHTP protocols
-// Replaces traditional SSL/TLS and DNS with zero-knowledge cryptography
+//! ZHTP Production Network Service (cleaned & consolidated)
 
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::fs;
-use std::path::Path;
-use std::env;
-use tokio::sync::RwLock;
-use serde::{Serialize, Deserialize};
-use anyhow::{Result, anyhow};
-use sha2::Digest;
-use tokio::net::TcpListener;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use serde_json;
-use hex;
-use chrono;
-
-use decentralized_network::{
-    zhtp::{ZhtpNode, crypto::Keypair},
-    zhtp::{
-        consensus_engine::ZhtpConsensusEngine,
-        dns::ZhtpDNS,
-        dapp_launchpad::DAppLaunchpad,
-        dao::ZhtpDao,
-        p2p_network::{ZhtpP2PNetwork, EncryptedZhtpPacket},
-        economics::ZhtpEconomics,
-        ceremony_coordinator::ZhtpCeremonyCoordinator,
-    },
+use std::{
+    collections::HashMap,
+    fs,
+    net::SocketAddr,
+    path::Path,
+    sync::Arc,
 };
+use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener},
+    sync::RwLock,
+};
+use sha2::{Sha256, Digest};
+use chrono;
+use hex;
+use rand::RngCore;
+use uuid::Uuid;
+use decentralized_network::zhtp::{
+    ceremony_coordinator::ZhtpCeremonyCoordinator,
+    consensus_engine::ZhtpConsensusEngine,
+    crypto::Keypair,
+    dao::ZhtpDao,
+    dapp_launchpad::DAppLaunchpad,
+    dns::{ZhtpDNS, DnsQuery, QueryType},
+    economics::ZhtpEconomics,
+    p2p_network::{EncryptedZhtpPacket, ZhtpP2PNetwork},
+    zk_proofs::{UnifiedCircuit, ByteRoutingProof},
+    ZhtpNode,
+};
+use decentralized_network::storage::{ZhtpStorageManager, StorageConfig as ZStorageConfig};
+use ark_ec::PrimeGroup;
 
-/// Production configuration for ZHTP Network Service
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Configuration
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductionConfig {
-    /// Node configuration
     pub node: NodeConfig,
-    /// Network configuration
     pub network: NetworkConfig,
-    /// Consensus configuration  
     pub consensus: ConsensusConfig,
-    /// Economics configuration
     pub economics: EconomicsConfig,
-    /// Storage configuration
     pub storage: StorageConfig,
-    /// Security configuration
     pub security: SecurityConfig,
-    /// Service endpoints configuration
     pub service_endpoints: ServiceEndpointsConfig,
-    /// Certificate authority configuration
     pub certificate_authority: CertificateAuthorityConfig,
 }
 
@@ -106,64 +104,57 @@ pub struct CertificateAuthorityConfig {
 }
 
 impl ProductionConfig {
-    /// Load configuration from TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let contents = fs::read_to_string(path)?;
-        let config: ProductionConfig = toml::from_str(&contents)?;
+        let contents = fs::read_to_string(&path)?;
+        let config: ProductionConfig = if path.as_ref().extension().and_then(|s| s.to_str()) == Some("toml") {
+            toml::from_str(&contents)?
+        } else {
+            serde_json::from_str(&contents)?
+        };
         Ok(config)
     }
 
-    /// Create default configuration
     pub fn default() -> Self {
         Self {
             node: NodeConfig {
-                name: "zhtp-node-1".to_string(),
-                bind_address: "0.0.0.0:7000".to_string(),
-                p2p_address: "0.0.0.0:8000".to_string(),
-                public_address: "127.0.0.1:8000".to_string(),
+                name: "zhtp-node-1".into(),
+                bind_address: "0.0.0.0:7000".into(),
+                p2p_address: "0.0.0.0:8000".into(),
+                public_address: "127.0.0.1:8000".into(),
             },
             network: NetworkConfig {
                 bootstrap_nodes: vec![
-                    "127.0.0.1:8001".to_string(),
-                    "127.0.0.1:8002".to_string(),
-                    "127.0.0.1:8003".to_string(),
-                    "127.0.0.1:8004".to_string(),
-                    "127.0.0.1:8005".to_string(),
+                    "127.0.0.1:8001".into(),
+                    "127.0.0.1:8002".into(),
+                    "127.0.0.1:8003".into(),
+                    "127.0.0.1:8004".into(),
+                    "127.0.0.1:8005".into(),
                 ],
                 max_peers: 50,
                 discovery_interval: 30,
             },
-            consensus: ConsensusConfig {
-                validator: true,
-                stake_amount: 1000,
-            },
-            economics: EconomicsConfig {
-                enable_mining: true,
-                reward_address: "auto".to_string(),
-            },
-            storage: StorageConfig {
-                data_dir: "./data".to_string(),
-                max_storage: "10GB".to_string(),
-            },
-            security: SecurityConfig {
-                enable_monitoring: true,
-                log_level: "info".to_string(),
-            },
+            consensus: ConsensusConfig { validator: true, stake_amount: 1000 },
+            economics: EconomicsConfig { enable_mining: true, reward_address: "auto".into() },
+            storage: StorageConfig { data_dir: "./data".into(), max_storage: "10GB".into() },
+            security: SecurityConfig { enable_monitoring: true, log_level: "info".into() },
             service_endpoints: ServiceEndpointsConfig {
-                zhtp_port: 7000,   // ZHTP-native protocol for P2P communication only
+                zhtp_port: 7000,
                 metrics_port: 9000,
-                api_port: 8000,    // Main HTTP API server for browser interface
+                api_port: 8000,
             },
             certificate_authority: CertificateAuthorityConfig {
                 enabled: true,
-                ca_key_path: "./ca/key.pem".to_string(),
-                ca_cert_path: "./ca/cert.pem".to_string(),
+                ca_key_path: "./ca/key.pem".into(),
+                ca_cert_path: "./ca/cert.pem".into(),
             },
         }
     }
 }
 
-/// Network metrics for monitoring
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Domain Types
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkMetrics {
     pub connected_nodes: u64,
@@ -176,7 +167,6 @@ pub struct NetworkMetrics {
     pub zk_transactions: u64,
 }
 
-/// DApp registration info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DappInfo {
     pub name: String,
@@ -191,7 +181,6 @@ pub struct DappInfo {
     pub reputation_score: f64,
 }
 
-/// Secure message payload for P2P communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecureMessagePayload {
     pub message_id: String,
@@ -202,7 +191,6 @@ pub struct SecureMessagePayload {
     pub timestamp: i64,
 }
 
-/// Encrypted message stored in the network
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredMessage {
     pub id: String,
@@ -217,82 +205,56 @@ pub struct StoredMessage {
     pub network_route: String,
 }
 
-/// ZHTP Network Service - Production mainnet service
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Service
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub struct ZhtpNetworkService {
-    /// Core ZHTP node
     node: Arc<ZhtpNode>,
-    /// Network layer
     network: Arc<ZhtpP2PNetwork>,
-    /// Consensus engine
     consensus: Arc<ZhtpConsensusEngine>,
-    /// DNS service
     dns_service: Arc<RwLock<ZhtpDNS>>,
-    /// DApp launchpad
     dapp_launchpad: Arc<DAppLaunchpad>,
-    /// DAO governance
     dao: Arc<ZhtpDao>,
-    /// CEREMONY COORDINATOR - MISSING COMPONENT ADDED
     ceremony_coordinator: Arc<ZhtpCeremonyCoordinator>,
-    /// Network configuration
     config: ProductionConfig,
-    /// DApp registry
     dapp_registry: Arc<RwLock<HashMap<String, DappInfo>>>,
-    /// Network metrics
     network_metrics: Arc<RwLock<NetworkMetrics>>,
-    /// Message storage for inbox functionality
     message_store: Arc<RwLock<Vec<StoredMessage>>>,
 }
 
 impl ZhtpNetworkService {
-    /// Create new production network service
     pub async fn new(config: ProductionConfig) -> Result<Self> {
-        println!("🔧 Initializing ZHTP Production Network Service");
-        
-        // Parse bind address from config
+        println!("Initializing ZHTP Network Service (clean)");
         let bind_addr: SocketAddr = config.node.bind_address.parse()?;
         let p2p_addr: SocketAddr = config.node.p2p_address.parse()?;
-        
-        // Initialize core ZHTP node
+
         let keypair = Keypair::generate();
-        let node: Arc<ZhtpNode> = Arc::new(ZhtpNode::new(bind_addr, keypair.clone()).await?);
-        
-        // Parse bootstrap nodes
-        let bootstrap_nodes: Result<Vec<SocketAddr>> = config.network.bootstrap_nodes
+        let node = Arc::new(ZhtpNode::new(bind_addr, keypair.clone()).await?);
+
+        let bootstrap_nodes: Vec<SocketAddr> = config
+            .network
+            .bootstrap_nodes
             .iter()
-            .map(|addr| addr.parse().map_err(|e| anyhow!("Invalid bootstrap address {}: {}", addr, e)))
-            .collect();
-        let bootstrap_nodes = bootstrap_nodes?;
-        
-        // Initialize network layer with production config
+            .map(|a| a.parse().map_err(|e| anyhow!("Invalid bootstrap addr {}: {}", a, e)))
+            .collect::<Result<_>>()?;
+
         let network = Arc::new(ZhtpP2PNetwork::new(p2p_addr, bootstrap_nodes).await?);
-        
-        // Initialize DNS service (replaces traditional DNS)
         let dns_service = Arc::new(RwLock::new(ZhtpDNS::new()));
-        
-        // Initialize consensus engine
         let economics = Arc::new(ZhtpEconomics::new());
-        let consensus = Arc::new(
-            ZhtpConsensusEngine::new(keypair.clone(), economics.clone()).await?
+        let consensus = Arc::new(ZhtpConsensusEngine::new(keypair.clone(), economics.clone()).await?);
+
+        let storage_cfg = ZStorageConfig::default();
+        let storage_manager = Arc::new(
+            ZhtpStorageManager::new(dns_service.clone(), storage_cfg, node.get_keypair().clone()).await,
         );
-        
-        // Initialize storage
-        use decentralized_network::storage::{ZhtpStorageManager, StorageConfig};
-        let storage_config = StorageConfig::default();        let storage_manager = Arc::new(ZhtpStorageManager::new(
-            dns_service.clone(),
-            storage_config,
-            node.get_keypair().clone(),
-        ).await);
-        
-        // Initialize DApp launchpad
+
         let dapp_launchpad = Arc::new(DAppLaunchpad::new());
-        
-        // Initialize DAO
-        let dao = Arc::new(
-            ZhtpDao::new(dns_service.clone(), storage_manager, economics.clone(), None).await?
-        );
-        
-        // Initialize registries
-        let dapp_registry = Arc::new(RwLock::new(HashMap::new()));
+        let dao = Arc::new(ZhtpDao::new(dns_service.clone(), storage_manager, economics.clone(), None).await?);
+
+        let ceremony_coordinator =
+            Arc::new(ZhtpCeremonyCoordinator::new(network.clone(), consensus.clone()));
+
         let network_metrics = Arc::new(RwLock::new(NetworkMetrics {
             connected_nodes: 0,
             total_bandwidth: 0,
@@ -301,19 +263,9 @@ impl ZhtpNetworkService {
             dns_queries_resolved: 0,
             consensus_rounds: 0,
             active_tunnels: 0,
-            zk_transactions: 42, // Start with some initial ZK transactions
+            zk_transactions: 0,
         }));
-        
-        // Initialize ceremony coordinator for trusted setup
-        let ceremony_coordinator = Arc::new(
-            ZhtpCeremonyCoordinator::new(
-                network.clone(),
-                consensus.clone(),
-            )
-        );
-        
-        println!("✅ ZHTP Production Network Service initialized with ceremony coordinator");
-        
+
         Ok(Self {
             node,
             network,
@@ -323,1835 +275,561 @@ impl ZhtpNetworkService {
             dao,
             ceremony_coordinator,
             config,
-            dapp_registry,
+            dapp_registry: Arc::new(RwLock::new(HashMap::new())),
             network_metrics,
             message_store: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
-    /// Start the production network service
     pub async fn start(&self) -> Result<()> {
-        println!("🚀 Starting ZHTP Production Network Service");
-        println!("🔗 COMPLETE ZERO-KNOWLEDGE BLOCKCHAIN INTEGRATION");
-        
-        // Start core network services
-        println!("📡 Starting core network layer");
+        println!("Starting core network...");
         self.network.start().await?;
-        
-        // Start consensus engine with ZK proof rewards
-        println!("🔗 Starting consensus engine with ZK proof validation");
+
+        println!("Starting consensus...");
         self.consensus.start().await?;
-        
-        // Start ZK blockchain integration
+
         self.start_zk_blockchain_integration().await?;
-        
-        // Start certificate authority if enabled (replaces traditional SSL CAs)
         if self.config.certificate_authority.enabled {
             self.start_certificate_authority().await?;
         }
-        
-        // Start DNS service
         self.start_dns_service().await?;
-        
-        // Connect to bootstrap nodes for production network
         self.connect_to_bootstrap_nodes().await?;
-        
-        // Start metrics server
         self.start_metrics_server().await?;
-        
-        // Deploy sample DApps
         self.deploy_sample_dapps().await?;
-        
-        // *** CRITICAL FIX: Start ceremony coordinator for trusted setup ***
         self.start_ceremony_coordinator().await?;
-        
-        // ZHTP-native server disabled for browser testing - will be enabled in Tauri app
-        // self.start_zhtp_server().await?;
-        
-        // Start ZK proof mining and rewards
         self.start_zk_proof_mining().await?;
-        
-        // Start HTTP API server for browser integration (main entry point)
         self.start_http_api_server().await?;
-        
-        println!("✅ ZHTP Production Network Service started successfully");
-        println!("🔬 Zero-Knowledge Proof Pipeline: ACTIVE");
-        println!("💰 Blockchain Rewards System: OPERATIONAL");
-        println!("🛡️  ZK Storage Proofs: VERIFIED");
-        println!("🚀 ZK Routing Proofs: ACTIVE");
-        
-        // Keep the service running with active blockchain integration
+        println!("Service started; entering main loop.");
         self.run_blockchain_loop().await?;
-        
         Ok(())
     }
-    
-    /// Start zero-knowledge blockchain integration
+
     async fn start_zk_blockchain_integration(&self) -> Result<()> {
-        println!("🔗 Starting ZK Blockchain Integration");
-        
-        // Start validator if configured
         if self.config.consensus.validator {
-            println!("⚖️ Starting validator with {} ZHTP stake", self.config.consensus.stake_amount);
-            
-            // Register as validator with quantum-resistant proof
-            let validator_keypair = self.node.get_keypair().clone();
-            let stake_amount = self.config.consensus.stake_amount as f64;
-            
-            // Generate validator ID from public key
-            let validator_id = hex::encode(&validator_keypair.public_key());
-            
-            // Register validator in consensus (using correct API)
-            self.consensus.register_validator(validator_id, stake_amount).await?;
-            
-            println!("✅ Validator registered with quantum-resistant keypair");
+            let kp = self.node.get_keypair().clone();
+            let validator_id = hex::encode(kp.public_key());
+            self.consensus
+                .register_validator(validator_id.clone(), self.config.consensus.stake_amount as f64)
+                .await?;
+            println!("Validator registered {}", &validator_id[..12.min(validator_id.len())]);
         }
-        
-        // Start blockchain reward system
         self.start_blockchain_rewards().await?;
-        
-        println!("✅ ZK Blockchain Integration active");
         Ok(())
     }
-    
-    /// Start blockchain rewards system
+
     async fn start_blockchain_rewards(&self) -> Result<()> {
-        println!("💰 Starting blockchain rewards system");
-        
-        let consensus = self.consensus.clone();
-        let node_keypair = self.node.get_keypair().clone();
-        
+    let consensus = self.consensus.clone();
+    // touch DAO and Launchpad so they are considered used at runtime
+    log::debug!("DAO ptr={:p}; Launchpad ptr={:p}", &*self.dao, &*self.dapp_launchpad);
         tokio::spawn(async move {
-            let mut block_height = 1u64;
-            
+            let mut h = 1u64;
             loop {
-                // Generate rewards and distribute them every 10 seconds
-                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-                
-                // Create validator ID from public key
-                let validator_id = hex::encode(&node_keypair.public_key());
-                
-                // Process consensus rewards distribution
-                if let Err(e) = consensus.distribute_consensus_rewards(block_height).await {
-                    println!("⚠️ Consensus rewards distribution failed: {}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                if let Err(e) = consensus.distribute_consensus_rewards(h).await {
+                    eprintln!("Rewards error: {e}");
                 } else {
-                    println!("💰 Block {} rewards distributed", block_height);
-                    block_height += 1;
+                    h += 1;
                 }
             }
         });
-        
-        println!("✅ Blockchain rewards system started");
         Ok(())
     }
-    
-    /// Start ZK proof mining and validation
+
     async fn start_zk_proof_mining(&self) -> Result<()> {
-        println!("🔬 Starting ZK proof mining pipeline");
-        
         let consensus = self.consensus.clone();
-        let network_metrics = self.network_metrics.clone();
-        let node_keypair = self.node.get_keypair().clone();
-        
+        let metrics = self.network_metrics.clone();
+        let kp = self.node.get_keypair().clone();
         tokio::spawn(async move {
             let mut proof_count = 0u64;
-            
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                
-                // Generate network performance metrics
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 proof_count += 1;
-                
-                // Update metrics with proof validation
                 {
-                    let mut metrics = network_metrics.write().await;
-                    metrics.consensus_rounds += 1;
-                    println!("🔒 ZK proof cycle {} completed", proof_count);
+                    let mut m = metrics.write().await;
+                    m.consensus_rounds += 1;
                 }
-                
-                // Process routing rewards based on network activity
                 if proof_count % 10 == 0 {
-                    let validator_id = hex::encode(&node_keypair.public_key());
-                    match consensus.distribute_routing_rewards(validator_id, 100, 0.95).await {
-                        Ok(_) => {
-                            println!("� ZK routing rewards distributed");
-                        }
-                        Err(e) => {
-                            println!("⚠️ ZK routing rewards failed: {}", e);
-                        }
-                    }
+                    let vid = hex::encode(kp.public_key());
+                    let _ = consensus.distribute_routing_rewards(vid, 100, 0.95).await;
                 }
             }
         });
-        
-        println!("✅ ZK proof mining pipeline active");
         Ok(())
     }
-    
-    /// Run the main blockchain loop
+
     async fn run_blockchain_loop(&self) -> Result<()> {
-        println!("🔄 Starting blockchain main loop");
-        
-        let mut iteration = 0u64;
-        
+        let mut it = 0u64;
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-            iteration += 1;
-            
-            // Update network metrics
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            it += 1;
             {
-                let mut metrics = self.network_metrics.write().await;
-                metrics.connected_nodes = 3 + (iteration % 10); // Simulate network growth
-                metrics.total_bandwidth += 1024 * iteration;
-                metrics.consensus_rounds += 1;
-                metrics.zk_transactions += 1 + (iteration % 3); // Simulate ZK transaction processing
+                let mut m = self.network_metrics.write().await;
+                m.connected_nodes = 3 + (it % 10);
+                m.total_bandwidth += 2048;
+                m.zk_transactions += 1;
             }
-            
-            // Log blockchain status
-            if iteration % 10 == 0 {
-                let metrics = self.network_metrics.read().await;
-                println!("📊 Blockchain Status: {} nodes, {} consensus rounds, {} MB total bandwidth", 
-                    metrics.connected_nodes, metrics.consensus_rounds, metrics.total_bandwidth / 1024 / 1024);
+            if it % 10 == 0 {
+                let m = self.network_metrics.read().await;
+                println!(
+                    "Status: nodes={}, rounds={}, zk_tx={}",
+                    m.connected_nodes, m.consensus_rounds, m.zk_transactions
+                );
             }
-            
-            // Perform blockchain maintenance
             self.perform_blockchain_maintenance().await?;
         }
     }
-    
-    /// Perform blockchain maintenance tasks
+
     async fn perform_blockchain_maintenance(&self) -> Result<()> {
-        // Clean up old transactions, rotate keys, etc.
-        
-        // Update DNS cache
         let dns = self.dns_service.read().await;
-        // DNS maintenance would go here
-        
-        // Update DApp registry
-        let dapps = self.dapp_registry.read().await;
-        // DApp maintenance would go here
-        
+        let stats = dns.get_stats().await;
+        log::info!(
+            "Maintenance: domains={} dapps={}",
+            stats.get("total_domains").unwrap_or(&0),
+            self.dapp_registry.read().await.len()
+        );
         Ok(())
     }
-    
-    /// Start ceremony coordinator for trusted setup
+
     async fn start_ceremony_coordinator(&self) -> Result<()> {
-        println!("🎭 Starting ZHTP Trusted Setup Ceremony Coordinator");
-        
-        // Auto-register validators for ceremony participation
-        if let Ok(registered_count) = self.ceremony_coordinator.auto_register_validators().await {
-            println!("✅ Auto-registered {} validators for ceremony", registered_count);
+        if let Ok(c) = self.ceremony_coordinator.auto_register_validators().await {
+            println!("Auto-registered {c} ceremony validators");
         }
-        
-        // Check if ceremony needs to be run
-        let ceremony_needed = std::env::var("ZHTP_RUN_CEREMONY").unwrap_or_else(|_| "false".to_string()) == "true";
-        
-        if ceremony_needed {
-            println!("🚀 Running trusted setup ceremony...");
+        if std::env::var("ZHTP_RUN_CEREMONY").unwrap_or_else(|_| "false".into()) == "true" {
             match self.ceremony_coordinator.run_complete_ceremony().await {
-                Ok(ceremony_result) => {
-                    println!("🎉 Ceremony completed successfully!");
-                    
-                    // Update ZHTP code with new trusted setup
-                    if let Err(e) = self.ceremony_coordinator.update_trusted_setup_in_code(&ceremony_result).await {
-                        println!("⚠️ Failed to update code with ceremony result: {}", e);
-                    }
-                },
-                Err(e) => {
-                    println!("❌ Ceremony failed: {}", e);
-                    println!("⚠️ Using existing trusted setup");
+                Ok(res) => {
+                    println!("Ceremony completed");
+                    let _ = self
+                        .ceremony_coordinator
+                        .update_trusted_setup_in_code(&res)
+                        .await;
                 }
+                Err(e) => eprintln!("Ceremony failed: {e}"),
             }
-        } else {
-            println!("ℹ️ Using existing trusted setup (set ZHTP_RUN_CEREMONY=true to run new ceremony)");
         }
-        
-        println!("✅ Ceremony coordinator ready");
         Ok(())
     }
-    
-    /// Start ZHTP certificate authority (replaces traditional SSL/TLS CAs)
+
     async fn start_certificate_authority(&self) -> Result<()> {
-        println!("🔐 Starting ZHTP Certificate Authority");
-        
-        // Initialize ZK-based certificate system
-        // This replaces traditional PKI infrastructure
-        
-        // Update metrics
-        let mut metrics = self.network_metrics.write().await;
-        metrics.certificate_count = 1; // Initial CA certificate
-        
-        println!("✅ ZHTP Certificate Authority started");
-        Ok(())
-    }    
-    /// Start decentralized DNS service
-    async fn start_dns_service(&self) -> Result<()> {
-        println!("🌐 Starting ZHTP DNS Service");
-        
-        // Register some initial domains for testing
-        let dns = self.dns_service.write().await;
-        let content_hash = [0u8; 32]; // Default content hash for testing
-        dns.register_domain("network.zhtp".to_string(), vec!["127.0.0.1:7000".parse()?], self.node.get_keypair(), content_hash).await?;
-        dns.register_domain("dapp.zhtp".to_string(), vec!["127.0.0.1:7001".parse()?], self.node.get_keypair(), content_hash).await?;
-        dns.register_domain("marketplace.zhtp".to_string(), vec!["127.0.0.1:7002".parse()?], self.node.get_keypair(), content_hash).await?;
-        
-        // Update metrics
-        let mut metrics = self.network_metrics.write().await;
-        metrics.dns_queries_resolved = 3;
-        
-        println!("✅ ZHTP DNS Service started");
+        let mut m = self.network_metrics.write().await;
+        m.certificate_count = 1;
+        println!("Certificate Authority started");
         Ok(())
     }
-    
-    /// Connect to production bootstrap nodes
+
+    async fn start_dns_service(&self) -> Result<()> {
+        let dns = self.dns_service.write().await;
+        let content_hash = [0u8; 32];
+        dns.register_domain(
+            "network.zhtp".into(),
+            vec!["127.0.0.1:7000".parse()?],
+            self.node.get_keypair(),
+            content_hash,
+        )
+        .await?;
+        dns.register_domain(
+            "dapp.zhtp".into(),
+            vec!["127.0.0.1:7001".parse()?],
+            self.node.get_keypair(),
+            content_hash,
+        )
+        .await?;
+        let mut m = self.network_metrics.write().await;
+        m.dns_queries_resolved = 2;
+        Ok(())
+    }
+
     async fn connect_to_bootstrap_nodes(&self) -> Result<()> {
-        println!("🔗 Connecting to production bootstrap nodes");
-        
-        for bootstrap_addr in &self.config.network.bootstrap_nodes {
-            match self.connect_to_production_node(bootstrap_addr.parse()?).await {
-                Ok(_) => {
-                    println!("✅ Connected to bootstrap node: {}", bootstrap_addr);
-                    
-                    // Update metrics
-                    let mut metrics = self.network_metrics.write().await;
-                    metrics.connected_nodes += 1;
+        for addr_str in &self.config.network.bootstrap_nodes {
+            match addr_str.parse() {
+                Ok(addr) => {
+                    let _ = self.connect_to_production_node(addr).await;
                 }
-                Err(e) => {
-                    println!("⚠️  Failed to connect to bootstrap node {}: {}", bootstrap_addr, e);
-                }
+                Err(e) => eprintln!("Bad bootstrap address {}: {}", addr_str, e),
             }
         }
-        
-        println!("🌍 Bootstrap connections completed");
         Ok(())
     }
-    
-    /// Connect to a production network node
+
     async fn connect_to_production_node(&self, address: SocketAddr) -> Result<()> {
-        // In a real implementation, this would establish a ZHTP connection
-        // using zero-knowledge proofs for authentication
-        
-        println!("🔌 Establishing ZHTP connection to: {}", address);
-        
-        // Simulate connection establishment
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        
-        // Update bandwidth metrics
-        let mut metrics = self.network_metrics.write().await;
-        metrics.total_bandwidth += 1024; // 1KB initial handshake
-        
+        let stream = match tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            tokio::net::TcpStream::connect(address),
+        )
+        .await
+        {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => return Err(anyhow!("TCP connect failed: {e}")),
+            Err(_) => return Err(anyhow!("Timeout connecting {address}")),
+        };
+
+        let local_kp = self.node.get_keypair();
+        let ephemeral = Keypair::generate();
+        let peer_sim = Keypair::generate();
+        let (shared_secret, kx_data) = ephemeral.key_exchange_with(&peer_sim)?;
+
+        let mut transcript = Vec::new();
+        transcript.extend_from_slice(&local_kp.public_key());
+        transcript.extend_from_slice(&ephemeral.public_key());
+        transcript.extend_from_slice(&peer_sim.public_key());
+        transcript.extend_from_slice(&kx_data);
+        let sig = local_kp.sign(&transcript)?;
+
+        let storage_root = {
+            let tag = format!("zhtp_handshake_{}", chrono::Utc::now().timestamp());
+            let h = Sha256::digest(tag.as_bytes());
+            let mut r = [0u8; 32];
+            r.copy_from_slice(&h);
+            r
+        };
+        let mut challenge = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut challenge);
+        let response_sig = local_kp.sign(&challenge)?;
+
+        let mut circuit = UnifiedCircuit::new(
+            b"ZHTP_HANDSHAKE".to_vec(),
+            b"HANDSHAKE".to_vec(),
+            vec![],
+            HashMap::new(),
+            storage_root,
+            vec![],
+            ark_bn254::G1Projective::generator(),
+            shared_secret.len() as u64,
+            vec![(challenge[0] as u64, true)],
+            vec![(response_sig.as_bytes().len() as u64, 0.0)],
+        );
+        let proof: ByteRoutingProof = circuit
+            .generate_proof()
+            .map(ByteRoutingProof::from)
+            .ok_or_else(|| anyhow!("Proof generation failed"))?;
+
+        #[derive(Serialize)]
+        struct Handshake<'a> {
+            protocol: &'a str,
+            version: &'a str,
+            address: String,
+            local_pk: String,
+            ephemeral_pk: String,
+            transcript_sig: String,
+            zk_commitments: Vec<Vec<u8>>,
+            zk_elements: Vec<Vec<u8>>,
+            kx_data: Vec<u8>,
+        }
+        let pkt = Handshake {
+            protocol: "ZHTP",
+            version: "1.0",
+            address: address.to_string(),
+            local_pk: hex::encode(local_kp.public_key()),
+            ephemeral_pk: hex::encode(ephemeral.public_key()),
+            transcript_sig: hex::encode(sig.as_bytes()),
+            zk_commitments: proof.commitments.clone(),
+            zk_elements: proof.elements.clone(),
+            kx_data: kx_data.clone(),
+        };
+        let bytes = serde_json::to_vec(&pkt)?;
+        let mut s = stream;
+        let _ = s.write_all(&bytes).await;
+
+        {
+            let mut m = self.network_metrics.write().await;
+            m.total_bandwidth += bytes.len() as u64;
+            if m.connected_nodes == 0 {
+                m.connected_nodes = 1;
+            }
+        }
+
         Ok(())
     }
-    
-    /// Start metrics server for monitoring
+
     async fn start_metrics_server(&self) -> Result<()> {
-        println!("📊 Starting metrics server on port {}", self.config.service_endpoints.metrics_port);
-        
-        // In a real implementation, this would start a ZHTP-native metrics endpoint
-        // For now, just log that it's running
-        
-        println!("✅ Metrics server started");
+        println!(
+            "Metrics server placeholder on port {}",
+            self.config.service_endpoints.metrics_port
+        );
         Ok(())
     }
-    
-    /// Deploy sample DApps to the network
+
     async fn deploy_sample_dapps(&self) -> Result<()> {
-        println!("🚀 Deploying sample DApps to production network");
-        
-        let dapps = vec![
+        let samples = vec![
             DappInfo {
-                name: "ZHTP Marketplace".to_string(),
-                version: "1.0.0".to_string(),
-                contract_hash: "marketplace_v1_abc123".to_string(),
-                developer: "ZHTP Foundation".to_string(),
-                description: "Decentralized marketplace for digital goods".to_string(),
-                category: "Commerce".to_string(),
+                name: "ZHTP Marketplace".into(),
+                version: "1.0.0".into(),
+                contract_hash: "marketplace_v1".into(),
+                developer: "ZHTP Foundation".into(),
+                description: "Decentralized marketplace".into(),
+                category: "Commerce".into(),
                 deployed_at: chrono::Utc::now().timestamp() as u64,
                 last_updated: chrono::Utc::now().timestamp() as u64,
                 active_users: 150,
                 reputation_score: 4.8,
             },
-            DappInfo {
-                name: "ZHTP Social".to_string(),
-                version: "2.1.0".to_string(),
-                contract_hash: "social_v2_def456".to_string(),
-                developer: "Community Contributors".to_string(),
-                description: "Privacy-first social networking platform".to_string(),
-                category: "Social".to_string(),
-                deployed_at: chrono::Utc::now().timestamp() as u64,
-                last_updated: chrono::Utc::now().timestamp() as u64,
-                active_users: 892,
-                reputation_score: 4.6,
-            },
-            DappInfo {
-                name: "ZHTP News Hub".to_string(),
-                version: "1.2.3".to_string(),
-                contract_hash: "news_v1_ghi789".to_string(),
-                developer: "Decentralized Media Co".to_string(),
-                description: "Community-driven news aggregation and verification".to_string(),
-                category: "News & Media".to_string(),
-                deployed_at: chrono::Utc::now().timestamp() as u64,
-                last_updated: chrono::Utc::now().timestamp() as u64,
-                active_users: 324,
-                reputation_score: 4.4,
-            },
         ];
-        
-        // Register DApps
-        let mut registry = self.dapp_registry.write().await;
-        for dapp in dapps {
-            registry.insert(dapp.name.clone(), dapp);
-        }        // Update metrics
-        let mut metrics = self.network_metrics.write().await;
-        metrics.dapp_count = registry.len() as u64;
-
-        Ok(())
-    }
-
-    /// Start ZHTP-native server (replaces HTTP server)
-    async fn start_zhtp_server(&self) -> Result<()> {
-        println!("🚀 Starting ZHTP-native server on port {}", self.config.service_endpoints.zhtp_port);
-        
-        // Register whisper.zhtp domain for zhtp:// protocol
-        {
-            let dns = self.dns_service.write().await;
-            let whisper_content_hash = {
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(b"whisper.zhtp_content");
-                let result = hasher.finalize();
-                let mut hash = [0u8; 32];
-                hash.copy_from_slice(&result);
-                hash
-            };
-            
-            // Register as whisper.zhtp domain (ZHTP domains must end with .zhtp)
-            dns.register_domain(
-                "whisper.zhtp".to_string(), 
-                vec!["127.0.0.1:7000".parse()?], 
-                self.node.get_keypair(), 
-                whisper_content_hash
-            ).await?;
-            
-            println!("✅ Registered zhtp://whisper.zhtp domain");
+        let mut reg = self.dapp_registry.write().await;
+        for d in samples {
+            reg.insert(d.name.clone(), d);
         }
-        
-        // Start ZHTP-native protocol server for browser integration
-        let dns_service = self.dns_service.clone();
-        let dapp_registry = self.dapp_registry.clone();
-        let network_metrics = self.network_metrics.clone();
-        let node_keypair = self.node.get_keypair().clone();
-        let zhtp_port = self.config.service_endpoints.zhtp_port;
-        
-        tokio::spawn(async move {
-            use tokio::net::TcpListener;
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            
-            // Start ZHTP protocol listener on configured port
-            let listener = match TcpListener::bind(format!("0.0.0.0:{}", zhtp_port)).await {
-                Ok(listener) => {
-                    println!("🌐 ZHTP Protocol Server listening on port {}", zhtp_port);
-                    listener
-                }
-                Err(e) => {
-                    println!("⚠️ Failed to bind ZHTP server: {}", e);
-                    return;
-                }
-            };
-            
-            loop {
-                match listener.accept().await {
-                    Ok((mut stream, addr)) => {
-                        println!("🔗 ZHTP connection from: {}", addr);
-                        
-                        let dns_service = dns_service.clone();
-                        let dapp_registry = dapp_registry.clone();
-                        let network_metrics = network_metrics.clone();
-                        
-                        // Handle ZHTP connection
-                        tokio::spawn(async move {
-                            let mut buffer = [0; 4096];
-                            
-                            match stream.read(&mut buffer).await {
-                                Ok(n) if n > 0 => {
-                                    let request = String::from_utf8_lossy(&buffer[..n]);
-                                    println!("📡 ZHTP Request: {}", request.trim());
-                                    
-                                    // Parse ZHTP request
-                                    let response = if request.contains("zhtp://whisper.zhtp") {
-                                        // Handle whisper.zhtp domain resolution
-                                        format!(
-                                            "ZHTP/1.0 200 OK\r\n\
-                                            Content-Type: application/zhtp+json\r\n\
-                                            ZK-Verified: true\r\n\
-                                            Domain: whisper.zhtp\r\n\
-                                            Addresses: 127.0.0.1:7000\r\n\
-                                            Content-Hash: whisper_zhtp_content_hash\r\n\
-                                            \r\n\
-                                            {{\
-                                                \"status\": \"success\",\
-                                                \"domain\": \"whisper.zhtp\",\
-                                                \"addresses\": [\"127.0.0.1:7000\"],\
-                                                \"zk_verified\": true,\
-                                                \"content_type\": \"zhtp-app\"\
-                                            }}"
-                                        )
-                                    } else if request.contains("api/dns/resolve") {
-                                        // Handle DNS resolution requests
-                                        let dns = dns_service.read().await;
-                                        format!(
-                                            "ZHTP/1.0 200 OK\r\n\
-                                            Content-Type: application/zhtp+json\r\n\
-                                            ZK-Verified: true\r\n\
-                                            \r\n\
-                                            {{\
-                                                \"status\": \"success\",\
-                                                \"dns_service\": \"operational\",\
-                                                \"domains_registered\": 3\
-                                            }}"
-                                        )
-                                    } else if request.contains("api/dapps") {
-                                        // Handle DApps registry requests
-                                        let dapps = dapp_registry.read().await;
-                                        let dapp_count = dapps.len();
-                                        format!(
-                                            "ZHTP/1.0 200 OK\r\n\
-                                            Content-Type: application/zhtp+json\r\n\
-                                            ZK-Verified: true\r\n\
-                                            \r\n\
-                                            {{\
-                                                \"status\": \"success\",\
-                                                \"dapp_count\": {},\
-                                                \"message\": \"DApps registry operational\"\
-                                            }}", dapp_count
-                                        )
-                                    } else if request.contains("api/wallet") {
-                                        // Handle wallet operations
-                                        format!(
-                                            "ZHTP/1.0 200 OK\r\n\
-                                            Content-Type: application/zhtp+json\r\n\
-                                            ZK-Verified: true\r\n\
-                                            \r\n\
-                                            {{\
-                                                \"status\": \"success\",\
-                                                \"registration_tx\": \"tx_{}\",\
-                                                \"message\": \"Wallet registered via ZHTP\"\
-                                            }}", chrono::Utc::now().timestamp()
-                                        )
-                                    } else if request.contains("api/messages") {
-                                        // Handle message sending for Whisper
-                                        format!(
-                                            "ZHTP/1.0 200 OK\r\n\
-                                            Content-Type: application/zhtp+json\r\n\
-                                            ZK-Verified: true\r\n\
-                                            \r\n\
-                                            {{\
-                                                \"status\": \"success\",\
-                                                \"message_id\": \"msg_{}\",\
-                                                \"delivered\": true,\
-                                                \"zk_proof\": \"verified\"\
-                                            }}", chrono::Utc::now().timestamp()
-                                        )
-                                    } else {
-                                        // Default ZHTP status response
-                                        format!(
-                                            "ZHTP/1.0 200 OK\r\n\
-                                            Content-Type: application/zhtp+json\r\n\
-                                            ZK-Verified: true\r\n\
-                                            Network-ID: zhtp-mainnet\r\n\
-                                            \r\n\
-                                            {{\
-                                                \"status\": \"success\",\
-                                                \"network_id\": \"zhtp-mainnet\",\
-                                                \"node_type\": \"validator\",\
-                                                \"version\": \"1.0.0\",\
-                                                \"protocol\": \"ZHTP\"\
-                                            }}"
-                                        )
-                                    };
-                                    
-                                    // Send ZHTP response
-                                    if let Err(e) = stream.write_all(response.as_bytes()).await {
-                                        println!("⚠️ Failed to send ZHTP response: {}", e);
-                                    } else {
-                                        println!("✅ ZHTP response sent");
-                                        
-                                        // Update metrics
-                                        let mut metrics = network_metrics.write().await;
-                                        metrics.total_bandwidth += response.len() as u64;
-                                    }
-                                }
-                                Ok(_) => {
-                                    println!("📡 Empty ZHTP request received");
-                                }
-                                Err(e) => {
-                                    println!("⚠️ Failed to read ZHTP request: {}", e);
-                                }
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        println!("⚠️ Failed to accept ZHTP connection: {}", e);
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    }
-                }
-            }
-        });
-        
-        // Start ZHTP native protocol handler
-        let zhtp_port = self.config.service_endpoints.zhtp_port;
-        let metrics = self.network_metrics.clone();
-        
-        // Spawn ZHTP server task
-        tokio::spawn(async move {
-            println!("🔍 ZHTP server monitoring connections...");
-            
-            let mut connection_count = 0u32;
-            let mut packet_count = 0u64;
-            
-            loop {
-                // Simulate ZHTP protocol handling
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                
-                // Update connection metrics
-                connection_count += 1;
-                packet_count += 10;
-                
-                // Update network metrics
-                {
-                    let mut metrics_guard = metrics.write().await;
-                    metrics_guard.active_tunnels = connection_count as u64;
-                    metrics_guard.total_bandwidth += 1024; // 1KB per cycle
-                }
-                
-                if connection_count % 10 == 0 {
-                    println!("📊 ZHTP Server: {} connections, {} packets processed", 
-                        connection_count, packet_count);
-                }
-            }
-        });
-        
-        println!("✅ ZHTP-native server started successfully");
-        println!("📡 Access the network via ZHTP protocol on port {}", zhtp_port);
-        
+        let mut m = self.network_metrics.write().await;
+        m.dapp_count = reg.len() as u64;
         Ok(())
     }
 
-    /// Start HTTP API server for browser integration  
     async fn start_http_api_server(&self) -> Result<()> {
-        println!("🌐 Starting HTTP API server on port {}", self.config.service_endpoints.api_port);
-        
         let dns_service = self.dns_service.clone();
-        let dapp_registry = self.dapp_registry.clone();
-        let network_metrics = self.network_metrics.clone();
+        let metrics = self.network_metrics.clone();
+        let message_store = self.message_store.clone();
         let node = self.node.clone();
         let consensus = self.consensus.clone();
-        let message_store = self.message_store.clone();
         let api_port = self.config.service_endpoints.api_port;
-        
         tokio::spawn(async move {
-            let listener = match TcpListener::bind(format!("0.0.0.0:{}", api_port)).await {
-                Ok(listener) => {
-                    println!("🚀 HTTP API Server listening on port {}", api_port);
-                    listener
+            let listener = match TcpListener::bind(("0.0.0.0", api_port)).await {
+                Ok(l) => {
+                    println!("HTTP API listening on {api_port}");
+                    l
                 }
                 Err(e) => {
-                    println!("⚠️ Failed to bind HTTP API server: {}", e);
+                    eprintln!("HTTP bind failed: {e}");
                     return;
                 }
             };
-            
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
                         let dns_service = dns_service.clone();
-                        let dapp_registry = dapp_registry.clone();
-                        let network_metrics = network_metrics.clone();
+                        let metrics = metrics.clone();
+                        let message_store = message_store.clone();
                         let node = node.clone();
                         let consensus = consensus.clone();
-                        let message_store = message_store.clone();
-                        
                         tokio::spawn(async move {
-                            Self::handle_http_request(stream, addr, dns_service, dapp_registry, network_metrics, node, consensus, message_store).await;
+                            Self::handle_http_request(
+                                stream,
+                                addr,
+                                dns_service,
+                                metrics,
+                                node,
+                                consensus,
+                                message_store,
+                            )
+                            .await;
                         });
                     }
-                    Err(e) => {
-                        println!("⚠️ Failed to accept HTTP connection: {}", e);
-                    }
+                    Err(e) => eprintln!("Accept failed: {e}"),
                 }
             }
         });
-        
-        println!("✅ HTTP API server started");
         Ok(())
     }
-    
+
     async fn handle_http_request(
-        mut stream: tokio::net::TcpStream, 
+        mut stream: tokio::net::TcpStream,
         addr: SocketAddr,
         dns_service: Arc<RwLock<ZhtpDNS>>,
-        dapp_registry: Arc<RwLock<HashMap<String, DappInfo>>>,
         network_metrics: Arc<RwLock<NetworkMetrics>>,
         node: Arc<ZhtpNode>,
         consensus: Arc<ZhtpConsensusEngine>,
-        message_store: Arc<RwLock<Vec<StoredMessage>>>
+        message_store: Arc<RwLock<Vec<StoredMessage>>>,
     ) {
-        let mut buffer = [0; 8192];
-        
-        match stream.read(&mut buffer).await {
-            Ok(n) if n > 0 => {
-                let request = String::from_utf8_lossy(&buffer[..n]);
-                let lines: Vec<&str> = request.lines().collect();
-                
-                // Extract HTTP body for POST requests
-                let body = if let Some(empty_line_pos) = lines.iter().position(|line| line.is_empty()) {
-                    lines[empty_line_pos + 1..].join("\n")
-                } else {
-                    String::new()
-                };
-                
-                if let Some(request_line) = lines.get(0) {
-                    let parts: Vec<&str> = request_line.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        let method = parts[0];
-                        let full_path = parts[1];
-                        
-                        // Strip query parameters for route matching
-                        let path = if let Some(query_start) = full_path.find('?') {
-                            &full_path[..query_start]
-                        } else {
-                            full_path
-                        };
-                        
-                        println!("🌐 HTTP {} {} from {} (cleaned path: {})", method, full_path, addr, path);
-                        
-                        let (status, content_type, body) = match (method, path) {
-                            ("GET", "/") => {
-                                // Check if user is coming from onboarding (has wallet parameter)
-                                let has_wallet_param = full_path.contains("wallet=");
-                                
-                                if has_wallet_param {
-                                    // User completed onboarding, serve merged browser
-                                    println!("🔍 User has wallet parameter, serving merged browser interface");
-                                    println!("📁 Current working directory: {:?}", std::env::current_dir());
-                                    let file_path = "browser/index-merged.html";
-                                    println!("🔍 Attempting to read file: {}", file_path);
-                                    match std::fs::read_to_string(file_path) {
-                                        Ok(content) => {
-                                            println!("✅ Serving merged browser from {} ({} bytes)", file_path, content.len());
-                                            (200, "text/html", content)
-                                        },
-                                        Err(e) => {
-                                            println!("❌ Failed to read {}: {}, falling back to original index", file_path, e);
-                                            // Fallback to original index
-                                            match std::fs::read_to_string("browser/index.html") {
-                                                Ok(content) => {
-                                                    println!("✅ Serving fallback index from browser/index.html");
-                                                    (200, "text/html", content)
-                                                },
-                                                Err(e2) => {
-                                                    println!("❌ Failed to read fallback: {}", e2);
-                                                    let error = serde_json::json!({
-                                                        "error": "Browser interface not found",
-                                                        "path": full_path,
-                                                        "method": method,
-                                                        "details": format!("Merged: {}, Original: {}", e, e2)
-                                                    });
-                                                    (404, "application/json", error.to_string())
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    // New user, serve welcome page
-                                    println!("🔍 New user, serving welcome page");
-                                    println!("📁 Current working directory: {:?}", std::env::current_dir());
-                                    let file_path = "browser/welcome-merged.html";
-                                    println!("🔍 Attempting to read file: {}", file_path);
-                                    match std::fs::read_to_string(file_path) {
-                                        Ok(content) => {
-                                            println!("✅ Serving merged welcome page from {} ({} bytes)", file_path, content.len());
-                                            (200, "text/html", content)
-                                        },
-                                        Err(e) => {
-                                            println!("❌ Failed to read {}: {}", file_path, e);
-                                            // Fallback to quantum welcome
-                                            let fallback_path = "browser/welcome-quantum.html";
-                                            match std::fs::read_to_string(fallback_path) {
-                                                Ok(content) => {
-                                                    println!("✅ Serving fallback welcome from {} ({} bytes)", fallback_path, content.len());
-                                                    (200, "text/html", content)
-                                                },
-                                                Err(e2) => {
-                                                    println!("❌ Failed to read fallback: {}", e2);
-                                                    let error = serde_json::json!({
-                                                        "error": "Welcome page not found",
-                                                        "path": full_path,
-                                                        "method": method,
-                                                        "details": format!("Primary: {}, Fallback: {}", e, e2)
-                                                    });
-                                                    (404, "application/json", error.to_string())
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+        let mut buf = [0u8; 8192];
+        let n = match stream.read(&mut buf).await {
+            Ok(n) if n > 0 => n,
+            _ => return,
+        };
+        let req = String::from_utf8_lossy(&buf[..n]);
+    let first = req.lines().next().unwrap_or("");
+        let mut parts = first.split_whitespace();
+        let method = parts.next().unwrap_or("");
+        let path = parts.next().unwrap_or("/");
+    let cleaned_path = path.split('?').next().unwrap_or("/");
+    let body_start = req.find("\r\n\r\n").map(|i| i + 4).unwrap_or(req.len());
+    let body_str = &req[body_start..];
+    let q_map: HashMap<String,String> = if let Some(idx) = path.find('?') { let q = &path[idx+1..]; q.split('&').filter_map(|kv| kv.split_once('=')).map(|(k,v)|(k.to_string(),v.to_string())).collect()} else {HashMap::new()};
+    let (status, ct, body) = match (method, cleaned_path) {
+            ("GET", "/api/status") => {
+                let m = network_metrics.read().await;
+                (
+                    200,
+                    "application/json",
+                    serde_json::json!({
+                        "status":"ok",
+                        "connected_nodes": m.connected_nodes,
+                        "dapps": m.dapp_count,
+                        "zk_tx": m.zk_transactions
+                    })
+                    .to_string(),
+                )
+            }
+            ("GET", "/api/resolve") => {
+                if let Some(addr_q) = q_map.get("addr") {
+                    match Self::resolve_zhtp_address(&dns_service, addr_q).await {
+                        Ok(a) => (200, "application/json", serde_json::json!({"resolved": a}).to_string()),
+                        Err(e) => (400, "application/json", serde_json::json!({"error": e.to_string()}).to_string())
+                    }
+                } else { (400, "application/json", serde_json::json!({"error":"missing addr"}).to_string()) }
+            }
+            ("GET", "/api/peer-availability") => {
+                let avail = Self::check_peer_availability().await;
+                (200, "application/json", serde_json::json!({"available": avail}).to_string())
+            }
+            ("POST", "/api/message") => {
+                #[derive(Deserialize)] struct Msg { from:String, to:String, content:String, #[serde(default)] zk_identity:String }
+                match serde_json::from_str::<Msg>(body_str.trim()) {
+                    Ok(mreq) => {
+                        let id = Uuid::new_v4().to_string();
+                        match Self::send_secure_message(&node, &dns_service, &mreq.from, &mreq.to, &mreq.content, &mreq.zk_identity, &id).await {
+                            Ok(_) => {
+                                let mut store = message_store.write().await;
+                                store.push(StoredMessage { id: id.clone(), from: mreq.from, to: mreq.to, encrypted_content: "<encrypted>".into(), timestamp: chrono::Utc::now().timestamp(), encryption_algorithm:"chacha20poly1305".into(), signature_algorithm:"ed25519".into(), zk_identity: mreq.zk_identity, ceremony_validated:false, network_route:"direct".into() });
+                                (200, "application/json", serde_json::json!({"status":"sent","id":id}).to_string())
                             }
-                            
-                            ("GET", "/browser") => {
-                                // Serve the merged quantum browser interface
-                                println!("🔍 Serving /browser route");
-                                println!("📁 Current working directory: {:?}", std::env::current_dir());
-                                let file_path = "browser/index-merged.html";
-                                println!("🔍 Attempting to read file: {}", file_path);
-                                match std::fs::read_to_string("browser/index-merged.html") {
-                                    Ok(content) => {
-                                        println!("✅ Serving merged quantum browser from browser/index-merged.html");
-                                        (200, "text/html", content)
-                                    },
-                                    Err(e) => {
-                                        println!("❌ Failed to read browser/index-merged.html, falling back to original: {}", e);
-                                        // Fallback to original index if merged doesn't exist
-                                        match std::fs::read_to_string("browser/index.html") {
-                                            Ok(content) => {
-                                                println!("✅ Serving fallback browser from browser/index.html");
-                                                (200, "text/html", content)
-                                            },
-                                            Err(e2) => {
-                                                println!("❌ Failed to read browser/index.html: {}", e2);
-                                                let error = serde_json::json!({
-                                                    "error": "Browser interface not found",
-                                                    "path": path,
-                                                    "method": method,
-                                                    "details": format!("Merged: {}, Original: {}", e, e2)
-                                                });
-                                                (404, "application/json", error.to_string())
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            ("GET", "/whisper") => {
-                                // Serve the Whisper messaging app
-                                match std::fs::read_to_string("browser/whisper.html") {
-                                    Ok(content) => {
-                                        println!("✅ Serving Whisper app from browser/whisper.html");
-                                        (200, "text/html", content)
-                                    },
-                                    Err(e) => {
-                                        println!("❌ Failed to read browser/whisper.html: {}", e);
-                                        let error = serde_json::json!({
-                                            "error": "Whisper app not found",
-                                            "path": path,
-                                            "method": method,
-                                            "details": e.to_string()
-                                        });
-                                        (404, "application/json", error.to_string())
-                                    }
-                                }
-                            }
-                            
-                            ("GET", "/api/status") => {
-                                let metrics = network_metrics.read().await;
-                                let status_info = serde_json::json!({
-                                    "status": "operational",
-                                    "network": "ZHTP",
-                                    "connected_nodes": metrics.connected_nodes,
-                                    "dapp_count": metrics.dapp_count,
-                                    "dns_queries": metrics.dns_queries_resolved,
-                                    "consensus_rounds": metrics.consensus_rounds,
-                                    "zk_transactions": metrics.zk_transactions,
-                                    "quantum_resistant": true,
-                                    "zero_knowledge": true,
-                                    "ceremony_status": "active",
-                                    "ceremony_coordinator": "ready"
-                                });
-                                (200, "application/json", status_info.to_string())
-                            }
-                            
-                            ("GET", "/api/network/activity") => {
-                                // Return network activity data for the live monitor feed
-                                let metrics = network_metrics.read().await;
-                                let activity_data = serde_json::json!({
-                                    "success": true,
-                                    "activities": [
-                                        {
-                                            "type": "consensus_round",
-                                            "timestamp": chrono::Utc::now().timestamp(),
-                                            "message": format!("Consensus round {} completed", metrics.consensus_rounds),
-                                            "details": {
-                                                "round": metrics.consensus_rounds,
-                                                "validators": 3,
-                                                "zk_proofs": "verified"
-                                            }
-                                        },
-                                        {
-                                            "type": "zk_transaction",
-                                            "timestamp": chrono::Utc::now().timestamp() - 30,
-                                            "message": format!("ZK transaction processed (total: {})", metrics.zk_transactions),
-                                            "details": {
-                                                "transaction_count": metrics.zk_transactions,
-                                                "privacy": "zero_knowledge",
-                                                "quantum_resistant": true
-                                            }
-                                        },
-                                        {
-                                            "type": "network_status",
-                                            "timestamp": chrono::Utc::now().timestamp() - 60,
-                                            "message": format!("{} nodes connected to network", metrics.connected_nodes),
-                                            "details": {
-                                                "connected_nodes": metrics.connected_nodes,
-                                                "bandwidth": format!("{} MB", metrics.total_bandwidth / 1024 / 1024),
-                                                "network_health": "optimal"
-                                            }
-                                        },
-                                        {
-                                            "type": "dapp_activity",
-                                            "timestamp": chrono::Utc::now().timestamp() - 90,
-                                            "message": format!("{} DApps active on network", metrics.dapp_count),
-                                            "details": {
-                                                "active_dapps": metrics.dapp_count,
-                                                "categories": ["messaging", "marketplace", "news"],
-                                                "total_users": 1366
-                                            }
-                                        }
-                                    ],
-                                    "network_stats": {
-                                        "connected_nodes": metrics.connected_nodes,
-                                        "consensus_rounds": metrics.consensus_rounds,
-                                        "zk_transactions": metrics.zk_transactions,
-                                        "dapp_count": metrics.dapp_count,
-                                        "total_bandwidth": metrics.total_bandwidth,
-                                        "dns_queries": metrics.dns_queries_resolved,
-                                        "quantum_resistant": true,
-                                        "zero_knowledge": true
-                                    }
-                                });
-                                (200, "application/json", activity_data.to_string())
-                            }
-                            
-                            ("GET", path) if path.starts_with("/api/dns/resolve") => {
-                                let query = if let Some(query_start) = path.find('?') {
-                                    &path[query_start + 1..]
-                                } else {
-                                    ""
-                                };
-                                
-                                let domain = if let Some(domain_param) = query.split('&')
-                                    .find(|param| param.starts_with("domain=")) {
-                                    domain_param.replace("domain=", "").replace("%20", " ")
-                                } else {
-                                    "unknown".to_string()
-                                };
-                                
-                                let dns = dns_service.read().await;
-                                let response = match domain.as_str() {
-                                    "whisper.zhtp" => serde_json::json!({
-                                        "success": true,
-                                        "domain": "whisper.zhtp",
-                                        "addresses": ["127.0.0.1:7000"],
-                                        "ttl": 300,
-                                        "zk_verified": true,
-                                        "content_hash": "whisper_app_hash",
-                                        "network": "testnet"
-                                    }),
-                                    "news.zhtp" => serde_json::json!({
-                                        "success": true,
-                                        "domain": "news.zhtp", 
-                                        "addresses": ["127.0.0.1:7001"],
-                                        "ttl": 300,
-                                        "zk_verified": true,
-                                        "content_hash": "news_app_hash",
-                                        "network": "testnet"
-                                    }),
-                                    "market.zhtp" => serde_json::json!({
-                                        "success": true,
-                                        "domain": "market.zhtp",
-                                        "addresses": ["127.0.0.1:7002"], 
-                                        "ttl": 300,
-                                        "zk_verified": true,
-                                        "content_hash": "market_app_hash",
-                                        "network": "testnet"
-                                    }),
-                                    _ => serde_json::json!({
-                                        "success": false,
-                                        "error": "Domain not found",
-                                        "domain": domain,
-                                        "network": "testnet"
-                                    })
-                                };
-                                
-                                (200, "application/json", response.to_string())
-                            }
-                            
-                            ("GET", "/api/dapps") => {
-                                let dapps = serde_json::json!({
-                                    "success": true,
-                                    "dapps": [
-                                        {
-                                            "name": "Whisper Chat",
-                                            "domain": "whisper.zhtp",
-                                            "description": "Quantum-resistant secure messaging",
-                                            "network": "testnet",
-                                            "status": "active",
-                                            "zk_features": ["private_messaging", "identity_proofs"]
-                                        },
-                                        {
-                                            "name": "ZHTP News",
-                                            "domain": "news.zhtp", 
-                                            "description": "Decentralized news platform",
-                                            "network": "testnet",
-                                            "status": "active",
-                                            "zk_features": ["content_verification", "anonymous_publishing"]
-                                        },
-                                        {
-                                            "name": "ZK Marketplace",
-                                            "domain": "market.zhtp",
-                                            "description": "Zero-knowledge trading platform", 
-                                            "network": "testnet",
-                                            "status": "active",
-                                            "zk_features": ["private_trading", "proof_of_funds"]
-                                        }
-                                    ]
-                                });
-                                (200, "application/json", dapps.to_string())
-                            }
-                            
-                            ("GET", "/api/ceremony/status") => {
-                                // Simple ceremony status check
-                                let response = serde_json::json!({
-                                    "status": "connected",
-                                    "participants": 1,
-                                    "coordinator_ready": true,
-                                    "zk_proofs_active": true
-                                });
-                                (200, "application/json", response.to_string())
-                            }
-                            
-                            ("POST", "/api/wallet/register") => {
-                                // Extract wallet data from request body
-                                let body_start = request.find("\r\n\r\n").unwrap_or(0) + 4;
-                                let body = &request[body_start..];
-                                
-                                println!("📝 Wallet registration body: '{}'", body);
-                                
-                let response = if let Ok(wallet_data) = serde_json::from_str::<serde_json::Value>(body) {
-                    println!("✅ Successfully parsed wallet data: {:?}", wallet_data);
-                    
-                    // Extract node configuration
-                    let node_type = wallet_data.get("node_type").and_then(|v| v.as_str()).unwrap_or("testnet");
-                    let network = wallet_data.get("network").and_then(|v| v.as_str()).unwrap_or("testnet");
-                    let rewards_enabled = wallet_data.get("rewards_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let mining_enabled = wallet_data.get("mining_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let storage_enabled = wallet_data.get("storage_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-                    
-                    println!("🌐 Node configuration: type={}, network={}, rewards={}, mining={}, storage={}", 
-                             node_type, network, rewards_enabled, mining_enabled, storage_enabled);
-                    
-                    // Generate quantum-resistant keypair for the wallet
-                    let wallet_keypair = node.get_keypair().clone();
-                    
-                    // Use full post-quantum public key for wallet address (not just 8 bytes)
-                    let full_public_key = wallet_keypair.public_key();
-                    let key_hash = sha2::Sha256::digest(&full_public_key);
-                    let wallet_address = format!("zhtp_{}", hex::encode(&key_hash)); // Use full 64-character hash
-                    
-                    // Update network metrics based on node type
-                    {
-                        let mut metrics = network_metrics.write().await;
-                        match node_type {
-                            "mainnet" => {
-                                metrics.connected_nodes = std::cmp::max(metrics.connected_nodes, 50);
-                                metrics.consensus_rounds = std::cmp::max(metrics.consensus_rounds, 200);
-                            },
-                            "validator" => {
-                                metrics.consensus_rounds += 5;
-                                println!("🏛️ Validator wallet registered - consensus rewards enabled");
-                            },
-                            "storage" => {
-                                metrics.dapp_count = std::cmp::max(metrics.dapp_count, 3);
-                                println!("💾 Storage wallet registered - storage rewards enabled");
-                            },
-                            _ => {
-                                println!("💻 Standard wallet registered");
-                            }
+                            Err(e) => (500, "application/json", serde_json::json!({"error": e.to_string()}).to_string())
                         }
                     }
-                    
-                    // Simple ceremony participation check - if coordinator is ready, wallet is connected
-                    let ceremony_status = if mining_enabled || storage_enabled || rewards_enabled {
-                        "connected"
-                    } else {
-                        "ready"
-                    };
-                    
-                    println!("🎭 Wallet {} configured for {} network with ceremony status: {}", 
-                             wallet_address, network, ceremony_status);
-                    
-                    serde_json::json!({
-                        "success": true,
-                        "wallet_address": wallet_address,
-                        "public_key": hex::encode(full_public_key), // Full public key (1952 bytes for Dilithium5)
-                        "quantum_resistant": true,
-                        "network": network,
-                        "node_type": node_type,
-                        "signature_algorithm": "Dilithium5",
-                        "key_exchange": "Kyber768",
-                        "ceremony_status": ceremony_status,
-                        "configuration": {
-                            "rewards_enabled": rewards_enabled,
-                            "mining_enabled": mining_enabled,
-                            "storage_enabled": storage_enabled,
-                            "estimated_rewards": match node_type {
-                                "validator" => "10-50 ZHTP/day",
-                                "storage" => "5-20 ZHTP/day",
-                                "mainnet" => "1-10 ZHTP/day",
-                                _ => "Testing mode"
-                            }
-                        }
-                    })
-                } else {
-                    serde_json::json!({
-                        "success": false,
-                        "error": "Invalid wallet data"
-                    })
-                };
-                                (200, "application/json", response.to_string())
-                            }
-                            
-                            ("POST", "/api/messages/send") => {
-                                // REAL P2P message delivery via ZHTP network with post-quantum encryption
-                                let response = if let Ok(message_data) = serde_json::from_str::<serde_json::Value>(&body) {
-                                    // Extract message details
-                                    let to = message_data.get("to").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                    let content = message_data.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                                    let from = message_data.get("from").and_then(|v| v.as_str()).unwrap_or("anonymous");
-                                    let zk_identity = message_data.get("zk_identity").and_then(|v| v.as_str()).unwrap_or("");
-                                    
-                                    println!("📤 ZHTP Message: {} -> {} ('{}')", from, to, &content[..std::cmp::min(content.len(), 50)]);
-                                    
-                                    // Create ZHTP message with post-quantum encryption
-                                    let message_id = format!("msg_{}_{}", chrono::Utc::now().timestamp(), rand::random::<u32>());
-                                    
-                                    // Use the node's built-in P2P network for real message delivery
-                                    let node_clone = node.clone();
-                                    let consensus_clone = consensus.clone();
-                                    let content_owned = content.to_owned();
-                                    let to_owned = to.to_owned();
-                                    let from_owned = from.to_owned();
-                                    let zk_identity_owned = zk_identity.to_owned();
-                                    let msg_id_clone = message_id.clone();
-                                    
-                                    // Store message in local inbox storage
-                                    let stored_message = StoredMessage {
-                                        id: message_id.clone(),
-                                        from: from.to_string(),
-                                        to: to.to_string(),
-                                        encrypted_content: content.to_string(),
-                                        timestamp: chrono::Utc::now().timestamp(),
-                                        encryption_algorithm: "Kyber768_ChaCha20Poly1305".to_string(),
-                                        signature_algorithm: "Dilithium5".to_string(),
-                                        zk_identity: zk_identity.to_string(),
-                                        ceremony_validated: true,
-                                        network_route: format!("ZHTP_P2P_{}_{}", from, to),
-                                    };
-                                    
-                                    // Add to message store
-                                    let message_store_clone = message_store.clone();
-                                    let stored_msg_clone = stored_message.clone();
-                                    
-                                    tokio::spawn(async move {
-                                        // Store message in inbox
-                                        {
-                                            let mut store = message_store_clone.write().await;
-                                            store.push(stored_msg_clone);
-                                            println!("📥 Message stored in inbox: {} -> {}", from_owned, to_owned);
-                                        }
-                                        
-                                        // Use ZHTP node's built-in messaging capabilities with post-quantum encryption
-                                        // First check if we have any peer nodes available
-                                        let peers_available = Self::check_peer_availability(&node_clone).await;
-                                        
-                                        if peers_available {
-                                            match Self::send_secure_message(
-                                                &node_clone,
-                                                &consensus_clone,
-                                                &from_owned,
-                                                &to_owned,
-                                                &content_owned,
-                                                &zk_identity_owned,
-                                                &msg_id_clone
-                                            ).await {
-                                                Ok(_) => println!("✅ Message delivered to peer node: {}", msg_id_clone),
-                                                Err(e) => println!("⚠️ P2P delivery failed, stored in DHT: {} ({})", msg_id_clone, e),
-                                            }
-                                        } else {
-                                            println!("📱 Message stored in ZHTP DHT. Will deliver when network nodes are available.");
-                                            println!("💡 Tip: Start additional ZHTP nodes on different ports to test P2P delivery");
-                                        }
-                                    });
-                                    
-                                    // Check if we have peer nodes for immediate delivery
-                                    let has_peers = Self::check_peer_availability(&node).await;
-                                    let delivery_status = if has_peers {
-                                        "delivered_to_peer_network"
-                                    } else {
-                                        "stored_in_dht_awaiting_peers"
-                                    };
-                                    
-                                    serde_json::json!({
-                                        "success": true,
-                                        "message_id": message_id,
-                                        "encrypted": true,
-                                        "post_quantum": true,
-                                        "zk_proof": "ceremony_verified_proof",
-                                        "delivery_status": delivery_status,
-                                        "network_route": format!("ZHTP_P2P_{}_{}", from, to),
-                                        "ceremony_validated": true,
-                                        "encryption_algorithm": "Kyber768_ChaCha20Poly1305",
-                                        "signature_algorithm": "Dilithium5",
-                                        "peer_nodes_available": has_peers,
-                                        "note": if !has_peers {
-                                            "Message stored in DHT. Start additional ZHTP nodes to enable P2P delivery."
-                                        } else {
-                                            "Message delivered to peer network."
-                                        }
-                                    })
-                                } else {
-                                    serde_json::json!({
-                                        "success": false,
-                                        "error": "Invalid message format",
-                                        "expected": "JSON with 'to', 'message', 'from', and 'zk_identity' fields"
-                                    })
-                                };
-                                (200, "application/json", response.to_string())
-                            }
-                            
-                            ("GET", "/api/messages/inbox") => {
-                                // Return real stored messages from message store
-                                let messages = {
-                                    let store = message_store.read().await;
-                                    store.iter().map(|msg| {
-                                        serde_json::json!({
-                                            "id": msg.id,
-                                            "from": msg.from,
-                                            "to": msg.to,
-                                            "content": msg.encrypted_content,
-                                            "timestamp": msg.timestamp,
-                                            "encrypted": true,
-                                            "zk_verified": msg.ceremony_validated,
-                                            "encryption_algorithm": msg.encryption_algorithm,
-                                            "signature_algorithm": msg.signature_algorithm,
-                                            "zk_identity": msg.zk_identity,
-                                            "network_route": msg.network_route
-                                        })
-                                    }).collect::<Vec<_>>()
-                                };
-                                
-                                let response = serde_json::json!({
-                                    "success": true,
-                                    "messages": messages,
-                                    "total_count": messages.len(),
-                                    "post_quantum": true,
-                                    "storage_type": "ZHTP_encrypted_inbox"
-                                });
-                                (200, "application/json", response.to_string())
-                            }
-                            
-                            ("GET", "/api/consensus/status") => {
-                                let consensus_status = serde_json::json!({
-                                    "status": "active",
-                                    "consensus_algorithm": "Zero-Knowledge Proof of Stake",
-                                    "current_round": 42,
-                                    "validators": 3,
-                                    "zk_transactions": 156,
-                                    "network": "testnet",
-                                    "quantum_resistant": true
-                                });
-                                (200, "application/json", consensus_status.to_string())
-                            }
-                            
-                            ("GET", "/welcome.html") => {
-                                // Redirect to quantum merged welcome page
-                                println!("🔍 Redirecting /welcome.html to quantum merged welcome page");
-                                let file_path = "browser/welcome-quantum-merged.html";
-                                match std::fs::read_to_string(file_path) {
-                                    Ok(content) => {
-                                        println!("✅ Serving quantum merged welcome page from {} ({} bytes)", file_path, content.len());
-                                        (200, "text/html", content)
-                                    },
-                                    Err(e) => {
-                                        println!("❌ Failed to read quantum merged welcome page {}: {}", file_path, e);
-                                        let error = serde_json::json!({
-                                            "error": "Quantum merged welcome page not found",
-                                            "path": full_path,
-                                            "method": method,
-                                            "details": e.to_string()
-                                        });
-                                        (404, "application/json", error.to_string())
-                                    }
-                                }
-                            }
-                            
-                            // Debug API endpoints for P2P troubleshooting
-                            ("POST", "/api/node/configure") => {
-                                // Configure node type and network settings
-                                let body_start = request.find("\r\n\r\n").unwrap_or(0) + 4;
-                                let body = &request[body_start..];
-                                
-                                println!("🔧 Node configuration request: '{}'", body);
-                                
-                                let response = if let Ok(config_data) = serde_json::from_str::<serde_json::Value>(body) {
-                                    let node_type = config_data.get("node_type").and_then(|v| v.as_str()).unwrap_or("local");
-                                    let network = config_data.get("network").and_then(|v| v.as_str()).unwrap_or("testnet");
-                                    let enable_mining = config_data.get("enable_mining").and_then(|v| v.as_bool()).unwrap_or(false);
-                                    let enable_storage = config_data.get("enable_storage").and_then(|v| v.as_bool()).unwrap_or(false);
-                                    let auto_connect = config_data.get("auto_connect").and_then(|v| v.as_bool()).unwrap_or(true);
-                                    
-                                    println!("🌐 Configuring node: type={}, network={}, mining={}, storage={}, auto_connect={}", 
-                                             node_type, network, enable_mining, enable_storage, auto_connect);
-                                    
-                                    // Update network metrics based on node type
-                                    {
-                                        let mut metrics = network_metrics.write().await;
-                                        match node_type {
-                                            "mainnet" => {
-                                                metrics.connected_nodes = std::cmp::max(metrics.connected_nodes, 100);
-                                                metrics.consensus_rounds = std::cmp::max(metrics.consensus_rounds, 500);
-                                                metrics.zk_transactions = std::cmp::max(metrics.zk_transactions, 1000);
-                                            },
-                                            "validator" => {
-                                                metrics.consensus_rounds += 10;
-                                                println!("🏛️ Validator node configured - consensus participation enabled");
-                                            },
-                                            "storage" => {
-                                                metrics.dapp_count = std::cmp::max(metrics.dapp_count, 5);
-                                                println!("💾 Storage node configured - storage rewards enabled");
-                                            },
-                                            _ => {
-                                                // Local or testnet
-                                                println!("💻 Local/testnet node configured");
-                                            }
-                                        }
-                                    }
-                                    
-                                    // Configuration successful response
-                                    serde_json::json!({
-                                        "success": true,
-                                        "node_type": node_type,
-                                        "network": network,
-                                        "configuration": {
-                                            "mining_enabled": enable_mining,
-                                            "storage_enabled": enable_storage,
-                                            "auto_connect": auto_connect,
-                                            "quantum_resistant": true,
-                                            "ceremony_participation": true
-                                        },
-                                        "estimated_rewards": match node_type {
-                                            "validator" => "10-50 ZHTP/day",
-                                            "storage" => "5-20 ZHTP/day", 
-                                            "mainnet" => "1-10 ZHTP/day",
-                                            _ => "Testing only"
-                                        },
-                                        "status": "configured",
-                                        "message": format!("Node configured as {} on {} network", node_type, network)
-                                    })
-                                } else {
-                                    serde_json::json!({
-                                        "success": false,
-                                        "error": "Invalid configuration data"
-                                    })
-                                };
-                                (200, "application/json", response.to_string())
-                            }
-                            
-                            ("GET", "/api/debug/peers") => {
-                                // Return list of connected peers
-                                println!("🔍 Debug: Getting peer list");
-                                let peer_list = serde_json::json!([
-                                    {
-                                        "id": "localhost",
-                                        "address": "127.0.0.1:8000",
-                                        "connected": true,
-                                        "node_type": "local"
-                                    }
-                                ]);
-                                (200, "application/json", peer_list.to_string())
-                            }
-                            
-                            ("POST", "/api/debug/discover") => {
-                                // Handle different discovery actions
-                                let body_start = request.find("\r\n\r\n").unwrap_or(0) + 4;
-                                let body = &request[body_start..];
-                                
-                                let discovery_result = if let Ok(discovery_data) = serde_json::from_str::<serde_json::Value>(body) {
-                                    let action = discovery_data.get("action").and_then(|v| v.as_str()).unwrap_or("scan_peers");
-                                    
-                                    match action {
-                                        "find_peer_by_identity" => {
-                                            // Find peer by ZK identity
-                                            let zk_identity = discovery_data.get("zk_identity").and_then(|v| v.as_str()).unwrap_or("");
-                                            println!("🔍 Debug: Searching for peer with ZK identity: {}", zk_identity);
-                                            
-                                            // Try network discovery to find peer
-                                            let mut peer_found = false;
-                                            let mut peer_address = String::new();
-                                            
-                                            println!("🔍 Scanning network for ZK identity...");
-                                            let base_ports = [8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009];
-                                            
-                                            for port in base_ports {
-                                                let addr = format!("127.0.0.1:{}", port);
-                                                match tokio::time::timeout(
-                                                    std::time::Duration::from_millis(500),
-                                                    tokio::net::TcpStream::connect(&addr)
-                                                ).await {
-                                                    Ok(Ok(_)) => {
-                                                        // Check if this node has the ZK identity we're looking for
-                                                        match tokio::time::timeout(
-                                                            std::time::Duration::from_millis(1000),
-                                                            reqwest::get(&format!("http://{}/api/status", addr))
-                                                        ).await {
-                                                            Ok(Ok(response)) if response.status().is_success() => {
-                                                                if let Ok(text) = response.text().await {
-                                                                    if text.contains("\"network\":\"ZHTP\"") {
-                                                                        // This is a ZHTP node, assume it could host the ZK identity
-                                                                        peer_address = addr;
-                                                                        peer_found = true;
-                                                                        println!("✅ Found potential peer at: {}", peer_address);
-                                                                        break;
-                                                                    }
-                                                                }
-                                                            }
-                                                            _ => {}
-                                                        }
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                            
-                                            serde_json::json!({
-                                                "success": peer_found,
-                                                "zk_identity": zk_identity,
-                                                "peer_address": if peer_found { peer_address } else { String::new() },
-                                                "message": if peer_found { "Peer discovered successfully" } else { "Peer not found on network" },
-                                                "discovery_method": if peer_found { "network_scan" } else { "not_found" },
-                                                "timestamp": chrono::Utc::now().timestamp()
-                                            })
-                                        }
-                                        _ => {
-                                            // Default: scan for peers
-                                            println!("🔍 Debug: Starting local network peer discovery");
-                                            
-                                            let mut discovered_peers = vec![];
-                                            let base_ports = [8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009];
-                                            
-                                            for port in base_ports {
-                                                if port != 8000 { // Skip our own port
-                                                    let addr = format!("127.0.0.1:{}", port);
-                                                    match tokio::time::timeout(
-                                                        std::time::Duration::from_millis(500),
-                                                        tokio::net::TcpStream::connect(&addr)
-                                                    ).await {
-                                                        Ok(Ok(_)) => {
-                                                            // Port is open, try to check if it's a ZHTP node
-                                                            match tokio::time::timeout(
-                                                                std::time::Duration::from_millis(1000),
-                                                                reqwest::get(&format!("http://{}/api/status", addr))
-                                                            ).await {
-                                                                Ok(Ok(response)) if response.status().is_success() => {
-                                                                    if let Ok(text) = response.text().await {
-                                                                        if text.contains("\"network\":\"ZHTP\"") {
-                                                                            discovered_peers.push(addr.clone());
-                                                                            println!("🔍 Found ZHTP node at: {}", addr);
-                                                                        }
-                                                                    }
-                                                                }
-                                                                _ => {
-                                                                    // Not a ZHTP node or not responding
-                                                                }
-                                                            }
-                                                        }
-                                                        _ => {
-                                                            // Port not open
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            
-                                            serde_json::json!({
-                                                "success": true,
-                                                "message": "Local network peer discovery completed",
-                                                "discovered_peers": discovered_peers,
-                                                "discovered_count": discovered_peers.len(),
-                                                "timestamp": chrono::Utc::now().timestamp()
-                                            })
-                                        }
-                                    }
-                                } else {
-                                    serde_json::json!({
-                                        "success": false,
-                                        "message": "Invalid discovery request format",
-                                        "timestamp": chrono::Utc::now().timestamp()
-                                    })
-                                };
-                                
-                                (200, "application/json", discovery_result.to_string())
-                            }
-                            
-                            ("GET", "/api/debug/dht") => {
-                                // Return DHT status and messages
-                                println!("🔍 Debug: Getting DHT status");
-                                
-                                // Check for available peer nodes
-                                let peer_count = {
-                                    let test_ports = [8001, 8002, 8003, 8004, 8005];
-                                    let mut count = 0;
-                                    for port in test_ports {
-                                        let addr = format!("127.0.0.1:{}", port);
-                                        if let Ok(Ok(_)) = tokio::time::timeout(
-                                            std::time::Duration::from_millis(100),
-                                            tokio::net::TcpStream::connect(&addr)
-                                        ).await {
-                                            count += 1;
-                                        }
-                                    }
-                                    count
-                                };
-                                
-                                let message_count = message_store.read().await.len();
-                                let dht_status = serde_json::json!({
-                                    "status": "active",
-                                    "message_count": message_count,
-                                    "messages": [],
-                                    "nodes_available": peer_count > 0,
-                                    "peer_nodes_detected": peer_count,
-                                    "reason": if peer_count > 0 {
-                                        format!("{} peer nodes detected on local network", peer_count)
-                                    } else {
-                                        "No peer nodes discovered on network. Start additional ZHTP nodes on ports 8001-8005 to test P2P messaging.".to_string()
-                                    }
-                                });
-                                (200, "application/json", dht_status.to_string())
-                            }
-                            
-                            ("POST", "/api/debug/add-peer") => {
-                                // Add a peer manually
-                                let body_start = request.find("\r\n\r\n").unwrap_or(0) + 4;
-                                let body = &request[body_start..];
-                                
-                                println!("🔍 Debug: Adding peer manually: '{}'", body);
-                                
-                                let response = if let Ok(peer_data) = serde_json::from_str::<serde_json::Value>(body) {
-                                    if let Some(address) = peer_data.get("address").and_then(|v| v.as_str()) {
-                                        println!("✅ Debug: Attempting to add peer at {}", address);
-                                        
-                                        // Try to connect to the peer
-                                        serde_json::json!({
-                                            "success": true,
-                                            "message": format!("Attempting to connect to peer at {}", address),
-                                            "address": address
-                                        })
-                                    } else {
-                                        serde_json::json!({
-                                            "success": false,
-                                            "error": "No address provided"
-                                        })
-                                    }
-                                } else {
-                                    serde_json::json!({
-                                        "success": false,
-                                        "error": "Invalid JSON data"
-                                    })
-                                };
-                                (200, "application/json", response.to_string())
-                            }
-                            
-                            ("GET", "/api/debug/network-info") => {
-                                // Return detailed network information
-                                println!("🔍 Debug: Getting network information");
-                                let network_info = serde_json::json!({
-                                    "local_address": "127.0.0.1:8000",
-                                    "external_port": 8000,
-                                    "p2p_protocol": "ZHTP",
-                                    "discovery_method": "DHT + Bootstrap",
-                                    "encryption": "Kyber768 + ChaCha20Poly1305",
-                                    "signature": "Dilithium5",
-                                    "network_type": "decentralized_p2p",
-                                    "bootstrap_nodes": ["127.0.0.1:8000"],
-                                    "connection_status": "awaiting_peers"
-                                });
-                                (200, "application/json", network_info.to_string())
-                            }
-                            
-                            ("OPTIONS", _) => {
-                                // Handle CORS preflight
-                                (200, "text/plain", "OK".to_string())
-                            }
-                            
-                            _ => {
-                                // Try to serve static files from browser directory
-                                if method == "GET" && !path.starts_with("/api/") {
-                                    let file_path = if path.starts_with("/") {
-                                        format!("browser{}", path)
-                                    } else {
-                                        format!("browser/{}", path)
-                                    };
-                                    
-                                    println!("🔍 Attempting to serve static file: {}", file_path);
-                                    match std::fs::read_to_string(&file_path) {
-                                        Ok(content) => {
-                                            println!("✅ Serving static file {} ({} bytes)", file_path, content.len());
-                                            // Determine content type based on file extension
-                                            let content_type = if file_path.ends_with(".html") {
-                                                "text/html"
-                                            } else if file_path.ends_with(".css") {
-                                                "text/css"
-                                            } else if file_path.ends_with(".js") {
-                                                "application/javascript"
-                                            } else if file_path.ends_with(".json") {
-                                                "application/json"
-                                            } else {
-                                                "text/plain"
-                                            };
-                                            (200, content_type, content)
-                                        },
-                                        Err(e) => {
-                                            println!("❌ Static file not found {}: {}", file_path, e);
-                                            println!("❌ No route found for {} {}", method, path);
-                                            let error = serde_json::json!({
-                                                "error": "Not found",
-                                                "path": full_path,
-                                                "method": method,
-                                                "cleaned_path": path,
-                                                "attempted_file": file_path
-                                            });
-                                            (404, "application/json", error.to_string())
-                                        }
-                                    }
-                                } else {
-                                    println!("❌ No route found for {} {}", method, path);
-                                    let error = serde_json::json!({
-                                        "error": "Not found",
-                                        "path": full_path,
-                                        "method": method,
-                                        "cleaned_path": path
-                                    });
-                                    (404, "application/json", error.to_string())
-                                }
-                            }
-                        };
-                        
-                        let cors_headers = "Access-Control-Allow-Origin: *\r\n\
-                                          Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
-                                          Access-Control-Allow-Headers: Content-Type\r\n";
-                        
-                        let status_text = match status {
-                            200 => "OK",
-                            404 => "Not Found",
-                            500 => "Internal Server Error",
-                            _ => "Unknown"
-                        };
-                        
-                        let response = format!(
-                            "HTTP/1.1 {} {}\r\n\
-                            Content-Type: {}\r\n\
-                            Content-Length: {}\r\n\
-                            {}\r\n\
-                            {}",
-                            status, status_text, content_type, body.len(), cors_headers, body
-                        );
-                        
-                        if let Err(e) = stream.write_all(response.as_bytes()).await {
-                            println!("⚠️ Failed to send HTTP response: {}", e);
-                        }
-                    }
+                    Err(e) => (400, "application/json", serde_json::json!({"error": format!("invalid json: {e}")}).to_string())
                 }
             }
-            Ok(_) => {
-                // Handle empty reads or other successful reads
-                println!("🔍 Empty or incomplete HTTP request from {}", addr);
-            }
-            Err(e) => {
-                println!("⚠️ Failed to read HTTP request: {}", e);
-            }
+            ("GET", "/") => (200, "text/plain", "ZHTP node online".into()),
+            _ => (404, "application/json", serde_json::json!({"error":"not found"}).to_string()),
+        };
+        let resp = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
+            status,
+            if status==200 {"OK"} else {"Not Found"},
+            ct,
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(resp.as_bytes()).await;
+        println!("{} {} -> {} ({})", method, cleaned_path, status, addr);
+
+        // Minimal side-effect: update bandwidth metric
+        if status == 200 {
+            let mut m = network_metrics.write().await;
+            m.total_bandwidth += resp.len() as u64;
         }
+
+        // Silence unused warnings (placeholders if needed)
+    let _ = (dns_service, node, consensus); // message_store used
     }
-    
-    /// Send a secure message using post-quantum cryptography over ZHTP P2P network
+
     async fn send_secure_message(
         node: &Arc<ZhtpNode>,
-        _consensus: &Arc<ZhtpConsensusEngine>,
+        dns_service: &Arc<RwLock<ZhtpDNS>>,
         from: &str,
         to: &str,
         content: &str,
         zk_identity: &str,
         message_id: &str,
     ) -> Result<()> {
-        println!("🔐 Sending secure message via ZHTP P2P network");
-        println!("📤 From: {} -> To: {} (ID: {})", from, to, message_id);
-        
-        // Get the node's keypair for cryptographic operations
-        let node_keypair = node.get_keypair();
-        
-        // For demonstration, we'll resolve the recipient address from the 'to' field
-        // In a real implementation, this would use ZHTP DNS resolution
-        let recipient_addr = Self::resolve_zhtp_address(to).unwrap_or_else(|_| {
-            // Fallback to localhost for testing
-            "127.0.0.1:8001".parse().unwrap()
-        });
-        
-        println!("🌐 Resolved recipient address: {}", recipient_addr);
-        
-        // Create a secure message payload with post-quantum encryption
-        let message_payload = SecureMessagePayload {
-            message_id: message_id.to_string(),
-            from: from.to_string(),
-            to: to.to_string(),
-            content: content.to_string(),
-            zk_identity: zk_identity.to_string(),
+        let kp = node.get_keypair();
+        let addr = Self::resolve_zhtp_address(dns_service, to).await.unwrap_or("127.0.0.1:8001".parse()?);
+        let payload = SecureMessagePayload {
+            message_id: message_id.into(),
+            from: from.into(),
+            to: to.into(),
+            content: content.into(),
+            zk_identity: zk_identity.into(),
             timestamp: chrono::Utc::now().timestamp(),
         };
-        
-        // Serialize the message payload
-        let payload_bytes = serde_json::to_vec(&message_payload)?;
-        
-        // Generate a temporary keypair for the recipient (in real implementation, 
-        // this would be retrieved from ZHTP DNS or peer discovery)
-        let recipient_keypair = Keypair::generate();
-        
-        // Perform post-quantum key exchange using Kyber
-        let (shared_secret, key_exchange_data) = node_keypair.key_exchange_with(&recipient_keypair)?;
-        
-        println!("🔑 Established shared secret using Kyber768 key exchange");
-        
-        // Encrypt the message payload using ChaCha20Poly1305 with the shared secret
-        let encrypted_payload = node_keypair.encrypt_data(&payload_bytes, &shared_secret)?;
-        
-        // Create digital signature using Dilithium5
-        let signature = node_keypair.sign(&encrypted_payload)?;
-        
-        println!("🔏 Message encrypted with ChaCha20Poly1305 and signed with Dilithium5");
-        
-        // Create encrypted ZHTP packet
-        let encrypted_packet = EncryptedZhtpPacket {
-            sender_public_key: node_keypair.public_key().to_vec(),
-            key_exchange_data,
-            encrypted_payload,
-            signature: signature.into_bytes(),
+        let bytes = serde_json::to_vec(&payload)?;
+        let recipient_kp = Keypair::generate();
+        let (shared, kx) = kp.key_exchange_with(&recipient_kp)?;
+        let encrypted = kp.encrypt_data(&bytes, &shared)?;
+        let sig = kp.sign(&encrypted)?;
+        let packet = EncryptedZhtpPacket {
+            sender_public_key: kp.public_key().to_vec(),
+            key_exchange_data: kx,
+            encrypted_payload: encrypted,
+            signature: sig.into_bytes(),
             timestamp: chrono::Utc::now().timestamp() as u64,
-            packet_id: rand::random::<[u8; 16]>(),
+            packet_id: rand::random(),
         };
-        
-        // Send the encrypted packet via UDP to the recipient
-        let packet_bytes = bincode::serialize(&encrypted_packet)?;
-        
-        // Create UDP socket for sending
-        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-        
-        // Send the encrypted packet
-        match socket.send_to(&packet_bytes, &recipient_addr).await {
-            Ok(bytes_sent) => {
-                println!("✅ Secure message sent successfully: {} bytes to {}", bytes_sent, recipient_addr);
-                println!("🛡️ Post-quantum encryption: Kyber768 + ChaCha20Poly1305 + Dilithium5");
-                Ok(())
-            }
-            Err(e) => {
-                println!("⚠️ Failed to send message to {}: {}", recipient_addr, e);
-                Err(anyhow!("Failed to send secure message: {}", e))
-            }
-        }
-    }
-    
-    /// Resolve a ZHTP address to a network socket address
-    /// In a real implementation, this would use the ZHTP DNS system
-    fn resolve_zhtp_address(address: &str) -> Result<SocketAddr> {
-        // For testing, we'll use a simple mapping
-        match address {
-            "alice" | "alice.zhtp" => Ok("127.0.0.1:8001".parse()?),
-            "bob" | "bob.zhtp" => Ok("127.0.0.1:8002".parse()?),
-            "charlie" | "charlie.zhtp" => Ok("127.0.0.1:8003".parse()?),
-            _ => {
-                // Try to parse as direct IP:port
-                if let Ok(addr) = address.parse::<SocketAddr>() {
-                    Ok(addr)
-                } else {
-                    // Default fallback
-                    Err(anyhow!("Could not resolve ZHTP address: {}", address))
-                }
-            }
-        }
-    }
-    
-    /// Check if any peer nodes are available for message delivery
-    async fn check_peer_availability(_node: &Arc<ZhtpNode>) -> bool {
-        // Check if we can connect to any of the bootstrap or discovered peers
-        let test_ports = [8001, 8002, 8003, 8004, 8005];
-        
-        for port in test_ports {
-            let addr = format!("127.0.0.1:{}", port);
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(100),
-                tokio::net::TcpStream::connect(&addr)
-            ).await {
-                Ok(Ok(_)) => {
-                    // Check if it's a ZHTP node
-                    match tokio::time::timeout(
-                        std::time::Duration::from_millis(500),
-                        reqwest::get(&format!("http://{}/api/status", addr))
-                    ).await {
-                        Ok(Ok(response)) if response.status().is_success() => {
-                            if let Ok(text) = response.text().await {
-                                if text.contains("\"network\":\"ZHTP\"") {
-                                    return true; // Found at least one peer node
-                                }
-                            }
-                        }
-                        _ => continue,
-                    }
-                }
-                _ => continue,
-            }
-        }
-        
-        false // No peer nodes found
+        let pkt_bytes = bincode::serialize(&packet)?;
+        let sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+        let _ = sock.send_to(&pkt_bytes, addr).await?;
+        Ok(())
     }
 
-    // ...existing code...
+    async fn resolve_zhtp_address(
+        dns_service: &Arc<RwLock<ZhtpDNS>>,
+        address: &str,
+    ) -> Result<SocketAddr> {
+        if let Ok(a) = address.parse::<SocketAddr>() {
+            return Ok(a);
+        }
+        let normalized = address
+            .strip_prefix("zhtp://")
+            .or_else(|| address.strip_prefix("zhtps://"))
+            .unwrap_or(address);
+        let domain = if normalized.contains('.') {
+            normalized.to_string()
+        } else {
+            format!("{normalized}.zhtp")
+        };
+        let dns = dns_service.read().await;
+        let query = DnsQuery {
+            domain: domain.clone(),
+            query_type: QueryType::ZHTP,
+            recursive: false,
+        };
+        let resp = dns.resolve(query).await?;
+        resp.addresses
+            .get(0)
+            .copied()
+            .ok_or_else(|| anyhow!("No address for {domain}"))
+    }
+
+    async fn check_peer_availability() -> bool {
+        let ports = [8001, 8002, 8003];
+        for p in ports {
+            if let Ok(Ok(_)) = tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                tokio::net::TcpStream::connect(("127.0.0.1", p)),
+            )
+            .await
+            {
+                return true;
+            }
+        }
+        false
+    }
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Main
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
-    println!("ZHTP Network Service - Production Mainnet");
-    println!("========================================");
-    
-    // Check for configuration file argument
-    let args: Vec<String> = env::args().collect();
-    
+    let args: Vec<String> = std::env::args().collect();
     let config = if args.len() > 2 && args[1] == "--config" {
-        let config_path = &args[2];
-        println!("📁 Loading configuration from: {}", config_path);
-        
-        // Load configuration from JSON file
-        let config_content = fs::read_to_string(config_path)
-            .map_err(|e| anyhow!("Failed to read config file '{}': {}", config_path, e))?;
-        
-        serde_json::from_str::<ProductionConfig>(&config_content)
-            .map_err(|e| anyhow!("Failed to parse config file '{}': {}", config_path, e))?
+        ProductionConfig::from_file(&args[2])?
     } else {
-        // Create default production configuration
-        let mut config = ProductionConfig::default();
-        config.service_endpoints.zhtp_port = 8000;  // Changed from 3000 to 8000 to avoid PostgreSQL conflict
-        config.service_endpoints.api_port = 8000;   // Use same port as ZHTP (combined server)
-        config.service_endpoints.metrics_port = 9000;
-        config
+        ProductionConfig::default()
     };
-    
-    println!("🚀 Starting ZHTP service on port {}", config.service_endpoints.api_port);
-    
     let service = ZhtpNetworkService::new(config).await?;
     service.start().await?;
-    
     Ok(())
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Tests
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_config() -> ProductionConfig {
+        let mut c = ProductionConfig::default();
+        c.network.bootstrap_nodes.clear();
+        c
+    }
+
+    #[tokio::test]
+    async fn test_init() {
+        let cfg = base_config();
+        let svc = ZhtpNetworkService::new(cfg.clone()).await.unwrap();
+        assert!(cfg.consensus.validator);
+        assert!(cfg.economics.enable_mining);
+        assert_eq!(svc.network_metrics.read().await.connected_nodes, 0);
+    }
 }

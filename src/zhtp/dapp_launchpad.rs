@@ -379,6 +379,12 @@ pub struct SupportResources {
     pub support_email: String,
 }
 
+impl Default for DAppLaunchpad {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DAppLaunchpad {
     /// Create a new DApp launchpad
     pub fn new() -> Self {
@@ -528,7 +534,7 @@ impl DAppLaunchpad {
     pub async fn create_token(&self, token_template: String, token_info: TokenInfo, creator: [u8; 32]) -> Result<String> {
         let mut factory = self.token_factory.write().await;
         
-        let template = factory.token_templates.get(&token_template)
+        let _template = factory.token_templates.get(&token_template)
             .ok_or_else(|| anyhow::anyhow!("Token template not found"))?;
 
         // Generate unique contract address
@@ -577,7 +583,7 @@ impl DAppLaunchpad {
     }
 
     /// Register as a developer (anonymous with ZK proof)
-    pub async fn register_developer(&self, developer_info: DeveloperInfo) -> Result<()> {
+    pub async fn register_developer(&self, _developer_info: DeveloperInfo) -> Result<()> {
         let mut factory = self.token_factory.write().await;
         
         // Verify developer identity proof
@@ -712,6 +718,12 @@ mod tests {
         let creator = [1u8; 32];
         let result = launchpad.create_token("basic_token".to_string(), token_info, creator).await;
         assert!(result.is_ok());
+    }
+}
+
+impl Default for DAppStore {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
