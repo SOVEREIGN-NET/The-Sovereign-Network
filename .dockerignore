@@ -40,6 +40,7 @@ deploy/docker-compose*.yml
 .env.local
 .env.development
 .env.test
+ZHTP.code-workspace
 
 # Ignore large binary files and databases
 *.db

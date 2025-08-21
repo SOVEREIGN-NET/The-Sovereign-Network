@@ -238,6 +238,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "axom"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff2f12956e1fb620cf3e45af17406cb5d2534badfa1d2a2c9b930df4a6220102"
+
+[[package]]
 name = "backtrace"
 version = "0.3.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -645,6 +651,7 @@ dependencies = [
  "ark-poly",
  "ark-serialize",
  "ark-std",
+ "axom",
  "base64",
  "bincode",
  "blake3",
