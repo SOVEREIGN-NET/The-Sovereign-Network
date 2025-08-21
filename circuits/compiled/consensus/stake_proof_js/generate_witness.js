@@ -38,8 +38,7 @@ function sanitizeAndValidateJSON(text, { maxBytes = 1_000_000 } = {}) {
   const stack = [obj];
   while (stack.length) {
     const cur = stack.pop();
-    if (Object.prototype.hasOwnProperty.call(cur, "__proto__")
-        || Object.prototype.hasOwnProperty.call(cur, "constructor")) {
+    if (Object.prototype.hasOwnProperty.call(cur, "__proto__") || Object.prototype.hasOwnProperty.call(cur, "constructor")) {
       throw new Error("Disallowed key detected (__proto__/constructor).");
     }
     for (const [k, v] of Object.entries(cur)) {
