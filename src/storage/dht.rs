@@ -80,7 +80,7 @@ impl DhtNode {
     /// Store data with ZK storage proof
     pub fn store(&mut self, key: Vec<u8>, data: Vec<u8>) -> StorageProof {
         use ark_bn254::{Fr, G1Projective};
-        use ark_ec::PrimeGroup;
+        use ark_ec::Group;
         use sha2::Digest;
 
         // Store the chunk
@@ -125,7 +125,6 @@ impl DhtNode {
     /// Verify storage proof with ZK validation
     pub fn verify_proof(&self, key: &[u8], proof: &StorageProof) -> bool {
         use ark_bn254::{Fr, G1Projective};
-        use ark_ec::PrimeGroup;
 
         // Get stored chunk
         let data = match self.chunks.get(key) {
