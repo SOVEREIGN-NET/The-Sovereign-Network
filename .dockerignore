@@ -41,6 +41,7 @@ deploy/docker-compose*.yml
 .env.development
 .env.test
 ZHTP.code-workspace
+Cargo.lock
 
 # Ignore large binary files and databases
 *.db

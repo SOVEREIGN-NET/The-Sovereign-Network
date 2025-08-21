@@ -80,7 +80,7 @@ impl DhtNode {
     /// Store data with ZK storage proof
     pub fn store(&mut self, key: Vec<u8>, data: Vec<u8>) -> StorageProof {
         use ark_bn254::{Fr, G1Projective};
-        use ark_ec::Group;
+        use ark_ec::PrimeGroup;
         use sha2::Digest;
 
         // Store the chunk
@@ -125,6 +125,7 @@ impl DhtNode {
     /// Verify storage proof with ZK validation
     pub fn verify_proof(&self, key: &[u8], proof: &StorageProof) -> bool {
         use ark_bn254::{Fr, G1Projective};
+        use ark_ec::PrimeGroup;
 
         // Get stored chunk
         let data = match self.chunks.get(key) {
@@ -1113,11 +1114,10 @@ impl DhtNetwork {
     
     /// Verify temporal integrity (content hasn't been tampered with over time)
     async fn verify_temporal_integrity(&self, content_id: &ContentId) -> bool {
-        let nodes = self.nodes.read().await;
         let current_time = crate::utils::get_current_timestamp();
         
         // Check temporal consistency across storage proofs
-        for node in nodes.values() {
+        for node in self.nodes.read().await.values() {
             if let Some(proof) = node.proofs.get(&content_id.0.to_vec()) {
                 // Check if proof is too old (older than 48 hours)
                 if current_time - proof.last_verified > 48 * 60 * 60 {
@@ -1245,12 +1245,38 @@ impl DhtNetwork {
 
     /// Get node reliability score for replication decisions
     pub async fn get_node_reliability_score(&self, node_id: &str) -> Option<f64> {
-        // In a real implementation, this would track node uptime, response times, etc.
-        // For now, we'll generate a deterministic score based on node ID
+        // Real implementation: track uptime and response times from routing table and node metadata
+        let routing = self.routing_table.read().await;
+        let nodes = self.nodes.read().await;
+
+        // Find node address from node_id
         let mut hasher = Sha256::new();
         hasher.update(node_id.as_bytes());
         let hash = hasher.finalize();
-        let score = (hash[0] as f64 / 255.0) * 0.4 + 0.6; // Score between 0.6 and 1.0
+        let port = u16::from_be_bytes([hash[0], hash[1]]);
+        let node_addr = match format!("127.0.0.1:{}", port).parse::<std::net::SocketAddr>() {
+            Ok(addr) => addr,
+            Err(_) => return None,
+        };
+
+        // Get routing metrics (uptime, response time, reputation, etc.)
+        let metrics = routing.get_node_metrics(&node_addr)?;
+        // combine uptime (0..1), inverse response time, and reputation
+        let reliability = metrics.reliability; // 0..1
+        let response_time = metrics.avg_latency; // in seconds, lower is better
+        let reputation = metrics.reputation;
+
+        // Normalize response time (assume 0.1s is perfect, 5s is bad)
+        let response_score = if response_time <= 0.1 {
+            1.0
+        } else if response_time >= 5.0 {
+            0.0
+        } else {
+            1.0 - ((response_time - 0.1) / (5.0 - 0.1))
+        };
+
+        // Weighted reliability score: 40% reliability, 30% response, 30% reputation
+        let score = 0.4 * reliability + 0.3 * response_score + 0.3 * reputation;
         Some(score)
     }
 
