@@ -1247,7 +1247,6 @@ impl DhtNetwork {
     pub async fn get_node_reliability_score(&self, node_id: &str) -> Option<f64> {
         // Real implementation: track uptime and response times from routing table and node metadata
         let routing = self.routing_table.read().await;
-        let nodes = self.nodes.read().await;
 
         // Find node address from node_id
         let mut hasher = Sha256::new();
