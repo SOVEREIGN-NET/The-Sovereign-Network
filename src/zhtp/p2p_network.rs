@@ -2248,7 +2248,7 @@ impl ZhtpP2PNetwork {
                     if !content_data.is_empty() && !storage_proof.is_empty() {
                         println!("Storage proof verified for node {:?}", response.source_node);
                     } else {
-                        eprintln!("Storage proof verification failed for node {:?}: empty data", response.source_node);
+                        log::error!("Storage proof verification failed for node {:?}: empty data", response.source_node);
                         continue;
                     }
                 }
