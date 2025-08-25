@@ -1,14 +1,12 @@
 use crate::zhtp::{
     consensus_engine::{ZkValidator, ValidatorStatus},
-    crypto::Keypair,
     p2p_network::ZhtpP2PNetwork,
 };
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
 use std::{
-    collections::{HashMap, BTreeSet},
+    collections::HashMap,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::RwLock;
 use sha2::{Sha256, Digest};
@@ -21,7 +19,7 @@ pub struct CeremonyParticipantManager {
     /// Ceremony state and progress
     ceremony_state: Arc<RwLock<CeremonyState>>,
     /// Network interface for participant communication
-    network: Arc<ZhtpP2PNetwork>,
+    _network: Arc<ZhtpP2PNetwork>,
     /// Ceremony configuration
     config: CeremonyConfig,
 }
@@ -223,10 +221,7 @@ impl CeremonyParticipantManager {
             max_participants: 140,
             min_per_type,
             max_per_type,
-            registration_deadline: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() + (30 * 24 * 60 * 60), // 30 days from now
+            registration_deadline: crate::utils::get_current_timestamp() + (30 * 24 * 60 * 60), // 30 days from now
             ceremony_timeout_hours: 72,
             contribution_timeout_minutes: 60,
         };
@@ -242,7 +237,7 @@ impl CeremonyParticipantManager {
                 expected_completion: None,
                 current_participant: None,
             })),
-            network,
+            _network: network,
             config,
         }
     }
@@ -283,7 +278,7 @@ impl CeremonyParticipantManager {
             identity,
             status: ParticipationStatus::Registered,
             contribution: None,
-            registered_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            registered_at: crate::utils::get_current_timestamp(),
             trust_weight,
         };
 
@@ -368,9 +363,9 @@ impl CeremonyParticipantManager {
         // Update state to start ceremony
         state.current_phase = CeremonyPhase::Phase1UniversalSRS;
         state.current_round = 1;
-        state.started_at = Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+        state.started_at = Some(crate::utils::get_current_timestamp());
         state.expected_completion = Some(
-            state.started_at.unwrap() + (self.config.ceremony_timeout_hours * 60 * 60)
+            state.started_at.unwrap_or(0) + (self.config.ceremony_timeout_hours * 60 * 60)
         );
 
         println!("🚀 Starting ZHTP Trusted Setup Ceremony with {} participants", state.total_participants);
@@ -419,7 +414,7 @@ impl CeremonyParticipantManager {
                     round: state.current_round,
                     contribution_hash,
                     entropy_source,
-                    contributed_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                    contributed_at: crate::utils::get_current_timestamp(),
                     verified: false, // Will be verified later
                 };
 
@@ -475,7 +470,7 @@ impl CeremonyParticipantManager {
         hasher.update(&identity.public_key);
         hasher.update(&identity.identity_commitment);
         hasher.update(format!("{:?}", participant_type).as_bytes());
-        hasher.update(&SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs().to_le_bytes());
+        hasher.update(crate::utils::get_current_timestamp().to_le_bytes());
         
         let hash = hasher.finalize();
         Ok(hex::encode(&hash[..8])) // Use first 8 bytes as ID
@@ -580,18 +575,313 @@ pub struct ParticipantTypeStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::zhtp::{
+        crypto::Keypair,
+    };
+    use std::net::SocketAddr;
     use tokio;
 
+    /// Helper function to create a test network instance
+    async fn create_test_network() -> Result<Arc<ZhtpP2PNetwork>> {
+        // Use a random available port for testing
+        let local_addr: SocketAddr = "127.0.0.1:0".parse()?;
+        let bootstrap_nodes = vec![]; // No bootstrap nodes for isolated test
+        
+        ZhtpP2PNetwork::new(local_addr, bootstrap_nodes).await.map(Arc::new)
+    }
+
+    /// Helper function to create test participant identity
+    fn create_test_identity(participant_type: &ParticipantType) -> ParticipantIdentity {
+        let keypair = Keypair::generate();
+        let mut identity_commitment = [0u8; 32];
+        
+        // Create a unique identity commitment based on type
+        let type_hash = sha2::Sha256::digest(format!("{:?}", participant_type).as_bytes());
+        identity_commitment.copy_from_slice(&type_hash[..32]);
+
+        ParticipantIdentity {
+            public_key: keypair.public_key(),
+            identity_commitment,
+            validator_info: if matches!(participant_type, ParticipantType::CoreValidator) {
+                Some(ZkValidator {
+                    encrypted_identity: vec![1, 2, 3, 4],
+                    stake: 150000.0, // Sufficient stake for validation (>= 100,000)
+                    stake_proof: crate::zhtp::zk_proofs::ByteRoutingProof {
+                        commitments: vec![],
+                        elements: vec![],
+                        inputs: vec![],
+                    },
+                    identity_commitment,
+                    metrics: crate::zhtp::consensus_engine::ZkNetworkMetrics::new(0.95),
+                    registered_at: crate::utils::get_current_timestamp(),
+                    last_activity: crate::utils::get_current_timestamp(),
+                    status: ValidatorStatus::Active,
+                })
+            } else {
+                None
+            },
+            network_metrics: if matches!(participant_type, ParticipantType::NetworkOperator) {
+                Some(NetworkReputationMetrics {
+                    storage_provided: 1000, // 1TB
+                    packets_routed: 100000,
+                    uptime_percentage: 0.95,
+                    reputation_score: 0.9,
+                    network_tenure_days: 60,
+                })
+            } else {
+                None
+            },
+            external_verification: if matches!(participant_type, ParticipantType::CommunityRepresentative) {
+                Some(ExternalVerification {
+                    organization: "Test University".to_string(),
+                    public_profile: "https://test-university.edu/crypto-lab".to_string(),
+                    expertise_verification: "PhD in Cryptography".to_string(),
+                    attestations: vec!["Academic Credential".to_string(), "Research Publication".to_string()],
+                })
+            } else {
+                None
+            },
+            contact_info: ContactInfo {
+                email: format!("test-{:?}@example.com", participant_type).to_lowercase(),
+                github: Some("test-participant".to_string()),
+                twitter: Some("@test_participant".to_string()),
+                preferred_contact: "email".to_string(),
+            },
+        }
+    }
+
     #[tokio::test]
-    async fn test_participant_registration() {
-        // This would require setting up a mock network, but demonstrates the API
-        // In practice, this would integrate with the actual ZHTP network
+    async fn test_participant_registration_integration() -> Result<()> {
+        // Create a real ZHTP network instance for testing
+        let network = create_test_network().await?;
+        let manager = CeremonyParticipantManager::new(network);
+
+        // Test registering different types of participants
+        let core_validator_identity = create_test_identity(&ParticipantType::CoreValidator);
+        let validator_id = manager.register_participant(
+            ParticipantType::CoreValidator,
+            core_validator_identity,
+        ).await?;
+
+        let network_operator_identity = create_test_identity(&ParticipantType::NetworkOperator);
+        let operator_id = manager.register_participant(
+            ParticipantType::NetworkOperator,
+            network_operator_identity,
+        ).await?;
+
+        let community_rep_identity = create_test_identity(&ParticipantType::CommunityRepresentative);
+        let community_id = manager.register_participant(
+            ParticipantType::CommunityRepresentative,
+            community_rep_identity,
+        ).await?;
+
+        let independent_identity = create_test_identity(&ParticipantType::IndependentParticipant);
+        let independent_id = manager.register_participant(
+            ParticipantType::IndependentParticipant,
+            independent_identity,
+        ).await?;
+
+        // Verify all participants were registered
+        let stats = manager.get_ceremony_stats().await;
+        assert_eq!(stats.total_participants, 4);
+        assert_eq!(stats.verified_participants, 0); // Not verified yet
+
+        // Verify participants
+        assert!(manager.verify_participant(&validator_id).await?);
+        assert!(manager.verify_participant(&operator_id).await?);
+        assert!(manager.verify_participant(&community_id).await?);
+        assert!(manager.verify_participant(&independent_id).await?);
+
+        // Check updated stats
+        let stats = manager.get_ceremony_stats().await;
+        assert_eq!(stats.verified_participants, 4);
         
-        // Mock network setup would go here
-        // let network = Arc::new(mock_network());
-        // let manager = CeremonyParticipantManager::new(network);
+        println!("✅ Successfully registered and verified 4 participants");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ceremony_flow_integration() -> Result<()> {
+        // Create a real network and manager
+        let network = create_test_network().await?;
+        let manager = CeremonyParticipantManager::new(network);
+
+        // Register minimum required participants for ceremony start
+        let mut participant_ids = Vec::new();
+
+        // Register 5 core validators (minimum required)
+        for _i in 0..5 {
+            let identity = create_test_identity(&ParticipantType::CoreValidator);
+            let id = manager.register_participant(ParticipantType::CoreValidator, identity).await?;
+            manager.verify_participant(&id).await?;
+            participant_ids.push(id);
+        }
+
+        // Register 10 network operators (minimum required)
+        for _i in 0..10 {
+            let identity = create_test_identity(&ParticipantType::NetworkOperator);
+            let id = manager.register_participant(ParticipantType::NetworkOperator, identity).await?;
+            manager.verify_participant(&id).await?;
+            participant_ids.push(id);
+        }
+
+        // Register 10 community representatives (minimum required)
+        for _i in 0..10 {
+            let identity = create_test_identity(&ParticipantType::CommunityRepresentative);
+            let id = manager.register_participant(ParticipantType::CommunityRepresentative, identity).await?;
+            manager.verify_participant(&id).await?;
+            participant_ids.push(id);
+        }
+
+        // Register 5 independent participants (minimum required)
+        for _i in 0..5 {
+            let identity = create_test_identity(&ParticipantType::IndependentParticipant);
+            let id = manager.register_participant(ParticipantType::IndependentParticipant, identity).await?;
+            manager.verify_participant(&id).await?;
+            participant_ids.push(id);
+        }
+
+        // Verify we have minimum participants
+        let stats = manager.get_ceremony_stats().await;
+        assert_eq!(stats.total_participants, 30); // Total registered
+        assert_eq!(stats.verified_participants, 30); // All verified
+        assert!(stats.total_participants >= manager.config.min_participants);
+
+        // Start the ceremony
+        manager.start_ceremony().await?;
+
+        // Verify ceremony state changed
+        let stats = manager.get_ceremony_stats().await;
+        assert_eq!(stats.current_phase, CeremonyPhase::Phase1UniversalSRS);
+        assert!(stats.started_at.is_some());
+        assert!(stats.expected_completion.is_some());
+
+        // Test getting next participant for contribution
+        let next_participant = manager.get_next_participant().await?;
+        assert!(next_participant.is_some());
         
-        // Test registration, verification, and ceremony flow
-        assert!(true); // Placeholder
+        if let Some(participant) = next_participant {
+            // Record a test contribution
+            let contribution_hash = [1u8; 32]; // Mock contribution hash
+            manager.record_contribution(
+                &participant.participant_id,
+                contribution_hash,
+                "test_entropy_source".to_string(),
+            ).await?;
+
+            // Verify contribution was recorded
+            let updated_stats = manager.get_ceremony_stats().await;
+            assert_eq!(updated_stats.completed_participants, 1);
+        }
+
+        println!("✅ Successfully completed full ceremony flow test");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_participant_verification_rules() -> Result<()> {
+        let network = create_test_network().await?;
+        let manager = CeremonyParticipantManager::new(network);
+
+        // Test validator with insufficient stake (should fail verification)
+        let mut validator_identity = create_test_identity(&ParticipantType::CoreValidator);
+        if let Some(ref mut validator_info) = validator_identity.validator_info {
+            validator_info.stake = 50000.0; // Below minimum of 100,000
+        }
+        
+        let validator_id = manager.register_participant(
+            ParticipantType::CoreValidator,
+            validator_identity,
+        ).await?;
+        
+        let verification_result = manager.verify_participant(&validator_id).await?;
+        assert!(!verification_result, "Validator with insufficient stake should not be verified");
+
+        // Test network operator with poor reputation (should fail)
+        let mut operator_identity = create_test_identity(&ParticipantType::NetworkOperator);
+        if let Some(ref mut metrics) = operator_identity.network_metrics {
+            metrics.reputation_score = 0.5; // Below minimum of 0.7
+        }
+
+        let operator_id = manager.register_participant(
+            ParticipantType::NetworkOperator,
+            operator_identity,
+        ).await?;
+        
+        let verification_result = manager.verify_participant(&operator_id).await?;
+        assert!(!verification_result, "Network operator with poor reputation should not be verified");
+
+        println!("✅ Verification rules working correctly");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ceremony_limits_and_constraints() -> Result<()> {
+        let network = create_test_network().await?;
+        let manager = CeremonyParticipantManager::new(network);
+
+        // Test participant type limits
+        let max_validators = *manager.config.max_per_type.get(&ParticipantType::CoreValidator).unwrap_or(&20);
+        
+        // Try to register more than maximum allowed validators
+        for i in 0..=max_validators {
+            let identity = create_test_identity(&ParticipantType::CoreValidator);
+            let result = manager.register_participant(ParticipantType::CoreValidator, identity).await;
+            
+            if i < max_validators {
+                assert!(result.is_ok(), "Registration should succeed within limits");
+            } else {
+                assert!(result.is_err(), "Registration should fail when exceeding limits");
+            }
+        }
+
+        // Test ceremony start with insufficient participants
+        let insufficient_manager = CeremonyParticipantManager::new(create_test_network().await?);
+        let start_result = insufficient_manager.start_ceremony().await;
+        assert!(start_result.is_err(), "Ceremony should not start with insufficient participants");
+
+        println!("✅ Ceremony limits and constraints working correctly");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_trust_weight_calculation() -> Result<()> {
+        let network = create_test_network().await?;
+        let manager = CeremonyParticipantManager::new(network);
+
+        // Test different participant types have different base trust weights
+        let validator_identity = create_test_identity(&ParticipantType::CoreValidator);
+        let operator_identity = create_test_identity(&ParticipantType::NetworkOperator);
+        let community_identity = create_test_identity(&ParticipantType::CommunityRepresentative);
+        let independent_identity = create_test_identity(&ParticipantType::IndependentParticipant);
+
+        let _validator_id = manager.register_participant(ParticipantType::CoreValidator, validator_identity).await?;
+        let _operator_id = manager.register_participant(ParticipantType::NetworkOperator, operator_identity).await?;
+        let _community_id = manager.register_participant(ParticipantType::CommunityRepresentative, community_identity).await?;
+        let _independent_id = manager.register_participant(ParticipantType::IndependentParticipant, independent_identity).await?;
+
+        // Access participants to check trust weights
+        let participants = manager.participants.read().await;
+        
+        let validator_weight = participants.get(&ParticipantType::CoreValidator)
+            .and_then(|v| v.first())
+            .map(|p| p.trust_weight)
+            .unwrap_or(0.0);
+            
+        let operator_weight = participants.get(&ParticipantType::NetworkOperator)
+            .and_then(|v| v.first())
+            .map(|p| p.trust_weight)
+            .unwrap_or(0.0);
+
+        // Validators should have higher trust weight than operators
+        assert!(validator_weight > operator_weight, 
+               "Validator trust weight ({}) should be higher than operator trust weight ({})", 
+               validator_weight, operator_weight);
+
+        println!("✅ Trust weight calculation working correctly");
+        println!("   Validator weight: {:.3}", validator_weight);
+        println!("   Operator weight: {:.3}", operator_weight);
+        
+        Ok(())
     }
 }

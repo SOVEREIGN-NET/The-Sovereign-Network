@@ -4,12 +4,17 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::Arc,
+    time::SystemTime,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, RwLock};
+use uuid::Uuid;
+use sha2::{Sha256, Digest};
+use base64::{Engine as _, engine::general_purpose};
 
 use crate::{
     storage::{ContentId, ContentMetadata},
     zhtp::{Keypair, ZhtpNode},
+    audit::{AuditTrail, AuditEventType},
 };
 
 /// Browser request type
@@ -39,8 +44,178 @@ pub enum BrowserRequest {
     DeployDApp(String, Vec<u8>), // name, code
 }
 
-/// Browser response type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Browser security configuration
+#[derive(Debug, Clone)]
+pub struct BrowserSecurityConfig {
+    pub enable_csp: bool,
+    pub allowed_origins: Vec<String>,
+    pub enable_sri: bool,
+    pub secure_cookies: bool,
+    pub enable_csrf_protection: bool,
+    pub session_timeout_minutes: u64,
+}
+
+impl Default for BrowserSecurityConfig {
+    fn default() -> Self {
+        Self {
+            enable_csp: true,
+            allowed_origins: vec!["self".to_string()],
+            enable_sri: true,
+            secure_cookies: true,
+            enable_csrf_protection: true,
+            session_timeout_minutes: 30,
+        }
+    }
+}
+
+/// Content Security Policy manager
+#[derive(Debug)]
+pub struct CspManager {
+    config: BrowserSecurityConfig,
+    nonces: Arc<RwLock<HashMap<String, SystemTime>>>,
+    audit_trail: Option<Arc<AuditTrail>>,
+}
+
+impl CspManager {
+    pub fn new(config: BrowserSecurityConfig, audit_trail: Option<Arc<AuditTrail>>) -> Self {
+        Self {
+            config,
+            nonces: Arc::new(RwLock::new(HashMap::new())),
+            audit_trail,
+        }
+    }
+
+    /// Generate a new nonce for scripts/styles
+    pub async fn generate_nonce(&self) -> String {
+        let nonce = Uuid::new_v4().to_string();
+        let mut nonces = self.nonces.write().await;
+        nonces.insert(nonce.clone(), SystemTime::now());
+        
+        // Log nonce generation
+        if let Some(audit) = &self.audit_trail {
+            let _ = audit.log_system_event(
+                AuditEventType::SystemOperation,
+                format!("CSP nonce generated: {}", &nonce[..8]),
+                None,
+            ).await;
+        }
+        
+        nonce
+    }
+
+    /// Validate nonce
+    pub async fn validate_nonce(&self, nonce: &str) -> bool {
+        let nonces = self.nonces.read().await;
+        if let Some(created_at) = nonces.get(nonce) {
+            // Nonces expire after 1 hour
+            SystemTime::now().duration_since(*created_at).unwrap().as_secs() < 3600
+        } else {
+            false
+        }
+    }
+
+    /// Generate Content Security Policy header
+    pub async fn generate_csp_header(&self, script_nonce: &str, style_nonce: &str) -> String {
+        if !self.config.enable_csp {
+            return String::new();
+        }
+
+        let mut directives = vec![
+            "default-src 'self'".to_string(),
+            format!("script-src 'self' 'nonce-{}'", script_nonce),
+            format!("style-src 'self' 'nonce-{}' 'unsafe-inline'", style_nonce), // Allow inline for CSS variables
+            "img-src 'self' data: blob:".to_string(),
+            "font-src 'self'".to_string(),
+            "connect-src 'self' wss: ws:".to_string(), // Allow WebSocket connections
+            "media-src 'none'".to_string(),
+            "object-src 'none'".to_string(),
+            "child-src 'none'".to_string(),
+            "worker-src 'self'".to_string(),
+            "frame-ancestors 'none'".to_string(),
+            "form-action 'self'".to_string(),
+            "upgrade-insecure-requests".to_string(),
+        ];
+
+        // Add report-uri if audit trail is available
+        if self.audit_trail.is_some() {
+            directives.push("report-uri /api/security/csp-report".to_string());
+        }
+
+        directives.join("; ")
+    }
+
+    /// Generate subresource integrity hash
+    pub fn generate_sri_hash(&self, content: &str) -> String {
+        if !self.config.enable_sri {
+            return String::new();
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        let hash = hasher.finalize();
+        format!("sha256-{}", general_purpose::STANDARD.encode(hash))
+    }
+
+    /// Clean expired nonces
+    pub async fn cleanup_expired_nonces(&self) {
+        let mut nonces = self.nonces.write().await;
+        let now = SystemTime::now();
+        nonces.retain(|_, created_at| {
+            now.duration_since(*created_at).unwrap().as_secs() < 3600
+        });
+    }
+}
+
+/// CSRF token manager
+#[derive(Debug)]
+pub struct CsrfManager {
+    tokens: Arc<RwLock<HashMap<String, (String, SystemTime)>>>, // session_id -> (token, created_at)
+    timeout_minutes: u64,
+}
+
+impl CsrfManager {
+    pub fn new(timeout_minutes: u64) -> Self {
+        Self {
+            tokens: Arc::new(RwLock::new(HashMap::new())),
+            timeout_minutes,
+        }
+    }
+
+    /// Generate CSRF token for session
+    pub async fn generate_token(&self, session_id: &str) -> String {
+        let token = Uuid::new_v4().to_string();
+        let mut tokens = self.tokens.write().await;
+        tokens.insert(session_id.to_string(), (token.clone(), SystemTime::now()));
+        token
+    }
+
+    /// Validate CSRF token
+    pub async fn validate_token(&self, session_id: &str, token: &str) -> bool {
+        let tokens = self.tokens.read().await;
+        if let Some((stored_token, created_at)) = tokens.get(session_id) {
+            if stored_token == token {
+                // Check if token is not expired
+                let elapsed = SystemTime::now().duration_since(*created_at).unwrap().as_secs();
+                elapsed < (self.timeout_minutes * 60)
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Clean expired tokens
+    pub async fn cleanup_expired_tokens(&self) {
+        let mut tokens = self.tokens.write().await;
+        let now = SystemTime::now();
+        let timeout_secs = self.timeout_minutes * 60;
+        
+        tokens.retain(|_, (_, created_at)| {
+            now.duration_since(*created_at).unwrap().as_secs() < timeout_secs
+        });
+    }
+}
 pub enum BrowserResponse {
     /// Content data
     Content(Vec<u8>, ContentMetadata),
@@ -66,23 +241,31 @@ pub enum BrowserResponse {
     Error(String),
 }
 
-/// ZHTP Browser interface
+/// ZHTP Browser interface with security features
 pub struct ZhtpBrowser {
-    /// ZHTP node
-    node: Arc<Mutex<ZhtpNode>>,
     /// Request channel
     request_tx: mpsc::Sender<BrowserRequest>,
     /// Response channel
     response_rx: mpsc::Receiver<BrowserResponse>,
     /// Storage manager reference
     storage: Option<Arc<crate::storage::ZhtpStorageManager>>,
-    /// Active connections
-    connections: Arc<Mutex<HashMap<SocketAddr, ContentMetadata>>>,
+    /// CSP manager
+    csp_manager: Arc<CspManager>,
+    /// CSRF manager
+    csrf_manager: Arc<CsrfManager>,
+    /// Security configuration
+    security_config: BrowserSecurityConfig,
 }
 
 impl ZhtpBrowser {
-    /// Create new browser instance
-    pub async fn new(addr: SocketAddr) -> Result<Self> {
+    /// Create new browser instance with security features
+    pub async fn new(
+        addr: SocketAddr, 
+        security_config: Option<BrowserSecurityConfig>,
+        audit_trail: Option<Arc<AuditTrail>>,
+    ) -> Result<Self> {
+        let security_config = security_config.unwrap_or_default();
+        
         // Create ZHTP node
         let node = ZhtpNode::new(addr, Keypair::generate()).await?;
         let node = Arc::new(Mutex::new(node));
@@ -91,23 +274,94 @@ impl ZhtpBrowser {
         let (request_tx, request_rx) = mpsc::channel(100);
         let (response_tx, response_rx) = mpsc::channel(100);
 
-        // Create browser
-        let browser = Self {
-            node: node.clone(),
-            request_tx,
-            response_rx,
-            storage: None,
-            connections: Arc::new(Mutex::new(HashMap::new())),
-        };
+        // Create security managers
+        let csp_manager = Arc::new(CspManager::new(security_config.clone(), audit_trail));
+        let csrf_manager = Arc::new(CsrfManager::new(security_config.session_timeout_minutes));
 
         // Spawn request handler
-        let node_clone = node.clone();
+        let node_clone = Arc::clone(&node);
         let response_tx_clone = response_tx.clone();
         tokio::spawn(async move {
             Self::handle_requests(node_clone, request_rx, response_tx_clone).await;
         });
 
+        // Spawn cleanup tasks
+        let csp_manager_cleanup = Arc::clone(&csp_manager);
+        let csrf_manager_cleanup = Arc::clone(&csrf_manager);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
+            loop {
+                interval.tick().await;
+                csp_manager_cleanup.cleanup_expired_nonces().await;
+                csrf_manager_cleanup.cleanup_expired_tokens().await;
+            }
+        });
+
+        // Create browser
+        let browser = Self {
+            request_tx,
+            response_rx,
+            storage: None,
+            csp_manager,
+            csrf_manager,
+            security_config,
+        };
+
         Ok(browser)
+    }
+
+    /// Generate secure HTML with CSP and CSRF protection
+    pub async fn generate_secure_html(&self, template: &str, session_id: &str) -> Result<String> {
+        // Generate nonces
+        let script_nonce = self.csp_manager.generate_nonce().await;
+        let style_nonce = self.csp_manager.generate_nonce().await;
+        
+        // Generate CSRF token
+        let csrf_token = self.csrf_manager.generate_token(session_id).await;
+        
+        // Generate CSP header (for response headers)
+        let _csp_header = self.csp_manager.generate_csp_header(&script_nonce, &style_nonce).await;
+        
+        // Replace template variables
+        let html = template
+            .replace("{{script_nonce}}", &script_nonce)
+            .replace("{{style_nonce}}", &style_nonce)
+            .replace("{{csrf_token}}", &csrf_token);
+            
+        Ok(html)
+    }
+
+    /// Validate CSRF token for requests
+    pub async fn validate_csrf_token(&self, session_id: &str, token: &str) -> bool {
+        self.csrf_manager.validate_token(session_id, token).await
+    }
+
+    /// Get CSP headers for HTTP response
+    pub async fn get_security_headers(&self, session_id: &str) -> HashMap<String, String> {
+        let script_nonce = self.csp_manager.generate_nonce().await;
+        let style_nonce = self.csp_manager.generate_nonce().await;
+        let csp_header = self.csp_manager.generate_csp_header(&script_nonce, &style_nonce).await;
+        
+        let mut headers = HashMap::new();
+        
+        if self.security_config.enable_csp {
+            headers.insert("Content-Security-Policy".to_string(), csp_header);
+        }
+        
+        headers.insert("X-Content-Type-Options".to_string(), "nosniff".to_string());
+        headers.insert("X-Frame-Options".to_string(), "DENY".to_string());
+        headers.insert("X-XSS-Protection".to_string(), "1; mode=block".to_string());
+        headers.insert("Referrer-Policy".to_string(), "strict-origin-when-cross-origin".to_string());
+        headers.insert("Permissions-Policy".to_string(), 
+            "geolocation=(), camera=(), microphone=(), payment=(), usb=()".to_string());
+        
+        if self.security_config.secure_cookies {
+            headers.insert("Set-Cookie".to_string(), 
+                format!("session_id={}; Secure; HttpOnly; SameSite=Strict; Max-Age={}",
+                    session_id, self.security_config.session_timeout_minutes * 60));
+        }
+        
+        headers
     }
 
     /// Handle browser requests
@@ -307,7 +561,7 @@ mod tests {
     #[tokio::test]
     async fn test_browser_basic() -> Result<()> {
         let addr: SocketAddr = "127.0.0.1:8000".parse()?;
-        let mut browser = ZhtpBrowser::new(addr).await?;
+        let mut browser = ZhtpBrowser::new(addr, None, None).await?;
 
         // Test that browser was created successfully
         println!("✅ ZHTP Browser created successfully");

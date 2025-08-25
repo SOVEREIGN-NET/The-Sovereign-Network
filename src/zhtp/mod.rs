@@ -107,7 +107,7 @@ impl SharedNode {
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel::<(ZhtpPacket, SocketAddr)>(32);
         let packet_tx = tx.clone();
-        let node = self.0.clone();
+        let _node = self.0.clone();
 
         tokio::spawn(async move {
             let mut buf = vec![0u8; 65535];

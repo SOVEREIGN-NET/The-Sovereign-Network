@@ -354,7 +354,7 @@ impl ZhtpDao {
 
     /// Register a new ZK identity for DAO participation
     pub async fn register_identity(&self, identity: ZkIdentity) -> Result<()> {
-        let identity_hash = hex::encode(&identity.identity_commitment);
+        let identity_hash = hex::encode(identity.identity_commitment);
         let mut registry = self.identity_registry.write().await;
         
         // Verify personhood proof to prevent Sybil attacks
@@ -491,7 +491,7 @@ impl ZhtpDao {
     }
 
     /// Register as a node to earn rewards
-    pub async fn register_node(&self, node_id: String, keypair: Keypair) -> Result<()> {
+    pub async fn register_node(&self, node_id: String, _keypair: Keypair) -> Result<()> {
         let mut incentives = self.node_incentives.write().await;
         let mut treasury = self.treasury.write().await;
         
