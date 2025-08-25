@@ -263,7 +263,7 @@ impl ZkTransaction {
                 // Use original sender/receiver bytes captured at proof generation time for strict public input validation
                 let source_bytes = if !self.source_hint.is_empty() { &self.source_hint } else { &hash[0..8] };
                 let dest_bytes = if !self.dest_hint.is_empty() { &self.dest_hint } else { &hash[8..16] };
-                eprintln!("validity proof verification: source_hint_len={} dest_hint_len={} first_source_byte={:?}", source_bytes.len(), dest_bytes.len(), source_bytes.get(0));
+                log::debug!("validity proof verification: source_hint_len={} dest_hint_len={} first_source_byte={:?}", source_bytes.len(), dest_bytes.len(), source_bytes.get(0));
                 let valid = crate::zhtp::zk_proofs::verify_unified_proof(
                     &native_proof,
                     source_bytes,
