@@ -286,7 +286,7 @@ impl ZkTransaction {
                 // For balance proof generation we used sender bytes as source and literal "balance_verification" as destination
                 let source_bytes = if !self.source_hint.is_empty() { &self.source_hint } else { &commitment_hash[0..8] };
                 let dest_literal = b"balance_verification".to_vec();
-                eprintln!("balance proof verification: source_hint_len={} dest_literal_len={}", source_bytes.len(), dest_literal.len());
+                log::debug!("balance proof verification: source_hint_len={} dest_literal_len={}", source_bytes.len(), dest_literal.len());
                 let valid = crate::zhtp::zk_proofs::verify_unified_proof(
                     &native_proof,
                     source_bytes,
