@@ -32,7 +32,7 @@ impl From<RoutingProof> for ByteRoutingProof {
         let commitments = proof.path_commitments.iter().map(|pc| {
             let mut bytes = Vec::new();
             if let Err(e) = pc.0.serialize_uncompressed(&mut bytes) {
-                eprintln!("Failed to serialize path commitment: {}", e);
+                error!("Failed to serialize path commitment: {}", e);
                 return Vec::new();
             }
             bytes
