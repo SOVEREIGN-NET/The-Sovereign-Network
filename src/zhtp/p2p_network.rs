@@ -2377,7 +2377,18 @@ impl ZhtpP2PNetwork {
             if content_data.len() as u64 != metadata.size {
                 eprintln!("Content integrity verification failed: size mismatch");
                 eprintln!("Expected: {} bytes", metadata.size);
-                eprintln!("Actual: {} bytes", content_data.len());
+            error!("Content integrity verification failed: hash mismatch");
+            error!("Expected: {}", content_id);
+            error!("Actual: {}", content_hash);
+            return Ok(false);
+        }
+        
+        // Verify content size if metadata specifies it
+        if metadata.size != 0 {
+            if content_data.len() as u64 != metadata.size {
+                error!("Content integrity verification failed: size mismatch");
+                error!("Expected: {} bytes", metadata.size);
+                error!("Actual: {} bytes", content_data.len());
                 return Ok(false);
             }
         }
