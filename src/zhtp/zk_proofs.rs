@@ -943,7 +943,10 @@ fn verify_public_inputs(
     eprintln!("debug public inputs first5: {:?}", &proof.public_inputs[0..5]);
 
     if proof.public_inputs[0] != circuit_expected_source || proof.public_inputs[1] != circuit_expected_dest {
-        eprintln!("public input mismatch: circuit_source_ok? {} circuit_dest_ok? {} provided_source_ok? {} provided_dest_ok? {}",
+    debug!("debug public inputs first5: {:?}", &proof.public_inputs[0..5]);
+
+    if proof.public_inputs[0] != circuit_expected_source || proof.public_inputs[1] != circuit_expected_dest {
+        error!("public input mismatch: circuit_source_ok? {} circuit_dest_ok? {} provided_source_ok? {} provided_dest_ok? {}",
             proof.public_inputs[0]==circuit_expected_source,
             proof.public_inputs[1]==circuit_expected_dest,
             proof.public_inputs[0]==provided_expected_source,
