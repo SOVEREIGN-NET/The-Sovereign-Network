@@ -22,7 +22,7 @@ cargo build --release
 
 # Run ZHTP service
 ./run-zhtp.bat  # Windows
-cargo run --release  # Linux/macOS
+cargo run --bin zhtp --release  # Linux/macOS
 
 # Access browser
 http://localhost:8000
