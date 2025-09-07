@@ -22,7 +22,7 @@ use tokio::{
     sync::RwLock,
     time::{interval, sleep},
 };
-use log::{info, warn, debug};
+use log::{info, warn, debug, error};
 use ark_ff::PrimeField;
 
 /// DHT Node information for real distributed hash table
@@ -2369,17 +2369,6 @@ impl ZhtpP2PNetwork {
             eprintln!("Content integrity verification failed: hash mismatch");
             eprintln!("Expected: {}", content_id);
             eprintln!("Actual: {}", content_hash);
-            return Ok(false);
-        }
-        
-        // Verify content size if metadata specifies it
-        if metadata.size != 0 {
-            if content_data.len() as u64 != metadata.size {
-                eprintln!("Content integrity verification failed: size mismatch");
-                eprintln!("Expected: {} bytes", metadata.size);
-            error!("Content integrity verification failed: hash mismatch");
-            error!("Expected: {}", content_id);
-            error!("Actual: {}", content_hash);
             return Ok(false);
         }
         

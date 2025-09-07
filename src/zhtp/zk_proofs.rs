@@ -11,6 +11,7 @@ use ark_bn254::{Fr, G1Projective};
 use ark_std::vec::Vec;
 use std::collections::{HashMap};
 use sha2::{Sha256, Digest};
+use log::{debug, error};
 
 // Re-export necessary types for use in other modules
 pub use ark_bn254::{Fr as ZkField, G1Projective as ZkGroup};
@@ -940,9 +941,6 @@ fn verify_public_inputs(
     let provided_expected_dest = circuit.hash_to_field(destination);
     let expected_root = circuit.hash_to_field(&stored_data_root); // 2
 
-    eprintln!("debug public inputs first5: {:?}", &proof.public_inputs[0..5]);
-
-    if proof.public_inputs[0] != circuit_expected_source || proof.public_inputs[1] != circuit_expected_dest {
     debug!("debug public inputs first5: {:?}", &proof.public_inputs[0..5]);
 
     if proof.public_inputs[0] != circuit_expected_source || proof.public_inputs[1] != circuit_expected_dest {
