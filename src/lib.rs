@@ -7,18 +7,15 @@ pub mod runtime;
 pub mod monitoring;
 pub mod integration;
 pub mod cli;
-pub mod zk_coordinator;
+pub mod api;
 
 // Re-export key types for external use
 pub use config::{NodeConfig, CliArgs, Environment, MeshMode, SecurityLevel};
 pub use runtime::{RuntimeOrchestrator, ComponentStatus, ComponentId, Component};
 pub use monitoring::{MonitoringSystem, SystemMetrics, HealthStatus as MonitoringHealth};
 pub use integration::{IntegrationManager, ServiceContainer, EventBus};
-pub use cli::{parse_arguments, InteractiveShell};
-pub use zk_coordinator::{
-    ZkProofCoordinator, UnifiedProofType, UnifiedIdentityProof, CompositeTransactionProof,
-    GenericRangeProof, ProofRequirements, SystemOperation, ProofStats
-};
+pub use cli::{ZhtpCli, ZhtpCommand, run_cli, format_output};
+pub use api::{ApiConfig, ApiEndpoints, start_api_server};
 
 /// ZHTP node version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

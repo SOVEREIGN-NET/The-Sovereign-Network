@@ -7,10 +7,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio_test;
 
-use zhtp::monitoring::*;
-use zhtp::monitoring::health_check::*;
-use zhtp::monitoring::metrics::*;
-use zhtp::monitoring::alerting::*;
+use zhtp::monitoring::{MonitoringSystem, MetricsCollector, HealthMonitor, AlertManager, NodeHealth, Alert, AlertLevel, MonitoringConfig, AlertThresholds};
 
 #[tokio::test]
 async fn test_monitoring_system_basic() -> Result<()> {

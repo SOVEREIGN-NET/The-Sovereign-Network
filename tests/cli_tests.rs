@@ -69,8 +69,8 @@ async fn test_cli_args_structure() -> Result<()> {
 async fn test_environment_types() -> Result<()> {
     // Test Environment enum variants
     let _dev = Environment::Development;
-    let _test = Environment::Testing;
-    let _prod = Environment::Production;
+    let _testnet = Environment::Testnet;
+    let _mainnet = Environment::Mainnet;
     
     // All environment types should be constructible
     Ok(())
@@ -97,7 +97,7 @@ async fn test_cli_module_integration() -> Result<()> {
         mesh_port: 443,
         pure_mesh: true,
         config: PathBuf::from("prod.toml"),
-        environment: Environment::Production,
+        environment: Environment::Mainnet,
         log_level: "info".to_string(),
         data_dir: PathBuf::from("/var/lib/zhtp"),
     };

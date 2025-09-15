@@ -42,6 +42,7 @@ thiserror = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 hex = "0.4"
 lru = "0.12"
+md5 = "0.7"
 
 # System integration
 sysinfo = "0.31"
@@ -53,6 +54,10 @@ async-trait = "0.1"
 
 # Web dashboard and HTTP server
 warp = "0.3"
+reqwest = { version = "0.11", features = ["json"] }
+axum = { version = "0.7", features = ["json", "tokio"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
 
 # Additional utilities for integration
 parking_lot = "0.12"

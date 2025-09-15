@@ -19,9 +19,10 @@ use lib_identity::{self, IdentityManager};
 use lib_blockchain::{self, Blockchain, Transaction, TransactionInput, TransactionOutput, IdentityTransactionData, BlockBuilder};
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
 use lib_consensus::{self, ConsensusEngine, ConsensusConfig};
-use lib_protocols::{ApiEndpoints, ZhtpServer, ZdnsServer, ZhtpIntegration, ServerConfig, ZdnsConfig, IntegrationConfig};
+use lib_protocols::{ZhtpServer, ZdnsServer, ZhtpIntegration, ServerConfig, ZdnsConfig, IntegrationConfig};
+use crate::ApiEndpoints;
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
+use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus, ZhtpHeaders};
 
 /// Helper function to create default storage configuration
 fn create_default_storage_config() -> Result<lib_storage::UnifiedStorageConfig> {
@@ -1545,7 +1546,33 @@ impl ZhtpRequestHandler for ApiEndpointsAdapter {
         // Get a mutable reference to the API endpoints
         if let Some(ref mut api_endpoints) = *self.api_endpoints.write().await {
             // Use the ApiEndpoints to handle the request
-            api_endpoints.handle_request(request).await
+            let method_str = match request.method {
+                ZhtpMethod::Get => "GET",
+                ZhtpMethod::Post => "POST",
+                ZhtpMethod::Put => "PUT",
+                ZhtpMethod::Delete => "DELETE",
+                ZhtpMethod::Patch => "PATCH",
+                ZhtpMethod::Head => "HEAD",
+                ZhtpMethod::Options => "OPTIONS",
+                ZhtpMethod::Verify => "VERIFY",
+                ZhtpMethod::Connect => "CONNECT",
+                ZhtpMethod::Trace => "TRACE",
+            };
+            let headers_map = request.headers.custom.clone();
+            let result = api_endpoints.handle_request(method_str, &request.uri, &request.body, headers_map).await
+                .map_err(|e| anyhow::anyhow!("API request failed: {}", e))?;
+            
+            // Convert JSON value to ZhtpResponse
+            Ok(ZhtpResponse {
+                version: "ZHTP/1.0".to_string(),
+                status: ZhtpStatus::Ok,
+                status_message: "Success".to_string(),
+                headers: ZhtpHeaders::new(),
+                body: serde_json::to_vec(&result).unwrap_or_default(),
+                timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+                server: None,
+                validity_proof: None,
+            })
         } else {
             // API endpoints not initialized
             Err(anyhow::anyhow!("API endpoints not initialized").into())
@@ -1622,14 +1649,14 @@ impl Component for ProtocolsComponent {
         info!("🌐 ZHTP server created on port 9333");
         
         // Initialize Web4 API endpoints BEFORE starting server
-        use lib_protocols::ApiConfig;
+        use crate::ApiConfig;
         let api_config = ApiConfig {
             require_auth: false, // For testing
             enable_rate_limiting: true,
             enable_economic_fees: true,
             ..Default::default()
         };
-        let api_endpoints = ApiEndpoints::new(api_config);
+        let api_endpoints = ApiEndpoints::new(api_config).await?;
         info!("🌐 Web4 API endpoints initialized - 50+ endpoints ready");
         
         // Store the API endpoints for later use

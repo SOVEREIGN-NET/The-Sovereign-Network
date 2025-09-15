@@ -29,7 +29,7 @@ async fn test_default_configuration() -> Result<()> {
     // Verify basic configuration structure
     assert!(!config.node_id.is_empty());
     assert!(matches!(config.mesh_mode, MeshMode::Hybrid | MeshMode::PureMesh));
-    assert!(matches!(config.security_level, SecurityLevel::Standard | SecurityLevel::High | SecurityLevel::Maximum));
+    assert!(matches!(config.security_level, SecurityLevel::Basic | SecurityLevel::Medium | SecurityLevel::High | SecurityLevel::Maximum));
     assert!(matches!(config.environment, Environment::Development | Environment::Testnet | Environment::Mainnet));
     
     Ok(())
@@ -139,7 +139,7 @@ async fn test_security_level_configuration() -> Result<()> {
     let config = load_configuration(&args).await?;
     
     // Verify security level is set appropriately
-    assert!(matches!(config.security_level, SecurityLevel::Standard | SecurityLevel::High | SecurityLevel::Maximum));
+    assert!(matches!(config.security_level, SecurityLevel::Basic | SecurityLevel::Medium | SecurityLevel::High | SecurityLevel::Maximum));
     
     Ok(())
 }
@@ -161,7 +161,7 @@ async fn test_data_directory_configuration() -> Result<()> {
     let config = load_configuration(&args).await?;
     
     // Verify data directory is set correctly
-    assert_eq!(config.data_directory, custom_data_dir);
+    assert_eq!(config.data_directory, custom_data_dir.to_string_lossy().to_string());
     
     Ok(())
 }
@@ -183,7 +183,7 @@ async fn test_port_configuration() -> Result<()> {
     let config = load_configuration(&args).await?;
     
     // Verify port configuration
-    assert_eq!(config.mesh_port, custom_port);
+    assert_eq!(config.network_config.mesh_port, custom_port);
     
     Ok(())
 }
@@ -206,8 +206,8 @@ async fn test_configuration_validation() -> Result<()> {
     
     // Basic validation checks
     assert!(!config.node_id.is_empty());
-    assert!(config.mesh_port > 0);
-    assert!(config.mesh_port < 65536);
+    assert!(config.network_config.mesh_port > 0);
+    // Note: mesh_port is u16, so it's always <= 65535
     
     Ok(())
 }
@@ -233,7 +233,7 @@ async fn test_multiple_configuration_loads() -> Result<()> {
     assert_eq!(config1.environment, config2.environment);
     assert_eq!(config1.mesh_mode, config2.mesh_mode);
     assert_eq!(config1.security_level, config2.security_level);
-    assert_eq!(config1.mesh_port, config2.mesh_port);
+    assert_eq!(config1.network_config.mesh_port, config2.network_config.mesh_port);
     
     Ok(())
 }

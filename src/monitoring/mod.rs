@@ -19,6 +19,7 @@ pub use alerting::*;
 pub use dashboard::*;
 
 /// Central monitoring system for ZHTP node
+#[derive(Clone)]
 pub struct MonitoringSystem {
     metrics_collector: Arc<MetricsCollector>,
     health_monitor: Arc<HealthMonitor>,

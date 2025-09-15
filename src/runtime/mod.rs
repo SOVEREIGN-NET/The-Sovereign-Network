@@ -10,11 +10,7 @@ use tokio::time::{Duration, Instant};
 use tracing::{info, warn, error, debug};
 
 use super::config::NodeConfig;
-use crate::zk_coordinator::{
-    ZkProofCoordinator, ProofRequirements, SystemOperation, OperationType, Subsystem, 
-    AccessLevel, CapabilityType, UnifiedProofType, RangeProofType, CoordinatorStats,
-    IdentityData, CredentialData, TransactionData
-};
+// Removed ZK coordinator - using unified lib-proofs system directly
 
 pub mod components;
 pub mod shared_blockchain;
@@ -148,6 +144,7 @@ pub trait Component: Send + Sync + std::fmt::Debug {
 }
 
 /// Runtime orchestrator that manages all ZHTP components
+#[derive(Clone)]
 pub struct RuntimeOrchestrator {
     config: NodeConfig,
     components: Arc<RwLock<HashMap<ComponentId, Arc<dyn Component>>>>,
@@ -156,8 +153,6 @@ pub struct RuntimeOrchestrator {
     shutdown_signal: Arc<Mutex<Option<mpsc::UnboundedSender<()>>>>,
     startup_order: Vec<ComponentId>,
     shared_blockchain: Arc<RwLock<Option<SharedBlockchainService>>>,
-    /// Unified ZK proof coordinator to eliminate redundancies
-    zk_coordinator: ZkProofCoordinator,
 }
 
 impl RuntimeOrchestrator {
@@ -173,7 +168,6 @@ impl RuntimeOrchestrator {
             message_bus: Arc::new(Mutex::new(message_tx)),
             shutdown_signal: Arc::new(Mutex::new(Some(shutdown_tx))),
             shared_blockchain: Arc::new(RwLock::new(None)),
-            zk_coordinator: ZkProofCoordinator::new()?,
             startup_order: vec![
                 ComponentId::Crypto,      // Foundation layer
                 ComponentId::ZK,          // Zero-knowledge proofs
@@ -262,9 +256,38 @@ impl RuntimeOrchestrator {
         Ok(())
     }
 
+    /// Register all component instances
+    pub async fn register_all_components(&self) -> Result<()> {
+        info!("📦 Registering all ZHTP component instances...");
+        
+        // Import all component types
+        use crate::runtime::components::{
+            CryptoComponent, ZKComponent, IdentityComponent, StorageComponent, 
+            NetworkComponent, BlockchainComponent, ConsensusComponent, 
+            EconomicsComponent, ProtocolsComponent
+        };
+        
+        // Register components in dependency order
+        self.register_component(Arc::new(CryptoComponent::new())).await?;
+        self.register_component(Arc::new(ZKComponent::new())).await?;
+        self.register_component(Arc::new(IdentityComponent::new())).await?;
+        self.register_component(Arc::new(StorageComponent::new())).await?;
+        self.register_component(Arc::new(NetworkComponent::new())).await?;
+        self.register_component(Arc::new(BlockchainComponent::new())).await?;
+        self.register_component(Arc::new(ConsensusComponent::new())).await?;
+        self.register_component(Arc::new(EconomicsComponent::new())).await?;
+        self.register_component(Arc::new(ProtocolsComponent::new())).await?;
+        
+        info!("✅ All components registered successfully");
+        Ok(())
+    }
+
     /// Start all components in the correct order
     pub async fn start_all_components(&self) -> Result<()> {
         info!("🚀 Starting all ZHTP components...");
+        
+        // First register all components
+        self.register_all_components().await?;
         
         for component_id in &self.startup_order {
             self.start_component(component_id.clone()).await
@@ -868,152 +891,5 @@ impl RuntimeOrchestrator {
         
         info!("✅ Graceful shutdown completed");
         Ok(())
-    }
-
-    /// Get the ZK proof coordinator for unified proof management
-    pub fn get_zk_coordinator(&self) -> &ZkProofCoordinator {
-        &self.zk_coordinator
-    }
-
-    /// Generate optimized proofs for a system operation
-    pub async fn generate_optimized_proofs(&self, operation: &SystemOperation) -> Result<Vec<UnifiedProofType>> {
-        info!("🔧 Generating optimized proofs for {:?} operation", operation.operation_type);
-        
-        // Analyze requirements to minimize redundant generation
-        let requirements = self.zk_coordinator.analyze_proof_requirements(operation);
-        info!("📊 Reduced proof requirements from {} potential to {} actual proofs", 
-              operation.potential_redundant_proofs, requirements.len());
-        
-        let mut proofs = Vec::new();
-        
-        for requirement in requirements {
-            match requirement.operation_type {
-                OperationType::Identity => {
-                    // Generate unified identity proof (replaces multiple redundant identity proofs)
-                    let identity_data = self.create_sample_identity_data(&requirement).await?;
-                    let identity_proof = self.zk_coordinator.get_or_generate_identity_proof(
-                        "sample_identity",
-                        &requirement,
-                        &identity_data,
-                    ).await?;
-                    proofs.push(UnifiedProofType::Identity(identity_proof));
-                }
-                OperationType::Transaction => {
-                    // Generate composite transaction proof (replaces multiple transaction-related proofs)
-                    let transaction_data = self.create_sample_transaction_data(&requirement).await?;
-                    let transaction_proof = self.zk_coordinator.get_or_generate_transaction_proof(
-                        "sample_transaction",
-                        &requirement,
-                        &transaction_data,
-                    ).await?;
-                    proofs.push(UnifiedProofType::Transaction(transaction_proof));
-                }
-                OperationType::Access => {
-                    // Generate range proof for access-related verifications
-                    let range_proof = self.zk_coordinator.get_or_generate_range_proof(
-                        "sample_access",
-                        RangeProofType::Custom("access_level".to_string()),
-                        100, // secret value
-                        50,  // minimum required
-                        None, // no maximum
-                        b"access_context",
-                    ).await?;
-                    proofs.push(UnifiedProofType::Range(range_proof));
-                }
-                _ => {
-                    // For other operations, generate appropriate range proofs
-                    let range_type = match requirement.subsystem {
-                        Subsystem::Consensus => RangeProofType::Stake,
-                        Subsystem::Storage => RangeProofType::StorageCapacity,
-                        Subsystem::Network => RangeProofType::NetworkBandwidth,
-                        _ => RangeProofType::Custom(format!("{:?}", requirement.subsystem)),
-                    };
-                    
-                    let range_proof = self.zk_coordinator.get_or_generate_range_proof(
-                        &format!("sample_{:?}", requirement.subsystem),
-                        range_type,
-                        75, // secret value
-                        25, // minimum required
-                        Some(150), // maximum allowed
-                        format!("{:?}_context", requirement.subsystem).as_bytes(),
-                    ).await?;
-                    proofs.push(UnifiedProofType::Range(range_proof));
-                }
-            }
-        }
-        
-        info!("✅ Generated {} optimized proofs (eliminated {} redundant proofs)", 
-              proofs.len(), operation.potential_redundant_proofs.saturating_sub(proofs.len()));
-        
-        Ok(proofs)
-    }
-
-    /// Verify unified proofs efficiently
-    pub async fn verify_unified_proofs(&self, proofs: &[UnifiedProofType]) -> Result<bool> {
-        info!("🔍 Verifying {} unified proofs", proofs.len());
-        
-        for (index, proof) in proofs.iter().enumerate() {
-            match self.zk_coordinator.verify_proof(proof).await {
-                Ok(true) => {
-                    debug!("✅ Proof {} verified successfully", index);
-                }
-                Ok(false) => {
-                    warn!("❌ Proof {} verification failed", index);
-                    return Ok(false);
-                }
-                Err(e) => {
-                    error!("❌ Proof {} verification error: {}", index, e);
-                    return Err(e);
-                }
-            }
-        }
-        
-        info!("✅ All {} proofs verified successfully", proofs.len());
-        Ok(true)
-    }
-
-    /// Get ZK proof generation statistics
-    pub async fn get_zk_stats(&self) -> CoordinatorStats {
-        self.zk_coordinator.get_statistics().await
-    }
-
-    /// Create sample identity data for proof generation
-    async fn create_sample_identity_data(&self, requirement: &ProofRequirements) -> Result<IdentityData> {
-        let mut capability_data = std::collections::HashMap::new();
-        
-        for capability in &requirement.required_capabilities {
-            capability_data.insert(capability.clone(), vec![1, 2, 3, 4]); // Sample data
-        }
-        
-        Ok(IdentityData {
-            secret_biometric: vec![0xaa, 0xbb, 0xcc, 0xdd],
-            humanity_registry: vec![0x11, 0x22, 0x33, 0x44],
-            uniqueness_nullifier: vec![0xff, 0xee, 0xdd, 0xcc],
-            credentials: vec![
-                CredentialData {
-                    secret_data: vec![0x01, 0x02, 0x03],
-                    public_commitment: vec![0x04, 0x05, 0x06],
-                    issuer_signature: vec![0x07, 0x08, 0x09],
-                }
-            ],
-            capability_data,
-        })
-    }
-
-    /// Create sample transaction data for proof generation
-    async fn create_sample_transaction_data(&self, _requirement: &ProofRequirements) -> Result<TransactionData> {
-        Ok(TransactionData {
-            secret_amount: 1000,
-            secret_fee: 10,
-            secret_nonce: 42,
-            sender_balance: 5000,
-            recipient_id: "sample_recipient".to_string(),
-            base_fee_rate: 1,
-            congestion_multiplier: 1.5,
-            complexity_factor: 1.2,
-            generates_rewards: true,
-            contribution_score: 85,
-            economic_impact: 100,
-        })
     }
 }

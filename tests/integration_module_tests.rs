@@ -65,9 +65,9 @@ async fn test_startup_order() -> Result<()> {
     assert_eq!(startup_order[0], ComponentId::Crypto); // Should be first
     
     // Economics and Protocols should come after their dependencies
-    let crypto_pos = startup_order.iter().position(|&x| x == ComponentId::Crypto).unwrap();
-    let blockchain_pos = startup_order.iter().position(|&x| x == ComponentId::Blockchain).unwrap();
-    let economics_pos = startup_order.iter().position(|&x| x == ComponentId::Economics).unwrap();
+    let crypto_pos = startup_order.iter().position(|x| *x == ComponentId::Crypto).unwrap();
+    let blockchain_pos = startup_order.iter().position(|x| *x == ComponentId::Blockchain).unwrap();
+    let economics_pos = startup_order.iter().position(|x| *x == ComponentId::Economics).unwrap();
     
     assert!(crypto_pos < blockchain_pos); // Crypto before blockchain
     assert!(blockchain_pos < economics_pos); // Blockchain before economics

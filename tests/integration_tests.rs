@@ -95,6 +95,10 @@ impl zhtp::runtime::Component for MockComponent {
         metrics.insert("memory_usage_mb".to_string(), 1.0);
         Ok(metrics)
     }
+
+    fn as_any(&self) -> &(dyn std::any::Any + 'static) {
+        self
+    }
 }
 
 #[tokio::test]
