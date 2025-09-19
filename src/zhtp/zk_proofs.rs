@@ -32,7 +32,7 @@ impl From<RoutingProof> for ByteRoutingProof {
         let commitments = proof.path_commitments.iter().map(|pc| {
             let mut bytes = Vec::new();
             if let Err(e) = pc.0.serialize_uncompressed(&mut bytes) {
-                error!("Failed to serialize path commitment: {}", e);
+                eprintln!("Failed to serialize path commitment: {}", e);
                 return Vec::new();
             }
             bytes
@@ -704,8 +704,8 @@ impl UnifiedCircuit {
             let mut coeffs = vec![*value];
             coeffs.resize(self.evaluation_domain.size(), Fr::zero());
             polynomials.push(DensePolynomial { coeffs });
-            println!("Created polynomial for value");
         }
+        println!("Created polynomial for {} values", values.len());
         
         polynomials
     }
@@ -943,10 +943,7 @@ fn verify_public_inputs(
     eprintln!("debug public inputs first5: {:?}", &proof.public_inputs[0..5]);
 
     if proof.public_inputs[0] != circuit_expected_source || proof.public_inputs[1] != circuit_expected_dest {
-    debug!("debug public inputs first5: {:?}", &proof.public_inputs[0..5]);
-
-    if proof.public_inputs[0] != circuit_expected_source || proof.public_inputs[1] != circuit_expected_dest {
-        error!("public input mismatch: circuit_source_ok? {} circuit_dest_ok? {} provided_source_ok? {} provided_dest_ok? {}",
+        eprintln!("public input mismatch: circuit_source_ok? {} circuit_dest_ok? {} provided_source_ok? {} provided_dest_ok? {}",
             proof.public_inputs[0]==circuit_expected_source,
             proof.public_inputs[1]==circuit_expected_dest,
             proof.public_inputs[0]==provided_expected_source,
