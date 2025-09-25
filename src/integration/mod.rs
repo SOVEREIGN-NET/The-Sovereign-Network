@@ -386,6 +386,10 @@ impl IntegrationManager {
                 // Setup protocols-specific integrations
                 // Connect to network, storage, economics
             }
+            ComponentId::Api => {
+                // Setup API-specific integrations
+                // Connect to all components for API endpoints
+            }
         }
 
         Ok(())
@@ -419,6 +423,12 @@ impl IntegrationManager {
                 ComponentId::Network, 
                 ComponentId::Storage, 
                 ComponentId::Economics
+            ],
+            ComponentId::Api => vec![
+                ComponentId::Identity,
+                ComponentId::Blockchain, 
+                ComponentId::Storage,
+                ComponentId::Protocols
             ],
         })
     }

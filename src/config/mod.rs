@@ -42,6 +42,12 @@ pub async fn load_configuration(args: &CliArgs) -> Result<NodeConfig> {
     // Apply CLI argument overrides
     node_config.apply_cli_overrides(args)?;
     
+    // Create data directory if it doesn't exist
+    if !args.data_dir.exists() {
+        std::fs::create_dir_all(&args.data_dir)?;
+        tracing::info!("📁 Created data directory: {}", args.data_dir.display());
+    }
+    
     // Apply environment-specific settings
     node_config.apply_environment_config(env_config)?;
     

@@ -15,6 +15,10 @@ use super::config::NodeConfig;
 pub mod components;
 pub mod shared_blockchain;
 pub mod blockchain_provider;
+pub mod did_startup;
+#[cfg(test)]
+pub mod test_api_integration;
+
 pub use components::*;
 pub use shared_blockchain::*;
 pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_blockchain};
@@ -94,6 +98,7 @@ pub enum ComponentId {
     Consensus,
     Economics,
     Protocols,
+    Api,
 }
 
 impl std::fmt::Display for ComponentId {
@@ -108,6 +113,7 @@ impl std::fmt::Display for ComponentId {
             ComponentId::Consensus => write!(f, "consensus"),
             ComponentId::Economics => write!(f, "economics"),
             ComponentId::Protocols => write!(f, "protocols"),
+            ComponentId::Api => write!(f, "api"),
         }
     }
 }
@@ -129,6 +135,8 @@ pub trait Component: Send + Sync + std::fmt::Debug {
         // Default implementation just calls regular stop
         self.stop().await
     }
+    
+
     
     /// Check component health
     async fn health_check(&self) -> Result<ComponentHealth>;
@@ -153,6 +161,7 @@ pub struct RuntimeOrchestrator {
     shutdown_signal: Arc<Mutex<Option<mpsc::UnboundedSender<()>>>>,
     startup_order: Vec<ComponentId>,
     shared_blockchain: Arc<RwLock<Option<SharedBlockchainService>>>,
+    user_identity: Arc<RwLock<Option<crate::runtime::did_startup::DidStartupResult>>>,
 }
 
 impl RuntimeOrchestrator {
@@ -168,6 +177,7 @@ impl RuntimeOrchestrator {
             message_bus: Arc::new(Mutex::new(message_tx)),
             shutdown_signal: Arc::new(Mutex::new(Some(shutdown_tx))),
             shared_blockchain: Arc::new(RwLock::new(None)),
+            user_identity: Arc::new(RwLock::new(None)),
             startup_order: vec![
                 ComponentId::Crypto,      // Foundation layer
                 ComponentId::ZK,          // Zero-knowledge proofs
@@ -177,7 +187,7 @@ impl RuntimeOrchestrator {
                 ComponentId::Blockchain,  // Blockchain layer
                 ComponentId::Consensus,   // Consensus mechanism
                 ComponentId::Economics,   // Economic incentives
-                ComponentId::Protocols,   // High-level protocols
+                ComponentId::Protocols,   // High-level protocols (includes ZHTP server with comprehensive handlers)
             ],
         };
 
@@ -264,7 +274,7 @@ impl RuntimeOrchestrator {
         use crate::runtime::components::{
             CryptoComponent, ZKComponent, IdentityComponent, StorageComponent, 
             NetworkComponent, BlockchainComponent, ConsensusComponent, 
-            EconomicsComponent, ProtocolsComponent
+            EconomicsComponent, ProtocolsComponent, ApiComponent
         };
         
         // Register components in dependency order
@@ -277,8 +287,16 @@ impl RuntimeOrchestrator {
         self.register_component(Arc::new(ConsensusComponent::new())).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ProtocolsComponent::new())).await?;
+        self.register_component(Arc::new(ApiComponent::new())).await?;
         
         info!("✅ All components registered successfully");
+        Ok(())
+    }
+
+    /// Set user identity data for components that need it
+    pub async fn set_user_identity(&self, identity: crate::runtime::did_startup::DidStartupResult) -> Result<()> {
+        let mut user_identity = self.user_identity.write().await;
+        *user_identity = Some(identity);
         Ok(())
     }
 
@@ -290,6 +308,25 @@ impl RuntimeOrchestrator {
         self.register_all_components().await?;
         
         for component_id in &self.startup_order {
+            // Special handling for blockchain component - pass user identity before starting
+            if matches!(component_id, ComponentId::Blockchain) {
+                if let Some(user_identity) = &*self.user_identity.read().await {
+                    info!("🔗 Passing user identity to blockchain component: {} ({})", user_identity.user_display_name, user_identity.node_did);
+                    
+                    // Get the blockchain component and set its user identity
+                    let components = self.components.read().await;
+                    if let Some(component) = components.get(&ComponentId::Blockchain) {
+                        // Downcast to BlockchainComponent to access set_user_identity method
+                        if let Some(blockchain_component) = component.as_any().downcast_ref::<crate::runtime::components::BlockchainComponent>() {
+                            blockchain_component.set_user_identity(user_identity.clone()).await;
+                            info!("✅ User identity passed to blockchain component successfully");
+                        }
+                    }
+                } else {
+                    warn!("⚠️ No user identity available for blockchain component - will use dummy identities");
+                }
+            }
+            
             self.start_component(component_id.clone()).await
                 .with_context(|| format!("Failed to start component {}", component_id))?;
             

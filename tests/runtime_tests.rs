@@ -39,6 +39,10 @@ impl Component for MockComponent {
         self.id.clone()
     }
     
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn start(&self) -> Result<()> {
         self.started.store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())

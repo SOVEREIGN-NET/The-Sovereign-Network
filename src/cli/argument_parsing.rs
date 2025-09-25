@@ -320,12 +320,19 @@ Examples:
             .help("Run in pure mesh mode (complete ISP bypass)")
             .action(clap::ArgAction::SetTrue))
         
+        .arg(Arg::new("node-type")
+            .short('t')
+            .long("node-type")
+            .value_name("TYPE")
+            .help("Node type with pre-configured settings")
+            .value_parser(["full", "validator", "storage", "edge", "dev"])
+            .help_heading("Node Configuration"))
+        
         .arg(Arg::new("config")
             .short('c')
             .long("config")
             .value_name("FILE")
-            .help("Configuration file path")
-            .default_value("lib-node.toml")
+            .help("Configuration file path (overrides --node-type)")
             .value_parser(clap::value_parser!(PathBuf)))
         
         .arg(Arg::new("environment")
@@ -570,11 +577,23 @@ Examples:
                 tracing::warn!("⚠️ Pure mesh mode in mainnet - ensure adequate long-range relay coverage");
             }
 
+            // Determine configuration file path
+            let config_path = if let Some(config) = matches.get_one::<PathBuf>("config") {
+                // Explicit config file provided
+                config.clone()
+            } else if let Some(node_type) = matches.get_one::<String>("node-type") {
+                // Use pre-configured node type
+                PathBuf::from(format!("./configs/{}-node.toml", node_type))
+            } else {
+                // Default config
+                PathBuf::from("lib-node.toml")
+            };
+
             // Create CLI args structure
             let args = CliArgs {
                 mesh_port: *matches.get_one::<u16>("mesh-port").unwrap(),
                 pure_mesh: matches.get_flag("pure-mesh"),
-                config: matches.get_one::<PathBuf>("config").unwrap().clone(),
+                config: config_path,
                 environment,
                 log_level: matches.get_one::<String>("log-level").unwrap().clone(),
                 data_dir: matches.get_one::<PathBuf>("data-dir").unwrap().clone(),

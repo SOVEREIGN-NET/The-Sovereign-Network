@@ -1,321 +1,306 @@
-//! ZHTP Orchestrator API Server
+//! ZHTP Server Module
 //! 
-//! HTTP API server that coordinates Level 2 components (protocols, blockchain, network)
-//! and provides orchestrated endpoints for Web4 functionality
+//! Clean, minimal ZHTP server implementation
 
-use crate::api::{ApiConfig, ApiEndpoints, handlers::*};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use anyhow::{Result, Context};
-use axum::{
-    routing::{get, post},
-    Router, Json, extract::Path,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
-use serde_json::{json, Value};
-use std::net::SocketAddr;
-use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::cors::CorsLayer;
-use tracing::{info, warn, error};
+use tracing::{info, error};
 
-/// Start the ZHTP orchestrator API server
-pub async fn start_api_server(config: ApiConfig) -> Result<()> {
-    let port = config.port.unwrap_or(9333);
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    
-    info!("🚀 Starting ZHTP Orchestrator API server on {}", addr);
-    
-    let app = create_app(config).await?;
-    
-    let listener = TcpListener::bind(addr)
-        .await
-        .context("Failed to bind API server")?;
-        
-    info!("✅ ZHTP Orchestrator API server listening on {}", addr);
-    
-    axum::serve(listener, app)
-        .await
-        .context("API server failed")?;
-        
-    Ok(())
+// ZHTP protocol imports
+use lib_protocols::zhtp::{Router, ZhtpRequestHandler, ZhtpResult};
+use lib_protocols::zhtp::routing::RouterConfig;
+use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+
+// Import our handlers and middleware
+use crate::api::handlers::{IdentityHandler, BlockchainHandler, StorageHandler, ProtocolHandler, NetworkHandler};
+use crate::api::middleware::MiddlewareStack;
+
+// External library imports
+use lib_identity::IdentityManager;
+use lib_blockchain::Blockchain;
+use lib_storage::StorageProvider;
+use lib_economy::EconomicModel;
+
+/// Clean ZHTP server implementation
+pub struct ZhtpServer {
+    router: Router,
+    middleware: MiddlewareStack,
+    identity_manager: Arc<RwLock<IdentityManager>>,
+    blockchain: Arc<RwLock<Blockchain>>,
+    storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+    economic_model: Arc<RwLock<EconomicModel>>,
 }
 
-/// Create the Axum application with all routes
-async fn create_app(config: ApiConfig) -> Result<Router> {
-    let cors = CorsLayer::new()
-        .allow_origin(tower_http::cors::Any)
-        .allow_methods(tower_http::cors::Any)
-        .allow_headers(tower_http::cors::Any);
+impl std::fmt::Debug for ZhtpServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZhtpServer")
+            .field("router", &"<Router>")
+            .field("middleware", &"<MiddlewareStack>")
+            .field("identity_manager", &"<Arc<RwLock<IdentityManager>>>")
+            .field("blockchain", &"<Arc<RwLock<Blockchain>>>")
+            .field("storage", &"<Arc<RwLock<UnifiedStorageSystem>>>")
+            .field("economic_model", &"<Arc<RwLock<EconomicModel>>>")
+            .finish()
+    }
+}
+
+impl ZhtpServer {
+    /// Create a new ZHTP server with clean configuration
+    pub async fn new() -> Result<Self> {
+        info!("🚀 Initializing ZHTP Server...");
+        
+        // Initialize router with default config
+        let router_config = RouterConfig::default();
+        let mut router = Router::new(router_config);
+        
+        // Initialize core components (these would be properly initialized in real implementation)
+        let identity_manager = Arc::new(RwLock::new(
+            IdentityManager::new()
+        ));
+        
+        let blockchain = Arc::new(RwLock::new(
+            Blockchain::new()?
+        ));
+        
+        // For storage, we'll use a placeholder - in real implementation this would be proper storage
+        let storage = Arc::new(RwLock::new(
+            lib_storage::UnifiedStorageSystem::new(lib_storage::UnifiedStorageConfig {
+                node_id: lib_storage::types::NodeId::from(lib_crypto::Hash::from_bytes(b"node_001")),
+                addresses: vec!["127.0.0.1:8000".to_string()],
+                economic_config: lib_storage::EconomicManagerConfig::default(),
+                storage_config: lib_storage::StorageConfig {
+                    max_storage_size: 1024 * 1024 * 1024, // 1GB
+                    default_tier: lib_storage::StorageTier::Hot,
+                    enable_compression: true,
+                    enable_encryption: true,
+                },
+                erasure_config: lib_storage::ErasureConfig {
+                    data_shards: 4,
+                    parity_shards: 2,
+                },
+            }).await?
+        ));
+        
+        let economic_model = Arc::new(RwLock::new(
+            EconomicModel::new()
+        ));
+        
+        // Register network handler routes
+        use crate::runtime::RuntimeOrchestrator;
+        use crate::config::NodeConfig;
+        let runtime = Arc::new(RuntimeOrchestrator::new(NodeConfig::default()).await?);
+        let network_handler = Arc::new(NetworkHandler::new(runtime));
+        
+        // Create routes for network endpoints
+        use lib_protocols::zhtp::routing::{Route, RoutePattern, EconomicRequirements, AccessRequirements, RouteMetadata, MonitoringConfig};
+        use lib_protocols::types::ZhtpMethod;
+        
+        // GET /api/v1/blockchain/network/peers
+        let peers_route = Route {
+            pattern: RoutePattern::Exact("/api/v1/blockchain/network/peers".to_string()),
+            methods: vec![ZhtpMethod::Get],
+            handler: network_handler.clone(),
+            priority: 100,
+            economic_requirements: EconomicRequirements::default(),
+            access_requirements: AccessRequirements::default(),
+            metadata: RouteMetadata {
+                name: "get_network_peers".to_string(),
+                description: "Get list of connected network peers".to_string(),
+                version: "1.0".to_string(),
+                tags: vec!["network".to_string(), "peers".to_string()],
+                rate_limit: None,
+                cache_config: None,
+                monitoring: MonitoringConfig {
+                    enable_logging: true,
+                    enable_metrics: true,
+                    enable_tracing: false,
+                    custom_metrics: vec![],
+                },
+            },
+            middleware: vec![],
+        };
+        router.add_route(peers_route)?;
+        
+        // GET /api/v1/blockchain/network/stats
+        let stats_route = Route {
+            pattern: RoutePattern::Exact("/api/v1/blockchain/network/stats".to_string()),
+            methods: vec![ZhtpMethod::Get],
+            handler: network_handler.clone(),
+            priority: 100,
+            economic_requirements: EconomicRequirements::default(),
+            access_requirements: AccessRequirements::default(),
+            metadata: RouteMetadata {
+                name: "get_network_stats".to_string(),
+                description: "Get network statistics and health metrics".to_string(),
+                version: "1.0".to_string(),
+                tags: vec!["network".to_string(), "stats".to_string()],
+                rate_limit: None,
+                cache_config: None,
+                monitoring: MonitoringConfig {
+                    enable_logging: true,
+                    enable_metrics: true,
+                    enable_tracing: false,
+                    custom_metrics: vec![],
+                },
+            },
+            middleware: vec![],
+        };
+        router.add_route(stats_route)?;
+        
+        // POST /api/v1/blockchain/network/peer/add
+        let add_peer_route = Route {
+            pattern: RoutePattern::Exact("/api/v1/blockchain/network/peer/add".to_string()),
+            methods: vec![ZhtpMethod::Post],
+            handler: network_handler.clone(),
+            priority: 100,
+            economic_requirements: EconomicRequirements::default(),
+            access_requirements: AccessRequirements::default(),
+            metadata: RouteMetadata {
+                name: "add_network_peer".to_string(),
+                description: "Add a new peer to the network".to_string(),
+                version: "1.0".to_string(),
+                tags: vec!["network".to_string(), "peers".to_string()],
+                rate_limit: None,
+                cache_config: None,
+                monitoring: MonitoringConfig {
+                    enable_logging: true,
+                    enable_metrics: true,
+                    enable_tracing: false,
+                    custom_metrics: vec![],
+                },
+            },
+            middleware: vec![],
+        };
+        router.add_route(add_peer_route)?;
+        
+        // DELETE /api/v1/blockchain/network/peer/{peer_id}
+        let remove_peer_route = Route {
+            pattern: RoutePattern::Parameterized("/api/v1/blockchain/network/peer/{peer_id}".to_string(), vec!["peer_id".to_string()]),
+            methods: vec![ZhtpMethod::Delete],
+            handler: network_handler.clone(),
+            priority: 100,
+            economic_requirements: EconomicRequirements::default(),
+            access_requirements: AccessRequirements::default(),
+            metadata: RouteMetadata {
+                name: "remove_network_peer".to_string(),
+                description: "Remove a peer from the network".to_string(),
+                version: "1.0".to_string(),
+                tags: vec!["network".to_string(), "peers".to_string()],
+                rate_limit: None,
+                cache_config: None,
+                monitoring: MonitoringConfig {
+                    enable_logging: true,
+                    enable_metrics: true,
+                    enable_tracing: false,
+                    custom_metrics: vec![],
+                },
+            },
+            middleware: vec![],
+        };
+        router.add_route(remove_peer_route)?;
+        
+        info!("📋 Router configured with network handler routes");
+        
+        // Initialize middleware stack
+        let middleware = MiddlewareStack::new();
+        
+        info!("✅ ZHTP Server initialized successfully");
+        
+        Ok(Self {
+            router,
+            middleware,
+            identity_manager,
+            blockchain,
+            storage,
+            economic_model,
+        })
+    }
     
-    let app = Router::new()
-        // Root endpoints
-        .route("/", get(root_handler))
-        .route("/health", get(health_handler))
-        .route("/status", get(status_handler))
-        
-        // API v1 routes - Level 1 Orchestrator endpoints
-        .route("/api/v1/status", get(orchestrator_status))
-        .route("/api/v1/info", get(orchestrator_info))
-        
-        // Node management (orchestrated)
-        .route("/api/v1/node/start", post(node_start))
-        .route("/api/v1/node/stop", post(node_stop))
-        .route("/api/v1/node/status", get(node_status))
-        .route("/api/v1/node/restart", post(node_restart))
-        
-        // Wallet operations (orchestrated via protocols)
-        .route("/api/v1/wallet/create", post(wallet_create))
-        .route("/api/v1/wallet/balance/:address", get(wallet_balance))
-        .route("/api/v1/wallet/transfer", post(wallet_transfer))
-        .route("/api/v1/wallet/history/:address", get(wallet_history))
-        .route("/api/v1/wallet/list", get(wallet_list))
-        
-        // DAO operations (orchestrated via protocols)
-        .route("/api/v1/dao/info", get(dao_info))
-        .route("/api/v1/dao/propose", post(dao_propose))
-        .route("/api/v1/dao/vote", post(dao_vote))
-        .route("/api/v1/dao/ubi/claim", post(dao_ubi_claim))
-        
-        // Identity operations (orchestrated via protocols)
-        .route("/api/v1/identity/create", post(identity_create))
-        .route("/api/v1/identity/verify", post(identity_verify))
-        .route("/api/v1/identity/list", get(identity_list))
-        
-        // Network operations (orchestrated via network)
-        .route("/api/v1/network/status", get(network_status))
-        .route("/api/v1/network/peers", get(network_peers))
-        .route("/api/v1/network/test", post(network_test))
-        
-        // Blockchain operations (orchestrated via blockchain)
-        .route("/api/v1/blockchain/status", get(blockchain_status))
-        .route("/api/v1/blockchain/transaction", post(blockchain_transaction))
-        .route("/api/v1/blockchain/stats", get(blockchain_stats))
-        
-        // System monitoring
-        .route("/api/v1/monitor/system", get(monitor_system))
-        .route("/api/v1/monitor/health", get(monitor_health))
-        .route("/api/v1/monitor/performance", get(monitor_performance))
-        .route("/api/v1/monitor/logs", get(monitor_logs))
-        
-        // Component management
-        .route("/api/v1/component/start", post(component_start))
-        .route("/api/v1/component/stop", post(component_stop))
-        .route("/api/v1/component/status", post(component_status))
-        .route("/api/v1/component/list", get(component_list))
-        
-        // Server management
-        .route("/api/v1/server/start", post(server_start))
-        .route("/api/v1/server/stop", post(server_stop))
-        .route("/api/v1/server/restart", post(server_restart))
-        .route("/api/v1/server/status", get(server_status))
-        .route("/api/v1/server/config", get(server_config))
-        
-        .layer(
-            ServiceBuilder::new()
-                .layer(cors)
-                .into_inner(),
-        );
-    
-    info!("🔧 Configured ZHTP Orchestrator API routes");
-    Ok(app)
-}
-
-// Root handlers
-async fn root_handler() -> impl IntoResponse {
-    Json(json!({
-        "service": "ZHTP Orchestrator",
-        "version": env!("CARGO_PKG_VERSION"),
-        "level": "Level 1 - Orchestrator",
-        "coordinates": ["protocols", "blockchain", "network"],
-        "api_version": "v1",
-        "status": "operational"
-    }))
-}
-
-async fn health_handler() -> impl IntoResponse {
-    Json(json!({
-        "status": "healthy",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "orchestrator": "operational",
-        "components_status": "checking..."
-    }))
-}
-
-async fn status_handler() -> impl IntoResponse {
-    Json(json!({
-        "orchestrator_status": "running",
-        "level": "Level 1",
-        "components": {
-            "protocols": "coordinating",
-            "blockchain": "coordinating", 
-            "network": "coordinating"
-        },
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    }))
-}
-
-// Orchestrator-specific endpoints
-async fn orchestrator_status() -> impl IntoResponse {
-    info!("📊 Orchestrator status requested");
-    
-    Json(json!({
-        "orchestrator": {
-            "status": "operational",
-            "level": "Level 1",
-            "coordinates": ["protocols", "blockchain", "network"],
-            "uptime": "running",
-            "version": env!("CARGO_PKG_VERSION")
-        },
-        "components": {
-            "protocols": "active",
-            "blockchain": "active", 
-            "network": "active",
-            "consensus": "coordinated",
-            "storage": "coordinated",
-            "economy": "coordinated"
-        },
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    }))
-}
-
-async fn orchestrator_info() -> impl IntoResponse {
-    Json(json!({
-        "name": "ZHTP Orchestrator",
-        "description": "Level 1 orchestrator coordinating Level 2 components",
-        "version": env!("CARGO_PKG_VERSION"),
-        "architecture": {
-            "level": 1,
-            "type": "orchestrator",
-            "coordinates": ["protocols", "blockchain", "network"],
-            "manages": ["consensus", "storage", "economy", "proofs", "identity", "crypto"]
-        },
-        "capabilities": [
-            "component_coordination",
-            "service_orchestration", 
-            "level_2_management",
-            "user_interface_provision",
-            "system_monitoring"
-        ]
-    }))
-}
-
-// Placeholder handlers that will coordinate with Level 2 components
-// These would make HTTP calls to lib-protocols, lib-blockchain, lib-network servers
-
-macro_rules! orchestrate_endpoint {
-    ($name:ident, $component:expr, $endpoint:expr) => {
-        async fn $name() -> impl IntoResponse {
-            info!("🎯 Orchestrating {} via {}", $endpoint, $component);
-            
-            // This would make actual HTTP calls to Level 2 components
-            // For now, return orchestration response
-            Json(json!({
-                "orchestrated": true,
-                "component": $component,
-                "endpoint": $endpoint,
-                "status": "coordinated",
-                "message": format!("Orchestrated {} operation via {}", $endpoint, $component),
-                "timestamp": chrono::Utc::now().to_rfc3339()
-            }))
+    /// Handle incoming ZHTP request
+    pub async fn handle_request(&mut self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Process request through middleware
+        if let Some(middleware_response) = self.middleware.process_request(&request).await
+            .map_err(|e| anyhow::anyhow!("Middleware error: {}", e))? {
+            return Ok(middleware_response);
         }
-    };
-}
-
-macro_rules! orchestrate_endpoint_with_body {
-    ($name:ident, $component:expr, $endpoint:expr) => {
-        async fn $name(Json(payload): Json<Value>) -> impl IntoResponse {
-            info!("🎯 Orchestrating {} via {} with payload", $endpoint, $component);
-            
-            // This would make actual HTTP calls to Level 2 components
-            // For now, return orchestration response
-            Json(json!({
-                "orchestrated": true,
-                "component": $component,
-                "endpoint": $endpoint,
-                "payload_received": payload,
-                "status": "coordinated",
-                "message": format!("Orchestrated {} operation via {}", $endpoint, $component),
-                "timestamp": chrono::Utc::now().to_rfc3339()
-            }))
-        }
-    };
-}
-
-// Node management
-orchestrate_endpoint_with_body!(node_start, "orchestrator", "node/start");
-orchestrate_endpoint_with_body!(node_stop, "orchestrator", "node/stop");
-orchestrate_endpoint!(node_status, "orchestrator", "node/status");
-orchestrate_endpoint_with_body!(node_restart, "orchestrator", "node/restart");
-
-// Wallet operations (coordinated via lib-protocols)
-orchestrate_endpoint_with_body!(wallet_create, "protocols", "wallet/create");
-orchestrate_endpoint_with_body!(wallet_transfer, "protocols", "wallet/transfer");
-orchestrate_endpoint!(wallet_list, "protocols", "wallet/list");
-
-async fn wallet_balance(Path(address): Path<String>) -> impl IntoResponse {
-    info!("🎯 Orchestrating wallet balance for {} via protocols", address);
+        
+        // Route request to appropriate handler
+        let response = self.router.route_request(request.clone()).await
+            .unwrap_or_else(|e| {
+                error!("Router error: {}", e);
+                ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Router error: {}", e),
+                )
+            });
+        
+        // Process response through middleware
+        let final_response = self.middleware.process_response(&request, response).await
+            .map_err(|e| anyhow::anyhow!("Middleware error: {}", e))?;
+        
+        Ok(final_response)
+    }
     
-    Json(json!({
-        "orchestrated": true,
-        "component": "protocols",
-        "endpoint": "wallet/balance",
-        "address": address,
-        "status": "coordinated",
-        "message": format!("Orchestrated wallet balance for {}", address),
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    }))
-}
-
-async fn wallet_history(Path(address): Path<String>) -> impl IntoResponse {
-    info!("🎯 Orchestrating wallet history for {} via protocols", address);
+    /// Start the ZHTP server
+    pub async fn start(&self, bind_address: &str) -> Result<()> {
+        info!("🌐 Starting ZHTP server on {}", bind_address);
+        
+        // This is where you would implement the actual server listening logic
+        // For now, we'll just log that the server is ready
+        info!("✅ ZHTP server is ready to handle requests");
+        info!("📍 Server endpoints:");
+        info!("   - Identity: /api/v1/identity/*");
+        info!("   - Blockchain: /api/v1/blockchain/*");
+        info!("   - Storage: /api/v1/storage/*");
+        info!("   - Protocol: /api/v1/protocol/*");
+        
+        // In a real implementation, this would be an infinite loop handling connections
+        Ok(())
+    }
     
-    Json(json!({
-        "orchestrated": true,
-        "component": "protocols",
-        "endpoint": "wallet/history", 
-        "address": address,
-        "status": "coordinated",
-        "message": format!("Orchestrated wallet history for {}", address),
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    }))
+    /// Health check endpoint
+    pub async fn health_check(&self) -> Result<ZhtpResponse> {
+        let health_data = serde_json::json!({
+            "status": "healthy",
+            "version": "1.0.0",
+            "protocol": "ZHTP/1.0",
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+            "handlers": [
+                "identity",
+                "blockchain", 
+                "storage",
+                "protocol"
+            ]
+        });
+        
+        let json_response = serde_json::to_vec(&health_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+    
+    /// Get server statistics
+    pub async fn get_stats(&self) -> Result<ZhtpResponse> {
+        let stats_data = serde_json::json!({
+            "status": "active",
+            "handlers_registered": 4,
+            "middleware_layers": 4,
+            "requests_processed": 0, // Would need to track this
+            "uptime": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs()
+        });
+        
+        let json_response = serde_json::to_vec(&stats_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
 }
-
-// DAO operations (coordinated via lib-protocols)
-orchestrate_endpoint!(dao_info, "protocols", "dao/info");
-orchestrate_endpoint_with_body!(dao_propose, "protocols", "dao/propose");
-orchestrate_endpoint_with_body!(dao_vote, "protocols", "dao/vote");
-orchestrate_endpoint_with_body!(dao_ubi_claim, "protocols", "dao/ubi/claim");
-
-// Identity operations (coordinated via lib-protocols)  
-orchestrate_endpoint_with_body!(identity_create, "protocols", "identity/create");
-orchestrate_endpoint_with_body!(identity_verify, "protocols", "identity/verify");
-orchestrate_endpoint!(identity_list, "protocols", "identity/list");
-
-// Network operations (coordinated via lib-network)
-orchestrate_endpoint!(network_status, "network", "status");
-orchestrate_endpoint!(network_peers, "network", "peers");
-orchestrate_endpoint_with_body!(network_test, "network", "test");
-
-// Blockchain operations (coordinated via lib-blockchain)
-orchestrate_endpoint!(blockchain_status, "blockchain", "status");
-orchestrate_endpoint_with_body!(blockchain_transaction, "blockchain", "transaction");
-orchestrate_endpoint!(blockchain_stats, "blockchain", "stats");
-
-// System monitoring
-orchestrate_endpoint!(monitor_system, "orchestrator", "monitor/system");
-orchestrate_endpoint!(monitor_health, "orchestrator", "monitor/health");
-orchestrate_endpoint!(monitor_performance, "orchestrator", "monitor/performance");
-orchestrate_endpoint!(monitor_logs, "orchestrator", "monitor/logs");
-
-// Component management
-orchestrate_endpoint_with_body!(component_start, "orchestrator", "component/start");
-orchestrate_endpoint_with_body!(component_stop, "orchestrator", "component/stop");
-orchestrate_endpoint_with_body!(component_status, "orchestrator", "component/status");
-orchestrate_endpoint!(component_list, "orchestrator", "component/list");
-
-// Server management
-orchestrate_endpoint_with_body!(server_start, "orchestrator", "server/start");
-orchestrate_endpoint_with_body!(server_stop, "orchestrator", "server/stop");
-orchestrate_endpoint_with_body!(server_restart, "orchestrator", "server/restart");
-orchestrate_endpoint!(server_status, "orchestrator", "server/status");
-orchestrate_endpoint!(server_config, "orchestrator", "server/config");

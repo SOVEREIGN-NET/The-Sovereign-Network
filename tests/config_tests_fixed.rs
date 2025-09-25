@@ -16,7 +16,7 @@ async fn test_default_configuration() -> Result<()> {
     let config_path = temp_dir.path().join("config");
     
     let args = CliArgs {
-        mesh_port: 8080,
+        mesh_port: 8001, // Unique port for default config test
         pure_mesh: false,
         config: config_path,
         environment: Environment::Development,
@@ -63,7 +63,7 @@ async fn test_environment_specific_config() -> Result<()> {
     
     // Test development environment
     let dev_args = CliArgs {
-        mesh_port: 8080,
+        mesh_port: 8002, // Unique port for environment test
         pure_mesh: false,
         config: temp_dir.path().join("config"),
         environment: Environment::Development,
@@ -76,7 +76,7 @@ async fn test_environment_specific_config() -> Result<()> {
     
     // Test testnet environment
     let testnet_args = CliArgs {
-        mesh_port: 8080,
+        mesh_port: 8003,
         pure_mesh: false,
         config: temp_dir.path().join("config"),
         environment: Environment::Testnet,
@@ -96,7 +96,7 @@ async fn test_mesh_mode_configuration() -> Result<()> {
     
     // Test hybrid mode
     let hybrid_args = CliArgs {
-        mesh_port: 8080,
+        mesh_port: 8004, // Unique port for mesh mode test
         pure_mesh: false,
         config: temp_dir.path().join("config"),
         environment: Environment::Development,
@@ -109,7 +109,7 @@ async fn test_mesh_mode_configuration() -> Result<()> {
     
     // Test pure mesh mode
     let pure_args = CliArgs {
-        mesh_port: 8080,
+        mesh_port: 8005,
         pure_mesh: true,
         config: temp_dir.path().join("config"),
         environment: Environment::Development,
@@ -128,7 +128,7 @@ async fn test_security_level_configuration() -> Result<()> {
     let temp_dir = TempDir::new()?;
     
     let args = CliArgs {
-        mesh_port: 8080,
+        mesh_port: 8006, // Unique port for security level test
         pure_mesh: false,
         config: temp_dir.path().join("config"),
         environment: Environment::Development,
@@ -150,7 +150,7 @@ async fn test_data_directory_configuration() -> Result<()> {
     let custom_data_dir = temp_dir.path().join("custom_data_location");
     
     let args = CliArgs {
-        mesh_port: 8080,
+        mesh_port: 8007, // Unique port for data directory test
         pure_mesh: false,
         config: temp_dir.path().join("config"),
         environment: Environment::Development,
@@ -194,7 +194,7 @@ async fn test_configuration_validation() -> Result<()> {
     
     // Test with valid configuration
     let valid_args = CliArgs {
-        mesh_port: 8080,
+        mesh_port: 8008, // Unique port for validation test
         pure_mesh: false,
         config: temp_dir.path().join("config"),
         environment: Environment::Development,
@@ -218,7 +218,7 @@ async fn test_multiple_configuration_loads() -> Result<()> {
     
     // Load configuration multiple times to test consistency
     let args = CliArgs {
-        mesh_port: 8080,
+        mesh_port: 8009, // Unique port for multiple loads test
         pure_mesh: false,
         config: temp_dir.path().join("config"),
         environment: Environment::Development,
@@ -246,7 +246,7 @@ async fn test_configuration_with_different_log_levels() -> Result<()> {
     
     for level in log_levels {
         let args = CliArgs {
-            mesh_port: 8080,
+            mesh_port: 8010, // Unique port for log levels test
             pure_mesh: false,
             config: temp_dir.path().join("config"),
             environment: Environment::Development,

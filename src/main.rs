@@ -20,7 +20,7 @@ use tracing::{info, error};
 // Import new orchestrator modules
 use zhtp::{
     cli::run_cli,
-    api::{start_api_server, ApiConfig},
+    // api::{start_api_server, ApiConfig}, // TODO: Re-enable when API handlers are implemented
 };
 
 #[tokio::main]
@@ -40,9 +40,12 @@ async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     
     if args.len() > 1 && args[1] == "--server" {
-        info!("🌐 Starting ZHTP Orchestrator in Server mode on port 9333");
-        let config = ApiConfig::default();
-        start_api_server(config).await?;
+        info!("🌐 ZHTP Orchestrator Server mode not yet implemented");
+        info!("💻 Falling back to CLI mode");
+        // TODO: Re-enable when API handlers are implemented
+        // let config = ApiConfig::default();
+        // start_api_server(config).await?;
+        run_cli().await?;
     } else {
         // Default: Use the full CLI structure with all subcommands
         info!("💻 Starting ZHTP Orchestrator CLI");

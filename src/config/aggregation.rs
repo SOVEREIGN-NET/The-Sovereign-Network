@@ -352,6 +352,11 @@ impl NodeConfig {
         self.environment = args.environment;
         self.data_directory = args.data_dir.to_string_lossy().to_string();
         
+        // If pure mesh mode is enabled, remove TCP protocols
+        if args.pure_mesh {
+            self.network_config.protocols.retain(|protocol| protocol != "tcp");
+        }
+        
         // Update port assignments
         self.port_assignments.insert("mesh".to_string(), args.mesh_port);
         self.port_assignments.insert("dht".to_string(), self.storage_config.dht_port);

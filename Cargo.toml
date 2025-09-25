@@ -61,6 +61,7 @@ tower-http = { version = "0.5", features = ["cors"] }
 
 # Additional utilities for integration
 parking_lot = "0.12"
+urlencoding = "2.1"
 
 [dev-dependencies]
 tokio-test = "0.4"

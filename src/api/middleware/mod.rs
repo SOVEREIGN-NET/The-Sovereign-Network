@@ -1,0 +1,201 @@
+//! Middleware Module
+//! 
+//! Clean, minimal middleware for ZHTP requests
+
+use std::sync::Arc;
+use anyhow::Result;
+use tracing::{info, warn};
+
+// ZHTP protocol imports
+use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+
+/// Simple request logging middleware
+pub struct LoggingMiddleware;
+
+impl LoggingMiddleware {
+    pub fn new() -> Self {
+        Self
+    }
+    
+    pub async fn process_request(&self, request: &ZhtpRequest) -> Result<()> {
+        let client_id = request.headers.get("X-Client-ID")
+            .unwrap_or_else(|| "unknown".to_string());
+        info!(
+            "📝 Request: {} {} from {}",
+            request.method,
+            request.uri,
+            client_id
+        );
+        Ok(())
+    }
+    
+    pub async fn process_response(&self, request: &ZhtpRequest, response: &ZhtpResponse) -> Result<()> {
+        info!(
+            "📤 Response: {} {} -> {} ({} bytes)",
+            request.method,
+            request.uri,
+            response.status,
+            response.body.len()
+        );
+        Ok(())
+    }
+}
+
+/// Simple CORS middleware
+pub struct CorsMiddleware {
+    allowed_origins: Vec<String>,
+}
+
+impl CorsMiddleware {
+    pub fn new() -> Self {
+        Self {
+            allowed_origins: vec![
+                "*".to_string(), // Allow all origins for development
+            ],
+        }
+    }
+    
+    pub fn with_origins(origins: Vec<String>) -> Self {
+        Self {
+            allowed_origins: origins,
+        }
+    }
+    
+    pub async fn process_request(&self, _request: &ZhtpRequest) -> Result<()> {
+        // CORS preflight handling would go here
+        Ok(())
+    }
+    
+    pub fn add_cors_headers(&self, response: &mut ZhtpResponse) -> Result<()> {
+        response.headers.set("Access-Control-Allow-Origin", "*".to_string());
+        response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS".to_string());
+        response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Client-ID".to_string());
+        Ok(())
+    }
+}
+
+/// Simple rate limiting middleware
+pub struct RateLimitMiddleware {
+    max_requests_per_minute: u32,
+}
+
+impl RateLimitMiddleware {
+    pub fn new(max_requests_per_minute: u32) -> Self {
+        Self {
+            max_requests_per_minute,
+        }
+    }
+    
+    pub async fn check_rate_limit(&self, client_id: &str) -> Result<bool> {
+        // Simplified rate limiting - would need proper implementation with storage
+        // For now, just log and allow all requests
+        info!("🚦 Rate limit check for client: {}", client_id);
+        Ok(true)
+    }
+    
+    pub fn create_rate_limit_response(&self) -> ZhtpResponse {
+        ZhtpResponse::error(
+            ZhtpStatus::TooManyRequests,
+            "Rate limit exceeded. Please try again later.".to_string(),
+        )
+    }
+}
+
+/// Authentication middleware
+pub struct AuthMiddleware;
+
+impl AuthMiddleware {
+    pub fn new() -> Self {
+        Self
+    }
+    
+    pub async fn authenticate_request(&self, request: &ZhtpRequest) -> Result<Option<String>> {
+        // Check for authentication header
+        if let Some(auth_header) = request.headers.get("Authorization") {
+            if auth_header.starts_with("Bearer ") {
+                let token = &auth_header[7..];
+                // Simplified token validation - would need proper JWT validation
+                info!("🔐 Authenticating token: {}...", &token[..8.min(token.len())]);
+                return Ok(Some("authenticated_user".to_string()));
+            }
+        }
+        
+        // Check if endpoint requires authentication
+        if self.requires_auth(&request.uri) {
+            warn!("🚫 Authentication required for: {}", request.uri);
+            return Ok(None);
+        }
+        
+        Ok(Some("anonymous".to_string()))
+    }
+    
+    pub fn create_auth_required_response(&self) -> ZhtpResponse {
+        ZhtpResponse::error(
+            ZhtpStatus::Unauthorized,
+            "Authentication required".to_string(),
+        )
+    }
+    
+    fn requires_auth(&self, uri: &str) -> bool {
+        // Define which endpoints require authentication
+        uri.starts_with("/api/v1/identity/create") ||
+        uri.starts_with("/api/v1/blockchain/transaction") ||
+        uri.starts_with("/api/v1/storage/put") ||
+        uri.starts_with("/api/v1/storage/delete")
+    }
+}
+
+/// Middleware stack for combining multiple middleware
+pub struct MiddlewareStack {
+    pub logging: LoggingMiddleware,
+    pub cors: CorsMiddleware,
+    pub rate_limit: RateLimitMiddleware,
+    pub auth: AuthMiddleware,
+}
+
+impl MiddlewareStack {
+    pub fn new() -> Self {
+        Self {
+            logging: LoggingMiddleware::new(),
+            cors: CorsMiddleware::new(),
+            rate_limit: RateLimitMiddleware::new(100), // 100 requests per minute
+            auth: AuthMiddleware::new(),
+        }
+    }
+    
+    /// Process request through all middleware
+    pub async fn process_request(&self, request: &ZhtpRequest) -> Result<Option<ZhtpResponse>> {
+        // 1. Logging
+        self.logging.process_request(request).await?;
+        
+        // 2. CORS preflight
+        self.cors.process_request(request).await?;
+        
+        // 3. Rate limiting
+        let client_id = request.headers.get("X-Client-ID")
+            .unwrap_or_else(|| "anonymous".to_string());
+        if !self.rate_limit.check_rate_limit(&client_id).await? {
+            return Ok(Some(self.rate_limit.create_rate_limit_response()));
+        }
+        
+        // 4. Authentication
+        if let Some(_user) = self.auth.authenticate_request(request).await? {
+            // Authentication successful, continue to handlers
+            Ok(None)
+        } else {
+            // Authentication failed
+            Ok(Some(self.auth.create_auth_required_response()))
+        }
+    }
+    
+    /// Process response through all middleware
+    pub async fn process_response(&self, request: &ZhtpRequest, mut response: ZhtpResponse) -> Result<ZhtpResponse> {
+        // 1. Add CORS headers
+        self.cors.add_cors_headers(&mut response)?;
+        
+        // 2. Response logging
+        self.logging.process_response(request, &response).await?;
+        
+        Ok(response)
+    }
+}

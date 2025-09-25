@@ -15,7 +15,7 @@ pub use runtime::{RuntimeOrchestrator, ComponentStatus, ComponentId, Component};
 pub use monitoring::{MonitoringSystem, SystemMetrics, HealthStatus as MonitoringHealth};
 pub use integration::{IntegrationManager, ServiceContainer, EventBus};
 pub use cli::{ZhtpCli, ZhtpCommand, run_cli, format_output};
-pub use api::{ApiConfig, ApiEndpoints, start_api_server};
+pub use api::{ZhtpServer, IdentityHandler, BlockchainHandler, StorageHandler, ProtocolHandler, MiddlewareStack};
 
 /// ZHTP node version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
