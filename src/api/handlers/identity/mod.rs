@@ -143,10 +143,13 @@ impl IdentityHandler {
         let mut identity_manager = self.identity_manager.write().await;
         
         let response_data = if identity_type == IdentityType::Human {
-            // Create full citizen identity
+            // Create full citizen identity WITH seed phrases
             let mut economic_model = self.economic_model.write().await;
             let citizenship_result = identity_manager
-                .create_citizen_identity(
+                .onboard_new_citizen(
+                    format!("Citizen_{}", std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs()), // Display name
                     req_data.recovery_options.unwrap_or_default(),
                     &mut *economic_model,
                 )

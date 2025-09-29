@@ -311,7 +311,7 @@ impl RuntimeOrchestrator {
             // Special handling for blockchain component - pass user identity before starting
             if matches!(component_id, ComponentId::Blockchain) {
                 if let Some(user_identity) = &*self.user_identity.read().await {
-                    info!("🔗 Passing user identity to blockchain component: {} ({})", user_identity.user_display_name, user_identity.node_did);
+                    info!("🔗 Passing user identity to blockchain component: {} ({})", user_identity.user_display_name, hex::encode(&user_identity.user_identity_id.0[..8]));
                     
                     // Get the blockchain component and set its user identity
                     let components = self.components.read().await;

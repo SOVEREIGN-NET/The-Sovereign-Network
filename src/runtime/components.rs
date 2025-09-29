@@ -646,7 +646,6 @@ impl Component for NetworkComponent {
             let stats = server.get_network_stats().await;
             metrics.insert("active_connections".to_string(), stats.active_connections as f64);
             metrics.insert("total_data_routed".to_string(), stats.total_data_routed as f64);
-            metrics.insert("wifi_sharing_nodes".to_string(), stats.wifi_sharing_nodes as f64);
             metrics.insert("long_range_relays".to_string(), stats.long_range_relays as f64);
             metrics.insert("average_latency_ms".to_string(), stats.average_latency_ms as f64);
             metrics.insert("coverage_area_km2".to_string(), stats.coverage_area_km2);
@@ -654,7 +653,6 @@ impl Component for NetworkComponent {
         } else {
             metrics.insert("active_connections".to_string(), 0.0);
             metrics.insert("total_data_routed".to_string(), 0.0);
-            metrics.insert("wifi_sharing_nodes".to_string(), 0.0);
             metrics.insert("long_range_relays".to_string(), 0.0);
             metrics.insert("average_latency_ms".to_string(), 0.0);
             metrics.insert("coverage_area_km2".to_string(), 0.0);
@@ -735,23 +733,7 @@ impl BlockchainComponent {
             blockchain.identity_registry.insert(user_person_identity.did.clone(), user_person_identity);
             info!("✅ Created REAL user identity: {} ({})", user_data.user_display_name, user_did);
             
-            // Create the user's node identity in blockchain
-            let user_node_identity = IdentityTransactionData {
-                did: user_data.node_did.clone(),
-                display_name: format!("{}'s ZHTP Node", user_data.user_display_name),
-                public_key: format!("node_{}_public_key", hex::encode(&user_data.node_identity_id.0[..8])).as_bytes().to_vec(),
-                ownership_proof: format!("owned_by:{}", user_did).as_bytes().to_vec(),
-                identity_type: "device".to_string(), // Node device owned by user
-                did_document_hash: lib_blockchain::types::hash::blake3_hash(format!("node_{}_did_document", hex::encode(&user_data.node_identity_id.0[..8])).as_bytes()),
-                created_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
-                registration_fee: 0,
-                dao_fee: 0,
-            };
-            
-            blockchain.identity_registry.insert(user_data.node_did.clone(), user_node_identity);
-            info!("✅ Created REAL node identity: {} owned by {}", user_data.node_did, user_data.user_display_name);
-            
-            info!("👥 Total REAL identities created: 2 (1 user + 1 node) - NO DUMMY IDENTITIES!");
+            info!("👥 Total REAL identities created: 1 user - NO DUMMY IDENTITIES!");
         } else {
             // Fallback to dummy identities only if no real user identity provided
             warn!("⚠️ No user identity provided - falling back to dummy identities for testing");
@@ -782,48 +764,7 @@ impl BlockchainComponent {
                 info!("✅ Created test person identity: {} ({})", name, did);
             }
             
-            // Create node identity that points to first validator as owner (for testing)
-            let node_identity_data = IdentityTransactionData {
-                did: "did:zhtp:node:genesis001".to_string(),
-                display_name: "ZHTP Genesis Node #001".to_string(),
-                public_key: b"genesis_node_public_key".to_vec(),
-                ownership_proof: format!("owned_by:{}", dummy_validators[0].1).as_bytes().to_vec(), // Points to Alice
-                identity_type: "device".to_string(), // Node is a device
-                did_document_hash: lib_blockchain::types::hash::blake3_hash(b"genesis_node_did_document"),
-                created_at: 0, // Genesis timestamp
-                registration_fee: 0,
-                dao_fee: 0,
-            };
-            
-            // Register node identity in blockchain identity registry
-            blockchain.identity_registry.insert(
-                "did:zhtp:node:genesis001".to_string(),
-                node_identity_data.clone()
-            );
-            
-            info!("🖥️ Created genesis node identity owned by: {}", dummy_validators[0].1);
-            
-            // Create node identity that points to first validator as owner (for testing)
-            let node_identity_data = IdentityTransactionData {
-                did: "did:zhtp:node:genesis001".to_string(),
-                display_name: "ZHTP Genesis Node #001".to_string(),
-                public_key: b"genesis_node_public_key".to_vec(),
-                ownership_proof: format!("owned_by:{}", dummy_validators[0].1).as_bytes().to_vec(), // Points to Alice
-                identity_type: "device".to_string(), // Node is a device
-                did_document_hash: lib_blockchain::types::hash::blake3_hash(b"genesis_node_did_document"),
-                created_at: 0, // Genesis timestamp
-                registration_fee: 0,
-                dao_fee: 0,
-            };
-            
-            // Register node identity in blockchain identity registry
-            blockchain.identity_registry.insert(
-                "did:zhtp:node:genesis001".to_string(),
-                node_identity_data.clone()
-            );
-            
-            info!("🖥️ Created genesis node identity owned by: {}", dummy_validators[0].1);
-            info!("👥 Total dummy identities created: 5 (4 persons + 1 node)");
+            info!("� Created {} dummy person identities for testing", dummy_validators.len());
         }
         
 
@@ -861,7 +802,7 @@ impl BlockchainComponent {
         let genesis_signature = Signature {
             signature: b"validator_alice_genesis_signature".to_vec(),
             public_key: PublicKey::new(b"validator_alice_key".to_vec()),
-            algorithm: SignatureAlgorithm::Ed25519,
+            algorithm: SignatureAlgorithm::Dilithium2,
             timestamp: 0, // Genesis timestamp
         };
         

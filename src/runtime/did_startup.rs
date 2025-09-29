@@ -1,6 +1,8 @@
 //! DID Startup Management
 //! 
-//! Handles DID creation and import during node startup using lib-identity
+//! Handles DID creation and import during node startup using lib-identity.
+//! Provides interactive user interface for identity management with full
+//! citizen onboarding including UBI, DAO participation, and Web4 access.
 
 use anyhow::{Result, anyhow};
 use std::io::{self, Write};
@@ -17,13 +19,11 @@ pub enum DidStartupChoice {
     QuickStart,
 }
 
-/// Result from DID startup containing user and node identities
+/// Result from DID startup containing user identity
 #[derive(Debug, Clone)]
 pub struct DidStartupResult {
     pub user_identity_id: IdentityId,
     pub user_display_name: String,
-    pub node_identity_id: IdentityId,
-    pub node_did: String,
 }
 
 /// Interactive DID startup manager
@@ -63,23 +63,12 @@ impl DidStartupManager {
 
         println!("\n🔗 User identity established successfully!");
         println!("🆔 User DID: did:zhtp:person:{}", hex::encode(&user_identity_id.0[..8]));
-        
-        // Create linked node/device identity automatically
-        println!("\n🤖 Creating linked node identity...");
-        let node_identity_id = Self::create_automatic_node_identity(&mut identity_manager, &user_identity_id).await?;
-
-        println!("✅ Node identity created and linked!");
-        println!("🤖 Node DID: did:zhtp:node:{}", hex::encode(&node_identity_id.0[..8]));
         println!("\n🌐 Ready to connect to mesh network and bootstrap with other nodes...");
         
         // Return complete startup result
-        let node_did = format!("did:zhtp:node:{}", hex::encode(&node_identity_id.0[..16]));
-        
         Ok(DidStartupResult {
             user_identity_id,
             user_display_name,
-            node_identity_id,
-            node_did,
         })
     }
 
@@ -90,9 +79,6 @@ impl DidStartupManager {
         println!("2) Import existing identity from recovery phrase");
         println!("3) Import from mesh network (if available)");
         println!("4) Quick start (auto-generate for testing)");
-        println!();
-        println!("Note: A device/node identity will be automatically created and");
-        println!("      linked to your user identity after mesh network connection.");
         println!();
 
         loop {
@@ -183,27 +169,7 @@ impl DidStartupManager {
         Ok((citizenship_result.identity_id, display_name))
     }
 
-    /// Create automatic node identity linked to user identity
-    async fn create_automatic_node_identity(
-        identity_manager: &mut IdentityManager,
-        user_identity_id: &IdentityId,
-    ) -> Result<IdentityId> {
-        let recovery_options = vec![
-            format!("linked_to_user:{}", hex::encode(&user_identity_id.0[..8])),
-            "node_key_backup".to_string(),
-        ];
 
-        println!("🔧 Generating node identity linked to user...");
-        
-        let node_identity_id = identity_manager
-            .create_identity(IdentityType::Device, recovery_options)
-            .await?;
-
-        println!("✅ Node identity created and linked to user identity!");
-        println!("🔗 Linked to user: {}", hex::encode(&user_identity_id.0[..8]));
-
-        Ok(node_identity_id)
-    }
 
     /// Import identity from recovery phrase using lib-identity
     async fn import_from_recovery_phrase_interactive(identity_manager: &mut IdentityManager) -> Result<(IdentityId, String)> {
@@ -309,23 +275,42 @@ impl DidStartupManager {
         }
     }
 
-    /// Create quick test identity for development/testing
+    /// Create quick test identity for development/testing using full citizen onboarding
     async fn create_quick_test_identity(identity_manager: &mut IdentityManager) -> Result<(IdentityId, String)> {
         println!("\n⚡ Quick Start Mode");
         println!("==================");
         println!("Generating a test user identity for development...");
 
         let recovery_options = vec!["generated_for_testing".to_string()];
+        let display_name = "QuickTestUser".to_string();
 
-        let identity_id = identity_manager
-            .create_identity(IdentityType::Human, recovery_options)
+        // Initialize economic model for citizen registration
+        let mut economic_model = EconomicModel::new();
+
+        println!("🎯 Creating test citizen identity with full Web4 benefits...");
+        
+        // Use lib-identity's complete citizen onboarding system even for quick start
+        let citizenship_result = identity_manager
+            .onboard_new_citizen(display_name.clone(), recovery_options, &mut economic_model)
             .await?;
 
-        println!("✅ Generated test user identity: {}", hex::encode(&identity_id.0[..8]));
+        println!("✅ Generated test user identity: {}", hex::encode(&citizenship_result.identity_id.0[..8]));
+        println!("💰 Primary Wallet: {}", hex::encode(&citizenship_result.primary_wallet_id.0[..8]));
+        println!("🎁 UBI Wallet: {}", hex::encode(&citizenship_result.ubi_wallet_id.0[..8]));
+        println!("💎 Savings Wallet: {}", hex::encode(&citizenship_result.savings_wallet_id.0[..8]));
+        
+        // Display seed phrases for testing
+        println!("\n🔑 WALLET SEED PHRASES (SAVE THESE!):");
+        println!("=====================================");
+        println!("Primary Wallet: {}", citizenship_result.wallet_seed_phrases.primary_wallet_seeds.words.join(" "));
+        println!("UBI Wallet: {}", citizenship_result.wallet_seed_phrases.ubi_wallet_seeds.words.join(" "));
+        println!("Savings Wallet: {}", citizenship_result.wallet_seed_phrases.savings_wallet_seeds.words.join(" "));
+        println!("=====================================");
+        
         println!("⚠️  NOTE: This is a temporary identity for testing only!");
         println!("   For production use, create a proper citizen identity.");
 
-        Ok((identity_id, "Quick Test User".to_string()))
+        Ok((citizenship_result.identity_id, display_name))
     }
 
     /// Discover identities on mesh network (placeholder implementation)
@@ -366,15 +351,10 @@ impl DidStartupManager {
     pub async fn create_new_citizen_identity() -> Result<DidStartupResult> {
         let mut identity_manager = IdentityManager::new();
         let (user_identity_id, user_display_name) = Self::create_new_citizen_interactive(&mut identity_manager).await?;
-        let node_identity_id = Self::create_automatic_node_identity(&mut identity_manager, &user_identity_id).await?;
-        
-        let node_did = format!("did:zhtp:node:{}", hex::encode(&node_identity_id.0[..16]));
         
         Ok(DidStartupResult {
             user_identity_id,
             user_display_name,
-            node_identity_id,
-            node_did,
         })
     }
 
@@ -382,15 +362,10 @@ impl DidStartupManager {
     pub async fn import_from_recovery_phrase() -> Result<DidStartupResult> {
         let mut identity_manager = IdentityManager::new();
         let (user_identity_id, user_display_name) = Self::import_from_recovery_phrase_interactive(&mut identity_manager).await?;
-        let node_identity_id = Self::create_automatic_node_identity(&mut identity_manager, &user_identity_id).await?;
-        
-        let node_did = format!("did:zhtp:node:{}", hex::encode(&node_identity_id.0[..16]));
         
         Ok(DidStartupResult {
             user_identity_id,
             user_display_name,
-            node_identity_id,
-            node_did,
         })
     }
 
@@ -398,15 +373,10 @@ impl DidStartupManager {
     pub async fn quick_start_identity() -> Result<DidStartupResult> {
         let mut identity_manager = IdentityManager::new();
         let (user_identity_id, user_display_name) = Self::create_quick_test_identity(&mut identity_manager).await?;
-        let node_identity_id = Self::create_automatic_node_identity(&mut identity_manager, &user_identity_id).await?;
-        
-        let node_did = format!("did:zhtp:node:{}", hex::encode(&node_identity_id.0[..16]));
         
         Ok(DidStartupResult {
             user_identity_id,
             user_display_name,
-            node_identity_id,
-            node_did,
         })
     }
 }

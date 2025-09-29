@@ -729,7 +729,7 @@ impl BlockchainHandler {
             lib_blockchain::integration::crypto_integration::Signature {
                 signature: req_data.transaction_data.as_bytes().to_vec(),
                 public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(vec![0u8; 32]),
-                algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Ed25519,
+                algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()

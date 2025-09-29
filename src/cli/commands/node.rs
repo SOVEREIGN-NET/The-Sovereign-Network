@@ -79,7 +79,7 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
                 }
             };
             
-            println!("✅ Node identity established: {}", startup_result.node_did);
+            println!("✅ User identity established: {}", startup_result.user_display_name);
             
             // Pass user identity to orchestrator before starting components
             orchestrator.set_user_identity(startup_result).await;
