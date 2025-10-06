@@ -17,31 +17,31 @@ use lib_identity::{
     IdentityManager, IdentityType, CitizenshipResult
 };
 
-// Economic model import  
-use lib_identity::economics::EconomicModel;
+// Identity and economic model imports
+use lib_identity::{
+    economics::EconomicModel as IdentityEconomicModel,
+};
 
 // Blockchain imports for transaction creation
 use lib_blockchain::{
     Transaction, 
-    TransactionType,
     transaction::IdentityTransactionData,
     integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm},
     Hash,
 };
 
-// Cryptographic imports for proper signing
-use lib_crypto::{generate_keypair, sign_message};
+// Removed unused cryptographic imports
 
 /// Clean identity handler implementation
 pub struct IdentityHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
-    economic_model: Arc<RwLock<EconomicModel>>,
+    economic_model: Arc<RwLock<IdentityEconomicModel>>,
 }
 
 impl IdentityHandler {
     pub fn new(
         identity_manager: Arc<RwLock<IdentityManager>>,
-        economic_model: Arc<RwLock<EconomicModel>>,
+        economic_model: Arc<RwLock<IdentityEconomicModel>>,
     ) -> Self {
         Self {
             identity_manager,
@@ -53,7 +53,7 @@ impl IdentityHandler {
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for IdentityHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        tracing::info!("🆔 Identity handler: {} {}", request.method, request.uri);
+        tracing::info!("Identity handler: {} {}", request.method, request.uri);
         
         let response = match (request.method, request.uri.as_str()) {
             (ZhtpMethod::Post, "/api/v1/identity/create") => {
@@ -146,7 +146,7 @@ impl IdentityHandler {
             // Create full citizen identity WITH seed phrases
             let mut economic_model = self.economic_model.write().await;
             let citizenship_result = identity_manager
-                .onboard_new_citizen(
+                .create_citizen_identity(
                     format!("Citizen_{}", std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)?
                         .as_secs()), // Display name
@@ -217,10 +217,10 @@ impl IdentityHandler {
             // Submit transaction to shared blockchain
             match self.submit_transaction_to_blockchain(transaction).await {
                 Ok(tx_hash) => {
-                    tracing::info!("🎉 Identity transaction submitted to blockchain: {}", tx_hash);
+                    tracing::info!(" Identity transaction submitted to blockchain: {}", tx_hash);
                 }
                 Err(e) => {
-                    tracing::warn!("⚠️ Failed to submit identity transaction to blockchain: {}", e);
+                    tracing::warn!("Failed to submit identity transaction to blockchain: {}", e);
                 }
             }
             
@@ -235,11 +235,13 @@ impl IdentityHandler {
         } else {
             // Create basic identity (non-human)
             // For now, return a placeholder response
-            let identity_id = lib_crypto::Hash::from_bytes(&[0u8; 32]); // Mock ID for non-human identities
+            // Generate proper random identity ID for non-human identities
+            let identity_data = format!("{}:{}", req_data.identity_type, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+            let identity_id = lib_crypto::hash_blake3(identity_data.as_bytes());
             
             CreateIdentityResponse {
                 status: "identity_created".to_string(),
-                identity_id: identity_id.to_string(),
+                identity_id: hex::encode(identity_id),
                 identity_type: req_data.identity_type,
                 access_level: "Visitor".to_string(),
                 created_at: std::time::SystemTime::now()
@@ -268,16 +270,26 @@ impl IdentityHandler {
         
         let identity_manager = self.identity_manager.read().await;
         
-        // For now, return a mock response since we need to implement identity retrieval
-        let response_data = IdentityResponse {
-            status: "identity_found".to_string(),
-            identity_id: identity_id.to_string(),
-            identity_type: "human".to_string(),
-            access_level: "FullCitizen".to_string(),
-            created_at: 1694995200,
-            last_active: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
+        // Use identity manager to retrieve actual identity data
+        let response_data = match identity_manager.get_identity(&identity_id) {
+            Some(identity) => IdentityResponse {
+                status: "identity_found".to_string(),
+                identity_id: identity_id.to_string(),
+                identity_type: format!("{:?}", identity.identity_type),
+                access_level: format!("{:?}", identity.access_level),
+                created_at: identity.created_at,
+                last_active: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs(),
+            },
+            None => IdentityResponse {
+                status: "identity_not_found".to_string(),
+                identity_id: identity_id.to_string(),
+                identity_type: "unknown".to_string(),
+                access_level: "None".to_string(),
+                created_at: 0,
+                last_active: 0,
+            },
         };
         
         let json_response = serde_json::to_vec(&response_data)?;
@@ -290,6 +302,31 @@ impl IdentityHandler {
     
     /// Handle citizenship application
     async fn handle_citizenship_application(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Extract and validate application data from request
+        let application_data: serde_json::Value = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid application data: {}", e))?;
+        
+        // Validate required fields in application
+        let applicant_name = application_data.get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Anonymous");
+        
+        let applicant_email = application_data.get("email")
+            .and_then(|v| v.as_str());
+        
+        // Validate that at least a name is provided
+        if applicant_name == "Anonymous" && applicant_email.is_none() {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Application must include either name or email".to_string(),
+            ));
+        }
+        
+        tracing::info!("Processing citizenship application for: {} ({})", 
+            applicant_name, 
+            applicant_email.unwrap_or("no email"));
+        
+        // TODO: Store application in identity manager for processing
         let response_data = json!({
             "status": "citizenship_application_received",
             "message": "Citizenship application functionality pending implementation",
@@ -324,7 +361,7 @@ impl IdentityHandler {
                 Ok(tx_hash)
             }
             Err(e) => {
-                tracing::error!("❌ Failed to get shared blockchain: {}", e);
+                tracing::error!("Failed to get shared blockchain: {}", e);
                 Err(anyhow::anyhow!("Failed to submit transaction: {}", e))
             }
         }

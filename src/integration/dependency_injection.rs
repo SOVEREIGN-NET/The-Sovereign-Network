@@ -7,6 +7,8 @@ use anyhow::{Result, Context};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::pin::Pin;
+use std::future::Future;
 use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug};
 use async_trait::async_trait;
@@ -59,7 +61,6 @@ type AsyncServiceFactory = Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Fu
 
 /// Service registration information
 struct ServiceRegistration {
-    type_id: TypeId,
     type_name: &'static str,
     scope: Scope,
     factory: Option<ServiceFactory>,
@@ -69,9 +70,8 @@ struct ServiceRegistration {
 }
 
 impl ServiceRegistration {
-    fn new(type_id: TypeId, type_name: &'static str, scope: Scope) -> Self {
+    fn new(_type_id: TypeId, type_name: &'static str, scope: Scope) -> Self {
         Self {
-            type_id,
             type_name,
             scope,
             factory: None,
@@ -95,20 +95,15 @@ impl ServiceRegistration {
         self.singleton_instance = Some(instance);
         self
     }
-
-    fn with_dependencies(mut self, dependencies: Vec<TypeId>) -> Self {
-        self.dependencies = dependencies;
-        self
-    }
 }
 
-/// Service scope for managing scoped instances
-pub struct ServiceScope {
+/// Dependency injection scope for managing scoped instances
+pub struct DIScope {
     instances: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
     injector: Arc<DependencyInjector>,
 }
 
-impl ServiceScope {
+impl DIScope {
     fn new(injector: Arc<DependencyInjector>) -> Self {
         Self {
             instances: HashMap::new(),
@@ -117,22 +112,24 @@ impl ServiceScope {
     }
 
     /// Get or create a scoped instance
-    pub async fn get<T: Injectable + 'static>(&mut self) -> Result<Arc<T>> {
-        let type_id = TypeId::of::<T>();
-        
-        if let Some(instance) = self.instances.get(&type_id) {
-            return instance
-                .clone()
-                .downcast::<T>()
-                .map_err(|_| anyhow::anyhow!("Failed to downcast service {}", std::any::type_name::<T>()));
-        }
+    pub fn get<T: Injectable + 'static>(&mut self) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + '_>> {
+        Box::pin(async move {
+            let type_id = TypeId::of::<T>();
+            
+            if let Some(instance) = self.instances.get(&type_id) {
+                return instance
+                    .clone()
+                    .downcast::<T>()
+                    .map_err(|_| anyhow::anyhow!("Failed to downcast service {}", std::any::type_name::<T>()));
+            }
 
-        // Create new scoped instance
-        let injector = self.injector.clone();
-        let instance = injector.resolve_internal::<T>(None).await?;
-        self.instances.insert(type_id, instance.clone() as Arc<dyn Any + Send + Sync>);
-        
-        Ok(instance)
+            // Create new scoped instance
+            let injector = self.injector.clone();
+            let instance = injector.resolve_internal::<T>(Some(self)).await?;
+            self.instances.insert(type_id, instance.clone() as Arc<dyn Any + Send + Sync>);
+            
+            Ok(instance)
+        })
     }
 
     /// Clean up all scoped instances
@@ -171,7 +168,7 @@ impl DependencyInjector {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
         
-        info!("📦 Registering singleton service: {}", type_name);
+        info!("Registering singleton service: {}", type_name);
 
         let registration = ServiceRegistration::new(type_id, type_name, Scope::Singleton)
             .with_instance(instance.clone() as Arc<dyn Any + Send + Sync>);
@@ -188,7 +185,7 @@ impl DependencyInjector {
 
         self.update_initialization_order().await?;
         
-        debug!("✅ Singleton service {} registered", type_name);
+        debug!("Singleton service {} registered", type_name);
         Ok(())
     }
 
@@ -200,7 +197,7 @@ impl DependencyInjector {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
         
-        info!("📦 Registering transient service: {}", type_name);
+        info!("Registering transient service: {}", type_name);
 
         let boxed_factory: ServiceFactory = Box::new(move || {
             Box::new(Arc::new(factory()))
@@ -216,7 +213,7 @@ impl DependencyInjector {
 
         self.update_initialization_order().await?;
         
-        debug!("✅ Transient service {} registered", type_name);
+        debug!("Transient service {} registered", type_name);
         Ok(())
     }
 
@@ -229,7 +226,7 @@ impl DependencyInjector {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
         
-        info!("📦 Registering async transient service: {}", type_name);
+        info!("Registering async transient service: {}", type_name);
 
         let boxed_factory: AsyncServiceFactory = Box::new(move || {
             let future = factory();
@@ -249,7 +246,7 @@ impl DependencyInjector {
 
         self.update_initialization_order().await?;
         
-        debug!("✅ Async transient service {} registered", type_name);
+        debug!("Async transient service {} registered", type_name);
         Ok(())
     }
 
@@ -261,7 +258,7 @@ impl DependencyInjector {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
         
-        info!("📦 Registering scoped service: {}", type_name);
+        info!("Registering scoped service: {}", type_name);
 
         let boxed_factory: ServiceFactory = Box::new(move || {
             Box::new(Arc::new(factory()))
@@ -277,7 +274,7 @@ impl DependencyInjector {
 
         self.update_initialization_order().await?;
         
-        debug!("✅ Scoped service {} registered", type_name);
+        debug!("Scoped service {} registered", type_name);
         Ok(())
     }
 
@@ -286,7 +283,7 @@ impl DependencyInjector {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
         
-        debug!("🔗 Registering dependencies for {}: {} deps", type_name, dependencies.len());
+        debug!("Registering dependencies for {}: {} deps", type_name, dependencies.len());
 
         {
             let mut services = self.services.write().await;
@@ -306,12 +303,17 @@ impl DependencyInjector {
         self.resolve_internal::<T>(None).await
     }
 
+    /// Resolve a service instance with a specific scope
+    pub async fn resolve_with_scope<T: Injectable + 'static>(&self, scope: &mut DIScope) -> Result<Arc<T>> {
+        self.resolve_internal::<T>(Some(scope)).await
+    }
+
     /// Resolve a service instance with optional scope
-    async fn resolve_internal<T: Injectable + 'static>(&self, scope: Option<&mut ServiceScope>) -> Result<Arc<T>> {
+    async fn resolve_internal<T: Injectable + 'static>(&self, di_scope: Option<&mut DIScope>) -> Result<Arc<T>> {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
         
-        debug!("🔍 Resolving service: {}", type_name);
+        debug!("Resolving service: {}", type_name);
 
         let scope = {
             let services = self.services.read().await;
@@ -348,16 +350,21 @@ impl DependencyInjector {
                 self.create_instance_by_type_id::<T>(type_id).await
             }
             Scope::Scoped => {
-                // Scoped instances would need additional scope management
-                // For now, treat as transient
-                self.create_instance_by_type_id::<T>(type_id).await
+                if let Some(scope_ref) = di_scope {
+                    // Use provided scope to get or create scoped instance
+                    scope_ref.get::<T>().await
+                } else {
+                    // No scope provided, create transient instance
+                    warn!("No scope provided for scoped service {}, creating transient instance", type_name);
+                    self.create_instance_by_type_id::<T>(type_id).await
+                }
             }
         }
     }
 
     /// Create a new service scope
-    pub fn create_scope(&self) -> ServiceScope {
-        ServiceScope::new(Arc::new(self.clone()))
+    pub fn create_scope(&self) -> DIScope {
+        DIScope::new(Arc::new(self.clone()))
     }
 
     /// Helper method to create instance by TypeId
@@ -407,7 +414,7 @@ impl DependencyInjector {
 
     /// Initialize all registered services in dependency order
     pub async fn initialize_all(&self) -> Result<()> {
-        info!("🚀 Initializing all registered services...");
+        info!(" Initializing all registered services...");
 
         let initialization_order = self.initialization_order.read().await.clone();
 
@@ -419,7 +426,7 @@ impl DependencyInjector {
                     .unwrap_or("Unknown")
             };
 
-            debug!("🔧 Initializing service: {}", type_name);
+            debug!("Initializing service: {}", type_name);
 
             // Get the service instance
             let instance = {
@@ -431,14 +438,14 @@ impl DependencyInjector {
                 if let Ok(injectable_arc) = instance.downcast::<Arc<dyn Injectable>>() {
                     injectable_arc.initialize().await
                         .with_context(|| format!("Failed to initialize service {}", type_name))?;
-                    debug!("✅ Service {} initialized", type_name);
+                    debug!("Service {} initialized", type_name);
                 } else {
-                    warn!("⚠️ Service {} does not implement Injectable", type_name);
+                    warn!("Service {} does not implement Injectable", type_name);
                 }
             }
         }
 
-        info!("✅ All services initialized successfully");
+        info!("All services initialized successfully");
         Ok(())
     }
 
@@ -467,21 +474,21 @@ impl DependencyInjector {
             if let Some(instance) = instance {
                 if let Ok(injectable_arc) = instance.downcast::<Arc<dyn Injectable>>() {
                     if let Err(e) = injectable_arc.cleanup().await {
-                        warn!("❌ Failed to cleanup service {}: {}", type_name, e);
+                        warn!("Failed to cleanup service {}: {}", type_name, e);
                     } else {
-                        debug!("✅ Service {} cleaned up", type_name);
+                        debug!("Service {} cleaned up", type_name);
                     }
                 }
             }
         }
 
-        info!("✅ All services cleaned up");
+        info!("All services cleaned up");
         Ok(())
     }
 
     /// Perform health checks on all services
     pub async fn health_check_all(&self) -> Result<HashMap<String, bool>> {
-        debug!("🔍 Performing health checks on all services...");
+        debug!("Performing health checks on all services...");
 
         let mut results = HashMap::new();
         let cache = self.singleton_cache.read().await;
@@ -499,14 +506,14 @@ impl DependencyInjector {
                     Ok(healthy) => {
                         results.insert(type_name.clone(), healthy);
                         if healthy {
-                            debug!("✅ Health check passed for: {}", type_name);
+                            debug!("Health check passed for: {}", type_name);
                         } else {
-                            warn!("⚠️ Health check failed for: {}", type_name);
+                            warn!("Health check failed for: {}", type_name);
                         }
                     }
                     Err(e) => {
                         results.insert(type_name.clone(), false);
-                        error!("❌ Health check error for {}: {}", type_name, e);
+                        error!("Health check error for {}: {}", type_name, e);
                     }
                 }
             } else {

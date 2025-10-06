@@ -9,12 +9,12 @@ This directory contains pre-configured templates for different types of ZHTP nod
 **Best for**: API servers, blockchain explorers, dApps, general-purpose nodes
 
 **Features**:
-- ✅ All 9 ZHTP components enabled
-- ✅ Complete blockchain copy and validation
-- ✅ API endpoints for serving data
-- ✅ Moderate storage provision (500GB)
-- ✅ High peer connectivity (150 peers)
-- ✅ Hybrid mesh + TCP/IP networking
+- All 9 ZHTP components enabled
+- Complete blockchain copy and validation
+- API endpoints for serving data
+- Moderate storage provision (500GB)
+- High peer connectivity (150 peers)
+- Hybrid mesh + TCP/IP networking
 
 **Resources**: 4GB RAM, 12 CPU threads, 1TB storage
 
@@ -23,12 +23,12 @@ This directory contains pre-configured templates for different types of ZHTP nod
 **Best for**: Stakers, consensus participants, block producers
 
 **Features**:
-- ✅ **Validator consensus ENABLED**
-- ✅ Maximum security (Dilithium-5, Kyber-1024)
-- ✅ High storage provision (1TB)
-- ✅ Enhanced peer connectivity (200 peers)
-- ✅ Hardware security key support
-- ✅ Higher staking requirements (10,000 ZHTP)
+- **Validator consensus ENABLED**
+- Maximum security (Dilithium-5, Kyber-1024)
+- High storage provision (1TB)
+- Enhanced peer connectivity (200 peers)
+- Hardware security key support
+- Higher staking requirements (10,000 ZHTP)
 
 **Resources**: 8GB RAM, 16 CPU threads, 2TB storage
 
@@ -37,12 +37,12 @@ This directory contains pre-configured templates for different types of ZHTP nod
 **Best for**: Storage providers, IPFS-like services, data availability
 
 **Features**:
-- ✅ **Large storage capacity (5TB)**
-- ✅ Cold storage tier optimization
-- ✅ High storage reward multipliers (3x)
-- ✅ Erasure coding for data integrity
-- ✅ Smart contracts disabled (resource conservation)
-- ✅ Extended timeout for storage operations
+- **Large storage capacity (5TB)**
+- Cold storage tier optimization
+- High storage reward multipliers (3x)
+- Erasure coding for data integrity
+- Smart contracts disabled (resource conservation)
+- Extended timeout for storage operations
 
 **Resources**: 2GB RAM, 8 CPU threads, 10TB storage
 
@@ -51,12 +51,12 @@ This directory contains pre-configured templates for different types of ZHTP nod
 **Best for**: Mesh relays, rural connectivity, censorship resistance
 
 **Features**:
-- ✅ **Pure mesh mode (ISP bypass)**
-- ✅ Mesh protocols only (Bluetooth, WiFi Direct, LoRaWAN)
-- ✅ Long-range relay support (satellite/LoRaWAN)
-- ✅ High routing reward multipliers (2x)
-- ✅ Minimal resource requirements
-- ✅ No internet fallback (true mesh independence)
+- **Pure mesh mode (ISP bypass)**
+- Mesh protocols only (Bluetooth, WiFi Direct, LoRaWAN)
+- Long-range relay support (satellite/LoRaWAN)
+- High routing reward multipliers (2x)
+- Minimal resource requirements
+- No internet fallback (true mesh independence)
 
 **Resources**: 1GB RAM, 4 CPU threads, 200GB storage
 
@@ -65,12 +65,12 @@ This directory contains pre-configured templates for different types of ZHTP nod
 **Best for**: Development, testing, local experiments
 
 **Features**:
-- ✅ Relaxed security settings
-- ✅ Fast block times (2 seconds)
-- ✅ Lower resource requirements
-- ✅ Simplified configuration
-- ✅ TCP-only networking
-- ✅ Local bootstrap peers
+- Relaxed security settings
+- Fast block times (2 seconds)
+- Lower resource requirements
+- Simplified configuration
+- TCP-only networking
+- Local bootstrap peers
 
 **Resources**: 512MB RAM, 2 CPU threads, 50GB storage
 

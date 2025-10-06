@@ -67,24 +67,24 @@ Create a new Zero-Knowledge Decentralized Identifier with full Web4 citizen onbo
 
 **Output**:
 ```
-🆔 Creating new ZHTP DID identity: TestUser
-✅ DID Created Successfully!
-🆔 DID: did:zhtp:81b3eefad482f2f6a2621d0c10c5c4b2340e81e86c3be637cd4a60df48cf8285
-👤 Identity ID: 81b3eefad482f2f6a2621d0c10c5c4b2340e81e86c3be637cd4a60df48cf8285
-💰 Primary Wallet: 82fcaa64469b576b51f04d0344f97e3e5649cbbceefceb1547a61d3f4e4eb75c
-⛓️ Blockchain TX: e12958e1d46f15cec4dd6b43787f66ab16bf72d5de10c946c76421fb02cbea3b
-📊 Status: transaction_created
+Creating new ZHTP DID identity: TestUser
+DID Created Successfully!
+DID: did:zhtp:81b3eefad482f2f6a2621d0c10c5c4b2340e81e86c3be637cd4a60df48cf8285
+Identity ID: 81b3eefad482f2f6a2621d0c10c5c4b2340e81e86c3be637cd4a60df48cf8285
+Primary Wallet: 82fcaa64469b576b51f04d0344f97e3e5649cbbceefceb1547a61d3f4e4eb75c
+Blockchain TX: e12958e1d46f15cec4dd6b43787f66ab16bf72d5de10c946c76421fb02cbea3b
+Status: transaction_created
 ```
 
 **What Gets Created**:
-- ✅ **Quantum-Resistant DID**: `did:zhtp:...` identifier
-- ✅ **Multiple Wallets**: Primary, UBI, and Savings wallets
-- ✅ **DAO Voting Rights**: 1 voting power granted automatically
-- ✅ **UBI Registration**: 33 ZHTP daily, 1000 ZHTP monthly eligibility
-- ✅ **Welcome Bonus**: 5000 ZHTP tokens credited immediately
-- ✅ **Blockchain Registration**: Identity mined into blockchain block
-- ✅ **Web4 Access**: Full access to 10 Web4 services
-- ✅ **Privacy Credentials**: 2 ZK credentials for selective disclosure
+- **Quantum-Resistant DID**: `did:zhtp:...` identifier
+- **Multiple Wallets**: Primary, UBI, and Savings wallets
+- **DAO Voting Rights**: 1 voting power granted automatically
+- **UBI Registration**: 33 ZHTP daily, 1000 ZHTP monthly eligibility
+- **Welcome Bonus**: 5000 ZHTP tokens credited immediately
+- **Blockchain Registration**: Identity mined into blockchain block
+- **Web4 Access**: Full access to 10 Web4 services
+- **Privacy Credentials**: 2 ZK credentials for selective disclosure
 
 ### Create Advanced DID Identity
 
@@ -106,20 +106,20 @@ Create a DID with custom identity type and recovery options.
 
 **Output**:
 ```
-🔐 Creating zero-knowledge DID identity: Alice
+Creating zero-knowledge DID identity: Alice
 🔖 Identity Type: human
-🔧 Recovery options configured: 2 phrases
-✅ Zero-Knowledge DID Created Successfully!
-🆔 DID: did:zhtp:...
-👤 Identity ID: ...
-💰 Primary Wallet: ...
+Recovery options configured: 2 phrases
+Zero-Knowledge DID Created Successfully!
+DID: did:zhtp:...
+Identity ID: ...
+Primary Wallet: ...
 🎁 UBI Wallet: ...
 🏦 Savings Wallet: ...
 🏛️ DAO Voting Power: 1
-💰 Daily UBI: 33 ZHTP
-⛓️ Blockchain TX: ...
-📊 Registration Status: transaction_created
-🎉 Full Web4 citizen onboarding completed!
+Daily UBI: 33 ZHTP
+Blockchain TX: ...
+Registration Status: transaction_created
+ Full Web4 citizen onboarding completed!
 ```
 
 ### Verify Identity
@@ -138,9 +138,9 @@ Verify an existing ZHTP identity and check its status.
 
 **Output**:
 ```
-🔍 Verifying ZHTP identity: 81b3eef...
-✅ Identity verification successful!
-📊 Verification Score: 95
+Verifying ZHTP identity: 81b3eef...
+Identity verification successful!
+Verification Score: 95
 🔒 Security Level: Standard
 ```
 
@@ -155,10 +155,10 @@ View blockchain identity information and statistics.
 
 **Output**:
 ```
-📋 Listing ZHTP identities from blockchain...
-📊 Blockchain Identity Status:
-⛓️ Latest Block: 1
-💡 To see created identities, check the server logs for DID creation events
+Listing ZHTP identities from blockchain...
+Blockchain Identity Status:
+Latest Block: 1
+To see created identities, check the server logs for DID creation events
    or use 'zhtp blockchain stats' to see blockchain statistics
 ```
 
@@ -384,7 +384,7 @@ Use `-v` flag to see complete API responses:
 
 **Additional Output**:
 ```
-📋 Full Response:
+Full Response:
 {
   "did": "did:zhtp:...",
   "identity_id": "...",

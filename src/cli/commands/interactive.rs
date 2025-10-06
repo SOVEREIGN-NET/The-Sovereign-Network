@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use crate::cli::{InteractiveArgs, ZhtpCli, format_output};
 
 pub async fn handle_interactive_command(_args: InteractiveArgs, cli: &ZhtpCli) -> Result<()> {
-    println!("🚀 ZHTP Orchestrator Interactive Shell");
+    println!(" ZHTP Orchestrator Interactive Shell");
     println!("======================================");
     println!("Type 'help' for available commands, 'exit' to quit");
     println!("Server: {}", cli.server);
@@ -34,17 +34,17 @@ pub async fn handle_interactive_command(_args: InteractiveArgs, cli: &ZhtpCli) -
                     }
                     "status" => {
                         if let Err(e) = check_orchestrator_status(&client, &base_url, cli).await {
-                            println!("❌ Error: {}", e);
+                            println!("Error: {}", e);
                         }
                     }
                     "health" => {
                         if let Err(e) = check_component_health(&client, &base_url, cli).await {
-                            println!("❌ Error: {}", e);
+                            println!("Error: {}", e);
                         }
                     }
                     "components" => {
                         if let Err(e) = list_components(&client, &base_url, cli).await {
-                            println!("❌ Error: {}", e);
+                            println!("Error: {}", e);
                         }
                     }
                     "" => continue,
@@ -52,17 +52,17 @@ pub async fn handle_interactive_command(_args: InteractiveArgs, cli: &ZhtpCli) -
                         if input.starts_with("start ") {
                             let component = input.strip_prefix("start ").unwrap();
                             if let Err(e) = start_component(&client, &base_url, component, cli).await {
-                                println!("❌ Error: {}", e);
+                                println!("Error: {}", e);
                             }
                         } else if input.starts_with("stop ") {
                             let component = input.strip_prefix("stop ").unwrap();
                             if let Err(e) = stop_component(&client, &base_url, component, cli).await {
-                                println!("❌ Error: {}", e);
+                                println!("Error: {}", e);
                             }
                         } else if input.starts_with("info ") {
                             let component = input.strip_prefix("info ").unwrap();
                             if let Err(e) = component_info(&client, &base_url, component, cli).await {
-                                println!("❌ Error: {}", e);
+                                println!("Error: {}", e);
                             }
                         } else {
                             println!("Unknown command: {}", input);
@@ -96,7 +96,7 @@ fn show_interactive_help() {
 }
 
 async fn check_orchestrator_status(client: &reqwest::Client, base_url: &str, cli: &ZhtpCli) -> Result<()> {
-    println!("🔄 Checking orchestrator status...");
+    println!(" Checking orchestrator status...");
     
     let response = client
         .get(&format!("{}/status", base_url))
@@ -108,14 +108,14 @@ async fn check_orchestrator_status(client: &reqwest::Client, base_url: &str, cli
         let formatted = format_output(&result, &cli.format)?;
         println!("{}", formatted);
     } else {
-        println!("❌ Orchestrator status unavailable: {}", response.status());
+        println!("Orchestrator status unavailable: {}", response.status());
     }
     
     Ok(())
 }
 
 async fn check_component_health(client: &reqwest::Client, base_url: &str, cli: &ZhtpCli) -> Result<()> {
-    println!("💚 Checking component health...");
+    println!("Checking component health...");
     
     let response = client
         .get(&format!("{}/monitor/health", base_url))
@@ -127,14 +127,14 @@ async fn check_component_health(client: &reqwest::Client, base_url: &str, cli: &
         let formatted = format_output(&result, &cli.format)?;
         println!("{}", formatted);
     } else {
-        println!("❌ Component health check failed: {}", response.status());
+        println!("Component health check failed: {}", response.status());
     }
     
     Ok(())
 }
 
 async fn list_components(client: &reqwest::Client, base_url: &str, cli: &ZhtpCli) -> Result<()> {
-    println!("📋 Listing components...");
+    println!("Listing components...");
     
     let response = client
         .get(&format!("{}/component/list", base_url))
@@ -146,14 +146,14 @@ async fn list_components(client: &reqwest::Client, base_url: &str, cli: &ZhtpCli
         let formatted = format_output(&result, &cli.format)?;
         println!("{}", formatted);
     } else {
-        println!("❌ Component list unavailable: {}", response.status());
+        println!("Component list unavailable: {}", response.status());
     }
     
     Ok(())
 }
 
 async fn start_component(client: &reqwest::Client, base_url: &str, component: &str, cli: &ZhtpCli) -> Result<()> {
-    println!("🚀 Starting component: {}", component);
+    println!(" Starting component: {}", component);
     
     let request_body = serde_json::json!({
         "component": component,
@@ -172,7 +172,7 @@ async fn start_component(client: &reqwest::Client, base_url: &str, component: &s
         let formatted = format_output(&result, &cli.format)?;
         println!("{}", formatted);
     } else {
-        println!("❌ Failed to start component: {}", response.status());
+        println!("Failed to start component: {}", response.status());
     }
     
     Ok(())
@@ -198,14 +198,14 @@ async fn stop_component(client: &reqwest::Client, base_url: &str, component: &st
         let formatted = format_output(&result, &cli.format)?;
         println!("{}", formatted);
     } else {
-        println!("❌ Failed to stop component: {}", response.status());
+        println!("Failed to stop component: {}", response.status());
     }
     
     Ok(())
 }
 
 async fn component_info(client: &reqwest::Client, base_url: &str, component: &str, cli: &ZhtpCli) -> Result<()> {
-    println!("📊 Getting component info: {}", component);
+    println!("Getting component info: {}", component);
     
     let request_body = serde_json::json!({
         "component": component,
@@ -223,7 +223,7 @@ async fn component_info(client: &reqwest::Client, base_url: &str, component: &st
         let formatted = format_output(&result, &cli.format)?;
         println!("{}", formatted);
     } else {
-        println!("❌ Failed to get component info: {}", response.status());
+        println!("Failed to get component info: {}", response.status());
     }
     
     Ok(())

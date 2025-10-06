@@ -112,7 +112,7 @@ impl InteractiveShell {
 
     /// Start the interactive shell
     pub async fn run(&mut self) -> Result<()> {
-        println!("🖥️  ZHTP Interactive Shell");
+        println!("ZHTP Interactive Shell");
         println!("   Type 'help' for available commands or 'exit' to quit");
         println!();
 
@@ -130,7 +130,7 @@ impl InteractiveShell {
             }
         }
 
-        println!("👋 ZHTP shell session ended");
+        println!(" ZHTP shell session ended");
         Ok(())
     }
 
@@ -171,7 +171,7 @@ impl InteractiveShell {
             "zk" => self.handle_zk_command(args).await,
             "monitor" => self.handle_monitor_command(args).await,
             _ => {
-                println!("❌ Unknown command: {}", command);
+                println!("Unknown command: {}", command);
                 println!("   Type 'help' for available commands");
                 Ok(())
             }
@@ -199,7 +199,7 @@ impl InteractiveShell {
                 println!();
             }
 
-            println!("💡 Use 'help <command>' for detailed usage information");
+            println!("Use 'help <command>' for detailed usage information");
         } else {
             let command = args[0].to_lowercase();
             if let Some(info) = self.commands.get(&command) {
@@ -208,7 +208,7 @@ impl InteractiveShell {
                 println!("   Usage: {}", info.usage);
                 println!("   Category: {}", info.category);
             } else {
-                println!("❌ Unknown command: {}", command);
+                println!("Unknown command: {}", command);
             }
         }
         Ok(())
@@ -225,7 +225,7 @@ impl InteractiveShell {
 
     /// Show system status with real data
     async fn show_status(&self) -> Result<()> {
-        println!("📊 ZHTP Node Status");
+        println!("ZHTP Node Status");
         println!("   Node Version: {}", env!("CARGO_PKG_VERSION"));
         println!("   Status: Running");
         
@@ -275,27 +275,27 @@ impl InteractiveShell {
 
     /// Show components with real status
     async fn show_components(&self) -> Result<()> {
-        println!("🔧 ZHTP Components");
+        println!("ZHTP Components");
         
         let components = [
-            ("lib-crypto", "🔐", "Post-quantum cryptography"),
-            ("lib-proofs", "🕶️", "Zero-knowledge proofs"),
+            ("lib-crypto", "[CRYPT]", "Post-quantum cryptography");
+            ("lib-proofs", "[PROOF]", "Zero-knowledge proofs");
             ("lib-identity", "👤", "Identity management"),
-            ("lib-storage", "💾", "Distributed storage"),
-            ("lib-network", "🌐", "Mesh networking"),
-            ("lib-blockchain", "⛓️", "Blockchain layer"),
+            ("lib-storage", "[STORE]", "Distributed storage"),
+            ("lib-network", "[NET]", "Mesh networking"),
+            ("lib-blockchain", "[CHAIN]", "Blockchain layer"),
             ("lib-consensus", "🤝", "Consensus mechanism"),
-            ("lib-economy", "💰", "UBI and economics"),
+            ("lib-economy", "[ECON]", "UBI and economics"),
             ("lib-protocols", "🌍", "Protocol definitions"),
         ];
         
         for (name, icon, description) in &components {
             // For now, assume all components are running since they're integrated
-            println!("   {} {} - {} ✅ Running", icon, name, description);
+            println!("   {} {} - {} Running", icon, name, description);
         }
         
         println!();
-        println!("💡 Use 'health' to check detailed component health status");
+        println!("Use 'health' to check detailed component health status");
         Ok(())
     }
 
@@ -310,38 +310,38 @@ impl InteractiveShell {
         
         // CPU check
         let cpu_usage = system.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / system.cpus().len() as f32;
-        let cpu_status = if cpu_usage < 70.0 { "✅" } else if cpu_usage < 85.0 { "⚠️" } else { "❌" };
+        let cpu_status = if cpu_usage < 70.0 { "[OK]" } else if cpu_usage < 85.0 { "[WARN]" } else { "[HIGH]" };
         println!("   CPU Usage: {} {:.1}%", cpu_status, cpu_usage);
         
         // Memory check
         let memory_usage = (system.used_memory() as f64 / system.total_memory() as f64) * 100.0;
-        let memory_status = if memory_usage < 80.0 { "✅" } else if memory_usage < 90.0 { "⚠️" } else { "❌" };
+        let memory_status = if memory_usage < 80.0 { "[OK]" } else if memory_usage < 90.0 { "[WARN]" } else { "[HIGH]" };
         println!("   Memory Usage: {} {:.1}%", memory_status, memory_usage);
         
         // Network health
         match lib_network::get_mesh_status().await {
             Ok(mesh_status) => {
-                let network_status = if mesh_status.connectivity_percentage > 70.0 { "✅" } else { "⚠️" };
+                let network_status = if mesh_status.connectivity_percentage > 70.0 { "" } else { "⚠️" };
                 println!("   Network: {} Connected ({:.1}% connectivity)", network_status, mesh_status.connectivity_percentage);
             }
             Err(_) => {
-                println!("   Network: ❌ Status unavailable");
+                println!("   Network: Status unavailable");
             }
         }
         
         // Blockchain health
         match lib_blockchain::get_blockchain_health() {
             Ok(health) => {
-                let blockchain_status = if health.is_synced && health.peer_count > 0 { "✅" } else { "⚠️" };
+                let blockchain_status = if health.is_synced && health.peer_count > 0 { "" } else { "⚠️" };
                 println!("   Blockchain: {} Active (last block: {}s ago)", blockchain_status, health.last_block_time);
             }
             Err(_) => {
-                println!("   Blockchain: ❌ Status unavailable");
+                println!("   Blockchain: Status unavailable");
             }
         }
         
-        println!("   Storage: ✅ Available");
-        println!("   Economics: ✅ UBI system active");
+        println!("   Storage: Available");
+        println!("   Economics: UBI system active");
         println!();
         
         Ok(())
@@ -407,21 +407,21 @@ impl InteractiveShell {
     /// Handle node management commands
     async fn handle_node_command(&self, args: &[&str]) -> Result<()> {
         if args.is_empty() {
-            println!("❌ Usage: node <start|stop|restart|info>");
+            println!("Usage: node <start|stop|restart|info>");
             return Ok(());
         }
 
         match args[0] {
-            "start" => println!("🚀 Starting ZHTP node..."),
-            "stop" => println!("🛑 Stopping ZHTP node..."),
-            "restart" => println!("🔄 Restarting ZHTP node..."),
+            "start" => println!(" Starting ZHTP node..."),
+            "stop" => println!("Stopping ZHTP node..."),
+            "restart" => println!(" Restarting ZHTP node..."),
             "info" => {
-                println!("ℹ️  ZHTP Node Information");
+                println!("  ZHTP Node Information");
                 println!("   Version: {}", env!("CARGO_PKG_VERSION"));
                 println!("   Type: Complete Internet Replacement Orchestrator");
                 println!("   Mode: Development");
             }
-            _ => println!("❌ Unknown node command: {}", args[0]),
+            _ => println!("Unknown node command: {}", args[0]),
         }
         Ok(())
     }
@@ -429,39 +429,39 @@ impl InteractiveShell {
     /// Handle mesh networking commands
     async fn handle_mesh_command(&self, args: &[&str]) -> Result<()> {
         if args.is_empty() {
-            println!("❌ Usage: mesh <status|peers|connect|disconnect>");
+            println!("Usage: mesh <status|peers|connect|disconnect>");
             return Ok(());
         }
 
         match args[0] {
             "status" => {
-                println!("🌐 Mesh Network Status");
+                println!("Mesh Network Status");
                 println!("   Mode: Hybrid (Mesh + TCP/IP)");
                 println!("   Connected Peers: [Placeholder]");
                 println!("   Protocols: Bluetooth LE, WiFi Direct, LoRaWAN");
                 println!("   ISP Bypass: Partial");
             }
             "peers" => self.show_peers().await?,
-            _ => println!("❌ Unknown mesh command: {}", args[0]),
+            _ => println!("Unknown mesh command: {}", args[0]),
         }
         Ok(())
     }
 
     /// Show connected peers with real data
     async fn show_peers(&self) -> Result<()> {
-        println!("👥 Connected Peers");
+        println!("Connected Peers");
         
         match lib_network::get_mesh_status().await {
             Ok(mesh_status) => {
                 if mesh_status.active_peers == 0 {
                     println!("   No peers currently connected");
-                    println!("   💡 Use mesh discovery to find nearby peers");
+                    println!("   Use mesh discovery to find nearby peers");
                 } else {
                     println!("   Total Active Peers: {}", mesh_status.active_peers);
-                    println!("   📱 Local Peers: {} (same network)", mesh_status.local_peers);
-                    println!("   🌐 Regional Peers: {} (nearby networks)", mesh_status.regional_peers);
-                    println!("   🌍 Global Peers: {} (distant networks)", mesh_status.global_peers);
-                    println!("   📡 Relay Peers: {} (long-range bridges)", mesh_status.relay_peers);
+                    println!("    Local Peers: {} (same network)", mesh_status.local_peers);
+                    println!("   Regional Peers: {} (nearby networks)", mesh_status.regional_peers);
+                    println!("   Global Peers: {} (distant networks)", mesh_status.global_peers);
+                    println!("   Relay Peers: {} (long-range bridges)", mesh_status.relay_peers);
                     
                     // Show connectivity health
                     let connectivity_status = if mesh_status.connectivity_percentage > 80.0 {
@@ -477,23 +477,23 @@ impl InteractiveShell {
                 }
             }
             Err(e) => {
-                println!("   ❌ Failed to get peer information: {}", e);
+                println!("   Failed to get peer information: {}", e);
                 println!("   Network component may not be running properly");
             }
         }
         
-        println!("   💡 Use 'connect <address>' to connect to new peers");
+        println!("   Use 'connect <address>' to connect to new peers");
         Ok(())
     }
 
     /// Show network information with real data
     async fn show_network(&self) -> Result<()> {
-        println!("🌐 Network Information");
+        println!("Network Information");
         
         // Get network statistics
         match lib_network::get_network_statistics().await {
             Ok(stats) => {
-                println!("   📊 Network Statistics:");
+                println!("   Network Statistics:");
                 println!("     • Bytes Sent: {:.1} MB", stats.bytes_sent as f64 / 1_000_000.0);
                 println!("     • Bytes Received: {:.1} MB", stats.bytes_received as f64 / 1_000_000.0);
                 println!("     • Packets Sent: {}", stats.packets_sent);
@@ -501,22 +501,22 @@ impl InteractiveShell {
                 println!("     • Active Connections: {}", stats.connection_count);
             }
             Err(e) => {
-                println!("   ❌ Network statistics unavailable: {}", e);
+                println!("   Network statistics unavailable: {}", e);
             }
         }
         
         // Get mesh status
         match lib_network::get_mesh_status().await {
             Ok(mesh_status) => {
-                println!("   🌐 Mesh Status:");
-                println!("     • Internet Connected: {}", if mesh_status.internet_connected { "✅ Yes" } else { "❌ No" });
-                println!("     • Mesh Connected: {}", if mesh_status.mesh_connected { "✅ Yes" } else { "❌ No" });
+                println!("   Mesh Status:");
+                println!("     • Internet Connected: {}", if mesh_status.internet_connected { "Yes" } else { "No" });
+                println!("     • Mesh Connected: {}", if mesh_status.mesh_connected { "Yes" } else { "No" });
                 println!("     • Coverage: {:.1}%", mesh_status.coverage);
                 println!("     • Stability: {:.1}%", mesh_status.stability);
                 println!("     • Redundancy: {:.1}%", mesh_status.redundancy);
             }
             Err(e) => {
-                println!("   ❌ Mesh status unavailable: {}", e);
+                println!("   Mesh status unavailable: {}", e);
             }
         }
         
@@ -530,20 +530,20 @@ impl InteractiveShell {
                 println!("     • Congestion: {:?}", bandwidth.congestion_level);
             }
             Err(e) => {
-                println!("   ❌ Bandwidth statistics unavailable: {}", e);
+                println!("   Bandwidth statistics unavailable: {}", e);
             }
         }
         
         // Get latency information
         match lib_network::get_latency_statistics().await {
             Ok(latency) => {
-                println!("   ⏱️ Latency:");
+                println!("   Latency:");
                 println!("     • Average: {:.1} ms", latency.average_latency);
                 println!("     • Jitter: {:.1} ms", latency.jitter);
                 println!("     • Timeout Rate: {:.1}%", latency.timeout_rate * 100.0);
             }
             Err(e) => {
-                println!("   ❌ Latency statistics unavailable: {}", e);
+                println!("   Latency statistics unavailable: {}", e);
             }
         }
         
@@ -552,31 +552,31 @@ impl InteractiveShell {
 
     /// Show economics status with real UBI and DAO data
     async fn show_economics(&self) -> Result<()> {
-        println!("💰 Economic System Status");
+        println!("Economic System Status");
         
         // Get blockchain height to show system activity
         match lib_blockchain::get_current_block_height().await {
             Ok(height) => {
-                println!("   🏛️ DAO System: ✅ Active (Block {})", height);
+                println!("   🏛️ DAO System: Active (Block {})", height);
             }
             Err(_) => {
-                println!("   🏛️ DAO System: ⚠️ Status unavailable");
+                println!("   🏛️ DAO System: Status unavailable");
             }
         }
         
-        println!("   💵 UBI System: ✅ Active");
-        println!("   💰 Daily UBI Amount: 50 ZHTP tokens");
+        println!("   💵 UBI System: Active");
+        println!("   Daily UBI Amount: 50 ZHTP tokens");
         
         // Calculate estimated UBI pool based on network activity
         match lib_network::get_active_peer_count().await {
             Ok(peer_count) => {
                 let estimated_pool = peer_count as u64 * 50 * 30; // peers * daily_ubi * 30 days
                 println!("   🏦 Estimated Monthly UBI Pool: {} ZHTP tokens", estimated_pool);
-                println!("   👥 Active Citizens: {} (estimated from peer count)", peer_count);
+                println!("   Active Citizens: {} (estimated from peer count)", peer_count);
             }
             Err(_) => {
                 println!("   🏦 UBI Pool: Status unavailable");
-                println!("   👥 Active Citizens: Status unavailable");
+                println!("   Active Citizens: Status unavailable");
             }
         }
         
@@ -584,11 +584,11 @@ impl InteractiveShell {
         match lib_network::get_mesh_status().await {
             Ok(mesh_status) => {
                 let mesh_rewards = mesh_status.active_peers as f64 * 10.0; // 10 tokens per peer for mesh participation
-                println!("   🌐 Mesh Participation Rewards: {:.0} ZHTP tokens/day", mesh_rewards);
-                println!("   📊 Network Health Score: {:.1}%", mesh_status.connectivity_percentage);
+                println!("   Mesh Participation Rewards: {:.0} ZHTP tokens/day", mesh_rewards);
+                println!("   Network Health Score: {:.1}%", mesh_status.connectivity_percentage);
             }
             Err(_) => {
-                println!("   🌐 Mesh Participation Rewards: Status unavailable");
+                println!("   Mesh Participation Rewards: Status unavailable");
             }
         }
         
@@ -599,11 +599,11 @@ impl InteractiveShell {
 
     /// Show UBI information with real data
     async fn show_ubi(&self, args: &[&str]) -> Result<()> {
-        println!("💰 Universal Basic Income");
+        println!("Universal Basic Income");
         
         if args.is_empty() {
             // Show general UBI status
-            println!("   📊 Your UBI Status: ✅ Eligible");
+            println!("   Your UBI Status: Eligible");
             println!("   💵 Daily Payment: 50 ZHTP tokens");
             
             // Calculate total received based on system uptime (simplified)
@@ -622,30 +622,30 @@ impl InteractiveShell {
             // Show system stats
             match lib_network::get_active_peer_count().await {
                 Ok(peer_count) => {
-                    println!("   🌍 Global UBI Recipients: {} active citizens", peer_count);
+                    println!("   Global UBI Recipients: {} active citizens", peer_count);
                     let daily_distribution = peer_count as u64 * 50;
                     println!("   📈 Daily Global Distribution: {} ZHTP tokens", daily_distribution);
                 }
                 Err(_) => {
-                    println!("   🌍 Global UBI Recipients: Status unavailable");
+                    println!("   Global UBI Recipients: Status unavailable");
                 }
             }
             
             // Show participation requirements
-            println!("   ✅ Participation Requirements:");
-            println!("     • Valid ZK-DID identity: ✅ Active");
-            println!("     • Mesh network participation: ✅ Contributing");
-            println!("     • DAO governance participation: ✅ Eligible to vote");
+            println!("   Participation Requirements:");
+            println!("     • Valid ZK-DID identity: Active");
+            println!("     • Mesh network participation: Contributing");
+            println!("     • DAO governance participation: Eligible to vote");
             
         } else {
             // Show status for specific citizen ID
             let citizen_id = args[0];
-            println!("   🆔 Citizen ID: {}", citizen_id);
-            println!("   📊 Status: ✅ Active citizen");
+            println!("   Citizen ID: {}", citizen_id);
+            println!("   Status: Active citizen");
             println!("   💵 Daily UBI: 50 ZHTP tokens");
             println!("   📈 Total Earned: Calculated based on participation");
             println!("   🗳️ DAO Voting Power: Active");
-            println!("   🌐 Mesh Contribution: Network routing and data sharing");
+            println!("   Mesh Contribution: Network routing and data sharing");
         }
         
         Ok(())
@@ -654,7 +654,7 @@ impl InteractiveShell {
     /// Handle DAO commands
     async fn handle_dao_command(&self, args: &[&str]) -> Result<()> {
         if args.is_empty() {
-            println!("❌ Usage: dao <proposals|vote|create>");
+            println!("Usage: dao <proposals|vote|create>");
             return Ok(());
         }
 
@@ -664,8 +664,8 @@ impl InteractiveShell {
                 println!("   [Placeholder proposal list - implement with actual DAO data]");
             }
             "vote" => println!("🗳️ Voting interface - [Implement with actual voting system]"),
-            "create" => println!("📝 Proposal creation - [Implement with actual proposal system]"),
-            _ => println!("❌ Unknown DAO command: {}", args[0]),
+            "create" => println!("Proposal creation - [Implement with actual proposal system]"),
+            _ => println!("Unknown DAO command: {}", args[0]),
         }
         Ok(())
     }
@@ -673,7 +673,7 @@ impl InteractiveShell {
     /// Handle storage commands
     async fn handle_storage_command(&self, args: &[&str]) -> Result<()> {
         if args.is_empty() {
-            println!("❌ Usage: storage <status|files|add|get>");
+            println!("Usage: storage <status|files|add|get>");
             return Ok(());
         }
 
@@ -700,7 +700,7 @@ impl InteractiveShell {
                 match lib_network::get_mesh_status().await {
                     Ok(mesh_status) => {
                         let estimated_network_storage = mesh_status.active_peers as f64 * 10.0; // 10GB per peer estimate
-                        println!("   🌐 Network Storage:");
+                        println!("   Network Storage:");
                         println!("     • Participating Nodes: {} peers", mesh_status.active_peers);
                         println!("     • Estimated Total Capacity: {:.1} GB", estimated_network_storage);
                         println!("     • Network Health: {:.1}%", mesh_status.connectivity_percentage);
@@ -711,55 +711,55 @@ impl InteractiveShell {
                         println!("     • Daily Storage Rewards: {:.0} ZHTP tokens", daily_storage_reward);
                     }
                     Err(_) => {
-                        println!("   🌐 Network Storage: Status unavailable");
+                        println!("   Network Storage: Status unavailable");
                     }
                 }
                 
                 // Show storage features
                 println!("   ⚡ Features:");
-                println!("     • 🔐 End-to-end encryption: ✅ Active");
-                println!("     • 🔄 Automatic replication: ✅ 3x redundancy");
-                println!("     • 📦 Deduplication: ✅ Enabled");
-                println!("     • 🌍 Global distribution: ✅ Mesh-based");
-                println!("     • 💰 Economic incentives: ✅ Token rewards");
+                println!("     • End-to-end encryption: Active");
+                println!("     •  Automatic replication: 3x redundancy");
+                println!("     • 📦 Deduplication: Enabled");
+                println!("     • Global distribution: Mesh-based");
+                println!("     • Economic incentives: Token rewards");
             }
             "files" => {
                 println!("📁 Stored Files");
-                println!("   🔍 Scanning distributed storage...");
+                println!("   Scanning distributed storage...");
                 println!("   📄 Recent files:");
                 println!("     • File1.txt (encrypted) - 2.5 MB - 3 replicas");
                 println!("     • Document.pdf (encrypted) - 8.2 MB - 3 replicas");
                 println!("     • Image.jpg (encrypted) - 1.8 MB - 3 replicas");
-                println!("   📊 Total stored: System tracking active");
-                println!("   💰 Storage rewards earned: Active contribution");
+                println!("   Total stored: System tracking active");
+                println!("   Storage rewards earned: Active contribution");
             }
             "add" => {
                 if args.len() < 2 {
-                    println!("❌ Usage: storage add <file-path>");
+                    println!("Usage: storage add <file-path>");
                 } else {
                     let file_path = args[1];
                     println!("📤 Adding file to distributed storage: {}", file_path);
-                    println!("   🔐 Encrypting file...");
+                    println!("   Encrypting file...");
                     println!("   📦 Creating chunks for distribution...");
-                    println!("   🌐 Distributing to mesh network...");
-                    println!("   ✅ File successfully stored with 3x replication");
-                    println!("   🆔 File hash: [Generated after actual implementation]");
+                    println!("   Distributing to mesh network...");
+                    println!("   File successfully stored with 3x replication");
+                    println!("   File hash: [Generated after actual implementation]");
                 }
             }
             "get" => {
                 if args.len() < 2 {
-                    println!("❌ Usage: storage get <file-hash> [output-path]");
+                    println!("Usage: storage get <file-hash> [output-path]");
                 } else {
                     let file_hash = args[1];
                     let output_path = args.get(2).unwrap_or(&"./downloaded_file");
-                    println!("📥 Retrieving file from distributed storage: {}", file_hash);
-                    println!("   🔍 Locating file chunks across mesh network...");
+                    println!("Retrieving file from distributed storage: {}", file_hash);
+                    println!("   Locating file chunks across mesh network...");
                     println!("   📦 Reconstructing file from chunks...");
                     println!("   🔓 Decrypting file...");
-                    println!("   ✅ File retrieved successfully: {}", output_path);
+                    println!("   File retrieved successfully: {}", output_path);
                 }
             }
-            _ => println!("❌ Unknown storage command: {}", args[0]),
+            _ => println!("Unknown storage command: {}", args[0]),
         }
         Ok(())
     }
@@ -767,7 +767,7 @@ impl InteractiveShell {
     /// Handle zero-knowledge commands
     async fn handle_zk_command(&self, args: &[&str]) -> Result<()> {
         if args.is_empty() {
-            println!("❌ Usage: zk <generate|verify|info|did>");
+            println!("Usage: zk <generate|verify|info|did>");
             return Ok(());
         }
 
@@ -780,18 +780,18 @@ impl InteractiveShell {
                 println!("   Curve: BN254 for final verification");
                 
                 // Show ZK performance stats
-                println!("   📊 Performance Metrics:");
+                println!("   Performance Metrics:");
                 println!("     • Proof Generation: ~2-5 seconds");
                 println!("     • Proof Verification: ~50-100ms");
                 println!("     • Proof Size: ~1-2 KB");
                 println!("     • Security Level: 100+ bits");
                 
                 // Show active ZK applications
-                println!("   🎯 Active Applications:");
-                println!("     • 🆔 ZK-DID (Identity): ✅ Active");
-                println!("     • 💰 Private Transactions: ✅ Active");
-                println!("     • 🗳️ Anonymous Voting: ✅ Available");
-                println!("     • 🔐 Private Contracts: ✅ Available");
+                println!("   Active Applications:");
+                println!("     • ZK-DID (Identity): Active");
+                println!("     • Private Transactions: Active");
+                println!("     • 🗳️ Anonymous Voting: Available");
+                println!("     • Private Contracts: Available");
                 
                 // Show circuit information
                 println!("   ⚙️ Available Circuits:");
@@ -802,47 +802,47 @@ impl InteractiveShell {
             }
             "generate" => {
                 if args.len() < 2 {
-                    println!("❌ Usage: zk generate <circuit-type> [input-data]");
+                    println!("Usage: zk generate <circuit-type> [input-data]");
                     println!("   Available circuits: identity, transaction, vote, custom");
                 } else {
                     let circuit_type = args[1];
-                    println!("🔄 Generating ZK proof for circuit: {}", circuit_type);
-                    println!("   📝 Compiling circuit...");
+                    println!(" Generating ZK proof for circuit: {}", circuit_type);
+                    println!("   Compiling circuit...");
                     println!("   🔢 Processing witness data...");
                     println!("   ⚡ Generating proof with Plonky2...");
-                    println!("   ✅ Proof generated successfully!");
-                    println!("   📊 Proof size: ~1.2 KB");
-                    println!("   ⏱️ Generation time: ~3.2 seconds");
-                    println!("   🆔 Proof ID: zk_proof_{}_[timestamp]", circuit_type);
+                    println!("   Proof generated successfully!");
+                    println!("   Proof size: ~1.2 KB");
+                    println!("   Generation time: ~3.2 seconds");
+                    println!("   Proof ID: zk_proof_{}_[timestamp]", circuit_type);
                 }
             }
             "verify" => {
                 if args.len() < 2 {
-                    println!("❌ Usage: zk verify <proof-id>");
+                    println!("Usage: zk verify <proof-id>");
                 } else {
                     let proof_id = args[1];
-                    println!("🔍 Verifying ZK proof: {}", proof_id);
-                    println!("   📋 Loading verification key...");
+                    println!("Verifying ZK proof: {}", proof_id);
+                    println!("   Loading verification key...");
                     println!("   🔢 Parsing proof data...");
                     println!("   ⚡ Running Plonky2 verifier...");
-                    println!("   ✅ Proof verified successfully!");
-                    println!("   ⏱️ Verification time: ~85ms");
+                    println!("   Proof verified successfully!");
+                    println!("   Verification time: ~85ms");
                     println!("   🔒 Security: Proof is cryptographically sound");
                 }
             }
             "did" => {
-                println!("🆔 Zero-Knowledge Decentralized Identity (ZK-DID)");
-                println!("   📊 Your Identity Status:");
-                println!("     • Identity Created: ✅ Active");
+                println!("Zero-Knowledge Decentralized Identity (ZK-DID)");
+                println!("   Your Identity Status:");
+                println!("     • Identity Created: Active");
                 println!("     • Privacy Level: 🔒 Maximum (zero-knowledge)");
                 println!("     • Verification Method: Plonky2 ZK proofs");
                 println!("     • Credential Count: Multiple verifiable claims");
                 
-                println!("   🎯 Identity Features:");
-                println!("     • 🔐 Prove identity without revealing data");
-                println!("     • 📋 Selective disclosure of attributes");
-                println!("     • 🌐 Cross-platform compatibility");
-                println!("     • 💰 Integrate with UBI eligibility");
+                println!("   Identity Features:");
+                println!("     • Prove identity without revealing data");
+                println!("     • Selective disclosure of attributes");
+                println!("     • Cross-platform compatibility");
+                println!("     • Integrate with UBI eligibility");
                 println!("     • 🗳️ Anonymous governance participation");
                 
                 println!("   📄 Available Proofs:");
@@ -858,7 +858,7 @@ impl InteractiveShell {
                 println!("     • Proofs generated today: System tracking");
                 println!("     • Identity verifications: Active");
             }
-            _ => println!("❌ Unknown ZK command: {}", args[0]),
+            _ => println!("Unknown ZK command: {}", args[0]),
         }
         Ok(())
     }
@@ -866,18 +866,18 @@ impl InteractiveShell {
     /// Handle monitoring commands
     async fn handle_monitor_command(&self, args: &[&str]) -> Result<()> {
         if args.is_empty() {
-            println!("❌ Usage: monitor <start|stop|status>");
+            println!("Usage: monitor <start|stop|status>");
             return Ok(());
         }
 
         match args[0] {
             "status" => {
-                println!("📊 Monitoring System");
+                println!("Monitoring System");
                 println!("   Dashboard: http://localhost:8081");
                 println!("   Alerts: [Placeholder] active");
-                println!("   Metrics Collection: ✅ Active");
+                println!("   Metrics Collection: Active");
             }
-            _ => println!("❌ Unknown monitor command: {}", args[0]),
+            _ => println!("Unknown monitor command: {}", args[0]),
         }
         Ok(())
     }

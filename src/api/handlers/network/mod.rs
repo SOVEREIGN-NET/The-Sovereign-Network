@@ -4,10 +4,8 @@
 //! Built on lib-network functions and runtime orchestrator capabilities.
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+// Removed unused tokio::sync::RwLock, anyhow::Result, serde_json::json
 use tracing::{info, warn, error};
 
 // ZHTP protocol imports
@@ -104,7 +102,7 @@ impl NetworkHandler {
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for NetworkHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        info!("🌐 Network handler: {} {}", request.method, request.uri);
+        info!("Network handler: {} {}", request.method, request.uri);
         
         let response = match (request.method, request.uri.as_str()) {
             (ZhtpMethod::Get, "/api/v1/blockchain/network/peers") => {
@@ -156,7 +154,7 @@ impl NetworkHandler {
     /// Get list of connected peers
     /// GET /api/v1/blockchain/network/peers
     async fn handle_get_network_peers(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        info!("👥 API: Getting network peers");
+        info!("API: Getting network peers");
 
         match self.runtime.get_connected_peers().await {
             Ok(peer_list) => {
@@ -198,7 +196,7 @@ impl NetworkHandler {
                     peers,
                 };
 
-                info!("✅ API: Retrieved {} network peers", response.peer_count);
+                info!("API: Retrieved {} network peers", response.peer_count);
                 
                 let json_response = serde_json::to_vec(&response)
                     .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
@@ -210,7 +208,7 @@ impl NetworkHandler {
                 ))
             }
             Err(e) => {
-                error!("❌ API: Failed to get network peers: {}", e);
+                error!("API: Failed to get network peers: {}", e);
                 
                 let error_response = NetworkPeersResponse {
                     status: "error".to_string(),
@@ -233,13 +231,13 @@ impl NetworkHandler {
     /// Get network statistics
     /// GET /api/v1/blockchain/network/stats
     async fn handle_get_network_stats(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        info!("📊 API: Getting network statistics");
+        info!("API: Getting network statistics");
 
         // Get mesh status from lib-network
         let mesh_status = match lib_network::get_mesh_status().await {
             Ok(status) => status,
             Err(e) => {
-                warn!("⚠️ API: Failed to get mesh status: {}", e);
+                warn!("API: Failed to get mesh status: {}", e);
                 lib_network::types::MeshStatus::default()
             }
         };
@@ -248,7 +246,7 @@ impl NetworkHandler {
         let network_stats = match lib_network::get_network_statistics().await {
             Ok(stats) => stats,
             Err(e) => {
-                warn!("⚠️ API: Failed to get network statistics: {}", e);
+                warn!("API: Failed to get network statistics: {}", e);
                 lib_network::types::NetworkStatistics {
                     bytes_sent: 0,
                     bytes_received: 0,
@@ -285,7 +283,7 @@ impl NetworkHandler {
             },
         };
 
-        info!("✅ API: Retrieved network statistics - {} active peers, {:.1}% connectivity", 
+        info!("API: Retrieved network statistics - {} active peers, {:.1}% connectivity", 
               response.peer_distribution.active_peers,
               response.mesh_status.connectivity_percentage);
         
@@ -302,7 +300,7 @@ impl NetworkHandler {
     /// Add a new peer to the network
     /// POST /api/v1/blockchain/network/peer/add
     async fn handle_add_network_peer(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        info!("🔗 API: Adding network peer");
+        info!("API: Adding network peer");
 
         // Parse request body
         let add_request: AddPeerRequest = if request.body.is_empty() {
@@ -317,7 +315,7 @@ impl NetworkHandler {
 
         // Validate peer address format
         if add_request.peer_address.is_empty() {
-            warn!("⚠️ API: Empty peer address provided");
+            warn!("API: Empty peer address provided");
             let error_response = AddPeerResponse {
                 status: "error".to_string(),
                 peer_id: "".to_string(),
@@ -328,9 +326,10 @@ impl NetworkHandler {
             let json_response = serde_json::to_vec(&error_response)
                 .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
             
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                "Peer address cannot be empty".to_string(),
+            return Ok(ZhtpResponse::success_with_content_type(
+                json_response,
+                "application/json".to_string(),
+                None,
             ));
         }
 
@@ -349,7 +348,7 @@ impl NetworkHandler {
                     connected: true,
                 };
 
-                info!("✅ API: Successfully added peer {} ({})", peer_id, add_request.peer_address);
+                info!("API: Successfully added peer {} ({})", peer_id, add_request.peer_address);
                 
                 let json_response = serde_json::to_vec(&response)
                     .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
@@ -361,7 +360,7 @@ impl NetworkHandler {
                 ))
             }
             Err(e) => {
-                error!("❌ API: Failed to add peer {}: {}", add_request.peer_address, e);
+                error!("API: Failed to add peer {}: {}", add_request.peer_address, e);
                 
                 let response = AddPeerResponse {
                     status: "error".to_string(),
@@ -411,7 +410,7 @@ impl NetworkHandler {
                     removed: true,
                 };
 
-                info!("✅ API: Successfully removed peer {}", peer_id);
+                info!("API: Successfully removed peer {}", peer_id);
                 
                 let json_response = serde_json::to_vec(&response)
                     .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
@@ -423,7 +422,7 @@ impl NetworkHandler {
                 ))
             }
             Err(e) => {
-                error!("❌ API: Failed to remove peer {}: {}", peer_id, e);
+                error!("API: Failed to remove peer {}: {}", peer_id, e);
                 
                 let response = RemovePeerResponse {
                     status: "error".to_string(),

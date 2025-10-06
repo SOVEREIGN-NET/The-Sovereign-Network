@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use crate::cli::{MonitorArgs, MonitorAction, ZhtpCli, format_output};
-use serde_json::json;
 
 pub async fn handle_monitor_command(args: MonitorArgs, cli: &ZhtpCli) -> Result<()> {
     let client = reqwest::Client::new();
@@ -23,11 +22,11 @@ pub async fn handle_monitor_command(args: MonitorArgs, cli: &ZhtpCli) -> Result<
                 println!("System monitoring orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate system monitoring: {}", response.status());
+                println!("Failed to orchestrate system monitoring: {}", response.status());
             }
         }
         MonitorAction::Health => {
-            println!("💚 Orchestrating health check for all components...");
+            println!("Orchestrating health check for all components...");
             
             let response = client
                 .get(&format!("{}/monitor/health", base_url))
@@ -40,7 +39,7 @@ pub async fn handle_monitor_command(args: MonitorArgs, cli: &ZhtpCli) -> Result<
                 println!("Health check orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate health check: {}", response.status());
+                println!("Failed to orchestrate health check: {}", response.status());
             }
         }
         MonitorAction::Performance => {
@@ -57,11 +56,11 @@ pub async fn handle_monitor_command(args: MonitorArgs, cli: &ZhtpCli) -> Result<
                 println!("Performance metrics orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate performance metrics: {}", response.status());
+                println!("Failed to orchestrate performance metrics: {}", response.status());
             }
         }
         MonitorAction::Logs => {
-            println!("📋 Orchestrating log retrieval...");
+            println!("Orchestrating log retrieval...");
             
             let response = client
                 .get(&format!("{}/monitor/logs", base_url))
@@ -74,7 +73,7 @@ pub async fn handle_monitor_command(args: MonitorArgs, cli: &ZhtpCli) -> Result<
                 println!("Logs orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate log retrieval: {}", response.status());
+                println!("Failed to orchestrate log retrieval: {}", response.status());
             }
         }
     }

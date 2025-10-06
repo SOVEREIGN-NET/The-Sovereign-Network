@@ -5,7 +5,8 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+// Removed unused Serialize
 use serde_json::json;
 
 // ZHTP protocol imports
@@ -14,10 +15,11 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 // Import actual DAO system components
 use lib_consensus::{
-    DaoEngine, DaoProposal, DaoProposalType, DaoProposalStatus, DaoVote, DaoVoteChoice,
-    DaoTreasury, DaoVoteTally, TreasuryTransaction, TreasuryTransactionType
+    DaoEngine, DaoProposalType, DaoProposalStatus, DaoVoteChoice,
+    // Removed unused DaoProposal, DaoVote, DaoTreasury, DaoVoteTally, TreasuryTransaction, TreasuryTransactionType
 };
-use lib_identity::{IdentityManager, identity::ZhtpIdentity as Identity};
+use lib_identity::IdentityManager;
+// Removed unused Identity alias
 use lib_crypto::Hash;
 
 /// Helper function to create JSON responses correctly

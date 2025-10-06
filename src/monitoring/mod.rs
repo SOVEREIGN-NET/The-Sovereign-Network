@@ -10,8 +10,8 @@ pub mod dashboard;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::info;
+// Removed unused: RwLock, warn, error
 
 pub use metrics::*;
 pub use health_check::*;
@@ -44,7 +44,7 @@ impl MonitoringSystem {
 
     /// Start the monitoring system
     pub async fn start(&mut self) -> Result<()> {
-        info!("📊 Starting monitoring system...");
+        info!("Starting monitoring system...");
 
         // Start metrics collection
         self.metrics_collector.start().await?;
@@ -62,13 +62,13 @@ impl MonitoringSystem {
             self.dashboard_server = Some(dashboard_arc);
         }
 
-        info!("✅ Monitoring system started successfully");
+        info!("Monitoring system started successfully");
         Ok(())
     }
 
     /// Stop the monitoring system
     pub async fn stop(&self) -> Result<()> {
-        info!("📊 Stopping monitoring system...");
+        info!("Stopping monitoring system...");
 
         // Stop dashboard server
         if let Some(dashboard) = &self.dashboard_server {
@@ -80,7 +80,7 @@ impl MonitoringSystem {
         self.health_monitor.stop().await?;
         self.metrics_collector.stop().await?;
 
-        info!("✅ Monitoring system stopped");
+        info!("Monitoring system stopped");
         Ok(())
     }
 

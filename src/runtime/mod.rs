@@ -14,6 +14,7 @@ use super::config::NodeConfig;
 
 pub mod components;
 pub mod shared_blockchain;
+pub mod shared_dht;
 pub mod blockchain_provider;
 pub mod did_startup;
 #[cfg(test)]
@@ -21,6 +22,7 @@ pub mod test_api_integration;
 
 pub use components::*;
 pub use shared_blockchain::*;
+pub use shared_dht::*;
 pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_blockchain};
 
 /// Component status information
@@ -161,14 +163,24 @@ pub struct RuntimeOrchestrator {
     shutdown_signal: Arc<Mutex<Option<mpsc::UnboundedSender<()>>>>,
     startup_order: Vec<ComponentId>,
     shared_blockchain: Arc<RwLock<Option<SharedBlockchainService>>>,
-    user_identity: Arc<RwLock<Option<crate::runtime::did_startup::DidStartupResult>>>,
+    user_wallet: Arc<RwLock<Option<crate::runtime::did_startup::WalletStartupResult>>>,
 }
 
 impl RuntimeOrchestrator {
     /// Create a new runtime orchestrator
     pub async fn new(config: NodeConfig) -> Result<Self> {
         let (message_tx, mut message_rx) = mpsc::unbounded_channel();
-        let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel();
+        
+        // Spawn shutdown monitor task
+        let shutdown_monitor = tokio::spawn(async move {
+            if let Some(_shutdown_signal) = shutdown_rx.recv().await {
+                tracing::info!("Shutdown signal received, initiating graceful shutdown");
+            }
+        });
+        
+        // Store shutdown monitor handle for cleanup
+        let _shutdown_handle = shutdown_monitor;
         
         let orchestrator = Self {
             config,
@@ -177,7 +189,7 @@ impl RuntimeOrchestrator {
             message_bus: Arc::new(Mutex::new(message_tx)),
             shutdown_signal: Arc::new(Mutex::new(Some(shutdown_tx))),
             shared_blockchain: Arc::new(RwLock::new(None)),
-            user_identity: Arc::new(RwLock::new(None)),
+            user_wallet: Arc::new(RwLock::new(None)),
             startup_order: vec![
                 ComponentId::Crypto,      // Foundation layer
                 ComponentId::ZK,          // Zero-knowledge proofs
@@ -198,7 +210,7 @@ impl RuntimeOrchestrator {
                 let components = components_clone.read().await;
                 if let Some(component) = components.get(&component_id) {
                     if let Err(e) = component.handle_message(message).await {
-                        error!("❌ Component {} failed to handle message: {}", component_id, e);
+                        error!("Component {} failed to handle message: {}", component_id, e);
                     }
                 }
             }
@@ -207,8 +219,9 @@ impl RuntimeOrchestrator {
         // Start health monitoring task
         let health_clone = orchestrator.component_health.clone();
         let components_clone = orchestrator.components.clone();
+        let health_interval = orchestrator.config.integration_settings.health_check_interval_ms;
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            let mut interval = tokio::time::interval(Duration::from_millis(health_interval));
             loop {
                 interval.tick().await;
                 
@@ -221,7 +234,7 @@ impl RuntimeOrchestrator {
                             health.insert(id.clone(), health_info);
                         }
                         Err(e) => {
-                            warn!("❌ Health check failed for {}: {}", id, e);
+                            warn!("Health check failed for {}: {}", id, e);
                             let error_health = ComponentHealth {
                                 status: ComponentStatus::Error(e.to_string()),
                                 last_heartbeat: Instant::now(),
@@ -238,14 +251,19 @@ impl RuntimeOrchestrator {
             }
         });
 
-        info!("🏗️ Runtime orchestrator initialized with {} components", orchestrator.startup_order.len());
+        info!("Runtime orchestrator initialized with {} components", orchestrator.startup_order.len());
         Ok(orchestrator)
+    }
+
+    /// Get configuration for runtime operations
+    pub fn config(&self) -> &NodeConfig {
+        &self.config
     }
 
     /// Register a component with the orchestrator
     pub async fn register_component(&self, component: Arc<dyn Component>) -> Result<()> {
         let id = component.id();
-        info!("📦 Registering component: {}", id);
+        info!("Registering component: {}", id);
         
         let mut components = self.components.write().await;
         components.insert(id.clone(), component);
@@ -262,13 +280,13 @@ impl RuntimeOrchestrator {
             cpu_usage: 0.0,
         });
         
-        debug!("✅ Component {} registered successfully", id);
+        debug!("Component {} registered successfully", id);
         Ok(())
     }
 
     /// Register all component instances
     pub async fn register_all_components(&self) -> Result<()> {
-        info!("📦 Registering all ZHTP component instances...");
+        info!("Registering all ZHTP component instances...");
         
         // Import all component types
         use crate::runtime::components::{
@@ -283,50 +301,43 @@ impl RuntimeOrchestrator {
         self.register_component(Arc::new(IdentityComponent::new())).await?;
         self.register_component(Arc::new(StorageComponent::new())).await?;
         self.register_component(Arc::new(NetworkComponent::new())).await?;
-        self.register_component(Arc::new(BlockchainComponent::new())).await?;
+        // Pass user wallet to blockchain component for proper genesis funding
+        let user_wallet_guard = self.user_wallet.read().await;
+        let user_wallet = user_wallet_guard.clone();
+        self.register_component(Arc::new(BlockchainComponent::new_with_wallet(user_wallet))).await?;
         self.register_component(Arc::new(ConsensusComponent::new())).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ProtocolsComponent::new())).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         
-        info!("✅ All components registered successfully");
+        info!("All components registered successfully");
         Ok(())
     }
 
-    /// Set user identity data for components that need it
-    pub async fn set_user_identity(&self, identity: crate::runtime::did_startup::DidStartupResult) -> Result<()> {
-        let mut user_identity = self.user_identity.write().await;
-        *user_identity = Some(identity);
+    /// Set user wallet data for components that need it (replaces identity-based approach)
+    pub async fn set_user_identity(&self, wallet: crate::runtime::did_startup::WalletStartupResult) -> Result<()> {
+        let mut user_wallet = self.user_wallet.write().await;
+        *user_wallet = Some(wallet);
+        Ok(())
+    }
+
+    /// Set user wallet data for components that need it
+    pub async fn set_user_wallet(&self, wallet: crate::runtime::did_startup::WalletStartupResult) -> Result<()> {
+        // Store wallet in orchestrator for use during component creation
+        let mut user_wallet = self.user_wallet.write().await;
+        *user_wallet = Some(wallet);
+        info!("User wallet stored in orchestrator for component initialization");
         Ok(())
     }
 
     /// Start all components in the correct order
     pub async fn start_all_components(&self) -> Result<()> {
-        info!("🚀 Starting all ZHTP components...");
+        info!(" Starting all ZHTP components...");
         
         // First register all components
         self.register_all_components().await?;
         
         for component_id in &self.startup_order {
-            // Special handling for blockchain component - pass user identity before starting
-            if matches!(component_id, ComponentId::Blockchain) {
-                if let Some(user_identity) = &*self.user_identity.read().await {
-                    info!("🔗 Passing user identity to blockchain component: {} ({})", user_identity.user_display_name, hex::encode(&user_identity.user_identity_id.0[..8]));
-                    
-                    // Get the blockchain component and set its user identity
-                    let components = self.components.read().await;
-                    if let Some(component) = components.get(&ComponentId::Blockchain) {
-                        // Downcast to BlockchainComponent to access set_user_identity method
-                        if let Some(blockchain_component) = component.as_any().downcast_ref::<crate::runtime::components::BlockchainComponent>() {
-                            blockchain_component.set_user_identity(user_identity.clone()).await;
-                            info!("✅ User identity passed to blockchain component successfully");
-                        }
-                    }
-                } else {
-                    warn!("⚠️ No user identity available for blockchain component - will use dummy identities");
-                }
-            }
-            
             self.start_component(component_id.clone()).await
                 .with_context(|| format!("Failed to start component {}", component_id))?;
             
@@ -334,13 +345,24 @@ impl RuntimeOrchestrator {
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
         
-        info!("✅ All components started successfully");
+        info!("All components started successfully");
         Ok(())
     }
 
     /// Start a specific component
     pub async fn start_component(&self, component_id: ComponentId) -> Result<()> {
-        info!("🚀 Starting component: {}", component_id);
+        // Check if component is already running to prevent duplicate starts
+        {
+            let health = self.component_health.read().await;
+            if let Some(health_info) = health.get(&component_id) {
+                if matches!(health_info.status, ComponentStatus::Running) {
+                    info!("Component {} is already running, skipping start", component_id);
+                    return Ok(());
+                }
+            }
+        }
+        
+        info!(" Starting component: {}", component_id);
         
         // Update status to starting
         {
@@ -365,12 +387,12 @@ impl RuntimeOrchestrator {
                         health_info.uptime = start_time.elapsed();
                     }
                     
-                    info!("✅ Component {} started successfully", component_id);
+                    info!("Component {} started successfully", component_id);
                     
                     // Initialize shared blockchain service after BlockchainComponent starts
                     if component_id == ComponentId::Blockchain {
                         if let Err(e) = self.initialize_shared_blockchain().await {
-                            warn!("⚠️ Failed to initialize shared blockchain service: {}", e);
+                            warn!("Failed to initialize shared blockchain service: {}", e);
                         }
                     }
                     
@@ -389,27 +411,27 @@ impl RuntimeOrchestrator {
                         health_info.error_count += 1;
                     }
                     
-                    error!("❌ Failed to start component {}: {}", component_id, e);
+                    error!("Failed to start component {}: {}", component_id, e);
                     Err(e)
                 }
             }
         } else {
             let error_msg = format!("Component {} not found", component_id);
-            error!("❌ {}", error_msg);
+            error!("{}", error_msg);
             Err(anyhow::anyhow!(error_msg))
         }
     }
 
     /// Stop all components in reverse order with timeout
     pub async fn shutdown_all_components(&self) -> Result<()> {
-        info!("🛑 Shutting down all ZHTP components...");
+        info!("Shutting down all ZHTP components...");
         
         // Set overall shutdown timeout
         let shutdown_future = async {
             // Stop components in reverse order
             for component_id in self.startup_order.iter().rev() {
                 if let Err(e) = self.stop_component(component_id.clone()).await {
-                    error!("❌ Failed to stop component {}: {}", component_id, e);
+                    error!("Failed to stop component {}: {}", component_id, e);
                     // Continue with other components even if one fails
                 }
                 
@@ -419,12 +441,14 @@ impl RuntimeOrchestrator {
         };
 
         // Apply overall timeout for shutdown
-        match tokio::time::timeout(Duration::from_secs(30), shutdown_future).await {
+        let shutdown_timeout_ms = self.config.integration_settings.cross_package_timeouts
+            .get("shutdown").copied().unwrap_or(30000);
+        match tokio::time::timeout(Duration::from_millis(shutdown_timeout_ms), shutdown_future).await {
             Ok(()) => {
-                info!("✅ All components shut down normally");
+                info!("All components shut down normally");
             }
             Err(_timeout) => {
-                warn!("⚠️ Shutdown timeout reached - forcing termination");
+                warn!("Shutdown timeout reached - forcing termination");
                 
                 // Force stop all remaining components
                 let components = self.components.read().await;
@@ -446,13 +470,13 @@ impl RuntimeOrchestrator {
             let _ = shutdown_tx.send(());
         }
         
-        info!("✅ All components shut down");
+        info!("All components shut down");
         Ok(())
     }
 
     /// Stop a specific component with timeout
     pub async fn stop_component(&self, component_id: ComponentId) -> Result<()> {
-        info!("🛑 Stopping component: {}", component_id);
+        info!("Stopping component: {}", component_id);
         
         // Update status to stopping
         {
@@ -475,7 +499,7 @@ impl RuntimeOrchestrator {
                         health_info.last_heartbeat = Instant::now();
                     }
                     
-                    info!("✅ Component {} stopped successfully", component_id);
+                    info!("Component {} stopped successfully", component_id);
                     Ok(())
                 }
                 Ok(Err(e)) => {
@@ -485,22 +509,22 @@ impl RuntimeOrchestrator {
                         health_info.error_count += 1;
                     }
                     
-                    error!("❌ Failed to stop component {}: {}", component_id, e);
+                    error!("Failed to stop component {}: {}", component_id, e);
                     Err(e)
                 }
                 Err(_timeout) => {
-                    warn!("⚠️ Timeout stopping component {}, forcing shutdown", component_id);
+                    warn!("Timeout stopping component {}, forcing shutdown", component_id);
                     
                     // Try force stop if available
                     match tokio::time::timeout(Duration::from_secs(5), component.force_stop()).await {
                         Ok(Ok(())) => {
-                            info!("✅ Component {} force stopped", component_id);
+                            info!("Component {} force stopped", component_id);
                         }
                         Ok(Err(e)) => {
-                            warn!("⚠️ Force stop failed for {}: {}", component_id, e);
+                            warn!("Force stop failed for {}: {}", component_id, e);
                         }
                         Err(_) => {
-                            warn!("⚠️ Force stop timeout for {}", component_id);
+                            warn!("Force stop timeout for {}", component_id);
                         }
                     }
                     
@@ -515,7 +539,7 @@ impl RuntimeOrchestrator {
                 }
             }
         } else {
-            warn!("⚠️ Component {} not found during shutdown", component_id);
+            warn!("Component {} not found during shutdown", component_id);
             Ok(()) // Not an error during shutdown
         }
     }
@@ -562,7 +586,7 @@ impl RuntimeOrchestrator {
 
     /// Restart a component
     pub async fn restart_component(&self, component_id: ComponentId) -> Result<()> {
-        info!("🔄 Restarting component: {}", component_id);
+        info!(" Restarting component: {}", component_id);
         
         // Update restart count
         {
@@ -576,7 +600,7 @@ impl RuntimeOrchestrator {
         tokio::time::sleep(Duration::from_millis(1000)).await; // Wait for cleanup
         self.start_component(component_id.clone()).await?;
         
-        info!("✅ Component {} restarted successfully", component_id);
+        info!("Component {} restarted successfully", component_id);
         Ok(())
     }
 
@@ -594,7 +618,7 @@ impl RuntimeOrchestrator {
                     }
                 }
                 Err(e) => {
-                    warn!("⚠️ Failed to get metrics from {}: {}", id, e);
+                    warn!("Failed to get metrics from {}: {}", id, e);
                 }
             }
         }
@@ -651,7 +675,7 @@ impl RuntimeOrchestrator {
                 Ok(peers)
             }
             Err(e) => {
-                warn!("⚠️ Failed to get mesh status: {}", e);
+                warn!("Failed to get mesh status: {}", e);
                 Ok(vec!["Network status unavailable".to_string()])
             }
         }
@@ -659,7 +683,7 @@ impl RuntimeOrchestrator {
 
     /// Connect to a peer
     pub async fn connect_to_peer(&self, addr: &str) -> Result<()> {
-        info!("🔗 Attempting to connect to peer: {}", addr);
+        info!("Attempting to connect to peer: {}", addr);
         
         // Send connect message to network component
         self.send_message(ComponentId::Network, ComponentMessage::Custom(
@@ -667,7 +691,7 @@ impl RuntimeOrchestrator {
             addr.as_bytes().to_vec()
         )).await?;
         
-        info!("✅ Connect request sent to network component for peer: {}", addr);
+        info!("Connect request sent to network component for peer: {}", addr);
         Ok(())
     }
 
@@ -681,7 +705,7 @@ impl RuntimeOrchestrator {
             addr.as_bytes().to_vec()
         )).await?;
         
-        info!("✅ Disconnect request sent to network component for peer: {}", addr);
+        info!("Disconnect request sent to network component for peer: {}", addr);
         Ok(())
     }
 
@@ -692,12 +716,12 @@ impl RuntimeOrchestrator {
         
         match lib_network::get_mesh_status().await {
             Ok(mesh_status) => {
-                info.push_str("🌐 ZHTP Mesh Network Status\n");
+                info.push_str("ZHTP Mesh Network Status\n");
                 info.push_str("===========================\n");
                 info.push_str(&format!("Internet Connected: {}\n", 
-                    if mesh_status.internet_connected { "✅ Yes" } else { "❌ No" }));
+                    if mesh_status.internet_connected { "Yes" } else { "No" }));
                 info.push_str(&format!("Mesh Connected: {}\n", 
-                    if mesh_status.mesh_connected { "✅ Yes" } else { "❌ No" }));
+                    if mesh_status.mesh_connected { "Yes" } else { "No" }));
                 info.push_str(&format!("Connectivity: {:.1}%\n", mesh_status.connectivity_percentage));
                 info.push_str(&format!("Active Peers: {}\n", mesh_status.active_peers));
                 info.push_str(&format!("  • Local: {}\n", mesh_status.local_peers));
@@ -708,13 +732,13 @@ impl RuntimeOrchestrator {
                 info.push_str(&format!("Stability: {:.1}%\n", mesh_status.stability));
             }
             Err(e) => {
-                info.push_str(&format!("❌ Failed to get mesh status: {}\n", e));
+                info.push_str(&format!("Failed to get mesh status: {}\n", e));
             }
         }
         
         match lib_network::get_network_statistics().await {
             Ok(net_stats) => {
-                info.push_str("\n📊 Network Statistics\n");
+                info.push_str("\nNetwork Statistics\n");
                 info.push_str("=====================\n");
                 info.push_str(&format!("Bytes Sent: {} MB\n", net_stats.bytes_sent / 1_000_000));
                 info.push_str(&format!("Bytes Received: {} MB\n", net_stats.bytes_received / 1_000_000));
@@ -723,7 +747,7 @@ impl RuntimeOrchestrator {
                 info.push_str(&format!("Connections: {}\n", net_stats.connection_count));
             }
             Err(e) => {
-                info.push_str(&format!("❌ Failed to get network statistics: {}\n", e));
+                info.push_str(&format!("Failed to get network statistics: {}\n", e));
             }
         }
         
@@ -735,13 +759,13 @@ impl RuntimeOrchestrator {
         match lib_network::get_mesh_status().await {
             Ok(mesh_status) => {
                 let status = if mesh_status.connectivity_percentage > 80.0 {
-                    "🟢 Excellent"
+                    "[EXCELLENT]"
                 } else if mesh_status.connectivity_percentage > 60.0 {
                     "🟡 Good"
                 } else if mesh_status.connectivity_percentage > 30.0 {
                     "🟠 Fair"
                 } else {
-                    "🔴 Poor"
+                    "[POOR]"
                 };
                 
                 Ok(format!(
@@ -756,19 +780,19 @@ impl RuntimeOrchestrator {
                 ))
             }
             Err(e) => {
-                Ok(format!("❌ Mesh status unavailable: {}", e))
+                Ok(format!("Mesh status unavailable: {}", e))
             }
         }
     }
 
     /// Run the main operational loop
     pub async fn run_main_loop(&self) -> Result<()> {
-        info!("🔄 Starting main operational loop...");
+        info!(" Starting main operational loop...");
         
         // Wait a moment for components to fully initialize
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         
-        info!("✅ ZHTP system fully operational - ready for identity and transaction testing");
+        info!("ZHTP system fully operational - ready for identity and transaction testing");
         
         // Create a future that never completes to keep the node running
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
@@ -778,7 +802,7 @@ impl RuntimeOrchestrator {
                 _ = interval.tick() => {
                     // Perform periodic maintenance
                     if let Err(e) = self.perform_maintenance().await {
-                        warn!("⚠️ Maintenance cycle error: {}", e);
+                        warn!("Maintenance cycle error: {}", e);
                     }
                 }
             }
@@ -787,7 +811,7 @@ impl RuntimeOrchestrator {
             {
                 let shutdown_signal = self.shutdown_signal.lock().await;
                 if shutdown_signal.is_none() {
-                    info!("🛑 Shutdown signal received, exiting main loop");
+                    info!("Shutdown signal received, exiting main loop");
                     break;
                 }
             }
@@ -799,19 +823,13 @@ impl RuntimeOrchestrator {
         Ok(())
     }
 
-    
-    /// Add a demo transaction periodically
-    async fn add_demo_transaction(&self) -> Result<()> {
-        // Demo transactions disabled - use API or manual triggers for testing
-        debug!("Demo transactions disabled");
-        Ok(())
-    }
+
 
     /// Perform periodic maintenance tasks
     async fn perform_maintenance(&self) -> Result<()> {
         // Get system metrics
         let metrics = self.get_system_metrics().await?;
-        debug!("📊 System metrics: {} total metrics collected", metrics.len());
+        debug!("System metrics: {} total metrics collected", metrics.len());
         
         // Check component health
         let health = self.get_detailed_health().await?;
@@ -821,14 +839,14 @@ impl RuntimeOrchestrator {
             .collect();
             
         if !unhealthy_components.is_empty() {
-            warn!("⚠️ Unhealthy components: {:?}", unhealthy_components);
+            warn!("Unhealthy components: {:?}", unhealthy_components);
         }
         
         // Log summary
         let running_count = health.values()
             .filter(|h| matches!(h.status, ComponentStatus::Running))
             .count();
-        debug!("💚 {}/{} components running normally", running_count, health.len());
+        debug!("{}/{} components running normally", running_count, health.len());
         
         Ok(())
     }
@@ -855,18 +873,18 @@ impl RuntimeOrchestrator {
                     
                     // Also set the global blockchain for protocol access
                     if let Err(e) = set_global_blockchain(blockchain_arc).await {
-                        warn!("⚠️ Failed to set global blockchain: {}", e);
+                        warn!("Failed to set global blockchain: {}", e);
                     } else {
-                        info!("✅ Global blockchain provider updated");
+                        info!("Global blockchain provider updated");
                     }
                     
-                    info!("✅ Shared blockchain service initialized");
+                    info!("Shared blockchain service initialized");
                     return Ok(());
                 }
             }
         }
         
-        warn!("⚠️ Failed to initialize shared blockchain service - blockchain component not found");
+        warn!("Failed to initialize shared blockchain service - blockchain component not found");
         Ok(())
     }
 
@@ -875,6 +893,9 @@ impl RuntimeOrchestrator {
         // Create a channel for the response
         let (response_tx, mut response_rx) = tokio::sync::mpsc::unbounded_channel();
         
+        // Store response sender for potential cleanup
+        let _response_sender = response_tx.clone();
+        
         // Send a request to the blockchain component
         let blockchain_request = ComponentMessage::Custom(
             "get_blockchain_instance".to_string(),
@@ -882,22 +903,22 @@ impl RuntimeOrchestrator {
         );
         
         if let Err(e) = self.send_message(ComponentId::Blockchain, blockchain_request).await {
-            warn!("⚠️ Failed to request blockchain instance: {}", e);
+            warn!("Failed to request blockchain instance: {}", e);
             return Ok(None);
         }
         
         // Wait for response with timeout
         match tokio::time::timeout(Duration::from_secs(5), response_rx.recv()).await {
             Ok(Some(blockchain_arc)) => {
-                info!("✅ Received shared blockchain instance from blockchain component");
+                info!("Received shared blockchain instance from blockchain component");
                 Ok(Some(blockchain_arc))
             }
             Ok(None) => {
-                warn!("⚠️ Blockchain component channel closed");
+                warn!("Blockchain component channel closed");
                 Ok(None)
             }
             Err(_) => {
-                warn!("⚠️ Timeout waiting for blockchain instance");
+                warn!("Timeout waiting for blockchain instance");
                 Ok(None)
             }
         }
@@ -911,11 +932,11 @@ impl RuntimeOrchestrator {
     
     /// Graceful shutdown of the orchestrator
     pub async fn graceful_shutdown(&self) -> Result<()> {
-        info!("🛑 Initiating graceful shutdown...");
+        info!("Initiating graceful shutdown...");
         
         // Stop all components
         if let Err(e) = self.shutdown_all_components().await {
-            error!("❌ Error during component shutdown: {}", e);
+            error!("Error during component shutdown: {}", e);
         }
         
         // Signal shutdown completion
@@ -926,7 +947,7 @@ impl RuntimeOrchestrator {
             }
         }
         
-        info!("✅ Graceful shutdown completed");
+        info!("Graceful shutdown completed");
         Ok(())
     }
 }

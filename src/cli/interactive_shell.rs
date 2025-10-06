@@ -48,7 +48,7 @@ impl InteractiveShell {
             match reader.read_line(&mut input).await {
                 Ok(0) => {
                     // EOF reached (Ctrl+D)
-                    println!("\n👋 Goodbye!");
+                    println!("\n Goodbye!");
                     break;
                 }
                 Ok(_) => {
@@ -77,19 +77,19 @@ impl InteractiveShell {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("❌ Command failed: {}", e);
-                                    println!("❌ Error: {}", e);
+                                    error!("Command failed: {}", e);
+                                    println!("Error: {}", e);
                                 }
                             }
                         }
                         Err(e) => {
-                            warn!("❌ Invalid command: {}", e);
-                            println!("❌ {}", e);
+                            warn!("Invalid command: {}", e);
+                            println!("{}", e);
                         }
                     }
                 }
                 Err(e) => {
-                    error!("❌ Failed to read input: {}", e);
+                    error!("Failed to read input: {}", e);
                     break;
                 }
             }
@@ -97,12 +97,12 @@ impl InteractiveShell {
 
         // Cleanup on exit
         if self.context.runtime.is_some() {
-            println!("🛑 Shutting down node...");
+            println!("Shutting down node...");
             if let Err(e) = execute_command(
                 super::command_execution::NodeCommand::Stop,
                 &mut self.context
             ).await {
-                error!("❌ Failed to shutdown cleanly: {}", e);
+                error!("Failed to shutdown cleanly: {}", e);
             }
         }
 
@@ -132,7 +132,7 @@ impl InteractiveShell {
                 // Change prompt
                 if parts.len() > 1 {
                     self.prompt = format!("{} ", parts[1..].join(" "));
-                    println!("✅ Prompt changed to: {}", self.prompt.trim());
+                    println!("Prompt changed to: {}", self.prompt.trim());
                 } else {
                     println!("Current prompt: {}", self.prompt.trim());
                 }
@@ -152,7 +152,7 @@ impl InteractiveShell {
     /// Display welcome message
     fn display_welcome_message(&self) {
         println!(r#"
-🌟 Welcome to ZHTP Network Node Interactive Shell
+Welcome to ZHTP Network Node Interactive Shell
 
   ████████╗██╗  ██╗████████╗██████╗ 
   ╚══██╔══╝██║  ██║╚══██╔══╝██╔══██╗
@@ -175,7 +175,7 @@ Type 'exit' to quit.
     /// Show available command aliases
     fn show_aliases(&self) {
         println!(r#"
-📋 Available Command Aliases:
+Available Command Aliases:
 
 Network:
   peers              → List connected peers
@@ -374,8 +374,8 @@ impl StatusPrompt {
 
     /// Generate status-aware prompt
     pub fn generate_prompt(&self) -> String {
-        let status_icon = if self.node_running { "🟢" } else { "🔴" };
-        let mesh_icon = if self.mesh_mode { "🕸️" } else { "🌐" };
+        let status_icon = if self.node_running { "[ON]" } else { "[OFF]" };
+        let mesh_icon = if self.mesh_mode { "[MESH]" } else { "[NET]" };
         let peer_info = if self.peer_count > 0 {
             format!(" ({} peers)", self.peer_count)
         } else {

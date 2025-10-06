@@ -27,7 +27,7 @@ pub async fn test_network_apis() -> anyhow::Result<()> {
     };
     
     let response = network_handler.handle_request(peers_request).await?;
-    println!("✅ GET /api/v1/blockchain/network/peers: {:?}", response.status);
+    println!("GET /api/v1/blockchain/network/peers: {:?}", response.status);
     
     // Test GET /api/v1/blockchain/network/stats
     let stats_request = ZhtpRequest {
@@ -43,7 +43,7 @@ pub async fn test_network_apis() -> anyhow::Result<()> {
     };
     
     let response = network_handler.handle_request(stats_request).await?;
-    println!("✅ GET /api/v1/blockchain/network/stats: {:?}", response.status);
+    println!("GET /api/v1/blockchain/network/stats: {:?}", response.status);
     
     // Test POST /api/v1/blockchain/network/peer/add
     let add_peer_body = serde_json::json!({
@@ -64,7 +64,7 @@ pub async fn test_network_apis() -> anyhow::Result<()> {
     };
     
     let response = network_handler.handle_request(add_request).await?;
-    println!("✅ POST /api/v1/blockchain/network/peer/add: {:?}", response.status);
+    println!("POST /api/v1/blockchain/network/peer/add: {:?}", response.status);
     
     // Test DELETE /api/v1/blockchain/network/peer/test_peer_001
     let delete_request = ZhtpRequest {
@@ -80,8 +80,8 @@ pub async fn test_network_apis() -> anyhow::Result<()> {
     };
     
     let response = network_handler.handle_request(delete_request).await?;
-    println!("✅ DELETE /api/v1/blockchain/network/peer/test_peer_001: {:?}", response.status);
+    println!("DELETE /api/v1/blockchain/network/peer/test_peer_001: {:?}", response.status);
     
-    println!("🎉 All network API tests completed!");
+    println!(" All network API tests completed!");
     Ok(())
 }

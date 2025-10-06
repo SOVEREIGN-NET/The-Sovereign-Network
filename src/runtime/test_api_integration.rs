@@ -41,7 +41,7 @@ mod api_integration_tests {
         assert!(health_result.is_ok(), "Should be able to get detailed health status");
         
         // This proves the API component is properly integrated into the runtime system
-        println!("✅ API component successfully integrated into runtime orchestrator");
+        println!("API component successfully integrated into runtime orchestrator");
     }
     
     #[tokio::test]

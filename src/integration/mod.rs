@@ -10,10 +10,8 @@ pub mod dependency_injection;
 use anyhow::{Result, Context};
 use std::future::Future;
 use std::pin::Pin;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::{info, warn, debug};
 
 pub use service_container::*;
 pub use event_bus::*;
@@ -48,7 +46,7 @@ impl IntegrationManager {
 
     /// Initialize the integration layer
     pub async fn initialize(&self) -> Result<()> {
-        info!("🔧 Initializing ZHTP integration layer...");
+        info!("Initializing ZHTP integration layer...");
 
         // Start event bus
         self.event_bus.start().await?;
@@ -65,20 +63,20 @@ impl IntegrationManager {
         // Setup event handlers
         self.setup_event_handlers().await?;
 
-        info!("✅ ZHTP integration layer initialized");
+        info!("ZHTP integration layer initialized");
         Ok(())
     }
 
     /// Shutdown the integration layer
     pub async fn shutdown(&self) -> Result<()> {
-        info!("🔧 Shutting down ZHTP integration layer...");
+        info!("Shutting down ZHTP integration layer...");
 
         // Shutdown components in reverse order
         self.component_manager.shutdown_all().await?;
         self.service_container.shutdown().await?;
         self.event_bus.stop().await?;
 
-        info!("✅ ZHTP integration layer shut down");
+        info!("ZHTP integration layer shut down");
         Ok(())
     }
 
@@ -112,7 +110,7 @@ impl IntegrationManager {
             self.component_manager.clone()
         ).await?;
 
-        info!("📦 Dependency injection configured");
+        info!("Dependency injection configured");
         Ok(())
     }
 
@@ -127,7 +125,7 @@ impl IntegrationManager {
         self.setup_economics_events().await?;
         self.setup_consensus_events().await?;
 
-        info!("📡 Event handlers configured");
+        info!("Event handlers configured");
         Ok(())
     }
 
@@ -136,7 +134,7 @@ impl IntegrationManager {
         // Key generation events
         self.event_bus.subscribe("crypto.key_generated", Box::new(|event| {
             let future = async move {
-                info!("🔐 New cryptographic key generated: {:?}", event);
+                info!("New cryptographic key generated: {:?}", event);
                 // Notify identity system
                 // Notify storage system for backup
                 Ok(())
@@ -147,7 +145,7 @@ impl IntegrationManager {
         // Encryption/decryption events
         self.event_bus.subscribe("crypto.data_encrypted", Box::new(|event| {
             let future = async move {
-                info!("🔒 Data encrypted: {:?}", event);
+                info!("Data encrypted: {:?}", event);
                 // Update metrics
                 Ok(())
             };
@@ -162,7 +160,7 @@ impl IntegrationManager {
         // Peer connection events
         self.event_bus.subscribe("network.peer_connected", Box::new(|event| {
             let future = async move {
-                info!("🌐 Peer connected: {:?}", event);
+                info!("Peer connected: {:?}", event);
                 // Notify consensus system
                 // Update routing tables
                 // Trigger sync if needed
@@ -173,7 +171,7 @@ impl IntegrationManager {
 
         self.event_bus.subscribe("network.peer_disconnected", Box::new(|event| {
             let future = async move {
-                warn!("🌐 Peer disconnected: {:?}", event);
+                warn!("Peer disconnected: {:?}", event);
                 // Update routing tables
                 // Check connectivity health
                 Ok(())
@@ -182,9 +180,30 @@ impl IntegrationManager {
         })).await?;
 
         // Message events
-        self.event_bus.subscribe("network.message_received", Box::new(|event| {
+        self.event_bus.subscribe("network.message_received", Box::new(|event: crate::integration::event_bus::Event| {
             let future = async move {
-                // Route messages to appropriate components
+                // Route messages to appropriate components based on message type
+                if let Some(message_type) = event.data.get("type").and_then(|v| v.as_str()) {
+                    match message_type {
+                        "blockchain_transaction" => {
+                            debug!("Routing blockchain transaction from {}", event.source);
+                            // TODO: Route to blockchain handler
+                        }
+                        "dht_query" => {
+                            debug!("Routing DHT query from {}", event.source);
+                            // TODO: Route to DHT handler  
+                        }
+                        "mesh_message" => {
+                            debug!("Routing mesh message from {}", event.source);
+                            // TODO: Route to mesh handler
+                        }
+                        _ => {
+                            debug!("Unknown message type '{}' from {}", message_type, event.source);
+                        }
+                    }
+                } else {
+                    warn!("Message received without type field from {}", event.source);
+                }
                 Ok(())
             };
             Box::pin(future) as Pin<Box<dyn Future<Output = Result<()>> + Send>>
@@ -198,7 +217,7 @@ impl IntegrationManager {
         // Block events
         self.event_bus.subscribe("blockchain.block_mined", Box::new(|event| {
             let future = async move {
-                info!("⛓️ Block mined: {:?}", event);
+                info!("Block mined: {:?}", event);
                 // Notify network for propagation
                 // Update storage
                 // Trigger UBI distribution
@@ -227,7 +246,7 @@ impl IntegrationManager {
         // File storage events
         self.event_bus.subscribe("storage.file_stored", Box::new(|event| {
             let future = async move {
-                info!("💾 File stored: {:?}", event);
+                info!("File stored: {:?}", event);
                 // Update blockchain record
                 // Notify network of availability
                 Ok(())
@@ -237,7 +256,7 @@ impl IntegrationManager {
 
         self.event_bus.subscribe("storage.file_requested", Box::new(|event| {
             let future = async move {
-                info!("💾 File requested: {:?}", event);
+                info!("File requested: {:?}", event);
                 // Check permissions with identity system
                 // Log access for economics
                 Ok(())
@@ -253,7 +272,7 @@ impl IntegrationManager {
         // Identity creation events
         self.event_bus.subscribe("identity.identity_created", Box::new(|event| {
             let future = async move {
-                info!("🆔 Identity created: {:?}", event);
+                info!("Identity created: {:?}", event);
                 // Register in blockchain
                 // Setup UBI eligibility
                 // Generate crypto keys
@@ -265,7 +284,7 @@ impl IntegrationManager {
         // Authentication events
         self.event_bus.subscribe("identity.authentication_success", Box::new(|event| {
             let future = async move {
-                info!("🆔 Authentication successful: {:?}", event);
+                info!("Authentication successful: {:?}", event);
                 // Log access
                 // Update session
                 Ok(())
@@ -281,7 +300,7 @@ impl IntegrationManager {
         // UBI events
         self.event_bus.subscribe("economics.ubi_distributed", Box::new(|event| {
             let future = async move {
-                info!("💰 UBI distributed: {:?}", event);
+                info!("UBI distributed: {:?}", event);
                 // Record transaction
                 // Update citizen status
                 Ok(())
@@ -292,7 +311,7 @@ impl IntegrationManager {
         // DAO events
         self.event_bus.subscribe("economics.proposal_created", Box::new(|event| {
             let future = async move {
-                info!("🏛️ DAO proposal created: {:?}", event);
+                info!("DAO proposal created: {:?}", event);
                 // Notify all citizens
                 // Schedule voting period
                 Ok(())
@@ -308,7 +327,7 @@ impl IntegrationManager {
         // Consensus events
         self.event_bus.subscribe("consensus.round_started", Box::new(|event| {
             let future = async move {
-                info!("🤝 Consensus round started: {:?}", event);
+                info!("Consensus round started: {:?}", event);
                 // Notify validators
                 // Prepare proposals
                 Ok(())
@@ -318,7 +337,7 @@ impl IntegrationManager {
 
         self.event_bus.subscribe("consensus.block_finalized", Box::new(|event| {
             let future = async move {
-                info!("🤝 Block finalized: {:?}", event);
+                info!("Block finalized: {:?}", event);
                 // Commit to blockchain
                 // Update state
                 Ok(())
@@ -332,7 +351,7 @@ impl IntegrationManager {
     /// Register a component with the integration layer
     pub async fn register_component(&self, component: Arc<dyn Component>) -> Result<()> {
         let component_id = component.id();
-        info!("📦 Registering component: {}", component_id);
+        info!("Registering component: {}", component_id);
 
         // Register with component manager
         self.component_manager.register_component(component.clone()).await?;
@@ -343,7 +362,7 @@ impl IntegrationManager {
         // Setup component-specific integrations
         self.setup_component_integration(component_id.clone()).await?;
 
-        info!("✅ Component {} registered successfully", component_id);
+        info!("Component {} registered successfully", component_id);
         Ok(())
     }
 
@@ -456,14 +475,14 @@ impl IntegrationManager {
 
     /// Start all components in dependency order
     pub async fn start_all_components(&self) -> Result<()> {
-        info!("🚀 Starting all components in dependency order...");
+        info!(" Starting all components in dependency order...");
 
         // Get dependency-sorted component order
         let startup_order = self.get_startup_order().await?;
 
         for component_id in startup_order {
             if let Some(component) = self.component_manager.get_component(&component_id).await? {
-                info!("🚀 Starting component: {}", component_id);
+                info!(" Starting component: {}", component_id);
                 component.start().await
                     .with_context(|| format!("Failed to start component {}", component_id))?;
                 
@@ -473,7 +492,7 @@ impl IntegrationManager {
             }
         }
 
-        info!("✅ All components started successfully");
+        info!("All components started successfully");
         Ok(())
     }
 

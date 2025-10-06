@@ -23,11 +23,11 @@ pub async fn handle_dao_command(args: DaoArgs, cli: &ZhtpCli) -> Result<()> {
                 println!("DAO Information orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate DAO info: {}", response.status());
+                println!("Failed to orchestrate DAO info: {}", response.status());
             }
         }
         DaoAction::Propose { title, description } => {
-            println!("📝 Orchestrating proposal creation: {}", title);
+            println!("Orchestrating proposal creation: {}", title);
             
             let request_body = json!({
                 "title": title,
@@ -44,10 +44,10 @@ pub async fn handle_dao_command(args: DaoArgs, cli: &ZhtpCli) -> Result<()> {
             if response.status().is_success() {
                 let result: serde_json::Value = response.json().await?;
                 let formatted = format_output(&result, &cli.format)?;
-                println!("✅ Proposal creation orchestrated successfully!");
+                println!("Proposal creation orchestrated successfully!");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate proposal creation: {}", response.status());
+                println!("Failed to orchestrate proposal creation: {}", response.status());
             }
         }
         DaoAction::Vote { proposal_id, choice } => {
@@ -68,14 +68,14 @@ pub async fn handle_dao_command(args: DaoArgs, cli: &ZhtpCli) -> Result<()> {
             if response.status().is_success() {
                 let result: serde_json::Value = response.json().await?;
                 let formatted = format_output(&result, &cli.format)?;
-                println!("✅ Vote orchestrated successfully!");
+                println!("Vote orchestrated successfully!");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate vote: {}", response.status());
+                println!("Failed to orchestrate vote: {}", response.status());
             }
         }
         DaoAction::ClaimUbi => {
-            println!("💰 Orchestrating UBI claim...");
+            println!("Orchestrating UBI claim...");
             
             let response = client
                 .post(&format!("{}/dao/ubi/claim", base_url))
@@ -86,10 +86,10 @@ pub async fn handle_dao_command(args: DaoArgs, cli: &ZhtpCli) -> Result<()> {
             if response.status().is_success() {
                 let result: serde_json::Value = response.json().await?;
                 let formatted = format_output(&result, &cli.format)?;
-                println!("✅ UBI claim orchestrated successfully!");
+                println!("UBI claim orchestrated successfully!");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate UBI claim: {}", response.status());
+                println!("Failed to orchestrate UBI claim: {}", response.status());
             }
         }
     }

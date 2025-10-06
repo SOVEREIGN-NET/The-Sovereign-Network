@@ -81,7 +81,7 @@ impl MeshMode {
     
     /// Validate that required capabilities are available for this mode
     pub fn validate_capabilities(&self, available_protocols: &[String]) -> Result<(), String> {
-        let required = self.get_protocol_selection();
+        let _required = self.get_protocol_selection();
         
         match self {
             MeshMode::PureMesh => {

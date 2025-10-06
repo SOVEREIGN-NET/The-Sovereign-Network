@@ -398,7 +398,7 @@ Examples:
             .long("api-port")
             .value_name("PORT")
             .help("API server port for Web4 protocols")
-            .default_value("8080")
+            .default_value("9333")
             .value_parser(clap::value_parser!(u16)))
         
         .arg(Arg::new("storage-capacity")
@@ -574,7 +574,7 @@ Examples:
 
             // Validate environment-specific requirements
             if environment == Environment::Mainnet && matches.get_flag("pure-mesh") {
-                tracing::warn!("⚠️ Pure mesh mode in mainnet - ensure adequate long-range relay coverage");
+                tracing::warn!("Pure mesh mode in mainnet - ensure adequate long-range relay coverage");
             }
 
             // Determine configuration file path
@@ -600,7 +600,7 @@ Examples:
             };
 
             // Log parsed arguments
-            tracing::debug!("📋 Parsed CLI arguments:");
+            tracing::debug!("Parsed CLI arguments:");
             tracing::debug!("   Mesh port: {}", args.mesh_port);
             tracing::debug!("   Pure mesh mode: {}", args.pure_mesh);
             tracing::debug!("   Config file: {}", args.config.display());
@@ -618,7 +618,7 @@ Examples:
 pub fn validate_cli_arguments(args: &CliArgs) -> Result<()> {
     // Check port ranges
     if args.mesh_port < 1024 {
-        tracing::warn!("⚠️ Using privileged port {} - may require administrator privileges", args.mesh_port);
+        tracing::warn!("Using privileged port {} - may require administrator privileges", args.mesh_port);
     }
 
     // Check data directory
@@ -629,14 +629,14 @@ pub fn validate_cli_arguments(args: &CliArgs) -> Result<()> {
 
     // Check config file
     if !args.config.exists() {
-        tracing::info!("📝 Configuration file not found, using defaults: {}", args.config.display());
+        tracing::info!("Configuration file not found, using defaults: {}", args.config.display());
     }
 
     // Environment-specific validations
     match args.environment {
         Environment::Mainnet => {
             if args.log_level == "debug" || args.log_level == "trace" {
-                tracing::warn!("⚠️ Debug logging enabled in mainnet environment");
+                tracing::warn!("Debug logging enabled in mainnet environment");
             }
         }
         Environment::Development => {

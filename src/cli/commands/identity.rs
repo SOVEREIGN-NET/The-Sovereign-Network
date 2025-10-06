@@ -14,7 +14,7 @@ pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Resul
     
     match args.action {
         IdentityAction::Create { name } => {
-            println!("🆔 Creating new ZHTP DID identity: {}", name);
+            println!("Creating new ZHTP DID identity: {}", name);
             
             // Use the correct API format that matches the working PowerShell command
             let request_body = json!({
@@ -40,37 +40,37 @@ pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Resul
                 
                 // Extract key information from the successful response
                 if let Some(did) = result.get("did") {
-                    println!("✅ DID Created Successfully!");
-                    println!("🆔 DID: {}", did.as_str().unwrap_or("N/A"));
+                    println!("DID Created Successfully!");
+                    println!("DID: {}", did.as_str().unwrap_or("N/A"));
                 }
                 if let Some(identity_id) = result.get("identity_id") {
-                    println!("👤 Identity ID: {}", identity_id.as_str().unwrap_or("N/A"));
+                    println!("Identity ID: {}", identity_id.as_str().unwrap_or("N/A"));
                 }
                 if let Some(primary_wallet) = result.get("primary_wallet_id") {
-                    println!("💰 Primary Wallet: {}", primary_wallet.as_str().unwrap_or("N/A"));
+                    println!("Primary Wallet: {}", primary_wallet.as_str().unwrap_or("N/A"));
                 }
                 if let Some(blockchain) = result.get("blockchain") {
                     if let Some(tx_hash) = blockchain.get("transaction_hash") {
-                        println!("⛓️ Blockchain TX: {}", tx_hash.as_str().unwrap_or("N/A"));
+                        println!("Blockchain TX: {}", tx_hash.as_str().unwrap_or("N/A"));
                     }
                     if let Some(status) = blockchain.get("registration_status") {
-                        println!("📊 Status: {}", status.as_str().unwrap_or("N/A"));
+                        println!("Status: {}", status.as_str().unwrap_or("N/A"));
                     }
                 }
                 
                 if cli.verbose {
                     let formatted = format_output(&result, &cli.format)?;
-                    println!("\n📋 Full Response:");
+                    println!("\nFull Response:");
                     println!("{}", formatted);
                 }
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                println!("❌ Failed to create DID identity: {} - {}", status, error_text);
+                println!("Failed to create DID identity: {} - {}", status, error_text);
             }
         }
         IdentityAction::CreateDid { name, identity_type, recovery_options } => {
-            println!("🔐 Creating zero-knowledge DID identity: {}", name);
+            println!("Creating zero-knowledge DID identity: {}", name);
             println!("🔖 Identity Type: {}", identity_type);
             
             // Use provided recovery options or generate defaults
@@ -91,7 +91,7 @@ pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Resul
                 "initial_wallet_type": "citizen_wallet"
             });
             
-            println!("🔧 Recovery options configured: {} phrases", final_recovery_options.len());
+            println!("Recovery options configured: {} phrases", final_recovery_options.len());
             
             let response = client
                 .post(&format!("{}/identity/create", base_url))
@@ -104,19 +104,19 @@ pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Resul
             if response.status().is_success() {
                 let result: serde_json::Value = response.json().await?;
                 
-                println!("✅ Zero-Knowledge DID Created Successfully!");
+                println!("Zero-Knowledge DID Created Successfully!");
                 
                 // Extract and display comprehensive DID information
                 if let Some(did) = result.get("did") {
-                    println!("🆔 DID: {}", did.as_str().unwrap_or("N/A"));
+                    println!("DID: {}", did.as_str().unwrap_or("N/A"));
                 }
                 if let Some(identity_id) = result.get("identity_id") {
-                    println!("👤 Identity ID: {}", identity_id.as_str().unwrap_or("N/A"));
+                    println!("Identity ID: {}", identity_id.as_str().unwrap_or("N/A"));
                 }
                 
                 // Wallet information
                 if let Some(primary_wallet) = result.get("primary_wallet_id") {
-                    println!("💰 Primary Wallet: {}", primary_wallet.as_str().unwrap_or("N/A"));
+                    println!("Primary Wallet: {}", primary_wallet.as_str().unwrap_or("N/A"));
                 }
                 if let Some(ubi_wallet) = result.get("ubi_wallet_id") {
                     println!("🎁 UBI Wallet: {}", ubi_wallet.as_str().unwrap_or("N/A"));
@@ -135,35 +135,35 @@ pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Resul
                 // UBI registration
                 if let Some(ubi_reg) = result.get("ubi_registration") {
                     if let Some(daily_amount) = ubi_reg.get("daily_amount") {
-                        println!("💰 Daily UBI: {} ZHTP", daily_amount.as_u64().unwrap_or(0) as f64 / 1_000_000_000_000_000_000.0);
+                        println!("Daily UBI: {} ZHTP", daily_amount.as_u64().unwrap_or(0) as f64 / 1_000_000_000_000_000_000.0);
                     }
                 }
                 
                 // Blockchain status
                 if let Some(blockchain) = result.get("blockchain") {
                     if let Some(tx_hash) = blockchain.get("transaction_hash") {
-                        println!("⛓️ Blockchain TX: {}", tx_hash.as_str().unwrap_or("N/A"));
+                        println!("Blockchain TX: {}", tx_hash.as_str().unwrap_or("N/A"));
                     }
                     if let Some(status) = blockchain.get("registration_status") {
-                        println!("📊 Registration Status: {}", status.as_str().unwrap_or("N/A"));
+                        println!("Registration Status: {}", status.as_str().unwrap_or("N/A"));
                     }
                 }
                 
-                println!("🎉 Full Web4 citizen onboarding completed!");
+                println!(" Full Web4 citizen onboarding completed!");
                 
                 if cli.verbose {
                     let formatted = format_output(&result, &cli.format)?;
-                    println!("\n📋 Complete Response:");
+                    println!("\nComplete Response:");
                     println!("{}", formatted);
                 }
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                println!("❌ Failed to create zero-knowledge DID: {} - {}", status, error_text);
+                println!("Failed to create zero-knowledge DID: {} - {}", status, error_text);
             }
         }
         IdentityAction::Verify { identity_id } => {
-            println!("🔍 Verifying ZHTP identity: {}", identity_id);
+            println!("Verifying ZHTP identity: {}", identity_id);
             
             let request_body = json!({
                 "identity_data": {
@@ -187,13 +187,13 @@ pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Resul
                 // Extract verification results
                 if let Some(verified) = result.get("verified") {
                     if verified.as_bool().unwrap_or(false) {
-                        println!("✅ Identity verification successful!");
+                        println!("Identity verification successful!");
                     } else {
-                        println!("❌ Identity verification failed!");
+                        println!("Identity verification failed!");
                     }
                 }
                 if let Some(score) = result.get("verification_score") {
-                    println!("📊 Verification Score: {}", score);
+                    println!("Verification Score: {}", score);
                 }
                 if let Some(level) = result.get("verification_level") {
                     println!("🔒 Security Level: {}", level.as_str().unwrap_or("N/A"));
@@ -201,17 +201,17 @@ pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Resul
                 
                 if cli.verbose {
                     let formatted = format_output(&result, &cli.format)?;
-                    println!("\n📋 Full Response:");
+                    println!("\nFull Response:");
                     println!("{}", formatted);
                 }
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                println!("❌ Failed to verify identity: {} - {}", status, error_text);
+                println!("Failed to verify identity: {} - {}", status, error_text);
             }
         }
         IdentityAction::List => {
-            println!("📋 Listing ZHTP identities from blockchain...");
+            println!("Listing ZHTP identities from blockchain...");
             
             // Since there's no direct list endpoint, we'll get blockchain status
             // and show identity information from there
@@ -224,24 +224,24 @@ pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Resul
             if response.status().is_success() {
                 let result: serde_json::Value = response.json().await?;
                 
-                println!("📊 Blockchain Identity Status:");
+                println!("Blockchain Identity Status:");
                 if let Some(height) = result.get("latest_height") {
-                    println!("⛓️ Latest Block: {}", height);
+                    println!("Latest Block: {}", height);
                 }
                 
                 // For now, show a message about checking server logs for created identities
-                println!("💡 To see created identities, check the server logs for DID creation events");
+                println!("To see created identities, check the server logs for DID creation events");
                 println!("   or use 'zhtp blockchain stats' to see blockchain statistics");
                 
                 if cli.verbose {
                     let formatted = format_output(&result, &cli.format)?;
-                    println!("\n📋 Blockchain Status:");
+                    println!("\nBlockchain Status:");
                     println!("{}", formatted);
                 }
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                println!("❌ Failed to get blockchain status: {} - {}", status, error_text);
+                println!("Failed to get blockchain status: {} - {}", status, error_text);
             }
         }
     }

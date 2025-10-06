@@ -2,7 +2,7 @@
 REM ZHTP Node Quick Start Script for Windows
 REM Helps users quickly deploy different types of ZHTP nodes
 
-echo 🚀 ZHTP Node Quick Start
+echo  ZHTP Node Quick Start
 echo ========================
 echo.
 
@@ -14,7 +14,7 @@ if exist ".\target\debug\zhtp.exe" set ZHTP_BIN=.\target\debug\zhtp.exe
 where %ZHTP_BIN% >nul 2>nul
 if errorlevel 1 (
     if not exist "%ZHTP_BIN%" (
-        echo ❌ ZHTP binary not found. Please build the project first:
+        echo ZHTP binary not found. Please build the project first:
         echo    cargo build --release
         pause
         exit /b 1
@@ -38,7 +38,7 @@ if "%choice%"=="1" (
 ) else if "%choice%"=="2" (
     set NODE_TYPE=validator
     echo ⚡ Starting Validator Node...
-    echo ⚠️  WARNING: Validator nodes require staking ZHTP tokens and high uptime!
+    echo  WARNING: Validator nodes require staking ZHTP tokens and high uptime!
     echo Make sure you have:
     echo - At least 10,000 ZHTP tokens for staking
     echo - Stable internet connection
@@ -56,12 +56,12 @@ if "%choice%"=="1" (
     echo Make sure you have sufficient disk space ^(1TB+ recommended^).
 ) else if "%choice%"=="4" (
     set NODE_TYPE=edge
-    echo 🌐 Starting Edge Node...
+    echo Starting Edge Node...
     echo This node will run in pure mesh mode for ISP bypass.
-    echo ⚠️  This mode requires mesh hardware ^(Bluetooth, WiFi Direct, or LoRaWAN^).
+    echo  This mode requires mesh hardware ^(Bluetooth, WiFi Direct, or LoRaWAN^).
 ) else if "%choice%"=="5" (
     set NODE_TYPE=dev
-    echo 🛠️ Starting Development Node...
+    echo Starting Development Node...
     echo This node uses relaxed security settings for development and testing.
 ) else (
     echo Invalid choice. Exiting.

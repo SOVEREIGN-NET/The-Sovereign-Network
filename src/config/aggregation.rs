@@ -279,7 +279,13 @@ impl Default for NodeConfig {
             network_config: NetworkConfig {
                 mesh_port: 33444, // DEFAULT_MESH_PORT
                 max_peers: 100,
-                protocols: vec!["tcp".to_string(), "bluetooth".to_string()],
+                protocols: vec![
+                    "mesh".to_string(),
+                    "bluetooth".to_string(),
+                    "wifi_direct".to_string(),
+                    "lorawan".to_string(),
+                    "tcp".to_string()
+                ],
                 bootstrap_peers: vec!["100.94.204.6:9333".to_string()],
                 long_range_relays: false,
             },
@@ -316,7 +322,7 @@ impl Default for NodeConfig {
             protocols_config: ProtocolsConfig {
                 lib_enabled: true,
                 zdns_enabled: true,
-                api_port: 8080,
+                api_port: 9333,
                 max_connections: 1000,
                 request_timeout_ms: 30000,
             },
@@ -412,17 +418,17 @@ impl NodeConfig {
 pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeConfig> {
     let mut config = NodeConfig::default();
     
-    tracing::info!("📁 Loading package configurations from directory: {}", config_path.display());
+    tracing::info!("Loading package configurations from directory: {}", config_path.display());
     
     // Try to load main node configuration file
     if config_path.exists() {
         let config_content = tokio::fs::read_to_string(config_path).await?;
         if let Ok(loaded_config) = toml::from_str::<NodeConfig>(&config_content) {
             config = loaded_config;
-            tracing::info!("✅ Loaded main configuration file");
+            tracing::info!("Loaded main configuration file");
         }
     } else {
-        tracing::info!("📝 Using default configuration (no config file found)");
+        tracing::info!("Using default configuration (no config file found)");
     }
     
     // Load package-specific configurations if available
@@ -431,7 +437,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
     // Try to load crypto package config
     if let Ok(crypto_config) = load_package_config::<CryptoConfig>(config_dir, "crypto").await {
         config.crypto_config = crypto_config;
-        tracing::debug!("✅ Loaded crypto package configuration");
+        tracing::debug!("Loaded crypto package configuration");
     }
     
     // Try to load other package configs when available
@@ -440,7 +446,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
     // Try to load crypto package config
     if let Ok(crypto_config) = load_package_config::<CryptoConfig>(config_dir, "lib-crypto").await {
         config.crypto_config = crypto_config;
-        tracing::debug!("✅ Loaded lib-crypto package configuration");
+        tracing::debug!("Loaded lib-crypto package configuration");
     }
     
     // Try to load network package config  
@@ -451,7 +457,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
         if !network_config.bootstrap_peers.is_empty() {
             config.network_config.bootstrap_peers = network_config.bootstrap_peers;
         }
-        tracing::debug!("✅ Loaded lib-network package configuration");
+        tracing::debug!("Loaded lib-network package configuration");
     }
     
     // Try to load storage package config
@@ -459,7 +465,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
         config.storage_config.storage_capacity_gb = storage_config.max_storage_gb;
         config.storage_config.replication_factor = storage_config.replication_factor;
         config.storage_config.erasure_coding = storage_config.enable_erasure_coding;
-        tracing::debug!("✅ Loaded lib-storage package configuration");
+        tracing::debug!("Loaded lib-storage package configuration");
     }
     
     // Try to load blockchain package config
@@ -467,7 +473,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
         config.blockchain_config.network_id = blockchain_config.network_id;
         config.blockchain_config.block_time_seconds = blockchain_config.target_block_time_secs;
         config.blockchain_config.max_block_size = blockchain_config.max_block_size;
-        tracing::debug!("✅ Loaded lib-blockchain package configuration");
+        tracing::debug!("Loaded lib-blockchain package configuration");
     }
     
     // Try to load economics package config
@@ -475,7 +481,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
         config.economics_config.daily_ubi_amount = economics_config.daily_ubi_amount;
         config.economics_config.dao_fee_percentage = economics_config.dao_fee_percentage;
         config.economics_config.mesh_rewards = economics_config.enable_mesh_rewards;
-        tracing::debug!("✅ Loaded lib-economy package configuration");
+        tracing::debug!("Loaded lib-economy package configuration");
     }
     
     // Try to load consensus package config
@@ -483,7 +489,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
         config.consensus_config.consensus_type = consensus_config.consensus_mechanism;
         config.consensus_config.validator_enabled = consensus_config.enable_validator;
         config.consensus_config.min_stake = consensus_config.minimum_stake;
-        tracing::debug!("✅ Loaded lib-consensus package configuration");
+        tracing::debug!("Loaded lib-consensus package configuration");
     }
     
     // Try to load identity package config
@@ -491,7 +497,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
         config.identity_config.auto_citizenship = identity_config.auto_citizenship_registration;
         config.identity_config.ubi_registration = identity_config.auto_ubi_registration;
         config.identity_config.recovery_modes = identity_config.recovery_methods;
-        tracing::debug!("✅ Loaded lib-identity package configuration");
+        tracing::debug!("Loaded lib-identity package configuration");
     }
     
     // Try to load ZK package config
@@ -500,7 +506,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
         config.zk_config.circuit_cache_enabled = zk_config.enable_circuit_cache;
         config.zk_config.parallel_proving = zk_config.enable_parallel_proving;
         config.zk_config.verification_threads = zk_config.verification_threads;
-        tracing::debug!("✅ Loaded lib-proofs package configuration");
+        tracing::debug!("Loaded lib-proofs package configuration");
     }
     
     // Try to load protocols package config
@@ -508,7 +514,7 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
         config.protocols_config.api_port = protocols_config.api_port;
         config.protocols_config.max_connections = protocols_config.max_concurrent_connections;
         config.protocols_config.request_timeout_ms = protocols_config.request_timeout_ms;
-        tracing::debug!("✅ Loaded lib-protocols package configuration");
+        tracing::debug!("Loaded lib-protocols package configuration");
     }
     
     Ok(config)

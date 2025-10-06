@@ -2,16 +2,15 @@
 //! 
 //! Provides a web-based dashboard for monitoring node status, metrics, and health
 
-use anyhow::{Result, Context};
+use anyhow::Result;
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use tokio::sync::RwLock;
 use warp::{Filter, Reply};
-use tracing::{info, warn, error};
-use uuid::Uuid;
+use tracing::{info, error};
+// Removed unused: Context, HashMap, RwLock, warn, Uuid
 
-use super::metrics::{SystemMetrics, MetricsSummary, MetricsCollector};
+use super::metrics::{MetricsSummary, MetricsCollector};
+// Removed unused SystemMetrics
 use super::health_check::{HealthStatus, HealthMonitor};
 use super::alerting::{Alert, AlertStats, AlertManager};
 use crate::runtime::RuntimeOrchestrator;
@@ -114,7 +113,7 @@ impl DashboardServer {
         }
 
         self.running.store(true, Ordering::SeqCst);
-        info!("🌐 Starting dashboard server on port {}...", self.port);
+        info!("Starting dashboard server on port {}...", self.port);
 
         let running = self.running.clone();
         let port = self.port;
@@ -130,18 +129,18 @@ impl DashboardServer {
                 health_monitor,
                 alert_manager,
             ).await {
-                error!("❌ Dashboard server error: {}", e);
+                error!("Dashboard server error: {}", e);
             }
         });
 
-        info!("✅ Dashboard server started on http://localhost:{}", self.port);
+        info!("Dashboard server started on http://localhost:{}", self.port);
         Ok(())
     }
 
     /// Stop the dashboard server
     pub async fn stop(&self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
-        info!("🌐 Dashboard server stopped");
+        info!("Dashboard server stopped");
         Ok(())
     }
 
@@ -153,6 +152,8 @@ impl DashboardServer {
         health_monitor: Option<Arc<HealthMonitor>>,
         alert_manager: Option<Arc<AlertManager>>,
     ) -> Result<()> {
+        // Monitor running state
+        let _running_clone = running.clone();
         // Dashboard data endpoint
         let dashboard_data = warp::path("api")
             .and(warp::path("dashboard"))
@@ -169,7 +170,7 @@ impl DashboardServer {
                         match Self::get_dashboard_data(None, metrics, health, alerts).await {
                             Ok(data) => Ok(warp::reply::json(&data)),
                             Err(e) => {
-                                error!("❌ Failed to get dashboard data: {}", e);
+                                error!("Failed to get dashboard data: {}", e);
                                 Err(warp::reject::reject())
                             }
                         }
@@ -190,7 +191,7 @@ impl DashboardServer {
                             match collector.get_current_metrics().await {
                                 Ok(data) => Ok(warp::reply::json(&data)),
                                 Err(e) => {
-                                    error!("❌ Failed to get metrics: {}", e);
+                                    error!("Failed to get metrics: {}", e);
                                     Err(warp::reject::reject())
                                 }
                             }
@@ -214,7 +215,7 @@ impl DashboardServer {
                             match monitor.get_current_health().await {
                                 Ok(data) => Ok(warp::reply::json(&data)),
                                 Err(e) => {
-                                    error!("❌ Failed to get health status: {}", e);
+                                    error!("Failed to get health status: {}", e);
                                     Err(warp::reject::reject())
                                 }
                             }
@@ -238,7 +239,7 @@ impl DashboardServer {
                             match manager.get_recent_alerts(50).await {
                                 Ok(data) => Ok(warp::reply::json(&data)),
                                 Err(e) => {
-                                    error!("❌ Failed to get alerts: {}", e);
+                                    error!("Failed to get alerts: {}", e);
                                     Err(warp::reject::reject())
                                 }
                             }
@@ -267,7 +268,7 @@ impl DashboardServer {
                                     ))
                                 }
                                 Err(e) => {
-                                    error!("❌ Failed to export Prometheus metrics: {}", e);
+                                    error!("Failed to export Prometheus metrics: {}", e);
                                     Err(warp::reject::reject())
                                 }
                             }
@@ -432,7 +433,7 @@ impl DashboardServer {
 <body>
     <div class="container">
         <header>
-            <h1>🌟 ZHTP Network Node Dashboard</h1>
+            <h1>ZHTP Network Node Dashboard</h1>
             <div class="status-indicator" id="status-indicator">
                 <span class="status-dot"></span>
                 <span id="status-text">Loading...</span>
@@ -442,7 +443,7 @@ impl DashboardServer {
         <main>
             <section class="overview-grid">
                 <div class="card">
-                    <h3>📊 System Overview</h3>
+                    <h3>System Overview</h3>
                     <div class="stat-grid">
                         <div class="stat">
                             <span class="label">Health Status</span>
@@ -464,7 +465,7 @@ impl DashboardServer {
                 </div>
 
                 <div class="card">
-                    <h3>🔧 Components</h3>
+                    <h3>Components</h3>
                     <div class="component-list" id="component-list">
                         <div class="component">
                             <span class="component-name">Crypto</span>
@@ -486,7 +487,7 @@ impl DashboardServer {
                 </div>
 
                 <div class="card">
-                    <h3>💰 Economics</h3>
+                    <h3>Economics</h3>
                     <div class="stat-grid">
                         <div class="stat">
                             <span class="label">UBI Distributed</span>
@@ -525,17 +526,17 @@ impl DashboardServer {
                 </div>
 
                 <div class="card chart-card">
-                    <h3>💾 Memory Usage</h3>
+                    <h3>Memory Usage</h3>
                     <canvas id="memory-chart"></canvas>
                 </div>
 
                 <div class="card chart-card">
-                    <h3>🌐 Network Traffic</h3>
+                    <h3>Network Traffic</h3>
                     <canvas id="network-chart"></canvas>
                 </div>
 
                 <div class="card chart-card">
-                    <h3>⛓️ Blockchain Stats</h3>
+                    <h3>Blockchain Stats</h3>
                     <canvas id="blockchain-chart"></canvas>
                 </div>
             </section>
@@ -778,7 +779,7 @@ footer {
     }
 
     async init() {
-        console.log('🌟 ZHTP Dashboard initializing...');
+        console.log('ZHTP Dashboard initializing...');
         
         // Initialize charts
         this.initCharts();
@@ -789,7 +790,7 @@ footer {
         // Start auto-refresh
         setInterval(() => this.updateDashboard(), this.updateInterval);
         
-        console.log('✅ ZHTP Dashboard ready');
+        console.log('ZHTP Dashboard ready');
     }
 
     initCharts() {
@@ -940,7 +941,7 @@ footer {
 
     async updateDashboard() {
         try {
-            console.log('🔄 Updating dashboard...');
+            console.log(' Updating dashboard...');
             
             // Fetch dashboard data
             const response = await fetch('/api/dashboard');
@@ -961,7 +962,7 @@ footer {
             this.lastUpdate = Date.now();
             
         } catch (error) {
-            console.error('❌ Failed to update dashboard:', error);
+            console.error('Failed to update dashboard:', error);
             this.updateStatusIndicator({ overall_health: 'Error' });
         }
     }

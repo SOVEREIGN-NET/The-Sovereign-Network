@@ -13,18 +13,18 @@ if [ -z "$CONFIG_FILE" ]; then
 fi
 
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo "❌ Configuration file not found: $CONFIG_FILE"
+    echo "Configuration file not found: $CONFIG_FILE"
     exit 1
 fi
 
-echo "🔍 Validating ZHTP configuration: $CONFIG_FILE"
+echo "Validating ZHTP configuration: $CONFIG_FILE"
 echo "================================================"
 
 # Check if it's a valid TOML file
 if ! command -v toml &> /dev/null; then
-    echo "ℹ️  TOML validator not found, skipping syntax check"
+    echo "  TOML validator not found, skipping syntax check"
 else
-    echo "✅ TOML syntax validation..."
+    echo "TOML syntax validation..."
     toml check "$CONFIG_FILE" || exit 1
 fi
 
@@ -36,7 +36,7 @@ STORAGE_CAPACITY=$(grep '^storage_capacity_gb' "$CONFIG_FILE" | cut -d'=' -f2 | 
 MAX_PEERS=$(grep '^max_peers' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' ' 2>/dev/null || echo "")
 
 echo
-echo "📊 Configuration Summary:"
+echo "Configuration Summary:"
 echo "  Mesh Mode: $MESH_MODE"
 echo "  Security Level: $SECURITY_LEVEL"  
 echo "  Validator Enabled: $VALIDATOR_ENABLED"
@@ -45,45 +45,45 @@ echo "  Max Peers: $MAX_PEERS"
 
 # Validation checks
 echo
-echo "🔍 Running validation checks..."
+echo "Running validation checks..."
 
 # Check mesh mode vs protocols
 if [ "$MESH_MODE" = "PureMesh" ]; then
     if grep -q '"tcp"' "$CONFIG_FILE"; then
-        echo "⚠️  WARNING: Pure mesh mode should not include TCP protocol"
+        echo " WARNING: Pure mesh mode should not include TCP protocol"
     else
-        echo "✅ Pure mesh mode: TCP protocol correctly excluded"
+        echo "Pure mesh mode: TCP protocol correctly excluded"
     fi
 fi
 
 # Check validator security requirements
 if [ "$VALIDATOR_ENABLED" = "true" ]; then
     if [ "$SECURITY_LEVEL" != "Maximum" ]; then
-        echo "⚠️  WARNING: Validator nodes should use Maximum security level"
+        echo " WARNING: Validator nodes should use Maximum security level"
     else
-        echo "✅ Validator security: Maximum level configured"
+        echo "Validator security: Maximum level configured"
     fi
 fi
 
 # Check storage capacity reasonableness
 if [ ! -z "$STORAGE_CAPACITY" ]; then
     if [ "$STORAGE_CAPACITY" -lt 10 ]; then
-        echo "⚠️  WARNING: Very low storage capacity (${STORAGE_CAPACITY}GB)"
+        echo " WARNING: Very low storage capacity (${STORAGE_CAPACITY}GB)"
     elif [ "$STORAGE_CAPACITY" -gt 50000 ]; then
-        echo "⚠️  WARNING: Very high storage capacity (${STORAGE_CAPACITY}GB) - ensure disk space available"
+        echo " WARNING: Very high storage capacity (${STORAGE_CAPACITY}GB) - ensure disk space available"
     else
-        echo "✅ Storage capacity: ${STORAGE_CAPACITY}GB looks reasonable"
+        echo "Storage capacity: ${STORAGE_CAPACITY}GB looks reasonable"
     fi
 fi
 
 # Check peer count
 if [ ! -z "$MAX_PEERS" ]; then
     if [ "$MAX_PEERS" -lt 10 ]; then
-        echo "⚠️  WARNING: Low peer count ($MAX_PEERS) may affect network connectivity"
+        echo " WARNING: Low peer count ($MAX_PEERS) may affect network connectivity"
     elif [ "$MAX_PEERS" -gt 1000 ]; then
-        echo "⚠️  WARNING: High peer count ($MAX_PEERS) may use significant resources"
+        echo " WARNING: High peer count ($MAX_PEERS) may use significant resources"
     else
-        echo "✅ Peer count: $MAX_PEERS looks reasonable"
+        echo "Peer count: $MAX_PEERS looks reasonable"
     fi
 fi
 
@@ -94,10 +94,10 @@ API_PORT=$(grep '^api_port' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' ' 2>/dev/nu
 
 if [ ! -z "$MESH_PORT" ] && [ ! -z "$DHT_PORT" ] && [ ! -z "$API_PORT" ]; then
     if [ "$MESH_PORT" = "$DHT_PORT" ] || [ "$MESH_PORT" = "$API_PORT" ] || [ "$DHT_PORT" = "$API_PORT" ]; then
-        echo "❌ ERROR: Port conflict detected - mesh, DHT, and API ports must be different"
+        echo "ERROR: Port conflict detected - mesh, DHT, and API ports must be different"
         exit 1
     else
-        echo "✅ Port configuration: No conflicts detected"
+        echo "Port configuration: No conflicts detected"
     fi
 fi
 
@@ -105,12 +105,12 @@ fi
 DATA_DIR=$(grep '^data_directory' "$CONFIG_FILE" | cut -d'"' -f2 2>/dev/null || echo "")
 if [ ! -z "$DATA_DIR" ]; then
     if [[ "$DATA_DIR" == /* ]] || [[ "$DATA_DIR" == ./* ]]; then
-        echo "✅ Data directory: $DATA_DIR"
+        echo "Data directory: $DATA_DIR"
     else
-        echo "⚠️  WARNING: Data directory should be absolute or relative path: $DATA_DIR"
+        echo " WARNING: Data directory should be absolute or relative path: $DATA_DIR"
     fi
 fi
 
 echo
-echo "✅ Configuration validation completed!"
-echo "💡 Start your node with: zhtp node start --config $CONFIG_FILE"
+echo "Configuration validation completed!"
+echo "Start your node with: zhtp node start --config $CONFIG_FILE"

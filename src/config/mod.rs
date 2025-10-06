@@ -9,7 +9,7 @@ pub mod mesh_modes;
 pub mod security;
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+
 use std::path::PathBuf;
 
 // Re-export configuration types
@@ -31,7 +31,7 @@ pub struct CliArgs {
 
 /// Load and validate complete node configuration
 pub async fn load_configuration(args: &CliArgs) -> Result<NodeConfig> {
-    tracing::info!("🔧 Loading configuration from {} packages...", 11);
+    tracing::info!("Loading configuration from {} packages...", 11);
     
     // Load environment-specific settings
     let env_config = environment::load_environment_config(args.environment).await?;
@@ -45,7 +45,7 @@ pub async fn load_configuration(args: &CliArgs) -> Result<NodeConfig> {
     // Create data directory if it doesn't exist
     if !args.data_dir.exists() {
         std::fs::create_dir_all(&args.data_dir)?;
-        tracing::info!("📁 Created data directory: {}", args.data_dir.display());
+        tracing::info!("Created data directory: {}", args.data_dir.display());
     }
     
     // Apply environment-specific settings
@@ -54,7 +54,7 @@ pub async fn load_configuration(args: &CliArgs) -> Result<NodeConfig> {
     // Validate cross-package configuration consistency
     validation::validate_complete_configuration(&node_config).await?;
     
-    tracing::info!("✅ Configuration validated: {} mode, {} security level", 
+    tracing::info!("Configuration validated: {} mode, {} security level", 
                   node_config.mesh_mode, node_config.security_level);
     
     Ok(node_config)

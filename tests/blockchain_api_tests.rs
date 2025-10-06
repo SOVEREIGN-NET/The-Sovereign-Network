@@ -73,7 +73,7 @@ async fn test_blockchain_foundation_ready() -> Result<()> {
     assert_eq!(blockchain_lock.blocks.len(), 4);
     assert!(blockchain_lock.latest_block().is_some());
     
-    println!("✅ Foundation layer is ready for API testing");
+    println!("Foundation layer is ready for API testing");
     Ok(())
 }
 
@@ -102,7 +102,7 @@ async fn test_blockchain_status_api() -> Result<()> {
     assert!(body["latest_block_hash"].is_string());
     assert!(body["total_transactions"].is_number());
     
-    println!("✅ Blockchain status API working");
+    println!("Blockchain status API working");
     Ok(())
 }
 
@@ -126,7 +126,7 @@ async fn test_latest_block_api() -> Result<()> {
     assert!(body["hash"].is_string());
     assert!(body["previous_hash"].is_string());
     
-    println!("✅ Latest block API working");
+    println!("Latest block API working");
     Ok(())
 }
 
@@ -149,7 +149,7 @@ async fn test_get_block_by_height_api() -> Result<()> {
     assert_eq!(body["status"], "block_found");
     assert_eq!(body["height"], 1);
     
-    println!("✅ Get block by height API working");
+    println!("Get block by height API working");
     Ok(())
 }
 
@@ -168,7 +168,7 @@ async fn test_get_block_not_found() -> Result<()> {
     let response = handler.handle_request(request).await?;
     assert!(response.status.is_error());
     
-    println!("✅ Block not found handling working");
+    println!("Block not found handling working");
     Ok(())
 }
 
@@ -193,7 +193,7 @@ async fn test_balance_api() -> Result<()> {
     assert_eq!(body["address"], test_address);
     assert!(body["balance"].is_number());
     
-    println!("✅ Balance API working");
+    println!("Balance API working");
     Ok(())
 }
 
@@ -216,7 +216,7 @@ async fn test_validators_api() -> Result<()> {
     assert!(body["total_validators"].is_number());
     assert!(body["validators"].is_array());
     
-    println!("✅ Validators API working");
+    println!("Validators API working");
     Ok(())
 }
 
@@ -250,7 +250,7 @@ async fn test_submit_transaction_api() -> Result<()> {
     assert_eq!(body["status"], "transaction_submitted");
     assert!(body["transaction_hash"].is_string());
     
-    println!("✅ Submit transaction API working");
+    println!("Submit transaction API working");
     Ok(())
 }
 
@@ -277,7 +277,7 @@ async fn test_submit_invalid_transaction() -> Result<()> {
     let response = handler.handle_request(request).await?;
     assert!(response.status.is_error());
     
-    println!("✅ Invalid transaction rejection working");
+    println!("Invalid transaction rejection working");
     Ok(())
 }
 
@@ -300,7 +300,7 @@ async fn test_api_error_handling() -> Result<()> {
     let response = handler.handle_request(request).await?;
     assert!(response.status.is_error());
     
-    println!("✅ API error handling working");
+    println!("API error handling working");
     Ok(())
 }
 
@@ -322,7 +322,7 @@ async fn test_api_headers() -> Result<()> {
     assert_eq!(response.headers.get("X-Handler"), Some("Blockchain"));
     assert_eq!(response.headers.get("X-Protocol"), Some("ZHTP/1.0"));
     
-    println!("✅ API headers working");
+    println!("API headers working");
     Ok(())
 }
 
@@ -379,7 +379,7 @@ async fn test_complete_api_flow() -> Result<()> {
     let validators_response = handler.handle_request(validators_request).await?;
     assert!(validators_response.status.is_success());
     
-    println!("✅ Complete API flow working");
+    println!("Complete API flow working");
     Ok(())
 }
 
@@ -417,7 +417,7 @@ async fn test_concurrent_api_requests() -> Result<()> {
         assert!(response.status.is_success());
     }
     
-    println!("✅ Concurrent API requests working");
+    println!("Concurrent API requests working");
     Ok(())
 }
 
@@ -445,6 +445,6 @@ async fn test_api_performance() -> Result<()> {
     // Should complete reasonably quickly (adjust threshold as needed)
     assert!(duration.as_millis() < 5000, "API performance too slow");
     
-    println!("✅ API performance acceptable");
+    println!("API performance acceptable");
     Ok(())
 }

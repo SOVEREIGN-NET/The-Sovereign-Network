@@ -6,7 +6,7 @@ use anyhow::{Result, Context};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Mutex};
-use tokio::time::{Duration, Instant, timeout};
+use tokio::time::{Duration, Instant};
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 
@@ -139,19 +139,19 @@ impl ComponentManager {
 
     /// Initialize the component manager
     pub async fn initialize(&self) -> Result<()> {
-        info!("🔧 Initializing component manager...");
+        info!("Initializing component manager...");
 
         // Start health check background task
         self.start_health_checker().await?;
 
-        info!("✅ Component manager initialized");
+        info!("Component manager initialized");
         Ok(())
     }
 
     /// Register a component
     pub async fn register_component(&self, component: Arc<dyn Component>) -> Result<()> {
         let id = component.id();
-        info!("📦 Registering component: {}", id);
+        info!("Registering component: {}", id);
 
         let registration = ComponentRegistration::new(component);
         let handle = ComponentHandle::new(id.clone());
@@ -168,14 +168,14 @@ impl ComponentManager {
         // Update startup order
         self.update_startup_order().await?;
 
-        info!("✅ Component {} registered successfully", id);
+        info!("Component {} registered successfully", id);
         Ok(())
     }
 
     /// Register a component with specific configuration
     pub async fn register_component_with_config(&self, registration: ComponentRegistration) -> Result<()> {
         let id = registration.id.clone();
-        info!("📦 Registering component with config: {}", id);
+        info!("Registering component with config: {}", id);
 
         let handle = ComponentHandle::new(id.clone());
 
@@ -191,13 +191,13 @@ impl ComponentManager {
         // Update startup order
         self.update_startup_order().await?;
 
-        info!("✅ Component {} registered with config", id);
+        info!("Component {} registered with config", id);
         Ok(())
     }
 
     /// Start a specific component
     pub async fn start_component(&self, component_id: &ComponentId) -> Result<()> {
-        info!("🚀 Starting component: {}", component_id);
+        info!(" Starting component: {}", component_id);
 
         // Check if dependencies are running
         self.check_dependencies(component_id).await?;
@@ -239,11 +239,11 @@ impl ComponentManager {
                         }
                     }
                     
-                    info!("✅ Component {} started successfully", component_id);
+                    info!("Component {} started successfully", component_id);
                     return Ok(());
                 }
                 Ok(Err(e)) => {
-                    warn!("❌ Component {} start failed (attempt {}): {}", 
+                    warn!("Component {} start failed (attempt {}): {}", 
                           component_id, attempts, e);
                     last_error = Some(e.to_string());
                 }
@@ -274,7 +274,7 @@ impl ComponentManager {
 
     /// Stop a specific component
     pub async fn stop_component(&self, component_id: &ComponentId) -> Result<()> {
-        info!("🛑 Stopping component: {}", component_id);
+        info!("Stopping component: {}", component_id);
 
         let (component, timeout) = {
             let components = self.components.read().await;
@@ -301,11 +301,11 @@ impl ComponentManager {
                         handle.mark_stopped();
                     }
                 }
-                info!("✅ Component {} stopped successfully", component_id);
+                info!("Component {} stopped successfully", component_id);
                 Ok(())
             }
             Ok(Err(e)) => {
-                warn!("❌ Component {} stop failed: {}", component_id, e);
+                warn!("Component {} stop failed: {}", component_id, e);
                 {
                     let mut handles = self.handles.write().await;
                     if let Some(handle) = handles.get_mut(component_id) {
@@ -326,7 +326,7 @@ impl ComponentManager {
                                 handle.mark_stopped();
                             }
                         }
-                        warn!("⚠️ Component {} force stopped", component_id);
+                        warn!("Component {} force stopped", component_id);
                         Ok(())
                     }
                     Err(e) => {
@@ -346,13 +346,13 @@ impl ComponentManager {
 
     /// Start all components in dependency order
     pub async fn start_all(&self) -> Result<()> {
-        info!("🚀 Starting all components in dependency order...");
+        info!(" Starting all components in dependency order...");
 
         let startup_order = self.startup_order.read().await.clone();
 
         for component_id in startup_order {
             if *self.shutdown_requested.read().await {
-                warn!("🛑 Shutdown requested, aborting startup");
+                warn!("Shutdown requested, aborting startup");
                 return Ok(());
             }
 
@@ -360,13 +360,13 @@ impl ComponentManager {
                 .with_context(|| format!("Failed to start component {}", component_id))?;
         }
 
-        info!("✅ All components started successfully");
+        info!("All components started successfully");
         Ok(())
     }
 
     /// Stop all components in reverse dependency order
     pub async fn shutdown_all(&self) -> Result<()> {
-        info!("🛑 Shutting down all components...");
+        info!("Shutting down all components...");
 
         // Set shutdown flag
         *self.shutdown_requested.write().await = true;
@@ -389,12 +389,12 @@ impl ComponentManager {
 
             if matches!(status, ComponentStatus::Running | ComponentStatus::Starting) {
                 if let Err(e) = self.stop_component(&component_id).await {
-                    warn!("❌ Failed to stop component {}: {}", component_id, e);
+                    warn!("Failed to stop component {}: {}", component_id, e);
                 }
             }
         }
 
-        info!("✅ All components shut down");
+        info!("All components shut down");
         Ok(())
     }
 
@@ -436,11 +436,11 @@ impl ComponentManager {
 
     /// Restart a component
     pub async fn restart_component(&self, component_id: &ComponentId) -> Result<()> {
-        info!("🔄 Restarting component: {}", component_id);
+        info!(" Restarting component: {}", component_id);
 
         // Stop first
         if let Err(e) = self.stop_component(component_id).await {
-            warn!("❌ Failed to stop component {} for restart: {}", component_id, e);
+            warn!("Failed to stop component {} for restart: {}", component_id, e);
         }
 
         // Wait a moment
@@ -450,7 +450,7 @@ impl ComponentManager {
         self.start_component(component_id).await
             .with_context(|| format!("Failed to restart component {}", component_id))?;
 
-        info!("✅ Component {} restarted successfully", component_id);
+        info!("Component {} restarted successfully", component_id);
         Ok(())
     }
 
@@ -471,11 +471,11 @@ impl ComponentManager {
                     };
 
                     if last_check.elapsed() > health_interval * 2 {
-                        warn!("⚠️ Component {} has not had a health check recently", id);
+                        warn!("Component {} has not had a health check recently", id);
                         return Ok(false);
                     }
                 } else {
-                    warn!("⚠️ Component {} has never had a health check", id);
+                    warn!("Component {} has never had a health check", id);
                     return Ok(false);
                 }
             }
@@ -624,22 +624,22 @@ impl ComponentManager {
                                 }
                                 match health.status {
                                     crate::runtime::ComponentStatus::Running => {
-                                        debug!("✅ Health check passed for component: {}", component_id);
+                                        debug!("Health check passed for component: {}", component_id);
                                     }
                                     _ => {
-                                        warn!("⚠️ Health check failed for component: {} (status: {:?})", component_id, health.status);
+                                        warn!("Health check failed for component: {} (status: {:?})", component_id, health.status);
                                     }
                                 }
                             }
                             Err(e) => {
-                                error!("❌ Health check error for component {}: {}", component_id, e);
+                                error!("Health check error for component {}: {}", component_id, e);
                             }
                         }
                     }
                 }
             }
 
-            debug!("🔍 Health checker task stopped");
+            debug!("Health checker task stopped");
         });
 
         *self.health_checker.lock().await = Some(handle);

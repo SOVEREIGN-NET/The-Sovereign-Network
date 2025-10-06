@@ -51,7 +51,7 @@ impl SharedBlockchainService {
         tokio::spawn(async move {
             while let Some(operation) = operation_rx.recv().await {
                 if let Err(e) = Self::handle_operation(&blockchain_clone, operation).await {
-                    error!("🔥 Error handling blockchain operation: {}", e);
+                    error!("Error handling blockchain operation: {}", e);
                 }
             }
         });
@@ -74,11 +74,11 @@ impl SharedBlockchainService {
                     match blockchain.add_pending_transaction(transaction.clone()) {
                         Ok(()) => {
                             let tx_hash = format!("{:?}", transaction.hash());
-                            info!("✅ Transaction added to shared blockchain: {}", tx_hash);
+                            info!("Transaction added to shared blockchain: {}", tx_hash);
                             Ok(tx_hash)
                         }
                         Err(e) => {
-                            error!("❌ Failed to add transaction to shared blockchain: {}", e);
+                            error!("Failed to add transaction to shared blockchain: {}", e);
                             Err(anyhow::anyhow!("Failed to add transaction: {}", e))
                         }
                     }
@@ -102,25 +102,32 @@ impl SharedBlockchainService {
                 let result = {
                     let blockchain = blockchain_arc.read().await;
                     // Search for transaction in all blocks
+                    let mut found_tx = None;
                     for block in &blockchain.blocks {
                         for tx in &block.transactions {
                             if format!("{:?}", tx.hash()) == hash {
-                                let _ = response_tx.send(Ok(Some(tx.clone())));
-                                return Ok(());
+                                found_tx = Some(tx.clone());
+                                break;
+                            }
+                        }
+                        if found_tx.is_some() { break; }
+                    }
+                    
+                    // Also check pending transactions if not found in blocks
+                    if found_tx.is_none() {
+                        for tx in &blockchain.pending_transactions {
+                            if format!("{:?}", tx.hash()) == hash {
+                                found_tx = Some(tx.clone());
+                                break;
                             }
                         }
                     }
                     
-                    // Also check pending transactions
-                    for tx in &blockchain.pending_transactions {
-                        if format!("{:?}", tx.hash()) == hash {
-                            let _ = response_tx.send(Ok(Some(tx.clone())));
-                            return Ok(());
-                        }
-                    }
-                    
-                    let _ = response_tx.send(Ok(None));
+                    found_tx
                 };
+                
+                // Send result using the found transaction
+                let _ = response_tx.send(Ok(result));
             }
             
             BlockchainOperation::GetMempool { response_tx } => {
@@ -144,7 +151,7 @@ impl SharedBlockchainService {
                     let mut blockchain = blockchain_arc.write().await;
                     // Create a simple block with pending transactions
                     if !blockchain.pending_transactions.is_empty() {
-                        info!("⛏️ Mining block with {} transactions", blockchain.pending_transactions.len());
+                        info!("Mining block with {} transactions", blockchain.pending_transactions.len());
                         
                         // For this implementation, we'll just create a simple block
                         // Real mining would involve proof of work
@@ -174,11 +181,11 @@ impl SharedBlockchainService {
                         
                         match blockchain.add_block(new_block.clone()) {
                             Ok(()) => {
-                                info!("⛏️ Block mined successfully at height {}", blockchain.height);
+                                info!("Block mined successfully at height {}", blockchain.height);
                                 Ok(new_block)
                             }
                             Err(e) => {
-                                error!("❌ Failed to add mined block: {}", e);
+                                error!("Failed to add mined block: {}", e);
                                 Err(anyhow::anyhow!("Failed to mine block: {}", e))
                             }
                         }
@@ -290,4 +297,14 @@ impl SharedBlockchainService {
     pub fn get_blockchain_arc(&self) -> Arc<RwLock<Blockchain>> {
         self.blockchain.clone()
     }
+}
+
+/// Get the shared blockchain service (global accessor)
+/// This provides access to the blockchain from anywhere in the application
+pub fn get_shared_blockchain() -> Result<SharedBlockchainService> {
+    // For simplicity, create a new blockchain instance if not available
+    // In production, this would be managed by the global service container
+    let blockchain = Blockchain::new()?;
+    let blockchain_arc = Arc::new(RwLock::new(blockchain));
+    Ok(SharedBlockchainService::new(blockchain_arc))
 }

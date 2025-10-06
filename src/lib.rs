@@ -8,6 +8,8 @@ pub mod monitoring;
 pub mod integration;
 pub mod cli;
 pub mod api;
+pub mod unified_server;
+pub mod session_manager;
 
 // Re-export key types for external use
 pub use config::{NodeConfig, CliArgs, Environment, MeshMode, SecurityLevel};
@@ -16,6 +18,8 @@ pub use monitoring::{MonitoringSystem, SystemMetrics, HealthStatus as Monitoring
 pub use integration::{IntegrationManager, ServiceContainer, EventBus};
 pub use cli::{ZhtpCli, ZhtpCommand, run_cli, format_output};
 pub use api::{ZhtpServer, IdentityHandler, BlockchainHandler, StorageHandler, ProtocolHandler, MiddlewareStack};
+pub use unified_server::{ZhtpUnifiedServer, IncomingProtocol};
+pub use session_manager::SessionManager;
 
 /// ZHTP node version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

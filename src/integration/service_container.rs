@@ -7,7 +7,7 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
-use tracing::{info, warn, error, debug};
+use tracing::{info, error, debug};
 
 use crate::runtime::{ComponentId, Component};
 
@@ -66,25 +66,25 @@ impl ServiceContainer {
             return Ok(());
         }
 
-        info!("📦 Initializing service container...");
+        info!("Initializing service container...");
         
         // Register core services
         self.register_core_services().await?;
         
         *initialized = true;
-        info!("✅ Service container initialized");
+        info!("Service container initialized");
         Ok(())
     }
 
     /// Shutdown the service container
     pub async fn shutdown(&self) -> Result<()> {
-        info!("📦 Shutting down service container...");
+        info!("Shutting down service container...");
         
         // Stop all components
         let components = self.components.read().await;
         for (id, component) in components.iter() {
             if let Err(e) = component.stop().await {
-                error!("❌ Failed to stop component {}: {}", id, e);
+                error!("Failed to stop component {}: {}", id, e);
             }
         }
         
@@ -96,7 +96,7 @@ impl ServiceContainer {
         let mut initialized = self.initialized.write().await;
         *initialized = false;
         
-        info!("✅ Service container shut down");
+        info!("Service container shut down");
         Ok(())
     }
 
@@ -108,7 +108,7 @@ impl ServiceContainer {
         let type_id = TypeId::of::<T>();
         let mut singletons = self.singletons.write().await;
         singletons.insert(type_id, instance);
-        debug!("📦 Registered singleton service: {:?}", std::any::type_name::<T>());
+        debug!("Registered singleton service: {:?}", std::any::type_name::<T>());
         Ok(())
     }
 
@@ -121,7 +121,7 @@ impl ServiceContainer {
         let type_id = TypeId::of::<T>();
         let mut factories = self.factories.write().await;
         factories.insert(type_id, Box::new(factory));
-        debug!("📦 Registered transient service: {:?}", std::any::type_name::<T>());
+        debug!("Registered transient service: {:?}", std::any::type_name::<T>());
         Ok(())
     }
 
@@ -129,7 +129,7 @@ impl ServiceContainer {
     pub async fn register_component(&self, id: ComponentId, component: Arc<dyn Component>) -> Result<()> {
         let mut components = self.components.write().await;
         components.insert(id.clone(), component);
-        debug!("📦 Registered component: {}", id);
+        debug!("Registered component: {}", id);
         Ok(())
     }
 
@@ -218,7 +218,7 @@ impl ServiceContainer {
         });
         self.register_singleton(self_ref).await?;
         
-        debug!("📦 Core services registered");
+        debug!("Core services registered");
         Ok(())
     }
 
@@ -296,7 +296,7 @@ pub struct ServiceContainerStats {
 
 impl ServiceScope {
     /// Resolve a scoped service
-    pub fn resolve_scoped<T>(&mut self, container: &ServiceContainer) -> Result<Arc<T>>
+    pub fn resolve_scoped<T>(&mut self, _container: &ServiceContainer) -> Result<Arc<T>>
     where
         T: Any + Send + Sync,
     {

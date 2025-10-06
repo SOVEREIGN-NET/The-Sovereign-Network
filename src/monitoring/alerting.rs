@@ -2,17 +2,17 @@
 //! 
 //! Handles alerts, notifications, and incident management for ZHTP node
 
-use anyhow::{Result, Context};
+use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
 use tokio::sync::{RwLock, mpsc};
-use tokio::time::{Duration, Instant};
+use tokio::time::Duration;
 use tracing::{info, warn, error, debug};
 
 use crate::monitoring::metrics::SystemMetrics;
 
-/// Alert manager for ZHTP node monitoring
+/// Alert manager for ZHTP             info!(\"Resolved alert: {} - {} ({})\", alert_id, alert.title, alert.message);\n            // Remove resolved alert from active alerts\n            alerts.retain(|a| a.id != alert_id);ode monitoring
 pub struct AlertManager {
     alerts: Arc<RwLock<VecDeque<Alert>>>,
     alert_rules: Arc<RwLock<Vec<AlertRule>>>,
@@ -158,10 +158,10 @@ impl NotificationChannel for ConsoleNotificationChannel {
         }
 
         let level_emoji = match alert.level {
-            AlertLevel::Info => "ℹ️",
-            AlertLevel::Warning => "⚠️",
+            AlertLevel::Info => "INFO",
+            AlertLevel::Warning => "WARNING",
             AlertLevel::Critical => "🚨",
-            AlertLevel::Emergency => "🔥",
+            AlertLevel::Emergency => "EMRG",
         };
 
         let timestamp = chrono::DateTime::from_timestamp(alert.timestamp as i64, 0)
@@ -169,11 +169,11 @@ impl NotificationChannel for ConsoleNotificationChannel {
             .format("%Y-%m-%d %H:%M:%S UTC");
 
         println!("\n{} ZHTP ALERT [{}] {}", level_emoji, alert.level_str(), timestamp);
-        println!("📋 {}: {}", alert.title, alert.message);
-        println!("🔗 Source: {} | ID: {}", alert.source, alert.id);
+        println!("{}: {}", alert.title, alert.message);
+        println!("Source: {} | ID: {}", alert.source, alert.id);
         
         if !alert.metadata.is_empty() {
-            println!("📊 Metadata:");
+            println!("Metadata:");
             for (key, value) in &alert.metadata {
                 println!("   {}: {}", key, value);
             }
@@ -224,7 +224,7 @@ impl NotificationChannel for EmailNotificationChannel {
 
         // Real email sending implementation
         if let Some(config) = &self.smtp_config {
-            use std::process::Command;
+            // Removed unused std::process::Command import
             
             // Create email content
             let subject = format!("ZHTP Alert: {}", alert.title);
@@ -297,16 +297,16 @@ impl NotificationChannel for WebhookNotificationChannel {
 
         match response {
             Ok(Ok(resp)) if resp.status().is_success() => {
-                info!("🔗 Webhook notification sent successfully to {} for alert: {}", self.webhook_url, alert.id);
+                info!("Webhook notification sent successfully to {} for alert: {}", self.webhook_url, alert.id);
             }
             Ok(Ok(resp)) => {
-                warn!("⚠️ Webhook responded with error status {}: {}", resp.status(), self.webhook_url);
+                warn!("Webhook responded with error status {}: {}", resp.status(), self.webhook_url);
             }
             Ok(Err(e)) => {
-                warn!("⚠️ Webhook request failed to {}: {}", self.webhook_url, e);
+                warn!("Webhook request failed to {}: {}", self.webhook_url, e);
             }
             Err(_) => {
-                warn!("⚠️ Webhook request timed out to {}", self.webhook_url);
+                warn!("Webhook request timed out to {}", self.webhook_url);
             }
         }
         
@@ -367,8 +367,59 @@ impl AlertManager {
 
     /// Create alert manager with custom thresholds
     pub async fn with_thresholds(thresholds: AlertThresholds) -> Result<Self> {
-        let mut manager = Self::new().await?;
-        // Store thresholds in config (we could extend AlertConfig to include these)
+        let manager = Self::new().await?;
+        // Store the custom thresholds for use in monitoring
+        // Note: AlertConfig doesn't have threshold fields, so we store them separately
+        // In a production system, we'd extend AlertConfig or store thresholds in the manager
+        tracing::info!("Alert manager initialized with custom thresholds: CPU={}, Memory={}, Disk={}", 
+            thresholds.cpu_usage, thresholds.memory_usage, thresholds.disk_usage);
+        
+        // Apply thresholds by creating rules with the specified values
+        manager.add_alert_rule(AlertRule {
+            id: "cpu_threshold".to_string(),
+            name: "CPU Usage Monitor".to_string(),
+            condition: AlertCondition::MetricThreshold {
+                metric_name: "cpu_usage".to_string(),
+                operator: ComparisonOperator::GreaterThan,
+                threshold: thresholds.cpu_usage,
+                duration: Duration::from_secs(60), // 1 minute sustained
+            },
+            level: AlertLevel::Warning,
+            enabled: true,
+            cooldown: manager.config.default_cooldown,
+            last_triggered: None,
+        }).await?;
+        
+        manager.add_alert_rule(AlertRule {
+            id: "memory_threshold".to_string(),
+            name: "Memory Usage Monitor".to_string(),
+            condition: AlertCondition::MetricThreshold {
+                metric_name: "memory_usage".to_string(),
+                operator: ComparisonOperator::GreaterThan,
+                threshold: thresholds.memory_usage,
+                duration: Duration::from_secs(60),
+            },
+            level: AlertLevel::Warning,
+            enabled: true,
+            cooldown: manager.config.default_cooldown,
+            last_triggered: None,
+        }).await?;
+        
+        manager.add_alert_rule(AlertRule {
+            id: "disk_threshold".to_string(),
+            name: "Disk Usage Monitor".to_string(),
+            condition: AlertCondition::MetricThreshold {
+                metric_name: "disk_usage".to_string(),
+                operator: ComparisonOperator::GreaterThan,
+                threshold: thresholds.disk_usage,
+                duration: Duration::from_secs(30), // Shorter for critical disk alerts
+            },
+            level: AlertLevel::Critical,
+            enabled: true,
+            cooldown: manager.config.default_cooldown,
+            last_triggered: None,
+        }).await?;
+        
         Ok(manager)
     }
 
@@ -397,7 +448,7 @@ impl AlertManager {
             Self::alert_processing_loop(alert_rx, alerts, channels, running, config).await;
         });
 
-        info!("✅ Alert manager started");
+        info!("Alert manager started");
         Ok(())
     }
 
@@ -492,9 +543,9 @@ impl AlertManager {
     /// Resolve an alert by ID
     pub async fn resolve_alert(&self, alert_id: &str) -> Result<()> {
         let mut alerts = self.alerts.write().await;
-        if let Some(alert) = alerts.iter_mut().find(|a| a.id == alert_id) {
+        if let Some(_alert) = alerts.iter_mut().find(|a| a.id == alert_id) {
             // In a real system, we'd mark it as resolved
-            info!("✅ Resolved alert: {}", alert_id);
+            info!("Resolved alert: {}", alert_id);
         }
         Ok(())
     }
@@ -550,7 +601,7 @@ impl AlertManager {
             )));
         }
 
-        info!("📡 Setup {} notification channels", channels.len());
+        info!("Setup {} notification channels", channels.len());
         Ok(())
     }
 
@@ -582,7 +633,7 @@ impl AlertManager {
                 for channel in channels_guard.iter() {
                     if channel.is_enabled() {
                         if let Err(e) = channel.send_notification(&alert).await {
-                            error!("❌ Failed to send notification via {}: {}", channel.name(), e);
+                            error!("Failed to send notification via {}: {}", channel.name(), e);
                         }
                     }
                 }
@@ -664,7 +715,7 @@ impl AlertManager {
         let mut rules = self.alert_rules.write().await;
         rules.extend(default_rules);
         
-        info!("📋 Setup {} default alert rules", rules.len());
+        info!("Setup {} default alert rules", rules.len());
         Ok(())
     }
 }

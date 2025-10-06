@@ -14,8 +14,8 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 // Import actual wallet system components
 use lib_economy::wallets::{
-    multi_wallet::{MultiWalletManager, WalletType, CrossWalletTransaction},
-    WalletBalance,
+    multi_wallet::{MultiWalletManager, WalletType},
+    // Removed unused CrossWalletTransaction, WalletBalance
 };
 use lib_identity::{IdentityManager, identity::ZhtpIdentity as Identity};
 use lib_crypto::Hash;
@@ -50,7 +50,7 @@ impl WalletHandler {
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for WalletHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        tracing::info!("💰 Wallet handler: {} {}", request.method, request.uri);
+        tracing::info!("Wallet handler: {} {}", request.method, request.uri);
         
         let response = match (request.method, request.uri.as_str()) {
             // GET /api/v1/wallet/list/{identity_id}
@@ -64,7 +64,7 @@ impl ZhtpRequestHandler for WalletHandler {
                 if path_parts.len() >= 2 {
                     self.handle_get_balance(path_parts[0], path_parts[1]).await
                 } else {
-                    Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, "Invalid balance path".to_string()))
+                    Ok(create_error_response(ZhtpStatus::BadRequest, "Invalid balance path".to_string()))
                 }
             }
             // GET /api/v1/wallet/statistics/{identity_id}
@@ -85,7 +85,7 @@ impl ZhtpRequestHandler for WalletHandler {
                 self.handle_unstake_tokens(request).await
             }
             _ => {
-                Ok(ZhtpResponse::error(
+                Ok(create_error_response(
                     ZhtpStatus::NotFound,
                     "Wallet endpoint not found".to_string(),
                 ))
@@ -101,7 +101,7 @@ impl ZhtpRequestHandler for WalletHandler {
             }
             Err(e) => {
                 tracing::error!("Wallet handler error: {}", e);
-                Ok(ZhtpResponse::error(
+                Ok(create_error_response(
                     ZhtpStatus::InternalServerError,
                     format!("Wallet error: {}", e),
                 ))
@@ -165,7 +165,7 @@ impl WalletHandler {
             .map_err(|_| anyhow::anyhow!("Invalid identity ID format"))?;
         
         if identity_hash.len() != 32 {
-            return Ok(ZhtpResponse::error(
+            return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
                 "Identity ID must be 32 bytes".to_string(),
             ));
@@ -200,13 +200,20 @@ impl WalletHandler {
         // Convert wallet summaries to API response format
         let mut wallets = Vec::new();
         for summary in wallet_summaries.iter() {
+            // Get full wallet details to access staked_balance and pending_rewards
+            let (staked_balance, pending_rewards) = if let Some(wallet) = identity.wallet_manager.get_wallet(&summary.id) {
+                (wallet.staked_balance, wallet.pending_rewards)
+            } else {
+                (0, 0)
+            };
+
             let wallet_info = WalletInfo {
                 wallet_type: format!("{:?}", summary.wallet_type),
-                wallet_id: hex::encode(&summary.id.0[..8]),
-                available_balance: summary.balance,
-                staked_balance: 0, // TODO: Get from quantum wallet details
-                pending_rewards: 0, // TODO: Get from quantum wallet details  
-                total_balance: summary.balance,
+                wallet_id: self.generate_wallet_id(&summary.wallet_type, identity_id),
+                available_balance: summary.balance.saturating_sub(staked_balance),
+                staked_balance,
+                pending_rewards,
+                total_balance: summary.balance + pending_rewards,
                 permissions: WalletPermissionsInfo {
                     can_transfer_external: true,
                     can_vote: summary.wallet_type == lib_identity::wallets::WalletType::Primary,
@@ -244,7 +251,7 @@ impl WalletHandler {
         let wallet_type = match self.parse_wallet_type(wallet_type_str) {
             Some(wt) => wt,
             None => {
-                return Ok(ZhtpResponse::error(
+                return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
                     format!("Invalid wallet type: {}", wallet_type_str),
                 ));
@@ -713,18 +720,16 @@ impl WalletHandler {
     }
 
     /// Generate wallet ID based on wallet type and identity
-    fn generate_wallet_id(&self, wallet_type: &WalletType, identity_id: &str) -> String {
+    fn generate_wallet_id(&self, wallet_type: &lib_identity::wallets::WalletType, identity_id: &str) -> String {
         match wallet_type {
-            WalletType::Primary => format!("wallet_{}", &identity_id[..12]),
-            WalletType::UbiDistribution => format!("ubi_{}", &identity_id[..12]),
-            WalletType::Staking => format!("staking_{}", &identity_id[..12]),
-            WalletType::Governance => format!("governance_{}", &identity_id[..12]),
-            WalletType::Privacy => format!("privacy_{}", &identity_id[..12]),
-            WalletType::Bridge => format!("bridge_{}", &identity_id[..12]),
-            WalletType::SmartContract => format!("contract_{}", &identity_id[..12]),
-            WalletType::Infrastructure => format!("infra_{}", &identity_id[..12]),
-            WalletType::IspBypassRewards => format!("isp_{}", &identity_id[..12]),
-            WalletType::MeshDiscoveryRewards => format!("mesh_{}", &identity_id[..12]),
+            lib_identity::wallets::WalletType::Primary => format!("wallet_{}", &identity_id[..12]),
+            lib_identity::wallets::WalletType::Standard => format!("standard_{}", &identity_id[..12]),
+            lib_identity::wallets::WalletType::UBI => format!("ubi_{}", &identity_id[..12]),
+            lib_identity::wallets::WalletType::Savings => format!("savings_{}", &identity_id[..12]),
+            lib_identity::wallets::WalletType::Business => format!("business_{}", &identity_id[..12]),
+            lib_identity::wallets::WalletType::Stealth => format!("stealth_{}", &identity_id[..12]),
+            lib_identity::wallets::WalletType::NonProfitDAO => format!("nonprofit_{}", &identity_id[..12]),
+            lib_identity::wallets::WalletType::ForProfitDAO => format!("forprofit_{}", &identity_id[..12]),
         }
     }
 

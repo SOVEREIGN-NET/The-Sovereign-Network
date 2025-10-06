@@ -21,13 +21,13 @@ impl BlockchainFactory {
                 let mut new_blockchain = Blockchain::new()?;
                 new_blockchain.restore_state(shared_state)?;
                 
-                log::info!("🔗 Created blockchain instance from shared state");
+                log::info!("Created blockchain instance from shared state");
                 return Ok(new_blockchain);
             }
         }
         
         // Fall back to creating a new blockchain instance
-        log::warn!("⚠️ Falling back to isolated blockchain instance - shared blockchain not available");
+        log::warn!("Falling back to isolated blockchain instance - shared blockchain not available");
         Blockchain::new()
     }
     
@@ -35,7 +35,7 @@ impl BlockchainFactory {
     pub async fn create_shared_blockchain() -> Result<Arc<RwLock<Blockchain>>> {
         // Return the global blockchain if available
         if let Ok(shared_blockchain) = crate::runtime::blockchain_provider::get_global_blockchain() {
-            log::info!("🔗 Using shared blockchain instance");
+            log::info!("Using shared blockchain instance");
             return Ok(shared_blockchain);
         }
         
@@ -44,9 +44,9 @@ impl BlockchainFactory {
         let blockchain_arc = Arc::new(RwLock::new(blockchain));
         
         if let Err(e) = crate::runtime::blockchain_provider::set_global_blockchain(blockchain_arc.clone()) {
-            log::warn!("⚠️ Failed to register new blockchain as global: {}", e);
+            log::warn!("Failed to register new blockchain as global: {}", e);
         } else {
-            log::info!("🔗 Created and registered new shared blockchain");
+            log::info!("Created and registered new shared blockchain");
         }
         
         Ok(blockchain_arc)

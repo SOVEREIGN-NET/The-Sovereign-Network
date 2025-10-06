@@ -3,13 +3,13 @@
 //! Ensures configuration consistency across all ZHTP packages
 
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use super::{NodeConfig, ConfigError};
 use tracing::{info, warn, error};
 
 /// Validate complete configuration across all packages
 pub async fn validate_complete_configuration(config: &NodeConfig) -> Result<()> {
-    info!("🔍 Validating configuration across {} packages...", config.package_count());
+    info!("Validating configuration across {} packages...", config.package_count());
     
     // Validate port assignments
     validate_port_assignments(config)?;
@@ -32,7 +32,7 @@ pub async fn validate_complete_configuration(config: &NodeConfig) -> Result<()> 
     // Validate cross-package integration
     validate_integration_settings(config)?;
     
-    info!("✅ Configuration validation completed successfully");
+    info!("Configuration validation completed successfully");
     Ok(())
 }
 
@@ -41,19 +41,30 @@ fn validate_port_assignments(config: &NodeConfig) -> Result<()> {
     let mut used_ports = HashMap::new();
     let mut conflicts = Vec::new();
     
-    // Check mesh port
-    if let Some(existing) = used_ports.insert(config.network_config.mesh_port, "mesh".to_string()) {
-        conflicts.push((config.network_config.mesh_port, vec!["mesh".to_string(), existing]));
+    // Special handling for unified server: mesh and API can share port 9333
+    let unified_server_port = 9333;
+    let is_unified_mode = config.network_config.mesh_port == unified_server_port 
+                       && config.protocols_config.api_port == unified_server_port;
+    
+    if is_unified_mode {
+        // In unified mode, mesh and API intentionally share the same port
+        used_ports.insert(unified_server_port, "unified-server".to_string());
+        info!("Using unified server mode - mesh and API protocols share port {}", unified_server_port);
+    } else {
+        // Check mesh port
+        if let Some(existing) = used_ports.insert(config.network_config.mesh_port, "mesh".to_string()) {
+            conflicts.push((config.network_config.mesh_port, vec!["mesh".to_string(), existing]));
+        }
+        
+        // Check API port
+        if let Some(existing) = used_ports.insert(config.protocols_config.api_port, "protocols-api".to_string()) {
+            conflicts.push((config.protocols_config.api_port, vec!["protocols-api".to_string(), existing]));
+        }
     }
     
-    // Check DHT port
+    // Check DHT port (always separate)
     if let Some(existing) = used_ports.insert(config.storage_config.dht_port, "storage-dht".to_string()) {
         conflicts.push((config.storage_config.dht_port, vec!["storage-dht".to_string(), existing]));
-    }
-    
-    // Check API port
-    if let Some(existing) = used_ports.insert(config.protocols_config.api_port, "protocols-api".to_string()) {
-        conflicts.push((config.protocols_config.api_port, vec!["protocols-api".to_string(), existing]));
     }
     
     // Check for standard port conflicts
@@ -68,12 +79,12 @@ fn validate_port_assignments(config: &NodeConfig) -> Result<()> {
     if !conflicts.is_empty() {
         let first_conflict_port = conflicts[0].0;
         for (port, packages) in &conflicts {
-            error!("❌ Port conflict on {}: used by {:?}", port, packages);
+            error!("Port conflict on {}: used by {:?}", port, packages);
         }
         return Err(ConfigError::PortConflict { port: first_conflict_port }.into());
     }
     
-    info!("✅ Port assignments validated - no conflicts detected");
+    info!("Port assignments validated - no conflicts detected");
     Ok(())
 }
 
@@ -84,14 +95,14 @@ fn validate_resource_allocations(config: &NodeConfig) -> Result<()> {
     // Check memory allocations
     let total_allocated_memory = allocations.bandwidth_allocation.len() * 100; // Rough estimate
     if total_allocated_memory > allocations.max_memory_mb {
-        warn!("⚠️ Memory allocation may exceed available memory");
+        warn!("Memory allocation may exceed available memory");
     }
     
     // Check CPU thread allocations
     let crypto_threads = config.zk_config.verification_threads;
     let total_threads = crypto_threads + 4; // Base threads for other operations
     if total_threads > allocations.max_cpu_threads {
-        warn!("⚠️ Thread allocation exceeds available CPU threads");
+        warn!("Thread allocation exceeds available CPU threads");
     }
     
     // Check storage capacity
@@ -105,7 +116,7 @@ fn validate_resource_allocations(config: &NodeConfig) -> Result<()> {
         }.into());
     }
     
-    info!("✅ Resource allocations validated");
+    info!("Resource allocations validated");
     Ok(())
 }
 
@@ -113,7 +124,7 @@ fn validate_resource_allocations(config: &NodeConfig) -> Result<()> {
 fn validate_security_consistency(config: &NodeConfig) -> Result<()> {
     // Check post-quantum cryptography consistency
     if config.crypto_config.post_quantum_enabled != (config.security_level != super::SecurityLevel::Basic) {
-        warn!("⚠️ Post-quantum crypto setting doesn't match security level");
+        warn!("Post-quantum crypto setting doesn't match security level");
     }
     
     // Check ZK proof security level consistency
@@ -125,15 +136,15 @@ fn validate_security_consistency(config: &NodeConfig) -> Result<()> {
     };
     
     if config.zk_config.verification_threads < expected_zk_threads {
-        warn!("⚠️ ZK verification threads below recommended level for security setting");
+        warn!("ZK verification threads below recommended level for security setting");
     }
     
     // Check consensus security requirements
     if config.consensus_config.validator_enabled && config.consensus_config.min_stake < 1000 {
-        warn!("⚠️ Low minimum stake for validator participation");
+        warn!("Low minimum stake for validator participation");
     }
     
-    info!("✅ Security consistency validated");
+    info!("Security consistency validated");
     Ok(())
 }
 
@@ -149,15 +160,15 @@ fn validate_mesh_mode_configuration(config: &NodeConfig) -> Result<()> {
     
     // Check long-range relay requirements
     if config.mesh_mode == super::MeshMode::PureMesh && !config.network_config.long_range_relays {
-        warn!("⚠️ Pure mesh mode without long-range relays may have limited global reach");
+        warn!("Pure mesh mode without long-range relays may have limited global reach");
     }
     
     // Check bootstrap peer configuration
     if config.mesh_mode == super::MeshMode::PureMesh && config.network_config.bootstrap_peers.is_empty() {
-        warn!("⚠️ Pure mesh mode without bootstrap peers may have connectivity issues");
+        warn!("Pure mesh mode without bootstrap peers may have connectivity issues");
     }
     
-    info!("✅ Mesh mode configuration validated");
+    info!("Mesh mode configuration validated");
     Ok(())
 }
 
@@ -194,10 +205,10 @@ fn validate_consensus_parameters(config: &NodeConfig) -> Result<()> {
     
     // Check DAO configuration
     if consensus.dao_enabled && !config.economics_config.ubi_enabled {
-        warn!("⚠️ DAO enabled but UBI disabled - may affect governance participation");
+        warn!("DAO enabled but UBI disabled - may affect governance participation");
     }
     
-    info!("✅ Consensus parameters validated");
+    info!("Consensus parameters validated");
     Ok(())
 }
 
@@ -207,12 +218,12 @@ fn validate_economic_parameters(config: &NodeConfig) -> Result<()> {
     
     // Check UBI parameters
     if economics.ubi_enabled && economics.daily_ubi_amount == 0 {
-        warn!("⚠️ UBI enabled but daily amount is 0");
+        warn!("UBI enabled but daily amount is 0");
     }
     
     // Check DAO fee percentage
     if economics.dao_fee_percentage < 0.0 || economics.dao_fee_percentage > 10.0 {
-        warn!("⚠️ DAO fee percentage outside recommended range (0-10%)");
+        warn!("DAO fee percentage outside recommended range (0-10%)");
     }
     
     // Check token economics
@@ -224,15 +235,15 @@ fn validate_economic_parameters(config: &NodeConfig) -> Result<()> {
     }
     
     if token_economics.inflation_rate > 20.0 {
-        warn!("⚠️ High inflation rate may affect token value stability");
+        warn!("High inflation rate may affect token value stability");
     }
     
     // Check reward consistency
     if economics.mesh_rewards && !config.network_config.protocols.contains(&"mesh".to_string()) {
-        warn!("⚠️ Mesh rewards enabled but mesh protocols not configured");
+        warn!("Mesh rewards enabled but mesh protocols not configured");
     }
     
-    info!("✅ Economic parameters validated");
+    info!("Economic parameters validated");
     Ok(())
 }
 
@@ -242,29 +253,29 @@ fn validate_integration_settings(config: &NodeConfig) -> Result<()> {
     
     // Check event bus configuration
     if !integration.event_bus_enabled {
-        warn!("⚠️ Event bus disabled - cross-package communication may be limited");
+        warn!("Event bus disabled - cross-package communication may be limited");
     }
     
     // Check health check intervals
     if integration.health_check_interval_ms < 1000 {
-        warn!("⚠️ Very short health check interval may impact performance");
+        warn!("Very short health check interval may impact performance");
     }
     
     if integration.health_check_interval_ms > 300000 { // 5 minutes
-        warn!("⚠️ Long health check interval may delay failure detection");
+        warn!("Long health check interval may delay failure detection");
     }
     
     // Check timeout configurations
     for (package, timeout_ms) in &integration.cross_package_timeouts {
         if *timeout_ms < 1000 {
-            warn!("⚠️ Short timeout for package '{}' may cause premature failures", package);
+            warn!("Short timeout for package '{}' may cause premature failures", package);
         }
         if *timeout_ms > 60000 { // 1 minute
-            warn!("⚠️ Long timeout for package '{}' may delay error detection", package);
+            warn!("Long timeout for package '{}' may delay error detection", package);
         }
     }
     
-    info!("✅ Integration settings validated");
+    info!("Integration settings validated");
     Ok(())
 }
 
@@ -279,20 +290,24 @@ pub async fn perform_configuration_health_check(config: &NodeConfig) -> ConfigHe
     
     if !config.zk_config.plonky2_enabled {
         report.add_warning("Zero-knowledge proofs disabled - privacy features unavailable");
+        report.add_recommendation("Enable plonky2_enabled = true in zk_config to activate privacy features");
     }
     
     if config.network_config.max_peers < 10 {
         report.add_warning("Low peer count may affect network resilience");
+        report.add_recommendation("Consider increasing max_peers to at least 20 for better network redundancy");
     }
     
     // Check resource adequacy
     if config.resource_allocations.max_memory_mb < 1024 {
         report.add_warning("Low memory allocation may affect performance");
+        report.add_recommendation("Increase max_memory_mb to at least 2048 MB for optimal performance");
     }
     
     // Check economic sustainability
     if config.economics_config.ubi_enabled && config.economics_config.daily_ubi_amount > 1000 {
         report.add_warning("High UBI amount may affect economic sustainability");
+        report.add_recommendation("Consider reducing daily_ubi_amount below 1000 to maintain economic balance");
     }
     
     report
@@ -335,26 +350,26 @@ impl ConfigHealthReport {
         if !self.critical_issues.is_empty() {
             error!("🚨 Critical Configuration Issues:");
             for issue in &self.critical_issues {
-                error!("   ❌ {}", issue);
+                error!("   {}", issue);
             }
         }
         
         if !self.warnings.is_empty() {
-            warn!("⚠️ Configuration Warnings:");
+            warn!("Configuration Warnings:");
             for warning in &self.warnings {
-                warn!("   ⚠️ {}", warning);
+                warn!("   {}", warning);
             }
         }
         
         if !self.recommendations.is_empty() {
-            info!("💡 Configuration Recommendations:");
+            info!("Configuration Recommendations:");
             for rec in &self.recommendations {
-                info!("   💡 {}", rec);
+                info!("   {}", rec);
             }
         }
         
         if self.critical_issues.is_empty() && self.warnings.is_empty() {
-            info!("✅ Configuration health check passed");
+            info!("Configuration health check passed");
         }
     }
 }

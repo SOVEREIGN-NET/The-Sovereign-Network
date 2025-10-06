@@ -2,13 +2,13 @@
 //! 
 //! Monitors the health and status of all ZHTP components
 
-use anyhow::{Result, Context};
+use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tokio::sync::RwLock;
-use tokio::time::{Duration, Instant, interval};
-use tracing::{info, warn, error, debug};
+use tokio::time::{Duration, interval};
+use tracing::{info, error, debug};
 
 use super::alerting::{Alert, AlertLevel, AlertManager};
 
@@ -355,6 +355,7 @@ pub enum IntegrityStatus {
 pub struct StorageHealth {
     pub total_capacity: u64,
     pub used_capacity: u64,
+    pub dht_node_count: u32,
     pub replication_health: ReplicationHealth,
     pub retrieval_health: RetrievalHealth,
     pub availability: f64,
@@ -459,12 +460,12 @@ impl HealthMonitor {
                 interval.tick().await;
                 
                 if let Err(e) = Self::perform_health_checks(&health_status, &alert_manager).await {
-                    error!("❌ Health check failed: {}", e);
+                    error!("Health check failed: {}", e);
                 }
             }
         });
 
-        info!("✅ Health monitoring started");
+        info!("Health monitoring started");
         Ok(())
     }
 
@@ -758,12 +759,20 @@ impl HealthMonitor {
         let storage_stats = match create_default_storage_config() {
             Ok(config) => {
                 match lib_storage::UnifiedStorageSystem::new(config).await {
-                    Ok(storage) => {
-                        // Get actual storage system metrics
-                        let total_storage = 1024 * 1024 * 1024 * 100; // 100GB system capacity
-                        let used_storage = std::fs::metadata("./")
-                            .map(|m| m.len())
-                            .unwrap_or(1024 * 1024 * 500); // 500MB fallback
+                    Ok(mut storage) => {
+                        // Try to get real storage metrics
+                        let (total_storage, used_storage) = match storage.get_statistics().await {
+                            Ok(stats) => (
+                                1024 * 1024 * 1024 * 100, // 100GB system capacity
+                                stats.storage_stats.total_storage_used
+                            ),
+                            Err(_) => (
+                                1024 * 1024 * 1024 * 100, // 100GB system capacity
+                                std::fs::metadata("./")
+                                    .map(|m| m.len())
+                                    .unwrap_or(1024 * 1024 * 500) // 500MB fallback
+                            )
+                        };
                         
                         Some(StorageStats {
                             total_storage,
@@ -773,8 +782,7 @@ impl HealthMonitor {
                     }
                     Err(_) => {
                         // Fallback to system disk usage
-                        use sysinfo::{System, Disks};
-                        let mut system = System::new_all();
+                        use sysinfo::Disks;
                         let disks = Disks::new_with_refreshed_list();
                         
                         if let Some(disk) = disks.iter().next() {
@@ -797,6 +805,7 @@ impl HealthMonitor {
                 Ok(StorageHealth {
                     total_capacity: stats.total_storage,
                     used_capacity: stats.used_storage,
+                    dht_node_count: stats.dht_nodes,
                     replication_health: ReplicationHealth {
                         replication_factor: 3.0, // Standard replication factor
                         under_replicated_files: 0, // Calculated from storage system status
@@ -815,6 +824,7 @@ impl HealthMonitor {
                 Ok(StorageHealth {
                     total_capacity: 1024 * 1024 * 1024 * 1024, // 1TB
                     used_capacity: 1024 * 1024 * 1024 * 250,   // 250GB
+                    dht_node_count: 0, // No DHT nodes when storage unavailable
                     replication_health: ReplicationHealth {
                         replication_factor: 3.0,
                         under_replicated_files: 50,
@@ -1080,6 +1090,7 @@ impl Default for HealthStatus {
             storage_health: StorageHealth {
                 total_capacity: 0,
                 used_capacity: 0,
+                dht_node_count: 0,
                 replication_health: ReplicationHealth {
                     replication_factor: 0.0,
                     under_replicated_files: 0,

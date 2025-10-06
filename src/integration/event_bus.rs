@@ -2,7 +2,7 @@
 //! 
 //! Provides publish-subscribe messaging between ZHTP components
 
-use anyhow::{Result, Context};
+use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -11,10 +11,9 @@ use std::pin::Pin;
 use std::sync::{Arc, atomic::{AtomicU64, AtomicBool, Ordering}};
 use tokio::sync::{RwLock, mpsc, broadcast};
 use tokio::time::{Duration, Instant};
-use tracing::{info, warn, error, debug};
+use tracing::{info, error, debug};
 use crate::integration::dependency_injection::Injectable;
 use async_trait::async_trait;
-use std::any::Any;
 
 /// Event bus for component communication
 pub struct EventBus {
@@ -116,14 +115,14 @@ impl EventBus {
         }
 
         self.running.store(true, Ordering::SeqCst);
-        info!("📡 Starting event bus...");
+        info!("Starting event bus...");
 
         // Start metrics collection if enabled
         if self.config.enable_metrics {
             self.start_metrics_collection().await?;
         }
 
-        info!("✅ Event bus started");
+        info!("Event bus started");
         Ok(())
     }
 
@@ -135,7 +134,7 @@ impl EventBus {
         self.publishers.write().await.clear();
         self.subscribers.write().await.clear();
         
-        info!("📡 Event bus stopped");
+        info!("Event bus stopped");
         Ok(())
     }
 
@@ -176,7 +175,7 @@ impl EventBus {
         // Publish event
         match publisher.send(event.clone()) {
             Ok(_) => {
-                debug!("📡 Published event: {} to topic: {}", event.id, topic);
+                debug!("Published event: {} to topic: {}", event.id, topic);
                 
                 // Notify direct subscribers
                 self.notify_subscribers(topic, event).await?;
@@ -184,7 +183,7 @@ impl EventBus {
                 Ok(())
             }
             Err(e) => {
-                error!("❌ Failed to publish event to topic {}: {}", topic, e);
+                error!("Failed to publish event to topic {}: {}", topic, e);
                 Err(anyhow::anyhow!("Failed to publish event: {}", e))
             }
         }
@@ -299,11 +298,11 @@ impl EventBus {
                     }
                 }
                 
-                debug!("📡 Unsubscribed from topic: {}", topic_clone);
+                debug!("Unsubscribed from topic: {}", topic_clone);
             }
         });
 
-        debug!("📡 Subscribed to topic: {} with ID: {}", topic, subscription_id);
+        debug!("Subscribed to topic: {} with ID: {}", topic, subscription_id);
         
         Ok(SubscriptionHandle {
             topic: topic.to_string(),
@@ -328,7 +327,7 @@ impl EventBus {
             }
         }
         
-        debug!("📡 Subscribed to {} topics matching pattern: {}", handles.len(), pattern);
+        debug!("Subscribed to {} topics matching pattern: {}", handles.len(), pattern);
         Ok(handles)
     }
 
@@ -356,10 +355,10 @@ impl EventBus {
                 let event_clone = event.clone();
                 match handler(event_clone).await {
                     Ok(()) => {
-                        debug!("📡 Event {} processed successfully by handler", event.id);
+                        debug!("Event {} processed successfully by handler", event.id);
                     }
                     Err(e) => {
-                        error!("❌ Event {} processing failed: {}", event.id, e);
+                        error!("Event {} processing failed: {}", event.id, e);
                         
                         // Update failure metrics
                         if self.config.enable_metrics {
@@ -408,7 +407,7 @@ impl EventBus {
                         total_time / metrics_guard.processing_times.len() as u32;
                 }
                 
-                debug!("📊 Event bus metrics updated");
+                debug!("Event bus metrics updated");
             }
         });
         
@@ -445,7 +444,7 @@ impl EventBus {
         let publishers = self.publishers.read().await;
         let subscribers = self.subscribers.read().await;
         
-        debug!("📡 Event bus health: running={}, topics={}, subscribers={}", 
+        debug!("Event bus health: running={}, topics={}, subscribers={}", 
                running, publishers.len(), subscribers.len());
         
         Ok(running)
@@ -471,7 +470,7 @@ impl EventBus {
         publishers.remove(topic);
         subscribers.remove(topic);
         
-        debug!("📡 Cleared topic: {}", topic);
+        debug!("Cleared topic: {}", topic);
         Ok(())
     }
 }
@@ -481,7 +480,7 @@ impl SubscriptionHandle {
     pub fn unsubscribe(self) {
         // The unsubscribe will happen when the handle is dropped
         // due to the mpsc channel closure
-        debug!("📡 Unsubscribing from topic: {}", self.topic);
+        debug!("Unsubscribing from topic: {}", self.topic);
     }
     
     /// Get subscription info
@@ -556,7 +555,7 @@ impl Event {
 #[async_trait]
 impl Injectable for EventBus {
     async fn initialize(&self) -> Result<()> {
-        info!("🚀 EventBus initialized");
+        info!(" EventBus initialized");
         Ok(())
     }
 

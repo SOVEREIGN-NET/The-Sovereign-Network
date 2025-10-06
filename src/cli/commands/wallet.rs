@@ -27,14 +27,14 @@ pub async fn handle_wallet_command(args: WalletArgs, cli: &ZhtpCli) -> Result<()
             if response.status().is_success() {
                 let result: serde_json::Value = response.json().await?;
                 let formatted = format_output(&result, &cli.format)?;
-                println!("✅ Wallet creation orchestrated successfully!");
+                println!("Wallet creation orchestrated successfully!");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate wallet creation: {}", response.status());
+                println!("Failed to orchestrate wallet creation: {}", response.status());
             }
         }
         WalletAction::Balance { address } => {
-            println!("💰 Orchestrating balance check for: {}", address);
+            println!("Orchestrating balance check for: {}", address);
             
             let response = client
                 .get(&format!("{}/wallet/balance", base_url))
@@ -48,7 +48,7 @@ pub async fn handle_wallet_command(args: WalletArgs, cli: &ZhtpCli) -> Result<()
                 println!("Balance orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate balance check: {}", response.status());
+                println!("Failed to orchestrate balance check: {}", response.status());
             }
         }
         WalletAction::Transfer { from, to, amount } => {
@@ -70,14 +70,14 @@ pub async fn handle_wallet_command(args: WalletArgs, cli: &ZhtpCli) -> Result<()
             if response.status().is_success() {
                 let result: serde_json::Value = response.json().await?;
                 let formatted = format_output(&result, &cli.format)?;
-                println!("✅ Transfer orchestrated successfully!");
+                println!("Transfer orchestrated successfully!");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate transfer: {}", response.status());
+                println!("Failed to orchestrate transfer: {}", response.status());
             }
         }
         WalletAction::History { address } => {
-            println!("📊 Orchestrating transaction history for: {}", address);
+            println!("Orchestrating transaction history for: {}", address);
             
             let response = client
                 .get(&format!("{}/wallet/history", base_url))
@@ -91,11 +91,11 @@ pub async fn handle_wallet_command(args: WalletArgs, cli: &ZhtpCli) -> Result<()
                 println!("Transaction history orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate history request: {}", response.status());
+                println!("Failed to orchestrate history request: {}", response.status());
             }
         }
         WalletAction::List => {
-            println!("📋 Orchestrating wallet list...");
+            println!("Orchestrating wallet list...");
             
             let response = client
                 .get(&format!("{}/wallet/list", base_url))
@@ -108,7 +108,7 @@ pub async fn handle_wallet_command(args: WalletArgs, cli: &ZhtpCli) -> Result<()
                 println!("Wallet list orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate wallet list: {}", response.status());
+                println!("Failed to orchestrate wallet list: {}", response.status());
             }
         }
     }

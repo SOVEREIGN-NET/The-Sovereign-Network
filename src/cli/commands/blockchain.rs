@@ -10,7 +10,7 @@ pub async fn handle_blockchain_command(args: BlockchainArgs, cli: &ZhtpCli) -> R
     
     match args.action {
         BlockchainAction::Status => {
-            println!("⛓️ Orchestrating blockchain status check...");
+            println!("Orchestrating blockchain status check...");
             
             let response = client
                 .get(&format!("{}/blockchain/status", base_url))
@@ -23,7 +23,7 @@ pub async fn handle_blockchain_command(args: BlockchainArgs, cli: &ZhtpCli) -> R
                 println!("Blockchain status orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate blockchain status: {}", response.status());
+                println!("Failed to orchestrate blockchain status: {}", response.status());
             }
         }
         BlockchainAction::Transaction { tx_hash } => {
@@ -46,11 +46,11 @@ pub async fn handle_blockchain_command(args: BlockchainArgs, cli: &ZhtpCli) -> R
                 println!("Transaction lookup orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate transaction lookup: {}", response.status());
+                println!("Failed to orchestrate transaction lookup: {}", response.status());
             }
         }
         BlockchainAction::Stats => {
-            println!("📊 Orchestrating blockchain statistics...");
+            println!("Orchestrating blockchain statistics...");
             
             let response = client
                 .get(&format!("{}/blockchain/stats", base_url))
@@ -63,7 +63,7 @@ pub async fn handle_blockchain_command(args: BlockchainArgs, cli: &ZhtpCli) -> R
                 println!("Blockchain stats orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate blockchain stats: {}", response.status());
+                println!("Failed to orchestrate blockchain stats: {}", response.status());
             }
         }
     }

@@ -372,7 +372,7 @@ impl Environment {
 
 /// Load environment-specific configuration
 pub async fn load_environment_config(environment: Environment) -> Result<EnvironmentConfig> {
-    tracing::info!("🌍 Loading configuration for {} environment", environment);
+    tracing::info!("Loading configuration for {} environment", environment);
     
     // Validate environment requirements
     environment.validate_requirements()?;
@@ -382,12 +382,12 @@ pub async fn load_environment_config(environment: Environment) -> Result<Environ
     
     // Load environment-specific overrides if available
     if let Ok(env_override) = std::env::var("ZHTP_CONFIG_OVERRIDE") {
-        tracing::info!("📁 Loading environment config override from: {}", env_override);
+        tracing::info!("Loading environment config override from: {}", env_override);
         
         if let Ok(override_content) = tokio::fs::read_to_string(&env_override).await {
             if let Ok(override_config) = toml::from_str::<EnvironmentConfig>(&override_content) {
                 config = override_config;
-                tracing::info!("✅ Applied environment configuration override");
+                tracing::info!("Applied environment configuration override");
             }
         }
     }
@@ -398,7 +398,7 @@ pub async fn load_environment_config(environment: Environment) -> Result<Environ
 /// Get available system memory in MB
 fn get_available_memory_mb() -> usize {
     // Simple implementation - in production would use proper system info
-    use std::process::Command;
+    // Command would be used for system memory detection in production
     
     #[cfg(windows)]
     {

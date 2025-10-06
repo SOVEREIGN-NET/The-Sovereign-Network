@@ -10,7 +10,7 @@ pub async fn handle_server_command(args: ServerArgs, cli: &ZhtpCli) -> Result<()
     
     match args.action {
         ServerAction::Start => {
-            println!("🚀 Starting ZHTP orchestrator server...");
+            println!(" Starting ZHTP orchestrator server...");
             
             let request_body = json!({
                 "action": "start",
@@ -29,7 +29,7 @@ pub async fn handle_server_command(args: ServerArgs, cli: &ZhtpCli) -> Result<()
                 println!("Server start orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to start orchestrator server: {}", response.status());
+                println!("Failed to start orchestrator server: {}", response.status());
             }
         }
         ServerAction::Stop => {
@@ -52,11 +52,11 @@ pub async fn handle_server_command(args: ServerArgs, cli: &ZhtpCli) -> Result<()
                 println!("Server stop orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to stop orchestrator server: {}", response.status());
+                println!("Failed to stop orchestrator server: {}", response.status());
             }
         }
         ServerAction::Restart => {
-            println!("🔄 Restarting ZHTP orchestrator server...");
+            println!(" Restarting ZHTP orchestrator server...");
             
             let request_body = json!({
                 "action": "restart",
@@ -75,11 +75,11 @@ pub async fn handle_server_command(args: ServerArgs, cli: &ZhtpCli) -> Result<()
                 println!("Server restart orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to restart orchestrator server: {}", response.status());
+                println!("Failed to restart orchestrator server: {}", response.status());
             }
         }
         ServerAction::Status => {
-            println!("📊 Checking ZHTP orchestrator server status...");
+            println!("Checking ZHTP orchestrator server status...");
             
             let response = client
                 .get(&format!("{}/server/status", base_url))
@@ -92,7 +92,7 @@ pub async fn handle_server_command(args: ServerArgs, cli: &ZhtpCli) -> Result<()
                 println!("Server status orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to get server status: {}", response.status());
+                println!("Failed to get server status: {}", response.status());
             }
         }
         ServerAction::Config => {
@@ -109,7 +109,7 @@ pub async fn handle_server_command(args: ServerArgs, cli: &ZhtpCli) -> Result<()
                 println!("Server configuration orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to get server configuration: {}", response.status());
+                println!("Failed to get server configuration: {}", response.status());
             }
         }
     }

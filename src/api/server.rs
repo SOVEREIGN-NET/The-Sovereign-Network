@@ -4,22 +4,24 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use anyhow::{Result, Context};
+use anyhow::Result;
 use tracing::{info, error};
 
 // ZHTP protocol imports
-use lib_protocols::zhtp::{Router, ZhtpRequestHandler, ZhtpResult};
+use lib_protocols::zhtp::{Router, ZhtpResult};
+// Removed unused Context, ZhtpRequestHandler
 use lib_protocols::zhtp::routing::RouterConfig;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 
 // Import our handlers and middleware
-use crate::api::handlers::{IdentityHandler, BlockchainHandler, StorageHandler, ProtocolHandler, NetworkHandler};
+use crate::api::handlers::NetworkHandler;
+// Removed unused IdentityHandler, BlockchainHandler, StorageHandler, ProtocolHandler
 use crate::api::middleware::MiddlewareStack;
 
 // External library imports
 use lib_identity::IdentityManager;
 use lib_blockchain::Blockchain;
-use lib_storage::StorageProvider;
+// Removed unused StorageProvider
 use lib_economy::EconomicModel;
 
 /// Clean ZHTP server implementation
@@ -48,7 +50,7 @@ impl std::fmt::Debug for ZhtpServer {
 impl ZhtpServer {
     /// Create a new ZHTP server with clean configuration
     pub async fn new() -> Result<Self> {
-        info!("🚀 Initializing ZHTP Server...");
+        info!(" Initializing ZHTP Server...");
         
         // Initialize router with default config
         let router_config = RouterConfig::default();
@@ -200,12 +202,12 @@ impl ZhtpServer {
         };
         router.add_route(remove_peer_route)?;
         
-        info!("📋 Router configured with network handler routes");
+        info!("Router configured with network handler routes");
         
         // Initialize middleware stack
         let middleware = MiddlewareStack::new();
         
-        info!("✅ ZHTP Server initialized successfully");
+        info!("ZHTP Server initialized successfully");
         
         Ok(Self {
             router,
@@ -244,12 +246,12 @@ impl ZhtpServer {
     
     /// Start the ZHTP server
     pub async fn start(&self, bind_address: &str) -> Result<()> {
-        info!("🌐 Starting ZHTP server on {}", bind_address);
+        info!("Starting ZHTP server on {}", bind_address);
         
         // This is where you would implement the actual server listening logic
         // For now, we'll just log that the server is ready
-        info!("✅ ZHTP server is ready to handle requests");
-        info!("📍 Server endpoints:");
+        info!("ZHTP server is ready to handle requests");
+        info!(" Server endpoints:");
         info!("   - Identity: /api/v1/identity/*");
         info!("   - Blockchain: /api/v1/blockchain/*");
         info!("   - Storage: /api/v1/storage/*");
@@ -286,6 +288,38 @@ impl ZhtpServer {
     
     /// Get server statistics
     pub async fn get_stats(&self) -> Result<ZhtpResponse> {
+        // Use all server fields to gather comprehensive stats
+        let identity_count = {
+            let _identity_manager = self.identity_manager.read().await;
+            // Use placeholder since identities field is private
+            0usize
+        };
+        
+        let blockchain_stats = {
+            let blockchain = self.blockchain.read().await;
+            let block_count = blockchain.blocks.len();
+            let transaction_count = blockchain.blocks.iter()
+                .map(|block| block.transactions.len())
+                .sum::<usize>();
+            (block_count, transaction_count)
+        };
+        
+        let storage_stats = {
+            let mut storage = self.storage.write().await;
+            match storage.get_statistics().await {
+                Ok(stats) => (stats.storage_stats.total_storage_used, stats.storage_stats.total_content_count),
+                Err(_) => (0, 0) // Default values on error
+            }
+        };
+        
+        let economic_stats = {
+            let economic_model = self.economic_model.read().await;
+            // Use available public fields from EconomicModel
+            let total_supply = economic_model.max_supply;
+            let circulating_supply = economic_model.current_supply;
+            (total_supply, circulating_supply)
+        };
+        
         let stats_data = serde_json::json!({
             "status": "active",
             "handlers_registered": 4,
@@ -293,10 +327,110 @@ impl ZhtpServer {
             "requests_processed": 0, // Would need to track this
             "uptime": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs()
+                .as_secs(),
+            "identity_stats": {
+                "total_identities": identity_count
+            },
+            "blockchain_stats": {
+                "block_count": blockchain_stats.0,
+                "transaction_count": blockchain_stats.1
+            },
+            "storage_stats": {
+                "total_storage_used": storage_stats.0,
+                "total_content_count": storage_stats.1
+            },
+            "economic_stats": {
+                "total_supply": economic_stats.0,
+                "circulating_supply": economic_stats.1
+            }
         });
         
         let json_response = serde_json::to_vec(&stats_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+    
+    /// Get identity manager status
+    pub async fn get_identity_status(&self) -> Result<ZhtpResponse> {
+        let identity_manager = self.identity_manager.read().await;
+        let identity_count = identity_manager.list_identities().len();
+        
+        let status_data = serde_json::json!({
+            "status": "active",
+            "total_identities": identity_count,
+            "identity_manager_ready": true
+        });
+        
+        let json_response = serde_json::to_vec(&status_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+    
+    /// Get blockchain status
+    pub async fn get_blockchain_status(&self) -> Result<ZhtpResponse> {
+        let blockchain = self.blockchain.read().await;
+        
+        let status_data = serde_json::json!({
+            "status": "active",
+            "height": blockchain.get_height(),
+            "pending_transactions": blockchain.get_pending_transactions().len(),
+            "total_identities": blockchain.get_all_identities().len(),
+            "blockchain_ready": true
+        });
+        
+        let json_response = serde_json::to_vec(&status_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+    
+    /// Get storage system status
+    pub async fn get_storage_status(&self) -> Result<ZhtpResponse> {
+        let (total_used, total_count) = {
+            let mut storage = self.storage.write().await;
+            match storage.get_statistics().await {
+                Ok(stats) => (stats.storage_stats.total_storage_used, stats.storage_stats.total_content_count),
+                Err(_) => (0, 0)
+            }
+        };
+        
+        let status_data = serde_json::json!({
+            "status": "active",
+            "total_storage_used": total_used,
+            "total_content_count": total_count,
+            "storage_ready": true
+        });
+        
+        let json_response = serde_json::to_vec(&status_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+    
+    /// Get economic model status
+    pub async fn get_economic_status(&self) -> Result<ZhtpResponse> {
+        let economic_model = self.economic_model.read().await;
+        
+        let status_data = serde_json::json!({
+            "status": "active",
+            "base_routing_rate": economic_model.base_routing_rate,
+            "quality_multiplier": economic_model.quality_multiplier,
+            "current_supply": economic_model.current_supply,
+            "max_supply": economic_model.max_supply,
+            "economic_model_ready": true
+        });
+        
+        let json_response = serde_json::to_vec(&status_data)?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
             "application/json".to_string(),

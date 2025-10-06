@@ -18,14 +18,14 @@ ZHTP is a revolutionary network node that orchestrates a complete internet repla
 
 ### Key Features
 
-- 🌐 **Complete ISP Replacement** - Pure mesh networking with Bluetooth LE, WiFi Direct, and LoRaWAN
+- **Complete ISP Replacement** - Pure mesh networking with Bluetooth LE, WiFi Direct, and LoRaWAN
 - 🔒 **Zero-Knowledge Privacy** - All communications protected with ZK proofs and post-quantum cryptography  
-- 💰 **Universal Basic Income** - 33 ZHTP daily, 1000 ZHTP monthly for all verified citizens
+- **Universal Basic Income** - 33 ZHTP daily, 1000 ZHTP monthly for all verified citizens
 - 🏛️ **Decentralized Governance** - DAO-based decision making with liquid democracy
-- 🚀 **Web4 Protocol Stack** - Next-generation internet protocols
+-  **Web4 Protocol Stack** - Next-generation internet protocols
 - ⚡ **Real-time Monitoring** - Comprehensive system health and performance metrics
 
-## 🏗️ Architecture
+##Architecture
 
 ZHTP operates as a **Level 1 Orchestrator** that coordinates **Level 2 Components**:
 
@@ -61,21 +61,21 @@ The ZHTP node requires all 9 specialized libraries to function:
 
 | Library | Purpose | Port | Status |
 |---------|---------|------|--------|
-| **lib-crypto** | Post-quantum cryptography (CRYSTALS-Dilithium/Kyber) | - | ✅ Required |
-| **lib-proofs** | Zero-knowledge system (Plonky2) | 8008 | ✅ Required |
-| **lib-identity** | Privacy-preserving identity management | 8007 | ✅ Required |
-| **lib-storage** | Distributed storage with encryption | 8004 | ✅ Required |
-| **lib-network** | Mesh networking (BLE, WiFi Direct, LoRaWAN) | 8003 | ✅ Required |
-| **lib-blockchain** | Blockchain layer with UBI support | 8002 | ✅ Required |
-| **lib-consensus** | Consensus mechanism | 8006 | ✅ Required |
-| **lib-economy** | Economic incentives and DAO governance | 8005 | ✅ Required |
-| **lib-protocols** | High-level protocol implementations | 8001 | ✅ Required |
+| **lib-crypto** | Post-quantum cryptography (CRYSTALS-Dilithium/Kyber) | - | Required |
+| **lib-proofs** | Zero-knowledge system (Plonky2) | 8008 | Required |
+| **lib-identity** | Privacy-preserving identity management | 8007 | Required |
+| **lib-storage** | Distributed storage with encryption | 8004 | Required |
+| **lib-network** | Mesh networking (BLE, WiFi Direct, LoRaWAN) | 8003 | Required |
+| **lib-blockchain** | Blockchain layer with UBI support | 8002 | Required |
+| **lib-consensus** | Consensus mechanism | 8006 | Required |
+| **lib-economy** | Economic incentives and DAO governance | 8005 | Required |
+| **lib-protocols** | High-level protocol implementations | 8001 | Required |
 
 ### Internal Modules
 
 The ZHTP orchestrator contains sophisticated internal systems:
 
-#### 🔧 Configuration System (`src/config/`)
+#### Configuration System (`src/config/`)
 - **aggregation.rs** - Cross-package configuration coordination
 - **validation.rs** - Configuration conflict detection and resolution
 - **environment.rs** - Environment-specific settings (dev/staging/prod)
@@ -93,24 +93,24 @@ The ZHTP orchestrator contains sophisticated internal systems:
 - **blockchain_provider.rs** - Blockchain integration layer
 - **shared_blockchain.rs** - Shared blockchain state management
 
-#### 📊 Monitoring System (`src/monitoring/`)
+#### Monitoring System (`src/monitoring/`)
 - **metrics.rs** - Real-time system metrics collection
 - **health_check.rs** - Component health monitoring
 - **alerting.rs** - Alert management and notifications
 - **dashboard.rs** - Web dashboard with live visualization
 
-#### 🔗 Integration Layer (`src/integration/`)
+#### Integration Layer (`src/integration/`)
 - **service_container.rs** - Dependency injection container
 - **event_bus.rs** - Inter-component messaging system
 - **component_manager.rs** - Component startup and shutdown coordination
 - **dependency_injection.rs** - Advanced dependency resolution
 
-#### 🌐 API Server (`src/api/`)
+#### API Server (`src/api/`)
 - **server.rs** - HTTP API server for external integration
 - **endpoints.rs** - RESTful API endpoint definitions
 - **handlers/** - Request handlers for each functional area
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 
@@ -293,7 +293,7 @@ cargo run -- component status lib-network
 cargo run -- component restart lib-consensus
 ```
 
-## 🔧 Configuration
+## Configuration
 
 ### Default Configuration File (`lib-node.toml`)
 
@@ -345,7 +345,7 @@ export ZHTP_API_PORT="9333"
 export ZHTP_ENVIRONMENT="development"
 ```
 
-## 🌐 API Reference
+## API Reference
 
 ### REST API Endpoints
 
@@ -377,7 +377,7 @@ The ZHTP node provides a comprehensive REST API on port 9333:
 
 For complete API documentation, visit: `http://127.0.0.1:9333/docs` when the server is running.
 
-## 🔍 Monitoring & Debugging
+## Monitoring & Debugging
 
 ### Web Dashboard
 
@@ -414,7 +414,7 @@ curl http://127.0.0.1:9333/api/v1/health
 curl http://127.0.0.1:9333/api/v1/health/lib-blockchain
 ```
 
-## 🛠️ Development
+## Development
 
 ### Building from Source
 
@@ -452,7 +452,7 @@ cargo run -- node start --dev
 cargo run -- node start --config dev-config.toml --dev
 ```
 
-## 🔐 Security Features
+## Security Features
 
 ### Post-Quantum Cryptography
 - **CRYSTALS-Dilithium** - Digital signatures
@@ -469,7 +469,7 @@ cargo run -- node start --config dev-config.toml --dev
 - **Quality Rewards** - Better service providers earn more
 - **Decentralized Governance** - Community-driven security decisions
 
-## 🌍 Network Modes
+## Network Modes
 
 ### Hybrid Mode (Default)
 - Uses mesh networking with TCP/IP fallback
@@ -486,20 +486,20 @@ cargo run -- node start --config dev-config.toml --dev
 - Useful for development and testing
 - Complete functionality simulation
 
-## 🎯 Roadmap
+## Roadmap
 
 ### Phase 1: Foundation (Current)
-- ✅ Core orchestrator implementation
-- ✅ Configuration management system
-- ✅ CLI interface and interactive shell
-- ✅ Monitoring and health checks
-- ✅ API server with REST endpoints
+- Core orchestrator implementation
+- Configuration management system
+- CLI interface and interactive shell
+- Monitoring and health checks
+- API server with REST endpoints
 
 ### Phase 2: Network Integration
-- 🔄 Complete mesh networking implementation
-- 🔄 ISP bypass functionality
-- 🔄 Multi-protocol support (BLE, WiFi Direct, LoRaWAN)
-- 🔄 Network topology optimization
+-  Complete mesh networking implementation
+-  ISP bypass functionality
+-  Multi-protocol support (BLE, WiFi Direct, LoRaWAN)
+-  Network topology optimization
 
 ### Phase 3: Economic System
 - 📅 UBI distribution implementation
@@ -513,7 +513,7 @@ cargo run -- node start --config dev-config.toml --dev
 - 📅 Mobile device support
 - 📅 Global network coordination
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions to the ZHTP project! Please see:
 

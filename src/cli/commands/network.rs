@@ -9,7 +9,7 @@ pub async fn handle_network_command(args: NetworkArgs, cli: &ZhtpCli) -> Result<
     
     match args.action {
         NetworkAction::Status => {
-            println!("🌐 Orchestrating network status check...");
+            println!("Orchestrating network status check...");
             
             let response = client
                 .get(&format!("{}/network/status", base_url))
@@ -22,11 +22,11 @@ pub async fn handle_network_command(args: NetworkArgs, cli: &ZhtpCli) -> Result<
                 println!("Network status orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate network status: {}", response.status());
+                println!("Failed to orchestrate network status: {}", response.status());
             }
         }
         NetworkAction::Peers => {
-            println!("👥 Orchestrating peer list request...");
+            println!("Orchestrating peer list request...");
             
             let response = client
                 .get(&format!("{}/network/peers", base_url))
@@ -39,7 +39,7 @@ pub async fn handle_network_command(args: NetworkArgs, cli: &ZhtpCli) -> Result<
                 println!("Network peers orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate peer list: {}", response.status());
+                println!("Failed to orchestrate peer list: {}", response.status());
             }
         }
         NetworkAction::Test => {
@@ -56,7 +56,7 @@ pub async fn handle_network_command(args: NetworkArgs, cli: &ZhtpCli) -> Result<
                 println!("Network test orchestrated:");
                 println!("{}", formatted);
             } else {
-                println!("❌ Failed to orchestrate network test: {}", response.status());
+                println!("Failed to orchestrate network test: {}", response.status());
             }
         }
     }

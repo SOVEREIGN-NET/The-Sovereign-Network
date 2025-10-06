@@ -222,7 +222,7 @@ impl MetricsCollector {
         }
 
         self.running.store(true, Ordering::SeqCst);
-        info!("📊 Starting metrics collection...");
+        info!("Starting metrics collection...");
 
         // Start collection loop
         let metrics_clone = self.metrics.clone();
@@ -237,19 +237,19 @@ impl MetricsCollector {
                 interval.tick().await;
                 
                 if let Err(e) = Self::collect_metrics(&metrics_clone, start_time).await {
-                    error!("❌ Failed to collect metrics: {}", e);
+                    error!("Failed to collect metrics: {}", e);
                 }
             }
         });
 
-        info!("✅ Metrics collection started");
+        info!("Metrics collection started");
         Ok(())
     }
 
     /// Stop metrics collection
     pub async fn stop(&self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
-        info!("📊 Stopped metrics collection");
+        info!("Stopped metrics collection");
         Ok(())
     }
 
@@ -324,7 +324,7 @@ impl MetricsCollector {
         // Collect economic metrics using real lib-economy
         Self::collect_economic_metrics(&mut metrics_guard).await?;
         
-        debug!("📊 Metrics collected successfully");
+        debug!("Metrics collected successfully");
         Ok(())
     }
 
@@ -421,10 +421,20 @@ impl MetricsCollector {
         // Get real storage metrics from lib-storage package with proper config
         if let Ok(config) = create_default_storage_config() {
             if let Ok(mut storage) = lib_storage::UnifiedStorageSystem::new(config).await {
-                // Use fallback values since get_storage_stats is not available
-                metrics.stored_files = 0;
-                metrics.storage_used_bytes = 1024 * 1024 * 100; // Default 100MB used
-                metrics.storage_available_bytes = 1024 * 1024 * 1024 * 10; // Default 10GB available
+                // Try to get real storage statistics
+                match storage.get_statistics().await {
+                    Ok(stats) => {
+                        metrics.stored_files = stats.storage_stats.total_content_count;
+                        metrics.storage_used_bytes = stats.storage_stats.total_storage_used;
+                        metrics.storage_available_bytes = 1024 * 1024 * 1024 * 10 - stats.storage_stats.total_storage_used; // 10GB limit
+                    },
+                    Err(_) => {
+                        // Fallback when stats unavailable
+                        metrics.stored_files = 0;
+                        metrics.storage_used_bytes = 1024 * 1024 * 100; // Default 100MB used
+                        metrics.storage_available_bytes = 1024 * 1024 * 1024 * 10; // Default 10GB available
+                    }
+                }
             } else {
                 // Fallback when storage system unavailable
                 metrics.stored_files = 0;
@@ -453,9 +463,9 @@ impl MetricsCollector {
             metrics.dao_proposals = blockchain.pending_transactions.len() as u64 / 10; // Estimate proposals
             metrics.dao_votes = blockchain.pending_transactions.len() as u64 / 5; // Estimate votes
             
-            debug!("📊 Economic metrics collected from blockchain data");
+            debug!("Economic metrics collected from blockchain data");
         } else {
-            debug!("📊 Economic metrics: blockchain not available, using defaults");
+            debug!("Economic metrics: blockchain not available, using defaults");
             metrics.total_ubi_distributed = 50000;
             metrics.token_circulation = 1000000;
             metrics.active_citizens = 100;
@@ -497,9 +507,8 @@ impl MetricsCollector {
 
     /// Get disk usage in bytes using real filesystem monitoring
     async fn get_disk_usage() -> Result<(u64, u64)> {
-        use sysinfo::{System, Disks};
+        use sysinfo::Disks;
         
-        let system = System::new_all();
         let disks = Disks::new_with_refreshed_list();
         
         // Get the disk containing the current working directory
@@ -524,7 +533,7 @@ impl MetricsCollector {
                 used_disk = disk.total_space() - disk.available_space();
             } else {
                 // Fallback if no disks are found - try to get system root disk
-                warn!("⚠️ No disks found, attempting to use system default values");
+                warn!("No disks found, attempting to use system default values");
                 total_disk = 1024 * 1024 * 1024 * 1024; // 1TB default
                 used_disk = total_disk / 2; // 50% usage default
             }

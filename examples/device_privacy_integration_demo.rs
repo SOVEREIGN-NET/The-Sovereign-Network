@@ -18,13 +18,13 @@ async fn main() -> Result<()> {
     demo_secure_communication().await?;
     demo_privacy_metrics().await?;
     
-    println!("\n✅ Device Privacy Integration Demo completed successfully!");
+    println!("\nDevice Privacy Integration Demo completed successfully!");
     Ok(())
 }
 
 /// Demonstrate identity masking capabilities
 async fn demo_identity_masking() -> Result<()> {
-    println!("\n📱 Identity Masking Demo");
+    println!("\n Identity Masking Demo");
     println!("-----------------------");
     
     // Simulate device identity creation
@@ -37,19 +37,19 @@ async fn demo_identity_masking() -> Result<()> {
     
     // Demonstrate identity rotation
     let rotated_identity = rotate_identity(&masked_identity);
-    println!("🔄 Rotated Identity: {}", rotated_identity);
+    println!(" Rotated Identity: {}", rotated_identity);
     
     Ok(())
 }
 
 /// Demonstrate network anonymization
 async fn demo_network_anonymization() -> Result<()> {
-    println!("\n🌐 Network Anonymization Demo");
+    println!("\nNetwork Anonymization Demo");
     println!("-----------------------------");
     
     // Simulate network routing through privacy layers
     let original_ip = "192.168.1.100";
-    println!("📍 Original IP: {}", original_ip);
+    println!(" Original IP: {}", original_ip);
     
     let anonymized_route = create_anonymized_route(original_ip);
     println!("🕵️ Anonymized Route: {:?}", anonymized_route);
@@ -63,12 +63,12 @@ async fn demo_network_anonymization() -> Result<()> {
 
 /// Demonstrate secure communication channels
 async fn demo_secure_communication() -> Result<()> {
-    println!("\n🔐 Secure Communication Demo");
+    println!("\nSecure Communication Demo");
     println!("----------------------------");
     
     // Create encrypted channel
     let channel_id = create_secure_channel();
-    println!("📡 Secure Channel ID: {}", channel_id);
+    println!("Secure Channel ID: {}", channel_id);
     
     // Simulate message encryption
     let message = "Hello, private world!";
@@ -84,7 +84,7 @@ async fn demo_secure_communication() -> Result<()> {
 
 /// Demonstrate privacy metrics collection
 async fn demo_privacy_metrics() -> Result<()> {
-    println!("\n📊 Privacy Metrics Demo");
+    println!("\nPrivacy Metrics Demo");
     println!("-----------------------");
     
     let metrics = collect_privacy_metrics().await;

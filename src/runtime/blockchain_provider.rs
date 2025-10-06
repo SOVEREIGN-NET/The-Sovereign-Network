@@ -2,7 +2,7 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 use lib_blockchain::{Blockchain, Transaction, Block, IdentityTransactionData, Hash};
 use anyhow::Result;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Global blockchain provider for shared access across components
 /// This allows the protocols component to access the shared blockchain instance
@@ -23,7 +23,7 @@ impl BlockchainProvider {
     /// Set the blockchain instance
     pub async fn set_blockchain(&self, blockchain: Arc<RwLock<Blockchain>>) -> Result<()> {
         *self.blockchain.write().await = Some(blockchain);
-        info!("🔗 Global blockchain instance set");
+        info!("Global blockchain instance set");
         Ok(())
     }
 
@@ -47,7 +47,7 @@ static GLOBAL_BLOCKCHAIN_PROVIDER: OnceLock<BlockchainProvider> = OnceLock::new(
 /// Initialize the global blockchain provider
 pub fn initialize_global_blockchain_provider() -> &'static BlockchainProvider {
     GLOBAL_BLOCKCHAIN_PROVIDER.get_or_init(|| {
-        info!("🌐 Initializing global blockchain provider");
+        info!("Initializing global blockchain provider");
         BlockchainProvider::new()
     })
 }
@@ -86,7 +86,9 @@ pub async fn add_transaction(transaction: Transaction) -> Result<String> {
     
     // Add transaction to blockchain and mempool
     let transaction_hash = transaction.hash().to_string();
-    blockchain_lock.add_pending_transaction(transaction);
+    if let Err(e) = blockchain_lock.add_pending_transaction(transaction) {
+        warn!("Failed to add pending transaction: {}", e);
+    }
     
     Ok(transaction_hash)
 }

@@ -15,7 +15,7 @@
 //! - Hybrid: Mesh networking with TCP/IP fallback for transition
 
 use anyhow::Result;
-use tracing::{info, error};
+use tracing::info;
 
 // Import new orchestrator modules
 use zhtp::{
@@ -33,26 +33,26 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    info!("🚀 ZHTP Orchestrator v{}", env!("CARGO_PKG_VERSION"));
-    info!("📊 Level 1 Orchestrator - Coordinates protocols, blockchain, network");
+    info!(" ZHTP Orchestrator v{}", env!("CARGO_PKG_VERSION"));
+    info!("Level 1 Orchestrator - Coordinates protocols, blockchain, network");
 
     // Check if this is a special server mode
     let args: Vec<String> = std::env::args().collect();
     
     if args.len() > 1 && args[1] == "--server" {
-        info!("🌐 ZHTP Orchestrator Server mode not yet implemented");
-        info!("💻 Falling back to CLI mode");
+        info!("ZHTP Orchestrator Server mode not yet implemented");
+        info!("Falling back to CLI mode");
         // TODO: Re-enable when API handlers are implemented
         // let config = ApiConfig::default();
         // start_api_server(config).await?;
         run_cli().await?;
     } else {
         // Default: Use the full CLI structure with all subcommands
-        info!("💻 Starting ZHTP Orchestrator CLI");
+        info!("Starting ZHTP Orchestrator CLI");
         run_cli().await?;
     }
 
-    info!("👋 ZHTP Orchestrator shutdown complete");
+    info!(" ZHTP Orchestrator shutdown complete");
     Ok(())
 }
 
