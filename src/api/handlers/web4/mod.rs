@@ -109,14 +109,61 @@ impl Web4Handler {
                     "image/png"
                 } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
                     "image/jpeg"
+                } else if path.ends_with(".gif") {
+                    "image/gif"
+                } else if path.ends_with(".svg") {
+                    "image/svg+xml"
+                } else if path.ends_with(".webp") {
+                    "image/webp"
+                } else if path.ends_with(".mp4") {
+                    "video/mp4"
+                } else if path.ends_with(".webm") {
+                    "video/webm"
+                } else if path.ends_with(".mp3") {
+                    "audio/mpeg"
+                } else if path.ends_with(".wav") {
+                    "audio/wav"
+                } else if path.ends_with(".ogg") {
+                    "audio/ogg"
                 } else {
                     "text/html"
                 };
 
-                info!("✅ Serving {} bytes of {}", content.len(), content_type);
+                // For HTML content, inject base tag to fix relative URLs
+                let final_content = if content_type == "text/html" {
+                    match String::from_utf8(content.clone()) {
+                        Ok(mut html) => {
+                            // Escape domain name for HTML (defense-in-depth, domain is already validated)
+                            let escaped_domain = domain
+                                .replace('&', "&amp;")
+                                .replace('<', "&lt;")
+                                .replace('>', "&gt;")
+                                .replace('"', "&quot;")
+                                .replace('\'', "&#39;");
+                            
+                            let base_url = format!("http://localhost:9333/api/v1/web4/serve/{}/", escaped_domain);
+                            let base_tag = format!("<base href=\"{}\">", base_url);
+                            
+                            // Insert base tag after <head> tag
+                            if let Some(head_pos) = html.find("<head>") {
+                                let insert_pos = head_pos + "<head>".len();
+                                html.insert_str(insert_pos, &format!("\n    {}", base_tag));
+                                html.into_bytes()
+                            } else {
+                                // If no <head> tag, return original content
+                                content
+                            }
+                        }
+                        Err(_) => content, // Not valid UTF-8, return as-is
+                    }
+                } else {
+                    content
+                };
+
+                info!("✅ Serving {} bytes of {}", final_content.len(), content_type);
 
                 Ok(ZhtpResponse::success_with_content_type(
-                    content,
+                    final_content,
                     content_type.to_string(),
                     None,
                 ))

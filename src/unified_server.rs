@@ -158,7 +158,8 @@ impl Middleware for AuthMiddleware {
         if request.uri.starts_with("/api/v1/public/") || 
            request.uri == "/api/v1/health" ||
            request.uri.starts_with("/api/v1/web4/") ||
-           request.uri.starts_with("/api/v1/dns/") {
+           request.uri.starts_with("/api/v1/dns/") ||
+           request.uri.starts_with("/api/v1/blockchain/") {
             return Ok(true);
         }
         
@@ -452,9 +453,13 @@ impl HttpRouter {
             _ => "HTTP/1.1 200 OK\r\n",
         };
         
+        // Extract content-type from ZhtpResponse headers
+        let content_type = response.headers.get("content-type")
+            .unwrap_or_else(|| "application/json".to_string());
+        
         let mut http_response = String::new();
         http_response.push_str(status_line);
-        http_response.push_str("Content-Type: application/json\r\n");
+        http_response.push_str(&format!("Content-Type: {}\r\n", content_type));
         http_response.push_str("Access-Control-Allow-Origin: *\r\n");
         http_response.push_str("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n");
         http_response.push_str("Access-Control-Allow-Headers: Content-Type, Authorization\r\n");
