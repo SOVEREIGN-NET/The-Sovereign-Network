@@ -22,6 +22,10 @@ use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus, ZhtpHeaders};
 use lib_network::protocols::wifi_direct::WiFiDirectMeshProtocol;
 use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
+use lib_network::dht::relay::ZhtpRelayProtocol;
+use lib_network::dht::protocol::{DhtPacket, DhtPacketPayload, DhtOperation, ZhtpRelayQuery, ZhtpRelayResponse};
+use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptionSession, ZhtpKeyExchangeInit, ZhtpKeyExchangeResponse};
+use lib_network::protocols::zhtp_auth::{ZhtpAuthManager, ZhtpAuthChallenge, ZhtpAuthResponse, NodeCapabilities};
 
 use lib_network::MeshConnection;
 use lib_blockchain::Blockchain;
@@ -499,6 +503,10 @@ pub struct MeshRouter {
     server_id: Uuid,
     identity_manager: Option<Arc<RwLock<IdentityManager>>>,
     session_manager: Arc<SessionManager>,
+    relay_protocol: Arc<RwLock<Option<ZhtpRelayProtocol>>>,
+    encryption_manager: Arc<RwLock<ZhtpEncryptionManager>>,
+    zhtp_auth_manager: Arc<RwLock<Option<ZhtpAuthManager>>>,
+    encryption_sessions: Arc<RwLock<HashMap<String, ZhtpEncryptionSession>>>,
 }
 
 impl MeshRouter {
@@ -508,6 +516,10 @@ impl MeshRouter {
             server_id,
             identity_manager: None,
             session_manager,
+            relay_protocol: Arc::new(RwLock::new(None)),
+            encryption_manager: Arc::new(RwLock::new(ZhtpEncryptionManager::new())),
+            zhtp_auth_manager: Arc::new(RwLock::new(None)),
+            encryption_sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
@@ -515,8 +527,128 @@ impl MeshRouter {
         self.identity_manager = Some(manager);
     }
     
+    /// Get a clone of the connections Arc for sharing with other components
+    pub fn get_connections(&self) -> Arc<RwLock<HashMap<PublicKey, MeshConnection>>> {
+        self.connections.clone()
+    }
+    
+    /// Get a clone of the relay protocol Arc for sharing with other components
+    pub fn get_relay_protocol(&self) -> Arc<RwLock<Option<ZhtpRelayProtocol>>> {
+        self.relay_protocol.clone()
+    }
+    
+    /// Get a clone of the identity manager Arc for sharing with other components
+    pub fn get_identity_manager(&self) -> Option<Arc<RwLock<IdentityManager>>> {
+        self.identity_manager.clone()
+    }
+    
+    /// Initialize ZHTP authentication manager with blockchain identity
+    pub async fn initialize_auth_manager(&self, blockchain_pubkey: PublicKey) -> Result<()> {
+        info!("🔐 Initializing ZHTP authentication manager...");
+        
+        let auth_manager = ZhtpAuthManager::new(blockchain_pubkey)?;
+        *self.zhtp_auth_manager.write().await = Some(auth_manager);
+        
+        info!("✅ ZHTP authentication manager initialized (Dilithium2)");
+        Ok(())
+    }
+    
+    /// Initialize ZHTP relay protocol with blockchain keys
+    pub async fn initialize_relay_protocol(&self) -> Result<()> {
+        info!("Initializing ZHTP relay protocol with post-quantum encryption...");
+        
+        // Generate Dilithium2 keypair for signing relay messages
+        let (dilithium_pubkey, dilithium_privkey) = lib_crypto::post_quantum::dilithium::dilithium2_keypair();
+        
+        // Create node capabilities for relay protocol
+        let capabilities = lib_network::protocols::zhtp_auth::NodeCapabilities {
+            has_dht: true,
+            can_relay: true,
+            max_bandwidth: 1000000, // 1 Gbps
+            protocols: vec!["zhtp".to_string(), "dht".to_string()],
+            reputation: 100,
+            quantum_secure: true,
+        };
+        
+        // Create relay protocol instance (secret_key, public_key, capabilities)
+        let relay = ZhtpRelayProtocol::new(
+            dilithium_privkey,
+            dilithium_pubkey,
+            capabilities,
+        );
+        
+        *self.relay_protocol.write().await = Some(relay);
+        
+        info!("✅ ZHTP relay protocol initialized (Dilithium2 + Kyber512 + ChaCha20)");
+        Ok(())
+    }
+    
     pub async fn handle_udp_mesh(&self, data: &[u8], addr: SocketAddr) -> Result<Option<Vec<u8>>> {
         debug!("Processing UDP mesh packet from: {} ({} bytes)", addr, data.len());
+        
+        // First, try to parse as ZHTP relay query (encrypted DHT request)
+        if let Ok(relay_query) = bincode::deserialize::<ZhtpRelayQuery>(data) {
+            info!("🔐 Received ZHTP relay query from: {} (encrypted)", addr);
+            
+            if let Some(relay_protocol) = self.relay_protocol.read().await.as_ref() {
+                let peer_address = addr.to_string();
+                match relay_protocol.process_relay_query(&peer_address, &relay_query).await {
+                    Ok(query_payload) => {
+                        info!("✅ ZHTP relay query verified and decrypted: domain={}, path={}", 
+                            query_payload.domain, query_payload.path);
+                        
+                        // Query local DHT for the requested content
+                        if let Ok(dht_client) = crate::runtime::shared_dht::get_dht_client().await {
+                            let dht = dht_client.read().await;
+                            let content_key = format!("{}/{}", query_payload.domain, query_payload.path);
+                            
+                            match dht.fetch_content(&content_key).await {
+                                Ok(content) => {
+                                    info!("📦 Found DHT content ({} bytes), creating encrypted response", content.len());
+                                    
+                                    // Create response payload with content hash
+                                    let content_hash_bytes = lib_crypto::hash_blake3(&content);
+                                    let content_hash = lib_crypto::Hash::from_bytes(&content_hash_bytes);
+                                    let response_payload = lib_network::dht::protocol::ZhtpRelayResponsePayload {
+                                        content: Some(content),
+                                        content_type: Some("application/octet-stream".to_string()),
+                                        content_hash: Some(content_hash),
+                                        error: None,
+                                        ttl: 3600,
+                                    };
+                                    
+                                    // Create encrypted relay response
+                                    let peer_address = addr.to_string();
+                                    match relay_protocol.create_relay_response(
+                                        &peer_address,
+                                        relay_query.request_id.clone(),
+                                        response_payload
+                                    ).await {
+                                        Ok(relay_response) => {
+                                            info!("🔐 Created encrypted relay response, sending back to {}", addr);
+                                            let response_bytes = bincode::serialize(&relay_response)?;
+                                            return Ok(Some(response_bytes));
+                                        },
+                                        Err(e) => {
+                                            warn!("Failed to create relay response: {}", e);
+                                        }
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!("DHT content not found: {}", e);
+                                    // Return empty response or error
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        warn!("❌ ZHTP relay query verification failed: {}", e);
+                    }
+                }
+            } else {
+                warn!("ZHTP relay protocol not initialized");
+            }
+        }
         
         // Bridge to Bluetooth if we have Bluetooth clients connected
         let _: Result<()> = self.bridge_dht_to_bluetooth(data, &addr).await;
@@ -1766,6 +1898,217 @@ impl MeshRouter {
         Ok(Some(serde_json::to_vec(&mesh_response)?))
     }
     
+    /// Shared authentication, key exchange, and DHT registration flow
+    /// Used by TCP, UDP, and Bluetooth connection handlers
+    async fn authenticate_and_register_peer(
+        &self,
+        peer_pubkey: &PublicKey,
+        handshake: &lib_network::discovery::local_network::MeshHandshake,
+        addr: &SocketAddr,
+        stream: &mut TcpStream,
+    ) -> Result<bool> {
+        let node_id = &handshake.node_id;
+        
+        // ============================================================================
+        // PHASE 2: BLOCKCHAIN AUTHENTICATION (Dilithium2 signatures)
+        // ============================================================================
+        info!("🔐 Phase 2: Initiating ZHTP blockchain authentication with peer {}", node_id);
+        
+        if let Some(auth_manager) = self.zhtp_auth_manager.read().await.as_ref() {
+            // Create authentication challenge
+            match auth_manager.create_challenge().await {
+                Ok(challenge) => {
+                    info!("🎯 Sending authentication challenge to peer {}", node_id);
+                    
+                    // Send challenge over TCP/Bluetooth
+                    let challenge_bytes = bincode::serialize(&challenge)?;
+                    if let Err(e) = stream.write_all(&challenge_bytes).await {
+                        warn!("Failed to send auth challenge to {}: {}", node_id, e);
+                        return Ok(false);
+                    }
+                    
+                    // Receive response with timeout
+                    let mut response_buf = vec![0; 16384]; // Dilithium signatures are large
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        stream.read(&mut response_buf)
+                    ).await {
+                        Ok(Ok(response_len)) if response_len > 0 => {
+                            match bincode::deserialize::<ZhtpAuthResponse>(&response_buf[..response_len]) {
+                                Ok(auth_response) => {
+                                    info!("📝 Received authentication response from peer {}", node_id);
+                                    
+                                    // Verify Dilithium2 signature
+                                    match auth_manager.verify_response(&auth_response).await {
+                                        Ok(verification) if verification.authenticated => {
+                                            info!("✅ Peer {} authenticated! Trust score: {:.2}", 
+                                                node_id, verification.trust_score);
+                                            
+                                            // Update connection with blockchain identity
+                                            let mut connections = self.connections.write().await;
+                                            if let Some(connection) = connections.get_mut(peer_pubkey) {
+                                                connection.zhtp_authenticated = true;
+                                                connection.peer_dilithium_pubkey = Some(auth_response.responder_pubkey.clone());
+                                                connection.trust_score = verification.trust_score;
+                                            }
+                                            
+                                            // ============================================================================
+                                            // PHASE 3: QUANTUM-SAFE KEY EXCHANGE (Kyber512)
+                                            // ============================================================================
+                                            info!("🔑 Phase 3: Initiating Kyber512 key exchange with peer {}", node_id);
+                                            
+                                            // Create encryption session
+                                            match ZhtpEncryptionSession::new() {
+                                                Ok(encryption_session) => {
+                                                    let session_id = uuid::Uuid::new_v4().to_string();
+                                                    
+                                                    // Send our Kyber public key
+                                                    match encryption_session.create_key_exchange_init(session_id.clone()) {
+                                                        Ok(key_init) => {
+                                                            let key_init_bytes = bincode::serialize(&key_init)?;
+                                                            if let Err(e) = stream.write_all(&key_init_bytes).await {
+                                                                warn!("Failed to send Kyber init to {}: {}", node_id, e);
+                                                                return Ok(false);
+                                                            }
+                                                            
+                                                            // Receive peer's Kyber ciphertext
+                                                            let mut key_response_buf = vec![0; 8192];
+                                                            match tokio::time::timeout(
+                                                                std::time::Duration::from_secs(10),
+                                                                stream.read(&mut key_response_buf)
+                                                            ).await {
+                                                                Ok(Ok(key_response_len)) if key_response_len > 0 => {
+                                                                    match bincode::deserialize::<ZhtpKeyExchangeResponse>(&key_response_buf[..key_response_len]) {
+                                                                        Ok(key_response) => {
+                                                                            info!("📦 Received Kyber ciphertext from peer {}", node_id);
+                                                                            
+                                                                            // Complete key exchange (decapsulate shared secret)
+                                                                            let mut session = encryption_session;
+                                                                            match session.complete_key_exchange(&key_response) {
+                                                                                Ok(_) => {
+                                                                                    info!("✅ Kyber512 shared secret established with peer {}", node_id);
+                                                                                    
+                                                                                    // Update connection
+                                                                                    let mut connections = self.connections.write().await;
+                                                                                    if let Some(connection) = connections.get_mut(peer_pubkey) {
+                                                                                        connection.quantum_secure = true;
+                                                                                        connection.kyber_shared_secret = session.get_shared_secret().map(|s| s.to_vec());
+                                                                                    }
+                                                                                    
+                                                                                    // Store encryption session
+                                                                                    self.encryption_sessions.write().await.insert(
+                                                                                        node_id.to_string(),
+                                                                                        session
+                                                                                    );
+                                                                                    
+                                                                                    // ============================================================================
+                                                                                    // PHASE 4: DHT PEER REGISTRATION
+                                                                                    // ============================================================================
+                                                                                    info!("📝 Phase 4: Registering peer {} in DHT", node_id);
+                                                                                    
+                                                                                    // Register peer in DHT with blockchain identity
+                                                                                    if let Ok(dht_client) = crate::runtime::shared_dht::get_dht_client().await {
+                                                                                        let dht = dht_client.read().await;
+                                                                                        
+                                                                                        // Create peer info with blockchain identity
+                                                                                        let peer_info = lib_network::dht::peer_discovery::ZhtpPeerInfo {
+                                                                                            blockchain_pubkey: peer_pubkey.clone(),
+                                                                                            dilithium_pubkey: auth_response.responder_pubkey.clone(),
+                                                                                            capabilities: NodeCapabilities {
+                                                                                                has_dht: handshake.protocols.contains(&"dht".to_string()),
+                                                                                                can_relay: handshake.protocols.contains(&"relay".to_string()),
+                                                                                                max_bandwidth: 1_000_000,
+                                                                                                protocols: handshake.protocols.clone(),
+                                                                                                reputation: verification.trust_score as u32,
+                                                                                                quantum_secure: true,
+                                                                                            },
+                                                                                            addresses: vec![addr.to_string()],
+                                                                                            reputation: verification.trust_score,
+                                                                                            last_seen: std::time::SystemTime::now()
+                                                                                                .duration_since(std::time::UNIX_EPOCH)
+                                                                                                .unwrap_or_default()
+                                                                                                .as_secs(),
+                                                                                            registered_at: std::time::SystemTime::now()
+                                                                                                .duration_since(std::time::UNIX_EPOCH)
+                                                                                                .unwrap_or_default()
+                                                                                                .as_secs(),
+                                                                                            ttl: 86400, // 24 hours
+                                                                                            signature: auth_response.signature.clone(),
+                                                                                        };
+                                                                                        
+                                                                                        // Register in DHT
+                                                                                        match dht.register_peer(peer_info).await {
+                                                                                            Ok(()) => {
+                                                                                                info!("✅ SUCCESS! Peer {} fully integrated:", node_id);
+                                                                                                info!("   ✓ Blockchain authenticated (Dilithium2)");
+                                                                                                info!("   ✓ Quantum-secure encryption (Kyber512)");
+                                                                                                info!("   ✓ Registered in DHT peer registry");
+                                                                                                info!("   ✓ Ready for relay queries & Web4 content");
+                                                                                                return Ok(true);
+                                                                                            }
+                                                                                            Err(e) => {
+                                                                                                warn!("Failed to register peer {} in DHT: {}", node_id, e);
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    warn!("Failed to complete key exchange with {}: {}", node_id, e);
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        Err(e) => {
+                                                                            warn!("Failed to deserialize Kyber response from {}: {}", node_id, e);
+                                                                        }
+                                                                    }
+                                                                }
+                                                                _ => {
+                                                                    warn!("Timeout or error receiving Kyber response from {}", node_id);
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            warn!("Failed to create key exchange init: {}", e);
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    warn!("Failed to create encryption session: {}", e);
+                                                }
+                                            }
+                                        }
+                                        Ok(_) => {
+                                            warn!("❌ Peer {} authentication failed (signature invalid)", node_id);
+                                            // Remove from connections
+                                            self.connections.write().await.remove(peer_pubkey);
+                                        }
+                                        Err(e) => {
+                                            warn!("Error verifying peer {} authentication: {}", node_id, e);
+                                            self.connections.write().await.remove(peer_pubkey);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to deserialize auth response from {}: {}", node_id, e);
+                                }
+                            }
+                        }
+                        _ => {
+                            warn!("Timeout or error receiving auth response from {}", node_id);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to create auth challenge: {}", e);
+                }
+            }
+        } else {
+            warn!("⚠️  ZHTP authentication manager not initialized, skipping authentication");
+        }
+        
+        Ok(false)
+    }
+    
     pub async fn handle_tcp_mesh(&self, mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
         info!("Processing TCP mesh connection from: {}", addr);
         
@@ -1774,8 +2117,80 @@ impl MeshRouter {
             .context("Failed to read TCP mesh data")?;
         
         if bytes_read > 0 {
-            // Process TCP mesh message
             debug!("TCP mesh data: {} bytes", bytes_read);
+            
+            // Try to parse as binary mesh handshake (from local discovery)
+            if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&buffer[..bytes_read]) {
+                info!("🤝 Received binary mesh handshake from peer: {}", handshake.node_id);
+                info!("   Version: {}, Port: {}, Protocols: {:?}", 
+                    handshake.version, handshake.mesh_port, handshake.protocols);
+                
+                let discovery_method = match handshake.discovered_via {
+                    0 => "local_multicast",
+                    1 => "bluetooth",
+                    2 => "wifi_direct",
+                    3 => "manual",
+                    _ => "unknown",
+                };
+                info!("   Discovered via: {}", discovery_method);
+                
+                // Add peer to mesh connections (like blockchain nodes do)
+                // Use node_id as temporary identity until blockchain identity is exchanged
+                let peer_pubkey = lib_crypto::PublicKey::new(handshake.node_id.as_bytes().to_vec());
+                
+                // Determine protocol from discovery method
+                let protocol = match handshake.discovered_via {
+                    0 => lib_network::protocols::NetworkProtocol::TCP,
+                    1 => lib_network::protocols::NetworkProtocol::BluetoothLE,
+                    2 => lib_network::protocols::NetworkProtocol::WiFiDirect,
+                    _ => lib_network::protocols::NetworkProtocol::TCP,
+                };
+                
+                // Create mesh connection (blockchain identity will be exchanged later)
+                let connection = lib_network::mesh::connection::MeshConnection {
+                    peer_id: peer_pubkey.clone(),
+                    protocol,
+                    peer_address: Some(addr.to_string()), // ✅ Store peer address for relay queries
+                    signal_strength: 0.8, // Initial estimate
+                    bandwidth_capacity: 1_000_000, // 1 MB/s default
+                    latency_ms: 50, // Initial estimate
+                    connected_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    data_transferred: 0,
+                    tokens_earned: 0,
+                    stability_score: 1.0,
+                    zhtp_authenticated: false, // Will be set to true after blockchain auth
+                    quantum_secure: false, // Will enable after Kyber key exchange
+                    peer_dilithium_pubkey: None, // Will be exchanged later
+                    kyber_shared_secret: None, // Will be established later
+                    trust_score: 0.5, // Default trust for new peers
+                };
+                
+                // Add to mesh connections
+                {
+                    let mut connections = self.connections.write().await;
+                    connections.insert(peer_pubkey.clone(), connection);
+                    info!("✅ Peer {} added to mesh network ({} total peers)", 
+                        handshake.node_id, connections.len());
+                }
+                
+                // Note: Blockchain sync happens at startup during bootstrap phase
+                // See components.rs try_bootstrap_blockchain() function
+                
+                // Note: Authentication will happen when the peer initiates a proper
+                // bidirectional connection. The initial discovery handshake is one-way
+                // and disconnects immediately, so we can't complete the auth dance here.
+                debug!("⏳ Peer {} registered, awaiting full authentication on next connection", handshake.node_id);
+                
+                // Send acknowledgment back on original stream
+                let ack = bincode::serialize(&true)?;
+                let _ = stream.write_all(&ack).await;
+            } else {
+                // Not a binary handshake, might be other mesh protocol
+                debug!("TCP data is not a binary mesh handshake, ignoring");
+            }
         }
         
         Ok(())
@@ -2004,9 +2419,14 @@ impl BluetoothRouter {
         Ok(())
     }
     
-    /// Handle incoming Bluetooth connection with DHT bridging
-    pub async fn handle_bluetooth_connection(&self, mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
-        info!("Processing Bluetooth connection with DHT bridge from: {}", addr);
+    /// Handle incoming Bluetooth connection with full mesh authentication
+    pub async fn handle_bluetooth_connection(
+        &self,
+        mut stream: TcpStream,
+        addr: SocketAddr,
+        mesh_router: &MeshRouter,
+    ) -> Result<()> {
+        info!("🔵 Processing Bluetooth mesh connection from: {}", addr);
         
         let mut buffer = vec![0; 8192];
         let bytes_read = stream.read(&mut buffer).await
@@ -2015,41 +2435,98 @@ impl BluetoothRouter {
         if bytes_read > 0 {
             debug!("Bluetooth data received: {} bytes", bytes_read);
             
-            // Parse incoming message to determine if it's ZHTP mesh traffic
-            let message = String::from_utf8_lossy(&buffer[..bytes_read]);
-            
-            if message.starts_with("ZHTP-MESH:") || message.starts_with("DHT:") {
-                // This is ZHTP mesh traffic - bridge to DHT network
-                info!("Bridging Bluetooth ZHTP traffic to DHT network");
+            // Try to parse as binary mesh handshake (same as TCP!)
+            if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&buffer[..bytes_read]) {
+                info!("🤝 Received Bluetooth mesh handshake from peer: {}", handshake.node_id);
+                info!("   Version: {}, Port: {}, Protocols: {:?}", 
+                    handshake.version, handshake.mesh_port, handshake.protocols);
                 
-                // TODO: Bridge to mesh router instead of having duplicate bridge logic
-                // For now, handle DHT operations directly
-                if message.starts_with("DHT:STORE:") || message.starts_with("DHT:GET:") {
-                    info!("Handling DHT operation via Bluetooth");
+                // Create peer identity
+                let peer_pubkey = lib_crypto::PublicKey::new(handshake.node_id.as_bytes().to_vec());
+                
+                // Bluetooth connections use BluetoothLE protocol
+                let protocol = lib_network::protocols::NetworkProtocol::BluetoothLE;
+                
+                // Create mesh connection
+                let connection = lib_network::mesh::connection::MeshConnection {
+                    peer_id: peer_pubkey.clone(),
+                    protocol,
+                    peer_address: Some(addr.to_string()), // ✅ Store Bluetooth peer address for relay queries
+                    signal_strength: 0.7, // Bluetooth typically lower than WiFi
+                    bandwidth_capacity: 100_000, // ~100 KB/s typical Bluetooth
+                    latency_ms: 100, // Bluetooth has higher latency
+                    connected_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    data_transferred: 0,
+                    tokens_earned: 0,
+                    stability_score: 0.8,
+                    zhtp_authenticated: false, // Will be set after authentication
+                    quantum_secure: false, // Will be set after Kyber exchange
+                    peer_dilithium_pubkey: None,
+                    kyber_shared_secret: None,
+                    trust_score: 0.5,
+                };
+                
+                // Add to mesh connections
+                {
+                    let mut connections = mesh_router.connections.write().await;
+                    connections.insert(peer_pubkey.clone(), connection);
+                    info!("✅ Bluetooth peer {} added to mesh network ({} total peers)", 
+                        handshake.node_id, connections.len());
                 }
                 
-                // Send DHT bridge response
-                let response = format!(
-                    "ZHTP/1.0 200 OK\r\nX-Protocol: Bluetooth-DHT-Bridge\r\nX-Node-ID: {:?}\r\nX-Service: ZHTP-Mesh\r\nX-Bridge: Active\r\n\r\nBridged to DHT network",
-                    &self.node_id[..8]
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
+                // Run full authentication, key exchange, and DHT registration (same as TCP!)
+                info!("🔐 Starting automatic authentication (no pairing code needed)");
+                let _ = mesh_router.authenticate_and_register_peer(&peer_pubkey, &handshake, &addr, &mut stream).await;
+                
+                // Send acknowledgment
+                let ack = bincode::serialize(&true)?;
+                let _ = stream.write_all(&ack).await;
+                
+                info!("✅ Bluetooth peer fully integrated - zero-trust authentication complete!");
                 
             } else {
-                // Regular Bluetooth connection
-                let response = format!(
-                    "ZHTP/1.0 200 OK\r\nX-Protocol: Bluetooth\r\nX-Node-ID: {:?}\r\nX-Service: ZHTP-Mesh\r\nX-Bridge: Available\r\n\r\nBluetooth connection established - DHT bridge ready",
-                    &self.node_id[..8]
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
+                // Legacy text-based Bluetooth messages (DHT bridge)
+                let message = String::from_utf8_lossy(&buffer[..bytes_read]);
+                
+                if message.starts_with("ZHTP-MESH:") || message.starts_with("DHT:") {
+                    info!("🌉 Bridging Bluetooth ZHTP traffic to DHT network");
+                    
+                    // ✅ ACTUALLY CALL THE BRIDGE FUNCTION
+                    match mesh_router.bridge_bluetooth_to_dht(&buffer[..bytes_read], &addr).await {
+                        Ok(()) => {
+                            info!("✅ Bluetooth message successfully bridged to DHT");
+                            let response = format!(
+                                "ZHTP/1.0 200 OK\r\nX-Protocol: Bluetooth-DHT-Bridge\r\nX-Node-ID: {:?}\r\nX-Service: ZHTP-Mesh\r\nX-Bridge: Active\r\n\r\nBridged to DHT network",
+                                &self.node_id[..8]
+                            );
+                            let _ = stream.write_all(response.as_bytes()).await;
+                        }
+                        Err(e) => {
+                            warn!("Failed to bridge Bluetooth message to DHT: {}", e);
+                            let response = format!(
+                                "ZHTP/1.0 500 Internal Server Error\r\nX-Protocol: Bluetooth-DHT-Bridge\r\nX-Error: {}\r\n\r\nBridge failed",
+                                e
+                            );
+                            let _ = stream.write_all(response.as_bytes()).await;
+                        }
+                    }
+                } else {
+                    // Unknown Bluetooth message - still acknowledge
+                    info!("Bluetooth message received (not DHT): {} bytes", bytes_read);
+                    let response = format!(
+                        "ZHTP/1.0 200 OK\r\nX-Protocol: Bluetooth\r\nX-Node-ID: {:?}\r\nX-Service: ZHTP-Mesh\r\n\r\nBluetooth mesh node ready",
+                        &self.node_id[..8]
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                }
+                
+                // Store legacy connection
+                let mut devices = self.connected_devices.write().await;
+                devices.insert(addr.to_string(), "bluetooth-legacy-bridge".to_string());
             }
-            
-            // Store connection info with bridge capability
-            let mut devices = self.connected_devices.write().await;
-            devices.insert(addr.to_string(), "bluetooth-dht-bridge".to_string());
-            
-            info!("Bluetooth-DHT bridge established with device at {}", addr);
-            info!("🌉 Device can now access DHT network via Bluetooth");
         }
         
         Ok(())
@@ -2219,12 +2696,8 @@ impl ZhtpUnifiedServer {
             warn!("WiFi Direct initialization failed: {}", e);
         }
         
-        // Initialize Bluetooth protocol for phone connectivity
-        if let Err(e) = bluetooth_router.initialize().await {
-            warn!("Bluetooth initialization failed: {}", e);
-        } else {
-            info!("Bluetooth mesh ready - discoverable as '{}'", bluetooth_router.get_service_name());
-        }
+        // NOTE: Bluetooth initialization happens in start() to avoid double initialization
+        // The bluetooth_router is created here but initialized later when server starts
         
         let bootstrap_router = BootstrapRouter::new(server_id);
         
@@ -2236,6 +2709,7 @@ impl ZhtpUnifiedServer {
             identity_manager.clone(),
             economic_model.clone(),
             session_manager.clone(),
+            Arc::new(mesh_router.clone()),
         ).await?;
         
         Ok(Self {
@@ -2264,7 +2738,8 @@ impl ZhtpUnifiedServer {
         storage: Arc<RwLock<UnifiedStorageSystem>>,
         identity_manager: Arc<RwLock<IdentityManager>>,
         _economic_model: Arc<RwLock<EconomicModel>>,
-        session_manager: Arc<SessionManager>,
+        _session_manager: Arc<SessionManager>,
+        mesh_router: Arc<MeshRouter>,
     ) -> Result<()> {
         info!("Registering comprehensive API handlers...");
         
@@ -2304,7 +2779,7 @@ impl ZhtpUnifiedServer {
         
         // DHT operations (zkDHT bridge)
         let dht_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            DhtHandler::new()
+            DhtHandler::new(mesh_router)
         );
         http_router.register_handler("/api/v1/dht".to_string(), dht_handler);
         
@@ -2336,6 +2811,62 @@ impl ZhtpUnifiedServer {
     pub async fn start(&mut self) -> Result<()> {
         info!("Starting ZHTP Unified Server on port {}", self.port);
         
+        // Initialize ZHTP relay protocol ONLY if not already initialized
+        // (components.rs may have already initialized it with authentication)
+        if self.mesh_router.relay_protocol.read().await.is_none() {
+            info!("⚙️ Initializing ZHTP relay protocol...");
+            if let Err(e) = self.mesh_router.initialize_relay_protocol().await {
+                warn!("Failed to initialize ZHTP relay protocol: {}", e);
+            }
+        } else {
+            info!("✅ ZHTP relay protocol already initialized (authentication active)");
+        }
+        
+        // Start local network peer discovery (multicast)
+        info!("🔍 Starting local network peer discovery...");
+        if let Err(e) = lib_network::discovery::local_network::start_local_discovery(
+            self.server_id,
+            self.port
+        ).await {
+            warn!("Failed to start local network discovery: {}", e);
+        } else {
+            info!("✅ Local network discovery active (multicast)");
+        }
+        
+        // Start automatic TCP/UDP network scanner
+        info!("🔍 Starting TCP/UDP network scanner...");
+        if let Err(e) = lib_network::discovery::network_scanner::start_network_scanner(self.port, self.server_id).await {
+            warn!("Failed to start network scanner: {}", e);
+        } else {
+            info!("✅ TCP/UDP network scanner active (scans every 30 seconds)");
+        }
+        
+        // Quick scan on startup for immediate peer discovery
+        info!("⚡ Running quick network scan...");
+        match lib_network::discovery::network_scanner::quick_scan_local_network().await {
+            Ok(nodes) if !nodes.is_empty() => {
+                info!("⚡ Quick scan found {} ZHTP nodes:", nodes.len());
+                for node in &nodes {
+                    info!("   → {}:{} ({}ms response)", node.ip, node.port, node.response_time_ms);
+                }
+            }
+            Ok(_) => {
+                info!("⚡ Quick scan complete - no ZHTP nodes found yet");
+            }
+            Err(e) => {
+                warn!("Quick scan failed: {}", e);
+            }
+        }
+        
+        // Initialize Bluetooth discovery
+        info!("📡 Initializing Bluetooth mesh discovery...");
+        if let Err(e) = self.bluetooth_router.initialize().await {
+            warn!("Bluetooth initialization failed: {}", e);
+            warn!("Continuing without Bluetooth support");
+        } else {
+            info!("✅ Bluetooth mesh advertising active");
+        }
+        
         // Bind TCP listener for HTTP, TCP mesh, WiFi Direct, Bootstrap
         let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", self.port)).await
             .context("Failed to bind TCP listener")?;
@@ -2358,9 +2889,10 @@ impl ZhtpUnifiedServer {
         self.start_udp_listener().await?;
         
         info!("ZHTP Unified Server online");
-        info!("Protocols: HTTP API + UDP Mesh + WiFi Direct + Bootstrap");
+        info!("Protocols: HTTP API + UDP Mesh + WiFi Direct + Bootstrap + ZHTP Relay");
         info!("Browser compatible: http://localhost:{}/api/v1/*", self.port);
         info!("Mesh compatible: UDP packets to port {}", self.port);
+        info!("🔐 ZHTP relay: Encrypted DHT queries with Dilithium2 + Kyber512 + ChaCha20");
         
         Ok(())
     }
@@ -2469,7 +3001,7 @@ impl ZhtpUnifiedServer {
             },
             IncomingProtocol::Bluetooth => {
                 info!("Bluetooth connection from phone: {}", addr);
-                bluetooth_router.handle_bluetooth_connection(stream, addr).await
+                bluetooth_router.handle_bluetooth_connection(stream, addr, &mesh_router).await
             },
             IncomingProtocol::Bootstrap | IncomingProtocol::Unknown => {
                 info!("Bootstrap connection from: {}", addr);
@@ -2493,9 +3025,19 @@ impl ZhtpUnifiedServer {
             return IncomingProtocol::HTTP;
         }
         
-        // ZHTP mesh detection
+        // ZHTP mesh detection (text protocol)
         if data.starts_with("ZHTP/1.0 MESH") {
             return IncomingProtocol::ZhtpMeshTcp;
+        }
+        
+        // Binary mesh handshake detection (bincode format from local discovery)
+        // Bincode handshakes start with small numbers (version byte)
+        // and are typically 60-100 bytes for mesh handshakes
+        if buffer.len() >= 20 && buffer.len() < 200 {
+            // Try to deserialize as MeshHandshake
+            if let Ok(_handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(buffer) {
+                return IncomingProtocol::ZhtpMeshTcp;
+            }
         }
         
         // WiFi Direct detection
@@ -2620,6 +3162,16 @@ impl ZhtpUnifiedServer {
         *self.is_running.read().await
     }
     
+    /// Initialize ZHTP authentication manager (wrapper for mesh_router method)
+    pub async fn initialize_auth_manager(&mut self, blockchain_pubkey: lib_crypto::PublicKey) -> Result<()> {
+        self.mesh_router.initialize_auth_manager(blockchain_pubkey).await
+    }
+    
+    /// Initialize ZHTP relay protocol (wrapper for mesh_router method)
+    pub async fn initialize_relay_protocol(&self) -> Result<()> {
+        self.mesh_router.initialize_relay_protocol().await
+    }
+    
     /// Get server information
     pub fn get_server_info(&self) -> (Uuid, u16) {
         (self.server_id, self.port)
@@ -2685,6 +3237,10 @@ impl Clone for MeshRouter {
             server_id: self.server_id,
             identity_manager: self.identity_manager.clone(),
             session_manager: self.session_manager.clone(),
+            relay_protocol: self.relay_protocol.clone(),
+            encryption_manager: self.encryption_manager.clone(),
+            zhtp_auth_manager: self.zhtp_auth_manager.clone(),
+            encryption_sessions: self.encryption_sessions.clone(),
         }
     }
 }

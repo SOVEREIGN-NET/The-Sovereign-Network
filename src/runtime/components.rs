@@ -1844,15 +1844,25 @@ impl Component for ProtocolsComponent {
         
         info!("Initializing backend components for unified server...");
         
-        // Get shared blockchain instance
-        let blockchain = match lib_blockchain::get_shared_blockchain().await {
-            Ok(shared_blockchain) => {
-                let blockchain_guard = shared_blockchain.read().await;
-                Arc::new(RwLock::new(blockchain_guard.clone()))
+        // 🔗 Try to bootstrap blockchain from existing network peers first
+        let blockchain = match try_bootstrap_blockchain().await {
+            Ok(synced_blockchain) => {
+                info!("✅ Bootstrapped blockchain from network peers");
+                Arc::new(RwLock::new(synced_blockchain))
             }
-            Err(_) => {
-                // Fallback to new blockchain
-                Arc::new(RwLock::new(lib_blockchain::Blockchain::new()?))
+            Err(e) => {
+                info!("⚠️ Could not bootstrap from peers ({}), checking local storage", e);
+                // Get shared blockchain instance or create new
+                match lib_blockchain::get_shared_blockchain().await {
+                    Ok(shared_blockchain) => {
+                        let blockchain_guard = shared_blockchain.read().await;
+                        Arc::new(RwLock::new(blockchain_guard.clone()))
+                    }
+                    Err(_) => {
+                        info!("🆕 Creating new genesis blockchain");
+                        Arc::new(RwLock::new(lib_blockchain::Blockchain::new()?))
+                    }
+                }
             }
         };
         
@@ -1881,6 +1891,55 @@ impl Component for ProtocolsComponent {
             identity_manager.clone(),
             economic_model.clone(),
         ).await?;
+        
+        // Initialize ZHTP authentication manager with blockchain identity
+        info!("🔐 Initializing ZHTP authentication and relay protocols...");
+        
+        // Load or create node identity for blockchain authentication
+        let node_identity_path = std::path::Path::new("data/node_identity.json");
+        
+        if node_identity_path.exists() {
+            // Load existing node identity
+            info!("📄 Loading node identity from data/node_identity.json");
+            match std::fs::read_to_string(node_identity_path) {
+                Ok(json_str) => {
+                    match serde_json::from_str::<lib_identity::ZhtpIdentity>(&json_str) {
+                        Ok(node_identity) => {
+                            // Convert Vec<u8> to PublicKey
+                            let blockchain_pubkey = lib_crypto::PublicKey::new(node_identity.public_key.clone());
+                            
+                            info!("✅ Node identity loaded: ID={}", hex::encode(&node_identity.id.as_bytes()[..8]));
+                            
+                            // Initialize authentication manager
+                            if let Err(e) = unified_server.initialize_auth_manager(blockchain_pubkey).await {
+                                warn!("Failed to initialize ZHTP auth manager: {}", e);
+                            } else {
+                                info!("✅ ZHTP authentication manager initialized");
+                            }
+                            
+                            // Initialize relay protocol
+                            if let Err(e) = unified_server.initialize_relay_protocol().await {
+                                warn!("Failed to initialize ZHTP relay protocol: {}", e);
+                            } else {
+                                info!("✅ ZHTP relay protocol initialized");
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse node identity: {}", e);
+                            warn!("⚠️  ZHTP authentication disabled - run 'zhtp identity create' first");
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to read node identity file: {}", e);
+                    warn!("⚠️  ZHTP authentication disabled - run 'zhtp identity create' first");
+                }
+            }
+        } else {
+            warn!("⚠️  No node identity found at data/node_identity.json");
+            info!("   Run 'zhtp identity create' to enable blockchain authentication");
+            info!("   Peers can still connect but won't be fully authenticated");
+        }
         
         info!("Starting unified server on port 9333...");
         info!("Protocols: HTTP API + UDP Mesh + WiFi Direct + Bootstrap");
@@ -2050,3 +2109,65 @@ impl Component for ProtocolsComponent {
         Ok(metrics)
     }
 }
+
+// Helper function to bootstrap blockchain from network
+async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
+    use lib_network::dht::bootstrap::{DHTBootstrap, DHTBootstrapEnhancements};
+    use tokio::time::{timeout, Duration};
+    
+    info!("🔍 Discovering network peers for blockchain bootstrap...");
+    
+    // Create bootstrap with mDNS enhancements
+    let enhancements = DHTBootstrapEnhancements {
+        enable_mdns: true,
+        enable_peer_exchange: false, // Don't need peer exchange for bootstrap
+        mdns_timeout: Duration::from_secs(5),
+        max_mdns_peers: 10,
+    };
+    
+    let mut bootstrap = DHTBootstrap::new(enhancements);
+    
+    // Use enhance_bootstrap to discover peers
+    let peers = bootstrap.enhance_bootstrap(&[]).await
+        .unwrap_or_else(|_| Vec::new());
+    
+    if peers.is_empty() {
+        return Err(anyhow::anyhow!("No network peers found"));
+    }
+    
+    info!("📡 Found {} potential peers, attempting blockchain sync...", peers.len());
+    
+    // Try each peer until we get a blockchain
+    for peer in peers {
+        let url = format!("http://{}/api/v1/blockchain/export", peer);
+        
+        match timeout(Duration::from_secs(5), async {
+            let response = reqwest::get(&url).await?;
+            if response.status().is_success() {
+                let data = response.bytes().await?.to_vec();
+                Ok::<Vec<u8>, anyhow::Error>(data)
+            } else {
+                Err(anyhow::anyhow!("Peer returned error: {}", response.status()))
+            }
+        }).await {
+            Ok(Ok(blockchain_data)) => {
+                // Create empty blockchain and import
+                let mut blockchain = lib_blockchain::Blockchain::new()?;
+                blockchain.import_chain(blockchain_data)?;
+                info!("✅ Successfully bootstrapped blockchain from {}", peer);
+                return Ok(blockchain);
+            }
+            Ok(Err(e)) => {
+                warn!("Failed to sync from {}: {}", peer, e);
+                continue;
+            }
+            Err(_) => {
+                warn!("Timeout connecting to {}", peer);
+                continue;
+            }
+        }
+    }
+    
+    Err(anyhow::anyhow!("Failed to bootstrap from any peer"))
+}
+

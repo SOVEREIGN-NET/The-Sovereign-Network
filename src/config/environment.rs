@@ -143,7 +143,7 @@ impl Environment {
                 network_settings: NetworkSettings {
                     network_id: "lib-dev".to_string(),
                     bootstrap_peers: vec![
-                        "127.0.0.1:9333".to_string(),
+                        "0.0.0.0:9333".to_string(),
                         "localhost:9334".to_string(),
                     ],
                     max_peers: 10,

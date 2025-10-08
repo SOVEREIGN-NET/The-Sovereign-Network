@@ -69,6 +69,13 @@ impl ZhtpRequestHandler for BlockchainHandler {
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/transaction/") => {
                 self.handle_get_transaction_by_hash(request).await
             }
+            // Blockchain sync endpoints
+            (ZhtpMethod::Get, "/api/v1/blockchain/export") => {
+                self.handle_export_chain(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/blockchain/import") => {
+                self.handle_import_chain(request).await
+            }
             (ZhtpMethod::Post, "/api/v1/blockchain/transaction/estimate-fee") => {
                 self.handle_estimate_transaction_fee(request).await
             }
@@ -1403,6 +1410,49 @@ impl BlockchainHandler {
             creator: "0x0000000000000000000000000000000000000000".to_string(),
             deployed_at: 0,
             bytecode_size: 0,
+        };
+        
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Export entire blockchain for sync
+    async fn handle_export_chain(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let blockchain = self.blockchain.read().await;
+        let exported_data = blockchain.export_chain()
+            .map_err(|e| anyhow::anyhow!("Failed to export blockchain: {}", e))?;
+        
+        tracing::info!("📤 Exported blockchain: {} bytes", exported_data.len());
+        
+        Ok(ZhtpResponse::success_with_content_type(
+            exported_data,
+            "application/octet-stream".to_string(),
+            None,
+        ))
+    }
+
+    /// Import blockchain from another node
+    async fn handle_import_chain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let mut blockchain = self.blockchain.write().await;
+        
+        blockchain.import_chain(request.body)
+            .map_err(|e| anyhow::anyhow!("Failed to import blockchain: {}", e))?;
+        
+        #[derive(Serialize)]
+        struct ImportResponse {
+            status: String,
+            message: String,
+            block_height: usize,
+        }
+        
+        let response_data = ImportResponse {
+            status: "success".to_string(),
+            message: "Blockchain imported successfully".to_string(),
+            block_height: blockchain.blocks.len(),
         };
         
         let json_response = serde_json::to_vec(&response_data)?;
