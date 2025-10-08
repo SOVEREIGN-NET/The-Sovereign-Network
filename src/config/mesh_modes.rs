@@ -25,7 +25,7 @@ impl fmt::Display for MeshMode {
 
 impl Default for MeshMode {
     fn default() -> Self {
-        MeshMode::Hybrid // Default to hybrid for easier transition
+        MeshMode::PureMesh // Default to pure mesh for local-only operation
     }
 }
 
@@ -182,9 +182,9 @@ impl Default for IspBypassConfig {
         Self {
             enabled: true,
             prefer_mesh_routes: true,
-            fallback_to_internet: true, // Safe default for hybrid mode
+            fallback_to_internet: false, // Pure mesh mode - no internet fallback
             long_range_relay_timeout_ms: 10000,
-            mesh_route_priority: 200, // High preference for mesh routes
+            mesh_route_priority: 255, // Maximum preference for mesh routes
         }
     }
 }

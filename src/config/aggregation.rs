@@ -286,7 +286,7 @@ impl Default for NodeConfig {
                     "lorawan".to_string(),
                     "tcp".to_string()
                 ],
-                bootstrap_peers: vec!["100.94.204.6:9333".to_string()],
+                bootstrap_peers: vec!["127.0.0.1:9333".to_string()],
                 long_range_relays: false,
             },
             

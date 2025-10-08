@@ -15,7 +15,7 @@ use serde_json::Value;
 #[command(name = "zhtp")]
 pub struct ZhtpCli {
     /// API server address
-    #[arg(short, long, default_value = "0.0.0.0:9333")]
+    #[arg(short, long, default_value = "127.0.0.1:9333")]
     pub server: String,
     
     /// Enable verbose output

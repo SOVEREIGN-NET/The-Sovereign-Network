@@ -143,7 +143,7 @@ impl Environment {
                 network_settings: NetworkSettings {
                     network_id: "lib-dev".to_string(),
                     bootstrap_peers: vec![
-                        "0.0.0.0:9333".to_string(),
+                        "127.0.0.1:9333".to_string(),
                         "localhost:9334".to_string(),
                     ],
                     max_peers: 10,
@@ -208,9 +208,7 @@ impl Environment {
                 network_settings: NetworkSettings {
                     network_id: "lib-testnet".to_string(),
                     bootstrap_peers: vec![
-                        "testnet1.zhtp.network:9333".to_string(),
-                        "testnet2.zhtp.network:9333".to_string(),
-                        "100.94.204.6:9333".to_string(),
+                        "127.0.0.1:9333".to_string(),
                     ],
                     max_peers: 50,
                     connection_timeout_ms: 10000,
@@ -274,10 +272,7 @@ impl Environment {
                 network_settings: NetworkSettings {
                     network_id: "lib-mainnet".to_string(),
                     bootstrap_peers: vec![
-                        "mainnet1.zhtp.network:9333".to_string(),
-                        "mainnet2.zhtp.network:9333".to_string(),
-                        "mainnet3.zhtp.network:9333".to_string(),
-                        "100.94.204.6:9333".to_string(),
+                        "127.0.0.1:9333".to_string(),
                     ],
                     max_peers: 100,
                     connection_timeout_ms: 30000,

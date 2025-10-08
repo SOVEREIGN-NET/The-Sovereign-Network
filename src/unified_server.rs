@@ -2867,15 +2867,15 @@ impl ZhtpUnifiedServer {
             info!("✅ Bluetooth mesh advertising active");
         }
         
-        // Bind TCP listener for HTTP, TCP mesh, WiFi Direct, Bootstrap
-        let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", self.port)).await
+        // Bind TCP listener for HTTP, TCP mesh, WiFi Direct, Bootstrap (localhost only for pure mesh)
+        let tcp_listener = TcpListener::bind(format!("127.0.0.1:{}", self.port)).await
             .context("Failed to bind TCP listener")?;
-        info!("TCP listener bound to port {}", self.port);
+        info!("TCP listener bound to localhost port {} (local mesh only)", self.port);
         
-        // Bind UDP socket for UDP mesh, Bootstrap
-        let udp_socket = UdpSocket::bind(format!("0.0.0.0:{}", self.port)).await
+        // Bind UDP socket for UDP mesh, Bootstrap (localhost only for pure mesh)
+        let udp_socket = UdpSocket::bind(format!("127.0.0.1:{}", self.port)).await
             .context("Failed to bind UDP socket")?;
-        info!("UDP socket bound to port {}", self.port);
+        info!("UDP socket bound to localhost port {} (local mesh only)", self.port);
         
         self.tcp_listener = Some(Arc::new(tcp_listener));
         self.udp_socket = Some(Arc::new(udp_socket));

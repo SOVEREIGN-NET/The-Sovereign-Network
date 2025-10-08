@@ -589,8 +589,8 @@ impl DhtHandler {
             let query = protocol.create_relay_query(peer_addr, domain, path, options).await?;
             let query_bytes = bincode::serialize(&query)?;
             
-            // Send via UDP
-            let socket = UdpSocket::bind("0.0.0.0:0").await?;
+            // Send via UDP (localhost only for pure mesh)
+            let socket = UdpSocket::bind("127.0.0.1:0").await?;
             socket.send_to(&query_bytes, peer_addr).await?;
             
             // Wait for response (with timeout)
