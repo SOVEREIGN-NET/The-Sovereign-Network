@@ -17,7 +17,7 @@ lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }
-lib-network = { path = "../lib-network", features = ["windows-gatt"] }
+lib-network = { path = "../lib-network" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts", "wasm-runtime"] }
 lib-consensus = { path = "../lib-consensus" }
 lib-economy = { path = "../lib-economy" }
@@ -90,3 +90,8 @@ development = ["tracing-subscriber/env-filter"]
 pure-mesh = []  # Pure mesh mode without TCP/IP fallback
 hybrid = []     # Hybrid mesh + TCP/IP mode
 yaml = ["dep:serde_yaml"]  # Optional YAML output support
+
+# Platform-specific Bluetooth features (automatically enabled on respective platforms)
+windows-bluetooth = ["lib-network/windows-gatt"]
+linux-bluetooth = []  # Linux uses BlueZ (system service)
+macos-bluetooth = ["lib-network/macos-corebluetooth"]
