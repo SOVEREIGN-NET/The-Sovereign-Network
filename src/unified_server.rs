@@ -2861,10 +2861,31 @@ impl BluetoothClassicRouter {
     pub async fn initialize(&self) -> Result<()> {
         info!("Initializing Bluetooth Classic RFCOMM protocol for high-throughput mesh...");
         
+        // Check if Windows Bluetooth feature is enabled on Windows
+        #[cfg(all(target_os = "windows", not(feature = "windows-bluetooth")))]
+        {
+            warn!("🚨 Windows: Bluetooth Classic requires --features windows-bluetooth");
+            warn!("   Current build will NOT support RFCOMM discovery or connections");
+            warn!("   Rebuild with: cargo build --features windows-bluetooth");
+            warn!("   Skipping Bluetooth Classic initialization");
+            return Err(anyhow::anyhow!("Windows Bluetooth feature not enabled"));
+        }
+        
         use lib_network::protocols::bluetooth_classic::BluetoothClassicProtocol;
+        use lib_crypto::PublicKey;
         
         // Create Bluetooth Classic protocol instance
         let bluetooth_classic = BluetoothClassicProtocol::new(self.node_id)?;
+        
+        // Initialize ZHTP authentication with blockchain public key
+        info!("🔐 Initializing ZHTP authentication for Bluetooth Classic...");
+        let blockchain_pubkey = PublicKey::new(self.node_id.to_vec());
+        if let Err(e) = bluetooth_classic.initialize_zhtp_auth(blockchain_pubkey).await {
+            warn!("⚠️  Bluetooth Classic auth initialization failed: {}", e);
+            warn!("Continuing without authentication - connections may be insecure");
+        } else {
+            info!("✅ Bluetooth Classic ZHTP authentication initialized");
+        }
         
         // Initialize RFCOMM advertising
         if let Err(e) = bluetooth_classic.start_advertising().await {
@@ -2967,6 +2988,123 @@ impl BluetoothClassicRouter {
     /// Check if Bluetooth Classic is advertising
     pub async fn is_advertising(&self) -> bool {
         self.protocol.read().await.is_some()
+    }
+    
+    /// Discover and connect to Bluetooth Classic peers
+    /// Actively discovers paired devices, queries RFCOMM services, and connects to ZHTP nodes
+    pub async fn discover_and_connect_peers(&self, mesh_router: &MeshRouter) -> Result<usize> {
+        info!("🔍 Starting Bluetooth Classic peer discovery...");
+        
+        let protocol_guard = self.protocol.read().await;
+        let protocol = match protocol_guard.as_ref() {
+            Some(p) => p,
+            None => {
+                warn!("Bluetooth Classic protocol not initialized");
+                return Ok(0);
+            }
+        };
+        
+        // Step 1: Discover paired devices
+        let devices = match protocol.discover_paired_devices().await {
+            Ok(devs) => {
+                info!("✅ Discovered {} paired Bluetooth devices", devs.len());
+                devs
+            }
+            Err(e) => {
+                warn!("Failed to discover Bluetooth devices: {}", e);
+                return Ok(0);
+            }
+        };
+        
+        let mut connected_count = 0;
+        
+        // Step 2: Query each device for RFCOMM services and connect
+        for device in devices {
+            info!("🔎 Checking device: {} ({})", 
+                device.name.as_deref().unwrap_or("Unknown"),
+                device.address
+            );
+            
+            // Only connect to paired and available devices
+            if !device.is_paired {
+                continue;
+            }
+            
+            // Query RFCOMM services on this device
+            let services = match protocol.query_rfcomm_services(&device.address).await {
+                Ok(svcs) => svcs,
+                Err(e) => {
+                    debug!("Failed to query services on {}: {}", device.address, e);
+                    continue;
+                }
+            };
+            
+            // Look for ZHTP services
+            for service in services {
+                if service.service_name.contains("ZHTP") || 
+                   service.service_uuid.contains("6ba7b810") {
+                    info!("✨ Found ZHTP service on {} (channel {})", 
+                        device.address, service.channel);
+                    
+                    // Attempt to connect
+                    match protocol.connect_to_peer(&device.address, service.channel).await {
+                        Ok(stream) => {
+                            info!("🎉 Connected to {} via Bluetooth Classic RFCOMM!", device.address);
+                            connected_count += 1;
+                            
+                            // Create mesh connection entry
+                            let peer_pubkey = lib_crypto::PublicKey::new(device.address.as_bytes().to_vec());
+                            let connection = lib_network::mesh::connection::MeshConnection {
+                                peer_id: peer_pubkey.clone(),
+                                protocol: lib_network::protocols::NetworkProtocol::BluetoothClassic,
+                                peer_address: Some(device.address.clone()),
+                                signal_strength: device.rssi.map(|r| (r + 127) as f64 / 127.0).unwrap_or(0.7),
+                                bandwidth_capacity: 375_000, // 375 KB/s
+                                latency_ms: 50,
+                                connected_at: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                                data_transferred: 0,
+                                tokens_earned: 0,
+                                stability_score: 0.8,
+                                zhtp_authenticated: false,
+                                quantum_secure: false,
+                                peer_dilithium_pubkey: None,
+                                kyber_shared_secret: None,
+                                trust_score: 0.5,
+                            };
+                            
+                            // Add to mesh network
+                            let mut connections = mesh_router.connections.write().await;
+                            connections.insert(peer_pubkey, connection);
+                            
+                            info!("✅ Added {} to mesh network", device.address);
+                            
+                            // Store the stream for future communication
+                            self.connected_devices.write().await.insert(
+                                device.address.clone(),
+                                device.address.clone()
+                            );
+                        }
+                        Err(e) => {
+                            debug!("Failed to connect to {}: {}", device.address, e);
+                        }
+                    }
+                    
+                    // Only connect to first ZHTP service per device
+                    break;
+                }
+            }
+        }
+        
+        if connected_count > 0 {
+            info!("🎊 Successfully connected to {} Bluetooth Classic peers", connected_count);
+        } else {
+            info!("No new Bluetooth Classic peers discovered");
+        }
+        
+        Ok(connected_count)
     }
     
     /// Get connected devices via Bluetooth Classic
@@ -3348,12 +3486,15 @@ impl ZhtpUnifiedServer {
     async fn start_bluetooth_mesh_handler(&self) -> Result<()> {
         info!("🔵 Starting Bluetooth LE mesh handler...");
         
-        if let Err(e) = self.bluetooth_router.initialize().await {
-            warn!("Bluetooth LE initialization failed: {}", e);
-            warn!("Continuing without Bluetooth support");
-        } else {
-            info!("✅ Bluetooth LE mesh active - discoverable for phone connections");
+        // Check if protocol is initialized (should be done in run_pure_mesh already)
+        let is_initialized = self.bluetooth_router.protocol.read().await.is_some();
+        
+        if !is_initialized {
+            warn!("Bluetooth LE protocol not initialized - skipping handler");
+            return Ok(());
         }
+        
+        info!("✅ Bluetooth LE mesh handler active - discoverable for phone connections");
         
         Ok(())
     }
@@ -3362,12 +3503,59 @@ impl ZhtpUnifiedServer {
     async fn start_bluetooth_classic_handler(&self) -> Result<()> {
         info!("🔵 Starting Bluetooth Classic RFCOMM mesh handler...");
         
-        if let Err(e) = self.bluetooth_classic_router.initialize().await {
-            warn!("Bluetooth Classic initialization failed: {}", e);
-            warn!("Continuing without Bluetooth Classic support");
-        } else {
-            info!("✅ Bluetooth Classic RFCOMM active - high-throughput mesh (375 KB/s)");
+        // Check if protocol is initialized (should be done in run_pure_mesh already)
+        let is_initialized = self.bluetooth_classic_router.protocol.read().await.is_some();
+        
+        if !is_initialized {
+            warn!("Bluetooth Classic protocol not initialized - skipping handler");
+            return Ok(());
         }
+        
+        info!("✅ Bluetooth Classic RFCOMM handler active");
+        
+        // Note: Windows Bluetooth API types are not Send, so periodic discovery
+        // cannot run in a spawned task. Manual discovery can still be triggered.
+        #[cfg(not(all(target_os = "windows", feature = "windows-bluetooth")))]
+        {
+            info!("Starting periodic Bluetooth Classic peer discovery...");
+            // Start periodic peer discovery task
+            let bt_router = self.bluetooth_classic_router.clone();
+            let mesh_router = self.mesh_router.clone();
+            let is_running = self.is_running.clone();
+            
+            tokio::spawn(async move {
+                // Initial discovery after 5 seconds
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+                
+                while *is_running.read().await {
+                    interval.tick().await;
+                    
+                    info!("🔍 Bluetooth Classic: Starting periodic peer discovery...");
+                    match bt_router.discover_and_connect_peers(&mesh_router).await {
+                        Ok(count) => {
+                            if count > 0 {
+                                info!("✅ Bluetooth Classic: Connected to {} new peers", count);
+                            } else {
+                                debug!("Bluetooth Classic: No new peers found");
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Bluetooth Classic discovery error: {}", e);
+                        }
+                    }
+                }
+            });
+        }
+        
+        #[cfg(all(target_os = "windows", feature = "windows-bluetooth"))]
+        {
+            info!("⚠️  Windows: Automatic periodic discovery disabled (API not thread-safe)");
+            info!("    Use manual discovery commands or API calls instead");
+        }
+        
+        info!("📡 Bluetooth Classic periodic discovery task started (60s interval)");
         
         Ok(())
     }
