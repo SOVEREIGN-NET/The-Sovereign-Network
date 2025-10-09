@@ -26,6 +26,7 @@ use lib_network::dht::relay::ZhtpRelayProtocol;
 use lib_network::dht::protocol::{DhtPacket, DhtPacketPayload, DhtOperation, ZhtpRelayQuery, ZhtpRelayResponse};
 use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptionSession, ZhtpKeyExchangeInit, ZhtpKeyExchangeResponse};
 use lib_network::protocols::zhtp_auth::{ZhtpAuthManager, ZhtpAuthChallenge, ZhtpAuthResponse, NodeCapabilities};
+use lib_network::types::mesh_message::ZhtpMeshMessage;
 
 use lib_network::MeshConnection;
 use lib_blockchain::Blockchain;
@@ -507,12 +508,33 @@ pub struct MeshRouter {
     encryption_manager: Arc<RwLock<ZhtpEncryptionManager>>,
     zhtp_auth_manager: Arc<RwLock<Option<ZhtpAuthManager>>>,
     encryption_sessions: Arc<RwLock<HashMap<String, ZhtpEncryptionSession>>>,
+    // Blockchain sync infrastructure
+    message_handler: Arc<lib_network::messaging::message_handler::MeshMessageHandler>,
+    sync_manager: Arc<lib_network::blockchain_sync::BlockchainSyncManager>,
+    // Protocol instances for sending
+    bluetooth_protocol: Arc<RwLock<Option<BluetoothMeshProtocol>>>,
+    udp_socket: Arc<RwLock<Option<Arc<UdpSocket>>>>,
 }
 
 impl MeshRouter {
     pub fn new(server_id: Uuid, session_manager: Arc<SessionManager>) -> Self {
+        // Create shared connections map for message handler
+        let connections = Arc::new(RwLock::new(HashMap::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        
+        // Create message handler with shared state
+        let message_handler = Arc::new(lib_network::messaging::message_handler::MeshMessageHandler::new(
+            connections.clone(),
+            long_range_relays,
+            revenue_pools,
+        ));
+        
+        // Create blockchain sync manager
+        let sync_manager = Arc::new(lib_network::blockchain_sync::BlockchainSyncManager::new());
+        
         Self {
-            connections: Arc::new(RwLock::new(HashMap::new())),
+            connections,
             server_id,
             identity_manager: None,
             session_manager,
@@ -520,11 +542,25 @@ impl MeshRouter {
             encryption_manager: Arc::new(RwLock::new(ZhtpEncryptionManager::new())),
             zhtp_auth_manager: Arc::new(RwLock::new(None)),
             encryption_sessions: Arc::new(RwLock::new(HashMap::new())),
+            message_handler,
+            sync_manager,
+            bluetooth_protocol: Arc::new(RwLock::new(None)),
+            udp_socket: Arc::new(RwLock::new(None)),
         }
     }
     
     pub fn set_identity_manager(&mut self, manager: Arc<RwLock<IdentityManager>>) {
         self.identity_manager = Some(manager);
+    }
+    
+    /// Set Bluetooth protocol for sending messages
+    pub async fn set_bluetooth_protocol(&self, protocol: BluetoothMeshProtocol) {
+        *self.bluetooth_protocol.write().await = Some(protocol);
+    }
+    
+    /// Set UDP socket for sending messages
+    pub async fn set_udp_socket(&self, socket: Arc<UdpSocket>) {
+        *self.udp_socket.write().await = Some(socket);
     }
     
     /// Get a clone of the connections Arc for sharing with other components
@@ -554,32 +590,56 @@ impl MeshRouter {
         let message_data = bincode::serialize(&message)
             .context("Failed to serialize mesh message")?;
         
+        // Get peer address
+        let peer_address = connection.peer_address.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Peer address not available"))?;
+        
         // Route through appropriate protocol based on connection type
-        match connection.protocol.as_str() {
-            "bluetooth" => {
-                info!("📤 Sending mesh message to peer via Bluetooth ({})", connection.peer_address);
-                // TODO: Get bluetooth protocol instance and send
-                // For now, we'll need to pass the BluetoothRouter reference
-                // This will be completed when we wire up the full integration
-                debug!("Bluetooth send not yet implemented - need protocol instance");
+        match &connection.protocol {
+            lib_network::protocols::NetworkProtocol::BluetoothLE | 
+            lib_network::protocols::NetworkProtocol::BluetoothClassic => {
+                info!("📤 Sending mesh message to peer via Bluetooth ({}) - {} bytes", peer_address, message_data.len());
+                
+                // Get bluetooth protocol instance
+                let bluetooth = self.bluetooth_protocol.read().await;
+                if let Some(ref protocol) = *bluetooth {
+                    // Send via Bluetooth GATT
+                    protocol.send_mesh_message(peer_address, &message_data).await?;
+                    info!("✅ Bluetooth message sent successfully");
+                    Ok(())
+                } else {
+                    warn!("Bluetooth protocol not initialized");
+                    Err(anyhow::anyhow!("Bluetooth protocol not available"))
+                }
+            }
+            lib_network::protocols::NetworkProtocol::WiFiDirect => {
+                info!("📤 Sending mesh message to peer via WiFi Direct ({})", peer_address);
+                // WiFi Direct would use TCP socket - implementation similar to Bluetooth
+                warn!("WiFi Direct send not yet fully implemented");
                 Ok(())
             }
-            "wifi-direct" => {
-                info!("📤 Sending mesh message to peer via WiFi Direct ({})", connection.peer_address);
-                // TODO: Similar for WiFi Direct
-                debug!("WiFi Direct send not yet implemented");
-                Ok(())
-            }
-            "udp" => {
-                info!("📤 Sending mesh message to peer via UDP ({})", connection.peer_address);
-                // UDP can be sent directly via socket
-                // TODO: Need UDP socket instance
-                debug!("UDP send not yet implemented");
-                Ok(())
+            lib_network::protocols::NetworkProtocol::UDP => {
+                info!("📤 Sending mesh message to peer via UDP ({}) - {} bytes", peer_address, message_data.len());
+                
+                // Parse peer address
+                let peer_addr: SocketAddr = peer_address.parse()
+                    .context("Invalid peer UDP address")?;
+                
+                // Get UDP socket instance
+                let socket = self.udp_socket.read().await;
+                if let Some(ref sock) = *socket {
+                    // Send via UDP
+                    sock.send_to(&message_data, peer_addr).await?;
+                    info!("✅ UDP message sent successfully");
+                    Ok(())
+                } else {
+                    warn!("UDP socket not initialized");
+                    Err(anyhow::anyhow!("UDP socket not available"))
+                }
             }
             protocol => {
-                warn!("Unsupported protocol for peer messaging: {}", protocol);
-                Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
+                warn!("Unsupported protocol for peer messaging: {:?}", protocol);
+                Err(anyhow::anyhow!("Unsupported protocol: {:?}", protocol))
             }
         }
     }
@@ -628,7 +688,119 @@ impl MeshRouter {
     pub async fn handle_udp_mesh(&self, data: &[u8], addr: SocketAddr) -> Result<Option<Vec<u8>>> {
         debug!("Processing UDP mesh packet from: {} ({} bytes)", addr, data.len());
         
-        // First, try to parse as ZHTP relay query (encrypted DHT request)
+        // First, try to parse as ZhtpMeshMessage (includes blockchain sync messages)
+        if let Ok(mesh_message) = bincode::deserialize::<ZhtpMeshMessage>(data) {
+            info!("📨 Received ZhtpMeshMessage from: {}", addr);
+            
+            // Handle blockchain-specific messages
+            match &mesh_message {
+                ZhtpMeshMessage::BlockchainRequest { requester, request_id, from_height } => {
+                    info!("📦 Blockchain request received (request_id: {}, from_height: {:?})", request_id, from_height);
+                    
+                    // Process via message handler
+                    if let Err(e) = self.message_handler.handle_mesh_message(mesh_message.clone(), requester.clone()).await {
+                        warn!("Failed to handle blockchain request: {}", e);
+                    } else {
+                        info!("✅ Blockchain request processed, preparing to send data chunks...");
+                        
+                        // Export and send blockchain chunks
+                        match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                            Ok(blockchain_arc) => {
+                                let blockchain_lock = blockchain_arc.read().await;
+                                
+                                // Export blockchain data
+                                match blockchain_lock.export_chain() {
+                                    Ok(blockchain_data) => {
+                                        info!("📦 Exported {} bytes of blockchain data", blockchain_data.len());
+                                        
+                                        // Get connection info for chunking
+                                        let connections = self.connections.read().await;
+                                        if let Some(connection) = connections.get(requester) {
+                                            // Chunk data based on protocol
+                                            match lib_network::blockchain_sync::BlockchainSyncManager::chunk_blockchain_data_for_protocol(
+                                                *request_id,
+                                                blockchain_data,
+                                                &connection.protocol
+                                            ) {
+                                                Ok(chunk_messages) => {
+                                                    let chunk_count = chunk_messages.len();
+                                                    info!("📤 Sending {} blockchain chunks to peer", chunk_count);
+                                                    
+                                                    // Send each chunk
+                                                    for chunk_message in chunk_messages {
+                                                        if let Err(e) = self.send_to_peer(requester, chunk_message).await {
+                                                            error!("Failed to send blockchain chunk: {}", e);
+                                                            break;
+                                                        }
+                                                    }
+                                                    info!("✅ All blockchain chunks sent successfully");
+                                                }
+                                                Err(e) => error!("Failed to chunk blockchain data: {}", e),
+                                            }
+                                        } else {
+                                            warn!("No connection found for requester");
+                                        }
+                                    }
+                                    Err(e) => error!("Failed to export blockchain: {}", e),
+                                }
+                            }
+                            Err(e) => error!("Failed to get global blockchain: {}", e),
+                        }
+                    }
+                    
+                    return Ok(None);
+                }
+                ZhtpMeshMessage::BlockchainData { request_id, chunk_index, total_chunks, data: chunk_data, complete_data_hash } => {
+                    info!("📥 Blockchain chunk {}/{} received (request_id: {}, {} bytes)", 
+                          chunk_index + 1, total_chunks, request_id, chunk_data.len());
+                    
+                    // Add chunk to sync manager
+                    match self.sync_manager.add_chunk(
+                        *request_id,
+                        *chunk_index,
+                        *total_chunks,
+                        chunk_data.clone(),
+                        *complete_data_hash
+                    ).await {
+                        Ok(Some(complete_data)) => {
+                            info!("🎉 All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
+                            info!("   Importing blockchain data...");
+                            
+                            // Import the blockchain
+                            match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                                Ok(blockchain_arc) => {
+                                    let mut blockchain_lock = blockchain_arc.write().await;
+                                    
+                                    match blockchain_lock.import_chain(complete_data) {
+                                        Ok(()) => {
+                                            info!("✅ Blockchain imported successfully from peer");
+                                            info!("   New blockchain height: {}", blockchain_lock.get_height());
+                                        }
+                                        Err(e) => error!("Failed to import blockchain: {}", e),
+                                    }
+                                }
+                                Err(e) => error!("Failed to get global blockchain: {}", e),
+                            }
+                        }
+                        Ok(None) => {
+                            debug!("Chunk {}/{} buffered, waiting for more chunks", chunk_index + 1, total_chunks);
+                        }
+                        Err(e) => {
+                            error!("Failed to process blockchain chunk: {}", e);
+                        }
+                    }
+                    
+                    return Ok(None);
+                }
+                _ => {
+                    // Other mesh messages - process via handler
+                    debug!("Processing non-blockchain mesh message");
+                    // We'll handle other message types below or let them fall through
+                }
+            }
+        }
+        
+        // Second, try to parse as ZHTP relay query (encrypted DHT request)
         if let Ok(relay_query) = bincode::deserialize::<ZhtpRelayQuery>(data) {
             info!("🔐 Received ZHTP relay query from: {} (encrypted)", addr);
             
@@ -2086,6 +2258,33 @@ impl MeshRouter {
                                                                                                 info!("   ✓ Quantum-secure encryption (Kyber512)");
                                                                                                 info!("   ✓ Registered in DHT peer registry");
                                                                                                 info!("   ✓ Ready for relay queries & Web4 content");
+                                                                                                
+                                                                                                // ============================================================================
+                                                                                                // PHASE 5: AUTOMATIC BLOCKCHAIN SYNC
+                                                                                                // ============================================================================
+                                                                                                info!("🔄 Phase 5: Initiating automatic blockchain sync with peer {}", node_id);
+                                                                                                
+                                                                                                // Create blockchain sync request
+                                                                                                let (request_id, sync_message) = match self.sync_manager
+                                                                                                    .create_blockchain_request(peer_pubkey.clone(), None).await {
+                                                                                                    Ok(result) => result,
+                                                                                                    Err(e) => {
+                                                                                                        warn!("Failed to create blockchain sync request: {}", e);
+                                                                                                        return Ok(true); // Still return success for connection
+                                                                                                    }
+                                                                                                };
+                                                                                                
+                                                                                                info!("📤 Sending blockchain sync request (ID: {}) to peer {}", request_id, node_id);
+                                                                                                
+                                                                                                // Send blockchain request to peer
+                                                                                                if let Err(e) = self.send_to_peer(&peer_pubkey, sync_message).await {
+                                                                                                    warn!("Failed to send blockchain sync request to peer {}: {}", node_id, e);
+                                                                                                    warn!("   Connection established but sync will not start automatically");
+                                                                                                } else {
+                                                                                                    info!("✅ Blockchain sync request sent successfully");
+                                                                                                    info!("   ⏳ Waiting for blockchain chunks from peer...");
+                                                                                                }
+                                                                                                
                                                                                                 return Ok(true);
                                                                                             }
                                                                                             Err(e) => {
@@ -3542,6 +3741,10 @@ impl Clone for MeshRouter {
             encryption_manager: self.encryption_manager.clone(),
             zhtp_auth_manager: self.zhtp_auth_manager.clone(),
             encryption_sessions: self.encryption_sessions.clone(),
+            message_handler: self.message_handler.clone(),
+            sync_manager: self.sync_manager.clone(),
+            bluetooth_protocol: self.bluetooth_protocol.clone(),
+            udp_socket: self.udp_socket.clone(),
         }
     }
 }

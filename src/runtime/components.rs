@@ -2146,12 +2146,17 @@ async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
     for peer in peers {
         // Check if peer address looks like a mesh address (e.g., "bluetooth://...")
         if peer.starts_with("bluetooth://") || peer.starts_with("wifi-direct://") {
-            info!("🔵 Peer {} is mesh-connected - using bincode mesh protocol (COMING SOON)", peer);
-            // TODO: Use BlockchainSyncManager to request via mesh
-            // let sync_manager = BlockchainSyncManager::new();
-            // let (request_id, message) = sync_manager.create_blockchain_request(...).await?;
-            // send_mesh_message_to_peer(peer, message).await?;
-            continue;
+            info!("🔵 Peer {} is mesh-connected - using bincode mesh protocol", peer);
+            
+            // NOTE: Mesh sync during bootstrap is a future enhancement.
+            // Currently, mesh peers will sync automatically AFTER they connect
+            // via the automatic blockchain sync trigger in authenticate_and_register_peer().
+            // This bootstrap function runs at startup before mesh connections are established,
+            // so HTTP fallback is appropriate here.
+            
+            info!("   Mesh sync happens post-bootstrap via automatic trigger");
+            info!("   Falling through to HTTP for initial bootstrap");
+            // Continue to HTTP sync below
         }
         
         // Fall back to HTTP for non-mesh peers
