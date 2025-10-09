@@ -1,0 +1,35 @@
+# Cargo build configuration for ZHTP
+# Optimizes compilation for different platforms
+
+[build]
+# Use all available CPU cores, but can be overridden with -j flag
+# jobs = 1  # Uncomment for Raspberry Pi / low-memory systems
+
+[target.aarch64-unknown-linux-gnu]
+# Raspberry Pi 3/4/5 (64-bit)
+linker = "aarch64-linux-gnu-gcc"
+
+[target.armv7-unknown-linux-gnueabihf]
+# Raspberry Pi 2/3 (32-bit)
+linker = "arm-linux-gnueabihf-gcc"
+
+[profile.dev]
+# Development builds - fast compilation
+split-debuginfo = "unpacked"  # Faster linking on Linux
+
+[profile.rpi]
+# Raspberry Pi optimized profile
+inherits = "release"
+
+# Reduce memory usage during compilation
+[net]
+git-fetch-with-cli = true  # Use system git instead of built-in (saves memory)
+
+# Registry settings
+[registries.crates-io]
+protocol = "sparse"  # Faster, less memory
+
+# Environment variables for low-memory systems
+[env]
+# Reduce LLVM memory usage
+CARGO_PROFILE_RELEASE_LTO = "false"

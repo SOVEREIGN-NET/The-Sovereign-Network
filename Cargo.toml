@@ -18,7 +18,7 @@ lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }
 lib-network = { path = "../lib-network" }
-lib-blockchain = { path = "../lib-blockchain", features = ["contracts", "wasm-runtime"] }
+lib-blockchain = { path = "../lib-blockchain", features = ["contracts"], optional = true }
 lib-consensus = { path = "../lib-consensus" }
 lib-economy = { path = "../lib-economy" }
 lib-protocols = { path = "../lib-protocols" }
@@ -84,14 +84,44 @@ tempfile = "3.8"
 criterion = "0.5"
 
 [features]
-default = ["production"]
+default = ["production", "full-blockchain"]
 production = []
 development = ["tracing-subscriber/env-filter"]
 pure-mesh = []  # Pure mesh mode without TCP/IP fallback
 hybrid = []     # Hybrid mesh + TCP/IP mode
 yaml = ["dep:serde_yaml"]  # Optional YAML output support
 
+# Blockchain features
+full-blockchain = ["lib-blockchain", "lib-blockchain/wasm-runtime"]  # Full blockchain with WASM contracts
+basic-blockchain = ["lib-blockchain"]  # Basic blockchain without WASM (saves ~500MB RAM during compile)
+
 # Platform-specific Bluetooth features (automatically enabled on respective platforms)
 windows-bluetooth = ["lib-network/windows-gatt"]
 linux-bluetooth = []  # Linux uses BlueZ (system service)
 macos-bluetooth = ["lib-network/macos-corebluetooth"]
+
+# Raspberry Pi optimized profile - minimal features for low-memory compilation
+rpi = ["basic-blockchain"]  # Raspberry Pi optimized build (no WASM runtime)
+
+[profile.dev]
+# Faster compilation, less memory usage
+opt-level = 0
+debug = true
+split-debuginfo = "unpacked"
+incremental = true
+
+[profile.release]
+# Standard release profile
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+
+[profile.rpi]
+# Raspberry Pi optimized: lower memory usage during compilation
+inherits = "release"
+opt-level = 2           # Lower optimization = less memory
+lto = false             # Disable LTO = much faster, less memory
+codegen-units = 256     # More codegen units = more parallelism, less memory per unit
+debug = false
+strip = true            # Strip symbols to reduce binary size
+

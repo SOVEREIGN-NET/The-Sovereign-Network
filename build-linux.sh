@@ -106,8 +106,55 @@ echo "Step 4: Building ZHTP..."
 echo "This may take several minutes on first build..."
 echo ""
 
-# Use the linux-bluetooth feature for Linux builds
-cargo build --release --features linux-bluetooth
+# Detect if we're on a Raspberry Pi or low-memory system
+TOTAL_MEM=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+TOTAL_MEM_GB=$((TOTAL_MEM / 1024 / 1024))
+
+echo "Detected RAM: ${TOTAL_MEM_GB}GB"
+
+# Configure build based on available memory
+if [ "$TOTAL_MEM_GB" -lt 2 ]; then
+    echo "Low memory system detected (<2GB). Applying optimizations..."
+    
+    # Check if swap is enabled
+    SWAP_SIZE=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
+    if [ "$SWAP_SIZE" -lt 2097152 ]; then  # Less than 2GB swap
+        echo ""
+        echo "WARNING: Insufficient swap space detected!"
+        echo "Current swap: $((SWAP_SIZE / 1024 / 1024))GB"
+        echo ""
+        echo "Creating 4GB swap file for compilation..."
+        
+        if [ ! -f /swapfile ]; then
+            sudo fallocate -l 4G /swapfile
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+            echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+            echo "✓ Swap space created and enabled"
+        else
+            sudo swapon /swapfile
+            echo "✓ Existing swap file enabled"
+        fi
+        echo ""
+    fi
+    
+    # Use Raspberry Pi optimized profile with single job
+    echo "Building with Raspberry Pi optimized profile (low memory mode)..."
+    echo "Note: WASM contract runtime disabled to save memory during compilation"
+    cargo build --profile rpi --features "linux-bluetooth,rpi" --no-default-features -j 1
+    
+    BUILD_DIR="rpi"
+    BINARY_PATH="./target/rpi/zhtp"
+else
+    echo "Sufficient memory detected. Building with standard release profile..."
+    
+    # Use the linux-bluetooth feature for Linux builds with full blockchain
+    cargo build --release --features linux-bluetooth
+    
+    BUILD_DIR="release"
+    BINARY_PATH="./target/release/zhtp"
+fi
 
 if [ $? -eq 0 ]; then
     echo ""
@@ -115,13 +162,13 @@ if [ $? -eq 0 ]; then
     echo "✓ Build successful!"
     echo "==================================="
     echo ""
-    echo "Binary location: ./target/release/zhtp"
+    echo "Binary location: ${BINARY_PATH}"
     echo ""
     echo "To run ZHTP:"
-    echo "  ./target/release/zhtp serve --port 8080"
+    echo "  ${BINARY_PATH} serve --port 8080"
     echo ""
     echo "For help:"
-    echo "  ./target/release/zhtp --help"
+    echo "  ${BINARY_PATH} --help"
     echo ""
 else
     echo ""
