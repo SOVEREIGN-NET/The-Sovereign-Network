@@ -21,11 +21,12 @@ struct ExistingNetworkInfo {
 
 pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
     match args.action {
-        NodeAction::Start { config, port, dev } => {
+        NodeAction::Start { config, port, dev, pure_mesh } => {
             println!(" Starting ZHTP orchestrator node...");
             println!("Port: {}", port);
             println!("Config: {:?}", config);
             println!("Dev mode: {}", dev);
+            println!("Pure mesh mode: {}", pure_mesh);
             
             // Show node type information if using predefined configs
             if let Some(ref config_path) = config {
@@ -49,7 +50,7 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             
             let cli_args = CliArgs {
                 mesh_port: port,
-                pure_mesh: false,
+                pure_mesh,
                 config: PathBuf::from(config.unwrap_or_else(|| "./config".to_string())),
                 environment: Environment::Development, // Use dev environment for now to avoid mainnet key requirement
                 log_level: if dev { "debug".to_string() } else { "info".to_string() },
@@ -58,6 +59,32 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             
             println!("Loading configuration...");
             let node_config = load_configuration(&cli_args).await?;
+            
+            // Apply network isolation if pure mesh mode is enabled
+            if pure_mesh {
+                println!("🔒 Applying network isolation for pure mesh mode...");
+                use crate::config::network_isolation::NetworkIsolationConfig;
+                
+                let isolation_config = NetworkIsolationConfig::default();
+                match isolation_config.apply_isolation().await {
+                    Ok(_) => {
+                        println!("✅ Network isolation applied successfully");
+                        println!("🚫 Internet access blocked - mesh networking only");
+                        
+                        // Test isolation
+                        match isolation_config.verify_isolation().await {
+                            Ok(_) => {
+                                println!("✅ Isolation verified: Local OK, Internet blocked");
+                            }
+                            Err(e) => println!("⚠️ Isolation verification failed: {}", e),
+                        }
+                    }
+                    Err(e) => {
+                        println!("❌ Failed to apply network isolation: {}", e);
+                        println!("⚠️ Continuing without isolation - manual configuration may be required");
+                    }
+                }
+            }
             
             println!("Starting runtime orchestrator...");
             let mut orchestrator = RuntimeOrchestrator::new(node_config.clone()).await?;

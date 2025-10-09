@@ -10,6 +10,7 @@ pub mod monitor;
 pub mod component;
 pub mod interactive;
 pub mod server;
+pub mod isolation;
 
 pub use node::handle_node_command;
 pub use wallet::handle_wallet_command;
@@ -19,5 +20,6 @@ pub use network::handle_network_command;
 pub use blockchain::handle_blockchain_command;
 pub use monitor::handle_monitor_command;
 pub use component::handle_component_command;
+pub use isolation::handle_isolation_command;
 pub use interactive::handle_interactive_command;
 pub use server::handle_server_command;

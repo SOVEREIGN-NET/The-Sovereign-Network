@@ -2113,6 +2113,7 @@ impl Component for ProtocolsComponent {
 // Helper function to bootstrap blockchain from network
 async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
     use lib_network::dht::bootstrap::{DHTBootstrap, DHTBootstrapEnhancements};
+    use lib_network::blockchain_sync::BlockchainSyncManager;
     use tokio::time::{timeout, Duration};
     
     info!("🔍 Discovering network peers for blockchain bootstrap...");
@@ -2137,8 +2138,23 @@ async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
     
     info!("📡 Found {} potential peers, attempting blockchain sync...", peers.len());
     
+    // TODO: First check if any peers are connected via mesh protocols (Bluetooth, WiFi Direct)
+    // This would query mesh_router.connections for active mesh peers
+    // For now, we'll use HTTP but with the understanding that mesh sync is coming
+    
     // Try each peer until we get a blockchain
     for peer in peers {
+        // Check if peer address looks like a mesh address (e.g., "bluetooth://...")
+        if peer.starts_with("bluetooth://") || peer.starts_with("wifi-direct://") {
+            info!("🔵 Peer {} is mesh-connected - using bincode mesh protocol (COMING SOON)", peer);
+            // TODO: Use BlockchainSyncManager to request via mesh
+            // let sync_manager = BlockchainSyncManager::new();
+            // let (request_id, message) = sync_manager.create_blockchain_request(...).await?;
+            // send_mesh_message_to_peer(peer, message).await?;
+            continue;
+        }
+        
+        // Fall back to HTTP for non-mesh peers
         let url = format!("http://{}/api/v1/blockchain/export", peer);
         
         match timeout(Duration::from_secs(5), async {
@@ -2154,7 +2170,7 @@ async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
                 // Create empty blockchain and import
                 let mut blockchain = lib_blockchain::Blockchain::new()?;
                 blockchain.import_chain(blockchain_data)?;
-                info!("✅ Successfully bootstrapped blockchain from {}", peer);
+                info!("✅ Successfully bootstrapped blockchain from {} (HTTP)", peer);
                 return Ok(blockchain);
             }
             Ok(Err(e)) => {
@@ -2170,4 +2186,3 @@ async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
     
     Err(anyhow::anyhow!("Failed to bootstrap from any peer"))
 }
-

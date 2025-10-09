@@ -74,6 +74,9 @@ pub enum ZhtpCommand {
     
     /// Server management
     Server(ServerArgs),
+    
+    /// Network isolation management
+    Isolation(IsolationArgs),
 }
 
 /// Node management commands
@@ -96,6 +99,9 @@ pub enum NodeAction {
         /// Enable development mode
         #[arg(long)]
         dev: bool,
+        /// Enable pure mesh mode (ISP-free networking)
+        #[arg(long)]
+        pure_mesh: bool,
     },
     /// Stop the orchestrator node
     Stop,
@@ -294,6 +300,13 @@ pub struct ServerArgs {
     pub action: ServerAction,
 }
 
+/// Network isolation commands
+#[derive(Args, Debug, Clone)]
+pub struct IsolationArgs {
+    #[command(subcommand)]
+    pub action: IsolationAction,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum ComponentAction {
     /// List all Level 2 components
@@ -334,6 +347,18 @@ pub enum ServerAction {
     Config,
 }
 
+#[derive(Subcommand, Debug, Clone)]
+pub enum IsolationAction {
+    /// Apply network isolation for pure mesh mode
+    Apply,
+    /// Check current isolation status
+    Check,
+    /// Remove network isolation
+    Remove,
+    /// Test network connectivity
+    Test,
+}
+
 /// Main CLI runner
 pub async fn run_cli() -> Result<()> {
     let cli = ZhtpCli::parse();
@@ -355,6 +380,7 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Component(args) => commands::component::handle_component_command(args.clone(), &cli).await,
         ZhtpCommand::Interactive(args) => commands::interactive::handle_interactive_command(args.clone(), &cli).await,
         ZhtpCommand::Server(args) => commands::server::handle_server_command(args.clone(), &cli).await,
+        ZhtpCommand::Isolation(args) => commands::isolation::handle_isolation_command(args.clone(), &cli).await,
     }
 }
 

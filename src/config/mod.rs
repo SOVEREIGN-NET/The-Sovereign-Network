@@ -7,6 +7,7 @@ pub mod validation;
 pub mod environment;
 pub mod mesh_modes;
 pub mod security;
+pub mod network_isolation;
 
 use anyhow::Result;
 
@@ -17,6 +18,7 @@ pub use aggregation::NodeConfig;
 pub use mesh_modes::MeshMode;
 pub use security::SecurityLevel;
 pub use environment::Environment;
+pub use network_isolation::NetworkIsolationConfig;
 
 /// Command line arguments structure
 #[derive(Debug, Clone)]
