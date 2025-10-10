@@ -641,7 +641,7 @@ pub fn validate_cli_arguments(args: &CliArgs) -> Result<()> {
         }
         Environment::Development => {
             if args.pure_mesh {
-                tracing::info!("🧪 Development + Pure mesh mode - testing ISP replacement");
+                tracing::info!(" Development + Pure mesh mode - testing ISP replacement");
             }
         }
         _ => {}
@@ -672,7 +672,7 @@ Key Features:
 • Economic incentives for sharing connectivity
 • Global coverage through long-range relays
 • Zero-knowledge privacy for all communications
-• Revolutionary internet replacement technology
+• internet replacement technology
 
 Requirements:
 • At least one mesh protocol must be available

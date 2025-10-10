@@ -43,7 +43,7 @@ pub async fn handle_monitor_command(args: MonitorArgs, cli: &ZhtpCli) -> Result<
             }
         }
         MonitorAction::Performance => {
-            println!("📈 Orchestrating performance metrics...");
+            println!(" Orchestrating performance metrics...");
             
             let response = client
                 .get(&format!("{}/monitor/performance", base_url))

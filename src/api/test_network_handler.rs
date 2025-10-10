@@ -7,7 +7,7 @@ use crate::runtime::RuntimeOrchestrator;
 use crate::config::NodeConfig;
 
 pub async fn test_network_apis() -> anyhow::Result<()> {
-    println!("🧪 Testing Network APIs directly...");
+    println!(" Testing Network APIs directly...");
     
     // Create runtime and network handler
     let runtime = Arc::new(RuntimeOrchestrator::new(NodeConfig::default()).await?);

@@ -128,7 +128,7 @@ pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Resul
                 // DAO registration
                 if let Some(dao_reg) = result.get("dao_registration") {
                     if let Some(voting_power) = dao_reg.get("voting_power") {
-                        println!("🏛️ DAO Voting Power: {}", voting_power);
+                        println!(" DAO Voting Power: {}", voting_power);
                     }
                 }
                 

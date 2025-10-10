@@ -12,7 +12,7 @@ use tracing::{info, error, debug};
 
 use super::alerting::{Alert, AlertLevel, AlertManager};
 
-/// Real storage stats from lib-storage
+/// storage stats from lib-storage
 struct StorageStats {
     total_storage: u64,
     used_storage: u64,
@@ -491,7 +491,7 @@ impl HealthMonitor {
     /// Get health history for a time period
     pub async fn get_health_history(&self, _duration: Duration) -> Result<Vec<HealthStatus>> {
         // For now, return current health as a single-item history
-        // In a real implementation, this would return historical data
+        // In a implementation, this would return historical data
         let current_health = self.get_current_health().await?;
         Ok(vec![current_health])
     }
@@ -581,15 +581,15 @@ impl HealthMonitor {
         })
     }
 
-    /// Check network health using real lib-network
+    /// Check network health using lib-network
     async fn check_network_health() -> Result<NetworkHealth> {
-        // Get real network health from lib-network package
+        // Get network health from lib-network package
         let peer_count = match lib_network::get_active_peer_count().await {
             Ok(count) => count,
             Err(_) => 0,
         };
         
-        // Get real network connectivity status from lib-network
+        // Get network connectivity status from lib-network
         let connectivity_status = match lib_network::get_mesh_status().await {
             Ok(mesh_status) => ConnectivityStatus {
                 internet_reachable: mesh_status.internet_connected,
@@ -624,8 +624,8 @@ impl HealthMonitor {
                         relay_peers: (peer_count / 10) as usize,
                     }
                 },
-                average_peer_latency: 150.0, // Could be enhanced with real latency data
-                peer_churn_rate: 5.0, // Could be enhanced with real churn rate calculation
+                average_peer_latency: 150.0, // Could be enhanced with latency data
+                peer_churn_rate: 5.0, // Could be enhanced with churn rate calculation
             },
             mesh_health: MeshHealth {
                 mesh_coverage: 80.0,
@@ -648,9 +648,9 @@ impl HealthMonitor {
         })
     }
 
-    /// Check blockchain health using real lib-blockchain
+    /// Check blockchain health using lib-blockchain
     async fn check_blockchain_health() -> Result<BlockchainHealth> {
-        // Get real blockchain health from lib-blockchain package
+        // Get blockchain health from lib-blockchain package
         let blockchain_health = match lib_blockchain::get_blockchain_health() {
             Ok(health) => health,
             Err(_) => {
@@ -753,14 +753,14 @@ impl HealthMonitor {
         })
     }
 
-    /// Check storage health using real lib-storage
+    /// Check storage health using lib-storage
     async fn check_storage_health() -> Result<StorageHealth> {
-        // Try to get real storage stats from lib-storage package with proper config
+        // Try to get storage stats from lib-storage package with proper config
         let storage_stats = match create_default_storage_config() {
             Ok(config) => {
                 match lib_storage::UnifiedStorageSystem::new(config).await {
                     Ok(mut storage) => {
-                        // Try to get real storage metrics
+                        // Try to get storage metrics
                         let (total_storage, used_storage) = match storage.get_statistics().await {
                             Ok(stats) => (
                                 1024 * 1024 * 1024 * 100, // 100GB system capacity
@@ -841,7 +841,7 @@ impl HealthMonitor {
         }
     }
 
-    /// Check economic system health using real lib-economy
+    /// Check economic system health using lib-economy
     async fn check_economic_health() -> Result<EconomicHealth> {
         // Economics health check would require specific economics API calls
         // For now, using fallback values since the economics module doesn't have

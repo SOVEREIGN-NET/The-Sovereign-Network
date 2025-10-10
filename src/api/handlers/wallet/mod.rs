@@ -1,6 +1,6 @@
 //! Wallet Handler Module
 //! 
-//! Complete wallet management using real MultiWalletManager and lib-economy patterns
+//! Complete wallet management using MultiWalletManager and lib-economy patterns
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -34,7 +34,7 @@ fn create_error_response(status: ZhtpStatus, message: String) -> ZhtpResponse {
     ZhtpResponse::error(status, message)
 }
 
-/// Complete wallet handler using real MultiWalletManager
+/// Complete wallet handler using MultiWalletManager
 pub struct WalletHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
 }
@@ -457,7 +457,7 @@ impl WalletHandler {
             }
         };
 
-        // Perform the actual transfer using the real function
+        // Perform the actual transfer using the function
         let purpose = req_data.purpose.unwrap_or_else(|| 
             format!("Transfer from {:?} to {:?}", from_wallet_type, to_wallet_type)
         );

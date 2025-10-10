@@ -14,7 +14,7 @@ pub fn show_lib_banner() {
 ║    ███████╗██║  ██║   ██║   ██║         ██║ ╚████║╚██████╔╝██████╔╝███████╗ ║
 ║    ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝         ╚═╝  ╚═══╝ ╚═════╝ ╚═════╝ ╚══════╝ ║
 ║                                                                              ║
-║                    REVOLUTIONARY INTERNET REPLACEMENT                  ║
+║                    INTERNET REPLACEMENT                  ║
 ║                                                                              ║
 ║    ┌─────────────────────────────────────────────────────────────────────┐  ║
 ║    │  Zero Knowledge Hypertext Transfer Protocol - Web4 Orchestrator    │  ║
@@ -23,9 +23,9 @@ pub fn show_lib_banner() {
 ║    │  Post-Quantum Cryptography (CRYSTALS-Dilithium/Kyber)           │  ║
 ║    │  Complete ISP Replacement via Mesh Networking                   │  ║
 ║    │  Universal Basic Income for All Network Participants            │  ║
-║    │  🏛️ Decentralized DAO Governance                                   │  ║
+║    │   Decentralized DAO Governance                                   │  ║
 ║    │   Zero-Knowledge Privacy for All Communications                  │  ║
-║    │   Revolutionary Web4 Protocol Stack                              │  ║
+║    │   Web4 Protocol Stack                              │  ║
 ║    └─────────────────────────────────────────────────────────────────────┘  ║
 ║                                                                              ║
 ║    ZHTP replaces the entire internet infrastructure:                     ║
@@ -34,7 +34,7 @@ pub fn show_lib_banner() {
 ║       • HTTP/HTTPS → Native ZHTP protocol with built-in economics          ║
 ║       • Governments → DAO governance with UBI distribution                 ║
 ║                                                                              ║
-║    🌟 The result: A free internet that pays users to participate!           ║
+║     The result: A free internet that pays users to participate!           ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 "#, env!("CARGO_PKG_VERSION"));
@@ -54,7 +54,7 @@ pub fn show_lib_banner() {
 pub fn show_development_warning() {
     println!(" DEVELOPMENT MODE WARNING ");
     println!("   This node is running in development mode.");
-    println!("   Do not use for production or real economic transactions.");
+    println!("   Do not use for production or economic transactions.");
     println!();
 }
 
@@ -62,7 +62,7 @@ pub fn show_development_warning() {
 pub fn show_mainnet_startup() {
     println!(" MAINNET MODE - LIVE ECONOMIC SYSTEM");
     println!("   This node will participate in the live ZHTP network.");
-    println!("   Real UBI payments and economic transactions are active.");
+    println!("   UBI payments and economic transactions are active.");
     println!("   All network activity is cryptographically secured.");
     println!();
 }
@@ -107,7 +107,7 @@ pub fn show_component_status(component: &str, status: &str, icon: &str) {
 pub fn show_success_message() {
     println!();
     println!("ZHTP NODE INITIALIZATION COMPLETE");
-    println!("🌟 Ready to revolutionize the internet!");
+    println!(" Ready to revolutionize the internet!");
     println!("Universal Basic Income system operational");
     println!("Zero-knowledge privacy protection active");
     println!("Mesh networking ready for ISP replacement");

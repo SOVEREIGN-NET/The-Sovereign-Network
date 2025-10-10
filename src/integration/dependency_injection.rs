@@ -451,7 +451,7 @@ impl DependencyInjector {
 
     /// Cleanup all services in reverse order
     pub async fn cleanup_all(&self) -> Result<()> {
-        info!("🧹 Cleaning up all services...");
+        info!(" Cleaning up all services...");
 
         let initialization_order = self.initialization_order.read().await.clone();
         let cleanup_order: Vec<_> = initialization_order.into_iter().rev().collect();
@@ -464,7 +464,7 @@ impl DependencyInjector {
                     .unwrap_or("Unknown")
             };
 
-            debug!("🧹 Cleaning up service: {}", type_name);
+            debug!(" Cleaning up service: {}", type_name);
 
             let instance = {
                 let mut cache = self.singleton_cache.write().await;

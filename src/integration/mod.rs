@@ -229,7 +229,7 @@ impl IntegrationManager {
         // Transaction events
         self.event_bus.subscribe("blockchain.transaction_received", Box::new(|event| {
             let future = async move {
-                info!("💸 Transaction received: {:?}", event);
+                info!(" Transaction received: {:?}", event);
                 // Validate with identity system
                 // Add to mempool
                 // Notify relevant parties

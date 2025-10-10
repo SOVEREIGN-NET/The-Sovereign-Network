@@ -12,7 +12,7 @@ pub async fn apply_isolation() -> Result<String> {
         Ok(()) => {
             // Verify it worked
             match verify_mesh_isolation().await {
-                Ok(true) => Ok("🎉 Network isolation applied successfully - mesh is now ISP-free!".to_string()),
+                Ok(true) => Ok(" Network isolation applied successfully - mesh is now ISP-free!".to_string()),
                 Ok(false) => Ok(" Network isolation applied but internet access still detected".to_string()),
                 Err(e) => Ok(format!("Network isolation applied but verification failed: {}", e)),
             }

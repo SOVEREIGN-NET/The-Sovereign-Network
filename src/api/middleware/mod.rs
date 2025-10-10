@@ -31,7 +31,7 @@ impl LoggingMiddleware {
     
     pub async fn process_response(&self, request: &ZhtpRequest, response: &ZhtpResponse) -> Result<()> {
         info!(
-            "📤 Response: {} {} -> {} ({} bytes)",
+            " Response: {} {} -> {} ({} bytes)",
             request.method,
             request.uri,
             response.status,

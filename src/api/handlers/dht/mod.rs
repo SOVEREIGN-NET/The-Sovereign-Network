@@ -411,7 +411,7 @@ impl DhtHandler {
 
     /// Fetch content by hash
     async fn fetch_content(&self, content_hash: &str) -> ZhtpResult<ZhtpResponse> {
-        info!("📥 Fetching content: {}...", &content_hash[..16]);
+        info!(" Fetching content: {}...", &content_hash[..16]);
 
         let dht_client_guard = self.dht_client.read().await;
         let client = match dht_client_guard.as_ref() {
@@ -566,7 +566,7 @@ impl DhtHandler {
         use tokio::net::UdpSocket;
         use lib_network::dht::protocol::ZhtpQueryOptions;
         
-        info!("📤 Sending UDP relay query to {}", peer_addr);
+        info!(" Sending UDP relay query to {}", peer_addr);
         
         // Parse content_hash as domain/path
         let (domain, path) = if content_hash.contains('/') {
@@ -620,7 +620,7 @@ impl DhtHandler {
     /// Send TCP relay query (for Bluetooth and WiFi Direct peers)
     /// Uses DHTClient's built-in send_dht_query which has proper blockchain identity and Dilithium2 signing
     async fn send_tcp_relay_query(&self, peer_addr: &str, content_hash: &str) -> Result<Vec<u8>, anyhow::Error> {
-        info!("📤 Sending TCP DHT query to {} for hash {}", peer_addr, &content_hash[..8.min(content_hash.len())]);
+        info!(" Sending TCP DHT query to {} for hash {}", peer_addr, &content_hash[..8.min(content_hash.len())]);
         
         // Parse content hash into domain/path format
         let (domain, path) = if content_hash.contains('/') {
@@ -682,7 +682,7 @@ impl DhtHandler {
             }
         };
 
-        info!("💾 Storing content for {}{}", store_request.domain, store_request.path);
+        info!(" Storing content for {}{}", store_request.domain, store_request.path);
 
         let mut dht_client_guard = self.dht_client.write().await;
         let client = match dht_client_guard.as_mut() {
@@ -738,7 +738,7 @@ impl DhtHandler {
             }
         };
 
-        info!("📤 Sending DHT query...");
+        info!(" Sending DHT query...");
 
         let dht_client_guard = self.dht_client.read().await;
         let client = match dht_client_guard.as_ref() {
@@ -790,7 +790,7 @@ impl DhtHandler {
 
     /// Get DHT statistics
     async fn get_dht_statistics(&self) -> ZhtpResult<ZhtpResponse> {
-        info!("📊 Getting DHT statistics...");
+        info!(" Getting DHT statistics...");
 
         let dht_client_guard = self.dht_client.read().await;
         let client = match dht_client_guard.as_ref() {
@@ -957,7 +957,7 @@ impl DhtHandler {
 
     /// Get contract response for a specific message ID
     async fn get_contract_response(&self, message_id: &str) -> ZhtpResult<ZhtpResponse> {
-        info!("📥 Getting contract response for message: {}", message_id);
+        info!(" Getting contract response for message: {}", message_id);
 
         // For now, return a mock response
         // In a full implementation, this would check for received responses
@@ -1164,7 +1164,7 @@ impl DhtHandler {
 
     /// Store contract metadata in DHT for Web4 accessibility
     async fn store_contract_in_dht(&self, contract_id: &str, blockchain_tx_hash: &str) -> Result<(), anyhow::Error> {
-        info!("📦 Storing contract {} metadata in DHT with blockchain reference: {}", contract_id, blockchain_tx_hash);
+        info!(" Storing contract {} metadata in DHT with blockchain reference: {}", contract_id, blockchain_tx_hash);
         
         // Create contract metadata for DHT storage
         let metadata = serde_json::json!({
@@ -1178,7 +1178,7 @@ impl DhtHandler {
         });
         
         // Store in DHT (for now just log - would use actual DHT client)
-        info!("📦 DHT storage metadata: {}", metadata);
+        info!(" DHT storage metadata: {}", metadata);
         info!(" Contract {} metadata stored in DHT successfully", contract_id);
         
         Ok(())
@@ -1200,11 +1200,11 @@ impl ZhtpRequestHandler for DhtHandler {
                     self.get_dht_status().await
                 }
                 "/api/v1/dht/peers" => {
-                    info!("👥 DHT peers request");
+                    info!(" DHT peers request");
                     self.discover_peers().await
                 }
                 "/api/v1/dht/statistics" => {
-                    info!("📊 DHT statistics request");
+                    info!(" DHT statistics request");
                     self.get_dht_statistics().await
                 }
                 "/api/dht/contracts/list" => {
@@ -1219,7 +1219,7 @@ impl ZhtpRequestHandler for DhtHandler {
                             "Message ID required".to_string(),
                         ))
                     } else {
-                        info!("📥 DHT contract response request: {}", message_id);
+                        info!(" DHT contract response request: {}", message_id);
                         self.get_contract_response(message_id).await
                     }
                 }
@@ -1231,7 +1231,7 @@ impl ZhtpRequestHandler for DhtHandler {
                             "Content hash required".to_string(),
                         ))
                     } else {
-                        info!("📥 DHT fetch content request: {}...", &content_hash[..16.min(content_hash.len())]);
+                        info!(" DHT fetch content request: {}...", &content_hash[..16.min(content_hash.len())]);
                         self.fetch_content(content_hash).await
                     }
                 }
@@ -1254,11 +1254,11 @@ impl ZhtpRequestHandler for DhtHandler {
                     self.resolve_content(request.body).await
                 }
                 "/api/v1/dht/store" => {
-                    info!("💾 DHT store request");
+                    info!(" DHT store request");
                     self.store_content(request.body).await
                 }
                 "/api/v1/dht/query" => {
-                    info!("📤 DHT query request");
+                    info!(" DHT query request");
                     self.query_dht(request.body).await
                 }
                 "/api/dht/send" => {

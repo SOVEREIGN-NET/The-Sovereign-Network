@@ -172,7 +172,7 @@ impl Middleware for AuthMiddleware {
         if let Some(auth_header) = request.headers.get("Authorization") {
             if auth_header.starts_with("Bearer ") {
                 let token = &auth_header[7..];
-                // In a real implementation, verify JWT token
+                // In a implementation, verify JWT token
                 if token.len() > 10 { // Simple validation
                     request.headers.set("X-Authenticated", "true".to_string());
                     return Ok(true);
@@ -598,7 +598,7 @@ impl MeshRouter {
         match &connection.protocol {
             lib_network::protocols::NetworkProtocol::BluetoothLE | 
             lib_network::protocols::NetworkProtocol::BluetoothClassic => {
-                info!("📤 Sending mesh message to peer via Bluetooth ({}) - {} bytes", peer_address, message_data.len());
+                info!(" Sending mesh message to peer via Bluetooth ({}) - {} bytes", peer_address, message_data.len());
                 
                 // Get bluetooth protocol instance
                 let bluetooth = self.bluetooth_protocol.read().await;
@@ -613,13 +613,13 @@ impl MeshRouter {
                 }
             }
             lib_network::protocols::NetworkProtocol::WiFiDirect => {
-                info!("📤 Sending mesh message to peer via WiFi Direct ({})", peer_address);
+                info!(" Sending mesh message to peer via WiFi Direct ({})", peer_address);
                 // WiFi Direct would use TCP socket - implementation similar to Bluetooth
                 warn!("WiFi Direct send not yet fully implemented");
                 Ok(())
             }
             lib_network::protocols::NetworkProtocol::UDP => {
-                info!("📤 Sending mesh message to peer via UDP ({}) - {} bytes", peer_address, message_data.len());
+                info!(" Sending mesh message to peer via UDP ({}) - {} bytes", peer_address, message_data.len());
                 
                 // Parse peer address
                 let peer_addr: SocketAddr = peer_address.parse()
@@ -695,7 +695,7 @@ impl MeshRouter {
             // Handle blockchain-specific messages
             match &mesh_message {
                 ZhtpMeshMessage::BlockchainRequest { requester, request_id, from_height } => {
-                    info!("📦 Blockchain request received (request_id: {}, from_height: {:?})", request_id, from_height);
+                    info!(" Blockchain request received (request_id: {}, from_height: {:?})", request_id, from_height);
                     
                     // Process via message handler
                     if let Err(e) = self.message_handler.handle_mesh_message(mesh_message.clone(), requester.clone()).await {
@@ -711,7 +711,7 @@ impl MeshRouter {
                                 // Export blockchain data
                                 match blockchain_lock.export_chain() {
                                     Ok(blockchain_data) => {
-                                        info!("📦 Exported {} bytes of blockchain data", blockchain_data.len());
+                                        info!(" Exported {} bytes of blockchain data", blockchain_data.len());
                                         
                                         // Get connection info for chunking
                                         let connections = self.connections.read().await;
@@ -724,7 +724,7 @@ impl MeshRouter {
                                             ) {
                                                 Ok(chunk_messages) => {
                                                     let chunk_count = chunk_messages.len();
-                                                    info!("📤 Sending {} blockchain chunks to peer", chunk_count);
+                                                    info!(" Sending {} blockchain chunks to peer", chunk_count);
                                                     
                                                     // Send each chunk
                                                     for chunk_message in chunk_messages {
@@ -751,7 +751,7 @@ impl MeshRouter {
                     return Ok(None);
                 }
                 ZhtpMeshMessage::BlockchainData { request_id, chunk_index, total_chunks, data: chunk_data, complete_data_hash } => {
-                    info!("📥 Blockchain chunk {}/{} received (request_id: {}, {} bytes)", 
+                    info!(" Blockchain chunk {}/{} received (request_id: {}, {} bytes)", 
                           chunk_index + 1, total_chunks, request_id, chunk_data.len());
                     
                     // Add chunk to sync manager
@@ -763,7 +763,7 @@ impl MeshRouter {
                         *complete_data_hash
                     ).await {
                         Ok(Some(complete_data)) => {
-                            info!("🎉 All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
+                            info!(" All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
                             info!("   Importing blockchain data...");
                             
                             // Import the blockchain
@@ -818,7 +818,7 @@ impl MeshRouter {
                             
                             match dht.fetch_content(&content_key).await {
                                 Ok(content) => {
-                                    info!("📦 Found DHT content ({} bytes), creating encrypted response", content.len());
+                                    info!(" Found DHT content ({} bytes), creating encrypted response", content.len());
                                     
                                     // Create response payload with content hash
                                     let content_hash_bytes = lib_crypto::hash_blake3(&content);
@@ -1235,7 +1235,7 @@ impl MeshRouter {
                 }
             }
         } else if mesh_req.uri == "/api/v1/identity/import" && mesh_req.method.to_uppercase() == "POST" {
-            info!("📥 Importing identity from 20-word phrase via UDP mesh");
+            info!(" Importing identity from 20-word phrase via UDP mesh");
             
             // Extract import request data
             let request_data = if let Some(body_data) = zhtp_request.get("body") {
@@ -1572,7 +1572,7 @@ impl MeshRouter {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing recovery phrase"))?;
         
-        info!("📥 Importing identity from recovery phrase");
+        info!(" Importing identity from recovery phrase");
         
         let mut manager = identity_manager.write().await;
         let identity_id = manager.import_identity_from_phrase(recovery_phrase).await?;
@@ -1811,7 +1811,7 @@ impl MeshRouter {
         let blockchain = lib_blockchain::get_shared_blockchain().await?;
         let mut blockchain_guard = blockchain.write().await;
         
-        // Extract real identity data from JSON result
+        // Extract identity data from JSON result
         let identity_id_str = identity_result.get("identity_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing identity_id string"))?;
@@ -1823,14 +1823,14 @@ impl MeshRouter {
         
         let did = format!("did:zhtp:{}", identity_id_str);
         
-        // Extract real display name from citizenship result or default
+        // Extract display name from citizenship result or default
         let display_name = identity_result.get("citizenship_result")
             .and_then(|cr| cr.get("display_name"))
             .and_then(|v| v.as_str())
             .unwrap_or("ZHTP Citizen")
             .to_string();
         
-        // Extract real public key from privacy credentials
+        // Extract public key from privacy credentials
         let public_key = identity_result.get("citizenship_result")
             .and_then(|cr| cr.get("privacy_credentials"))
             .and_then(|pc| pc.get("public_key"))
@@ -1857,7 +1857,7 @@ impl MeshRouter {
                     .as_secs()
             });
         
-        // Create identity transaction data with real extracted data
+        // Create identity transaction data with extracted data
         let identity_data = lib_blockchain::IdentityTransactionData {
             did: did.clone(),
             display_name,
@@ -1876,7 +1876,7 @@ impl MeshRouter {
         
         // Register ALL wallets created during citizenship on blockchain
         if let Some(citizenship_result) = identity_result.get("citizenship_result") {
-            // Register Primary Wallet with real data
+            // Register Primary Wallet with data
             if let Some(primary_wallet_id_val) = citizenship_result.get("primary_wallet_id") {
                 let primary_wallet_id_str = primary_wallet_id_val.as_str()
                     .ok_or_else(|| anyhow::anyhow!("primary_wallet_id is not a string"))?;
@@ -1913,7 +1913,7 @@ impl MeshRouter {
                 info!("Registered Primary Wallet {} on blockchain", primary_wallet_id_str);
             }
             
-            // Register UBI Wallet with real data
+            // Register UBI Wallet with data
             if let Some(ubi_wallet_id_val) = citizenship_result.get("ubi_wallet_id") {
                 let ubi_wallet_id_str = ubi_wallet_id_val.as_str()
                     .ok_or_else(|| anyhow::anyhow!("ubi_wallet_id is not a string"))?;
@@ -1949,7 +1949,7 @@ impl MeshRouter {
                 info!("Registered UBI Wallet {} on blockchain", ubi_wallet_id_str);
             }
             
-            // Register Savings Wallet with real data
+            // Register Savings Wallet with data
             if let Some(savings_wallet_id_val) = citizenship_result.get("savings_wallet_id") {
                 let savings_wallet_id_str = savings_wallet_id_val.as_str()
                     .ok_or_else(|| anyhow::anyhow!("savings_wallet_id is not a string"))?;
@@ -1985,14 +1985,14 @@ impl MeshRouter {
                     created_at,
                     registration_fee: 50,
                     capabilities: 0x02, // Savings-specific capabilities
-                    initial_balance: welcome_bonus, // Real welcome bonus amount
+                    initial_balance: welcome_bonus, // welcome bonus amount
                 };
                 let _savings_tx_hash = blockchain_guard.register_wallet(wallet_data)?;
                 info!("Registered Savings Wallet {} on blockchain", savings_wallet_id_str);
             }
         }
         
-        info!("Successfully recorded identity and wallets on blockchain with real data");
+        info!("Successfully recorded identity and wallets on blockchain with data");
         Ok(())
     }
     
@@ -2132,7 +2132,7 @@ impl MeshRouter {
             // Create authentication challenge
             match auth_manager.create_challenge().await {
                 Ok(challenge) => {
-                    info!("🎯 Sending authentication challenge to peer {}", node_id);
+                    info!(" Sending authentication challenge to peer {}", node_id);
                     
                     // Send challenge over TCP/Bluetooth
                     let challenge_bytes = bincode::serialize(&challenge)?;
@@ -2150,7 +2150,7 @@ impl MeshRouter {
                         Ok(Ok(response_len)) if response_len > 0 => {
                             match bincode::deserialize::<ZhtpAuthResponse>(&response_buf[..response_len]) {
                                 Ok(auth_response) => {
-                                    info!("📝 Received authentication response from peer {}", node_id);
+                                    info!(" Received authentication response from peer {}", node_id);
                                     
                                     // Verify Dilithium2 signature
                                     match auth_manager.verify_response(&auth_response).await {
@@ -2169,7 +2169,7 @@ impl MeshRouter {
                                             // ============================================================================
                                             // PHASE 3: QUANTUM-SAFE KEY EXCHANGE (Kyber512)
                                             // ============================================================================
-                                            info!("🔑 Phase 3: Initiating Kyber512 key exchange with peer {}", node_id);
+                                            info!(" Phase 3: Initiating Kyber512 key exchange with peer {}", node_id);
                                             
                                             // Create encryption session
                                             match ZhtpEncryptionSession::new() {
@@ -2194,7 +2194,7 @@ impl MeshRouter {
                                                                 Ok(Ok(key_response_len)) if key_response_len > 0 => {
                                                                     match bincode::deserialize::<ZhtpKeyExchangeResponse>(&key_response_buf[..key_response_len]) {
                                                                         Ok(key_response) => {
-                                                                            info!("📦 Received Kyber ciphertext from peer {}", node_id);
+                                                                            info!(" Received Kyber ciphertext from peer {}", node_id);
                                                                             
                                                                             // Complete key exchange (decapsulate shared secret)
                                                                             let mut session = encryption_session;
@@ -2218,7 +2218,7 @@ impl MeshRouter {
                                                                                     // ============================================================================
                                                                                     // PHASE 4: DHT PEER REGISTRATION
                                                                                     // ============================================================================
-                                                                                    info!("📝 Phase 4: Registering peer {} in DHT", node_id);
+                                                                                    info!(" Phase 4: Registering peer {} in DHT", node_id);
                                                                                     
                                                                                     // Register peer in DHT with blockchain identity
                                                                                     if let Ok(dht_client) = crate::runtime::shared_dht::get_dht_client().await {
@@ -2274,7 +2274,7 @@ impl MeshRouter {
                                                                                                     }
                                                                                                 };
                                                                                                 
-                                                                                                info!("📤 Sending blockchain sync request (ID: {}) to peer {}", request_id, node_id);
+                                                                                                info!(" Sending blockchain sync request (ID: {}) to peer {}", request_id, node_id);
                                                                                                 
                                                                                                 // Send blockchain request to peer
                                                                                                 if let Err(e) = self.send_to_peer(&peer_pubkey, sync_message).await {
@@ -2282,7 +2282,7 @@ impl MeshRouter {
                                                                                                     warn!("   Connection established but sync will not start automatically");
                                                                                                 } else {
                                                                                                     info!(" Blockchain sync request sent successfully");
-                                                                                                    info!("   ⏳ Waiting for blockchain chunks from peer...");
+                                                                                                    info!("    Waiting for blockchain chunks from peer...");
                                                                                                 }
                                                                                                 
                                                                                                 return Ok(true);
@@ -2423,7 +2423,7 @@ impl MeshRouter {
                 // Note: Authentication will happen when the peer initiates a proper
                 // bidirectional connection. The initial discovery handshake is one-way
                 // and disconnects immediately, so we can't complete the auth dance here.
-                debug!("⏳ Peer {} registered, awaiting full authentication on next connection", handshake.node_id);
+                debug!(" Peer {} registered, awaiting full authentication on next connection", handshake.node_id);
                 
                 // Send acknowledgment back on original stream
                 let ack = bincode::serialize(&true)?;
@@ -2584,10 +2584,10 @@ impl WiFiRouter {
     /// Check if this device is currently a group owner
     pub async fn is_group_owner(&self) -> bool {
         // Simulate group owner detection based on network configuration
-        // In a real implementation, this would check WiFi Direct interface status
+        // In a implementation, this would check WiFi Direct interface status
         debug!("Checking WiFi Direct group owner status");
         
-        // For demonstration, alternate based on node_id to simulate real detection
+        // For demonstration, alternate based on node_id to simulate detection
         let is_owner = (self.node_id[0] % 2) == 0;
         debug!("WiFi Direct group owner status: {} (simulated based on node_id)", is_owner);
         is_owner
@@ -2685,7 +2685,7 @@ impl BluetoothRouter {
                         // TODO: Forward to DHT
                     }
                     GattMessage::RawData(uuid, data) => {
-                        info!("📥 GATT: Raw data on {}: {} bytes", uuid, data.len());
+                        info!(" GATT: Raw data on {}: {} bytes", uuid, data.len());
                         // Process based on characteristic UUID
                     }
                     GattMessage::RelayQuery(data) => {
@@ -3020,7 +3020,7 @@ impl BluetoothClassicRouter {
         
         // Step 2: Query each device for RFCOMM services and connect
         for device in devices {
-            info!("🔎 Checking device: {} ({})", 
+            info!(" Checking device: {} ({})", 
                 device.name.as_deref().unwrap_or("Unknown"),
                 device.address
             );
@@ -3049,7 +3049,7 @@ impl BluetoothClassicRouter {
                     // Attempt to connect
                     match protocol.connect_to_peer(&device.address, service.channel).await {
                         Ok(stream) => {
-                            info!("🎉 Connected to {} via Bluetooth Classic RFCOMM!", device.address);
+                            info!(" Connected to {} via Bluetooth Classic RFCOMM!", device.address);
                             connected_count += 1;
                             
                             // Create mesh connection entry
@@ -3385,7 +3385,7 @@ impl ZhtpUnifiedServer {
         // Initialize ZHTP relay protocol ONLY if not already initialized
         // (components.rs may have already initialized it with authentication)
         if self.mesh_router.relay_protocol.read().await.is_none() {
-            info!("⚙️ Initializing ZHTP relay protocol...");
+            info!(" Initializing ZHTP relay protocol...");
             if let Err(e) = self.mesh_router.initialize_relay_protocol().await {
                 warn!("Failed to initialize ZHTP relay protocol: {}", e);
             }
@@ -3467,7 +3467,7 @@ impl ZhtpUnifiedServer {
         info!(" Verifying network isolation...");
         match crate::config::network_isolation::verify_mesh_isolation().await {
             Ok(true) => {
-                info!("🎉 NETWORK ISOLATION VERIFIED - Mesh is ISP-free!");
+                info!(" NETWORK ISOLATION VERIFIED - Mesh is ISP-free!");
                 info!(" No internet access possible - pure mesh operation confirmed");
             }
             Ok(false) => {
@@ -3601,7 +3601,7 @@ impl ZhtpUnifiedServer {
             while *is_running.read().await {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        debug!("📥 New TCP connection from: {}", addr);
+                        debug!(" New TCP connection from: {}", addr);
                         
                         let http_router = http_router.clone();
                         let mesh_router = mesh_router.clone();
@@ -3757,7 +3757,7 @@ impl ZhtpUnifiedServer {
             while *is_running.read().await {
                 match socket.recv_from(&mut buffer).await {
                     Ok((len, addr)) => {
-                        debug!("📥 UDP packet from: {} ({} bytes)", addr, len);
+                        debug!(" UDP packet from: {} ({} bytes)", addr, len);
                         
                         let data = &buffer[..len];
                         let protocol = Self::detect_udp_protocol(data);

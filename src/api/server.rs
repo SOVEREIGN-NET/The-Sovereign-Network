@@ -56,7 +56,7 @@ impl ZhtpServer {
         let router_config = RouterConfig::default();
         let mut router = Router::new(router_config);
         
-        // Initialize core components (these would be properly initialized in real implementation)
+        // Initialize core components (these would be properly initialized in implementation)
         let identity_manager = Arc::new(RwLock::new(
             IdentityManager::new()
         ));
@@ -65,7 +65,7 @@ impl ZhtpServer {
             Blockchain::new()?
         ));
         
-        // For storage, we'll use a placeholder - in real implementation this would be proper storage
+        // For storage, we'll use a placeholder - in implementation this would be proper storage
         let storage = Arc::new(RwLock::new(
             lib_storage::UnifiedStorageSystem::new(lib_storage::UnifiedStorageConfig {
                 node_id: lib_storage::types::NodeId::from(lib_crypto::Hash::from_bytes(b"node_001")),
@@ -257,7 +257,7 @@ impl ZhtpServer {
         info!("   - Storage: /api/v1/storage/*");
         info!("   - Protocol: /api/v1/protocol/*");
         
-        // In a real implementation, this would be an infinite loop handling connections
+        // In a implementation, this would be an infinite loop handling connections
         Ok(())
     }
     

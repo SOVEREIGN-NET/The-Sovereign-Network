@@ -8,7 +8,7 @@ use tokio::time::{timeout, Duration};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Basic test of DHT API endpoints
-    println!("🧪 Testing DHT API Endpoints");
+    println!(" Testing DHT API Endpoints");
     
     let client = reqwest::Client::new();
     let base_url = "http://127.0.0.1:9333";
@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     // Test 2: Get DHT Status  
-    println!("\n📊 Testing DHT Status...");
+    println!("\n Testing DHT Status...");
     let status_response = client
         .get(format!("{}/api/v1/dht/status", base_url))
         .send()
@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     // Test 3: Get DHT Statistics
-    println!("\n📈 Testing DHT Statistics...");
+    println!("\n Testing DHT Statistics...");
     let stats_response = client
         .get(format!("{}/api/v1/dht/statistics", base_url))
         .send()
@@ -71,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     // Test 4: Discover Peers
-    println!("\n👥 Testing DHT Peer Discovery...");
+    println!("\n Testing DHT Peer Discovery...");
     let peers_response = client
         .get(format!("{}/api/v1/dht/peers", base_url))
         .send()
@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => println!(" DHT Peers failed: {}", e)
     }
     
-    println!("\n🎯 DHT API Test Complete!");
+    println!("\n DHT API Test Complete!");
     
     Ok(())
 }

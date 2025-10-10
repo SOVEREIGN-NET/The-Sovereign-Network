@@ -154,7 +154,7 @@ impl SharedBlockchainService {
                         info!("Mining block with {} transactions", blockchain.pending_transactions.len());
                         
                         // For this implementation, we'll just create a simple block
-                        // Real mining would involve proof of work
+                        // mining would involve proof of work
                         let transactions = blockchain.pending_transactions.clone();
                         blockchain.pending_transactions.clear();
                         

@@ -33,7 +33,7 @@ impl StorageHandler {
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for StorageHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        tracing::info!("💾 Storage handler: {} {}", request.method, request.uri);
+        tracing::info!(" Storage handler: {} {}", request.method, request.uri);
         
         let response = match (request.method, request.uri.as_str()) {
             (ZhtpMethod::Get, "/api/v1/storage/status") => {
@@ -216,7 +216,7 @@ impl StorageHandler {
         let uploader = if let Some(auth_header) = request.headers.get("Authorization") {
             if auth_header.starts_with("Bearer ") {
                 let token = &auth_header[7..];
-                // In a real implementation, this would decode the JWT token to get identity
+                // In a implementation, this would decode the JWT token to get identity
                 // For now, create an identity based on the token
                 ZhtpIdentity::new(
                     IdentityType::Human,

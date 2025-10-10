@@ -29,11 +29,11 @@ async fn demo_identity_masking() -> Result<()> {
     
     // Simulate device identity creation
     let device_id = generate_device_id();
-    println!("🔑 Device ID: {}", device_id);
+    println!(" Device ID: {}", device_id);
     
     // Create masked identity
     let masked_identity = create_masked_identity(&device_id);
-    println!("🎭 Masked Identity: {}", masked_identity);
+    println!(" Masked Identity: {}", masked_identity);
     
     // Demonstrate identity rotation
     let rotated_identity = rotate_identity(&masked_identity);
@@ -90,7 +90,7 @@ async fn demo_privacy_metrics() -> Result<()> {
     let metrics = collect_privacy_metrics().await;
     
     for (metric, value) in metrics {
-        println!("📈 {}: {}", metric, value);
+        println!(" {}: {}", metric, value);
     }
     
     Ok(())

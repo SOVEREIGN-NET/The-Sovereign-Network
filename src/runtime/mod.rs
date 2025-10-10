@@ -634,11 +634,11 @@ impl RuntimeOrchestrator {
         Ok(aggregated_metrics)
     }
 
-    // Real implementations using lib-network APIs
+    // implementations using lib-network APIs
     
     /// Get connected peers from network component
     pub async fn get_connected_peers(&self) -> Result<Vec<String>> {
-        // Get real peer information from lib-network
+        // Get peer information from lib-network
         match lib_network::get_mesh_status().await {
             Ok(mesh_status) => {
                 let mut peers = Vec::new();
@@ -697,7 +697,7 @@ impl RuntimeOrchestrator {
 
     /// Disconnect from a peer
     pub async fn disconnect_from_peer(&self, addr: &str) -> Result<()> {
-        info!("🔌 Attempting to disconnect from peer: {}", addr);
+        info!(" Attempting to disconnect from peer: {}", addr);
         
         // Send disconnect message to network component
         self.send_message(ComponentId::Network, ComponentMessage::Custom(

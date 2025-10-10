@@ -437,7 +437,7 @@ subnet 192.168.100.0 netmask 255.255.255.0 {{
         }
 
         if isolation_working {
-            info!("🎉 Network isolation VERIFIED - mesh is ISP-free!");
+            info!(" Network isolation VERIFIED - mesh is ISP-free!");
         } else {
             error!(" Network isolation FAILED - internet access still possible!");
         }

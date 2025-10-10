@@ -222,7 +222,7 @@ impl NotificationChannel for EmailNotificationChannel {
             return Ok(());
         }
 
-        // Real email sending implementation
+        // email sending implementation
         if let Some(config) = &self.smtp_config {
             // Removed unused std::process::Command import
             
@@ -274,7 +274,7 @@ impl NotificationChannel for WebhookNotificationChannel {
             return Ok(());
         }
 
-        // Real webhook implementation using reqwest
+        // webhook implementation using reqwest
         use serde_json::json;
         
         let payload = json!({
@@ -544,7 +544,7 @@ impl AlertManager {
     pub async fn resolve_alert(&self, alert_id: &str) -> Result<()> {
         let mut alerts = self.alerts.write().await;
         if let Some(_alert) = alerts.iter_mut().find(|a| a.id == alert_id) {
-            // In a real system, we'd mark it as resolved
+            // In a system, we'd mark it as resolved
             info!("Resolved alert: {}", alert_id);
         }
         Ok(())

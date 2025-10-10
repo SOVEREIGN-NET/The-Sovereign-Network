@@ -8,7 +8,7 @@
 //! - Universal Basic Income through network participation
 //! - Quantum-resistant cryptographic security
 //! - Decentralized governance through DAO integration
-//! - Revolutionary Web4 protocol stack
+//! - Web4 protocol stack
 //! 
 //! The ZHTP node can operate in two modes:
 //! - Pure Mesh: Complete ISP bypass using only mesh protocols
@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
 // Level 3: (consensus, storage, economy) - utilize Level 4 utilities
 // Level 4: (proofs, identity, crypto) - core utilities
 //
-// To actually run Level 2 components with real implementations:
+// To actually run Level 2 components with implementations:
 // 1. Start lib-protocols server on port 8001
 // 2. Start lib-blockchain server on port 8002  
 // 3. Start lib-network server on port 8003

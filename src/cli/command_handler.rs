@@ -34,7 +34,7 @@ async fn execute_wallet_command(command: WalletCommand) -> Result<()> {
     
     match command {
         WalletCommand::Create { name, wallet_type } => {
-            println!("🆕 Creating new {} wallet: {}", wallet_type, name);
+            println!(" Creating new {} wallet: {}", wallet_type, name);
             
             let request_body = json!({
                 "wallet_name": name,
@@ -73,7 +73,7 @@ async fn execute_wallet_command(command: WalletCommand) -> Result<()> {
             }
         }
         WalletCommand::Transfer { to, amount, fee } => {
-            println!("💸 Transferring {} tokens to: {}", amount, to);
+            println!(" Transferring {} tokens to: {}", amount, to);
             
             let request_body = json!({
                 "to": to,
@@ -168,7 +168,7 @@ async fn execute_dao_command(command: DaoCommand) -> Result<()> {
     
     match command {
         DaoCommand::Info => {
-            println!("🏛️ Getting DAO information...");
+            println!(" Getting DAO information...");
             
             let response = client
                 .get(&format!("{}/dao/info", base_url))
@@ -207,7 +207,7 @@ async fn execute_dao_command(command: DaoCommand) -> Result<()> {
             }
         }
         DaoCommand::Vote { proposal_id, choice } => {
-            println!("🗳️ Voting {} on proposal ID: {}", if choice { "YES" } else { "NO" }, proposal_id);
+            println!(" Voting {} on proposal ID: {}", if choice { "YES" } else { "NO" }, proposal_id);
             
             let request_body = json!({
                 "proposal_id": proposal_id,
@@ -329,7 +329,7 @@ async fn execute_identity_command(command: IdentityCommand) -> Result<()> {
             }
         }
         IdentityCommand::Export { id } => {
-            println!("📤 Exporting identity: {}", id);
+            println!(" Exporting identity: {}", id);
             println!("Identity export functionality would be implemented here");
         }
         IdentityCommand::Verify { proof } => {
@@ -592,7 +592,7 @@ async fn execute_network_command(command: NetworkCommand) -> Result<()> {
             }
         }
         NetworkCommand::Test => {
-            println!("🧪 Testing network connectivity...");
+            println!(" Testing network connectivity...");
             
             let response = client
                 .post(&format!("{}/network/test", base_url))

@@ -484,7 +484,7 @@ impl WalletStartupManager {
                     Ok(vec![])
                 } else {
                     println!("Found {} peers, but no wallet advertisements", peers.len());
-                    // In a real implementation, we could query peers directly
+                    // In a implementation, we could query peers directly
                     // For now, return empty to indicate no importable wallets
                     Ok(vec![])
                 }
@@ -524,7 +524,7 @@ impl WalletStartupManager {
 
     /// Recover wallet from mesh network data
     async fn recover_wallet_from_mesh_data(data: &[u8], wallet_name: &str) -> Result<(WalletId, String, String, String)> {
-        // Parse the mesh wallet data (would be encrypted in real implementation)
+        // Parse the mesh wallet data (would be encrypted in implementation)
         match serde_json::from_slice::<serde_json::Value>(data) {
             Ok(wallet_info) => {
                 // Extract seed phrase if available

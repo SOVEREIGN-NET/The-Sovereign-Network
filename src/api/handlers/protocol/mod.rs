@@ -17,7 +17,7 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 /// Clean protocol handler implementation with proper metrics tracking
 pub struct ProtocolHandler {
     server_info: Arc<RwLock<ServerInfo>>,
-    // Real metrics counters
+    // metrics counters
     requests_handled: Arc<AtomicU64>,
     total_bytes_sent: Arc<AtomicU64>,
     total_bytes_received: Arc<AtomicU64>,
@@ -76,7 +76,7 @@ impl ProtocolHandler {
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for ProtocolHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        tracing::info!("🔌 Protocol handler: {} {}", request.method, request.uri);
+        tracing::info!(" Protocol handler: {} {}", request.method, request.uri);
         
         let response = match (request.method, request.uri.as_str()) {
             (ZhtpMethod::Get, "/api/v1/protocol/info") => {
@@ -350,7 +350,7 @@ impl ProtocolHandler {
     
     /// Handle protocol statistics request
     async fn handle_protocol_stats(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
-        // Get real metrics from our counters
+        // Get metrics from our counters
         let requests_handled = self.requests_handled.load(Ordering::Relaxed);
         let total_bytes_sent = self.total_bytes_sent.load(Ordering::Relaxed);
         let total_bytes_received = self.total_bytes_received.load(Ordering::Relaxed);

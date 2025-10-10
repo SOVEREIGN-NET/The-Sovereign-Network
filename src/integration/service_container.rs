@@ -237,7 +237,7 @@ impl ServiceContainer {
         let singletons = self.singletons.read().await;
         let singleton_count = singletons.len();
         
-        debug!("📦 Service container health: {} components, {} singletons", 
+        debug!(" Service container health: {} components, {} singletons", 
                component_count, singleton_count);
         
         Ok(true)
@@ -318,7 +318,7 @@ impl ServiceScope {
     /// Dispose of scoped services
     pub fn dispose(self) {
         // Services will be dropped when scope is dropped
-        debug!("📦 Service scope disposed with {} services", self.scoped_services.len());
+        debug!(" Service scope disposed with {} services", self.scoped_services.len());
     }
 }
 
@@ -403,17 +403,17 @@ impl ServiceContainerBuilder {
             match registration.lifetime {
                 ServiceLifetime::Singleton => {
                     // Would need additional logic to create singleton instances
-                    debug!("📦 Singleton registration: {:?}", registration.service_type);
+                    debug!(" Singleton registration: {:?}", registration.service_type);
                 }
                 ServiceLifetime::Transient => {
                     if let Some(_factory) = registration.factory {
                         // Register factory for transient services
-                        debug!("📦 Transient registration: {:?}", registration.service_type);
+                        debug!(" Transient registration: {:?}", registration.service_type);
                     }
                 }
                 ServiceLifetime::Scoped => {
                     // Scoped services would need additional scope management
-                    debug!("📦 Scoped registration: {:?}", registration.service_type);
+                    debug!(" Scoped registration: {:?}", registration.service_type);
                 }
             }
         }

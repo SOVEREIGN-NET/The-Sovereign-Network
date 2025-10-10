@@ -507,7 +507,7 @@ impl BlockchainHandler {
             
             match coordinator.list_all_validators().await {
                 Ok(real_validators) => {
-                    // Map real validator info to API format
+                    // Map validator info to API format
                     let validators: Vec<ValidatorInfo> = real_validators
                         .iter()
                         .map(|v| ValidatorInfo {
@@ -846,10 +846,10 @@ impl BlockchainHandler {
         let req_data: BroadcastTransactionRequest = serde_json::from_slice(&request.body)?;
         
         // For now, we'll create a simple transaction from the hex data
-        // In a real implementation, you'd deserialize the hex data into a Transaction
+        // In a implementation, you'd deserialize the hex data into a Transaction
         let mut blockchain = self.blockchain.write().await;
         
-        // Parse the hex transaction data into a real Transaction
+        // Parse the hex transaction data into a Transaction
         let transaction = match hex::decode(&req_data.transaction_data) {
             Ok(tx_bytes) => {
                 match serde_json::from_slice::<lib_blockchain::transaction::Transaction>(&tx_bytes) {
@@ -1043,7 +1043,7 @@ fn calculate_pending_balance_for_address(address: &[u8; 32], pending_transaction
             // The input references a previous output that is being spent
             let _previous_output_hash = &input.previous_output;
             
-            // In a real implementation, we would need to:
+            // In a implementation, we would need to:
             // 1. Look up the UTXO in the blockchain's utxo_set
             // 2. Check if the UTXO belongs to our address (requires proving key ownership)
             // 3. Subtract the estimated amount if it belongs to us
@@ -1066,7 +1066,7 @@ fn calculate_pending_balance_for_address(address: &[u8; 32], pending_transaction
     pending_balance
 }
 
-/// Create a real cryptographic signature for blockchain transactions
+/// Create a cryptographic signature for blockchain transactions
 async fn create_real_transaction_signature(req_data: &SubmitTransactionRequest) -> anyhow::Result<lib_blockchain::integration::crypto_integration::Signature> {
     use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
     
@@ -1195,7 +1195,7 @@ impl BlockchainHandler {
         let tx_hash_result = blake3::hash(tx_data.as_bytes());
         let tx_hash: [u8; 32] = *tx_hash_result.as_bytes();
         
-        // In a real implementation, we would:
+        // In a implementation, we would:
         // 1. Create a proper transaction with the contract bytecode
         // 2. Add it to mempool
         // 3. Include it in the next block
@@ -1426,7 +1426,7 @@ impl BlockchainHandler {
         let exported_data = blockchain.export_chain()
             .map_err(|e| anyhow::anyhow!("Failed to export blockchain: {}", e))?;
         
-        tracing::info!("📤 Exported blockchain: {} bytes", exported_data.len());
+        tracing::info!(" Exported blockchain: {} bytes", exported_data.len());
         
         Ok(ZhtpResponse::success_with_content_type(
             exported_data,

@@ -286,7 +286,7 @@ impl Environment {
                     penetration_testing_mode: false, // No testing in production
                 },
                 economic_settings: EconomicSettings {
-                    ubi_daily_amount: 33, // Real UBI amount
+                    ubi_daily_amount: 33, // UBI amount
                     transaction_fees: FeeSettings {
                         base_fee: 100,
                         per_byte_fee: 10,
@@ -294,7 +294,7 @@ impl Environment {
                         dao_fee_percentage: 2.0, // Standard DAO fee
                     },
                     validator_rewards: RewardSettings {
-                        block_reward: 12, // Real block reward
+                        block_reward: 12, // block reward
                         validation_reward: 2,
                         mesh_participation_reward: 1,
                         storage_provision_reward: 1,

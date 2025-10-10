@@ -395,10 +395,10 @@ impl NetworkHandler {
             }
         };
 
-        info!("🔌 API: Removing network peer: {}", peer_id);
+        info!(" API: Removing network peer: {}", peer_id);
 
         // For demonstration, we'll use the peer_id as the address
-        // In a real implementation, you'd maintain a mapping of peer_id -> address
+        // In a implementation, you'd maintain a mapping of peer_id -> address
         let peer_address = format!("peer-address-{}", peer_id);
 
         match self.runtime.disconnect_from_peer(&peer_address).await {

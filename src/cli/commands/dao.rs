@@ -10,7 +10,7 @@ pub async fn handle_dao_command(args: DaoArgs, cli: &ZhtpCli) -> Result<()> {
     
     match args.action {
         DaoAction::Info => {
-            println!("🏛️ Orchestrating DAO information request...");
+            println!(" Orchestrating DAO information request...");
             
             let response = client
                 .get(&format!("{}/dao/info", base_url))
@@ -51,7 +51,7 @@ pub async fn handle_dao_command(args: DaoArgs, cli: &ZhtpCli) -> Result<()> {
             }
         }
         DaoAction::Vote { proposal_id, choice } => {
-            println!("🗳️ Orchestrating vote: {} on proposal {}", choice, proposal_id);
+            println!(" Orchestrating vote: {} on proposal {}", choice, proposal_id);
             
             let request_body = json!({
                 "proposal_id": proposal_id,

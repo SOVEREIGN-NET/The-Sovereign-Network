@@ -43,7 +43,7 @@ pub async fn handle_network_command(args: NetworkArgs, cli: &ZhtpCli) -> Result<
             }
         }
         NetworkAction::Test => {
-            println!("🧪 Orchestrating network connectivity test...");
+            println!(" Orchestrating network connectivity test...");
             
             let response = client
                 .post(&format!("{}/network/test", base_url))

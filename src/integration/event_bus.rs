@@ -278,7 +278,7 @@ impl EventBus {
                     };
                     
                     handlers.retain(|handler| {
-                        // In real implementation, each handler would have an ID
+                        // In implementation, each handler would have an ID
                         // For now, we'll use a hash-based approach to identify handlers
                         let handler_hash = calculate_handler_hash(handler);
                         handler_hash != handler_id_u64
@@ -561,7 +561,7 @@ impl Injectable for EventBus {
 
     async fn cleanup(&self) -> Result<()> {
         self.stop().await?;
-        info!("🧹 EventBus cleaned up");
+        info!(" EventBus cleaned up");
         Ok(())
     }
 

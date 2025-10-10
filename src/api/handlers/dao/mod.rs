@@ -62,7 +62,7 @@ struct ProposalListQuery {
     offset: Option<usize>,
 }
 
-/// Complete DAO handler using real DaoEngine
+/// Complete DAO handler using DaoEngine
 pub struct DaoHandler {
     dao_engine: Arc<RwLock<DaoEngine>>,
     identity_manager: Arc<RwLock<IdentityManager>>,

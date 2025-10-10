@@ -96,7 +96,7 @@ pub async fn handle_server_command(args: ServerArgs, cli: &ZhtpCli) -> Result<()
             }
         }
         ServerAction::Config => {
-            println!("⚙️ Getting ZHTP orchestrator server configuration...");
+            println!(" Getting ZHTP orchestrator server configuration...");
             
             let response = client
                 .get(&format!("{}/server/config", base_url))

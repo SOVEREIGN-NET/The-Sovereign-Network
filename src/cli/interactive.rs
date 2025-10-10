@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::collections::HashMap;
 use tracing::{info, warn, error};
 
-// Import zhtp modules for real data
+// Import zhtp modules for data
 use lib_network;
 use lib_blockchain;
 
@@ -223,13 +223,13 @@ impl InteractiveShell {
         Ok(())
     }
 
-    /// Show system status with real data
+    /// Show system status with data
     async fn show_status(&self) -> Result<()> {
         println!("ZHTP Node Status");
         println!("   Node Version: {}", env!("CARGO_PKG_VERSION"));
         println!("   Status: Running");
         
-        // Get real uptime
+        // Get uptime
         let uptime = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -238,7 +238,7 @@ impl InteractiveShell {
         let minutes = (uptime % 3600) / 60;
         println!("   Uptime: {}h {}m", hours, minutes);
         
-        // Get real system information using sysinfo
+        // Get system information using sysinfo
         use sysinfo::System;
         let mut system = System::new_all();
         system.refresh_all();
@@ -273,20 +273,20 @@ impl InteractiveShell {
         Ok(())
     }
 
-    /// Show components with real status
+    /// Show components with status
     async fn show_components(&self) -> Result<()> {
         println!("ZHTP Components");
         
         let components = [
             ("lib-crypto", "[CRYPT]", "Post-quantum cryptography");
             ("lib-proofs", "[PROOF]", "Zero-knowledge proofs");
-            ("lib-identity", "👤", "Identity management"),
+            ("lib-identity", "", "Identity management"),
             ("lib-storage", "[STORE]", "Distributed storage"),
             ("lib-network", "[NET]", "Mesh networking"),
             ("lib-blockchain", "[CHAIN]", "Blockchain layer"),
             ("lib-consensus", "🤝", "Consensus mechanism"),
             ("lib-economy", "[ECON]", "UBI and economics"),
-            ("lib-protocols", "🌍", "Protocol definitions"),
+            ("lib-protocols", "", "Protocol definitions"),
         ];
         
         for (name, icon, description) in &components {
@@ -299,7 +299,7 @@ impl InteractiveShell {
         Ok(())
     }
 
-    /// Show health status with real monitoring data
+    /// Show health status with monitoring data
     async fn show_health(&self) -> Result<()> {
         println!("🏥 System Health Check");
         
@@ -347,11 +347,11 @@ impl InteractiveShell {
         Ok(())
     }
 
-    /// Show metrics with real system data
+    /// Show metrics with system data
     async fn show_metrics(&self) -> Result<()> {
-        println!("📈 System Metrics");
+        println!(" System Metrics");
         
-        // Real system metrics
+        // system metrics
         use sysinfo::System;
         let mut system = System::new_all();
         system.refresh_all();
@@ -447,7 +447,7 @@ impl InteractiveShell {
         Ok(())
     }
 
-    /// Show connected peers with real data
+    /// Show connected peers with data
     async fn show_peers(&self) -> Result<()> {
         println!("Connected Peers");
         
@@ -465,13 +465,13 @@ impl InteractiveShell {
                     
                     // Show connectivity health
                     let connectivity_status = if mesh_status.connectivity_percentage > 80.0 {
-                        "🟢 Excellent"
+                        " Excellent"
                     } else if mesh_status.connectivity_percentage > 60.0 {
                         "🟡 Good"
                     } else if mesh_status.connectivity_percentage > 30.0 {
                         "🟠 Fair"
                     } else {
-                        "🔴 Poor"
+                        " Poor"
                     };
                     println!("   Connectivity: {} ({:.1}%)", connectivity_status, mesh_status.connectivity_percentage);
                 }
@@ -486,7 +486,7 @@ impl InteractiveShell {
         Ok(())
     }
 
-    /// Show network information with real data
+    /// Show network information with data
     async fn show_network(&self) -> Result<()> {
         println!("Network Information");
         
@@ -523,7 +523,7 @@ impl InteractiveShell {
         // Get bandwidth information
         match lib_network::get_bandwidth_statistics().await {
             Ok(bandwidth) => {
-                println!("   📈 Bandwidth:");
+                println!("    Bandwidth:");
                 println!("     • Upload Utilization: {:.1}%", bandwidth.upload_utilization * 100.0);
                 println!("     • Download Utilization: {:.1}%", bandwidth.download_utilization * 100.0);
                 println!("     • Efficiency: {:.1}%", bandwidth.efficiency * 100.0);
@@ -550,17 +550,17 @@ impl InteractiveShell {
         Ok(())
     }
 
-    /// Show economics status with real UBI and DAO data
+    /// Show economics status with UBI and DAO data
     async fn show_economics(&self) -> Result<()> {
         println!("Economic System Status");
         
         // Get blockchain height to show system activity
         match lib_blockchain::get_current_block_height().await {
             Ok(height) => {
-                println!("   🏛️ DAO System: Active (Block {})", height);
+                println!("    DAO System: Active (Block {})", height);
             }
             Err(_) => {
-                println!("   🏛️ DAO System: Status unavailable");
+                println!("    DAO System: Status unavailable");
             }
         }
         
@@ -597,7 +597,7 @@ impl InteractiveShell {
         Ok(())
     }
 
-    /// Show UBI information with real data
+    /// Show UBI information with data
     async fn show_ubi(&self, args: &[&str]) -> Result<()> {
         println!("Universal Basic Income");
         
@@ -612,7 +612,7 @@ impl InteractiveShell {
                 .unwrap_or_default()
                 .as_secs() / 86400; // Convert to days
             let estimated_total = uptime_days.min(365) * 50; // Cap at 1 year
-            println!("   💎 Estimated Total Received: {} ZHTP tokens", estimated_total);
+            println!("    Estimated Total Received: {} ZHTP tokens", estimated_total);
             
             // Show next payment time
             let current_time = chrono::Utc::now();
@@ -624,7 +624,7 @@ impl InteractiveShell {
                 Ok(peer_count) => {
                     println!("   Global UBI Recipients: {} active citizens", peer_count);
                     let daily_distribution = peer_count as u64 * 50;
-                    println!("   📈 Daily Global Distribution: {} ZHTP tokens", daily_distribution);
+                    println!("    Daily Global Distribution: {} ZHTP tokens", daily_distribution);
                 }
                 Err(_) => {
                     println!("   Global UBI Recipients: Status unavailable");
@@ -643,8 +643,8 @@ impl InteractiveShell {
             println!("   Citizen ID: {}", citizen_id);
             println!("   Status: Active citizen");
             println!("   💵 Daily UBI: 50 ZHTP tokens");
-            println!("   📈 Total Earned: Calculated based on participation");
-            println!("   🗳️ DAO Voting Power: Active");
+            println!("    Total Earned: Calculated based on participation");
+            println!("    DAO Voting Power: Active");
             println!("   Mesh Contribution: Network routing and data sharing");
         }
         
@@ -660,10 +660,10 @@ impl InteractiveShell {
 
         match args[0] {
             "proposals" => {
-                println!("🏛️ Active DAO Proposals");
+                println!(" Active DAO Proposals");
                 println!("   [Placeholder proposal list - implement with actual DAO data]");
             }
-            "vote" => println!("🗳️ Voting interface - [Implement with actual voting system]"),
+            "vote" => println!(" Voting interface - [Implement with actual voting system]"),
             "create" => println!("Proposal creation - [Implement with actual proposal system]"),
             _ => println!("Unknown DAO command: {}", args[0]),
         }
@@ -679,11 +679,11 @@ impl InteractiveShell {
 
         match args[0] {
             "status" => {
-                println!("💾 Storage System Status");
+                println!(" Storage System Status");
                 
                 // Show system disk usage
                 if let Some(disk_usage) = self.get_disk_usage() {
-                    println!("   💾 Local Storage:");
+                    println!("    Local Storage:");
                     println!("     • Available: {:.2} GB", disk_usage.available_gb);
                     println!("     • Used: {:.2} GB", disk_usage.used_gb);
                     println!("     • Total: {:.2} GB", disk_usage.total_gb);
@@ -693,7 +693,7 @@ impl InteractiveShell {
                     let contribution_capacity = disk_usage.available_gb * 0.1; // Use 10% of available space
                     println!("     • Available for Network: {:.2} GB", contribution_capacity);
                 } else {
-                    println!("   💾 Local Storage: Status unavailable");
+                    println!("    Local Storage: Status unavailable");
                 }
                 
                 // Show network storage stats
@@ -719,7 +719,7 @@ impl InteractiveShell {
                 println!("    Features:");
                 println!("     • End-to-end encryption: Active");
                 println!("     •  Automatic replication: 3x redundancy");
-                println!("     • 📦 Deduplication: Enabled");
+                println!("     •  Deduplication: Enabled");
                 println!("     • Global distribution: Mesh-based");
                 println!("     • Economic incentives: Token rewards");
             }
@@ -738,9 +738,9 @@ impl InteractiveShell {
                     println!("Usage: storage add <file-path>");
                 } else {
                     let file_path = args[1];
-                    println!("📤 Adding file to distributed storage: {}", file_path);
+                    println!(" Adding file to distributed storage: {}", file_path);
                     println!("   Encrypting file...");
-                    println!("   📦 Creating chunks for distribution...");
+                    println!("    Creating chunks for distribution...");
                     println!("   Distributing to mesh network...");
                     println!("   File successfully stored with 3x replication");
                     println!("   File hash: [Generated after actual implementation]");
@@ -754,7 +754,7 @@ impl InteractiveShell {
                     let output_path = args.get(2).unwrap_or(&"./downloaded_file");
                     println!("Retrieving file from distributed storage: {}", file_hash);
                     println!("   Locating file chunks across mesh network...");
-                    println!("   📦 Reconstructing file from chunks...");
+                    println!("    Reconstructing file from chunks...");
                     println!("   🔓 Decrypting file...");
                     println!("   File retrieved successfully: {}", output_path);
                 }
@@ -790,11 +790,11 @@ impl InteractiveShell {
                 println!("   Active Applications:");
                 println!("     • ZK-DID (Identity): Active");
                 println!("     • Private Transactions: Active");
-                println!("     • 🗳️ Anonymous Voting: Available");
+                println!("     •  Anonymous Voting: Available");
                 println!("     • Private Contracts: Available");
                 
                 // Show circuit information
-                println!("   ⚙️ Available Circuits:");
+                println!("    Available Circuits:");
                 println!("     • Identity verification circuit");
                 println!("     • Transaction privacy circuit");
                 println!("     • Voting privacy circuit");
@@ -843,7 +843,7 @@ impl InteractiveShell {
                 println!("     • Selective disclosure of attributes");
                 println!("     • Cross-platform compatibility");
                 println!("     • Integrate with UBI eligibility");
-                println!("     • 🗳️ Anonymous governance participation");
+                println!("     •  Anonymous governance participation");
                 
                 println!("    Available Proofs:");
                 println!("     • Age verification (without revealing exact age)");
@@ -853,7 +853,7 @@ impl InteractiveShell {
                 
                 // Show recent activity
                 let current_time = chrono::Utc::now();
-                println!("   📈 Recent Activity:");
+                println!("    Recent Activity:");
                 println!("     • Last proof generated: {} UTC", current_time.format("%Y-%m-%d %H:%M"));
                 println!("     • Proofs generated today: System tracking");
                 println!("     • Identity verifications: Active");

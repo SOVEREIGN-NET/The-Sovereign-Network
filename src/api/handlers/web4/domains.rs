@@ -97,9 +97,9 @@ impl Web4Handler {
         let simple_request: SimpleDomainRegistrationRequest = serde_json::from_slice(&request_body)
             .map_err(|e| anyhow!("Invalid simple domain registration request: {}", e))?;
 
-        info!("📝 Registering domain: {}", simple_request.domain);
-        info!("👤 Owner: {}", simple_request.owner);
-        info!("📦 Content paths: {}", simple_request.content_mappings.len());
+        info!(" Registering domain: {}", simple_request.domain);
+        info!(" Owner: {}", simple_request.owner);
+        info!(" Content paths: {}", simple_request.content_mappings.len());
 
         // Prepare content mappings for storage
         let mut initial_content = HashMap::new();
@@ -173,7 +173,7 @@ impl Web4Handler {
             simple_request.metadata.clone(),
         ).await {
             Ok(tx_hash) => {
-                info!("🎉 Web4Contract deployed with transaction: {}", tx_hash);
+                info!(" Web4Contract deployed with transaction: {}", tx_hash);
                 Some(tx_hash)
             }
             Err(e) => {
@@ -543,7 +543,7 @@ impl Web4Handler {
         let contract_bytes = serde_json::to_vec(&web4_contract)
             .map_err(|e| anyhow!("Failed to serialize Web4Contract: {}", e))?;
 
-        info!("📦 Contract serialized: {} bytes", contract_bytes.len());
+        info!(" Contract serialized: {} bytes", contract_bytes.len());
 
         // Create blockchain transaction for contract deployment
         // System transactions have EMPTY inputs to bypass identity verification

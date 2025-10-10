@@ -83,7 +83,7 @@ impl DnsHandler {
         let registry = HashMap::new();
         
         // DNS registry starts empty - domains will be registered through proper deployment process
-        info!("DNS handler initialized with empty registry - ready for real domain deployments");
+        info!("DNS handler initialized with empty registry - ready for domain deployments");
 
         Self {
             domain_registry: Arc::new(RwLock::new(registry)),

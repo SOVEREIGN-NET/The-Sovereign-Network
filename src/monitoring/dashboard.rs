@@ -335,7 +335,7 @@ impl DashboardServer {
         health_monitor: Option<Arc<HealthMonitor>>,
         alert_manager: Option<Arc<AlertManager>>,
     ) -> Result<DashboardData> {
-        // Get real runtime data instead of placeholders
+        // Get runtime data instead of placeholders
         let (runtime_metrics, uptime_seconds, start_time) = if let Some(rt) = runtime {
             let metrics = rt.get_system_metrics().await.unwrap_or_default();
             let uptime = metrics.get("uptime_seconds").copied().unwrap_or(0.0) as u64;
@@ -374,7 +374,7 @@ impl DashboardServer {
             (vec![], None)
         };
 
-        // Get real component and system data
+        // Get component and system data
         let components_running = runtime_metrics.get("running_components").copied().unwrap_or(0.0) as usize;
         let components_total = runtime_metrics.get("total_components").copied().unwrap_or(9.0) as usize;
         let peer_count = if let Some(rt) = runtime {
@@ -383,7 +383,7 @@ impl DashboardServer {
             0
         };
         
-        // Get real blockchain data from lib-blockchain
+        // Get blockchain data from lib-blockchain
         let (block_height, transaction_count) = match lib_blockchain::get_shared_blockchain().await {
             Ok(blockchain_guard) => {
                 let blockchain = blockchain_guard.read().await;
@@ -521,7 +521,7 @@ impl DashboardServer {
 
             <section class="metrics-grid">
                 <div class="card chart-card">
-                    <h3>📈 CPU Usage</h3>
+                    <h3> CPU Usage</h3>
                     <canvas id="cpu-chart"></canvas>
                 </div>
 
@@ -984,7 +984,7 @@ footer {
         document.getElementById('peer-count').textContent = data.system_status.peer_count;
         document.getElementById('block-height').textContent = this.formatNumber(data.system_status.block_height);
         
-        // Update economic stats with real data
+        // Update economic stats with data
         document.getElementById('ubi-distributed').textContent = this.formatNumber(data.system_status.ubi_distributed);
         document.getElementById('active-citizens').textContent = this.formatNumber(data.system_status.peer_count || 0);
         document.getElementById('dao-proposals').textContent = this.formatNumber(data.system_status.transaction_count / 100 || 0); // Estimate proposals from tx activity
@@ -997,7 +997,7 @@ footer {
         let componentsHtml = '';
         
         if (data.health_status && data.health_status.component_health) {
-            // Use real component data
+            // Use component data
             for (const [name, health] of Object.entries(data.health_status.component_health)) {
                 const status = health.status || 'Unknown';
                 const statusClass = status === 'Running' ? 'running' : 

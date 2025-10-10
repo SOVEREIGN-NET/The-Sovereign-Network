@@ -52,7 +52,7 @@ pub async fn handle_wallet_command(args: WalletArgs, cli: &ZhtpCli) -> Result<()
             }
         }
         WalletAction::Transfer { from, to, amount } => {
-            println!("💸 Orchestrating transfer: {} from {} to {}", amount, from, to);
+            println!(" Orchestrating transfer: {} from {} to {}", amount, from, to);
             
             let request_body = json!({
                 "from": from,

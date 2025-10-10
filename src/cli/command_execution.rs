@@ -420,7 +420,7 @@ async fn execute_blockchain_info(context: &CommandContext) -> Result<String> {
                     info.push_str(&format!("Health Status: {}\n", if health.is_healthy { "Healthy " } else { "Unhealthy " }));
                     info.push_str(&format!("Current Block Height: {}\n", height));
                     info.push_str(&format!(" Active Validators: {}\n", health.active_validators));
-                    info.push_str(&format!("📈 Network Hashrate: {:.2} TH/s\n", health.network_hashrate / 1_000_000_000_000.0));
+                    info.push_str(&format!(" Network Hashrate: {:.2} TH/s\n", health.network_hashrate / 1_000_000_000_000.0));
                     info.push_str(&format!("Average Block Time: {:.1}s\n", health.average_block_time));
                     Ok(info)
                 },
@@ -468,7 +468,7 @@ async fn execute_send_transaction(context: &CommandContext, to: &str, amount: &s
     
     match send_transaction(to, amount_value, fee).await {
         Ok(tx_hash) => {
-            Ok(format!("Transaction sent successfully!\n💸 Amount: {} ZHTP\n To: {}\nFee: {} ZHTP\nTX Hash: {}", 
+            Ok(format!("Transaction sent successfully!\n Amount: {} ZHTP\n To: {}\nFee: {} ZHTP\nTX Hash: {}", 
                 amount_value, to, fee, tx_hash))
         },
         Err(e) => Ok(format!("Failed to send transaction: {}", e))
@@ -535,9 +535,9 @@ async fn execute_storage_info(context: &CommandContext) -> Result<String> {
     
     match storage.get_storage_stats().await {
         Ok(stats) => {
-            let mut info = format!("💾 Storage System Information:\n");
+            let mut info = format!(" Storage System Information:\n");
             info.push_str(&format!("Total Storage: {:.2} GB\n", stats.total_storage as f64 / 1_000_000_000.0));
-            info.push_str(&format!("📈 Used Storage: {:.2} GB\n", stats.used_storage as f64 / 1_000_000_000.0));
+            info.push_str(&format!(" Used Storage: {:.2} GB\n", stats.used_storage as f64 / 1_000_000_000.0));
             info.push_str(&format!("📁 Total Files: {}\n", stats.file_count));
             info.push_str(&format!("DHT Nodes: {}\n", stats.dht_nodes));
             info.push_str(&format!("Total Earnings: {:.6} ZHTP\n", stats.total_earnings));
@@ -564,7 +564,7 @@ async fn execute_store_file(context: &CommandContext, path: &str) -> Result<Stri
     
     match storage.upload_content(content, None).await {
         Ok(content_hash) => {
-            Ok(format!("File stored successfully!\n📁 Path: {}\nContent Hash: {}\n💾 Size: {} bytes", 
+            Ok(format!("File stored successfully!\n📁 Path: {}\nContent Hash: {}\n Size: {} bytes", 
                 path, content_hash, fs::metadata(path).map(|m| m.len()).unwrap_or(0)))
         },
         Err(e) => Ok(format!("Failed to store file: {}", e))
@@ -640,7 +640,7 @@ async fn execute_ubi_info(context: &CommandContext) -> Result<String> {
             info.push_str(&format!("UBI Status: {}\n", if ubi_status.is_eligible { "Eligible " } else { "Not Eligible " }));
             info.push_str(&format!("💵 Available UBI: {:.6} ZHTP\n", ubi_status.available_amount));
             info.push_str(&format!("⏰ Next Payment: {}\n", ubi_status.next_payment_time));
-            info.push_str(&format!("📈 Monthly Rate: {:.6} ZHTP\n", ubi_status.monthly_rate));
+            info.push_str(&format!(" Monthly Rate: {:.6} ZHTP\n", ubi_status.monthly_rate));
             info.push_str(&format!("Participation Score: {:.1}%\n", ubi_status.participation_score * 100.0));
             Ok(info)
         },
@@ -677,12 +677,12 @@ async fn execute_dao_info(context: &CommandContext) -> Result<String> {
     
     match get_dao_status().await {
         Ok(dao_status) => {
-            let mut info = format!("🏛️ DAO Governance Information:\n");
+            let mut info = format!(" DAO Governance Information:\n");
             info.push_str(&format!("Treasury Balance: {:.2} ZHTP\n", dao_status.treasury_balance));
-            info.push_str(&format!("🗳️ Active Proposals: {}\n", dao_status.active_proposals));
+            info.push_str(&format!(" Active Proposals: {}\n", dao_status.active_proposals));
             info.push_str(&format!("Total Voters: {}\n", dao_status.total_voters));
             info.push_str(&format!("Participation Rate: {:.1}%\n", dao_status.participation_rate * 100.0));
-            info.push_str(&format!("💸 Daily UBI Distribution: {:.2} ZHTP\n", dao_status.daily_ubi_distribution));
+            info.push_str(&format!(" Daily UBI Distribution: {:.2} ZHTP\n", dao_status.daily_ubi_distribution));
             Ok(info)
         },
         Err(e) => Ok(format!("Failed to get DAO status: {}", e))
@@ -700,7 +700,7 @@ async fn execute_vote_proposal(context: &CommandContext, id: u64, vote: bool) ->
         Ok(vote_result) => {
             if vote_result.success {
                 let vote_str = if vote { "YES" } else { "NO" };
-                Ok(format!("Vote cast successfully!\n🗳️ Proposal ID: {}\n👍 Vote: {}\nTransaction: {}", 
+                Ok(format!("Vote cast successfully!\n Proposal ID: {}\n👍 Vote: {}\nTransaction: {}", 
                     id, vote_str, vote_result.transaction_hash))
             } else {
                 Ok(format!("Vote failed: {}", vote_result.reason))
@@ -720,7 +720,7 @@ async fn execute_create_proposal(context: &CommandContext, title: &str, desc: &s
     match create_dao_proposal("current_user", title, desc).await {
         Ok(proposal_result) => {
             if proposal_result.success {
-                Ok(format!("Proposal created successfully!\n🏛️ Proposal ID: {}\nTitle: {}\nTransaction: {}", 
+                Ok(format!("Proposal created successfully!\n Proposal ID: {}\nTitle: {}\nTransaction: {}", 
                     proposal_result.proposal_id, title, proposal_result.transaction_hash))
             } else {
                 Ok(format!("Proposal creation failed: {}", proposal_result.reason))
@@ -738,7 +738,7 @@ async fn execute_help(topic: Option<&str>) -> Result<String> {
         Some("ubi") => Ok("UBI system help - see documentation".to_string()),
         Some(topic) => Ok(format!("❓ Help topic '{}' not found", topic)),
         None => Ok(r#"
-🌟 ZHTP Network Node - Command Help
+ ZHTP Network Node - Command Help
 
 Node Control:
   start              Start the ZHTP node
@@ -795,9 +795,9 @@ For detailed help: help <topic>
 
 async fn execute_version() -> Result<String> {
     Ok(format!(r#"
-🌟 ZHTP Network Node v{}
+ ZHTP Network Node v{}
 
-Revolutionary Internet Replacement System
+Internet Replacement System
 • Complete ISP bypass through mesh networking
 • Zero-knowledge privacy for all communications
 • Universal Basic Income through network participation
@@ -809,7 +809,7 @@ Built with Rust 🦀 | Powered by Zero-Knowledge
 }
 
 async fn execute_config(context: &CommandContext) -> Result<String> {
-    Ok(format!("⚙️ Current Configuration:\n{:#?}", context.config))
+    Ok(format!(" Current Configuration:\n{:#?}", context.config))
 }
 
 async fn execute_logs(_context: &CommandContext, level: Option<&str>) -> Result<String> {
@@ -860,16 +860,16 @@ async fn execute_metrics(context: &CommandContext) -> Result<String> {
         Ok(storage) => {
             match storage.get_storage_stats().await {
                 Ok(storage_stats) => {
-                    metrics.push_str("\n💾 Storage:\n");
+                    metrics.push_str("\n Storage:\n");
                     metrics.push_str(&format!("  • Files: {}\n", storage_stats.file_count));
                     metrics.push_str(&format!("  • Used Space: {:.2} GB\n", storage_stats.used_storage as f64 / 1e9));
                     metrics.push_str(&format!("  • DHT Nodes: {}\n", storage_stats.dht_nodes));
                     metrics.push_str(&format!("  • Earnings: {:.6} ZHTP\n", storage_stats.total_earnings));
                 },
-                Err(_) => metrics.push_str("\n💾 Storage: Stats unavailable\n"),
+                Err(_) => metrics.push_str("\n Storage: Stats unavailable\n"),
             }
         },
-        Err(_) => metrics.push_str("\n💾 Storage: Unavailable\n"),
+        Err(_) => metrics.push_str("\n Storage: Unavailable\n"),
     }
     
     // Economics metrics

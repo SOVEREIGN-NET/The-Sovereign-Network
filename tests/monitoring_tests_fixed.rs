@@ -279,7 +279,7 @@ async fn test_monitoring_configuration() -> Result<()> {
         prometheus_port: 9091,
     };
     
-    // Create monitoring system (config would be used in real implementation)
+    // Create monitoring system (config would be used in implementation)
     let mut monitoring = MonitoringSystem::new().await?;
     monitoring.start().await?;
     

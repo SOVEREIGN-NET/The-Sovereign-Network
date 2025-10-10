@@ -206,8 +206,8 @@ impl IdentityHandler {
                 identity_transaction_data,
                 vec![], // No outputs needed for identity registration
                 Signature {
-                    signature: crypto_signature.signature, // Real cryptographic signature over tx hash
-                    public_key: PublicKey::new(keypair.public_key.dilithium_pk.to_vec()), // Real public key
+                    signature: crypto_signature.signature, // cryptographic signature over tx hash
+                    public_key: PublicKey::new(keypair.public_key.dilithium_pk.to_vec()), // public key
                     algorithm: SignatureAlgorithm::Dilithium2, // Post-quantum algorithm
                     timestamp: citizenship_result.dao_registration.registered_at,
                 },
@@ -356,7 +356,7 @@ impl IdentityHandler {
                 blockchain.add_pending_transaction(transaction.clone())?;
                 
                 let tx_hash = transaction.hash().to_string();
-                tracing::info!("📤 Transaction submitted to blockchain mempool: {}", &tx_hash[..16]);
+                tracing::info!(" Transaction submitted to blockchain mempool: {}", &tx_hash[..16]);
                 
                 Ok(tx_hash)
             }

@@ -35,7 +35,7 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
                 } else if config_path.contains("validator-node") {
                     println!(" Node Type: Validator Node (Consensus participation)");
                 } else if config_path.contains("storage-node") {
-                    println!("💾 Node Type: Storage Node (Distributed storage services)");
+                    println!(" Node Type: Storage Node (Distributed storage services)");
                 } else if config_path.contains("edge-node") {
                     println!("Node Type: Edge Node (Mesh networking and ISP bypass)");
                 } else if config_path.contains("dev-node") {
@@ -134,7 +134,7 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             
             // The ZHTP server and API endpoints are already running via ProtocolsComponent
             println!("ZHTP orchestrator fully operational!");
-            println!("Real blockchain mining and consensus active");
+            println!("blockchain mining and consensus active");
             println!("Level 1 Orchestrator managing: crypto, zk, identity, storage, network, blockchain, consensus, economics, protocols");
             println!("ZHTP server and Web4 API endpoints active on port {}", port);
             println!("Press Ctrl+C to stop the node");
@@ -308,7 +308,7 @@ async fn import_identity_from_mesh(network_info: &ExistingNetworkInfo) -> Result
             }
             
             // Try to find importable identities from discovered peers
-            // For now, this is simplified - in a real implementation,
+            // For now, this is simplified - in a implementation,
             // we would query each peer for available identity services
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             
@@ -363,7 +363,7 @@ async fn fetch_blockchain_info_from_peers() -> Result<BlockchainInfo> {
     let discovered_peers = dht.discover_peers().await.unwrap_or_default();
     
     // Try to get blockchain info from the shared blockchain instance
-    // In a real implementation, this would query remote peers for their blockchain state
+    // In a implementation, this would query remote peers for their blockchain state
     let height = match crate::runtime::shared_blockchain::get_shared_blockchain() {
         Ok(blockchain_service) => {
             blockchain_service.get_height().await.unwrap_or(0)
@@ -426,7 +426,7 @@ async fn create_or_load_node_identity() -> Result<ZhtpIdentity> {
     }
     
     // Create new node identity
-    println!("🆕 Creating new persistent node identity...");
+    println!(" Creating new persistent node identity...");
     
     // Generate cryptographic key pair for the node
     let keypair = generate_keypair()?;
@@ -455,7 +455,7 @@ async fn create_or_load_node_identity() -> Result<ZhtpIdentity> {
             if let Err(e) = fs::write(identity_file, identity_json) {
                 println!(" Warning: Could not save identity to disk: {}", e);
             } else {
-                println!("💾 Node identity saved to {}", identity_file);
+                println!(" Node identity saved to {}", identity_file);
             }
         }
         Err(e) => {

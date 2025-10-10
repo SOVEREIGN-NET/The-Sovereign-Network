@@ -275,7 +275,7 @@ impl MetricsCollector {
         };
         
         metrics.custom_metrics.insert(metric_name, value);
-        debug!("📈 Recorded metric: {} = {}", name, value);
+        debug!(" Recorded metric: {} = {}", name, value);
         
         Ok(())
     }
@@ -315,13 +315,13 @@ impl MetricsCollector {
         // Collect network metrics
         Self::collect_network_metrics(&mut metrics_guard).await?;
         
-        // Collect blockchain metrics using real lib-blockchain
+        // Collect blockchain metrics using lib-blockchain
         Self::collect_blockchain_metrics(&mut metrics_guard).await?;
         
-        // Collect storage metrics using real lib-storage
+        // Collect storage metrics using lib-storage
         Self::collect_storage_metrics(&mut metrics_guard).await?;
         
-        // Collect economic metrics using real lib-economy
+        // Collect economic metrics using lib-economy
         Self::collect_economic_metrics(&mut metrics_guard).await?;
         
         debug!("Metrics collected successfully");
@@ -357,9 +357,9 @@ impl MetricsCollector {
         Ok(())
     }
 
-    /// Collect network metrics using real lib-network
+    /// Collect network metrics using lib-network
     async fn collect_network_metrics(metrics: &mut SystemMetrics) -> Result<()> {
-        // Get real network metrics from lib-network package
+        // Get network metrics from lib-network package
         if let Ok(peer_count) = lib_network::get_active_peer_count().await {
             metrics.peer_count = peer_count;
         } else {
@@ -392,9 +392,9 @@ impl MetricsCollector {
         Ok(())
     }
 
-    /// Collect blockchain metrics using real lib-blockchain
+    /// Collect blockchain metrics using lib-blockchain
     async fn collect_blockchain_metrics(metrics: &mut SystemMetrics) -> Result<()> {
-        // Get real blockchain metrics from lib-blockchain package
+        // Get blockchain metrics from lib-blockchain package
         if let Ok(block_height) = lib_blockchain::get_current_block_height().await {
             metrics.current_block_height = block_height;
         } else {
@@ -416,12 +416,12 @@ impl MetricsCollector {
         Ok(())
     }
 
-    /// Collect storage metrics using real lib-storage
+    /// Collect storage metrics using lib-storage
     async fn collect_storage_metrics(metrics: &mut SystemMetrics) -> Result<()> {
-        // Get real storage metrics from lib-storage package with proper config
+        // Get storage metrics from lib-storage package with proper config
         if let Ok(config) = create_default_storage_config() {
             if let Ok(mut storage) = lib_storage::UnifiedStorageSystem::new(config).await {
-                // Try to get real storage statistics
+                // Try to get storage statistics
                 match storage.get_statistics().await {
                     Ok(stats) => {
                         metrics.stored_files = stats.storage_stats.total_content_count;
@@ -451,7 +451,7 @@ impl MetricsCollector {
         Ok(())
     }
 
-    /// Collect economic metrics using real lib-economy
+    /// Collect economic metrics using lib-economy
     async fn collect_economic_metrics(metrics: &mut SystemMetrics) -> Result<()> {
         // Try to collect economics data from the blockchain's economics transactions
         if let Ok(blockchain_guard) = lib_blockchain::get_shared_blockchain().await {
@@ -475,7 +475,7 @@ impl MetricsCollector {
         Ok(())
     }
 
-    /// Get CPU usage percentage using real system monitoring
+    /// Get CPU usage percentage using system monitoring
     async fn get_cpu_usage() -> Result<f64> {
         use sysinfo::System;
         
@@ -492,7 +492,7 @@ impl MetricsCollector {
         Ok(cpu_usage as f64)
     }
 
-    /// Get memory usage in bytes using real system monitoring
+    /// Get memory usage in bytes using system monitoring
     async fn get_memory_usage() -> Result<(u64, u64)> {
         use sysinfo::System;
         
@@ -505,7 +505,7 @@ impl MetricsCollector {
         Ok((used_memory, total_memory))
     }
 
-    /// Get disk usage in bytes using real filesystem monitoring
+    /// Get disk usage in bytes using filesystem monitoring
     async fn get_disk_usage() -> Result<(u64, u64)> {
         use sysinfo::Disks;
         

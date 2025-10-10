@@ -285,6 +285,6 @@ The ZHTP API server runs on `http://127.0.0.1:9333` by default and includes:
 - **Live Monitoring**: Real-time system health and metrics
 - **Development Logging**: Comprehensive request/response logging
 - **Test Mode**: Simplified operations for development testing
-- **Simulation Mode**: Network operations without real hardware requirements
+- **Simulation Mode**: Network operations without hardware requirements
 
 For production deployment, configure appropriate security headers, rate limiting, and authentication mechanisms.
