@@ -59,17 +59,17 @@ ZHTP operates as a **Level 1 Orchestrator** that coordinates **Level 2 Component
 
 The ZHTP node requires all 9 specialized libraries to function:
 
-| Library | Purpose | Port | Status |
-|---------|---------|------|--------|
+| Library | Purpose  | Status |
+|---------|---------|--------|
 | **lib-crypto** | Post-quantum cryptography (CRYSTALS-Dilithium/Kyber) | - | Required |
-| **lib-proofs** | Zero-knowledge system (Plonky2) | 8008 | Required |
-| **lib-identity** | Privacy-preserving identity management | 8007 | Required |
-| **lib-storage** | Distributed storage with encryption | 8004 | Required |
-| **lib-network** | Mesh networking (BLE, WiFi Direct, LoRaWAN) | 8003 | Required |
-| **lib-blockchain** | Blockchain layer with UBI support | 8002 | Required |
-| **lib-consensus** | Consensus mechanism | 8006 | Required |
-| **lib-economy** | Economic incentives and DAO governance | 8005 | Required |
-| **lib-protocols** | High-level protocol implementations | 8001 | Required |
+| **lib-proofs** | Zero-knowledge system (Plonky2)  | Required |
+| **lib-identity** | Privacy-preserving identity management  | Required |
+| **lib-storage** | Distributed storage with encryption  | Required |
+| **lib-network** | Mesh networking (BLE, WiFi Direct, LoRaWAN)  | Required |
+| **lib-blockchain** | Blockchain layer with UBI support  | Required |
+| **lib-consensus** | Consensus mechanism  | Required |
+| **lib-economy** | Economic incentives and DAO governance  | Required |
+| **lib-protocols** | High-level protocol implementations  | Required |
 
 ### Internal Modules
 
