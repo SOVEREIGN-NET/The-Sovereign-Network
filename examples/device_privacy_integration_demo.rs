@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("🔒 ZHTP Device Privacy Integration Demo");
+    println!(" ZHTP Device Privacy Integration Demo");
     println!("======================================");
     
     // Simulate device privacy features
@@ -73,7 +73,7 @@ async fn demo_secure_communication() -> Result<()> {
     // Simulate message encryption
     let message = "Hello, private world!";
     let encrypted_message = encrypt_message(message, &channel_id);
-    println!("🔒 Encrypted Message: {}", encrypted_message);
+    println!(" Encrypted Message: {}", encrypted_message);
     
     // Simulate message decryption
     let decrypted_message = decrypt_message(&encrypted_message, &channel_id);

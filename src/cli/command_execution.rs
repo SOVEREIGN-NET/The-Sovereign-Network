@@ -164,7 +164,7 @@ async fn execute_status(context: &CommandContext) -> Result<String> {
         let mut result = String::from("ZHTP Node Status:\n");
         
         for (component, is_running) in status {
-            let status_icon = if is_running { "" } else { "❌" };
+            let status_icon = if is_running { "" } else { "" };
             result.push_str(&format!("  {} {}\n", status_icon, component));
         }
         
@@ -236,10 +236,10 @@ async fn execute_network_info(context: &CommandContext) -> Result<String> {
     match get_mesh_status().await {
         Ok(mesh_status) => {
             info.push_str(&format!("\nMesh Status:\n"));
-            info.push_str(&format!("  • Status: {}\n", if mesh_status.is_connected { "Connected " } else { "Disconnected ❌" }));
+            info.push_str(&format!("  • Status: {}\n", if mesh_status.is_connected { "Connected " } else { "Disconnected " }));
             info.push_str(&format!("  • Mesh Nodes: {}\n", mesh_status.mesh_size));
             info.push_str(&format!("  • Routing Efficiency: {:.1}%\n", mesh_status.routing_efficiency * 100.0));
-            info.push_str(&format!("  • ISP Bypass: {}\n", if mesh_status.isp_bypass_active { "Active " } else { "Inactive ❌" }));
+            info.push_str(&format!("  • ISP Bypass: {}\n", if mesh_status.isp_bypass_active { "Active " } else { "Inactive " }));
         },
         Err(e) => info.push_str(&format!("Failed to get mesh status: {}\n", e)),
     }
@@ -259,11 +259,11 @@ async fn execute_mesh_status(context: &CommandContext) -> Result<String> {
             let peer_count = get_active_peer_count().await.unwrap_or(0);
             
             let mut result = String::from("Mesh Network Status:\n");
-            result.push_str(&format!("Connection: {}\n", if status.is_connected { "Connected " } else { "Disconnected ❌" }));
+            result.push_str(&format!("Connection: {}\n", if status.is_connected { "Connected " } else { "Disconnected " }));
             result.push_str(&format!("Peer Count: {}\n", peer_count));
             result.push_str(&format!("Mesh Size: {}\n", status.mesh_size));
-            result.push_str(&format!("⚡ Routing Efficiency: {:.1}%\n", status.routing_efficiency * 100.0));
-            result.push_str(&format!("🚫 ISP Bypass: {}\n", if status.isp_bypass_active { "Active " } else { "Inactive ❌" }));
+            result.push_str(&format!(" Routing Efficiency: {:.1}%\n", status.routing_efficiency * 100.0));
+            result.push_str(&format!(" ISP Bypass: {}\n", if status.isp_bypass_active { "Active " } else { "Inactive " }));
             result.push_str(&format!("Signal Strength: {:.1}%\n", status.signal_strength * 100.0));
             result.push_str(&format!(" Data Throughput: {:.2} MB/s\n", status.throughput as f64 / 1_000_000.0));
             
@@ -417,9 +417,9 @@ async fn execute_blockchain_info(context: &CommandContext) -> Result<String> {
             match get_current_block_height().await {
                 Ok(height) => {
                     let mut info = format!("Blockchain Information:\n");
-                    info.push_str(&format!("Health Status: {}\n", if health.is_healthy { "Healthy " } else { "Unhealthy ❌" }));
+                    info.push_str(&format!("Health Status: {}\n", if health.is_healthy { "Healthy " } else { "Unhealthy " }));
                     info.push_str(&format!("Current Block Height: {}\n", height));
-                    info.push_str(&format!("⚡ Active Validators: {}\n", health.active_validators));
+                    info.push_str(&format!(" Active Validators: {}\n", health.active_validators));
                     info.push_str(&format!("📈 Network Hashrate: {:.2} TH/s\n", health.network_hashrate / 1_000_000_000_000.0));
                     info.push_str(&format!("Average Block Time: {:.1}s\n", health.average_block_time));
                     Ok(info)
@@ -637,7 +637,7 @@ async fn execute_ubi_info(context: &CommandContext) -> Result<String> {
     match get_ubi_status("current_user").await {
         Ok(ubi_status) => {
             let mut info = format!("Universal Basic Income Information:\n");
-            info.push_str(&format!("UBI Status: {}\n", if ubi_status.is_eligible { "Eligible " } else { "Not Eligible ❌" }));
+            info.push_str(&format!("UBI Status: {}\n", if ubi_status.is_eligible { "Eligible " } else { "Not Eligible " }));
             info.push_str(&format!("💵 Available UBI: {:.6} ZHTP\n", ubi_status.available_amount));
             info.push_str(&format!("⏰ Next Payment: {}\n", ubi_status.next_payment_time));
             info.push_str(&format!("📈 Monthly Rate: {:.6} ZHTP\n", ubi_status.monthly_rate));
@@ -804,7 +804,7 @@ Revolutionary Internet Replacement System
 • Post-quantum cryptographic security
 • Decentralized governance through DAO integration
 
-Built with Rust 🦀 | Powered by Zero-Knowledge ⚡
+Built with Rust 🦀 | Powered by Zero-Knowledge 
 "#, env!("CARGO_PKG_VERSION")))
 }
 

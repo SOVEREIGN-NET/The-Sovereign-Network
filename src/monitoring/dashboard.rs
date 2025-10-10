@@ -509,7 +509,7 @@ impl DashboardServer {
                 </div>
 
                 <div class="card">
-                    <h3>🚨 Recent Alerts</h3>
+                    <h3> Recent Alerts</h3>
                     <div class="alert-list" id="alert-list">
                         <div class="alert-item info">
                             <span class="alert-time">12:34</span>

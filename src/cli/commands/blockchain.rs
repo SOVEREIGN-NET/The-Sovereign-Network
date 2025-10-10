@@ -27,7 +27,7 @@ pub async fn handle_blockchain_command(args: BlockchainArgs, cli: &ZhtpCli) -> R
             }
         }
         BlockchainAction::Transaction { tx_hash } => {
-            println!("📄 Orchestrating transaction lookup: {}", tx_hash);
+            println!(" Orchestrating transaction lookup: {}", tx_hash);
             
             let request_body = json!({
                 "tx_hash": tx_hash,

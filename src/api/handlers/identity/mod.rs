@@ -155,8 +155,8 @@ impl IdentityHandler {
                 )
                 .await?;
             
-            // 🔥 FIX: Create blockchain transaction for the identity registration
-            tracing::error!("🚨 BLOCKCHAIN TRANSACTION CREATION STARTING - DEBUG LOG");
+            //  FIX: Create blockchain transaction for the identity registration
+            tracing::error!(" BLOCKCHAIN TRANSACTION CREATION STARTING - DEBUG LOG");
             let did_string = format!("did:zhtp:{}", citizenship_result.identity_id);
             
             // Create proper ownership proof by signing the DID with identity data

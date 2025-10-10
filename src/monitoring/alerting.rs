@@ -160,7 +160,7 @@ impl NotificationChannel for ConsoleNotificationChannel {
         let level_emoji = match alert.level {
             AlertLevel::Info => "INFO",
             AlertLevel::Warning => "WARNING",
-            AlertLevel::Critical => "🚨",
+            AlertLevel::Critical => "",
             AlertLevel::Emergency => "EMRG",
         };
 
@@ -430,7 +430,7 @@ impl AlertManager {
         }
 
         self.running.store(true, Ordering::SeqCst);
-        info!("🚨 Starting alert manager...");
+        info!(" Starting alert manager...");
 
         // Initialize default notification channels
         self.setup_default_channels().await?;
@@ -455,7 +455,7 @@ impl AlertManager {
     /// Stop the alert manager
     pub async fn stop(&self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
-        info!("🚨 Alert manager stopped");
+        info!(" Alert manager stopped");
         Ok(())
     }
 
@@ -615,7 +615,7 @@ impl AlertManager {
     ) {
         while running.load(Ordering::SeqCst) {
             if let Some(alert) = alert_rx.recv().await {
-                debug!("🚨 Processing alert: {} - {}", alert.id, alert.title);
+                debug!(" Processing alert: {} - {}", alert.id, alert.title);
 
                 // Store alert
                 {

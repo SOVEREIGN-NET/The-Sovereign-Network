@@ -433,7 +433,7 @@ async fn execute_zk_command(command: ZkCommand) -> Result<()> {
             }
         }
         ZkCommand::Commit { data } => {
-            println!("🔒 Creating ZK commitment...");
+            println!(" Creating ZK commitment...");
             
             let request_body = json!({
                 "data": data,
@@ -485,7 +485,7 @@ async fn execute_blockchain_command(command: BlockchainCommand) -> Result<()> {
             }
         }
         BlockchainCommand::Transaction { hash } => {
-            println!("📄 Getting transaction: {}", hash);
+            println!(" Getting transaction: {}", hash);
             
             let response = client
                 .get(&format!("{}/blockchain/transaction?hash={}", base_url, hash))

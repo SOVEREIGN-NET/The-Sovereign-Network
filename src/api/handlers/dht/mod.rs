@@ -445,7 +445,7 @@ impl DhtHandler {
                     metadata,
                 };
 
-                info!("✅ Content fetched from local DHT: {} bytes", response.content.len());
+                info!(" Content fetched from local DHT: {} bytes", response.content.len());
                 Ok(ZhtpResponse::success_with_content_type(
                     serde_json::to_vec(&response).unwrap(),
                     "application/json".to_string(),
@@ -453,9 +453,9 @@ impl DhtHandler {
                 ))
             }
             Err(local_err) => {
-                info!("❌ Content not in local DHT, querying mesh peers...");
+                info!(" Content not in local DHT, querying mesh peers...");
                 
-                // ✅ Query mesh peers (TCP and Bluetooth)
+                //  Query mesh peers (TCP and Bluetooth)
                 match self.query_mesh_peers_for_content(content_hash).await {
                     Ok(content) => {
                         let mut metadata = HashMap::new();
@@ -476,7 +476,7 @@ impl DhtHandler {
                             metadata,
                         };
 
-                        info!("✅ Content fetched from mesh peer: {} bytes", response.content.len());
+                        info!(" Content fetched from mesh peer: {} bytes", response.content.len());
                         Ok(ZhtpResponse::success_with_content_type(
                             serde_json::to_vec(&response).unwrap(),
                             "application/json".to_string(),
@@ -497,7 +497,7 @@ impl DhtHandler {
     
     /// Query mesh peers for content (including Bluetooth peers)
     async fn query_mesh_peers_for_content(&self, content_hash: &str) -> Result<Vec<u8>, anyhow::Error> {
-        info!("🔍 Querying mesh peers for content: {}", &content_hash[..16.min(content_hash.len())]);
+        info!(" Querying mesh peers for content: {}", &content_hash[..16.min(content_hash.len())]);
         
         // Get mesh connections from handler's reference
         let connections = self.mesh_connections.read().await;
@@ -506,7 +506,7 @@ impl DhtHandler {
             return Err(anyhow::anyhow!("No mesh peers available"));
         }
         
-        info!("📡 Querying {} mesh peers (TCP + Bluetooth)", connections.len());
+        info!(" Querying {} mesh peers (TCP + Bluetooth)", connections.len());
         
         // Try each peer until we find the content
         for (peer_id, connection) in connections.iter() {
@@ -516,7 +516,7 @@ impl DhtHandler {
             // Send relay query to peer
             match self.send_relay_query_to_peer(peer_id, connection, content_hash).await {
                 Ok(content) => {
-                    info!("✅ Found content on peer {}", peer_id_hex);
+                    info!(" Found content on peer {}", peer_id_hex);
                     return Ok(content);
                 }
                 Err(e) => {
@@ -647,12 +647,12 @@ impl DhtHandler {
                     // DHTQueryResponse is a struct with success/error/content_hash fields
                     if response.success {
                         if let Some(hash) = response.content_hash {
-                            info!("✅ Received content hash from peer {}: {}", peer_addr, hash);
+                            info!(" Received content hash from peer {}: {}", peer_addr, hash);
                             // Content hash received - would fetch content from storage
                             // For now, return an error to indicate content needs to be fetched
                             return Err(anyhow::anyhow!("Content hash received but content fetch not implemented"));
                         } else {
-                            debug!("✅ Query succeeded but no content hash returned from {}", peer_addr);
+                            debug!(" Query succeeded but no content hash returned from {}", peer_addr);
                             return Err(anyhow::anyhow!("No content hash in response"));
                         }
                     } else if let Some(err) = response.error {
@@ -869,7 +869,7 @@ impl DhtHandler {
                         ))
                     }
                     Err(e) => {
-                        warn!("⚠️ Contract deployed to blockchain but DHT storage failed: {}", e);
+                        warn!(" Contract deployed to blockchain but DHT storage failed: {}", e);
                         
                         let response_data = serde_json::json!({
                             "status": "partial_success",
@@ -889,7 +889,7 @@ impl DhtHandler {
                 }
             }
             Err(e) => {
-                error!("❌ Failed to deploy smart contract to blockchain: {}", e);
+                error!(" Failed to deploy smart contract to blockchain: {}", e);
                 Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     format!("Smart contract deployment failed: {}", e),
@@ -1110,7 +1110,7 @@ impl DhtHandler {
 
     /// Deploy smart contract directly to blockchain (bypassing HTTP API)
     async fn deploy_smart_contract_to_blockchain(&self, contract_id: String, operation: &str) -> Result<String, anyhow::Error> {
-        info!("🚀 Deploying smart contract {} to blockchain with operation: {}", contract_id, operation);
+        info!(" Deploying smart contract {} to blockchain with operation: {}", contract_id, operation);
         
         // Get direct access to blockchain
         let blockchain = get_global_blockchain().await?;
@@ -1196,7 +1196,7 @@ impl ZhtpRequestHandler for DhtHandler {
         let response = match request.method {
             ZhtpMethod::Get => match request.uri.as_str() {
                 "/api/v1/dht/status" => {
-                    debug!("🌐 DHT status request");
+                    debug!(" DHT status request");
                     self.get_dht_status().await
                 }
                 "/api/v1/dht/peers" => {
@@ -1275,7 +1275,7 @@ impl ZhtpRequestHandler for DhtHandler {
                 }
             },
             _ => {
-                warn!("❌ Unsupported DHT method: {:?}", request.method);
+                warn!(" Unsupported DHT method: {:?}", request.method);
                 Ok(ZhtpResponse::method_not_allowed("Method not allowed for DHT endpoint".to_string()))
             }
         };

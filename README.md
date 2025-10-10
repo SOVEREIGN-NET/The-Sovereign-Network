@@ -19,11 +19,11 @@ ZHTP is a revolutionary network node that orchestrates a complete internet repla
 ### Key Features
 
 - **Complete ISP Replacement** - Pure mesh networking with Bluetooth LE, WiFi Direct, and LoRaWAN
-- 🔒 **Zero-Knowledge Privacy** - All communications protected with ZK proofs and post-quantum cryptography  
+-  **Zero-Knowledge Privacy** - All communications protected with ZK proofs and post-quantum cryptography  
 - **Universal Basic Income** - 33 ZHTP daily, 1000 ZHTP monthly for all verified citizens
 - 🏛️ **Decentralized Governance** - DAO-based decision making with liquid democracy
 -  **Web4 Protocol Stack** - Next-generation internet protocols
-- ⚡ **Real-time Monitoring** - Comprehensive system health and performance metrics
+-  **Real-time Monitoring** - Comprehensive system health and performance metrics
 
 ##Architecture
 
@@ -540,7 +540,7 @@ cargo clippy
 git push origin feature/your-feature-name
 ```
 
-## 📄 License
+##  License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 

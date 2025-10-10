@@ -321,7 +321,7 @@ impl InteractiveShell {
         // Network health
         match lib_network::get_mesh_status().await {
             Ok(mesh_status) => {
-                let network_status = if mesh_status.connectivity_percentage > 70.0 { "" } else { "⚠️" };
+                let network_status = if mesh_status.connectivity_percentage > 70.0 { "" } else { "" };
                 println!("   Network: {} Connected ({:.1}% connectivity)", network_status, mesh_status.connectivity_percentage);
             }
             Err(_) => {
@@ -332,7 +332,7 @@ impl InteractiveShell {
         // Blockchain health
         match lib_blockchain::get_blockchain_health() {
             Ok(health) => {
-                let blockchain_status = if health.is_synced && health.peer_count > 0 { "" } else { "⚠️" };
+                let blockchain_status = if health.is_synced && health.peer_count > 0 { "" } else { "" };
                 println!("   Blockchain: {} Active (last block: {}s ago)", blockchain_status, health.last_block_time);
             }
             Err(_) => {
@@ -716,7 +716,7 @@ impl InteractiveShell {
                 }
                 
                 // Show storage features
-                println!("   ⚡ Features:");
+                println!("    Features:");
                 println!("     • End-to-end encryption: Active");
                 println!("     •  Automatic replication: 3x redundancy");
                 println!("     • 📦 Deduplication: Enabled");
@@ -726,7 +726,7 @@ impl InteractiveShell {
             "files" => {
                 println!("📁 Stored Files");
                 println!("   Scanning distributed storage...");
-                println!("   📄 Recent files:");
+                println!("    Recent files:");
                 println!("     • File1.txt (encrypted) - 2.5 MB - 3 replicas");
                 println!("     • Document.pdf (encrypted) - 8.2 MB - 3 replicas");
                 println!("     • Image.jpg (encrypted) - 1.8 MB - 3 replicas");
@@ -773,7 +773,7 @@ impl InteractiveShell {
 
         match args[0] {
             "info" => {
-                println!("🔒 Zero-Knowledge System");
+                println!(" Zero-Knowledge System");
                 println!("   Proof System: Plonky2 with FRI");
                 println!("   Field: Goldilocks (64-bit)");
                 println!("   Hash Function: Poseidon");
@@ -809,7 +809,7 @@ impl InteractiveShell {
                     println!(" Generating ZK proof for circuit: {}", circuit_type);
                     println!("   Compiling circuit...");
                     println!("   🔢 Processing witness data...");
-                    println!("   ⚡ Generating proof with Plonky2...");
+                    println!("    Generating proof with Plonky2...");
                     println!("   Proof generated successfully!");
                     println!("   Proof size: ~1.2 KB");
                     println!("   Generation time: ~3.2 seconds");
@@ -824,17 +824,17 @@ impl InteractiveShell {
                     println!("Verifying ZK proof: {}", proof_id);
                     println!("   Loading verification key...");
                     println!("   🔢 Parsing proof data...");
-                    println!("   ⚡ Running Plonky2 verifier...");
+                    println!("    Running Plonky2 verifier...");
                     println!("   Proof verified successfully!");
                     println!("   Verification time: ~85ms");
-                    println!("   🔒 Security: Proof is cryptographically sound");
+                    println!("    Security: Proof is cryptographically sound");
                 }
             }
             "did" => {
                 println!("Zero-Knowledge Decentralized Identity (ZK-DID)");
                 println!("   Your Identity Status:");
                 println!("     • Identity Created: Active");
-                println!("     • Privacy Level: 🔒 Maximum (zero-knowledge)");
+                println!("     • Privacy Level:  Maximum (zero-knowledge)");
                 println!("     • Verification Method: Plonky2 ZK proofs");
                 println!("     • Credential Count: Multiple verifiable claims");
                 
@@ -845,7 +845,7 @@ impl InteractiveShell {
                 println!("     • Integrate with UBI eligibility");
                 println!("     • 🗳️ Anonymous governance participation");
                 
-                println!("   📄 Available Proofs:");
+                println!("    Available Proofs:");
                 println!("     • Age verification (without revealing exact age)");
                 println!("     • Citizenship proof (without revealing location)");
                 println!("     • Qualification proof (without revealing details)");

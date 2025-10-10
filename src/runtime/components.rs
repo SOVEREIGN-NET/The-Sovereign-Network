@@ -575,7 +575,7 @@ impl Component for NetworkComponent {
     }
 
     async fn force_stop(&self) -> Result<()> {
-        warn!("🚨 Force stopping network component...");
+        warn!(" Force stopping network component...");
         *self.status.write().await = ComponentStatus::Stopping;
         
         // Immediately drop the mesh server to terminate all background tasks
@@ -973,7 +973,7 @@ impl Component for BlockchainComponent {
     }
 
     async fn force_stop(&self) -> Result<()> {
-        warn!("🚨 Force stopping blockchain component...");
+        warn!(" Force stopping blockchain component...");
         *self.status.write().await = ComponentStatus::Stopping;
         
         // Immediately abort mining
@@ -1847,11 +1847,11 @@ impl Component for ProtocolsComponent {
         // 🔗 Try to bootstrap blockchain from existing network peers first
         let blockchain = match try_bootstrap_blockchain().await {
             Ok(synced_blockchain) => {
-                info!("✅ Bootstrapped blockchain from network peers");
+                info!(" Bootstrapped blockchain from network peers");
                 Arc::new(RwLock::new(synced_blockchain))
             }
             Err(e) => {
-                info!("⚠️ Could not bootstrap from peers ({}), checking local storage", e);
+                info!(" Could not bootstrap from peers ({}), checking local storage", e);
                 // Get shared blockchain instance or create new
                 match lib_blockchain::get_shared_blockchain().await {
                     Ok(shared_blockchain) => {
@@ -1893,14 +1893,14 @@ impl Component for ProtocolsComponent {
         ).await?;
         
         // Initialize ZHTP authentication manager with blockchain identity
-        info!("🔐 Initializing ZHTP authentication and relay protocols...");
+        info!(" Initializing ZHTP authentication and relay protocols...");
         
         // Load or create node identity for blockchain authentication
         let node_identity_path = std::path::Path::new("data/node_identity.json");
         
         if node_identity_path.exists() {
             // Load existing node identity
-            info!("📄 Loading node identity from data/node_identity.json");
+            info!(" Loading node identity from data/node_identity.json");
             match std::fs::read_to_string(node_identity_path) {
                 Ok(json_str) => {
                     match serde_json::from_str::<lib_identity::ZhtpIdentity>(&json_str) {
@@ -1908,35 +1908,35 @@ impl Component for ProtocolsComponent {
                             // Convert Vec<u8> to PublicKey
                             let blockchain_pubkey = lib_crypto::PublicKey::new(node_identity.public_key.clone());
                             
-                            info!("✅ Node identity loaded: ID={}", hex::encode(&node_identity.id.as_bytes()[..8]));
+                            info!(" Node identity loaded: ID={}", hex::encode(&node_identity.id.as_bytes()[..8]));
                             
                             // Initialize authentication manager
                             if let Err(e) = unified_server.initialize_auth_manager(blockchain_pubkey).await {
                                 warn!("Failed to initialize ZHTP auth manager: {}", e);
                             } else {
-                                info!("✅ ZHTP authentication manager initialized");
+                                info!(" ZHTP authentication manager initialized");
                             }
                             
                             // Initialize relay protocol
                             if let Err(e) = unified_server.initialize_relay_protocol().await {
                                 warn!("Failed to initialize ZHTP relay protocol: {}", e);
                             } else {
-                                info!("✅ ZHTP relay protocol initialized");
+                                info!(" ZHTP relay protocol initialized");
                             }
                         }
                         Err(e) => {
                             warn!("Failed to parse node identity: {}", e);
-                            warn!("⚠️  ZHTP authentication disabled - run 'zhtp identity create' first");
+                            warn!("  ZHTP authentication disabled - run 'zhtp identity create' first");
                         }
                     }
                 }
                 Err(e) => {
                     warn!("Failed to read node identity file: {}", e);
-                    warn!("⚠️  ZHTP authentication disabled - run 'zhtp identity create' first");
+                    warn!("  ZHTP authentication disabled - run 'zhtp identity create' first");
                 }
             }
         } else {
-            warn!("⚠️  No node identity found at data/node_identity.json");
+            warn!("  No node identity found at data/node_identity.json");
             info!("   Run 'zhtp identity create' to enable blockchain authentication");
             info!("   Peers can still connect but won't be fully authenticated");
         }
@@ -2116,7 +2116,7 @@ async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
     use lib_network::blockchain_sync::BlockchainSyncManager;
     use tokio::time::{timeout, Duration};
     
-    info!("🔍 Discovering network peers for blockchain bootstrap...");
+    info!(" Discovering network peers for blockchain bootstrap...");
     
     // Create bootstrap with mDNS enhancements
     let enhancements = DHTBootstrapEnhancements {
@@ -2136,7 +2136,7 @@ async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
         return Err(anyhow::anyhow!("No network peers found"));
     }
     
-    info!("📡 Found {} potential peers, attempting blockchain sync...", peers.len());
+    info!(" Found {} potential peers, attempting blockchain sync...", peers.len());
     
     // TODO: First check if any peers are connected via mesh protocols (Bluetooth, WiFi Direct)
     // This would query mesh_router.connections for active mesh peers
@@ -2146,7 +2146,7 @@ async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
     for peer in peers {
         // Check if peer address looks like a mesh address (e.g., "bluetooth://...")
         if peer.starts_with("bluetooth://") || peer.starts_with("wifi-direct://") {
-            info!("🔵 Peer {} is mesh-connected - using bincode mesh protocol", peer);
+            info!(" Peer {} is mesh-connected - using bincode mesh protocol", peer);
             
             // NOTE: Mesh sync during bootstrap is a future enhancement.
             // Currently, mesh peers will sync automatically AFTER they connect
@@ -2175,7 +2175,7 @@ async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
                 // Create empty blockchain and import
                 let mut blockchain = lib_blockchain::Blockchain::new()?;
                 blockchain.import_chain(blockchain_data)?;
-                info!("✅ Successfully bootstrapped blockchain from {} (HTTP)", peer);
+                info!(" Successfully bootstrapped blockchain from {} (HTTP)", peer);
                 return Ok(blockchain);
             }
             Ok(Err(e)) => {

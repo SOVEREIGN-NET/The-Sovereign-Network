@@ -141,7 +141,7 @@ Verify an existing ZHTP identity and check its status.
 Verifying ZHTP identity: 81b3eef...
 Identity verification successful!
 Verification Score: 95
-🔒 Security Level: Standard
+ Security Level: Standard
 ```
 
 ### List Identities

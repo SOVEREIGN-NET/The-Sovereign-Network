@@ -605,7 +605,7 @@ impl MeshRouter {
                 if let Some(ref protocol) = *bluetooth {
                     // Send via Bluetooth GATT
                     protocol.send_mesh_message(peer_address, &message_data).await?;
-                    info!("✅ Bluetooth message sent successfully");
+                    info!(" Bluetooth message sent successfully");
                     Ok(())
                 } else {
                     warn!("Bluetooth protocol not initialized");
@@ -630,7 +630,7 @@ impl MeshRouter {
                 if let Some(ref sock) = *socket {
                     // Send via UDP
                     sock.send_to(&message_data, peer_addr).await?;
-                    info!("✅ UDP message sent successfully");
+                    info!(" UDP message sent successfully");
                     Ok(())
                 } else {
                     warn!("UDP socket not initialized");
@@ -646,12 +646,12 @@ impl MeshRouter {
     
     /// Initialize ZHTP authentication manager with blockchain identity
     pub async fn initialize_auth_manager(&self, blockchain_pubkey: PublicKey) -> Result<()> {
-        info!("🔐 Initializing ZHTP authentication manager...");
+        info!(" Initializing ZHTP authentication manager...");
         
         let auth_manager = ZhtpAuthManager::new(blockchain_pubkey)?;
         *self.zhtp_auth_manager.write().await = Some(auth_manager);
         
-        info!("✅ ZHTP authentication manager initialized (Dilithium2)");
+        info!(" ZHTP authentication manager initialized (Dilithium2)");
         Ok(())
     }
     
@@ -681,7 +681,7 @@ impl MeshRouter {
         
         *self.relay_protocol.write().await = Some(relay);
         
-        info!("✅ ZHTP relay protocol initialized (Dilithium2 + Kyber512 + ChaCha20)");
+        info!(" ZHTP relay protocol initialized (Dilithium2 + Kyber512 + ChaCha20)");
         Ok(())
     }
     
@@ -701,7 +701,7 @@ impl MeshRouter {
                     if let Err(e) = self.message_handler.handle_mesh_message(mesh_message.clone(), requester.clone()).await {
                         warn!("Failed to handle blockchain request: {}", e);
                     } else {
-                        info!("✅ Blockchain request processed, preparing to send data chunks...");
+                        info!(" Blockchain request processed, preparing to send data chunks...");
                         
                         // Export and send blockchain chunks
                         match crate::runtime::blockchain_provider::get_global_blockchain().await {
@@ -733,7 +733,7 @@ impl MeshRouter {
                                                             break;
                                                         }
                                                     }
-                                                    info!("✅ All blockchain chunks sent successfully");
+                                                    info!(" All blockchain chunks sent successfully");
                                                 }
                                                 Err(e) => error!("Failed to chunk blockchain data: {}", e),
                                             }
@@ -773,7 +773,7 @@ impl MeshRouter {
                                     
                                     match blockchain_lock.import_chain(complete_data) {
                                         Ok(()) => {
-                                            info!("✅ Blockchain imported successfully from peer");
+                                            info!(" Blockchain imported successfully from peer");
                                             info!("   New blockchain height: {}", blockchain_lock.get_height());
                                         }
                                         Err(e) => error!("Failed to import blockchain: {}", e),
@@ -802,13 +802,13 @@ impl MeshRouter {
         
         // Second, try to parse as ZHTP relay query (encrypted DHT request)
         if let Ok(relay_query) = bincode::deserialize::<ZhtpRelayQuery>(data) {
-            info!("🔐 Received ZHTP relay query from: {} (encrypted)", addr);
+            info!(" Received ZHTP relay query from: {} (encrypted)", addr);
             
             if let Some(relay_protocol) = self.relay_protocol.read().await.as_ref() {
                 let peer_address = addr.to_string();
                 match relay_protocol.process_relay_query(&peer_address, &relay_query).await {
                     Ok(query_payload) => {
-                        info!("✅ ZHTP relay query verified and decrypted: domain={}, path={}", 
+                        info!(" ZHTP relay query verified and decrypted: domain={}, path={}", 
                             query_payload.domain, query_payload.path);
                         
                         // Query local DHT for the requested content
@@ -839,7 +839,7 @@ impl MeshRouter {
                                         response_payload
                                     ).await {
                                         Ok(relay_response) => {
-                                            info!("🔐 Created encrypted relay response, sending back to {}", addr);
+                                            info!(" Created encrypted relay response, sending back to {}", addr);
                                             let response_bytes = bincode::serialize(&relay_response)?;
                                             return Ok(Some(response_bytes));
                                         },
@@ -856,7 +856,7 @@ impl MeshRouter {
                         }
                     },
                     Err(e) => {
-                        warn!("❌ ZHTP relay query verification failed: {}", e);
+                        warn!(" ZHTP relay query verification failed: {}", e);
                     }
                 }
             } else {
@@ -2126,7 +2126,7 @@ impl MeshRouter {
         // ============================================================================
         // PHASE 2: BLOCKCHAIN AUTHENTICATION (Dilithium2 signatures)
         // ============================================================================
-        info!("🔐 Phase 2: Initiating ZHTP blockchain authentication with peer {}", node_id);
+        info!(" Phase 2: Initiating ZHTP blockchain authentication with peer {}", node_id);
         
         if let Some(auth_manager) = self.zhtp_auth_manager.read().await.as_ref() {
             // Create authentication challenge
@@ -2155,7 +2155,7 @@ impl MeshRouter {
                                     // Verify Dilithium2 signature
                                     match auth_manager.verify_response(&auth_response).await {
                                         Ok(verification) if verification.authenticated => {
-                                            info!("✅ Peer {} authenticated! Trust score: {:.2}", 
+                                            info!(" Peer {} authenticated! Trust score: {:.2}", 
                                                 node_id, verification.trust_score);
                                             
                                             // Update connection with blockchain identity
@@ -2200,7 +2200,7 @@ impl MeshRouter {
                                                                             let mut session = encryption_session;
                                                                             match session.complete_key_exchange(&key_response) {
                                                                                 Ok(_) => {
-                                                                                    info!("✅ Kyber512 shared secret established with peer {}", node_id);
+                                                                                    info!(" Kyber512 shared secret established with peer {}", node_id);
                                                                                     
                                                                                     // Update connection
                                                                                     let mut connections = self.connections.write().await;
@@ -2253,7 +2253,7 @@ impl MeshRouter {
                                                                                         // Register in DHT
                                                                                         match dht.register_peer(peer_info).await {
                                                                                             Ok(()) => {
-                                                                                                info!("✅ SUCCESS! Peer {} fully integrated:", node_id);
+                                                                                                info!(" SUCCESS! Peer {} fully integrated:", node_id);
                                                                                                 info!("   ✓ Blockchain authenticated (Dilithium2)");
                                                                                                 info!("   ✓ Quantum-secure encryption (Kyber512)");
                                                                                                 info!("   ✓ Registered in DHT peer registry");
@@ -2281,7 +2281,7 @@ impl MeshRouter {
                                                                                                     warn!("Failed to send blockchain sync request to peer {}: {}", node_id, e);
                                                                                                     warn!("   Connection established but sync will not start automatically");
                                                                                                 } else {
-                                                                                                    info!("✅ Blockchain sync request sent successfully");
+                                                                                                    info!(" Blockchain sync request sent successfully");
                                                                                                     info!("   ⏳ Waiting for blockchain chunks from peer...");
                                                                                                 }
                                                                                                 
@@ -2319,7 +2319,7 @@ impl MeshRouter {
                                             }
                                         }
                                         Ok(_) => {
-                                            warn!("❌ Peer {} authentication failed (signature invalid)", node_id);
+                                            warn!(" Peer {} authentication failed (signature invalid)", node_id);
                                             // Remove from connections
                                             self.connections.write().await.remove(peer_pubkey);
                                         }
@@ -2344,7 +2344,7 @@ impl MeshRouter {
                 }
             }
         } else {
-            warn!("⚠️  ZHTP authentication manager not initialized, skipping authentication");
+            warn!("  ZHTP authentication manager not initialized, skipping authentication");
         }
         
         Ok(false)
@@ -2391,7 +2391,7 @@ impl MeshRouter {
                 let connection = lib_network::mesh::connection::MeshConnection {
                     peer_id: peer_pubkey.clone(),
                     protocol,
-                    peer_address: Some(addr.to_string()), // ✅ Store peer address for relay queries
+                    peer_address: Some(addr.to_string()), //  Store peer address for relay queries
                     signal_strength: 0.8, // Initial estimate
                     bandwidth_capacity: 1_000_000, // 1 MB/s default
                     latency_ms: 50, // Initial estimate
@@ -2413,7 +2413,7 @@ impl MeshRouter {
                 {
                     let mut connections = self.connections.write().await;
                     connections.insert(peer_pubkey.clone(), connection);
-                    info!("✅ Peer {} added to mesh network ({} total peers)", 
+                    info!(" Peer {} added to mesh network ({} total peers)", 
                         handshake.node_id, connections.len());
                 }
                 
@@ -2655,7 +2655,7 @@ impl BluetoothRouter {
         // Create GATT message channel for forwarding GATT writes to this router
         let (gatt_tx, mut gatt_rx) = tokio::sync::mpsc::unbounded_channel();
         bluetooth_protocol.set_gatt_message_channel(gatt_tx).await;
-        info!("✅ GATT message channel connected to BluetoothRouter");
+        info!(" GATT message channel connected to BluetoothRouter");
         
         // Initialize Bluetooth advertising for ZHTP service
         if let Err(e) = bluetooth_protocol.start_advertising().await {
@@ -2673,7 +2673,7 @@ impl BluetoothRouter {
                 use lib_network::protocols::bluetooth::GattMessage;
                 match gatt_message {
                     GattMessage::MeshHandshake(data) => {
-                        info!("📡 GATT: Received mesh handshake ({} bytes)", data.len());
+                        info!(" GATT: Received mesh handshake ({} bytes)", data.len());
                         // Parse and process mesh handshake
                         if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&data) {
                             info!("🤝 GATT handshake from: {}", handshake.node_id);
@@ -2689,7 +2689,7 @@ impl BluetoothRouter {
                         // Process based on characteristic UUID
                     }
                     GattMessage::RelayQuery(data) => {
-                        info!("🔐 GATT: Relay query ({} bytes)", data.len());
+                        info!(" GATT: Relay query ({} bytes)", data.len());
                         // TODO: Process ZHTP relay query
                     }
                 }
@@ -2711,7 +2711,7 @@ impl BluetoothRouter {
         addr: SocketAddr,
         mesh_router: &MeshRouter,
     ) -> Result<()> {
-        info!("🔵 Processing Bluetooth mesh connection from: {}", addr);
+        info!(" Processing Bluetooth mesh connection from: {}", addr);
         
         let mut buffer = vec![0; 8192];
         let bytes_read = stream.read(&mut buffer).await
@@ -2736,7 +2736,7 @@ impl BluetoothRouter {
                 let connection = lib_network::mesh::connection::MeshConnection {
                     peer_id: peer_pubkey.clone(),
                     protocol,
-                    peer_address: Some(addr.to_string()), // ✅ Store Bluetooth peer address for relay queries
+                    peer_address: Some(addr.to_string()), //  Store Bluetooth peer address for relay queries
                     signal_strength: 0.7, // Bluetooth typically lower than WiFi
                     bandwidth_capacity: 250_000, // 250 KB/s - optimized BLE throughput (7.5ms interval + 1ms delay)
                     latency_ms: 100, // Bluetooth has higher latency
@@ -2758,19 +2758,19 @@ impl BluetoothRouter {
                 {
                     let mut connections = mesh_router.connections.write().await;
                     connections.insert(peer_pubkey.clone(), connection);
-                    info!("✅ Bluetooth peer {} added to mesh network ({} total peers)", 
+                    info!(" Bluetooth peer {} added to mesh network ({} total peers)", 
                         handshake.node_id, connections.len());
                 }
                 
                 // Run full authentication, key exchange, and DHT registration (same as TCP!)
-                info!("🔐 Starting automatic authentication (no pairing code needed)");
+                info!(" Starting automatic authentication (no pairing code needed)");
                 let _ = mesh_router.authenticate_and_register_peer(&peer_pubkey, &handshake, &addr, &mut stream).await;
                 
                 // Send acknowledgment
                 let ack = bincode::serialize(&true)?;
                 let _ = stream.write_all(&ack).await;
                 
-                info!("✅ Bluetooth peer fully integrated - zero-trust authentication complete!");
+                info!(" Bluetooth peer fully integrated - zero-trust authentication complete!");
                 
             } else {
                 // Legacy text-based Bluetooth messages (DHT bridge)
@@ -2779,10 +2779,10 @@ impl BluetoothRouter {
                 if message.starts_with("ZHTP-MESH:") || message.starts_with("DHT:") {
                     info!("🌉 Bridging Bluetooth ZHTP traffic to DHT network");
                     
-                    // ✅ ACTUALLY CALL THE BRIDGE FUNCTION
+                    //  ACTUALLY CALL THE BRIDGE FUNCTION
                     match mesh_router.bridge_bluetooth_to_dht(&buffer[..bytes_read], &addr).await {
                         Ok(()) => {
-                            info!("✅ Bluetooth message successfully bridged to DHT");
+                            info!(" Bluetooth message successfully bridged to DHT");
                             let response = format!(
                                 "ZHTP/1.0 200 OK\r\nX-Protocol: Bluetooth-DHT-Bridge\r\nX-Node-ID: {:?}\r\nX-Service: ZHTP-Mesh\r\nX-Bridge: Active\r\n\r\nBridged to DHT network",
                                 &self.node_id[..8]
@@ -2864,7 +2864,7 @@ impl BluetoothClassicRouter {
         // Check if Windows Bluetooth feature is enabled on Windows
         #[cfg(all(target_os = "windows", not(feature = "windows-bluetooth")))]
         {
-            warn!("🚨 Windows: Bluetooth Classic requires --features windows-bluetooth");
+            warn!(" Windows: Bluetooth Classic requires --features windows-bluetooth");
             warn!("   Current build will NOT support RFCOMM discovery or connections");
             warn!("   Rebuild with: cargo build --features windows-bluetooth");
             warn!("   Skipping Bluetooth Classic initialization");
@@ -2878,13 +2878,13 @@ impl BluetoothClassicRouter {
         let bluetooth_classic = BluetoothClassicProtocol::new(self.node_id)?;
         
         // Initialize ZHTP authentication with blockchain public key
-        info!("🔐 Initializing ZHTP authentication for Bluetooth Classic...");
+        info!(" Initializing ZHTP authentication for Bluetooth Classic...");
         let blockchain_pubkey = PublicKey::new(self.node_id.to_vec());
         if let Err(e) = bluetooth_classic.initialize_zhtp_auth(blockchain_pubkey).await {
-            warn!("⚠️  Bluetooth Classic auth initialization failed: {}", e);
+            warn!("  Bluetooth Classic auth initialization failed: {}", e);
             warn!("Continuing without authentication - connections may be insecure");
         } else {
-            info!("✅ Bluetooth Classic ZHTP authentication initialized");
+            info!(" Bluetooth Classic ZHTP authentication initialized");
         }
         
         // Initialize RFCOMM advertising
@@ -2911,7 +2911,7 @@ impl BluetoothClassicRouter {
         addr: SocketAddr,
         mesh_router: &MeshRouter,
     ) -> Result<()> {
-        info!("🔵 Processing Bluetooth Classic RFCOMM connection from: {}", addr);
+        info!(" Processing Bluetooth Classic RFCOMM connection from: {}", addr);
         
         let mut buffer = vec![0; 8192];
         let bytes_read = stream.read(&mut buffer).await
@@ -2958,19 +2958,19 @@ impl BluetoothClassicRouter {
                 {
                     let mut connections = mesh_router.connections.write().await;
                     connections.insert(peer_pubkey.clone(), connection);
-                    info!("✅ Bluetooth Classic peer {} added to mesh network ({} total peers)", 
+                    info!(" Bluetooth Classic peer {} added to mesh network ({} total peers)", 
                         handshake.node_id, connections.len());
                 }
                 
                 // Run SAME authentication flow as BLE (transport-agnostic!)
-                info!("🔐 Starting automatic authentication over RFCOMM");
+                info!(" Starting automatic authentication over RFCOMM");
                 let _ = mesh_router.authenticate_and_register_peer(&peer_pubkey, &handshake, &addr, &mut stream).await;
                 
                 // Send acknowledgment
                 let ack = bincode::serialize(&true)?;
                 let _ = stream.write_all(&ack).await;
                 
-                info!("✅ Bluetooth Classic peer fully integrated - high-throughput mesh active!");
+                info!(" Bluetooth Classic peer fully integrated - high-throughput mesh active!");
                 
             } else {
                 warn!("Failed to parse RFCOMM handshake");
@@ -2993,7 +2993,7 @@ impl BluetoothClassicRouter {
     /// Discover and connect to Bluetooth Classic peers
     /// Actively discovers paired devices, queries RFCOMM services, and connects to ZHTP nodes
     pub async fn discover_and_connect_peers(&self, mesh_router: &MeshRouter) -> Result<usize> {
-        info!("🔍 Starting Bluetooth Classic peer discovery...");
+        info!(" Starting Bluetooth Classic peer discovery...");
         
         let protocol_guard = self.protocol.read().await;
         let protocol = match protocol_guard.as_ref() {
@@ -3007,7 +3007,7 @@ impl BluetoothClassicRouter {
         // Step 1: Discover paired devices
         let devices = match protocol.discover_paired_devices().await {
             Ok(devs) => {
-                info!("✅ Discovered {} paired Bluetooth devices", devs.len());
+                info!(" Discovered {} paired Bluetooth devices", devs.len());
                 devs
             }
             Err(e) => {
@@ -3079,7 +3079,7 @@ impl BluetoothClassicRouter {
                             let mut connections = mesh_router.connections.write().await;
                             connections.insert(peer_pubkey, connection);
                             
-                            info!("✅ Added {} to mesh network", device.address);
+                            info!(" Added {} to mesh network", device.address);
                             
                             // Store the stream for future communication
                             self.connected_devices.write().await.insert(
@@ -3374,12 +3374,12 @@ impl ZhtpUnifiedServer {
         info!("Starting ZHTP Unified Server on port {}", self.port);
         
         // STEP 1: Apply network isolation to block internet access
-        info!("🔒 Applying network isolation for ISP-free mesh operation...");
+        info!(" Applying network isolation for ISP-free mesh operation...");
         if let Err(e) = crate::config::network_isolation::initialize_network_isolation().await {
             warn!("Failed to apply network isolation: {}", e);
-            warn!("⚠️ Mesh may still have internet access - check network configuration");
+            warn!(" Mesh may still have internet access - check network configuration");
         } else {
-            info!("✅ Network isolation applied - mesh is now ISP-free");
+            info!(" Network isolation applied - mesh is now ISP-free");
         }
         
         // Initialize ZHTP relay protocol ONLY if not already initialized
@@ -3390,39 +3390,39 @@ impl ZhtpUnifiedServer {
                 warn!("Failed to initialize ZHTP relay protocol: {}", e);
             }
         } else {
-            info!("✅ ZHTP relay protocol already initialized (authentication active)");
+            info!(" ZHTP relay protocol already initialized (authentication active)");
         }
         
         // Start local network peer discovery (multicast)
-        info!("🔍 Starting local network peer discovery...");
+        info!(" Starting local network peer discovery...");
         if let Err(e) = lib_network::discovery::local_network::start_local_discovery(
             self.server_id,
             self.port
         ).await {
             warn!("Failed to start local network discovery: {}", e);
         } else {
-            info!("✅ Local network discovery active (multicast)");
+            info!(" Local network discovery active (multicast)");
         }
         
         // Start automatic TCP/UDP network scanner
-        info!("🔍 Starting TCP/UDP network scanner...");
+        info!(" Starting TCP/UDP network scanner...");
         if let Err(e) = lib_network::discovery::network_scanner::start_network_scanner(self.port, self.server_id).await {
             warn!("Failed to start network scanner: {}", e);
         } else {
-            info!("✅ TCP/UDP network scanner active (scans every 30 seconds)");
+            info!(" TCP/UDP network scanner active (scans every 30 seconds)");
         }
         
         // Quick scan on startup for immediate peer discovery
-        info!("⚡ Running quick network scan...");
+        info!(" Running quick network scan...");
         match lib_network::discovery::network_scanner::quick_scan_local_network().await {
             Ok(nodes) if !nodes.is_empty() => {
-                info!("⚡ Quick scan found {} ZHTP nodes:", nodes.len());
+                info!(" Quick scan found {} ZHTP nodes:", nodes.len());
                 for node in &nodes {
                     info!("   → {}:{} ({}ms response)", node.ip, node.port, node.response_time_ms);
                 }
             }
             Ok(_) => {
-                info!("⚡ Quick scan complete - no ZHTP nodes found yet");
+                info!(" Quick scan complete - no ZHTP nodes found yet");
             }
             Err(e) => {
                 warn!("Quick scan failed: {}", e);
@@ -3430,26 +3430,26 @@ impl ZhtpUnifiedServer {
         }
         
         // Initialize Bluetooth discovery
-        info!("📡 Initializing Bluetooth mesh discovery...");
+        info!(" Initializing Bluetooth mesh discovery...");
         if let Err(e) = self.bluetooth_router.initialize().await {
             warn!("Bluetooth LE initialization failed: {}", e);
             warn!("Continuing without Bluetooth LE support");
         } else {
-            info!("✅ Bluetooth LE mesh advertising active");
+            info!(" Bluetooth LE mesh advertising active");
         }
         
         // Initialize Bluetooth Classic for high-throughput mesh
-        info!("📡 Initializing Bluetooth Classic RFCOMM...");
+        info!(" Initializing Bluetooth Classic RFCOMM...");
         if let Err(e) = self.bluetooth_classic_router.initialize().await {
             warn!("Bluetooth Classic initialization failed: {}", e);
             warn!("Continuing without Bluetooth Classic support");
         } else {
-            info!("✅ Bluetooth Classic RFCOMM active (375 KB/s)");
+            info!(" Bluetooth Classic RFCOMM active (375 KB/s)");
         }
         
         // PURE MESH MODE: No TCP/UDP binding - use direct mesh protocols only
-        info!("🔵 Pure Mesh Mode: Using direct protocols (BLE, BT Classic, WiFi Direct, LoRaWAN)");
-        info!("📡 No IP binding - mesh discovery via radio protocols only");
+        info!(" Pure Mesh Mode: Using direct protocols (BLE, BT Classic, WiFi Direct, LoRaWAN)");
+        info!(" No IP binding - mesh discovery via radio protocols only");
         
         *self.is_running.write().await = true;
         
@@ -3461,21 +3461,21 @@ impl ZhtpUnifiedServer {
         
         info!("ZHTP Unified Server online");
         info!("Protocols: BLE + BT Classic + WiFi Direct + LoRaWAN + ZHTP Relay");
-        info!("🔐 ZHTP relay: Encrypted DHT queries with Dilithium2 + Kyber512 + ChaCha20");
+        info!(" ZHTP relay: Encrypted DHT queries with Dilithium2 + Kyber512 + ChaCha20");
         
         // Verify network isolation is working
-        info!("🔍 Verifying network isolation...");
+        info!(" Verifying network isolation...");
         match crate::config::network_isolation::verify_mesh_isolation().await {
             Ok(true) => {
                 info!("🎉 NETWORK ISOLATION VERIFIED - Mesh is ISP-free!");
-                info!("✅ No internet access possible - pure mesh operation confirmed");
+                info!(" No internet access possible - pure mesh operation confirmed");
             }
             Ok(false) => {
-                warn!("⚠️ NETWORK ISOLATION FAILED - Internet access still possible!");
-                warn!("🌐 Check firewall and routing configuration");
+                warn!(" NETWORK ISOLATION FAILED - Internet access still possible!");
+                warn!(" Check firewall and routing configuration");
             }
             Err(e) => {
-                warn!("🔍 Could not verify network isolation: {}", e);
+                warn!(" Could not verify network isolation: {}", e);
             }
         }
         
@@ -3484,7 +3484,7 @@ impl ZhtpUnifiedServer {
 
     /// Start Bluetooth mesh protocol handler
     async fn start_bluetooth_mesh_handler(&self) -> Result<()> {
-        info!("🔵 Starting Bluetooth LE mesh handler...");
+        info!(" Starting Bluetooth LE mesh handler...");
         
         // Check if protocol is initialized (should be done in run_pure_mesh already)
         let is_initialized = self.bluetooth_router.protocol.read().await.is_some();
@@ -3494,14 +3494,14 @@ impl ZhtpUnifiedServer {
             return Ok(());
         }
         
-        info!("✅ Bluetooth LE mesh handler active - discoverable for phone connections");
+        info!(" Bluetooth LE mesh handler active - discoverable for phone connections");
         
         Ok(())
     }
 
     /// Start Bluetooth Classic RFCOMM mesh handler
     async fn start_bluetooth_classic_handler(&self) -> Result<()> {
-        info!("🔵 Starting Bluetooth Classic RFCOMM mesh handler...");
+        info!(" Starting Bluetooth Classic RFCOMM mesh handler...");
         
         // Check if protocol is initialized (should be done in run_pure_mesh already)
         let is_initialized = self.bluetooth_classic_router.protocol.read().await.is_some();
@@ -3511,7 +3511,7 @@ impl ZhtpUnifiedServer {
             return Ok(());
         }
         
-        info!("✅ Bluetooth Classic RFCOMM handler active");
+        info!(" Bluetooth Classic RFCOMM handler active");
         
         // Note: Windows Bluetooth API types are not Send, so periodic discovery
         // cannot run in a spawned task. Manual discovery can still be triggered.
@@ -3532,11 +3532,11 @@ impl ZhtpUnifiedServer {
                 while *is_running.read().await {
                     interval.tick().await;
                     
-                    info!("🔍 Bluetooth Classic: Starting periodic peer discovery...");
+                    info!(" Bluetooth Classic: Starting periodic peer discovery...");
                     match bt_router.discover_and_connect_peers(&mesh_router).await {
                         Ok(count) => {
                             if count > 0 {
-                                info!("✅ Bluetooth Classic: Connected to {} new peers", count);
+                                info!(" Bluetooth Classic: Connected to {} new peers", count);
                             } else {
                                 debug!("Bluetooth Classic: No new peers found");
                             }
@@ -3551,24 +3551,24 @@ impl ZhtpUnifiedServer {
         
         #[cfg(all(target_os = "windows", feature = "windows-bluetooth"))]
         {
-            info!("⚠️  Windows: Automatic periodic discovery disabled (API not thread-safe)");
+            info!("  Windows: Automatic periodic discovery disabled (API not thread-safe)");
             info!("    Use manual discovery commands or API calls instead");
         }
         
-        info!("📡 Bluetooth Classic periodic discovery task started (60s interval)");
+        info!(" Bluetooth Classic periodic discovery task started (60s interval)");
         
         Ok(())
     }
 
     /// Start WiFi Direct mesh protocol handler  
     async fn start_wifi_direct_handler(&self) -> Result<()> {
-        info!("📶 Starting WiFi Direct mesh handler...");
+        info!(" Starting WiFi Direct mesh handler...");
         
         if let Err(e) = self.wifi_router.initialize().await {
             warn!("WiFi Direct initialization failed: {}", e);
             warn!("Continuing without WiFi Direct support");
         } else {
-            info!("✅ WiFi Direct mesh active - P2P connections enabled");
+            info!(" WiFi Direct mesh active - P2P connections enabled");
         }
         
         Ok(())
@@ -3576,11 +3576,11 @@ impl ZhtpUnifiedServer {
 
     /// Start LoRaWAN mesh protocol handler
     async fn start_lorawan_handler(&self) -> Result<()> {
-        info!("📡 Starting LoRaWAN mesh handler...");
+        info!(" Starting LoRaWAN mesh handler...");
         
         // LoRaWAN requires specific hardware - check availability
-        info!("📻 LoRaWAN mesh protocol ready (requires LoRa hardware)");
-        info!("✅ Long-range mesh capability available");
+        info!(" LoRaWAN mesh protocol ready (requires LoRa hardware)");
+        info!(" Long-range mesh capability available");
         
         Ok(())
     }

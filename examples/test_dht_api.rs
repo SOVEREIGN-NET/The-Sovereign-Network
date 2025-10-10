@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("   Response: {}", body);
             }
         }
-        Err(e) => println!("❌ DHT Initialize failed: {}", e)
+        Err(e) => println!(" DHT Initialize failed: {}", e)
     }
     
     // Test 2: Get DHT Status  
@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("   Response: {}", body);
             }
         }
-        Err(e) => println!("❌ DHT Status failed: {}", e)
+        Err(e) => println!(" DHT Status failed: {}", e)
     }
     
     // Test 3: Get DHT Statistics
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("   Response: {}", body);
             }
         }
-        Err(e) => println!("❌ DHT Statistics failed: {}", e)
+        Err(e) => println!(" DHT Statistics failed: {}", e)
     }
     
     // Test 4: Discover Peers
@@ -84,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("   Response: {}", body);
             }
         }
-        Err(e) => println!("❌ DHT Peers failed: {}", e)
+        Err(e) => println!(" DHT Peers failed: {}", e)
     }
     
     println!("\n🎯 DHT API Test Complete!");

@@ -13,7 +13,7 @@ pub async fn apply_isolation() -> Result<String> {
             // Verify it worked
             match verify_mesh_isolation().await {
                 Ok(true) => Ok("🎉 Network isolation applied successfully - mesh is now ISP-free!".to_string()),
-                Ok(false) => Ok("⚠️ Network isolation applied but internet access still detected".to_string()),
+                Ok(false) => Ok(" Network isolation applied but internet access still detected".to_string()),
                 Err(e) => Ok(format!("Network isolation applied but verification failed: {}", e)),
             }
         },
@@ -24,8 +24,8 @@ pub async fn apply_isolation() -> Result<String> {
 /// Check current network isolation status
 pub async fn check_isolation_status() -> Result<String> {
     match verify_mesh_isolation().await {
-        Ok(true) => Ok("✅ Network is isolated - no internet access (ISP-free mesh)".to_string()),
-        Ok(false) => Ok("🌐 Network has internet access - not isolated".to_string()),
+        Ok(true) => Ok(" Network is isolated - no internet access (ISP-free mesh)".to_string()),
+        Ok(false) => Ok(" Network has internet access - not isolated".to_string()),
         Err(e) => Ok(format!("Could not determine isolation status: {}", e)),
     }
 }
@@ -35,7 +35,7 @@ pub async fn show_isolation_config() -> Result<String> {
     let config = NetworkIsolationConfig::default();
     
     let mut output = String::new();
-    output.push_str("🔒 Network Isolation Configuration:\n");
+    output.push_str(" Network Isolation Configuration:\n");
     output.push_str(&format!("Isolation enabled: {}\n", config.enable_isolation));
     output.push_str("Allowed subnets:\n");
     for subnet in &config.allowed_subnets {
@@ -56,7 +56,7 @@ pub async fn remove_isolation() -> Result<String> {
     let config = NetworkIsolationConfig::default();
     
     match config.remove_isolation().await {
-        Ok(()) => Ok("🌐 Network isolation removed - internet access restored".to_string()),
+        Ok(()) => Ok(" Network isolation removed - internet access restored".to_string()),
         Err(e) => Ok(format!("Failed to remove network isolation: {}", e)),
     }
 }
@@ -66,22 +66,22 @@ pub async fn test_connectivity() -> Result<String> {
     let config = NetworkIsolationConfig::default();
     
     let mut output = String::new();
-    output.push_str("🔍 Testing network connectivity:\n");
+    output.push_str(" Testing network connectivity:\n");
     
     // Test local connectivity
     match config.test_connectivity("127.0.0.1").await {
-        Ok(true) => output.push_str("✅ Local (127.0.0.1): Reachable\n"),
-        Ok(false) => output.push_str("❌ Local (127.0.0.1): Not reachable\n"),
-        Err(e) => output.push_str(&format!("⚠️ Local (127.0.0.1): Test failed - {}\n", e)),
+        Ok(true) => output.push_str(" Local (127.0.0.1): Reachable\n"),
+        Ok(false) => output.push_str(" Local (127.0.0.1): Not reachable\n"),
+        Err(e) => output.push_str(&format!(" Local (127.0.0.1): Test failed - {}\n", e)),
     }
     
     // Test internet connectivity
     let internet_hosts = vec!["8.8.8.8", "1.1.1.1", "google.com"];
     for host in internet_hosts {
         match config.test_connectivity(host).await {
-            Ok(true) => output.push_str(&format!("🌐 Internet ({}): Reachable (isolation may be broken)\n", host)),
-            Ok(false) => output.push_str(&format!("✅ Internet ({}): Not reachable (good isolation)\n", host)),
-            Err(e) => output.push_str(&format!("✅ Internet ({}): Test failed (good isolation) - {}\n", host, e)),
+            Ok(true) => output.push_str(&format!(" Internet ({}): Reachable (isolation may be broken)\n", host)),
+            Ok(false) => output.push_str(&format!(" Internet ({}): Not reachable (good isolation)\n", host)),
+            Err(e) => output.push_str(&format!(" Internet ({}): Test failed (good isolation) - {}\n", host, e)),
         }
     }
     

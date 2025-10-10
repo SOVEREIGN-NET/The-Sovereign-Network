@@ -33,7 +33,7 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
                 if config_path.contains("full-node") {
                     println!("🖥️ Node Type: Full Node (Complete blockchain functionality)");
                 } else if config_path.contains("validator-node") {
-                    println!("⚡ Node Type: Validator Node (Consensus participation)");
+                    println!(" Node Type: Validator Node (Consensus participation)");
                 } else if config_path.contains("storage-node") {
                     println!("💾 Node Type: Storage Node (Distributed storage services)");
                 } else if config_path.contains("edge-node") {
@@ -62,26 +62,26 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             
             // Apply network isolation if pure mesh mode is enabled
             if pure_mesh {
-                println!("🔒 Applying network isolation for pure mesh mode...");
+                println!(" Applying network isolation for pure mesh mode...");
                 use crate::config::network_isolation::NetworkIsolationConfig;
                 
                 let isolation_config = NetworkIsolationConfig::default();
                 match isolation_config.apply_isolation().await {
                     Ok(_) => {
-                        println!("✅ Network isolation applied successfully");
-                        println!("🚫 Internet access blocked - mesh networking only");
+                        println!(" Network isolation applied successfully");
+                        println!(" Internet access blocked - mesh networking only");
                         
                         // Test isolation
                         match isolation_config.verify_isolation().await {
                             Ok(_) => {
-                                println!("✅ Isolation verified: Local OK, Internet blocked");
+                                println!(" Isolation verified: Local OK, Internet blocked");
                             }
-                            Err(e) => println!("⚠️ Isolation verification failed: {}", e),
+                            Err(e) => println!(" Isolation verification failed: {}", e),
                         }
                     }
                     Err(e) => {
-                        println!("❌ Failed to apply network isolation: {}", e);
-                        println!("⚠️ Continuing without isolation - manual configuration may be required");
+                        println!(" Failed to apply network isolation: {}", e);
+                        println!(" Continuing without isolation - manual configuration may be required");
                     }
                 }
             }
@@ -237,7 +237,7 @@ async fn handle_existing_network_identity(network_info: &ExistingNetworkInfo) ->
                 return create_wallet_from_node_identity(network_info).await;
             }
             "4" => {
-                println!("\n⚡ Quick start mode...");
+                println!("\n Quick start mode...");
                 return WalletStartupManager::quick_start_wallet().await;
             }
             _ => {
@@ -279,7 +279,7 @@ async fn handle_genesis_network_identity() -> Result<WalletStartupResult> {
                 return WalletStartupManager::import_from_recovery_phrase().await;
             }
             "3" => {
-                println!("\n⚡ Quick start mode...");
+                println!("\n Quick start mode...");
                 return WalletStartupManager::quick_start_wallet().await;
             }
             _ => {
@@ -413,13 +413,13 @@ async fn create_or_load_node_identity() -> Result<ZhtpIdentity> {
                         return Ok(identity);
                     }
                     Err(e) => {
-                        println!("⚠️ Failed to parse existing identity file: {}", e);
+                        println!(" Failed to parse existing identity file: {}", e);
                         // Fall through to create new identity
                     }
                 }
             }
             Err(e) => {
-                println!("⚠️ Failed to read identity file: {}", e);
+                println!(" Failed to read identity file: {}", e);
                 // Fall through to create new identity
             }
         }
@@ -447,19 +447,19 @@ async fn create_or_load_node_identity() -> Result<ZhtpIdentity> {
     
     // Save the identity to disk for persistence
     if let Err(e) = fs::create_dir_all("./data") {
-        println!("⚠️ Warning: Could not create data directory: {}", e);
+        println!(" Warning: Could not create data directory: {}", e);
     }
     
     match serde_json::to_string_pretty(&node_identity) {
         Ok(identity_json) => {
             if let Err(e) = fs::write(identity_file, identity_json) {
-                println!("⚠️ Warning: Could not save identity to disk: {}", e);
+                println!(" Warning: Could not save identity to disk: {}", e);
             } else {
                 println!("💾 Node identity saved to {}", identity_file);
             }
         }
         Err(e) => {
-            println!("⚠️ Warning: Could not serialize identity: {}", e);
+            println!(" Warning: Could not serialize identity: {}", e);
         }
     }
     
@@ -476,7 +476,7 @@ async fn create_wallet_from_node_identity(network_info: &ExistingNetworkInfo) ->
     
     println!(" Node DHT Address: {:?}", &node_identity.id.to_string()[..16]);
     println!("Primary Wallet Address: {}", node_identity.id.to_string());
-    println!("🌐 Network: {}", network_info.network_id);
+    println!(" Network: {}", network_info.network_id);
     
     // Create wallet using the identity's integrated wallet manager
     let wallet_name = format!("primary-{}", &node_identity.id.to_string()[..8]);
@@ -495,8 +495,8 @@ async fn create_wallet_from_node_identity(network_info: &ExistingNetworkInfo) ->
             (wallet_id, seed_phrase.words.join(" "))
         }
         Err(e) => {
-            println!("⚠️ Failed to create wallet with seed phrase: {}", e);
-            println!("📄 Creating basic wallet without seed phrase for now...");
+            println!(" Failed to create wallet with seed phrase: {}", e);
+            println!(" Creating basic wallet without seed phrase for now...");
             
             // Return error since seed phrase is required
             return Err(anyhow!("Failed to create wallet with seed phrase: {}", e));
@@ -543,8 +543,8 @@ async fn create_genesis_wallet_from_node_identity() -> Result<WalletStartupResul
             (wallet_id, seed_phrase.words.join(" "))
         }
         Err(e) => {
-            println!("⚠️ Failed to create wallet with seed phrase: {}", e);
-            println!("📄 Creating basic genesis wallet without seed phrase for now...");
+            println!(" Failed to create wallet with seed phrase: {}", e);
+            println!(" Creating basic genesis wallet without seed phrase for now...");
             
             // Return error since seed phrase is required
             return Err(anyhow!("Failed to create genesis wallet with seed phrase: {}", e));

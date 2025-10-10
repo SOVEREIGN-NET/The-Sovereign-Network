@@ -24,7 +24,7 @@ pub fn show_lib_banner() {
 ║    │  Complete ISP Replacement via Mesh Networking                   │  ║
 ║    │  Universal Basic Income for All Network Participants            │  ║
 ║    │  🏛️ Decentralized DAO Governance                                   │  ║
-║    │  🔒 Zero-Knowledge Privacy for All Communications                  │  ║
+║    │   Zero-Knowledge Privacy for All Communications                  │  ║
 ║    │   Revolutionary Web4 Protocol Stack                              │  ║
 ║    └─────────────────────────────────────────────────────────────────────┘  ║
 ║                                                                              ║
@@ -52,7 +52,7 @@ pub fn show_lib_banner() {
 
 /// Display development mode warning
 pub fn show_development_warning() {
-    println!(" DEVELOPMENT MODE WARNING ⚠️");
+    println!(" DEVELOPMENT MODE WARNING ");
     println!("   This node is running in development mode.");
     println!("   Do not use for production or real economic transactions.");
     println!();

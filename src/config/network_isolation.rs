@@ -89,7 +89,7 @@ impl Default for MeshDhcpConfig {
             ip_range_start: "192.168.100.10".to_string(),
             ip_range_end: "192.168.100.100".to_string(),
             subnet_mask: "255.255.255.0".to_string(),
-            default_gateway: None,  // ✅ NO DEFAULT GATEWAY = NO INTERNET
+            default_gateway: None,  //  NO DEFAULT GATEWAY = NO INTERNET
             dns_servers: vec![
                 "192.168.100.1".to_string(),     // Local mesh DNS only
             ],
@@ -147,7 +147,7 @@ impl NetworkIsolationConfig {
             return Ok(());
         }
 
-        info!("🔒 Applying network isolation for pure mesh operation");
+        info!(" Applying network isolation for pure mesh operation");
 
         // 1. Remove default gateway
         self.remove_default_gateway().await?;
@@ -161,13 +161,13 @@ impl NetworkIsolationConfig {
         // 4. Verify isolation is working
         self.verify_isolation().await?;
 
-        info!("✅ Network isolation applied - mesh is now ISP-free");
+        info!(" Network isolation applied - mesh is now ISP-free");
         Ok(())
     }
 
     /// Remove default gateway to prevent internet routing
     async fn remove_default_gateway(&self) -> Result<()> {
-        info!("🚫 Removing default gateway to block internet access");
+        info!(" Removing default gateway to block internet access");
 
         #[cfg(target_os = "windows")]
         {
@@ -179,7 +179,7 @@ impl NetworkIsolationConfig {
             match output {
                 Ok(result) => {
                     if result.status.success() {
-                        info!("✅ Windows: Default route removed");
+                        info!(" Windows: Default route removed");
                     } else {
                         let error = String::from_utf8_lossy(&result.stderr);
                         warn!("Windows: Failed to remove default route: {}", error);
@@ -195,7 +195,7 @@ impl NetworkIsolationConfig {
 
             if let Ok(result) = ps_output {
                 if result.status.success() {
-                    info!("✅ Windows: PowerShell default route removed");
+                    info!(" Windows: PowerShell default route removed");
                 }
             }
         }
@@ -210,7 +210,7 @@ impl NetworkIsolationConfig {
             match output {
                 Ok(result) => {
                     if result.status.success() {
-                        info!("✅ Linux: Default route removed");
+                        info!(" Linux: Default route removed");
                     } else {
                         // Try alternative method
                         let alt_output = Command::new("route")
@@ -219,7 +219,7 @@ impl NetworkIsolationConfig {
 
                         if let Ok(alt_result) = alt_output {
                             if alt_result.status.success() {
-                                info!("✅ Linux: Default route removed (alternative)");
+                                info!(" Linux: Default route removed (alternative)");
                             }
                         }
                     }
@@ -238,7 +238,7 @@ impl NetworkIsolationConfig {
             match output {
                 Ok(result) => {
                     if result.status.success() {
-                        info!("✅ macOS: Default route removed");
+                        info!(" macOS: Default route removed");
                     }
                 }
                 Err(e) => warn!("macOS: Route command failed: {}", e),
@@ -250,7 +250,7 @@ impl NetworkIsolationConfig {
 
     /// Apply firewall rules to block external traffic
     async fn apply_firewall_rules(&self) -> Result<()> {
-        info!("🔥 Applying firewall rules for mesh isolation");
+        info!(" Applying firewall rules for mesh isolation");
 
         #[cfg(target_os = "windows")]
         {
@@ -306,7 +306,7 @@ impl NetworkIsolationConfig {
             match output {
                 Ok(result) => {
                     if result.status.success() {
-                        info!("✅ Windows firewall rule added: {}", rule.name);
+                        info!(" Windows firewall rule added: {}", rule.name);
                     } else {
                         let error = String::from_utf8_lossy(&result.stderr);
                         warn!("Failed to add Windows firewall rule {}: {}", rule.name, error);
@@ -348,7 +348,7 @@ impl NetworkIsolationConfig {
             match output {
                 Ok(result) => {
                     if result.status.success() {
-                        info!("✅ Linux iptables rule added: {}", rule.name);
+                        info!(" Linux iptables rule added: {}", rule.name);
                     } else {
                         let error = String::from_utf8_lossy(&result.stderr);
                         warn!("Failed to add iptables rule {}: {}", rule.name, error);
@@ -367,7 +367,7 @@ impl NetworkIsolationConfig {
             return Ok(());
         }
 
-        info!("📡 Configuring mesh-only DHCP (no internet gateway)");
+        info!(" Configuring mesh-only DHCP (no internet gateway)");
 
         // Create DHCP configuration
         let dhcp_config = format!(
@@ -390,14 +390,14 @@ subnet 192.168.100.0 netmask 255.255.255.0 {{
         );
 
         info!("DHCP Config (ISP-Free):\n{}", dhcp_config);
-        info!("✅ DHCP configured without default gateway - mesh isolated");
+        info!(" DHCP configured without default gateway - mesh isolated");
 
         Ok(())
     }
 
     /// Verify that isolation is working (no internet connectivity)
     pub async fn verify_isolation(&self) -> Result<()> {
-        info!("🔍 Verifying network isolation...");
+        info!(" Verifying network isolation...");
 
         // Test connectivity to common internet hosts
         let test_hosts = vec![
@@ -413,14 +413,14 @@ subnet 192.168.100.0 netmask 255.255.255.0 {{
             
             match ping_result {
                 Ok(true) => {
-                    error!("❌ ISOLATION FAILED: Can still reach {}", host);
+                    error!(" ISOLATION FAILED: Can still reach {}", host);
                     isolation_working = false;
                 }
                 Ok(false) => {
-                    info!("✅ Isolation verified: Cannot reach {}", host);
+                    info!(" Isolation verified: Cannot reach {}", host);
                 }
                 Err(e) => {
-                    info!("✅ Connectivity test failed for {} (good): {}", host, e);
+                    info!(" Connectivity test failed for {} (good): {}", host, e);
                 }
             }
         }
@@ -429,17 +429,17 @@ subnet 192.168.100.0 netmask 255.255.255.0 {{
         let local_test = self.test_connectivity("127.0.0.1").await;
         match local_test {
             Ok(true) => {
-                info!("✅ Local connectivity working");
+                info!(" Local connectivity working");
             }
             _ => {
-                warn!("⚠️ Local connectivity may be impaired");
+                warn!(" Local connectivity may be impaired");
             }
         }
 
         if isolation_working {
             info!("🎉 Network isolation VERIFIED - mesh is ISP-free!");
         } else {
-            error!("🚨 Network isolation FAILED - internet access still possible!");
+            error!(" Network isolation FAILED - internet access still possible!");
         }
 
         Ok(())
@@ -468,12 +468,12 @@ subnet 192.168.100.0 netmask 255.255.255.0 {{
 
     /// Remove isolation and restore internet access
     pub async fn remove_isolation(&self) -> Result<()> {
-        info!("🌐 Removing network isolation - restoring internet access");
+        info!(" Removing network isolation - restoring internet access");
 
         // This would restore default gateway, remove firewall rules, etc.
         // Implementation depends on how the system was configured before
 
-        warn!("⚠️ Isolation removal not implemented - manually restore network settings");
+        warn!(" Isolation removal not implemented - manually restore network settings");
         Ok(())
     }
 

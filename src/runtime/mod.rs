@@ -461,7 +461,7 @@ impl RuntimeOrchestrator {
                         }
                     }
                 }
-                warn!("🚨 Forced shutdown completed");
+                warn!(" Forced shutdown completed");
             }
         }
         

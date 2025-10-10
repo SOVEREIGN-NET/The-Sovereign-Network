@@ -113,12 +113,12 @@ impl DnsHandler {
 
         // First try Web4Manager if available
         if let Some(web4_manager) = &self.web4_manager {
-            info!("🔍 Querying Web4Manager for domain: {}", domain);
+            info!(" Querying Web4Manager for domain: {}", domain);
             let manager = web4_manager.read().await;
             
             match manager.registry.lookup_domain(domain).await {
                 Ok(domain_info) if domain_info.found => {
-                    info!("✅ Domain {} found in Web4 registry", domain);
+                    info!(" Domain {} found in Web4 registry", domain);
                     
                     let owner_display = domain_info.owner_info.as_ref()
                         .and_then(|o| o.alias.clone())

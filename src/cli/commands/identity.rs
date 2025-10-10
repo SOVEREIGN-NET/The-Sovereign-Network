@@ -196,7 +196,7 @@ pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Resul
                     println!("Verification Score: {}", score);
                 }
                 if let Some(level) = result.get("verification_level") {
-                    println!("🔒 Security Level: {}", level.as_str().unwrap_or("N/A"));
+                    println!(" Security Level: {}", level.as_str().unwrap_or("N/A"));
                 }
                 
                 if cli.verbose {

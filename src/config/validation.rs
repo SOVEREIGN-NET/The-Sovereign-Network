@@ -71,7 +71,7 @@ fn validate_port_assignments(config: &NodeConfig) -> Result<()> {
     let standard_ports = [22, 53, 80, 443, 8080, 3000, 5432, 27017];
     for &port in &standard_ports {
         if used_ports.contains_key(&port) {
-            warn!("🚨 Using standard system port {}: {}", port, used_ports[&port]);
+            warn!(" Using standard system port {}: {}", port, used_ports[&port]);
         }
     }
     
@@ -348,7 +348,7 @@ impl ConfigHealthReport {
     
     pub fn print_report(&self) {
         if !self.critical_issues.is_empty() {
-            error!("🚨 Critical Configuration Issues:");
+            error!(" Critical Configuration Issues:");
             for issue in &self.critical_issues {
                 error!("   {}", issue);
             }

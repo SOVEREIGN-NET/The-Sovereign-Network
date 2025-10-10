@@ -110,7 +110,7 @@ impl Web4Handler {
             let content_hash = lib_crypto::hash_blake3(&content_bytes);
             let content_hash_hex = hex::encode(&content_hash[..8]); // Use first 8 bytes for shorter hash
             
-            info!("  📄 Path: {} ({} bytes)", path, content_bytes.len());
+            info!("   Path: {} ({} bytes)", path, content_bytes.len());
             info!("     Hash: {}", content_hash_hex);
             info!("     Type: {}", mapping.content_type);
             
@@ -163,7 +163,7 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Domain registration failed: {}", e))?;
 
         let total_fees = registration_response.fees_charged;
-        info!("✅ Domain {} registered via Web4Manager with {} ZHTP fees", simple_request.domain, total_fees);
+        info!(" Domain {} registered via Web4Manager with {} ZHTP fees", simple_request.domain, total_fees);
 
         // Deploy Web4Contract to blockchain
         let blockchain_tx_hash = match self.deploy_web4_contract(
@@ -177,7 +177,7 @@ impl Web4Handler {
                 Some(tx_hash)
             }
             Err(e) => {
-                error!("⚠️ Failed to deploy Web4Contract: {}", e);
+                error!(" Failed to deploy Web4Contract: {}", e);
                 None
             }
         };
@@ -205,7 +205,7 @@ impl Web4Handler {
         let response_json = serde_json::to_vec(&response)
             .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
 
-        info!("✅ Domain {} registered successfully with {} ZHTP fees", simple_request.domain, total_fees);
+        info!(" Domain {} registered successfully with {} ZHTP fees", simple_request.domain, total_fees);
         
         Ok(ZhtpResponse::success_with_content_type(
             response_json,
@@ -300,7 +300,7 @@ impl Web4Handler {
         }
 
         let domain = path_parts[5]; // ["", "api", "v1", "web4", "domains", "hello-world.zhtp"]
-        info!("🔍 Looking up Web4 domain: {}", domain);
+        info!(" Looking up Web4 domain: {}", domain);
 
         let manager = self.web4_manager.read().await;
         
@@ -478,7 +478,7 @@ impl Web4Handler {
         content_mappings: &HashMap<String, String>,
         metadata: Option<serde_json::Value>,
     ) -> Result<String, anyhow::Error> {
-        info!("🚀 Deploying Web4Contract for domain: {}", domain);
+        info!(" Deploying Web4Contract for domain: {}", domain);
 
         let current_time = chrono::Utc::now().timestamp() as u64;
         let contract_id = format!("web4_{}", hex::encode(lib_crypto::hash_blake3(domain.as_bytes())));
@@ -575,7 +575,7 @@ impl Web4Handler {
         add_transaction(transaction).await
             .map_err(|e| anyhow!("Failed to add contract transaction: {}", e))?;
 
-        info!("✅ Web4Contract {} deployed with transaction: {}", contract_id, tx_hash);
+        info!(" Web4Contract {} deployed with transaction: {}", contract_id, tx_hash);
         Ok(tx_hash)
     }
 }

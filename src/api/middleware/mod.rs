@@ -65,7 +65,7 @@ impl CorsMiddleware {
         // CORS preflight handling
         if let Some(origin) = request.headers.get("Origin") {
             if !self.is_origin_allowed(&origin) {
-                warn!("🚫 CORS: Origin not allowed: {}", origin);
+                warn!(" CORS: Origin not allowed: {}", origin);
             }
         }
         Ok(())
@@ -127,7 +127,7 @@ impl RateLimitMiddleware {
         if last_minute == current_minute {
             // Same minute, check if limit exceeded
             if count >= self.max_requests_per_minute {
-                warn!("🚫 Rate limit exceeded for client: {} ({}/{})", client_id, count, self.max_requests_per_minute);
+                warn!(" Rate limit exceeded for client: {} ({}/{})", client_id, count, self.max_requests_per_minute);
                 return Ok(false);
             }
             // Increment counter
@@ -171,7 +171,7 @@ impl AuthMiddleware {
         
         // Check if endpoint requires authentication
         if self.requires_auth(&request.uri) {
-            warn!("🚫 Authentication required for: {}", request.uri);
+            warn!(" Authentication required for: {}", request.uri);
             return Ok(None);
         }
         

@@ -92,7 +92,7 @@ impl Web4Handler {
             "/".to_string()
         };
 
-        info!("🌐 Serving content for domain: {} path: {}", domain, path);
+        info!(" Serving content for domain: {} path: {}", domain, path);
 
         let manager = self.web4_manager.read().await;
         
@@ -160,7 +160,7 @@ impl Web4Handler {
                     content
                 };
 
-                info!("✅ Serving {} bytes of {}", final_content.len(), content_type);
+                info!(" Serving {} bytes of {}", final_content.len(), content_type);
 
                 Ok(ZhtpResponse::success_with_content_type(
                     final_content,
