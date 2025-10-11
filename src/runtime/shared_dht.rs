@@ -13,7 +13,7 @@ use tracing::{info, debug};
 /// Global DHT instance manager - wrapped in RwLock for mutable access
 static GLOBAL_DHT: OnceCell<Arc<RwLock<Option<Arc<RwLock<DHTClient>>>>>> = OnceCell::const_new();
 
-/// Initialize the global DHT instance
+/// Initialize the global DHT instance (singleton with proper guards)
 /// This should be called once at application startup
 pub async fn initialize_global_dht(identity: ZhtpIdentity) -> Result<()> {
     let dht_container = GLOBAL_DHT.get_or_init(|| async {
@@ -24,7 +24,7 @@ pub async fn initialize_global_dht(identity: ZhtpIdentity) -> Result<()> {
     
     // Check if DHT is already initialized
     if dht_guard.is_some() {
-        info!("DHT already initialized, skipping duplicate initialization");
+        debug!("DHT already initialized, skipping duplicate initialization");
         return Ok(());
     }
     
@@ -38,6 +38,16 @@ pub async fn initialize_global_dht(identity: ZhtpIdentity) -> Result<()> {
     
     info!("Global DHT instance initialized successfully");
     Ok(())
+}
+
+/// Initialize DHT if not already initialized (safe wrapper)
+pub async fn initialize_global_dht_safe(identity: ZhtpIdentity) -> Result<()> {
+    if is_dht_initialized().await {
+        debug!("DHT already initialized, skipping");
+        return Ok(());
+    }
+    
+    initialize_global_dht(identity).await
 }
 
 /// Get a reference to the global DHT instance

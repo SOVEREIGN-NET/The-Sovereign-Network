@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use crate::cli::{NodeArgs, NodeAction, ZhtpCli};
 use crate::runtime::RuntimeOrchestrator;
 use crate::runtime::did_startup::{WalletStartupManager, WalletStartupResult};
-use crate::runtime::shared_dht::{initialize_global_dht, get_dht_client};
+use crate::runtime::shared_dht::{initialize_global_dht_safe, get_dht_client};
 use lib_network::dht::DHTClient;
 use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_identity::ZhtpIdentity;
@@ -174,9 +174,9 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
 async fn attempt_mesh_bootstrap(orchestrator: &mut RuntimeOrchestrator) -> Result<ExistingNetworkInfo> {
     println!("Scanning for existing ZHTP network...");
     
-    // Register components but DON'T start network component yet to avoid duplicate startup
+    // Only perform peer discovery without component registration
+    // Component registration will happen later in start_all_components()
     println!(" Starting network component for discovery...");
-    orchestrator.register_all_components().await?;
     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
     
     // Check if we found any ZHTP peers without starting a full network component
@@ -333,8 +333,8 @@ async fn check_discovered_peers() -> Result<u32> {
     // This identity will become the node's permanent DHT address
     let node_identity = create_or_load_node_identity().await?;
     
-    // Initialize global DHT instance (singleton pattern)
-    initialize_global_dht(node_identity).await?;
+    // Initialize global DHT instance safely (prevents duplicate initialization)
+    initialize_global_dht_safe(node_identity).await?;
     
     // Get the shared DHT client
     let dht_client = get_dht_client().await?;

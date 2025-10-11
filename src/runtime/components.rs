@@ -1866,17 +1866,18 @@ impl Component for ProtocolsComponent {
             }
         };
         
-        // Initialize identity manager
+        // Use shared instances instead of creating new ones to prevent duplicate initialization
+        // Identity manager - use a minimal instance for protocols (not full init)
         let identity_manager = Arc::new(RwLock::new(
-            lib_identity::initialize_identity_system().await?
+            lib_identity::IdentityManager::new() // Use constructor instead of full init
         ));
         
-        // Initialize economic model
+        // Initialize economic model (lightweight initialization)
         let economic_model = Arc::new(RwLock::new(
             lib_economy::EconomicModel::new()
         ));
         
-        // Initialize storage system
+        // Storage system - use minimal config for protocols component
         let storage_config = create_default_storage_config()?;
         let storage = Arc::new(RwLock::new(
             lib_storage::UnifiedStorageSystem::new(storage_config).await?

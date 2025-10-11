@@ -284,8 +284,17 @@ impl RuntimeOrchestrator {
         Ok(())
     }
 
-    /// Register all component instances
+    /// Register all component instances (with singleton guard)
     pub async fn register_all_components(&self) -> Result<()> {
+        // Check if components are already registered to prevent duplicate registration
+        {
+            let components = self.components.read().await;
+            if !components.is_empty() {
+                info!("Components already registered, skipping duplicate registration");
+                return Ok(());
+            }
+        }
+        
         info!("Registering all ZHTP component instances...");
         
         // Import all component types
@@ -334,7 +343,7 @@ impl RuntimeOrchestrator {
     pub async fn start_all_components(&self) -> Result<()> {
         info!(" Starting all ZHTP components...");
         
-        // First register all components
+        // Register components once if not already registered
         self.register_all_components().await?;
         
         for component_id in &self.startup_order {

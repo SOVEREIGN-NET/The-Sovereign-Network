@@ -3447,13 +3447,35 @@ impl ZhtpUnifiedServer {
             info!(" Bluetooth Classic RFCOMM active (375 KB/s)");
         }
         
-        // PURE MESH MODE: No TCP/UDP binding - use direct mesh protocols only
-        info!(" Pure Mesh Mode: Using direct protocols (BLE, BT Classic, WiFi Direct, LoRaWAN)");
-        info!(" No IP binding - mesh discovery via radio protocols only");
+        // HYBRID MODE: TCP/UDP + Mesh Protocols for Browser Compatibility
+        info!(" Hybrid Mode: TCP/UDP for browser + Direct mesh protocols");
+        
+        // Bind TCP listener for HTTP API
+        let bind_addr = format!("0.0.0.0:{}", self.port);
+        info!(" Binding TCP listener on {}...", bind_addr);
+        let listener = TcpListener::bind(&bind_addr).await
+            .context(format!("Failed to bind TCP listener on {}", bind_addr))?;
+        self.tcp_listener = Some(Arc::new(listener));
+        info!(" TCP listener bound successfully on port {}", self.port);
+        
+        // Bind UDP socket for mesh protocol
+        info!(" Binding UDP socket on {}...", bind_addr);
+        let udp_socket = UdpSocket::bind(&bind_addr).await
+            .context(format!("Failed to bind UDP socket on {}", bind_addr))?;
+        self.udp_socket = Some(Arc::new(udp_socket));
+        info!(" UDP socket bound successfully on port {}", self.port);
         
         *self.is_running.write().await = true;
         
-        // Start pure mesh protocol handlers (no TCP/UDP)
+        // Start TCP listener for HTTP API
+        self.start_tcp_listener().await?;
+        info!(" TCP listener started - HTTP API ready");
+        
+        // Start UDP listener for mesh protocol
+        self.start_udp_listener().await?;
+        info!(" UDP listener started - ZHTP mesh protocol ready");
+        
+        // Start mesh protocol handlers
         self.start_bluetooth_mesh_handler().await?;
         self.start_bluetooth_classic_handler().await?;
         self.start_wifi_direct_handler().await?;
