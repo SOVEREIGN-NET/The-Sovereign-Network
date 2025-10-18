@@ -12,6 +12,7 @@ pub mod dao;
 pub mod dht;
 pub mod web4;
 pub mod dns;
+pub mod mesh;
 
 pub use identity::IdentityHandler;
 pub use blockchain::BlockchainHandler;
@@ -23,3 +24,4 @@ pub use dao::DaoHandler;
 pub use dht::DhtHandler;
 pub use web4::Web4Handler;
 pub use dns::DnsHandler;
+pub use mesh::MeshHandler;

@@ -310,13 +310,15 @@ impl RuntimeOrchestrator {
         self.register_component(Arc::new(IdentityComponent::new())).await?;
         self.register_component(Arc::new(StorageComponent::new())).await?;
         self.register_component(Arc::new(NetworkComponent::new())).await?;
-        // Pass user wallet to blockchain component for proper genesis funding
+        // Pass user wallet AND environment to blockchain component for proper network initialization
         let user_wallet_guard = self.user_wallet.read().await;
         let user_wallet = user_wallet_guard.clone();
-        self.register_component(Arc::new(BlockchainComponent::new_with_wallet(user_wallet))).await?;
+        let environment = self.config.environment;  // Get environment from config
+        let api_port = self.config.protocols_config.api_port;  // Get API port from config
+        self.register_component(Arc::new(BlockchainComponent::new_with_wallet_and_environment(user_wallet, environment))).await?;
         self.register_component(Arc::new(ConsensusComponent::new())).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
-        self.register_component(Arc::new(ProtocolsComponent::new())).await?;
+        self.register_component(Arc::new(ProtocolsComponent::new(environment, api_port))).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         
         info!("All components registered successfully");

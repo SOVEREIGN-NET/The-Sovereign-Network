@@ -3231,9 +3231,9 @@ impl ZhtpUnifiedServer {
         storage: Arc<RwLock<UnifiedStorageSystem>>,
         identity_manager: Arc<RwLock<IdentityManager>>,
         economic_model: Arc<RwLock<EconomicModel>>,
+        port: u16, // Port from configuration
     ) -> Result<Self> {
         let server_id = Uuid::new_v4();
-        let port = 9333; // Single port for all protocols
         
         info!("Creating ZHTP Unified Server (ID: {})", server_id);
         info!("Port: {} (HTTP + UDP + WiFi + Bootstrap)", port);

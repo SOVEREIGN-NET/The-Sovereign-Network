@@ -1,12 +1,12 @@
-# Validator Node Configuration
-# Optimized for consensus participation and block validation
-# Suitable for: Stakers, consensus participants, block producers
+# Mainnet Validator Node Configuration
+# Optimized for consensus participation and block validation on MAINNET
+# Suitable for: Production validators, stakers, block producers
 
 # Core Node Settings
 mesh_mode = "Hybrid"
 security_level = "Maximum"  # Highest security for validators
 environment = "Mainnet"
-data_directory = "./data/validator-node"
+data_directory = "./data/mainnet-validator"  # Mainnet-specific directory
 
 [crypto_config]
 post_quantum_enabled = true
@@ -45,10 +45,12 @@ long_range_relays = true  # Validators may need relay access
 
 [blockchain_config]
 network_id = "zhtp-mainnet"
+chain_id = 1  # Mainnet chain ID
 block_time_seconds = 5
 max_block_size = 2097152
 zk_transactions = true
 smart_contracts = true
+enforce_chain_id = true  # CRITICAL: Prevent testnet tx replay
 
 [consensus_config]
 consensus_type = "Hybrid"

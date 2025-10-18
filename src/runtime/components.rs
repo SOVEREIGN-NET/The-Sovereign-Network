@@ -670,6 +670,7 @@ pub struct BlockchainComponent {
     blockchain: Arc<RwLock<Option<Blockchain>>>,
     mining_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     user_wallet: Arc<RwLock<Option<crate::runtime::did_startup::WalletStartupResult>>>,
+    environment: crate::config::Environment,  // NEW: Store environment for network-specific initialization
 }
 
 impl BlockchainComponent {
@@ -680,6 +681,7 @@ impl BlockchainComponent {
             blockchain: Arc::new(RwLock::new(None)),
             mining_handle: Arc::new(RwLock::new(None)),
             user_wallet: Arc::new(RwLock::new(None)),
+            environment: crate::config::Environment::Development,  // Default to dev
         }
     }
 
@@ -690,6 +692,22 @@ impl BlockchainComponent {
             blockchain: Arc::new(RwLock::new(None)),
             mining_handle: Arc::new(RwLock::new(None)),
             user_wallet: Arc::new(RwLock::new(user_wallet)),
+            environment: crate::config::Environment::Development,  // Default to dev
+        }
+    }
+    
+    /// NEW: Create with wallet and environment for network-specific blockchain
+    pub fn new_with_wallet_and_environment(
+        user_wallet: Option<crate::runtime::did_startup::WalletStartupResult>,
+        environment: crate::config::Environment,
+    ) -> Self {
+        Self {
+            status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
+            start_time: Arc::new(RwLock::new(None)),
+            blockchain: Arc::new(RwLock::new(None)),
+            mining_handle: Arc::new(RwLock::new(None)),
+            user_wallet: Arc::new(RwLock::new(user_wallet)),
+            environment,
         }
     }
     
@@ -852,6 +870,7 @@ impl BlockchainComponent {
         
         let genesis_tx = Transaction {
             version: 1,
+            chain_id: 0x03,  // Development network default - will be overridden by actual network
             transaction_type: lib_blockchain::types::TransactionType::Transfer,
             inputs: vec![], // Genesis transaction has no inputs
             outputs: genesis_outputs.clone(),
@@ -904,6 +923,7 @@ impl Component for BlockchainComponent {
 
     async fn start(&self) -> Result<()> {
         info!("Starting blockchain component with shared blockchain service...");
+        info!("🌐 Network Environment: {}", self.environment);
         
         *self.status.write().await = ComponentStatus::Starting;
         
@@ -918,9 +938,12 @@ impl Component for BlockchainComponent {
                 *self.blockchain.write().await = Some(blockchain_clone);
             }
             Err(_) => {
-                // If no shared blockchain exists, initialize one and set it globally
-                info!("Initializing new shared blockchain instance...");
-                let shared_blockchain = lib_blockchain::initialize_shared_blockchain();
+                // If no shared blockchain exists, initialize one for the correct network
+                info!("Initializing new shared blockchain instance for {} network...", self.environment);
+                
+                // Convert Environment to GenesisConfig
+                let genesis_config = self.environment.to_genesis_config();
+                let shared_blockchain = lib_blockchain::initialize_shared_blockchain_for_network(genesis_config);
                 
                 let blockchain_clone = {
                     let mut blockchain_guard = shared_blockchain.write().await;
@@ -947,7 +970,7 @@ impl Component for BlockchainComponent {
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
         
-        info!("Blockchain component started with shared blockchain service");
+        info!("✅ Blockchain component started with shared blockchain service for {} network", self.environment);
         Ok(())
     }
 
@@ -1279,6 +1302,7 @@ impl BlockchainComponent {
         // Create the blockchain transaction as SYSTEM TRANSACTION (no inputs, no ZK proofs needed)
         Ok(Transaction {
             version: 1,
+            chain_id: 0x03,  // Development network default - system transactions are network-agnostic
             transaction_type: blockchain_tx_type,
             inputs, // Empty inputs = system transaction (creates new money like mining)
             outputs,
@@ -1313,6 +1337,7 @@ impl BlockchainComponent {
         
         let temp_transaction = lib_blockchain::Transaction {
             version: 1,
+            chain_id: 0x03,  // Development network default - for signature generation
             transaction_type: tx_type,
             inputs: inputs.to_vec(),
             outputs: outputs.to_vec(),
@@ -1798,6 +1823,8 @@ pub struct ProtocolsComponent {
     unified_server: Arc<RwLock<Option<crate::unified_server::ZhtpUnifiedServer>>>,
     zdns_server: Arc<RwLock<Option<ZdnsServer>>>,
     lib_integration: Arc<RwLock<Option<ZhtpIntegration>>>,
+    environment: crate::config::environment::Environment,  // NEW: Network-specific environment
+    api_port: u16,  // Port from configuration
 }
 
 impl std::fmt::Debug for ProtocolsComponent {
@@ -1813,13 +1840,15 @@ impl std::fmt::Debug for ProtocolsComponent {
 }
 
 impl ProtocolsComponent {
-    pub fn new() -> Self {
+    pub fn new(environment: crate::config::environment::Environment, api_port: u16) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
             unified_server: Arc::new(RwLock::new(None)),
             zdns_server: Arc::new(RwLock::new(None)),
             lib_integration: Arc::new(RwLock::new(None)),
+            environment,  // Store environment for network-specific paths
+            api_port,     // Store port from configuration
         }
     }
 }
@@ -1885,23 +1914,26 @@ impl Component for ProtocolsComponent {
         
         info!("Creating ZHTP Unified Server (consolidates all protocols)...");
         
-        // Create unified server that handles ALL protocols on port 9333
+        // Create unified server that handles ALL protocols on configured port
         let mut unified_server = crate::unified_server::ZhtpUnifiedServer::new(
             blockchain.clone(),
             storage.clone(),
             identity_manager.clone(),
             economic_model.clone(),
+            self.api_port,  // Use port from configuration
         ).await?;
         
         // Initialize ZHTP authentication manager with blockchain identity
         info!(" Initializing ZHTP authentication and relay protocols...");
         
-        // Load or create node identity for blockchain authentication
-        let node_identity_path = std::path::Path::new("data/node_identity.json");
+        // Load or create node identity for blockchain authentication (network-specific path)
+        let data_dir = self.environment.data_directory();
+        let node_identity_path = format!("{}/node_identity.json", data_dir);
+        let node_identity_path = std::path::Path::new(&node_identity_path);
         
         if node_identity_path.exists() {
             // Load existing node identity
-            info!(" Loading node identity from data/node_identity.json");
+            info!(" Loading node identity from {}", node_identity_path.display());
             match std::fs::read_to_string(node_identity_path) {
                 Ok(json_str) => {
                     match serde_json::from_str::<lib_identity::ZhtpIdentity>(&json_str) {

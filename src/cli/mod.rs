@@ -93,15 +93,18 @@ pub enum NodeAction {
         /// Configuration file
         #[arg(short, long)]
         config: Option<String>,
-        /// Port to bind to
-        #[arg(short, long, default_value = "9333")]
-        port: u16,
+        /// Port to bind to (overrides config file mesh_port if specified)
+        #[arg(short, long)]
+        port: Option<u16>,
         /// Enable development mode
         #[arg(long)]
         dev: bool,
         /// Enable pure mesh mode (ISP-free networking)
         #[arg(long)]
         pure_mesh: bool,
+        /// Network environment (overrides config file)
+        #[arg(short, long, value_parser = ["mainnet", "testnet", "dev"])]
+        network: Option<String>,
     },
     /// Stop the orchestrator node
     Stop,

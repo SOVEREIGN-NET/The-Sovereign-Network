@@ -1,12 +1,12 @@
-# Full Node Configuration
-# Runs all ZHTP components for complete blockchain functionality
-# Suitable for: API servers, blockchain explorers, dApps
+# Mainnet Full Node Configuration
+# Runs all ZHTP components for complete blockchain functionality on MAINNET
+# Suitable for: API servers, blockchain explorers, dApps, production nodes
 
 # Core Node Settings
 mesh_mode = "Hybrid"  # Support both mesh and TCP/IP
 security_level = "High"
 environment = "Mainnet"
-data_directory = "./data/full-node"
+data_directory = "./data/mainnet-full"  # Mainnet-specific directory
 
 [crypto_config]
 post_quantum_enabled = true
@@ -45,10 +45,12 @@ long_range_relays = false
 
 [blockchain_config]
 network_id = "zhtp-mainnet"
+chain_id = 1  # Mainnet chain ID
 block_time_seconds = 5
 max_block_size = 2097152  # 2MB blocks
 zk_transactions = true
 smart_contracts = true
+enforce_chain_id = true  # CRITICAL: Prevent testnet tx replay
 
 [consensus_config]
 consensus_type = "Hybrid"

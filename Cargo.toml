@@ -68,15 +68,16 @@ parking_lot = "0.12"
 urlencoding = "2.1"
 
 # Windows-specific dependencies (for Bluetooth and WiFi Direct protocols)
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.51", features = [
+[target.'cfg(target_os = "windows")'.dependencies.windows]
+version = "0.51"
+features = [
     "Win32_Devices_Bluetooth", 
     "Win32_Foundation",
     "Foundation",
     "Devices_Bluetooth_GenericAttributeProfile",
     "Devices_WiFiDirect",
     "Networking_Proximity"
-] }
+]
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -84,7 +85,7 @@ tempfile = "3.8"
 criterion = "0.5"
 
 [features]
-default = ["production", "full-blockchain"]
+default = ["production", "full-blockchain", "platform-bluetooth"]
 production = []
 development = ["tracing-subscriber/env-filter"]
 pure-mesh = []  # Pure mesh mode without TCP/IP fallback
@@ -96,8 +97,9 @@ full-blockchain = ["lib-blockchain", "lib-blockchain/wasm-runtime"]  # Full bloc
 basic-blockchain = ["lib-blockchain"]  # Basic blockchain without WASM (saves ~500MB RAM during compile)
 
 # Platform-specific Bluetooth features (automatically enabled on respective platforms)
+platform-bluetooth = []  # Auto-enable Bluetooth for current platform
 windows-bluetooth = ["lib-network/windows-gatt"]
-linux-bluetooth = []  # Linux uses BlueZ (system service)
+linux-bluetooth = ["lib-network/enhanced-parsing"]  # Linux uses BlueZ via D-Bus
 macos-bluetooth = ["lib-network/macos-corebluetooth"]
 
 # Raspberry Pi optimized profile - minimal features for low-memory compilation

@@ -353,7 +353,12 @@ impl NodeConfig {
     
     /// Apply CLI argument overrides to configuration
     pub fn apply_cli_overrides(&mut self, args: &CliArgs) -> Result<()> {
-        self.network_config.mesh_port = args.mesh_port;
+        // Only override mesh_port if explicitly specified via CLI
+        if let Some(port) = args.mesh_port {
+            self.network_config.mesh_port = port;
+            tracing::info!("CLI override: mesh_port = {}", port);
+        }
+        
         self.mesh_mode = if args.pure_mesh { MeshMode::PureMesh } else { MeshMode::Hybrid };
         self.environment = args.environment;
         self.data_directory = args.data_dir.to_string_lossy().to_string();
@@ -364,7 +369,7 @@ impl NodeConfig {
         }
         
         // Update port assignments
-        self.port_assignments.insert("mesh".to_string(), args.mesh_port);
+        self.port_assignments.insert("mesh".to_string(), self.network_config.mesh_port);
         self.port_assignments.insert("dht".to_string(), self.storage_config.dht_port);
         self.port_assignments.insert("api".to_string(), self.protocols_config.api_port);
         

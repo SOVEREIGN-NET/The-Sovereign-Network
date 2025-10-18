@@ -23,7 +23,7 @@ pub use network_isolation::NetworkIsolationConfig;
 /// Command line arguments structure
 #[derive(Debug, Clone)]
 pub struct CliArgs {
-    pub mesh_port: u16,
+    pub mesh_port: Option<u16>,  // Optional: only override if specified
     pub pure_mesh: bool,
     pub config: PathBuf,
     pub environment: Environment,
