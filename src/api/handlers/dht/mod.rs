@@ -1095,6 +1095,12 @@ impl DhtHandler {
                 .unwrap()
                 .as_secs(),
             recovery_keys: vec![],
+            owner_identity_id: None,  // Service identity has no owner
+            reward_wallet_id: None,   // Service identity doesn't need rewards
+            encrypted_master_seed: None,  // Service identities don't use seed-based HD wallets
+            next_wallet_index: 0,
+            password_hash: None,
+            master_seed_phrase: None,
         }
     }
 

@@ -88,6 +88,140 @@ pub struct RemovePeerResponse {
     pub removed: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SyncMetricsResponse {
+    pub status: String,
+    pub blocks_sent: u64,
+    pub blocks_received: u64,
+    pub transactions_sent: u64,
+    pub transactions_received: u64,
+    pub blocks_relayed: u64,
+    pub transactions_relayed: u64,
+    pub blocks_rejected: u64,
+    pub transactions_rejected: u64,
+    pub sync_efficiency: f64,
+    pub relay_ratio: f64,
+}
+
+// Phase 4: Advanced monitoring response structures
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PerformanceMetricsResponse {
+    pub status: String,
+    pub avg_block_propagation_ms: f64,
+    pub avg_tx_propagation_ms: f64,
+    pub p95_block_latency_ms: u64,
+    pub p95_tx_latency_ms: u64,
+    pub min_block_latency_ms: u64,
+    pub max_block_latency_ms: u64,
+    pub min_tx_latency_ms: u64,
+    pub max_tx_latency_ms: u64,
+    pub bytes_sent_per_sec: f64,
+    pub bytes_received_per_sec: f64,
+    pub peak_bandwidth_usage_bps: u64,
+    pub duplicate_block_ratio: f64,
+    pub duplicate_tx_ratio: f64,
+    pub validation_success_rate: f64,
+    pub relay_efficiency: f64,
+    pub measurement_duration_secs: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AlertsResponse {
+    pub status: String,
+    pub total_alerts: usize,
+    pub unacknowledged_count: usize,
+    pub alerts: Vec<AlertInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AlertInfo {
+    pub id: String,
+    pub level: String,
+    pub category: String,
+    pub message: String,
+    pub timestamp: u64,
+    pub acknowledged: bool,
+    pub peer_id: Option<String>,
+    pub metric_value: Option<f64>,
+    pub threshold_value: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AcknowledgeAlertRequest {
+    pub alert_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AcknowledgeAlertResponse {
+    pub status: String,
+    pub acknowledged: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AlertThresholdsResponse {
+    pub status: String,
+    pub max_block_latency_ms: u64,
+    pub max_tx_latency_ms: u64,
+    pub max_bandwidth_mbps: f64,
+    pub min_validation_success_rate: f64,
+    pub max_duplicate_ratio: f64,
+    pub min_peer_score: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateThresholdsRequest {
+    pub max_block_latency_ms: Option<u64>,
+    pub max_tx_latency_ms: Option<u64>,
+    pub max_bandwidth_mbps: Option<f64>,
+    pub min_validation_success_rate: Option<f64>,
+    pub max_duplicate_ratio: Option<f64>,
+    pub min_peer_score: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MetricsHistoryResponse {
+    pub status: String,
+    pub interval_secs: u64,
+    pub snapshots: Vec<HistorySnapshot>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HistorySnapshot {
+    pub timestamp: u64,
+    pub blocks_received: u64,
+    pub txs_received: u64,
+    pub blocks_rejected: u64,
+    pub txs_rejected: u64,
+    pub avg_latency_ms: f64,
+    pub bandwidth_bps: u64,
+    pub active_peers: usize,
+    pub banned_peers: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PeerPerformanceResponse {
+    pub status: String,
+    pub total_peers: usize,
+    pub peers: Vec<PeerPerformanceInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PeerPerformanceInfo {
+    pub peer_id: String,
+    pub reputation_score: i32,
+    pub blocks_accepted: u64,
+    pub blocks_rejected: u64,
+    pub txs_accepted: u64,
+    pub txs_rejected: u64,
+    pub violations: u32,
+    pub acceptance_rate: f64,
+    pub first_seen: u64,
+    pub last_seen: u64,
+    pub status: String, // "active", "warning", "banned"
+}
+
 /// Network handler implementation
 pub struct NetworkHandler {
     runtime: Arc<RuntimeOrchestrator>,
@@ -111,6 +245,38 @@ impl ZhtpRequestHandler for NetworkHandler {
             (ZhtpMethod::Get, "/api/v1/blockchain/network/stats") => {
                 self.handle_get_network_stats(request).await
             }
+            (ZhtpMethod::Get, "/api/v1/blockchain/sync/metrics") => {
+                self.handle_get_sync_metrics(request).await
+            }
+            // Phase 4: Advanced monitoring endpoints
+            (ZhtpMethod::Get, "/api/v1/blockchain/sync/performance") => {
+                self.handle_get_performance_metrics(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/blockchain/sync/alerts") => {
+                self.handle_get_alerts(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/blockchain/sync/alerts/acknowledge") => {
+                self.handle_acknowledge_alert(request).await
+            }
+            (ZhtpMethod::Delete, "/api/v1/blockchain/sync/alerts/acknowledged") => {
+                self.handle_clear_acknowledged_alerts(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/blockchain/sync/alerts/thresholds") => {
+                self.handle_get_alert_thresholds(request).await
+            }
+            (ZhtpMethod::Put, "/api/v1/blockchain/sync/alerts/thresholds") => {
+                self.handle_update_alert_thresholds(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/blockchain/sync/history") => {
+                self.handle_get_metrics_history(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/blockchain/sync/peers") => {
+                self.handle_get_peer_performance(request).await
+            }
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/sync/peers/") => {
+                self.handle_get_specific_peer_performance(request).await
+            }
+            // Existing endpoints
             (ZhtpMethod::Post, "/api/v1/blockchain/network/peer/add") => {
                 self.handle_add_network_peer(request).await
             }
@@ -142,7 +308,8 @@ impl ZhtpRequestHandler for NetworkHandler {
     }
     
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
-        request.uri.starts_with("/api/v1/blockchain/network/")
+        request.uri.starts_with("/api/v1/blockchain/network/") || 
+        request.uri.starts_with("/api/v1/blockchain/sync/")
     }
     
     fn priority(&self) -> u32 {
@@ -297,6 +464,89 @@ impl NetworkHandler {
         ))
     }
 
+    /// Get blockchain sync metrics
+    /// GET /api/v1/blockchain/sync/metrics
+    async fn handle_get_sync_metrics(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting blockchain sync metrics");
+
+        // Get metrics from global mesh router provider
+        match crate::runtime::mesh_router_provider::get_broadcast_metrics().await {
+            Ok(metrics) => {
+                // Calculate efficiency and relay ratios
+                let total_received = metrics.blocks_received + metrics.transactions_received;
+                let total_relayed = metrics.blocks_relayed + metrics.transactions_relayed;
+                let total_rejected = metrics.blocks_rejected + metrics.transactions_rejected;
+                
+                let sync_efficiency = if total_received > 0 {
+                    ((total_received - total_rejected) as f64 / total_received as f64) * 100.0
+                } else {
+                    100.0
+                };
+                
+                let relay_ratio = if total_received > 0 {
+                    (total_relayed as f64 / total_received as f64) * 100.0
+                } else {
+                    0.0
+                };
+
+                let response = SyncMetricsResponse {
+                    status: "success".to_string(),
+                    blocks_sent: metrics.blocks_sent,
+                    blocks_received: metrics.blocks_received,
+                    transactions_sent: metrics.transactions_sent,
+                    transactions_received: metrics.transactions_received,
+                    blocks_relayed: metrics.blocks_relayed,
+                    transactions_relayed: metrics.transactions_relayed,
+                    blocks_rejected: metrics.blocks_rejected,
+                    transactions_rejected: metrics.transactions_rejected,
+                    sync_efficiency,
+                    relay_ratio,
+                };
+
+                info!("API: Sync metrics - {} blocks sent, {} received, {:.1}% efficiency", 
+                      response.blocks_sent, response.blocks_received, response.sync_efficiency);
+                
+                let json_response = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                
+                Ok(ZhtpResponse::success_with_content_type(
+                    json_response,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("API: Failed to get mesh router metrics: {}", e);
+                
+                // Return zero metrics on error
+                let response = SyncMetricsResponse {
+                    status: "error".to_string(),
+                    blocks_sent: 0,
+                    blocks_received: 0,
+                    transactions_sent: 0,
+                    transactions_received: 0,
+                    blocks_relayed: 0,
+                    transactions_relayed: 0,
+                    blocks_rejected: 0,
+                    transactions_rejected: 0,
+                    sync_efficiency: 0.0,
+                    relay_ratio: 0.0,
+                };
+                
+                let json_response = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                
+                Ok(ZhtpResponse::success_with_content_type(
+                    json_response,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+        }
+    }
+
+
+
     /// Add a new peer to the network
     /// POST /api/v1/blockchain/network/peer/add
     async fn handle_add_network_peer(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
@@ -438,6 +688,509 @@ impl NetworkHandler {
                     json_response,
                     "application/json".to_string(),
                     None,
+                ))
+            }
+        }
+    }
+
+    // ==================== Phase 4: Advanced Monitoring Handler Methods ====================
+
+    /// Get detailed performance metrics
+    /// GET /api/v1/blockchain/sync/performance
+    async fn handle_get_performance_metrics(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting sync performance metrics");
+        
+        match crate::runtime::mesh_router_provider::get_performance_metrics().await {
+            Ok(metrics) => {
+                let response = PerformanceMetricsResponse {
+                    status: "success".to_string(),
+                    avg_block_propagation_ms: metrics.avg_block_propagation_ms,
+                    avg_tx_propagation_ms: metrics.avg_tx_propagation_ms,
+                    p95_block_latency_ms: metrics.p95_block_latency_ms,
+                    p95_tx_latency_ms: metrics.p95_tx_latency_ms,
+                    min_block_latency_ms: metrics.min_block_latency_ms,
+                    max_block_latency_ms: metrics.max_block_latency_ms,
+                    min_tx_latency_ms: metrics.min_tx_latency_ms,
+                    max_tx_latency_ms: metrics.max_tx_latency_ms,
+                    bytes_sent_per_sec: metrics.bytes_sent_per_sec,
+                    bytes_received_per_sec: metrics.bytes_received_per_sec,
+                    peak_bandwidth_usage_bps: metrics.peak_bandwidth_usage_bps,
+                    duplicate_block_ratio: metrics.duplicate_block_ratio,
+                    duplicate_tx_ratio: metrics.duplicate_tx_ratio,
+                    validation_success_rate: metrics.validation_success_rate,
+                    relay_efficiency: metrics.relay_efficiency,
+                    measurement_duration_secs: metrics.measurement_duration_secs,
+                };
+                
+                info!("API: Performance metrics - {:.2}ms avg block latency, {:.1}% validation success", 
+                      response.avg_block_propagation_ms, response.validation_success_rate);
+                
+                let json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                
+                Ok(ZhtpResponse::success_with_content_type(
+                    json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("API: Failed to get performance metrics: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to get performance metrics: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Get active alerts
+    /// GET /api/v1/blockchain/sync/alerts
+    async fn handle_get_alerts(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting active alerts");
+        
+        match crate::runtime::mesh_router_provider::get_active_alerts().await {
+            Ok(alerts) => {
+                let unacknowledged_count = alerts.iter().filter(|a| !a.acknowledged).count();
+                
+                let alert_infos: Vec<AlertInfo> = alerts.iter().map(|alert| {
+                    let level_str = match alert.level {
+                        crate::unified_server::AlertLevel::Info => "info",
+                        crate::unified_server::AlertLevel::Warning => "warning",
+                        crate::unified_server::AlertLevel::Critical => "critical",
+                    };
+                    
+                    AlertInfo {
+                        id: alert.id.clone(),
+                        level: level_str.to_string(),
+                        category: alert.category.clone(),
+                        message: alert.message.clone(),
+                        timestamp: alert.timestamp,
+                        acknowledged: alert.acknowledged,
+                        peer_id: alert.peer_id.clone(),
+                        metric_value: alert.metric_value,
+                        threshold_value: alert.threshold_value,
+                    }
+                }).collect();
+                
+                let response = AlertsResponse {
+                    status: "success".to_string(),
+                    total_alerts: alerts.len(),
+                    unacknowledged_count,
+                    alerts: alert_infos,
+                };
+                
+                info!("API: Retrieved {} alerts ({} unacknowledged)", response.total_alerts, unacknowledged_count);
+                
+                let json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                
+                Ok(ZhtpResponse::success_with_content_type(
+                    json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("API: Failed to get alerts: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to get alerts: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Acknowledge an alert
+    /// POST /api/v1/blockchain/sync/alerts/acknowledge
+    async fn handle_acknowledge_alert(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Acknowledging alert");
+        
+        // Parse request body
+        let ack_request: AcknowledgeAlertRequest = if request.body.is_empty() {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Request body with alert_id is required".to_string(),
+            ));
+        } else {
+            serde_json::from_slice(&request.body)
+                .map_err(|e| anyhow::anyhow!("Invalid JSON in request body: {}", e))?
+        };
+        
+        match crate::runtime::mesh_router_provider::acknowledge_alert(&ack_request.alert_id).await {
+            Ok(acknowledged) => {
+                let response = AcknowledgeAlertResponse {
+                    status: if acknowledged { "success" } else { "not_found" }.to_string(),
+                    acknowledged,
+                    message: if acknowledged {
+                        format!("Alert {} acknowledged", ack_request.alert_id)
+                    } else {
+                        format!("Alert {} not found", ack_request.alert_id)
+                    },
+                };
+                
+                info!("API: Alert {} acknowledgment: {}", ack_request.alert_id, acknowledged);
+                
+                let json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                
+                Ok(ZhtpResponse::success_with_content_type(
+                    json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("API: Failed to acknowledge alert: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to acknowledge alert: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Clear acknowledged alerts
+    /// DELETE /api/v1/blockchain/sync/alerts/acknowledged
+    async fn handle_clear_acknowledged_alerts(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Clearing acknowledged alerts");
+        
+        match crate::runtime::mesh_router_provider::clear_acknowledged_alerts().await {
+            Ok(()) => {
+                let response = serde_json::json!({
+                    "status": "success",
+                    "message": "Acknowledged alerts cleared"
+                });
+                
+                info!("API: Successfully cleared acknowledged alerts");
+                
+                let json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                
+                Ok(ZhtpResponse::success_with_content_type(
+                    json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("API: Failed to clear acknowledged alerts: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to clear acknowledged alerts: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Get alert thresholds configuration
+    /// GET /api/v1/blockchain/sync/alerts/thresholds
+    async fn handle_get_alert_thresholds(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting alert thresholds");
+        
+        match crate::runtime::mesh_router_provider::get_alert_thresholds().await {
+            Ok(thresholds) => {
+                let response = AlertThresholdsResponse {
+                    status: "success".to_string(),
+                    max_block_latency_ms: thresholds.max_block_latency_ms,
+                    max_tx_latency_ms: thresholds.max_tx_latency_ms,
+                    max_bandwidth_mbps: thresholds.max_bandwidth_mbps,
+                    min_validation_success_rate: thresholds.min_validation_success_rate,
+                    max_duplicate_ratio: thresholds.max_duplicate_ratio,
+                    min_peer_score: thresholds.min_peer_score,
+                };
+                
+                info!("API: Retrieved alert thresholds");
+                
+                let json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                
+                Ok(ZhtpResponse::success_with_content_type(
+                    json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("API: Failed to get alert thresholds: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to get alert thresholds: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Update alert thresholds configuration
+    /// PUT /api/v1/blockchain/sync/alerts/thresholds
+    async fn handle_update_alert_thresholds(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Updating alert thresholds");
+        
+        // Parse request body
+        let update_request: UpdateThresholdsRequest = if request.body.is_empty() {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Request body with threshold values is required".to_string(),
+            ));
+        } else {
+            serde_json::from_slice(&request.body)
+                .map_err(|e| anyhow::anyhow!("Invalid JSON in request body: {}", e))?
+        };
+        
+        // Get current thresholds first
+        match crate::runtime::mesh_router_provider::get_alert_thresholds().await {
+            Ok(mut thresholds) => {
+                // Update only the provided fields
+                if let Some(val) = update_request.max_block_latency_ms {
+                    thresholds.max_block_latency_ms = val;
+                }
+                if let Some(val) = update_request.max_tx_latency_ms {
+                    thresholds.max_tx_latency_ms = val;
+                }
+                if let Some(val) = update_request.max_bandwidth_mbps {
+                    thresholds.max_bandwidth_mbps = val;
+                }
+                if let Some(val) = update_request.min_validation_success_rate {
+                    thresholds.min_validation_success_rate = val;
+                }
+                if let Some(val) = update_request.max_duplicate_ratio {
+                    thresholds.max_duplicate_ratio = val;
+                }
+                if let Some(val) = update_request.min_peer_score {
+                    thresholds.min_peer_score = val;
+                }
+                
+                // Apply the updated thresholds
+                match crate::runtime::mesh_router_provider::update_alert_thresholds(thresholds.clone()).await {
+                    Ok(()) => {
+                        let response = AlertThresholdsResponse {
+                            status: "success".to_string(),
+                            max_block_latency_ms: thresholds.max_block_latency_ms,
+                            max_tx_latency_ms: thresholds.max_tx_latency_ms,
+                            max_bandwidth_mbps: thresholds.max_bandwidth_mbps,
+                            min_validation_success_rate: thresholds.min_validation_success_rate,
+                            max_duplicate_ratio: thresholds.max_duplicate_ratio,
+                            min_peer_score: thresholds.min_peer_score,
+                        };
+                        
+                        info!("API: Successfully updated alert thresholds");
+                        
+                        let json = serde_json::to_vec(&response)
+                            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                        
+                        Ok(ZhtpResponse::success_with_content_type(
+                            json,
+                            "application/json".to_string(),
+                            None,
+                        ))
+                    }
+                    Err(e) => {
+                        error!("API: Failed to update alert thresholds: {}", e);
+                        Ok(ZhtpResponse::error(
+                            ZhtpStatus::InternalServerError,
+                            format!("Failed to update alert thresholds: {}", e),
+                        ))
+                    }
+                }
+            }
+            Err(e) => {
+                error!("API: Failed to get current thresholds: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to get current thresholds: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Get metrics history
+    /// GET /api/v1/blockchain/sync/history?last_n=100
+    async fn handle_get_metrics_history(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting metrics history");
+        
+        // Parse query parameter for last_n
+        let last_n = request.uri
+            .split('?')
+            .nth(1)
+            .and_then(|query| {
+                query.split('&')
+                    .find(|param| param.starts_with("last_n="))
+                    .and_then(|param| param.strip_prefix("last_n="))
+                    .and_then(|val| val.parse::<usize>().ok())
+            });
+        
+        match crate::runtime::mesh_router_provider::get_metrics_history(last_n).await {
+            Ok(snapshots) => {
+                let history_snapshots: Vec<HistorySnapshot> = snapshots.iter().map(|s| {
+                    HistorySnapshot {
+                        timestamp: s.timestamp,
+                        blocks_received: s.blocks_received,
+                        txs_received: s.txs_received,
+                        blocks_rejected: s.blocks_rejected,
+                        txs_rejected: s.txs_rejected,
+                        avg_latency_ms: s.avg_latency_ms,
+                        bandwidth_bps: s.bandwidth_bps,
+                        active_peers: s.active_peers,
+                        banned_peers: s.banned_peers,
+                    }
+                }).collect();
+                
+                let response = MetricsHistoryResponse {
+                    status: "success".to_string(),
+                    interval_secs: 60, // Hard-coded from MetricsHistory::new(720, 60)
+                    snapshots: history_snapshots,
+                };
+                
+                info!("API: Retrieved {} metrics snapshots", response.snapshots.len());
+                
+                let json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                
+                Ok(ZhtpResponse::success_with_content_type(
+                    json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("API: Failed to get metrics history: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to get metrics history: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Get all peer performance statistics
+    /// GET /api/v1/blockchain/sync/peers
+    async fn handle_get_peer_performance(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting peer performance statistics");
+        
+        match crate::runtime::mesh_router_provider::list_peer_performance().await {
+            Ok(peer_stats) => {
+                let peer_infos: Vec<PeerPerformanceInfo> = peer_stats.iter().map(|stats| {
+                    let status = if stats.violations > 10 {
+                        "banned"
+                    } else if stats.reputation_score < 0 {
+                        "warning"
+                    } else {
+                        "active"
+                    };
+                    
+                    PeerPerformanceInfo {
+                        peer_id: stats.peer_id.clone(),
+                        reputation_score: stats.reputation_score,
+                        blocks_accepted: stats.blocks_accepted,
+                        blocks_rejected: stats.blocks_rejected,
+                        txs_accepted: stats.txs_accepted,
+                        txs_rejected: stats.txs_rejected,
+                        violations: stats.violations,
+                        acceptance_rate: stats.acceptance_rate,
+                        first_seen: stats.first_seen,
+                        last_seen: stats.last_seen,
+                        status: status.to_string(),
+                    }
+                }).collect();
+                
+                let response = PeerPerformanceResponse {
+                    status: "success".to_string(),
+                    total_peers: peer_infos.len(),
+                    peers: peer_infos,
+                };
+                
+                info!("API: Retrieved performance stats for {} peers", response.total_peers);
+                
+                let json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                
+                Ok(ZhtpResponse::success_with_content_type(
+                    json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("API: Failed to get peer performance: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to get peer performance: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Get specific peer performance statistics
+    /// GET /api/v1/blockchain/sync/peers/{peer_id}
+    async fn handle_get_specific_peer_performance(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Extract peer_id from URL path
+        let peer_id = match request.uri.strip_prefix("/api/v1/blockchain/sync/peers/") {
+            Some(id_str) => {
+                // Remove query parameters if present
+                id_str.split('?').next().unwrap_or(id_str).to_string()
+            }
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Invalid peer performance URL format".to_string(),
+                ));
+            }
+        };
+        
+        info!("API: Getting performance statistics for peer: {}", peer_id);
+        
+        match crate::runtime::mesh_router_provider::get_peer_performance(&peer_id).await {
+            Ok(Some(stats)) => {
+                let status = if stats.violations > 10 {
+                    "banned"
+                } else if stats.reputation_score < 0 {
+                    "warning"
+                } else {
+                    "active"
+                };
+                
+                let peer_info = PeerPerformanceInfo {
+                    peer_id: stats.peer_id.clone(),
+                    reputation_score: stats.reputation_score,
+                    blocks_accepted: stats.blocks_accepted,
+                    blocks_rejected: stats.blocks_rejected,
+                    txs_accepted: stats.txs_accepted,
+                    txs_rejected: stats.txs_rejected,
+                    violations: stats.violations,
+                    acceptance_rate: stats.acceptance_rate,
+                    first_seen: stats.first_seen,
+                    last_seen: stats.last_seen,
+                    status: status.to_string(),
+                };
+                
+                let response = serde_json::json!({
+                    "status": "success",
+                    "peer": peer_info
+                });
+                
+                info!("API: Retrieved performance stats for peer {}", peer_id);
+                
+                let json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                
+                Ok(ZhtpResponse::success_with_content_type(
+                    json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Ok(None) => {
+                warn!("API: Peer {} not found", peer_id);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Peer {} not found", peer_id),
+                ))
+            }
+            Err(e) => {
+                error!("API: Failed to get peer performance for {}: {}", peer_id, e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to get peer performance: {}", e),
                 ))
             }
         }

@@ -21,6 +21,8 @@ use tracing::{info, error};
 pub struct Web4Handler {
     /// Web4 system manager
     web4_manager: Arc<RwLock<Web4Manager>>,
+    /// Wallet-content ownership manager
+    wallet_content_manager: Arc<RwLock<lib_storage::WalletContentManager>>,
 }
 
 impl Web4Handler {
@@ -33,8 +35,12 @@ impl Web4Handler {
         
         info!(" Web4 API handler initialized successfully");
         
+        // Initialize wallet-content manager for ownership tracking
+        let wallet_content_manager = lib_storage::WalletContentManager::new();
+        
         Ok(Self {
             web4_manager: Arc::new(RwLock::new(web4_manager)),
+            wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
         })
     }
 

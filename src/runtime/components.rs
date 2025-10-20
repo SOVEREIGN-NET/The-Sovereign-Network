@@ -719,58 +719,67 @@ impl BlockchainComponent {
         blockchain: &mut Blockchain,
         user_wallet: Option<&crate::runtime::did_startup::WalletStartupResult>,
     ) -> Result<()> {
-        info!("Creating genesis funding for wallet-based transaction system...");
+        info!("Creating genesis funding for identity-based transaction system...");
         
         // Initialize outputs vector for genesis transaction
         let mut genesis_outputs = Vec::new();
         
-        // Create genesis wallet UTXOs instead of identities
+        // Create genesis wallet UTXOs for identity-linked wallets
         if let Some(wallet_data) = user_wallet {
-            info!("Using user wallet: {} ({})", wallet_data.wallet_name, hex::encode(&wallet_data.node_wallet_id.0[..8]));
+            info!("Using identity-linked wallet: {} (Identity: {}, Wallet: {})", 
+                wallet_data.wallet_name, 
+                hex::encode(&wallet_data.node_identity_id.0[..8]),
+                hex::encode(&wallet_data.node_wallet_id.0[..8]));
             
-            // Create user's wallet UTXO in genesis block for initial funding
+            // Create user's identity-linked wallet UTXO in genesis block for initial funding
             let user_wallet_output = TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(
-                    format!("user_wallet_commitment_{}", hex::encode(&wallet_data.node_wallet_id.0[..8])).as_bytes()
+                    format!("identity_wallet_commitment_{}", hex::encode(&wallet_data.node_identity_id.0[..8])).as_bytes()
                 ),
                 note: lib_blockchain::types::hash::blake3_hash(
-                    format!("user_wallet_note_{}", hex::encode(&wallet_data.node_wallet_id.0[..8])).as_bytes()
+                    format!("identity_wallet_note_{}", hex::encode(&wallet_data.node_identity_id.0[..8])).as_bytes()
                 ),
-                recipient: PublicKey::new(format!("wallet_{}", hex::encode(&wallet_data.node_wallet_id.0[..8])).as_bytes().to_vec()),
+                recipient: PublicKey::new(format!("identity_{}", hex::encode(&wallet_data.node_identity_id.0[..8])).as_bytes().to_vec()),
             };
             
             // Add user wallet output to genesis transaction outputs
             genesis_outputs.push(user_wallet_output);
             
-            info!("Created user wallet UTXO: {} ({})", wallet_data.wallet_name, wallet_data.wallet_address);
-            info!("User wallet will receive genesis funding for network operations");
+            info!("Created identity-linked wallet UTXO for identity: {} (wallet: {}, address: {})", 
+                hex::encode(&wallet_data.node_identity_id.0[..8]),
+                wallet_data.wallet_name, 
+                wallet_data.wallet_address);
+            info!("Identity-linked wallet will receive genesis funding for network operations");
         }
         
-        // Create validator wallets for BFT consensus (minimum 4 required)
-        info!("Setting up wallet-based validation for BFT consensus...");
+        // Create validator identities for BFT consensus (minimum 4 required)
+        info!("Setting up identity-based validation for BFT consensus...");
         
-        // User wallet becomes the primary validator (validator #1)
+        // User identity becomes the primary validator (validator #1)
         if let Some(wallet_data) = user_wallet {
-            info!("User wallet '{}' registered as primary validator", wallet_data.wallet_name);
+            info!("User identity '{}' with wallet '{}' registered as primary validator", 
+                hex::encode(&wallet_data.node_identity_id.0[..8]),
+                wallet_data.wallet_name);
         }
         
-        // Create 3 additional validator wallets to meet BFT minimum of 4 validators
+        // Create 3 additional validator identities to meet BFT minimum of 4 validators
+        // Note: In production these would be real identities with wallets
         let additional_validators = vec![
             ("ValidatorBeta", "zhtp:validator:beta"),
             ("ValidatorGamma", "zhtp:validator:gamma"), 
             ("ValidatorDelta", "zhtp:validator:delta"),
         ];
         
-        info!("Creating {} additional validator wallets for BFT consensus...", additional_validators.len());
+        info!("Creating {} additional validator identities for BFT consensus...", additional_validators.len());
         
-        for (name, wallet_address) in &additional_validators {
-            // Create wallet ID from address for tracking
-            let wallet_id_bytes = lib_blockchain::types::hash::blake3_hash(wallet_address.as_bytes());
+        for (name, identity_address) in &additional_validators {
+            // Create identity ID from address for tracking
+            let identity_id_bytes = lib_blockchain::types::hash::blake3_hash(identity_address.as_bytes());
             
-            info!("Created validator wallet: {} ({})", name, &wallet_id_bytes.to_hex()[..16]);
+            info!("Created validator identity: {} ({})", name, &identity_id_bytes.to_hex()[..16]);
         }
         
-        info!("Total validators: 1 user + 3 network = 4 wallets for BFT consensus");
+        info!("Total validators: 1 user identity + 3 network identities = 4 identities for BFT consensus");
         
 
         
@@ -1948,6 +1957,20 @@ impl Component for ProtocolsComponent {
         // Start the unified server (replaces all separate servers!)
         unified_server.start().await?;
         
+        // Initialize global mesh router provider for API access
+        info!(" Initializing global mesh router provider...");
+        crate::runtime::mesh_router_provider::initialize_global_mesh_router_provider();
+        let mesh_router_arc = unified_server.get_mesh_router_arc();
+        if let Err(e) = crate::runtime::mesh_router_provider::set_global_mesh_router(mesh_router_arc.clone()).await {
+            warn!("Failed to set global mesh router: {}", e);
+        } else {
+            info!(" Global mesh router provider initialized");
+        }
+        
+        // Phase 4: Start metrics snapshot background task
+        info!(" Starting performance metrics snapshot task...");
+        mesh_router_arc.start_metrics_snapshot_task().await;
+        
         // Store server instance
         *self.unified_server.write().await = Some(unified_server);
         
@@ -2175,7 +2198,7 @@ async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
             Ok(Ok(blockchain_data)) => {
                 // Create empty blockchain and import
                 let mut blockchain = lib_blockchain::Blockchain::new()?;
-                blockchain.import_chain(blockchain_data)?;
+                blockchain.evaluate_and_merge_chain(blockchain_data).await?;
                 info!(" Successfully bootstrapped blockchain from {} (HTTP)", peer);
                 return Ok(blockchain);
             }

@@ -1439,7 +1439,7 @@ impl BlockchainHandler {
     async fn handle_import_chain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let mut blockchain = self.blockchain.write().await;
         
-        blockchain.import_chain(request.body)
+        blockchain.evaluate_and_merge_chain(request.body).await
             .map_err(|e| anyhow::anyhow!("Failed to import blockchain: {}", e))?;
         
         #[derive(Serialize)]

@@ -16,6 +16,7 @@ pub mod components;
 pub mod shared_blockchain;
 pub mod shared_dht;
 pub mod blockchain_provider;
+pub mod mesh_router_provider;
 pub mod did_startup;
 #[cfg(test)]
 pub mod test_api_integration;
@@ -24,6 +25,7 @@ pub use components::*;
 pub use shared_blockchain::*;
 pub use shared_dht::*;
 pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_blockchain};
+pub use mesh_router_provider::{initialize_global_mesh_router_provider, set_global_mesh_router, get_broadcast_metrics};
 
 /// Component status information
 #[derive(Debug, Clone, PartialEq)]

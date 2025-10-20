@@ -22,11 +22,20 @@ use lib_identity::types::identity_types::IdentityType;
 /// Clean storage handler implementation
 pub struct StorageHandler {
     storage: Arc<RwLock<UnifiedStorageSystem>>,
+    wallet_content_manager: Option<Arc<RwLock<lib_storage::WalletContentManager>>>,
 }
 
 impl StorageHandler {
     pub fn new(storage: Arc<RwLock<UnifiedStorageSystem>>) -> Self {
-        Self { storage }
+        Self { 
+            storage,
+            wallet_content_manager: None,
+        }
+    }
+    
+    pub fn with_wallet_manager(mut self, manager: Arc<RwLock<lib_storage::WalletContentManager>>) -> Self {
+        self.wallet_content_manager = Some(manager);
+        self
     }
 }
 
@@ -38,6 +47,9 @@ impl ZhtpRequestHandler for StorageHandler {
         let response = match (request.method, request.uri.as_str()) {
             (ZhtpMethod::Get, "/api/v1/storage/status") => {
                 self.handle_storage_status(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/storage/store") => {
+                self.handle_store_content(request).await
             }
             (ZhtpMethod::Post, "/api/v1/storage/put") => {
                 self.handle_put_data(request).await
@@ -156,6 +168,163 @@ impl StorageHandler {
             uptime: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs(),
+        };
+        
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None::<IdentityId>,
+        ))
+    }
+    
+    /// Handle wallet-aware content storage
+    /// POST /api/v1/storage/store
+    /// 
+    /// Stores content and registers ownership to wallet if wallet_id provided
+    async fn handle_store_content(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct StoreRequest {
+            data: String,  // Base64 encoded content
+            wallet_id: Option<String>,  // Optional wallet owner
+        }
+        
+        let req_data: StoreRequest = serde_json::from_slice(&request.body)?;
+        
+        // Decode base64 data
+        let content = base64::decode(&req_data.data)
+            .map_err(|e| anyhow::anyhow!("Invalid base64 data: {}", e))?;
+        
+        // Validate content size (10MB limit)
+        const MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024;
+        if content.len() > MAX_CONTENT_SIZE {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::PayloadTooLarge,
+                format!("Content size {} exceeds limit of {} bytes", content.len(), MAX_CONTENT_SIZE),
+            ));
+        }
+        
+        // Calculate content hash
+        use lib_crypto::hashing::hash_blake3;
+        let content_hash = hash_blake3(&content);
+        let content_hash_obj = lib_crypto::Hash::from_bytes(&content_hash[..32]);
+        
+        tracing::info!("Storing content with hash: {} ({} bytes)", 
+            hex::encode(&content_hash), content.len());
+        
+        // Register ownership if wallet_id provided and we have wallet_content_manager
+        let ownership_registered = if let (Some(wallet_id_str), Some(ref manager)) = 
+            (&req_data.wallet_id, &self.wallet_content_manager) 
+        {
+            match lib_crypto::Hash::from_hex(wallet_id_str) {
+                Ok(wallet_id) => {
+                    // Create a minimal ZhtpIdentity for the owner
+                    let owner_identity = ZhtpIdentity::new(
+                        IdentityType::Human,
+                        wallet_id.as_bytes().to_vec(),
+                        ZeroKnowledgeProof::new(
+                            "wallet_upload".to_string(),
+                            vec![],
+                            vec![],
+                            vec![],
+                            None,
+                        ),
+                    ).unwrap_or_else(|_| {
+                        // Fallback identity if creation fails
+                        ZhtpIdentity::new(
+                            IdentityType::Human,
+                            vec![0u8; 32],
+                            ZeroKnowledgeProof::new("default".to_string(), vec![], vec![], vec![], None),
+                        ).unwrap()
+                    });
+                    
+                    let current_time = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    
+                    // Create full ContentMetadata as required
+                    let metadata = lib_storage::ContentMetadata {
+                        hash: content_hash_obj.clone(),
+                        content_hash: content_hash_obj.clone(),
+                        owner: owner_identity,
+                        size: content.len() as u64,
+                        content_type: "application/octet-stream".to_string(),
+                        filename: format!("upload_{}.bin", hex::encode(&content_hash[..8])),
+                        description: "Uploaded via storage API".to_string(),
+                        checksum: content_hash_obj.clone(),
+                        
+                        // Storage configuration
+                        tier: lib_storage::StorageTier::Hot,
+                        encryption: lib_storage::EncryptionLevel::None,
+                        access_pattern: lib_storage::AccessPattern::Occasional,
+                        replication_factor: 3,
+                        total_chunks: ((content.len() / 65536) + 1) as u32,
+                        is_encrypted: false,
+                        is_compressed: false,
+                        
+                        // Access control (public by default)
+                        access_control: vec![lib_storage::AccessLevel::Public],
+                        tags: vec!["upload".to_string(), "api".to_string()],
+                        
+                        // Economics
+                        cost_per_day: 10,
+                        created_at: current_time,
+                        last_accessed: current_time,
+                        access_count: 0,
+                        expires_at: None,
+                    };
+                    
+                    let mut mgr = manager.write().await;
+                    match mgr.register_content_ownership(
+                        content_hash_obj,
+                        wallet_id,
+                        &metadata,
+                        0  // No purchase price for uploads
+                    ) {
+                        Ok(_) => {
+                            tracing::info!("✓ Registered content ownership: {} → {}", 
+                                hex::encode(&content_hash), wallet_id_str);
+                            true
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to register ownership: {}", e);
+                            false
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Invalid wallet_id format: {}", e);
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        
+        #[derive(Serialize)]
+        struct StoreResponse {
+            success: bool,
+            hash: String,
+            size: usize,
+            wallet_id: Option<String>,
+            ownership_registered: bool,
+            message: String,
+        }
+        
+        let response_data = StoreResponse {
+            success: true,
+            hash: hex::encode(&content_hash),
+            size: content.len(),
+            wallet_id: req_data.wallet_id.clone(),
+            ownership_registered,
+            message: if ownership_registered {
+                "Content stored and ownership registered successfully".to_string()
+            } else if req_data.wallet_id.is_some() {
+                "Content stored but ownership registration failed".to_string()
+            } else {
+                "Content stored successfully (no wallet specified)".to_string()
+            },
         };
         
         let json_response = serde_json::to_vec(&response_data)?;

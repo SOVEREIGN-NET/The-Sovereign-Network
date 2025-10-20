@@ -12,6 +12,8 @@ pub mod dao;
 pub mod dht;
 pub mod web4;
 pub mod dns;
+pub mod wallet_content;
+pub mod marketplace;
 
 pub use identity::IdentityHandler;
 pub use blockchain::BlockchainHandler;
@@ -23,3 +25,5 @@ pub use dao::DaoHandler;
 pub use dht::DhtHandler;
 pub use web4::Web4Handler;
 pub use dns::DnsHandler;
+pub use wallet_content::WalletContentHandler;
+pub use marketplace::MarketplaceHandler;

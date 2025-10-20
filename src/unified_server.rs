@@ -164,7 +164,11 @@ impl Middleware for AuthMiddleware {
            request.uri == "/api/v1/health" ||
            request.uri.starts_with("/api/v1/web4/") ||
            request.uri.starts_with("/api/v1/dns/") ||
-           request.uri.starts_with("/api/v1/blockchain/") {
+           request.uri.starts_with("/api/v1/blockchain/") ||
+           request.uri.starts_with("/api/v1/storage/") ||
+           request.uri.starts_with("/api/marketplace/") ||
+           request.uri.starts_with("/api/content/") ||
+           request.uri.starts_with("/api/wallet/") {
             return Ok(true);
         }
         
@@ -498,7 +502,361 @@ impl HttpRouter {
     }
 }
 
+/// Peer rate limiting tracker
+#[derive(Debug, Clone)]
+struct PeerRateLimit {
+    block_count: u32,
+    tx_count: u32,
+    last_reset: u64,
+    violations: u32, // Track rate limit violations
+}
+
+impl PeerRateLimit {
+    fn new() -> Self {
+        Self {
+            block_count: 0,
+            tx_count: 0,
+            last_reset: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            violations: 0,
+        }
+    }
+    
+    fn check_and_increment_block(&mut self, max_per_minute: u32) -> bool {
+        self.reset_if_needed();
+        if self.block_count >= max_per_minute {
+            self.violations += 1;
+            return false; // Rate limit exceeded
+        }
+        self.block_count += 1;
+        true
+    }
+    
+    fn check_and_increment_tx(&mut self, max_per_minute: u32) -> bool {
+        self.reset_if_needed();
+        if self.tx_count >= max_per_minute {
+            self.violations += 1;
+            return false;
+        }
+        self.tx_count += 1;
+        true
+    }
+    
+    fn reset_if_needed(&mut self) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        if now - self.last_reset >= 60 {
+            self.block_count = 0;
+            self.tx_count = 0;
+            self.last_reset = now;
+            // Don't reset violations - they accumulate over time
+        }
+    }
+    
+    fn get_violations(&self) -> u32 {
+        self.violations
+    }
+}
+
+/// Peer reputation scoring
+#[derive(Debug, Clone)]
+pub struct PeerReputation {
+    pub peer_id: String,
+    pub score: i32, // -100 (banned) to 100 (trusted)
+    pub blocks_accepted: u64,
+    pub blocks_rejected: u64,
+    pub txs_accepted: u64,
+    pub txs_rejected: u64,
+    pub violations: u32,
+    pub first_seen: u64,
+    pub last_seen: u64,
+}
+
+impl PeerReputation {
+    fn new(peer_id: String) -> Self {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        Self {
+            peer_id,
+            score: 50, // Start neutral
+            blocks_accepted: 0,
+            blocks_rejected: 0,
+            txs_accepted: 0,
+            txs_rejected: 0,
+            violations: 0,
+            first_seen: now,
+            last_seen: now,
+        }
+    }
+    
+    fn update_last_seen(&mut self) {
+        self.last_seen = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    }
+    
+    fn record_block_accepted(&mut self) {
+        self.blocks_accepted += 1;
+        self.score = (self.score + 1).min(100);
+        self.update_last_seen();
+    }
+    
+    fn record_block_rejected(&mut self) {
+        self.blocks_rejected += 1;
+        self.score = (self.score - 2).max(-100);
+        self.update_last_seen();
+    }
+    
+    fn record_tx_accepted(&mut self) {
+        self.txs_accepted += 1;
+        self.score = (self.score + 1).min(100);
+        self.update_last_seen();
+    }
+    
+    fn record_tx_rejected(&mut self) {
+        self.txs_rejected += 1;
+        self.score = (self.score - 2).max(-100);
+        self.update_last_seen();
+    }
+    
+    fn record_violation(&mut self) {
+        self.violations += 1;
+        self.score = (self.score - 10).max(-100);
+        self.update_last_seen();
+    }
+    
+    fn is_banned(&self) -> bool {
+        self.score <= -50 || self.violations >= 10
+    }
+    
+    fn get_acceptance_rate(&self) -> f64 {
+        let total = self.blocks_accepted + self.blocks_rejected + self.txs_accepted + self.txs_rejected;
+        if total == 0 {
+            return 100.0;
+        }
+        ((self.blocks_accepted + self.txs_accepted) as f64 / total as f64) * 100.0
+    }
+}
+
+/// Peer performance statistics (for API responses)
+#[derive(Debug, Clone)]
+pub struct PeerPerformanceStats {
+    pub peer_id: String,
+    pub reputation_score: i32,
+    pub blocks_accepted: u64,
+    pub blocks_rejected: u64,
+    pub txs_accepted: u64,
+    pub txs_rejected: u64,
+    pub violations: u32,
+    pub acceptance_rate: f64,
+    pub first_seen: u64,
+    pub last_seen: u64,
+}
+
+/// Broadcast metrics
+#[derive(Debug, Clone)]
+pub struct BroadcastMetrics {
+    pub blocks_sent: u64,
+    pub blocks_received: u64,
+    pub transactions_sent: u64,
+    pub transactions_received: u64,
+    pub blocks_relayed: u64,
+    pub transactions_relayed: u64,
+    pub blocks_rejected: u64,
+    pub transactions_rejected: u64,
+}
+
+impl BroadcastMetrics {
+    fn new() -> Self {
+        Self {
+            blocks_sent: 0,
+            blocks_received: 0,
+            transactions_sent: 0,
+            transactions_received: 0,
+            blocks_relayed: 0,
+            transactions_relayed: 0,
+            blocks_rejected: 0,
+            transactions_rejected: 0,
+        }
+    }
+}
+
+/// Performance metrics for blockchain sync
+#[derive(Debug, Clone)]
+pub struct SyncPerformanceMetrics {
+    // Latency tracking (milliseconds)
+    pub avg_block_propagation_ms: f64,
+    pub avg_tx_propagation_ms: f64,
+    pub p95_block_latency_ms: u64,
+    pub p95_tx_latency_ms: u64,
+    pub min_block_latency_ms: u64,
+    pub max_block_latency_ms: u64,
+    pub min_tx_latency_ms: u64,
+    pub max_tx_latency_ms: u64,
+    
+    // Bandwidth tracking (bytes)
+    pub total_bytes_sent: u64,
+    pub total_bytes_received: u64,
+    pub bytes_sent_per_sec: f64,
+    pub bytes_received_per_sec: f64,
+    pub peak_bandwidth_usage_bps: u64,
+    
+    // Efficiency metrics
+    pub duplicate_block_ratio: f64,
+    pub duplicate_tx_ratio: f64,
+    pub validation_success_rate: f64,
+    pub relay_efficiency: f64,
+    
+    // Time window for rate calculations
+    pub measurement_start: u64,
+    pub measurement_duration_secs: u64,
+}
+
+impl SyncPerformanceMetrics {
+    fn new() -> Self {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        Self {
+            avg_block_propagation_ms: 0.0,
+            avg_tx_propagation_ms: 0.0,
+            p95_block_latency_ms: 0,
+            p95_tx_latency_ms: 0,
+            min_block_latency_ms: u64::MAX,
+            max_block_latency_ms: 0,
+            min_tx_latency_ms: u64::MAX,
+            max_tx_latency_ms: 0,
+            total_bytes_sent: 0,
+            total_bytes_received: 0,
+            bytes_sent_per_sec: 0.0,
+            bytes_received_per_sec: 0.0,
+            peak_bandwidth_usage_bps: 0,
+            duplicate_block_ratio: 0.0,
+            duplicate_tx_ratio: 0.0,
+            validation_success_rate: 100.0,
+            relay_efficiency: 100.0,
+            measurement_start: now,
+            measurement_duration_secs: 0,
+        }
+    }
+}
+
+/// Alert severity levels
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AlertLevel {
+    Info,
+    Warning,
+    Critical,
+}
+
+/// Sync alert notification
+#[derive(Debug, Clone)]
+pub struct SyncAlert {
+    pub id: String,
+    pub level: AlertLevel,
+    pub category: String,
+    pub message: String,
+    pub timestamp: u64,
+    pub acknowledged: bool,
+    pub peer_id: Option<String>,
+    pub metric_value: Option<f64>,
+    pub threshold_value: Option<f64>,
+}
+
+impl SyncAlert {
+    fn new(level: AlertLevel, category: String, message: String) -> Self {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        Self {
+            id: format!("alert_{}", now),
+            level,
+            category,
+            message,
+            timestamp: now,
+            acknowledged: false,
+            peer_id: None,
+            metric_value: None,
+            threshold_value: None,
+        }
+    }
+    
+    fn with_peer(mut self, peer_id: String) -> Self {
+        self.peer_id = Some(peer_id);
+        self
+    }
+    
+    fn with_metric(mut self, value: f64, threshold: f64) -> Self {
+        self.metric_value = Some(value);
+        self.threshold_value = Some(threshold);
+        self
+    }
+}
+
+/// Alert thresholds configuration
+#[derive(Debug, Clone)]
+pub struct AlertThresholds {
+    pub max_block_latency_ms: u64,
+    pub max_tx_latency_ms: u64,
+    pub max_bandwidth_mbps: f64,
+    pub min_validation_success_rate: f64,
+    pub max_duplicate_ratio: f64,
+    pub min_peer_score: i32,
+}
+
+impl Default for AlertThresholds {
+    fn default() -> Self {
+        Self {
+            max_block_latency_ms: 5000,      // 5 seconds
+            max_tx_latency_ms: 3000,         // 3 seconds
+            max_bandwidth_mbps: 10.0,        // 10 MB/s
+            min_validation_success_rate: 95.0, // 95%
+            max_duplicate_ratio: 20.0,       // 20%
+            min_peer_score: -25,             // Warning before ban threshold
+        }
+    }
+}
+
+/// Historical data point for time-series tracking
+#[derive(Debug, Clone)]
+pub struct MetricsSnapshot {
+    pub timestamp: u64,
+    pub blocks_received: u64,
+    pub txs_received: u64,
+    pub blocks_rejected: u64,
+    pub txs_rejected: u64,
+    pub avg_latency_ms: f64,
+    pub bandwidth_bps: u64,
+    pub active_peers: usize,
+    pub banned_peers: usize,
+}
+
+/// Time-series metrics storage with rolling window
+#[derive(Debug, Clone)]
+pub struct MetricsHistory {
+    pub snapshots: Vec<MetricsSnapshot>,
+    pub max_snapshots: usize,
+    pub interval_secs: u64,
+    pub last_snapshot: u64,
+}
+
+impl MetricsHistory {
+    fn new(max_snapshots: usize, interval_secs: u64) -> Self {
+        Self {
+            snapshots: Vec::new(),
+            max_snapshots,
+            interval_secs,
+            last_snapshot: 0,
+        }
+    }
+    
+    fn add_snapshot(&mut self, snapshot: MetricsSnapshot) {
+        self.last_snapshot = snapshot.timestamp;
+        self.snapshots.push(snapshot);
+        if self.snapshots.len() > self.max_snapshots {
+            self.snapshots.remove(0); // Remove oldest
+        }
+    }
+    
+    fn should_snapshot(&self) -> bool {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        now - self.last_snapshot >= self.interval_secs
+    }
+}
+
 /// UDP mesh protocol routing and handling
+#[derive(Debug)]
 pub struct MeshRouter {
     connections: Arc<RwLock<HashMap<PublicKey, MeshConnection>>>,
     server_id: Uuid,
@@ -509,29 +867,62 @@ pub struct MeshRouter {
     zhtp_auth_manager: Arc<RwLock<Option<ZhtpAuthManager>>>,
     encryption_sessions: Arc<RwLock<HashMap<String, ZhtpEncryptionSession>>>,
     // Blockchain sync infrastructure
-    message_handler: Arc<lib_network::messaging::message_handler::MeshMessageHandler>,
     sync_manager: Arc<lib_network::blockchain_sync::BlockchainSyncManager>,
     // Protocol instances for sending
     bluetooth_protocol: Arc<RwLock<Option<BluetoothMeshProtocol>>>,
     udp_socket: Arc<RwLock<Option<Arc<UdpSocket>>>>,
+    // Real-time block propagation - duplicate detection
+    recent_blocks: Arc<RwLock<HashMap<lib_blockchain::types::Hash, u64>>>,
+    recent_transactions: Arc<RwLock<HashMap<lib_blockchain::types::Hash, u64>>>,
+    // Blockchain broadcast receiver
+    broadcast_receiver: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<lib_blockchain::BlockchainBroadcastMessage>>>>,
+    // Phase 3: Rate limiting & monitoring
+    peer_rate_limits: Arc<RwLock<HashMap<String, PeerRateLimit>>>,
+    broadcast_metrics: Arc<RwLock<BroadcastMetrics>>,
+    peer_reputations: Arc<RwLock<HashMap<String, PeerReputation>>>,
+    // Phase 4: Advanced monitoring & analytics
+    performance_metrics: Arc<RwLock<SyncPerformanceMetrics>>,
+    active_alerts: Arc<RwLock<Vec<SyncAlert>>>,
+    alert_thresholds: Arc<RwLock<AlertThresholds>>,
+    metrics_history: Arc<RwLock<MetricsHistory>>,
+    latency_samples_blocks: Arc<RwLock<Vec<u64>>>,  // For percentile calculations
+    latency_samples_txs: Arc<RwLock<Vec<u64>>>,
 }
 
 impl MeshRouter {
     pub fn new(server_id: Uuid, session_manager: Arc<SessionManager>) -> Self {
-        // Create shared connections map for message handler
+        // Create shared connections map
         let connections = Arc::new(RwLock::new(HashMap::new()));
-        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
-        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
-        
-        // Create message handler with shared state
-        let message_handler = Arc::new(lib_network::messaging::message_handler::MeshMessageHandler::new(
-            connections.clone(),
-            long_range_relays,
-            revenue_pools,
-        ));
         
         // Create blockchain sync manager
         let sync_manager = Arc::new(lib_network::blockchain_sync::BlockchainSyncManager::new());
+        
+        // Create duplicate tracking for block propagation
+        let recent_blocks = Arc::new(RwLock::new(HashMap::new()));
+        let recent_transactions = Arc::new(RwLock::new(HashMap::new()));
+        
+        // Spawn cleanup task for duplicate tracking
+        let recent_blocks_cleanup = recent_blocks.clone();
+        let recent_transactions_cleanup = recent_transactions.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(300)).await; // Every 5 minutes
+                let cutoff = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() - 3600; // Keep 1 hour history
+                
+                // Cleanup old blocks
+                let mut blocks = recent_blocks_cleanup.write().await;
+                blocks.retain(|_, &mut ts| ts > cutoff);
+                
+                // Cleanup old transactions
+                let mut txs = recent_transactions_cleanup.write().await;
+                txs.retain(|_, &mut ts| ts > cutoff);
+                
+                debug!("Cleaned up duplicate tracking maps (blocks: {}, txs: {})", blocks.len(), txs.len());
+            }
+        });
         
         Self {
             connections,
@@ -542,11 +933,560 @@ impl MeshRouter {
             encryption_manager: Arc::new(RwLock::new(ZhtpEncryptionManager::new())),
             zhtp_auth_manager: Arc::new(RwLock::new(None)),
             encryption_sessions: Arc::new(RwLock::new(HashMap::new())),
-            message_handler,
             sync_manager,
             bluetooth_protocol: Arc::new(RwLock::new(None)),
             udp_socket: Arc::new(RwLock::new(None)),
+            recent_blocks,
+            recent_transactions,
+            broadcast_receiver: Arc::new(RwLock::new(None)),
+            peer_rate_limits: Arc::new(RwLock::new(HashMap::new())),
+            broadcast_metrics: Arc::new(RwLock::new(BroadcastMetrics::new())),
+            peer_reputations: Arc::new(RwLock::new(HashMap::new())),
+            // Phase 4: Advanced monitoring
+            performance_metrics: Arc::new(RwLock::new(SyncPerformanceMetrics::new())),
+            active_alerts: Arc::new(RwLock::new(Vec::new())),
+            alert_thresholds: Arc::new(RwLock::new(AlertThresholds::default())),
+            metrics_history: Arc::new(RwLock::new(MetricsHistory::new(720, 60))), // 12 hours at 1-min intervals
+            latency_samples_blocks: Arc::new(RwLock::new(Vec::new())),
+            latency_samples_txs: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+    
+    /// Get broadcast metrics
+    pub async fn get_broadcast_metrics(&self) -> BroadcastMetrics {
+        self.broadcast_metrics.read().await.clone()
+    }
+    
+    /// Get peer reputation (for monitoring/admin purposes)
+    pub async fn get_peer_reputation(&self, peer_id: &str) -> Option<PeerReputation> {
+        self.peer_reputations.read().await.get(peer_id).cloned()
+    }
+    
+    /// List all peer reputations
+    pub async fn list_peer_reputations(&self) -> Vec<PeerReputation> {
+        self.peer_reputations.read().await.values().cloned().collect()
+    }
+    
+    // Phase 4: Advanced monitoring getters
+    
+    /// Get performance metrics
+    pub async fn get_performance_metrics(&self) -> SyncPerformanceMetrics {
+        self.performance_metrics.read().await.clone()
+    }
+    
+    /// Get active alerts
+    pub async fn get_active_alerts(&self) -> Vec<SyncAlert> {
+        self.active_alerts.read().await.clone()
+    }
+    
+    /// Acknowledge an alert by ID
+    pub async fn acknowledge_alert(&self, alert_id: &str) -> bool {
+        let mut alerts = self.active_alerts.write().await;
+        if let Some(alert) = alerts.iter_mut().find(|a| a.id == alert_id) {
+            alert.acknowledged = true;
+            return true;
+        }
+        false
+    }
+    
+    /// Clear acknowledged alerts
+    pub async fn clear_acknowledged_alerts(&self) {
+        let mut alerts = self.active_alerts.write().await;
+        alerts.retain(|a| !a.acknowledged);
+    }
+    
+    /// Get alert thresholds
+    pub async fn get_alert_thresholds(&self) -> AlertThresholds {
+        self.alert_thresholds.read().await.clone()
+    }
+    
+    /// Update alert thresholds
+    pub async fn update_alert_thresholds(&self, thresholds: AlertThresholds) {
+        *self.alert_thresholds.write().await = thresholds;
+    }
+    
+    /// Get metrics history
+    pub async fn get_metrics_history(&self, last_n: Option<usize>) -> Vec<MetricsSnapshot> {
+        let history = self.metrics_history.read().await;
+        match last_n {
+            Some(n) => {
+                let start = history.snapshots.len().saturating_sub(n);
+                history.snapshots[start..].to_vec()
+            }
+            None => history.snapshots.clone(),
+        }
+    }
+    
+    /// Get peer-specific performance metrics
+    pub async fn get_peer_performance(&self, peer_id: &str) -> Option<PeerPerformanceStats> {
+        let reputation = self.peer_reputations.read().await.get(peer_id).cloned()?;
+        
+        Some(PeerPerformanceStats {
+            peer_id: peer_id.to_string(),
+            reputation_score: reputation.score,
+            blocks_accepted: reputation.blocks_accepted,
+            blocks_rejected: reputation.blocks_rejected,
+            txs_accepted: reputation.txs_accepted,
+            txs_rejected: reputation.txs_rejected,
+            violations: reputation.violations,
+            acceptance_rate: reputation.get_acceptance_rate(),
+            first_seen: reputation.first_seen,
+            last_seen: reputation.last_seen,
+        })
+    }
+    
+    /// List all peers with performance stats
+    pub async fn list_peer_performance(&self) -> Vec<PeerPerformanceStats> {
+        let reputations = self.peer_reputations.read().await;
+        reputations.iter().map(|(peer_id, rep)| {
+            PeerPerformanceStats {
+                peer_id: peer_id.clone(),
+                reputation_score: rep.score,
+                blocks_accepted: rep.blocks_accepted,
+                blocks_rejected: rep.blocks_rejected,
+                txs_accepted: rep.txs_accepted,
+                txs_rejected: rep.txs_rejected,
+                violations: rep.violations,
+                acceptance_rate: rep.get_acceptance_rate(),
+                first_seen: rep.first_seen,
+                last_seen: rep.last_seen,
+            }
+        }).collect()
+    }
+
+    // ==================== Phase 4: Performance Tracking Methods ====================
+
+    /// Record block propagation latency
+    async fn track_block_latency(&self, block_timestamp: u64) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        if now > block_timestamp {
+            let latency_ms = ((now - block_timestamp) * 1000) as u64;
+            
+            // Add to latency samples for percentile calculation
+            let mut samples = self.latency_samples_blocks.write().await;
+            samples.push(latency_ms);
+            
+            // Keep only last 1000 samples to prevent unbounded growth
+            if samples.len() > 1000 {
+                let excess = samples.len() - 1000;
+                samples.drain(0..excess);
+            }
+            
+            // Update metrics
+            self.update_performance_metrics().await;
+        }
+    }
+
+    /// Record transaction propagation latency
+    async fn track_tx_latency(&self, tx_timestamp: u64) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        if now > tx_timestamp {
+            let latency_ms = ((now - tx_timestamp) * 1000) as u64;
+            
+            // Add to latency samples
+            let mut samples = self.latency_samples_txs.write().await;
+            samples.push(latency_ms);
+            
+            // Keep only last 1000 samples
+            if samples.len() > 1000 {
+                let excess = samples.len() - 1000;
+                samples.drain(0..excess);
+            }
+            
+            // Update metrics
+            self.update_performance_metrics().await;
+        }
+    }
+
+    /// Record bytes sent to track bandwidth
+    async fn track_bytes_sent(&self, bytes: u64) {
+        let mut metrics = self.performance_metrics.write().await;
+        metrics.total_bytes_sent += bytes;
+    }
+
+    /// Record bytes received to track bandwidth
+    async fn track_bytes_received(&self, bytes: u64) {
+        let mut metrics = self.performance_metrics.write().await;
+        metrics.total_bytes_received += bytes;
+    }
+
+    /// Calculate p95 percentile from samples
+    fn calculate_p95(samples: &[u64]) -> u64 {
+        if samples.is_empty() {
+            return 0;
+        }
+        
+        let mut sorted = samples.to_vec();
+        sorted.sort_unstable();
+        
+        let index = ((sorted.len() as f64) * 0.95).ceil() as usize;
+        sorted.get(index.saturating_sub(1)).copied().unwrap_or(0)
+    }
+
+    /// Update performance metrics with current data
+    async fn update_performance_metrics(&self) {
+        let mut metrics = self.performance_metrics.write().await;
+        
+        // Calculate block latency metrics
+        let block_samples = self.latency_samples_blocks.read().await;
+        if !block_samples.is_empty() {
+            let sum: u64 = block_samples.iter().sum();
+            metrics.avg_block_propagation_ms = sum as f64 / block_samples.len() as f64;
+            metrics.p95_block_latency_ms = Self::calculate_p95(&block_samples);
+            metrics.min_block_latency_ms = *block_samples.iter().min().unwrap_or(&0);
+            metrics.max_block_latency_ms = *block_samples.iter().max().unwrap_or(&0);
+        }
+        
+        // Calculate tx latency metrics
+        let tx_samples = self.latency_samples_txs.read().await;
+        if !tx_samples.is_empty() {
+            let sum: u64 = tx_samples.iter().sum();
+            metrics.avg_tx_propagation_ms = sum as f64 / tx_samples.len() as f64;
+            metrics.p95_tx_latency_ms = Self::calculate_p95(&tx_samples);
+            metrics.min_tx_latency_ms = *tx_samples.iter().min().unwrap_or(&0);
+            metrics.max_tx_latency_ms = *tx_samples.iter().max().unwrap_or(&0);
+        }
+        
+        // Calculate bandwidth metrics
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let duration = now.saturating_sub(metrics.measurement_start);
+        if duration > 0 {
+            metrics.bytes_sent_per_sec = metrics.total_bytes_sent as f64 / duration as f64;
+            metrics.bytes_received_per_sec = metrics.total_bytes_received as f64 / duration as f64;
+            
+            // Update peak bandwidth
+            let current_bps = (metrics.bytes_sent_per_sec + metrics.bytes_received_per_sec) as u64;
+            if current_bps > metrics.peak_bandwidth_usage_bps {
+                metrics.peak_bandwidth_usage_bps = current_bps;
+            }
+        }
+        
+        // Calculate efficiency metrics
+        let broadcast_metrics = self.broadcast_metrics.read().await;
+        let total_blocks = broadcast_metrics.blocks_received;
+        let rejected_blocks = broadcast_metrics.blocks_rejected;
+        if total_blocks > 0 {
+            metrics.duplicate_block_ratio = (rejected_blocks as f64 / total_blocks as f64) * 100.0;
+            metrics.validation_success_rate = ((total_blocks - rejected_blocks) as f64 / total_blocks as f64) * 100.0;
+        }
+        
+        let total_txs = broadcast_metrics.transactions_received;
+        let rejected_txs = broadcast_metrics.transactions_rejected;
+        if total_txs > 0 {
+            metrics.duplicate_tx_ratio = (rejected_txs as f64 / total_txs as f64) * 100.0;
+        }
+        
+        // Calculate relay efficiency (accepted / total sent)
+        let total_sent = broadcast_metrics.blocks_sent + broadcast_metrics.transactions_sent;
+        if total_sent > 0 {
+            metrics.relay_efficiency = ((total_blocks + total_txs) as f64 / total_sent as f64) * 100.0;
+        }
+        
+        metrics.measurement_duration_secs = duration;
+    }
+
+    /// Check thresholds and generate alerts
+    async fn check_and_generate_alerts(&self) {
+        let metrics = self.performance_metrics.read().await;
+        let thresholds = self.alert_thresholds.read().await;
+        let mut alerts = self.active_alerts.write().await;
+        
+        // Check block latency threshold
+        if metrics.avg_block_propagation_ms > thresholds.max_block_latency_ms as f64 {
+            let alert = SyncAlert::new(
+                AlertLevel::Warning,
+                "block_latency".to_string(),
+                format!("Block propagation latency ({:.2}ms) exceeds threshold ({}ms)", 
+                        metrics.avg_block_propagation_ms, thresholds.max_block_latency_ms)
+            ).with_metric(metrics.avg_block_propagation_ms, thresholds.max_block_latency_ms as f64);
+            
+            // Only add if not already present
+            if !alerts.iter().any(|a| a.category == "block_latency" && !a.acknowledged) {
+                alerts.push(alert);
+            }
+        }
+        
+        // Check tx latency threshold
+        if metrics.avg_tx_propagation_ms > thresholds.max_tx_latency_ms as f64 {
+            let alert = SyncAlert::new(
+                AlertLevel::Warning,
+                "tx_latency".to_string(),
+                format!("Transaction propagation latency ({:.2}ms) exceeds threshold ({}ms)", 
+                        metrics.avg_tx_propagation_ms, thresholds.max_tx_latency_ms)
+            ).with_metric(metrics.avg_tx_propagation_ms, thresholds.max_tx_latency_ms as f64);
+            
+            if !alerts.iter().any(|a| a.category == "tx_latency" && !a.acknowledged) {
+                alerts.push(alert);
+            }
+        }
+        
+        // Check bandwidth threshold
+        let bandwidth_mbps = (metrics.bytes_sent_per_sec + metrics.bytes_received_per_sec) / 1_000_000.0;
+        if bandwidth_mbps > thresholds.max_bandwidth_mbps {
+            let alert = SyncAlert::new(
+                AlertLevel::Critical,
+                "bandwidth".to_string(),
+                format!("Bandwidth usage ({:.2} MB/s) exceeds threshold ({:.2} MB/s)", 
+                        bandwidth_mbps, thresholds.max_bandwidth_mbps)
+            ).with_metric(bandwidth_mbps, thresholds.max_bandwidth_mbps);
+            
+            if !alerts.iter().any(|a| a.category == "bandwidth" && !a.acknowledged) {
+                alerts.push(alert);
+            }
+        }
+        
+        // Check validation success rate
+        if metrics.validation_success_rate < thresholds.min_validation_success_rate && metrics.validation_success_rate > 0.0 {
+            let alert = SyncAlert::new(
+                AlertLevel::Critical,
+                "validation_rate".to_string(),
+                format!("Validation success rate ({:.1}%) below threshold ({:.1}%)", 
+                        metrics.validation_success_rate, thresholds.min_validation_success_rate)
+            ).with_metric(metrics.validation_success_rate, thresholds.min_validation_success_rate);
+            
+            if !alerts.iter().any(|a| a.category == "validation_rate" && !a.acknowledged) {
+                alerts.push(alert);
+            }
+        }
+        
+        // Check duplicate ratio
+        if metrics.duplicate_block_ratio > thresholds.max_duplicate_ratio {
+            let alert = SyncAlert::new(
+                AlertLevel::Warning,
+                "duplicate_blocks".to_string(),
+                format!("Duplicate block ratio ({:.1}%) exceeds threshold ({:.1}%)", 
+                        metrics.duplicate_block_ratio, thresholds.max_duplicate_ratio)
+            ).with_metric(metrics.duplicate_block_ratio, thresholds.max_duplicate_ratio);
+            
+            if !alerts.iter().any(|a| a.category == "duplicate_blocks" && !a.acknowledged) {
+                alerts.push(alert);
+            }
+        }
+        
+        // Check peer scores
+        let reputations = self.peer_reputations.read().await;
+        for (peer_id, rep) in reputations.iter() {
+            if rep.score < thresholds.min_peer_score && rep.score < 0 {
+                let alert = SyncAlert::new(
+                    AlertLevel::Warning,
+                    "peer_score".to_string(),
+                    format!("Peer {} has low reputation score ({})", &peer_id[..16.min(peer_id.len())], rep.score)
+                ).with_peer(peer_id.clone()).with_metric(rep.score as f64, thresholds.min_peer_score as f64);
+                
+                if !alerts.iter().any(|a| a.category == "peer_score" && a.peer_id.as_ref() == Some(peer_id) && !a.acknowledged) {
+                    alerts.push(alert);
+                }
+            }
+        }
+    }
+
+    /// Create a metrics snapshot for historical tracking
+    async fn create_metrics_snapshot(&self) -> MetricsSnapshot {
+        let broadcast_metrics = self.broadcast_metrics.read().await;
+        let performance_metrics = self.performance_metrics.read().await;
+        let connections = self.connections.read().await;
+        let reputations = self.peer_reputations.read().await;
+        
+        let banned_count = reputations.values().filter(|r| r.is_banned()).count();
+        
+        MetricsSnapshot {
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            blocks_received: broadcast_metrics.blocks_received,
+            txs_received: broadcast_metrics.transactions_received,
+            blocks_rejected: broadcast_metrics.blocks_rejected,
+            txs_rejected: broadcast_metrics.transactions_rejected,
+            avg_latency_ms: (performance_metrics.avg_block_propagation_ms + performance_metrics.avg_tx_propagation_ms) / 2.0,
+            bandwidth_bps: (performance_metrics.bytes_sent_per_sec + performance_metrics.bytes_received_per_sec) as u64,
+            active_peers: connections.len(),
+            banned_peers: banned_count,
+        }
+    }
+
+    /// Start background metrics snapshot task
+    pub async fn start_metrics_snapshot_task(&self) {
+        let metrics_history = self.metrics_history.clone();
+        let mesh_router = Arc::new(self.clone());
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            
+            loop {
+                interval.tick().await;
+                
+                // Create snapshot
+                let snapshot = mesh_router.create_metrics_snapshot().await;
+                
+                // Add to history
+                let mut history = metrics_history.write().await;
+                history.add_snapshot(snapshot);
+                
+                // Check and generate alerts
+                mesh_router.check_and_generate_alerts().await;
+                
+                debug!("📊 Metrics snapshot created ({} total snapshots)", history.snapshots.len());
+            }
+        });
+        
+        info!("✓ Started metrics snapshot background task (60s interval)");
+    }
+    
+    /// Set the blockchain broadcast receiver and start processing task
+    pub async fn set_broadcast_receiver(&self, mut receiver: tokio::sync::mpsc::UnboundedReceiver<lib_blockchain::BlockchainBroadcastMessage>) {
+        info!("✓ Blockchain broadcast channel connected to mesh router");
+        
+        let connections = self.connections.clone();
+        let recent_blocks = self.recent_blocks.clone();
+        let recent_transactions = self.recent_transactions.clone();
+        let identity_manager = self.identity_manager.clone();
+        let udp_socket = self.udp_socket.clone();
+        let bluetooth_protocol = self.bluetooth_protocol.clone();
+        let broadcast_metrics = self.broadcast_metrics.clone();
+        
+        // Spawn task to process broadcast messages from blockchain
+        tokio::spawn(async move {
+            while let Some(msg) = receiver.recv().await {
+                match msg {
+                    lib_blockchain::BlockchainBroadcastMessage::NewBlock(block) => {
+                        info!("📡 Broadcasting new block {} to mesh network", block.height());
+                        
+                        // Serialize block
+                        let block_data = match bincode::serialize(&block) {
+                            Ok(data) => data,
+                            Err(e) => {
+                                error!("Failed to serialize block: {}", e);
+                                continue;
+                            }
+                        };
+                        
+                        // Get local node's public key (use empty vec for now - TODO: get from identity manager)
+                        let sender_pubkey = lib_crypto::PublicKey::new(vec![]);
+                        
+                        // Create NewBlock message
+                        let message = lib_network::types::mesh_message::ZhtpMeshMessage::NewBlock {
+                            block: block_data,
+                            sender: sender_pubkey,
+                            height: block.height(),
+                            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        };
+                        
+                        // Serialize message
+                        let serialized = match bincode::serialize(&message) {
+                            Ok(data) => data,
+                            Err(e) => {
+                                error!("Failed to serialize NewBlock message: {}", e);
+                                continue;
+                            }
+                        };
+                        
+                        // Broadcast to all connected peers
+                        let conns = connections.read().await;
+                        let mut success_count = 0;
+                        
+                        for (peer_key, connection) in conns.iter() {
+                            match &connection.protocol {
+                                lib_network::protocols::NetworkProtocol::UDP => {
+                                    if let Some(ref sock) = *udp_socket.read().await {
+                                        if let Some(peer_addr_str) = &connection.peer_address {
+                                            if let Ok(addr) = peer_addr_str.parse::<SocketAddr>() {
+                                                if sock.send_to(&serialized, addr).await.is_ok() {
+                                                    success_count += 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {} // TODO: Add other protocols as needed
+                            }
+                        }
+                        
+                        info!("📤 Block {} broadcast to {} peers", block.height(), success_count);
+                        
+                        // Update metrics
+                        broadcast_metrics.write().await.blocks_sent += 1;
+                        
+                        // Mark as seen (prevent echo)
+                        recent_blocks.write().await.insert(
+                            block.header.hash(),
+                            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+                        );
+                    }
+                    lib_blockchain::BlockchainBroadcastMessage::NewTransaction(tx) => {
+                        debug!("📡 Broadcasting new transaction {} to mesh network", tx.hash());
+                        
+                        // Serialize transaction
+                        let tx_data = match bincode::serialize(&tx) {
+                            Ok(data) => data,
+                            Err(e) => {
+                                error!("Failed to serialize transaction: {}", e);
+                                continue;
+                            }
+                        };
+                        
+                        // Get local node's public key (use empty vec for now - TODO: get from identity manager)
+                        let sender_pubkey = lib_crypto::PublicKey::new(vec![]);
+                        
+                        // Get tx hash bytes
+                        let tx_hash = tx.hash();
+                        let tx_hash_slice = tx_hash.as_bytes();
+                        let mut tx_hash_bytes = [0u8; 32];
+                        tx_hash_bytes.copy_from_slice(tx_hash_slice);
+                        
+                        // Create NewTransaction message
+                        let message = lib_network::types::mesh_message::ZhtpMeshMessage::NewTransaction {
+                            transaction: tx_data,
+                            sender: sender_pubkey,
+                            tx_hash: tx_hash_bytes,
+                            fee: 1000, // TODO: Extract actual fee from transaction
+                        };
+                        
+                        // Serialize message
+                        let serialized = match bincode::serialize(&message) {
+                            Ok(data) => data,
+                            Err(e) => {
+                                error!("Failed to serialize NewTransaction message: {}", e);
+                                continue;
+                            }
+                        };
+                        
+                        // Broadcast to all connected peers
+                        let conns = connections.read().await;
+                        let mut success_count = 0;
+                        
+                        for (peer_key, connection) in conns.iter() {
+                            match &connection.protocol {
+                                lib_network::protocols::NetworkProtocol::UDP => {
+                                    if let Some(ref sock) = *udp_socket.read().await {
+                                        if let Some(peer_addr_str) = &connection.peer_address {
+                                            if let Ok(addr) = peer_addr_str.parse::<SocketAddr>() {
+                                                if sock.send_to(&serialized, addr).await.is_ok() {
+                                                    success_count += 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {} // TODO: Add other protocols as needed
+                            }
+                        }
+                        
+                        debug!("📤 Transaction {} broadcast to {} peers", tx.hash(), success_count);
+                        
+                        // Update metrics
+                        broadcast_metrics.write().await.transactions_sent += 1;
+                        
+                        // Mark as seen (prevent echo)
+                        recent_transactions.write().await.insert(
+                            tx.hash(),
+                            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+                        );
+                    }
+                }
+            }
+            
+            warn!("Blockchain broadcast receiver task terminated");
+        });
+        
+        info!("✓ Blockchain broadcast processing task started");
     }
     
     pub fn set_identity_manager(&mut self, manager: Arc<RwLock<IdentityManager>>) {
@@ -590,6 +1530,9 @@ impl MeshRouter {
         let message_data = bincode::serialize(&message)
             .context("Failed to serialize mesh message")?;
         
+        // Phase 4: Track bytes sent
+        let bytes_sent = message_data.len() as u64;
+        
         // Get peer address
         let peer_address = connection.peer_address.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Peer address not available"))?;
@@ -606,6 +1549,10 @@ impl MeshRouter {
                     // Send via Bluetooth GATT
                     protocol.send_mesh_message(peer_address, &message_data).await?;
                     info!(" Bluetooth message sent successfully");
+                    
+                    // Phase 4: Track bytes sent
+                    self.track_bytes_sent(bytes_sent).await;
+                    
                     Ok(())
                 } else {
                     warn!("Bluetooth protocol not initialized");
@@ -631,6 +1578,10 @@ impl MeshRouter {
                     // Send via UDP
                     sock.send_to(&message_data, peer_addr).await?;
                     info!(" UDP message sent successfully");
+                    
+                    // Phase 4: Track bytes sent
+                    self.track_bytes_sent(bytes_sent).await;
+                    
                     Ok(())
                 } else {
                     warn!("UDP socket not initialized");
@@ -642,6 +1593,86 @@ impl MeshRouter {
                 Err(anyhow::anyhow!("Unsupported protocol: {:?}", protocol))
             }
         }
+    }
+    
+    /// Broadcast a message to all connected peers (excluding optional sender)
+    /// Used for real-time block and transaction propagation
+    pub async fn broadcast_to_peers(
+        &self,
+        message: ZhtpMeshMessage,
+        exclude: Option<&PublicKey>,
+    ) -> Result<usize> {
+        let connections = self.connections.read().await;
+        
+        // Serialize message once for efficiency
+        let serialized = bincode::serialize(&message)
+            .context("Failed to serialize broadcast message")?;
+        
+        let mut success_count = 0;
+        let mut failed_count = 0;
+        
+        for (peer_key, connection) in connections.iter() {
+            // Skip excluded peer (usually the original sender)
+            if let Some(excluded_key) = exclude {
+                if peer_key == excluded_key {
+                    continue;
+                }
+            }
+            
+            // Skip if no peer address
+            let peer_address = match connection.peer_address.as_ref() {
+                Some(addr) => addr,
+                None => {
+                    debug!("Skipping peer without address: {:?}", hex::encode(&peer_key.key_id[0..8.min(peer_key.key_id.len())]));
+                    continue;
+                }
+            };
+            
+            // Send based on protocol type
+            let result = match &connection.protocol {
+                lib_network::protocols::NetworkProtocol::UDP => {
+                    let socket = self.udp_socket.read().await;
+                    if let Some(ref sock) = *socket {
+                        let peer_addr: Result<SocketAddr, _> = peer_address.parse();
+                        match peer_addr {
+                            Ok(addr) => sock.send_to(&serialized, addr).await.map(|_| ()).map_err(|e| anyhow::anyhow!("UDP send error: {}", e)),
+                            Err(e) => Err(anyhow::anyhow!("Invalid address: {}", e)),
+                        }
+                    } else {
+                        Err(anyhow::anyhow!("UDP socket not available"))
+                    }
+                }
+                lib_network::protocols::NetworkProtocol::BluetoothLE | 
+                lib_network::protocols::NetworkProtocol::BluetoothClassic => {
+                    let bluetooth = self.bluetooth_protocol.read().await;
+                    if let Some(ref protocol) = *bluetooth {
+                        protocol.send_mesh_message(peer_address, &serialized).await
+                    } else {
+                        Err(anyhow::anyhow!("Bluetooth protocol not available"))
+                    }
+                }
+                _ => {
+                    debug!("Skipping unsupported protocol: {:?}", connection.protocol);
+                    continue;
+                }
+            };
+            
+            match result {
+                Ok(_) => {
+                    success_count += 1;
+                    debug!("Broadcast to peer {:?} successful", hex::encode(&peer_key.key_id[0..8.min(peer_key.key_id.len())]));
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    debug!("Failed to broadcast to peer {:?}: {}", hex::encode(&peer_key.key_id[0..8.min(peer_key.key_id.len())]), e);
+                }
+            }
+        }
+        
+        if success_count > 0 || failed_count > 0 {
+            info!("📡 Broadcast complete: {} succeeded, {} failed", success_count, failed_count);
+        }
+        Ok(success_count)
     }
     
     /// Initialize ZHTP authentication manager with blockchain identity
@@ -695,57 +1726,51 @@ impl MeshRouter {
             // Handle blockchain-specific messages
             match &mesh_message {
                 ZhtpMeshMessage::BlockchainRequest { requester, request_id, from_height } => {
-                    info!(" Blockchain request received (request_id: {}, from_height: {:?})", request_id, from_height);
+                    info!(" Blockchain request received from {:?} (request_id: {}, from_height: {:?})", 
+                          hex::encode(&requester.key_id[0..8]), request_id, from_height);
                     
-                    // Process via message handler
-                    if let Err(e) = self.message_handler.handle_mesh_message(mesh_message.clone(), requester.clone()).await {
-                        warn!("Failed to handle blockchain request: {}", e);
-                    } else {
-                        info!(" Blockchain request processed, preparing to send data chunks...");
-                        
-                        // Export and send blockchain chunks
-                        match crate::runtime::blockchain_provider::get_global_blockchain().await {
-                            Ok(blockchain_arc) => {
-                                let blockchain_lock = blockchain_arc.read().await;
-                                
-                                // Export blockchain data
-                                match blockchain_lock.export_chain() {
-                                    Ok(blockchain_data) => {
-                                        info!(" Exported {} bytes of blockchain data", blockchain_data.len());
-                                        
-                                        // Get connection info for chunking
-                                        let connections = self.connections.read().await;
-                                        if let Some(connection) = connections.get(requester) {
-                                            // Chunk data based on protocol
-                                            match lib_network::blockchain_sync::BlockchainSyncManager::chunk_blockchain_data_for_protocol(
-                                                *request_id,
-                                                blockchain_data,
-                                                &connection.protocol
-                                            ) {
-                                                Ok(chunk_messages) => {
-                                                    let chunk_count = chunk_messages.len();
-                                                    info!(" Sending {} blockchain chunks to peer", chunk_count);
-                                                    
-                                                    // Send each chunk
-                                                    for chunk_message in chunk_messages {
-                                                        if let Err(e) = self.send_to_peer(requester, chunk_message).await {
-                                                            error!("Failed to send blockchain chunk: {}", e);
-                                                            break;
-                                                        }
+                    // Export and send blockchain chunks directly
+                    match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                        Ok(blockchain_arc) => {
+                            let blockchain_lock = blockchain_arc.read().await;
+                            
+                            // Export blockchain data
+                            match blockchain_lock.export_chain() {
+                                Ok(blockchain_data) => {
+                                    info!(" Exported {} bytes of blockchain data", blockchain_data.len());
+                                    
+                                    // Get connection info for chunking
+                                    let connections = self.connections.read().await;
+                                    if let Some(connection) = connections.get(requester) {
+                                        // Chunk data based on protocol
+                                        match lib_network::blockchain_sync::BlockchainSyncManager::chunk_blockchain_data_for_protocol(
+                                            *request_id,
+                                            blockchain_data,
+                                            &connection.protocol
+                                        ) {
+                                            Ok(chunk_messages) => {
+                                                let chunk_count = chunk_messages.len();
+                                                info!(" Sending {} blockchain chunks to peer", chunk_count);
+                                                
+                                                // Send each chunk
+                                                for chunk_message in chunk_messages {
+                                                    if let Err(e) = self.send_to_peer(requester, chunk_message).await {
+                                                        error!("Failed to send blockchain chunk: {}", e);
+                                                        break;
                                                     }
-                                                    info!(" All blockchain chunks sent successfully");
                                                 }
-                                                Err(e) => error!("Failed to chunk blockchain data: {}", e),
+                                                info!(" All blockchain chunks sent successfully");
                                             }
-                                        } else {
-                                            warn!("No connection found for requester");
+                                            Err(e) => error!("Failed to chunk blockchain data: {}", e),
                                         }
+                                    } else {
+                                        warn!("No connection found for requester");
                                     }
-                                    Err(e) => error!("Failed to export blockchain: {}", e),
                                 }
+                                Err(e) => error!("Failed to export blockchain: {}", e),
                             }
-                            Err(e) => error!("Failed to get global blockchain: {}", e),
                         }
+                        Err(e) => error!("Failed to get global blockchain: {}", e),
                     }
                     
                     return Ok(None);
@@ -771,8 +1796,8 @@ impl MeshRouter {
                                 Ok(blockchain_arc) => {
                                     let mut blockchain_lock = blockchain_arc.write().await;
                                     
-                                    match blockchain_lock.import_chain(complete_data) {
-                                        Ok(()) => {
+                                    match blockchain_lock.evaluate_and_merge_chain(complete_data).await {
+                                        Ok(merge_result) => {
                                             info!(" Blockchain imported successfully from peer");
                                             info!("   New blockchain height: {}", blockchain_lock.get_height());
                                         }
@@ -787,6 +1812,332 @@ impl MeshRouter {
                         }
                         Err(e) => {
                             error!("Failed to process blockchain chunk: {}", e);
+                        }
+                    }
+                    
+                    return Ok(None);
+                }
+                ZhtpMeshMessage::NewBlock { block, sender, height, timestamp } => {
+                    info!("📦 Received NewBlock at height {} from {:?}", height, hex::encode(&sender.key_id[0..8.min(sender.key_id.len())]));
+                    
+                    // Phase 4: Track block latency
+                    self.track_block_latency(*timestamp).await;
+                    
+                    // Phase 4: Track bytes received
+                    self.track_bytes_received(block.len() as u64).await;
+                    
+                    let sender_key = hex::encode(&sender.key_id);
+                    
+                    // Check peer reputation first - reject if banned
+                    {
+                        let mut reputations = self.peer_reputations.write().await;
+                        let reputation = reputations.entry(sender_key.clone()).or_insert_with(|| PeerReputation::new(sender_key.clone()));
+                        
+                        if reputation.is_banned() {
+                            warn!("🚫 Blocked NewBlock from banned peer {} (score: {}, violations: {})", 
+                                  &sender_key[..16], reputation.score, reputation.violations);
+                            self.broadcast_metrics.write().await.blocks_rejected += 1;
+                            return Ok(None);
+                        }
+                    }
+                    
+                    // Rate limiting check
+                    let mut rate_limits = self.peer_rate_limits.write().await;
+                    let rate_limit = rate_limits.entry(sender_key.clone()).or_insert_with(PeerRateLimit::new);
+                    
+                    const MAX_BLOCKS_PER_MINUTE: u32 = 10; // Configurable limit
+                    if !rate_limit.check_and_increment_block(MAX_BLOCKS_PER_MINUTE) {
+                        warn!("⚠️ Rate limit exceeded for peer {} - rejecting block {}", &sender_key[..16], height);
+                        
+                        // Record violation in reputation
+                        let violations = rate_limit.get_violations();
+                        drop(rate_limits);
+                        
+                        let mut reputations = self.peer_reputations.write().await;
+                        if let Some(reputation) = reputations.get_mut(&sender_key) {
+                            reputation.record_violation();
+                            if reputation.is_banned() {
+                                warn!("🚫 Peer {} has been banned (score: {}, violations: {})", 
+                                      &sender_key[..16], reputation.score, reputation.violations);
+                            }
+                        }
+                        
+                        self.broadcast_metrics.write().await.blocks_rejected += 1;
+                        return Ok(None);
+                    }
+                    drop(rate_limits);
+                    
+                    // Update metrics
+                    self.broadcast_metrics.write().await.blocks_received += 1;
+                    
+                    // Check for duplicates using hash of block data
+                    let block_data_hash = {
+                        let hash_bytes = lib_crypto::hash_blake3(&block);
+                        lib_blockchain::types::Hash::from(hash_bytes)
+                    };
+                    
+                    {
+                        let mut recent = self.recent_blocks.write().await;
+                        if recent.contains_key(&block_data_hash) {
+                            debug!("Duplicate block {} ignored", height);
+                            return Ok(None);
+                        }
+                        recent.insert(block_data_hash, *timestamp);
+                    }
+                    
+                    // Deserialize block
+                    let received_block = match lib_blockchain::integration::network_integration::deserialize_block_from_network(&block) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            error!("Failed to deserialize block: {}", e);
+                            return Ok(None);
+                        }
+                    };
+                    
+                    // Validate block height matches
+                    if received_block.height() != *height {
+                        warn!("Block height mismatch: advertised {}, actual {}", height, received_block.height());
+                        return Ok(None);
+                    }
+                    
+                    // Get blockchain and try to add block
+                    match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                        Ok(blockchain_arc) => {
+                            let blockchain = blockchain_arc.read().await;
+                            
+                            // Check if we already have this block
+                            if blockchain.get_height() >= *height {
+                                if let Some(existing) = blockchain.get_block(*height) {
+                                    if existing.header.hash() == received_block.header.hash() {
+                                        debug!("Block {} already in chain", height);
+                                        return Ok(None);
+                                    }
+                                }
+                            }
+                            drop(blockchain); // Release read lock before acquiring write lock
+                            
+                            let mut blockchain = blockchain_arc.write().await;
+                            
+                            // Export as single-block chain for evaluation
+                            let import_data = lib_blockchain::BlockchainImport {
+                                blocks: vec![received_block.clone()],
+                                utxo_set: HashMap::new(),
+                                identity_registry: HashMap::new(),
+                                wallet_registry: HashMap::new(),
+                                token_contracts: HashMap::new(),
+                                web4_contracts: HashMap::new(),
+                                contract_blocks: HashMap::new(),
+                            };
+                            
+                            let serialized = match bincode::serialize(&import_data) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    error!("Failed to serialize block for import: {}", e);
+                                    return Ok(None);
+                                }
+                            };
+                            
+                            // Try to evaluate and merge
+                            match blockchain.evaluate_and_merge_chain(serialized).await {
+                                Ok(merge_result) => {
+                                    match merge_result {
+                                        lib_consensus::ChainMergeResult::ImportedAdopted | 
+                                        lib_consensus::ChainMergeResult::Merged => {
+                                            info!("✅ Block {} accepted into blockchain", height);
+                                            
+                                            // Update reputation - block accepted
+                                            {
+                                                let mut reputations = self.peer_reputations.write().await;
+                                                if let Some(reputation) = reputations.get_mut(&sender_key) {
+                                                    reputation.record_block_accepted();
+                                                }
+                                            }
+                                            
+                                            // Update metrics for relay
+                                            self.broadcast_metrics.write().await.blocks_relayed += 1;
+                                            
+                                            drop(blockchain); // Release lock before broadcasting
+                                            
+                                            // Relay to other peers (excluding sender)
+                                            let relay_message = ZhtpMeshMessage::NewBlock {
+                                                block: block.clone(),
+                                                sender: sender.clone(),
+                                                height: *height,
+                                                timestamp: *timestamp,
+                                            };
+                                            
+                                            if let Err(e) = self.broadcast_to_peers(relay_message, Some(&sender)).await {
+                                                warn!("Failed to relay block to peers: {}", e);
+                                            }
+                                        },
+                                        lib_consensus::ChainMergeResult::LocalKept => {
+                                            debug!("Block {} rejected - local chain is better", height);
+                                            
+                                            // Update reputation - block rejected
+                                            {
+                                                let mut reputations = self.peer_reputations.write().await;
+                                                if let Some(reputation) = reputations.get_mut(&sender_key) {
+                                                    reputation.record_block_rejected();
+                                                }
+                                            }
+                                            
+                                            self.broadcast_metrics.write().await.blocks_rejected += 1;
+                                        },
+                                        lib_consensus::ChainMergeResult::Failed(reason) => {
+                                            warn!("Block {} validation failed: {}", height, reason);
+                                            
+                                            // Update reputation - block rejected
+                                            {
+                                                let mut reputations = self.peer_reputations.write().await;
+                                                if let Some(reputation) = reputations.get_mut(&sender_key) {
+                                                    reputation.record_block_rejected();
+                                                }
+                                            }
+                                            
+                                            self.broadcast_metrics.write().await.blocks_rejected += 1;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to evaluate block {}: {}", height, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to get global blockchain: {}", e);
+                        }
+                    }
+                    
+                    return Ok(None);
+                }
+                ZhtpMeshMessage::NewTransaction { transaction, sender, tx_hash, fee } => {
+                    info!("💸 Received NewTransaction {:?} (fee: {}) from {:?}", 
+                          hex::encode(&tx_hash[0..8]), fee, hex::encode(&sender.key_id[0..8.min(sender.key_id.len())]));
+                    
+                    // Phase 4: Track bytes received
+                    self.track_bytes_received(transaction.len() as u64).await;
+                    
+                    let sender_key = hex::encode(&sender.key_id);
+                    
+                    // Check peer reputation first - reject if banned
+                    {
+                        let mut reputations = self.peer_reputations.write().await;
+                        let reputation = reputations.entry(sender_key.clone()).or_insert_with(|| PeerReputation::new(sender_key.clone()));
+                        
+                        if reputation.is_banned() {
+                            warn!("🚫 Blocked NewTransaction from banned peer {} (score: {})", 
+                                  &sender_key[..16], reputation.score);
+                            self.broadcast_metrics.write().await.transactions_rejected += 1;
+                            return Ok(None);
+                        }
+                    }
+                    
+                    // Rate limiting check
+                    let mut rate_limits = self.peer_rate_limits.write().await;
+                    let rate_limit = rate_limits.entry(sender_key.clone()).or_insert_with(PeerRateLimit::new);
+                    
+                    const MAX_TXS_PER_MINUTE: u32 = 100; // Configurable limit
+                    if !rate_limit.check_and_increment_tx(MAX_TXS_PER_MINUTE) {
+                        warn!("⚠️ Rate limit exceeded for peer {} - rejecting transaction", &sender_key[..16]);
+                        
+                        // Record violation
+                        drop(rate_limits);
+                        let mut reputations = self.peer_reputations.write().await;
+                        if let Some(reputation) = reputations.get_mut(&sender_key) {
+                            reputation.record_violation();
+                        }
+                        
+                        self.broadcast_metrics.write().await.transactions_rejected += 1;
+                        return Ok(None);
+                    }
+                    drop(rate_limits);
+                    
+                    // Update metrics
+                    self.broadcast_metrics.write().await.transactions_received += 1;
+                    
+                    // Check for duplicates
+                    let tx_hash_obj = lib_blockchain::types::Hash::from(*tx_hash);
+                    {
+                        let mut recent = self.recent_transactions.write().await;
+                        let current_time = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        
+                        if recent.contains_key(&tx_hash_obj) {
+                            debug!("Duplicate transaction {:?} ignored", hex::encode(&tx_hash[0..8]));
+                            return Ok(None);
+                        }
+                        recent.insert(tx_hash_obj, current_time);
+                    }
+                    
+                    // Deserialize transaction
+                    let received_tx = match lib_blockchain::integration::network_integration::deserialize_transaction_from_network(&transaction) {
+                        Ok(tx) => tx,
+                        Err(e) => {
+                            error!("Failed to deserialize transaction: {}", e);
+                            return Ok(None);
+                        }
+                    };
+                    
+                    // Validate hash matches
+                    let computed_hash = received_tx.hash();
+                    if computed_hash.as_bytes() != tx_hash {
+                        warn!("Transaction hash mismatch");
+                        return Ok(None);
+                    }
+                    
+                    // Add to mempool
+                    match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                        Ok(blockchain_arc) => {
+                            let mut blockchain = blockchain_arc.write().await;
+                            
+                            match blockchain.add_pending_transaction(received_tx) {
+                                Ok(()) => {
+                                    info!("✅ Transaction {:?} accepted to mempool", hex::encode(&tx_hash[0..8]));
+                                    
+                                    // Update reputation - transaction accepted
+                                    {
+                                        let mut reputations = self.peer_reputations.write().await;
+                                        if let Some(reputation) = reputations.get_mut(&sender_key) {
+                                            reputation.record_tx_accepted();
+                                        }
+                                    }
+                                    
+                                    // Update metrics for relay
+                                    self.broadcast_metrics.write().await.transactions_relayed += 1;
+                                    
+                                    drop(blockchain); // Release lock before broadcasting
+                                    
+                                    // Relay to other peers (excluding sender)
+                                    let relay_message = ZhtpMeshMessage::NewTransaction {
+                                        transaction: transaction.clone(),
+                                        sender: sender.clone(),
+                                        tx_hash: *tx_hash,
+                                        fee: *fee,
+                                    };
+                                    
+                                    if let Err(e) = self.broadcast_to_peers(relay_message, Some(&sender)).await {
+                                        warn!("Failed to relay transaction to peers: {}", e);
+                                    }
+                                },
+                                Err(e) => {
+                                    debug!("Transaction {:?} rejected from mempool: {}", hex::encode(&tx_hash[0..8]), e);
+                                    
+                                    // Update reputation - transaction rejected
+                                    {
+                                        let mut reputations = self.peer_reputations.write().await;
+                                        if let Some(reputation) = reputations.get_mut(&sender_key) {
+                                            reputation.record_tx_rejected();
+                                        }
+                                    }
+                                    
+                                    self.broadcast_metrics.write().await.transactions_rejected += 1;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to get global blockchain: {}", e);
                         }
                     }
                     
@@ -1169,7 +2520,7 @@ impl MeshRouter {
                 }
             }
         } else if mesh_req.uri == "/api/v1/wallet/create" && mesh_req.method.to_uppercase() == "POST" {
-            info!("💳 Creating standalone wallet via UDP mesh");
+            info!("💳 Creating identity-linked wallet via UDP mesh");
             
             // Extract wallet creation request data
             let request_data = if let Some(body_data) = zhtp_request.get("body") {
@@ -1203,10 +2554,10 @@ impl MeshRouter {
                 })
             };
             
-            // Handle standalone wallet creation
+            // Handle identity-linked wallet creation
             match self.create_standalone_wallet_direct(request_data).await {
                 Ok(wallet_result) => {
-                    info!("Standalone wallet created successfully");
+                    info!("Identity-linked wallet created successfully");
                     
                     let wallet_data = serde_json::to_string(&wallet_result).unwrap_or_default();
                     let response_json = serde_json::json!({
@@ -1230,7 +2581,7 @@ impl MeshRouter {
                     Ok(Some(serde_json::to_vec(&mesh_response)?))
                 },
                 Err(e) => {
-                    warn!("Standalone wallet creation failed: {}", e);
+                    warn!("Identity-linked wallet creation failed: {}", e);
                     self.create_error_mesh_response(500, &format!("Wallet creation failed: {}", e)).await
                 }
             }
@@ -1661,12 +3012,17 @@ impl MeshRouter {
         }))
     }
     
-    /// Create standalone wallet (not tied to DID) using WalletManager
+    /// Create identity-linked wallet using WalletManager (enforces identity requirement)
     async fn create_standalone_wallet_direct(&self, request_data: serde_json::Value) -> Result<serde_json::Value> {
         // Extract wallet parameters
         let wallet_name = request_data.get("wallet_name")
             .and_then(|v| v.as_str())
-            .unwrap_or("Standalone Wallet")
+            .unwrap_or("New Wallet")
+            .to_string();
+            
+        let node_name = request_data.get("node_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("API User")
             .to_string();
             
         let wallet_type_str = request_data.get("wallet_type")
@@ -1677,75 +3033,78 @@ impl MeshRouter {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         
-        info!("💳 Creating standalone wallet: {}", wallet_name);
+        info!("💳 Creating user identity with wallet: {} for node: {}", wallet_name, node_name);
         
-        // Create standalone wallet manager (no owner identity)
-        let mut wallet_manager = lib_identity::wallets::WalletManager::new_standalone();
-        
-        // Convert string to WalletType enum
-        let wallet_type = match wallet_type_str {
-            "Primary" => lib_identity::wallets::WalletType::Primary,
-            "UBI" => lib_identity::wallets::WalletType::UBI,
-            "Savings" => lib_identity::wallets::WalletType::Savings,
-            "DAO" => lib_identity::wallets::WalletType::NonProfitDAO,
-            _ => lib_identity::wallets::WalletType::Standard,
-        };
-        
-        // Create wallet with seed phrase
-        let (wallet_id, seed_phrase) = wallet_manager.create_wallet_with_seed_phrase(
-            wallet_type,
+        // Create user identity with wallet (enforces identity requirement)
+        let (user_identity_id, wallet_id, seed_phrase) = lib_identity::create_user_identity_with_wallet(
+            node_name.clone(),
             wallet_name.clone(),
             wallet_alias.clone()
         ).await?;
         
-        info!("Created standalone wallet with ID: {}", hex::encode(&wallet_id.0[..8]));
+        info!("✓ User identity created: {}", hex::encode(&user_identity_id.0[..8]));
         
-        // Record standalone wallet on blockchain
-        self.record_standalone_wallet_on_blockchain(&wallet_id, &wallet_type_str, &wallet_name, &wallet_alias, &seed_phrase).await
-            .unwrap_or_else(|e| warn!("Failed to record standalone wallet on blockchain: {}", e));
+        // Create node device identity owned by the user
+        info!("⚙ Creating node device identity...");
+        let node_device_name = format!("{}-device", node_name);
+        let identity_id = lib_identity::create_node_device_identity(
+            user_identity_id.clone(),
+            wallet_id.clone(),
+            node_device_name,
+        ).await?;
         
-        // Distribute wallet info to DHT
-        self.distribute_standalone_wallet_to_dht(&wallet_id, &wallet_type_str, &wallet_name).await
-            .unwrap_or_else(|e| warn!("Failed to distribute standalone wallet to DHT: {}", e));
+        info!("Created complete identity setup - User: {}, Node Device: {}, Wallet: {}", 
+            hex::encode(&user_identity_id.0[..8]),
+            hex::encode(&identity_id.0[..8]),
+            hex::encode(&wallet_id.0[..8]));
         
-        // Return wallet creation result
+        // Record identity-wallet pair on blockchain
+        self.record_standalone_wallet_on_blockchain(&user_identity_id, &wallet_id, &wallet_type_str, &wallet_name, &wallet_alias, &seed_phrase).await
+            .unwrap_or_else(|e| warn!("Failed to record identity-wallet on blockchain: {}", e));
+        
+        // Distribute identity-wallet info to DHT
+        self.distribute_standalone_wallet_to_dht(&user_identity_id, &wallet_id, &wallet_type_str, &wallet_name).await
+            .unwrap_or_else(|e| warn!("Failed to distribute identity-wallet to DHT: {}", e));
+        
+        // Return wallet creation result with identity
         Ok(serde_json::json!({
             "success": true,
+            "user_identity_id": user_identity_id,
+            "node_identity_id": identity_id,
             "wallet_id": wallet_id,
             "wallet_type": wallet_type_str,
             "wallet_name": wallet_name,
+            "node_name": node_name,
             "alias": wallet_alias,
-            "seed_phrase": {
-                "words": seed_phrase.words,
-                "word_count": seed_phrase.word_count,
-                "language": seed_phrase.language
-            },
+            "seed_phrase": seed_phrase,
             "created_at": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            "standalone": true,
+            "identity_linked": true,
             "blockchain_recorded": true,
             "dht_distributed": true
         }))
     }
     
-    /// Record standalone wallet on blockchain 
+    /// Record identity-wallet pair on blockchain 
     async fn record_standalone_wallet_on_blockchain(
-        &self, 
+        &self,
+        identity_id: &lib_identity::IdentityId,
         wallet_id: &lib_identity::wallets::WalletId,
         wallet_type: &str,
         wallet_name: &str,
         wallet_alias: &Option<String>,
-        seed_phrase: &lib_identity::recovery::RecoveryPhrase
+        seed_phrase: &str
     ) -> Result<()> {
-        info!("Recording standalone wallet on blockchain...");
+        info!("Recording identity-linked wallet on blockchain...");
         
         let blockchain = lib_blockchain::get_shared_blockchain().await?;
         let mut blockchain_guard = blockchain.write().await;
         
         // Create seed commitment hash for blockchain verification
-        let seed_commitment = lib_crypto::hash_blake3(&seed_phrase.words.join(" ").as_bytes());
+        // seed_phrase is already a String (20 words joined by spaces)
+        let seed_commitment = lib_crypto::hash_blake3(seed_phrase.as_bytes());
         
         let wallet_data = lib_blockchain::WalletTransactionData {
             wallet_id: lib_blockchain::Hash::from_slice(&wallet_id.0),
@@ -1753,24 +3112,25 @@ impl MeshRouter {
             wallet_name: wallet_name.to_string(),
             alias: wallet_alias.clone(),
             public_key: vec![0u8; 32], // Generate proper public key
-            owner_identity_id: None, // No owner for standalone wallets
+            owner_identity_id: Some(lib_blockchain::Hash::from_slice(&identity_id.0)), // Identity-linked
             seed_commitment: lib_blockchain::Hash::from_slice(&seed_commitment),
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs(),
-            registration_fee: 25, // Lower fee for standalone wallets
+            registration_fee: 25,
             capabilities: 0x0F, // Basic capabilities
-            initial_balance: 0, // No initial balance for standalone
+            initial_balance: 0,
         };
         
         let _tx_hash = blockchain_guard.register_wallet(wallet_data)?;
-        info!("Standalone wallet recorded on blockchain");
+        info!("Identity-linked wallet recorded on blockchain");
         Ok(())
     }
     
-    /// Distribute standalone wallet to DHT
+    /// Distribute identity-wallet pair to DHT
     async fn distribute_standalone_wallet_to_dht(
         &self,
+        identity_id: &lib_identity::IdentityId,
         wallet_id: &lib_identity::wallets::WalletId, 
         wallet_type: &str,
         wallet_name: &str
@@ -1779,11 +3139,14 @@ impl MeshRouter {
             let mut dht = dht_client.write().await;
             
             let wallet_info = serde_json::json!({
+                "identity_id": hex::encode(&identity_id.0),
                 "wallet_id": hex::encode(&wallet_id.0),
                 "wallet_type": wallet_type,
                 "wallet_name": wallet_name,
-                "standalone": true,
-                "public_endpoint": format!("zhtp://wallet.{}.zhtp/", hex::encode(&wallet_id.0[..8])),
+                "identity_linked": true,
+                "public_endpoint": format!("zhtp://identity.{}.wallet.{}.zhtp/", 
+                    hex::encode(&identity_id.0[..8]),
+                    hex::encode(&wallet_id.0[..8])),
                 "capabilities": ["receive"], // Public capabilities only
                 "created_at": std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
@@ -1791,14 +3154,16 @@ impl MeshRouter {
             });
             
             let wallet_info_bytes = serde_json::to_vec(&wallet_info)?;
-            let path = format!("/standalone/{}", hex::encode(&wallet_id.0[..8]));
+            let path = format!("/identity/{}/wallet/{}", 
+                hex::encode(&identity_id.0[..8]),
+                hex::encode(&wallet_id.0[..8]));
             dht.store_content(
                 "wallet.zhtp",
                 &path,
                 wallet_info_bytes
             ).await?;
             
-            info!("Standalone wallet distributed to DHT");
+            info!("Identity-wallet pair distributed to DHT");
         }
         Ok(())
     }
@@ -2554,8 +3919,11 @@ pub struct BluetoothRouter {
 pub struct BluetoothClassicRouter {
     connected_devices: Arc<RwLock<HashMap<String, String>>>,
     node_id: [u8; 32],
-    protocol: Arc<RwLock<Option<lib_network::protocols::bluetooth_classic::BluetoothClassicProtocol>>>,
+    protocol: Arc<RwLock<Option<lib_network::protocols::bluetooth::classic::BluetoothClassicProtocol>>>,
 }
+
+// Type alias for cleaner code
+type ClassicProtocol = lib_network::protocols::bluetooth::classic::BluetoothClassicProtocol;
 
 impl WiFiRouter {
     pub fn new() -> Self {
@@ -2658,9 +4026,13 @@ impl BluetoothRouter {
         info!(" GATT message channel connected to BluetoothRouter");
         
         // Initialize Bluetooth advertising for ZHTP service
+        // Note: Windows COM threading handled within the Bluetooth implementation
         if let Err(e) = bluetooth_protocol.start_advertising().await {
             warn!("Bluetooth advertising failed to start: {}", e);
-            return Err(anyhow::anyhow!("Bluetooth advertising initialization failed: {}", e));
+            // Don't fail the entire initialization if Bluetooth fails
+            warn!("Continuing without Bluetooth advertising support");
+        } else {
+            info!(" Bluetooth advertising started successfully");
         }
         
         // Store the protocol instance
@@ -2670,7 +4042,7 @@ impl BluetoothRouter {
         let connected_devices = self.connected_devices.clone();
         tokio::spawn(async move {
             while let Some(gatt_message) = gatt_rx.recv().await {
-                use lib_network::protocols::bluetooth::GattMessage;
+                use lib_network::protocols::bluetooth::gatt::GattMessage;
                 match gatt_message {
                     GattMessage::MeshHandshake(data) => {
                         info!(" GATT: Received mesh handshake ({} bytes)", data.len());
@@ -2871,7 +4243,7 @@ impl BluetoothClassicRouter {
             return Err(anyhow::anyhow!("Windows Bluetooth feature not enabled"));
         }
         
-        use lib_network::protocols::bluetooth_classic::BluetoothClassicProtocol;
+        use lib_network::protocols::bluetooth::classic::BluetoothClassicProtocol;
         use lib_crypto::PublicKey;
         
         // Create Bluetooth Classic protocol instance
@@ -2987,7 +4359,8 @@ impl BluetoothClassicRouter {
     
     /// Check if Bluetooth Classic is advertising
     pub async fn is_advertising(&self) -> bool {
-        self.protocol.read().await.is_some()
+        let protocol_guard: tokio::sync::RwLockReadGuard<Option<ClassicProtocol>> = self.protocol.read().await;
+        protocol_guard.is_some()
     }
     
     /// Discover and connect to Bluetooth Classic peers
@@ -2995,8 +4368,8 @@ impl BluetoothClassicRouter {
     pub async fn discover_and_connect_peers(&self, mesh_router: &MeshRouter) -> Result<usize> {
         info!(" Starting Bluetooth Classic peer discovery...");
         
-        let protocol_guard = self.protocol.read().await;
-        let protocol = match protocol_guard.as_ref() {
+        let protocol_guard: tokio::sync::RwLockReadGuard<Option<ClassicProtocol>> = self.protocol.read().await;
+        let protocol: &ClassicProtocol = match protocol_guard.as_ref() {
             Some(p) => p,
             None => {
                 warn!("Bluetooth Classic protocol not initialized");
@@ -3005,7 +4378,7 @@ impl BluetoothClassicRouter {
         };
         
         // Step 1: Discover paired devices
-        let devices = match protocol.discover_paired_devices().await {
+        let devices: Vec<lib_network::protocols::bluetooth::classic::BluetoothDevice> = match protocol.discover_paired_devices().await {
             Ok(devs) => {
                 info!(" Discovered {} paired Bluetooth devices", devs.len());
                 devs
@@ -3225,6 +4598,67 @@ pub struct ZhtpUnifiedServer {
 }
 
 impl ZhtpUnifiedServer {
+    /// Check if an address is a self-connection from our own node trying to connect to itself
+    /// This prevents multi-NIC self-loops but ALLOWS browser connections from localhost
+    fn is_self_connection(addr: &std::net::SocketAddr) -> bool {
+        let ip = addr.ip();
+        
+        // IMPORTANT: Do NOT block loopback (127.0.0.1) - that's how browsers connect!
+        // We only want to block our actual network IP connecting to itself
+        
+        // Check if the source IP matches our local network IP
+        // (This prevents Ethernet connecting to WiFi on same machine)
+        if let Ok(local_ip) = local_ip_address::local_ip() {
+            // Only block if source IP matches our non-loopback local IP
+            if !local_ip.is_loopback() && ip == local_ip {
+                return true;
+            }
+        }
+        
+        // Check for link-local auto-assigned addresses (169.254.x.x, fe80::/10)
+        // These can cause issues on multi-NIC systems
+        match ip {
+            std::net::IpAddr::V4(ipv4) => {
+                // 169.254.x.x is link-local (auto-assigned)
+                if ipv4.octets()[0] == 169 && ipv4.octets()[1] == 254 {
+                    // Get our local IP to compare
+                    if let Ok(local_ip) = local_ip_address::local_ip() {
+                        if std::net::IpAddr::V4(ipv4) == local_ip {
+                            return true;
+                        }
+                    }
+                }
+            }
+            std::net::IpAddr::V6(ipv6) => {
+                // fe80::/10 is link-local
+                if ipv6.segments()[0] & 0xffc0 == 0xfe80 {
+                    // Get our local IP to compare
+                    if let Ok(local_ip) = local_ip_address::local_ip() {
+                        if std::net::IpAddr::V6(ipv6) == local_ip {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        false
+    }
+    
+    /// Get broadcast metrics from mesh router
+    pub async fn get_broadcast_metrics(&self) -> BroadcastMetrics {
+        self.mesh_router.get_broadcast_metrics().await
+    }
+    
+    /// Get the mesh router as an Arc for global provider access
+    pub fn get_mesh_router_arc(&self) -> Arc<MeshRouter> {
+        // MeshRouter is already Arc-wrapped internally, but we need to clone the Arc to return
+        // Since MeshRouter isn't stored as Arc in the struct, we need to wrap it
+        // For now, we'll need to refactor mesh_router to be Arc<MeshRouter> instead of MeshRouter
+        // As a temporary solution, return a reference through the methods
+        Arc::new(self.mesh_router.clone())
+    }
+    
     /// Create new unified server with comprehensive backend integration
     pub async fn new(
         blockchain: Arc<RwLock<Blockchain>>,
@@ -3251,6 +4685,18 @@ impl ZhtpUnifiedServer {
         
         // Set identity manager on mesh router for direct UDP access
         mesh_router.set_identity_manager(identity_manager.clone());
+        
+        // Create blockchain broadcast channel for real-time sync
+        let (broadcast_sender, broadcast_receiver) = tokio::sync::mpsc::unbounded_channel();
+        
+        // Configure blockchain to use broadcast channel
+        {
+            let mut blockchain_write = blockchain.write().await;
+            blockchain_write.set_broadcast_channel(broadcast_sender);
+        }
+        
+        // Configure mesh router to receive broadcasts
+        mesh_router.set_broadcast_receiver(broadcast_receiver).await;
         
         // Initialize WiFi Direct protocol
         if let Err(e) = wifi_router.initialize().await {
@@ -3321,9 +4767,13 @@ impl ZhtpUnifiedServer {
         );
         http_router.register_handler("/api/v1/identity".to_string(), identity_handler);
         
-        // Storage operations
+        // Wallet content ownership manager (shared across handlers)
+        let wallet_content_manager = Arc::new(RwLock::new(lib_storage::WalletContentManager::new()));
+        
+        // Storage operations (with wallet content manager for ownership tracking)
         let storage_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             StorageHandler::new(storage.clone())
+                .with_wallet_manager(Arc::clone(&wallet_content_manager))
         );
         http_router.register_handler("/api/v1/storage".to_string(), storage_handler);
         
@@ -3348,6 +4798,20 @@ impl ZhtpUnifiedServer {
         // Web4 domain and content (handle async creation first)
         let web4_handler = Web4Handler::new().await?;
         let web4_manager = web4_handler.get_web4_manager();
+        let wallet_content_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::WalletContentHandler::new(Arc::clone(&wallet_content_manager))
+        );
+        http_router.register_handler("/api/wallet".to_string(), Arc::clone(&wallet_content_handler));
+        http_router.register_handler("/api/content".to_string(), wallet_content_handler);
+        
+        // Marketplace handler for buying/selling content (shares managers with wallet content)
+        let marketplace_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::MarketplaceHandler::new(
+                Arc::clone(&wallet_content_manager),
+                Arc::clone(&blockchain)
+            )
+        );
+        http_router.register_handler("/api/marketplace".to_string(), marketplace_handler);
         
         // DNS resolution for .zhtp domains (connect to Web4Manager)
         let mut dns_handler = DnsHandler::new();
@@ -3526,7 +4990,8 @@ impl ZhtpUnifiedServer {
         info!(" Starting Bluetooth Classic RFCOMM mesh handler...");
         
         // Check if protocol is initialized (should be done in run_pure_mesh already)
-        let is_initialized = self.bluetooth_classic_router.protocol.read().await.is_some();
+        let protocol_guard: tokio::sync::RwLockReadGuard<Option<ClassicProtocol>> = self.bluetooth_classic_router.protocol.read().await;
+        let is_initialized = protocol_guard.is_some();
         
         if !is_initialized {
             warn!("Bluetooth Classic protocol not initialized - skipping handler");
@@ -3623,6 +5088,12 @@ impl ZhtpUnifiedServer {
             while *is_running.read().await {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
+                        // Skip self-connections
+                        if Self::is_self_connection(&addr) {
+                            debug!("⏭️ Skipping self-connection from {}", addr);
+                            continue;
+                        }
+                        
                         debug!(" New TCP connection from: {}", addr);
                         
                         let http_router = http_router.clone();
@@ -3779,6 +5250,12 @@ impl ZhtpUnifiedServer {
             while *is_running.read().await {
                 match socket.recv_from(&mut buffer).await {
                     Ok((len, addr)) => {
+                        // Skip self-connections
+                        if Self::is_self_connection(&addr) {
+                            debug!("⏭️ Skipping self-connection from {}", addr);
+                            continue;
+                        }
+                        
                         debug!(" UDP packet from: {} ({} bytes)", addr, len);
                         
                         let data = &buffer[..len];
@@ -3951,10 +5428,22 @@ impl Clone for MeshRouter {
             encryption_manager: self.encryption_manager.clone(),
             zhtp_auth_manager: self.zhtp_auth_manager.clone(),
             encryption_sessions: self.encryption_sessions.clone(),
-            message_handler: self.message_handler.clone(),
             sync_manager: self.sync_manager.clone(),
             bluetooth_protocol: self.bluetooth_protocol.clone(),
             udp_socket: self.udp_socket.clone(),
+            recent_blocks: self.recent_blocks.clone(),
+            recent_transactions: self.recent_transactions.clone(),
+            broadcast_receiver: self.broadcast_receiver.clone(),
+            peer_rate_limits: self.peer_rate_limits.clone(),
+            broadcast_metrics: self.broadcast_metrics.clone(),
+            peer_reputations: self.peer_reputations.clone(),
+            // Phase 4: Advanced monitoring
+            performance_metrics: self.performance_metrics.clone(),
+            active_alerts: self.active_alerts.clone(),
+            alert_thresholds: self.alert_thresholds.clone(),
+            metrics_history: self.metrics_history.clone(),
+            latency_samples_blocks: self.latency_samples_blocks.clone(),
+            latency_samples_txs: self.latency_samples_txs.clone(),
         }
     }
 }

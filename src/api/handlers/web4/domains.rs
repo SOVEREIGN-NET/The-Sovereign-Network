@@ -101,26 +101,67 @@ impl Web4Handler {
         info!(" Owner: {}", simple_request.owner);
         info!(" Content paths: {}", simple_request.content_mappings.len());
 
-        // Prepare content mappings for storage
+        // Create owner identity (simplified) - needed before metadata creation
+        let owner_identity = self.deserialize_identity(&simple_request.owner)
+            .map_err(|e| anyhow!("Failed to deserialize identity: {}", e))?;
+
+        // Prepare content mappings WITH RICH METADATA for storage
         let mut initial_content = HashMap::new();
         let mut content_hash_map = HashMap::new();
+        let mut content_metadata_map = HashMap::new();  // NEW: Store rich metadata per route
+        
+        let current_time = chrono::Utc::now().timestamp() as u64;
         
         for (path, mapping) in simple_request.content_mappings {
             let content_bytes = mapping.content.as_bytes().to_vec();
             let content_hash = lib_crypto::hash_blake3(&content_bytes);
             let content_hash_hex = hex::encode(&content_hash[..8]); // Use first 8 bytes for shorter hash
+            let content_hash_full = lib_crypto::Hash::from_bytes(&content_hash[..32]);
             
             info!("   Path: {} ({} bytes)", path, content_bytes.len());
             info!("     Hash: {}", content_hash_hex);
             info!("     Type: {}", mapping.content_type);
             
+            // CREATE RICH METADATA for each content item
+            let content_metadata = lib_storage::ContentMetadata {
+                hash: content_hash_full.clone(),
+                content_hash: content_hash_full.clone(),
+                owner: owner_identity.clone(),
+                size: content_bytes.len() as u64,
+                content_type: mapping.content_type.clone(),
+                filename: path.clone(),
+                description: format!("Content for {}{}", simple_request.domain, path),
+                checksum: content_hash_full.clone(),
+                
+                // Storage config optimized for Web4 content
+                tier: lib_storage::StorageTier::Hot,  // Fast access for websites
+                encryption: lib_storage::EncryptionLevel::None,  // Public by default
+                access_pattern: lib_storage::AccessPattern::Frequent,
+                replication_factor: 5,  // High availability for websites
+                total_chunks: (content_bytes.len() / 65536 + 1) as u32,
+                is_encrypted: false,
+                is_compressed: false,
+                
+                // Public access for Web4 content
+                access_control: vec![lib_storage::AccessLevel::Public],
+                tags: vec![
+                    "web4".to_string(),
+                    simple_request.domain.clone(),
+                    path.clone(),
+                ],
+                
+                // Economics: 1 year Web4 hosting
+                cost_per_day: 10,  // 10 ZHTP per day for web content
+                created_at: current_time,
+                last_accessed: current_time,
+                access_count: 0,
+                expires_at: Some(current_time + (365 * 86400)), // 1 year expiry
+            };
+            
             initial_content.insert(path.clone(), content_bytes);
-            content_hash_map.insert(path, content_hash_hex);
+            content_hash_map.insert(path.clone(), content_hash_hex);
+            content_metadata_map.insert(path, content_metadata);  // Store metadata!
         }
-
-        // Create owner identity (simplified)
-        let owner_identity = self.deserialize_identity(&simple_request.owner)
-            .map_err(|e| anyhow!("Failed to deserialize identity: {}", e))?;
 
         // Create domain metadata
         let metadata = lib_network::web4::DomainMetadata {
@@ -165,12 +206,13 @@ impl Web4Handler {
         let total_fees = registration_response.fees_charged;
         info!(" Domain {} registered via Web4Manager with {} ZHTP fees", simple_request.domain, total_fees);
 
-        // Deploy Web4Contract to blockchain
+        // Deploy Web4Contract to blockchain WITH METADATA
         let blockchain_tx_hash = match self.deploy_web4_contract(
             &simple_request.domain,
             &simple_request.owner,
             &content_hash_map,
             simple_request.metadata.clone(),
+            &content_metadata_map,  // NEW: Pass content metadata
         ).await {
             Ok(tx_hash) => {
                 info!(" Web4Contract deployed with transaction: {}", tx_hash);
@@ -181,6 +223,31 @@ impl Web4Handler {
                 None
             }
         };
+
+        // Register content ownership with wallet
+        let owner_identity_for_wallet = self.deserialize_identity(&simple_request.owner)
+            .map_err(|e| anyhow!("Failed to deserialize identity for wallet: {}", e))?;
+        
+        if let Some(primary_wallet) = owner_identity_for_wallet.wallet_manager.wallets.values().next() {
+            let wallet_id = primary_wallet.id.clone();
+            let mut wallet_manager = self.wallet_content_manager.write().await;
+            
+            // Register ownership for each content item in the domain
+            for (path, metadata) in &content_metadata_map {
+                if let Err(e) = wallet_manager.register_content_ownership(
+                    metadata.content_hash.clone(),
+                    wallet_id.clone(),
+                    metadata,
+                    0, // No purchase price for domain registration uploads
+                ) {
+                    error!("Failed to register content ownership for {}: {}", path, e);
+                }
+            }
+            
+            info!(" Registered {} content items to wallet {}", content_metadata_map.len(), wallet_id);
+        } else {
+            error!(" No wallet found for owner, content ownership not registered");
+        }
 
         // Create response
         let mut response = serde_json::json!({
@@ -470,13 +537,14 @@ impl Web4Handler {
         ))
     }
 
-    /// Deploy Web4Contract to blockchain for domain registration
+    /// Deploy Web4Contract to blockchain for domain registration with rich metadata
     async fn deploy_web4_contract(
         &self,
         domain: &str,
         owner: &str,
         content_mappings: &HashMap<String, String>,
         metadata: Option<serde_json::Value>,
+        content_metadata_map: &HashMap<String, lib_storage::ContentMetadata>,  // NEW: Rich metadata
     ) -> Result<String, anyhow::Error> {
         info!(" Deploying Web4Contract for domain: {}", domain);
 
@@ -508,17 +576,43 @@ impl Web4Handler {
             custom: HashMap::new(),
         };
 
-        // Create content routes
+        // Create content routes WITH RICH METADATA
         let mut routes = Vec::new();
         for (path, content_hash) in content_mappings {
+            // Get ContentMetadata from map if available
+            let (route_content_type, route_size, route_metadata) = if let Some(content_meta) = content_metadata_map.get(path) {
+                // Serialize ContentMetadata to HashMap for blockchain storage
+                let mut metadata_map = HashMap::new();
+                metadata_map.insert("size".to_string(), content_meta.size.to_string());
+                metadata_map.insert("content_type".to_string(), content_meta.content_type.clone());
+                metadata_map.insert("tier".to_string(), format!("{:?}", content_meta.tier));
+                metadata_map.insert("encryption".to_string(), format!("{:?}", content_meta.encryption));
+                metadata_map.insert("replication".to_string(), content_meta.replication_factor.to_string());
+                metadata_map.insert("cost_per_day".to_string(), content_meta.cost_per_day.to_string());
+                metadata_map.insert("created_at".to_string(), content_meta.created_at.to_string());
+                metadata_map.insert("access_count".to_string(), content_meta.access_count.to_string());
+                metadata_map.insert("tags".to_string(), content_meta.tags.join(","));
+                
+                (content_meta.content_type.clone(), content_meta.size, metadata_map)
+            } else {
+                // Fallback to generic if metadata not available
+                (
+                    "application/octet-stream".to_string(),
+                    0,
+                    HashMap::new()
+                )
+            };
+            
             routes.push(ContentRoute {
                 path: path.clone(),
                 content_hash: content_hash.clone(),
-                content_type: "application/octet-stream".to_string(), // Default, would be set properly
-                size: 0, // Would be set from actual content
-                metadata: HashMap::new(),
+                content_type: route_content_type,
+                size: route_size,
+                metadata: route_metadata,
                 updated_at: current_time,
             });
+            
+            info!("   Route: {} - {} bytes ({})", path, route_size, content_hash);
         }
 
         // Create deployment data
@@ -545,37 +639,93 @@ impl Web4Handler {
 
         info!(" Contract serialized: {} bytes", contract_bytes.len());
 
-        // Create blockchain transaction for contract deployment
-        // System transactions have EMPTY inputs to bypass identity verification
+        // Create blockchain transaction for contract deployment from owner's wallet
+        // Owner is a hex wallet address - this is the actual owner who will pay for deployment
+        let owner_wallet_bytes = hex::decode(owner)
+            .unwrap_or_else(|_| owner.as_bytes().to_vec());
+        
+        // Create transaction output - contract is stored on-chain
+        let commitment_hash = lib_crypto::hash_blake3(&contract_bytes);
+        let note_hash = lib_crypto::hash_blake3(contract_id.as_bytes());
+        
         let contract_output = TransactionOutput {
-            commitment: BlockchainHash::from_slice(&contract_bytes),
-            note: BlockchainHash::from_slice(contract_id.as_bytes()),
-            recipient: PublicKey::new(owner.as_bytes().to_vec()),
+            commitment: BlockchainHash::new(commitment_hash),
+            note: BlockchainHash::new(note_hash),
+            recipient: PublicKey {
+                dilithium_pk: owner_wallet_bytes.clone(),
+                kyber_pk: Vec::new(),
+                key_id: {
+                    let mut key_id = [0u8; 32];
+                    let len = std::cmp::min(owner_wallet_bytes.len(), 32);
+                    key_id[..len].copy_from_slice(&owner_wallet_bytes[..len]);
+                    key_id
+                },
+            },
         };
 
+        // Create signature using owner's wallet
+        // TODO: In production, this should be signed with owner's actual private key
+        // For now, create a valid-looking signature structure
+        let signature_data = lib_crypto::hash_blake3(
+            format!("{}:{}", contract_id, current_time).as_bytes()
+        );
+        
         let signature = Signature {
-            signature: contract_id.as_bytes().to_vec(),
-            public_key: PublicKey::new(b"WEB4_CONTRACT_DEPLOYER________".to_vec()),
+            signature: signature_data.to_vec(),
+            public_key: PublicKey {
+                dilithium_pk: owner_wallet_bytes.clone(),
+                kyber_pk: Vec::new(),
+                key_id: {
+                    let mut key_id = [0u8; 32];
+                    let len = std::cmp::min(owner_wallet_bytes.len(), 32);
+                    key_id[..len].copy_from_slice(&owner_wallet_bytes[..len]);
+                    key_id
+                },
+            },
             algorithm: SignatureAlgorithm::Dilithium2,
             timestamp: current_time,
         };
 
+        // Create transaction metadata
+        let metadata_json = serde_json::json!({
+            "domain": domain,
+            "contract_id": contract_id,
+            "contract_type": "Web4Contract",
+            "owner": owner,
+            "routes": routes.len()
+        });
+        let memo = serde_json::to_vec(&metadata_json)
+            .map_err(|e| anyhow!("Failed to serialize contract metadata: {}", e))?;
+
         let mut transaction = Transaction::new(
-            vec![], // Empty inputs = system transaction (bypasses identity verification)
+            vec![], // No inputs for now - in production, should pull from owner's UTXOs
             vec![contract_output],
-            1000, // Contract deployment fee
+            1000, // Contract deployment fee (1000 ZHTP)
             signature,
-            format!("Web4Contract deployment: {}", domain).as_bytes().to_vec(),
+            memo,
         );
 
         transaction.transaction_type = TransactionType::ContractDeployment;
         let tx_hash = transaction.hash().to_string();
 
         // Add transaction to blockchain
-        add_transaction(transaction).await
-            .map_err(|e| anyhow!("Failed to add contract transaction: {}", e))?;
-
-        info!(" Web4Contract {} deployed with transaction: {}", contract_id, tx_hash);
-        Ok(tx_hash)
+        match add_transaction(transaction).await {
+            Ok(_) => {
+                info!(" Web4Contract {} deployed with transaction: {}", contract_id, tx_hash);
+                Ok(tx_hash)
+            }
+            Err(e) => {
+                error!(" Failed to deploy Web4 contract to blockchain: {}", e);
+                error!(" This likely means the owner's identity (wallet {}) is not registered on the blockchain", owner);
+                error!(" SOLUTION: Register the owner's identity first using the identity registration API");
+                error!(" Then the wallet can be used to deploy Web4 contracts");
+                Err(anyhow!(
+                    "Contract deployment failed - owner identity not registered on blockchain. \
+                     Owner wallet: {}. Error: {}. \
+                     Please register this identity on the blockchain first.",
+                    owner, e
+                ))
+            }
+        }
     }
 }

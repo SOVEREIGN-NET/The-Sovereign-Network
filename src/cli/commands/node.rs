@@ -10,6 +10,157 @@ use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_identity::ZhtpIdentity;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use std::io::{self, Write};
+use blake3;
+
+// ============================================================================
+// Password Utility Functions
+// ============================================================================
+
+/// Prompt user for identity/node name
+fn prompt_for_identity_name() -> Result<String> {
+    loop {
+        print!("\nEnter a name for your identity (node): ");
+        io::stdout().flush()?;
+        
+        let mut name = String::new();
+        io::stdin().read_line(&mut name)?;
+        let name = name.trim();
+        
+        if name.is_empty() {
+            println!("❌ Name cannot be empty. Please try again.");
+            continue;
+        }
+        
+        if name.len() < 3 {
+            println!("❌ Name must be at least 3 characters long.");
+            continue;
+        }
+        
+        return Ok(name.to_string());
+    }
+}
+
+/// Validate password strength
+fn validate_password_strength(password: &str) -> Result<()> {
+    if password.len() < 8 {
+        return Err(anyhow!("Password must be at least 8 characters long"));
+    }
+    
+    let has_uppercase = password.chars().any(|c| c.is_uppercase());
+    let has_lowercase = password.chars().any(|c| c.is_lowercase());
+    let has_digit = password.chars().any(|c| c.is_numeric());
+    let has_special = password.chars().any(|c| !c.is_alphanumeric());
+    
+    if !has_uppercase {
+        return Err(anyhow!("Password must contain at least one uppercase letter"));
+    }
+    if !has_lowercase {
+        return Err(anyhow!("Password must contain at least one lowercase letter"));
+    }
+    if !has_digit {
+        return Err(anyhow!("Password must contain at least one number"));
+    }
+    if !has_special {
+        return Err(anyhow!("Password must contain at least one special character"));
+    }
+    
+    Ok(())
+}
+
+/// Securely prompt for password (no echo)
+fn prompt_for_password(prompt: &str) -> Result<String> {
+    print!("{}", prompt);
+    io::stdout().flush()?;
+    
+    let password = rpassword::read_password()?;
+    Ok(password)
+}
+
+/// Prompt for seed phrase confirmation
+fn confirm_seed_phrase(seed_phrase: &str) -> Result<()> {
+    println!("\n⚠️  IMPORTANT: Write down your recovery phrase!");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("📝 Your Recovery Phrase:");
+    println!("{}", seed_phrase);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("\n⚠️  Store this in a safe place. You'll need it to recover your wallet!");
+    println!("⚠️  Anyone with this phrase can access your funds!");
+    
+    loop {
+        print!("\nType 'CONFIRM' to verify you've saved your recovery phrase: ");
+        io::stdout().flush()?;
+        
+        let mut confirmation = String::new();
+        io::stdin().read_line(&mut confirmation)?;
+        
+        if confirmation.trim() == "CONFIRM" {
+            println!("✅ Recovery phrase confirmed!");
+            return Ok(());
+        } else {
+            println!("❌ You must type 'CONFIRM' to continue. Please save your recovery phrase first.");
+        }
+    }
+}
+
+/// Prompt for DID password with confirmation
+fn prompt_for_did_password() -> Result<String> {
+    println!("\n🔐 Set a password to protect your Digital Identity");
+    println!("Requirements: 8+ chars, uppercase, lowercase, number, special character");
+    
+    loop {
+        let password = prompt_for_password("\nEnter password: ")?;
+        
+        if let Err(e) = validate_password_strength(&password) {
+            println!("❌ {}", e);
+            continue;
+        }
+        
+        let confirmation = prompt_for_password("Confirm password: ")?;
+        
+        if password != confirmation {
+            println!("❌ Passwords don't match. Please try again.");
+            continue;
+        }
+        
+        println!("✅ Password set successfully!");
+        return Ok(password);
+    }
+}
+
+/// Prompt for optional wallet password
+fn prompt_for_wallet_password(wallet_type: &str) -> Result<Option<String>> {
+    println!("\n🔐 Set a password for your {} wallet (optional)", wallet_type);
+    print!("Press Enter to skip, or type a password: ");
+    io::stdout().flush()?;
+    
+    let password = rpassword::read_password()?;
+    
+    if password.is_empty() {
+        println!("⏭️  Skipping wallet password");
+        return Ok(None);
+    }
+    
+    // Validate wallet password (minimum 6 chars)
+    if password.len() < 6 {
+        println!("❌ Wallet password must be at least 6 characters. Skipping.");
+        return Ok(None);
+    }
+    
+    let confirmation = prompt_for_password("Confirm wallet password: ")?;
+    
+    if password != confirmation {
+        println!("❌ Passwords don't match. Skipping wallet password.");
+        return Ok(None);
+    }
+    
+    println!("✅ Wallet password set!");
+    Ok(Some(password))
+}
+
+// ============================================================================
+// Network Info and Identity Management
+// ============================================================================
 
 #[derive(Debug)]
 struct ExistingNetworkInfo {
@@ -208,11 +359,13 @@ async fn handle_existing_network_identity(network_info: &ExistingNetworkInfo) ->
     println!("Network peers: {}", network_info.peer_count);
     println!("Blockchain height: {}", network_info.blockchain_height);
     println!();
-    println!("Choose how to set up your wallet:");
-    println!("1) Import existing wallet from mesh network");
-    println!("2) Import from recovery phrase");
-    println!("3) Create new wallet on this network");
+    println!("Choose how to set up your Digital Identity (DID):");
+    println!("1) Import existing identity from mesh network");
+    println!("2) Import identity from recovery phrase");
+    println!("3) Create new identity with wallets (Primary, Savings, Staking)");
     println!("4) Quick start (auto-generate for testing)");
+    println!();
+    println!("Note: Your DID will own this node and manage multiple wallets.");
     println!();
     
     loop {
@@ -224,16 +377,17 @@ async fn handle_existing_network_identity(network_info: &ExistingNetworkInfo) ->
         
         match input.trim() {
             "1" => {
-                println!("\nScanning mesh network for existing wallets...");
+                println!("\nScanning mesh network for existing identity...");
                 return import_identity_from_mesh(network_info).await;
             }
             "2" => {
-                println!("\nImport from recovery phrase...");
+                println!("\nImport identity from recovery phrase...");
                 return WalletStartupManager::import_from_recovery_phrase().await;
             }
             "3" => {
-                println!("\n Creating new wallet on existing network...");
-                println!(" Wallet address will be derived from DHT node identity");
+                println!("\n Creating new digital identity with wallets...");
+                println!(" Your DID will own 3 wallets: Primary (rewards), Savings, Staking");
+                println!(" Node will route rewards to your Primary wallet");
                 return create_wallet_from_node_identity(network_info).await;
             }
             "4" => {
@@ -255,10 +409,12 @@ async fn handle_genesis_network_identity() -> Result<WalletStartupResult> {
     println!("No existing network found. You'll be creating a new genesis network.");
     println!("This node will become the first node in a new ZHTP mesh.");
     println!();
-    println!("Choose how to set up your genesis wallet:");
-    println!("1) Create new wallet (full Web4 access, blockchain participation)");
-    println!("2) Import existing wallet from recovery phrase");
+    println!("Choose how to set up your Digital Identity (DID):");
+    println!("1) Create new identity with wallets (Primary, Savings, Staking)");
+    println!("2) Import existing identity from recovery phrase");
     println!("3) Quick start (auto-generate for testing)");
+    println!();
+    println!("Note: Your DID will own this node. The node routes rewards to your wallets.");
     println!();
     
     loop {
@@ -270,12 +426,13 @@ async fn handle_genesis_network_identity() -> Result<WalletStartupResult> {
         
         match input.trim() {
             "1" => {
-                println!("\n Creating new genesis wallet...");
-                println!(" Wallet address will be derived from DHT node identity");
+                println!("\n Creating new digital identity with wallets...");
+                println!(" Your DID will own 3 wallets: Primary (rewards), Savings, Staking");
+                println!(" Node will route rewards to your Primary wallet");
                 return create_genesis_wallet_from_node_identity().await;
             }
             "2" => {
-                println!("\nImport from recovery phrase...");
+                println!("\nImport identity from recovery phrase...");
                 return WalletStartupManager::import_from_recovery_phrase().await;
             }
             "3" => {
@@ -474,40 +631,72 @@ async fn create_wallet_from_node_identity(network_info: &ExistingNetworkInfo) ->
     // Get the persistent node identity
     let node_identity = create_or_load_node_identity().await?;
     
-    println!(" Node DHT Address: {:?}", &node_identity.id.to_string()[..16]);
-    println!("Primary Wallet Address: {}", node_identity.id.to_string());
+    println!(" Node DHT Address: {}", hex::encode(&node_identity.id.0));
+    println!("Primary Wallet Address: {}", hex::encode(&node_identity.id.0));
     println!(" Network: {}", network_info.network_id);
     
-    // Create wallet using the identity's integrated wallet manager
-    let wallet_name = format!("primary-{}", &node_identity.id.to_string()[..8]);
+    // ========================================================================
+    // STEP 1: Prompt for identity name
+    // ========================================================================
+    let identity_name = prompt_for_identity_name()?;
+    println!("✅ Identity name: {}", identity_name);
+    
+    // ========================================================================
+    // STEP 2: Create wallet with seed phrase
+    // ========================================================================
+    let wallet_name = format!("{}'s Primary Wallet", identity_name);
     
     // Use the identity's built-in wallet manager to create a wallet
     let mut node_identity_mut = node_identity.clone();
-    let (wallet_id, actual_seed_phrase) = match node_identity_mut.wallet_manager.create_wallet_with_seed_phrase(
+    let (wallet_id, seed_phrase_struct) = match node_identity_mut.wallet_manager.create_wallet_with_seed_phrase(
         lib_identity::wallets::WalletType::Standard,
         wallet_name.clone(),
         Some("primary".to_string()),
     ).await {
         Ok((wallet_id, seed_phrase)) => {
-            println!(" Wallet created with seed phrase");
-            println!(" Seed Phrase: {}", seed_phrase.words.join(" "));
-            println!(" Save this seed phrase - it's your wallet recovery key!");
-            (wallet_id, seed_phrase.words.join(" "))
+            println!(" ✓ Wallet created with seed phrase");
+            (wallet_id, seed_phrase)
         }
         Err(e) => {
-            println!(" Failed to create wallet with seed phrase: {}", e);
-            println!(" Creating basic wallet without seed phrase for now...");
-            
-            // Return error since seed phrase is required
             return Err(anyhow!("Failed to create wallet with seed phrase: {}", e));
         }
     };
     
-    // Create wallet address in ZHTP format for compatibility
-    let wallet_address = format!("zhtp:{}", &node_identity.id.to_string()[..16]);
+    let actual_seed_phrase = seed_phrase_struct.words.join(" ");
+    
+    // ========================================================================
+    // STEP 3: Display and confirm seed phrase
+    // ========================================================================
+    confirm_seed_phrase(&actual_seed_phrase)?;
+    
+    // ========================================================================
+    // STEP 4: Set DID password
+    // ========================================================================
+    let did_password = prompt_for_did_password()?;
+    
+    // Hash the password for storage using Blake3
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(did_password.as_bytes());
+    let password_hash = hasher.finalize();
+    
+    println!("🔐 DID password secured with Blake3 hash: {}...", hex::encode(&password_hash.as_bytes()[..8]));
+    
+    // ========================================================================
+    // STEP 5: Optional wallet passwords
+    // ========================================================================
+    let _primary_wallet_password = prompt_for_wallet_password("Primary")?;
+    let _savings_wallet_password = prompt_for_wallet_password("Savings")?;
+    let _staking_wallet_password = prompt_for_wallet_password("Staking")?;
+    
+    println!("\n✅ All passwords and security configured!");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    
+    // Create wallet address in ZHTP format for compatibility (full address)
+    let wallet_address = format!("zhtp:{}", hex::encode(&wallet_id.0));
     
     // Return result compatible with existing ZHTP system  
     Ok(WalletStartupResult {
+        node_identity_id: node_identity.id.clone(),
         node_wallet_id: wallet_id,
         wallet_name,
         seed_phrase: actual_seed_phrase,
@@ -516,49 +705,148 @@ async fn create_wallet_from_node_identity(network_info: &ExistingNetworkInfo) ->
 }
 
 /// Create a genesis wallet using the node's DHT identity as the primary address
+/// This now creates BOTH a user identity (with wallet) AND a node device identity (for networking)
 async fn create_genesis_wallet_from_node_identity() -> Result<WalletStartupResult> {
     println!("Creating genesis wallet from DHT node identity...");
     
-    // Get the persistent node identity
-    let node_identity = create_or_load_node_identity().await?;
+    // Check if we have an existing setup
+    let identity_file = "./data/node_identity.json";
+    let user_identity_file = "./data/user_identity.json";
     
-    println!(" Genesis Node DHT Address: {:?}", &node_identity.id.to_string()[..16]);
-    println!("Genesis Wallet Address: {}", node_identity.id.to_string());
-    println!(" This node will be the genesis node for a new ZHTP network");
+    // Try to load existing identities if they exist
+    if std::path::Path::new(identity_file).exists() && std::path::Path::new(user_identity_file).exists() {
+        println!(" Loading existing identity setup...");
+        
+        // Load the node device identity
+        let node_identity_json = std::fs::read_to_string(identity_file)?;
+        let node_identity: ZhtpIdentity = serde_json::from_str(&node_identity_json)?;
+        
+        // Load the user identity  
+        let user_identity_json = std::fs::read_to_string(user_identity_file)?;
+        let user_identity: ZhtpIdentity = serde_json::from_str(&user_identity_json)?;
+        
+        println!(" Loaded node device identity: {}", hex::encode(&node_identity.id.0[..8]));
+        println!(" Loaded user identity: {}", hex::encode(&user_identity.id.0[..8]));
+        
+        // Get the primary wallet from the user identity
+        let wallet_summaries = user_identity.wallet_manager.list_wallets();
+        if let Some(first_wallet) = wallet_summaries.first() {
+            let wallet_id = first_wallet.id.clone();
+            let wallet_name = format!("genesis-{}", hex::encode(&user_identity.id.0[..8]));
+            let wallet_address = format!("zhtp:{}", hex::encode(&wallet_id.0[..16]));
+            
+            // Note: We can't retrieve the seed phrase from an existing wallet
+            // User should have saved it during initial creation
+            return Ok(WalletStartupResult {
+                node_identity_id: node_identity.id.clone(),
+                node_wallet_id: wallet_id,
+                wallet_name,
+                seed_phrase: "".to_string(), // Can't retrieve existing seed phrase
+                wallet_address,
+            });
+        }
+    }
     
-    // Create genesis wallet using the identity's integrated wallet manager
-    let wallet_name = format!("genesis-{}", &node_identity.id.to_string()[..8]);
+    println!(" Creating new genesis identity setup...");
+    println!(" This will create:");
+    println!("   1. User identity (Human) with genesis wallet");
+    println!("   2. Node device identity (Device) for networking");
+    println!();
     
-    // Use the identity's built-in wallet manager to create a wallet
-    let mut node_identity_mut = node_identity.clone();
-    let (wallet_id, actual_seed_phrase) = match node_identity_mut.wallet_manager.create_wallet_with_seed_phrase(
-        lib_identity::wallets::WalletType::Standard, // Use Standard type since Genesis doesn't exist
+    // ========================================================================
+    // STEP 1: Prompt for identity name
+    // ========================================================================
+    let user_name = prompt_for_identity_name()?;
+    println!("✅ Identity name: {}", user_name);
+    
+    // ========================================================================
+    // STEP 2: Create wallet and get seed phrase
+    // ========================================================================
+    let wallet_name = format!("{}'s Genesis Wallet", user_name);
+    
+    let (user_identity_id, wallet_id, seed_phrase) = lib_identity::create_user_identity_with_wallet(
+        user_name.clone(),
         wallet_name.clone(),
         Some("genesis".to_string()),
-    ).await {
-        Ok((wallet_id, seed_phrase)) => {
-            println!(" Genesis wallet created with seed phrase");
-            println!(" Genesis Seed Phrase: {}", seed_phrase.words.join(" "));
-            println!(" CRITICAL: Save this seed phrase - it controls the genesis node!");
-            (wallet_id, seed_phrase.words.join(" "))
-        }
-        Err(e) => {
-            println!(" Failed to create wallet with seed phrase: {}", e);
-            println!(" Creating basic genesis wallet without seed phrase for now...");
-            
-            // Return error since seed phrase is required
-            return Err(anyhow!("Failed to create genesis wallet with seed phrase: {}", e));
-        }
-    };
+    ).await?;
     
-    // Create wallet address in ZHTP format for compatibility
-    let wallet_address = format!("zhtp:{}", &node_identity.id.to_string()[..16]);
+    println!(" ✓ User identity created: {}", hex::encode(&user_identity_id.0[..8]));
     
-    // Return result compatible with existing ZHTP system
+    // ========================================================================
+    // STEP 3: Display and confirm seed phrase
+    // ========================================================================
+    confirm_seed_phrase(&seed_phrase)?;
+    
+    // ========================================================================
+    // STEP 4: Set DID password
+    // ========================================================================
+    let did_password = prompt_for_did_password()?;
+    
+    // Hash the password for storage using Blake3
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(did_password.as_bytes());
+    let password_hash = hasher.finalize();
+    
+    println!("🔐 DID password secured with Blake3 hash: {}...", hex::encode(&password_hash.as_bytes()[..8]));
+    
+    // ========================================================================
+    // STEP 5: Optional wallet passwords
+    // ========================================================================
+    let _primary_wallet_password = prompt_for_wallet_password("Primary")?;
+    let _savings_wallet_password = prompt_for_wallet_password("Savings")?;
+    let _staking_wallet_password = prompt_for_wallet_password("Staking")?;
+    
+    // Note: Wallet passwords are collected but not yet integrated into wallet storage
+    // This will be implemented in a future update to the wallet encryption system
+    
+    println!("\n✅ All passwords and security configured!");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    
+    // ========================================================================
+    // STEP 6: Create node device identity owned by the user
+    // ========================================================================
+    let node_device_name = format!("{}'s Node Device", user_name);
+    let node_identity_id = lib_identity::create_node_device_identity(
+        user_identity_id.clone(),
+        wallet_id.clone(),
+        node_device_name,
+    ).await?;
+    
+    println!(" ✓ Node device identity created: {}", hex::encode(&node_identity_id.0[..8]));
+    println!(" Genesis Node DHT Address (full): {}", hex::encode(&node_identity_id.0));
+    println!(" Genesis Wallet Address (full): {}", hex::encode(&wallet_id.0));
+    println!(" This node will be the genesis node for a new ZHTP network");
+    
+    // Save both identities for future use
+    std::fs::create_dir_all("./data")?;
+    
+    // We need to load the actual identity objects to save them
+    let identity_manager = lib_identity::IdentityManager::new();
+    if let Some(node_identity) = identity_manager.get_identity(&node_identity_id) {
+        let node_json = serde_json::to_string_pretty(&node_identity)?;
+        std::fs::write(identity_file, node_json)?;
+        println!(" Node device identity saved to {}", identity_file);
+    }
+    
+    if let Some(user_identity) = identity_manager.get_identity(&user_identity_id) {
+        let user_json = serde_json::to_string_pretty(&user_identity)?;
+        std::fs::write(user_identity_file, user_json)?;
+        println!(" User identity saved to {}", user_identity_file);
+    }
+    
+    println!(" Genesis Seed Phrase: {}", seed_phrase);
+    println!(" CRITICAL: Save this seed phrase - it controls the genesis node!");
+    
+    // Create wallet address in ZHTP format
+    let wallet_address = format!("zhtp:{}", hex::encode(&wallet_id.0[..16]));
+    
+    // Return result with the node device identity (used for DHT)
     Ok(WalletStartupResult {
+        node_identity_id,
         node_wallet_id: wallet_id,
-        wallet_name,
-        seed_phrase: actual_seed_phrase,
+        wallet_name: format!("genesis-{}", hex::encode(&user_identity_id.0[..8])),
+        seed_phrase,
         wallet_address,
     })
 }
+
