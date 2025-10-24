@@ -1,0 +1,127 @@
+# Testnet Storage Node Configuration
+# Optimized for distributed storage provision on TESTNET
+# Suitable for: Testing storage providers, development storage nodes
+
+# Core Node Settings
+mesh_mode = "Hybrid"
+security_level = "High"
+environment = "Testnet"
+data_directory = "./data/testnet-storage"
+
+[crypto_config]
+post_quantum_enabled = true
+dilithium_level = 3  # Moderate security for testing
+kyber_level = 768
+hybrid_mode = true
+memory_security = true
+
+[zk_config]
+plonky2_enabled = true
+proof_cache_size = 500
+circuit_cache_enabled = true
+parallel_proving = true
+verification_threads = 4
+
+[identity_config]
+auto_citizenship = true
+ubi_registration = true
+dao_auto_join = true
+recovery_modes = ["mnemonic", "social"]
+reputation_enabled = true
+
+[storage_config]
+dht_port = 33443  # Testnet DHT port
+storage_capacity_gb = 500  # Moderate storage for testnet
+replication_factor = 2
+erasure_coding = true
+pricing_tier = "cold"  # Low-cost storage for testing
+
+[network_config]
+mesh_port = 33445  # Testnet mesh port
+max_peers = 80
+protocols = ["tcp", "bluetooth", "wifi_direct"]
+bootstrap_peers = [
+    "testnet-seed1.sovereign.net:9334",
+    "testnet-seed2.sovereign.net:9334"
+]
+long_range_relays = false
+
+[blockchain_config]
+network_id = "zhtp-testnet"
+chain_id = 2  # Testnet chain ID
+block_time_seconds = 5
+max_block_size = 1048576  # 1MB blocks
+zk_transactions = true
+smart_contracts = true
+enforce_chain_id = true
+
+[consensus_config]
+consensus_type = "Hybrid"
+dao_enabled = true
+validator_enabled = false  # Storage nodes don't validate
+min_stake = 0
+reward_multipliers = {}
+
+[economics_config]
+ubi_enabled = true
+daily_ubi_amount = 100
+dao_fee_percentage = 1.0
+mesh_rewards = true
+
+[economics_config.token_economics]
+total_supply = 1000000000
+inflation_rate = 5.0
+burn_rate = 0.5
+reward_pool_percentage = 20.0
+
+[protocols_config]
+lib_enabled = true
+zdns_enabled = true
+api_port = 9334  # Testnet API port
+max_connections = 500
+request_timeout_ms = 15000
+
+[resource_allocations]
+max_memory_mb = 1024  # 1GB for testnet storage
+max_cpu_threads = 4
+max_disk_gb = 1000  # 1TB for storage node
+bandwidth_allocation = {}
+
+[integration_settings]
+event_bus_enabled = true
+service_discovery = true
+health_check_interval_ms = 15000
+cross_package_timeouts = {}
+
+[logging]
+level = "debug"
+file_logging = true
+console_logging = true
+structured_logging = true
+performance_metrics = true
+security_events = true
+log_rotation = true
+max_log_size_mb = 50
+max_log_files = 5
+
+[security]
+require_signatures = true
+allow_unsafe_operations = true
+rate_limiting = false
+audit_logging = true
+penetration_testing_mode = true
+firewall_enabled = false
+ddos_protection = false
+intrusion_detection = true
+
+[testnet_features]
+faucet_enabled = false
+debugging_apis = true
+performance_profiling = true
+
+[backup]
+enabled = true
+interval_hours = 24
+retention_days = 7
+storage_backend = "distributed"
+encryption_enabled = true

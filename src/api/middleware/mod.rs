@@ -187,10 +187,12 @@ impl AuthMiddleware {
     
     fn requires_auth(&self, uri: &str) -> bool {
         // Define which endpoints require authentication
-        uri.starts_with("/api/v1/identity/create") ||
+        // NOTE: Identity creation does NOT require auth (you're creating your first identity!)
         uri.starts_with("/api/v1/blockchain/transaction") ||
         uri.starts_with("/api/v1/storage/put") ||
-        uri.starts_with("/api/v1/storage/delete")
+        uri.starts_with("/api/v1/storage/delete") ||
+        uri.starts_with("/api/v1/wallet/") || // Wallet operations need auth
+        uri.starts_with("/api/v1/identity/update") // Updates need auth, but not create
     }
 }
 

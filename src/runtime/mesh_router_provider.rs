@@ -8,7 +8,7 @@ use crate::unified_server::{MeshRouter, BroadcastMetrics};
 /// Global mesh router provider for shared access across components
 /// This allows API handlers to access mesh router metrics and state
 /// without directly coupling to the protocols component or unified server
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MeshRouterProvider {
     mesh_router: Arc<RwLock<Option<Arc<MeshRouter>>>>,
 }

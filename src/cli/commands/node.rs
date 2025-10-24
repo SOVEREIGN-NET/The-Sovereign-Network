@@ -2,14 +2,11 @@
 
 use anyhow::{Result, anyhow};
 use crate::cli::{NodeArgs, NodeAction, ZhtpCli};
+use crate::config::environment::Environment;  // NEW: For network-specific data paths
 use crate::runtime::RuntimeOrchestrator;
 use crate::runtime::did_startup::{WalletStartupManager, WalletStartupResult};
 use crate::runtime::shared_dht::{initialize_global_dht_safe, get_dht_client};
-use lib_network::dht::DHTClient;
-use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_identity::ZhtpIdentity;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::io::{self, Write};
 use blake3;
 
@@ -168,16 +165,33 @@ struct ExistingNetworkInfo {
     blockchain_height: u64,
     network_id: String,
     bootstrap_peers: Vec<String>,
+    environment: Environment,  // NEW: Network-specific environment for proper data paths
 }
 
 pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
     match args.action {
-        NodeAction::Start { config, port, dev, pure_mesh } => {
+        NodeAction::Start { config, port, dev, pure_mesh, network } => {
             println!(" Starting ZHTP orchestrator node...");
-            println!("Port: {}", port);
+            if let Some(p) = port {
+                println!("Port override: {}", p);
+            }
             println!("Config: {:?}", config);
             println!("Dev mode: {}", dev);
             println!("Pure mesh mode: {}", pure_mesh);
+            
+            // Parse network override if provided
+            let network_override = network.as_ref().and_then(|n| {
+                match n.as_str() {
+                    "mainnet" => Some(Environment::Mainnet),
+                    "testnet" => Some(Environment::Testnet),
+                    "dev" => Some(Environment::Development),
+                    _ => None,
+                }
+            });
+            
+            if let Some(ref net) = network_override {
+                println!("🌐 Network Override: {}", net);
+            }
             
             // Show node type information if using predefined configs
             if let Some(ref config_path) = config {
@@ -203,13 +217,35 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
                 mesh_port: port,
                 pure_mesh,
                 config: PathBuf::from(config.unwrap_or_else(|| "./config".to_string())),
-                environment: Environment::Development, // Use dev environment for now to avoid mainnet key requirement
+                environment: network_override.unwrap_or(Environment::Development), // Use CLI override or default
                 log_level: if dev { "debug".to_string() } else { "info".to_string() },
                 data_dir: PathBuf::from("./data"),
             };
             
             println!("Loading configuration...");
-            let node_config = load_configuration(&cli_args).await?;
+            let mut node_config = load_configuration(&cli_args).await?;
+            
+            // Apply network override if --network flag was provided
+            if let Some(network_env) = network_override {
+                println!("🔄 Overriding config environment with CLI flag: {}", network_env);
+                node_config.environment = network_env;
+                
+                // Update related config fields for consistency
+                match network_env {
+                    Environment::Mainnet => {
+                        println!("   → Using mainnet genesis block (chain_id: 0x01)");
+                        println!("   → Data directory: ./data/mainnet");
+                    }
+                    Environment::Testnet => {
+                        println!("   → Using testnet genesis block (chain_id: 0x02)");
+                        println!("   → Data directory: ./data/testnet");
+                    }
+                    Environment::Development => {
+                        println!("   → Using development genesis block (chain_id: 0x03)");
+                        println!("   → Data directory: ./data/dev");
+                    }
+                }
+            }
             
             // Apply network isolation if pure mesh mode is enabled
             if pure_mesh {
@@ -242,8 +278,8 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             
             println!("Attempting to connect to existing ZHTP mesh network...");
             
-            // Step 1: Try to bootstrap to existing network
-            let mesh_connection_result = attempt_mesh_bootstrap(&mut orchestrator).await;
+            // Step 1: Try to bootstrap to existing network (pass environment for network-specific paths)
+            let mesh_connection_result = attempt_mesh_bootstrap(&mut orchestrator, &node_config.environment).await;
             
             let startup_result = match mesh_connection_result {
                 Ok(existing_network_info) => {
@@ -258,8 +294,8 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
                     println!("No existing ZHTP network found or connection failed");
                     println!("Starting new genesis network...");
                     
-                    // Step 2b: Handle identity for new genesis network
-                    handle_genesis_network_identity().await?
+                    // Step 2b: Handle identity for new genesis network (pass environment)
+                    handle_genesis_network_identity(&node_config.environment).await?
                 }
             };
             
@@ -287,7 +323,7 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             println!("ZHTP orchestrator fully operational!");
             println!("blockchain mining and consensus active");
             println!("Level 1 Orchestrator managing: crypto, zk, identity, storage, network, blockchain, consensus, economics, protocols");
-            println!("ZHTP server and Web4 API endpoints active on port {}", port);
+            println!("ZHTP server and Web4 API endpoints active on port {}", node_config.protocols_config.api_port);
             println!("Press Ctrl+C to stop the node");
             
             // Wait for shutdown signal (no need to start duplicate API server)
@@ -322,7 +358,7 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
 }
 
 /// Attempt to bootstrap to an existing ZHTP mesh network
-async fn attempt_mesh_bootstrap(orchestrator: &mut RuntimeOrchestrator) -> Result<ExistingNetworkInfo> {
+async fn attempt_mesh_bootstrap(orchestrator: &mut RuntimeOrchestrator, environment: &Environment) -> Result<ExistingNetworkInfo> {
     println!("Scanning for existing ZHTP network...");
     
     // Only perform peer discovery without component registration
@@ -332,7 +368,7 @@ async fn attempt_mesh_bootstrap(orchestrator: &mut RuntimeOrchestrator) -> Resul
     
     // Check if we found any ZHTP peers without starting a full network component
     // This will be replaced by the proper network component startup later
-    let peer_count = check_discovered_peers().await?;
+    let peer_count = check_discovered_peers(environment).await?;
     
     if peer_count > 0 {
         println!("Found {} ZHTP peers", peer_count);
@@ -345,6 +381,7 @@ async fn attempt_mesh_bootstrap(orchestrator: &mut RuntimeOrchestrator) -> Resul
             blockchain_height: blockchain_info.height,
             network_id: blockchain_info.network_id,
             bootstrap_peers: blockchain_info.peers,
+            environment: environment.clone(),  // Propagate environment for data paths
         })
     } else {
         Err(anyhow!("No ZHTP peers discovered"))
@@ -403,7 +440,7 @@ async fn handle_existing_network_identity(network_info: &ExistingNetworkInfo) ->
 }
 
 /// Handle wallet setup when creating a new genesis network
-async fn handle_genesis_network_identity() -> Result<WalletStartupResult> {
+async fn handle_genesis_network_identity(environment: &Environment) -> Result<WalletStartupResult> {
     println!("\nCreating New ZHTP Genesis Network");
     println!("====================================");
     println!("No existing network found. You'll be creating a new genesis network.");
@@ -429,7 +466,7 @@ async fn handle_genesis_network_identity() -> Result<WalletStartupResult> {
                 println!("\n Creating new digital identity with wallets...");
                 println!(" Your DID will own 3 wallets: Primary (rewards), Savings, Staking");
                 println!(" Node will route rewards to your Primary wallet");
-                return create_genesis_wallet_from_node_identity().await;
+                return create_genesis_wallet_from_node_identity(environment).await;
             }
             "2" => {
                 println!("\nImport identity from recovery phrase...");
@@ -481,14 +518,14 @@ async fn import_identity_from_mesh(network_info: &ExistingNetworkInfo) -> Result
     }
     
     println!(" Falling back to manual wallet creation...");
-    handle_genesis_network_identity().await
+    handle_genesis_network_identity(&network_info.environment).await
 }
 
 /// Check for discovered peers (using shared DHT instance)
-async fn check_discovered_peers() -> Result<u32> {
+async fn check_discovered_peers(environment: &Environment) -> Result<u32> {
     // Use persistent node identity for network discovery
     // This identity will become the node's permanent DHT address
-    let node_identity = create_or_load_node_identity().await?;
+    let node_identity = create_or_load_node_identity(environment).await?;
     
     // Initialize global DHT instance safely (prevents duplicate initialization)
     initialize_global_dht_safe(node_identity).await?;
@@ -551,18 +588,20 @@ struct BlockchainInfo {
 
 /// Create or load persistent node identity that serves as both DHT address and wallet address
 /// This ensures the node has a consistent identity across all DHT operations
-async fn create_or_load_node_identity() -> Result<ZhtpIdentity> {
+async fn create_or_load_node_identity(environment: &Environment) -> Result<ZhtpIdentity> {
     use std::path::Path;
     use std::fs;
     use lib_crypto::generate_keypair;
     
-    let identity_file = "./data/node_identity.json";
+    // Use network-specific data directory
+    let data_dir = environment.data_directory();
+    let identity_file = format!("{}/node_identity.json", data_dir);
     
     // Try to load existing node identity
-    if Path::new(identity_file).exists() {
+    if Path::new(&identity_file).exists() {
         println!(" Loading existing node identity from {}", identity_file);
         
-        match fs::read_to_string(identity_file) {
+        match fs::read_to_string(&identity_file) {
             Ok(identity_json) => {
                 match serde_json::from_str::<ZhtpIdentity>(&identity_json) {
                     Ok(identity) => {
@@ -602,14 +641,14 @@ async fn create_or_load_node_identity() -> Result<ZhtpIdentity> {
     println!(" Created node identity with ID: {:?}", &node_identity.id.to_string()[..8]);
     println!(" This identity serves as both DHT address and primary node address");
     
-    // Save the identity to disk for persistence
-    if let Err(e) = fs::create_dir_all("./data") {
-        println!(" Warning: Could not create data directory: {}", e);
+    // Save the identity to disk for persistence (network-specific directory)
+    if let Err(e) = fs::create_dir_all(&data_dir) {
+        println!(" Warning: Could not create data directory {}: {}", data_dir, e);
     }
     
     match serde_json::to_string_pretty(&node_identity) {
         Ok(identity_json) => {
-            if let Err(e) = fs::write(identity_file, identity_json) {
+            if let Err(e) = fs::write(&identity_file, identity_json) {
                 println!(" Warning: Could not save identity to disk: {}", e);
             } else {
                 println!(" Node identity saved to {}", identity_file);
@@ -628,8 +667,8 @@ async fn create_or_load_node_identity() -> Result<ZhtpIdentity> {
 async fn create_wallet_from_node_identity(network_info: &ExistingNetworkInfo) -> Result<WalletStartupResult> {
     println!(" Creating wallet from DHT node identity...");
     
-    // Get the persistent node identity
-    let node_identity = create_or_load_node_identity().await?;
+    // Get the persistent node identity (uses network-specific data directory)
+    let node_identity = create_or_load_node_identity(&network_info.environment).await?;
     
     println!(" Node DHT Address: {}", hex::encode(&node_identity.id.0));
     println!("Primary Wallet Address: {}", hex::encode(&node_identity.id.0));
@@ -706,23 +745,24 @@ async fn create_wallet_from_node_identity(network_info: &ExistingNetworkInfo) ->
 
 /// Create a genesis wallet using the node's DHT identity as the primary address
 /// This now creates BOTH a user identity (with wallet) AND a node device identity (for networking)
-async fn create_genesis_wallet_from_node_identity() -> Result<WalletStartupResult> {
+async fn create_genesis_wallet_from_node_identity(environment: &Environment) -> Result<WalletStartupResult> {
     println!("Creating genesis wallet from DHT node identity...");
     
-    // Check if we have an existing setup
-    let identity_file = "./data/node_identity.json";
-    let user_identity_file = "./data/user_identity.json";
+    // Check if we have an existing setup (uses network-specific data directory)
+    let data_dir = environment.data_directory();
+    let identity_file = format!("{}/node_identity.json", data_dir);
+    let user_identity_file = format!("{}/user_identity.json", data_dir);
     
     // Try to load existing identities if they exist
-    if std::path::Path::new(identity_file).exists() && std::path::Path::new(user_identity_file).exists() {
+    if std::path::Path::new(&identity_file).exists() && std::path::Path::new(&user_identity_file).exists() {
         println!(" Loading existing identity setup...");
         
         // Load the node device identity
-        let node_identity_json = std::fs::read_to_string(identity_file)?;
+        let node_identity_json = std::fs::read_to_string(&identity_file)?;
         let node_identity: ZhtpIdentity = serde_json::from_str(&node_identity_json)?;
         
         // Load the user identity  
-        let user_identity_json = std::fs::read_to_string(user_identity_file)?;
+        let user_identity_json = std::fs::read_to_string(&user_identity_file)?;
         let user_identity: ZhtpIdentity = serde_json::from_str(&user_identity_json)?;
         
         println!(" Loaded node device identity: {}", hex::encode(&node_identity.id.0[..8]));
@@ -824,13 +864,13 @@ async fn create_genesis_wallet_from_node_identity() -> Result<WalletStartupResul
     let identity_manager = lib_identity::IdentityManager::new();
     if let Some(node_identity) = identity_manager.get_identity(&node_identity_id) {
         let node_json = serde_json::to_string_pretty(&node_identity)?;
-        std::fs::write(identity_file, node_json)?;
+        std::fs::write(&identity_file, node_json)?;
         println!(" Node device identity saved to {}", identity_file);
     }
     
     if let Some(user_identity) = identity_manager.get_identity(&user_identity_id) {
         let user_json = serde_json::to_string_pretty(&user_identity)?;
-        std::fs::write(user_identity_file, user_json)?;
+        std::fs::write(&user_identity_file, user_json)?;
         println!(" User identity saved to {}", user_identity_file);
     }
     

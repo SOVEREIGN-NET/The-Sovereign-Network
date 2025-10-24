@@ -371,6 +371,7 @@ impl MarketplaceHandler {
         // Create transaction
         let transaction = Transaction {
             version: 1,
+            chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::Transfer,
             inputs: vec![],  // TODO: Should pull from buyer's UTXOs with ZK proofs
             outputs: vec![output],
@@ -382,15 +383,13 @@ impl MarketplaceHandler {
                     kyber_pk: Vec::new(),
                     key_id: [0; 32],
                 },
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+                timestamp: 0,
             },
             memo,
             identity_data: None,
             wallet_data: None,
+            validator_data: None,
         };
         
         // Calculate transaction hash

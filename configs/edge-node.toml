@@ -1,12 +1,12 @@
-# Edge Node Configuration  
-# Optimized for mesh networking and ISP bypass
-# Suitable for: Mesh relays, rural connectivity, censorship resistance
+# Mainnet Edge Node Configuration  
+# Optimized for mesh networking and ISP bypass on MAINNET
+# Suitable for: Production mesh relays, rural connectivity, censorship resistance
 
 # Core Node Settings
 mesh_mode = "PureMesh"  # ISP bypass mode
 security_level = "High"
 environment = "Mainnet"
-data_directory = "./data/edge-node"
+data_directory = "./data/mainnet-edge"  # Mainnet-specific directory
 
 [crypto_config]
 post_quantum_enabled = true
@@ -45,10 +45,12 @@ long_range_relays = true  # CRITICAL for pure mesh mode
 
 [blockchain_config]
 network_id = "zhtp-mainnet"
+chain_id = 1  # Mainnet chain ID
 block_time_seconds = 5
 max_block_size = 524288  # Smaller blocks for bandwidth efficiency
 zk_transactions = true
 smart_contracts = false  # Conserve resources
+enforce_chain_id = true  # CRITICAL: Prevent testnet tx replay
 
 [consensus_config]
 consensus_type = "Hybrid"

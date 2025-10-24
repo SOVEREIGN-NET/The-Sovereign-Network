@@ -18,8 +18,95 @@ use lib_crypto::{self, KeyPair, generate_keypair, sign_message};
 use lib_identity::{self, IdentityManager};
 use lib_blockchain::{self, Blockchain, Transaction, TransactionOutput};
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
-use lib_consensus::{self, ConsensusEngine, ConsensusConfig};
+use lib_consensus::{self, ConsensusEngine, ConsensusConfig, ValidatorManager};
 use lib_protocols::{ZdnsServer, ZhtpIntegration, ZdnsConfig, IntegrationConfig};
+
+// Import configuration types for multi-node genesis
+use crate::config::aggregation::BootstrapValidator;
+
+/// Genesis validator for multi-node network initialization
+#[derive(Debug, Clone)]
+pub struct GenesisValidator {
+    /// Validator identity ID (DID hash)
+    pub identity_id: lib_crypto::Hash,
+    /// Initial stake amount  
+    pub stake: u64,
+    /// Storage capacity provided
+    pub storage_provided: u64,
+    /// Commission rate (basis points)
+    pub commission_rate: u16,
+    /// Network endpoints
+    pub endpoints: Vec<String>,
+    /// Consensus public key
+    pub consensus_key: Option<lib_crypto::PublicKey>,
+}
+
+impl From<BootstrapValidator> for GenesisValidator {
+    fn from(bootstrap: BootstrapValidator) -> Self {
+        // Parse identity_id - could be DID or hash string
+        let identity_id = if bootstrap.identity_id.starts_with("did:") {
+            // Extract hash from DID
+            let did_parts: Vec<&str> = bootstrap.identity_id.split(':').collect();
+            if did_parts.len() >= 3 {
+                // Convert hex string to Hash
+                if let Ok(bytes) = hex::decode(did_parts[2]) {
+                    if bytes.len() == 32 {
+                        let mut hash_bytes = [0u8; 32];
+                        hash_bytes.copy_from_slice(&bytes);
+                        lib_crypto::Hash(hash_bytes)
+                    } else {
+                        // Fallback: hash the DID string
+                        lib_crypto::Hash(lib_crypto::hash_blake3(bootstrap.identity_id.as_bytes()))
+                    }
+                } else {
+                    // Fallback: hash the DID string
+                    lib_crypto::Hash(lib_crypto::hash_blake3(bootstrap.identity_id.as_bytes()))
+                }
+            } else {
+                lib_crypto::Hash(lib_crypto::hash_blake3(bootstrap.identity_id.as_bytes()))
+            }
+        } else {
+            // Assume it's a hex hash string
+            if let Ok(bytes) = hex::decode(&bootstrap.identity_id) {
+                if bytes.len() == 32 {
+                    let mut hash_bytes = [0u8; 32];
+                    hash_bytes.copy_from_slice(&bytes);
+                    lib_crypto::Hash(hash_bytes)
+                } else {
+                    lib_crypto::Hash(lib_crypto::hash_blake3(bootstrap.identity_id.as_bytes()))
+                }
+            } else {
+                lib_crypto::Hash(lib_crypto::hash_blake3(bootstrap.identity_id.as_bytes()))
+            }
+        };
+        
+        // Parse consensus key
+        let consensus_key = if !bootstrap.consensus_key.is_empty() {
+            // Try to parse as hex or base64
+            if let Ok(bytes) = hex::decode(&bootstrap.consensus_key) {
+                Some(lib_crypto::PublicKey {
+                    dilithium_pk: bytes,
+                    kyber_pk: Vec::new(),
+                    key_id: identity_id.0,
+                })
+            } else {
+                // Fallback: create from identity
+                None
+            }
+        } else {
+            None
+        };
+        
+        Self {
+            identity_id,
+            stake: bootstrap.stake,
+            storage_provided: bootstrap.storage_provided,
+            commission_rate: bootstrap.commission_rate,
+            endpoints: bootstrap.endpoints,
+            consensus_key,
+        }
+    }
+}
 
 
 /// Helper function to create default storage configuration
@@ -45,6 +132,35 @@ fn create_default_storage_config() -> Result<lib_storage::UnifiedStorageConfig> 
     })
 }
 use lib_network::{self, ZhtpMeshServer};
+
+/// Statistics for routing reward processing
+/// 
+/// This struct provides a snapshot of routing activity used by the
+/// routing reward processor to determine when to create reward transactions.
+#[derive(Debug, Clone, Default)]
+pub struct RoutingRewardStats {
+    /// Theoretical tokens earned from routing activity
+    pub theoretical_tokens_earned: u64,
+    /// Total bytes routed through this node
+    pub bytes_routed: u64,
+    /// Total messages routed
+    pub messages_routed: u64,
+}
+
+/// Storage reward statistics for reward calculation
+#[derive(Debug, Clone, Default)]
+pub struct StorageRewardStats {
+    /// Theoretical tokens earned from storage activity
+    pub theoretical_tokens_earned: u64,
+    /// Total number of content items stored
+    pub items_stored: u64,
+    /// Total bytes stored (cumulative size of all content)
+    pub bytes_stored: u64,
+    /// Total number of content retrievals served
+    pub retrievals_served: u64,
+    /// Total storage duration in hours
+    pub storage_duration_hours: u64,
+}
 
 /// Crypto component implementation using lib-crypto package
 #[derive(Debug)]
@@ -411,7 +527,7 @@ impl Component for StorageComponent {
                 match lib_storage::UnifiedStorageSystem::new(config).await {
                     Ok(storage) => {
                         info!("unified storage system initialized successfully");
-                        info!("IPFS-style content addressing ready");
+                        info!("-style content addressing ready");
                         info!("DHT network integration active");
                         info!("Economic incentives for storage providers enabled");
                         
@@ -489,6 +605,7 @@ impl Component for StorageComponent {
 }
 
 /// Network component implementation using lib-network package
+#[derive(Clone)]
 pub struct NetworkComponent {
     status: Arc<RwLock<ComponentStatus>>,
     start_time: Arc<RwLock<Option<Instant>>>,
@@ -662,6 +779,111 @@ impl Component for NetworkComponent {
     }
 }
 
+impl NetworkComponent {
+    /// Get current routing statistics for reward processing
+    /// 
+    /// Returns a snapshot of routing activity including theoretical tokens earned,
+    /// bytes routed, and messages relayed. This is used by the routing reward
+    /// processor to determine when to create reward transactions.
+    pub async fn get_routing_stats(&self) -> RoutingRewardStats {
+        if let Some(ref server) = *self.mesh_server.read().await {
+            RoutingRewardStats {
+                theoretical_tokens_earned: server.get_theoretical_tokens_earned().await,
+                bytes_routed: server.get_total_bytes_routed().await,
+                messages_routed: server.get_total_messages_routed().await,
+            }
+        } else {
+            warn!("Mesh server not initialized, returning default routing stats");
+            RoutingRewardStats::default()
+        }
+    }
+    
+    /// Reset routing reward counter after successful claim
+    /// 
+    /// This should be called after a reward transaction has been successfully
+    /// created and added to the blockchain to prevent double-counting rewards.
+    /// 
+    /// # Errors
+    /// Returns an error if the mesh server is not initialized.
+    pub async fn reset_routing_rewards(&self) -> Result<()> {
+        if let Some(ref server) = *self.mesh_server.read().await {
+            server.reset_reward_counter().await;
+            info!("✅ Routing rewards reset after successful claim");
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Cannot reset rewards: mesh server not initialized"))
+        }
+    }
+    
+    /// Get this node's unique identifier for reward attribution
+    /// 
+    /// Returns a 32-byte array representing this node's unique ID, used to
+    /// properly attribute routing and storage rewards to the correct node in
+    /// blockchain transactions.
+    /// 
+    /// # Returns
+    /// - `Some([u8; 32])` - The node's unique identifier if mesh server is initialized
+    /// - `None` - If the mesh server is not yet initialized
+    pub async fn get_node_id(&self) -> Option<[u8; 32]> {
+        if let Some(ref server) = *self.mesh_server.read().await {
+            Some(server.get_node_id())
+        } else {
+            warn!("Cannot get node ID: mesh server not initialized");
+            None
+        }
+    }
+    
+    /// Get Arc reference to mesh server (for advanced reward processing)
+    /// 
+    /// This provides direct access to the mesh server for background tasks
+    /// that need to monitor routing statistics.
+    pub fn get_mesh_server_arc(&self) -> Arc<RwLock<Option<ZhtpMeshServer>>> {
+        self.mesh_server.clone()
+    }
+    
+    // ==================== Storage Statistics Methods ====================
+    
+    /// Get storage statistics for reward calculation
+    /// 
+    /// Returns current storage contribution statistics including items stored,
+    /// bytes stored, retrievals served, and theoretical tokens earned.
+    /// 
+    /// # Returns
+    /// Current storage statistics, or default values if mesh server not initialized.
+    pub async fn get_storage_stats(&self) -> StorageRewardStats {
+        if let Some(ref server) = *self.mesh_server.read().await {
+            let stats = server.get_storage_stats_snapshot().await;
+            StorageRewardStats {
+                theoretical_tokens_earned: stats.theoretical_tokens_earned,
+                items_stored: stats.items_stored,
+                bytes_stored: stats.bytes_stored,
+                retrievals_served: stats.retrievals_served,
+                storage_duration_hours: stats.storage_duration_hours,
+            }
+        } else {
+            warn!("Mesh server not initialized, returning default storage stats");
+            StorageRewardStats::default()
+        }
+    }
+    
+    /// Reset storage reward counter after successful claim
+    /// 
+    /// This should be called after a storage reward transaction has been successfully
+    /// created and added to the blockchain to prevent double-counting rewards.
+    /// 
+    /// # Errors
+    /// Returns an error if the mesh server is not initialized.
+    pub async fn reset_storage_rewards(&self) -> Result<()> {
+        if let Some(ref server) = *self.mesh_server.read().await {
+            server.reset_storage_reward_counter().await;
+            info!("✅ Storage rewards reset after successful claim");
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Cannot reset storage rewards: mesh server not initialized"))
+        }
+    }
+}
+
 /// Blockchain component implementation using lib-blockchain package
 #[derive(Debug)]
 pub struct BlockchainComponent {
@@ -670,6 +892,8 @@ pub struct BlockchainComponent {
     blockchain: Arc<RwLock<Option<Blockchain>>>,
     mining_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     user_wallet: Arc<RwLock<Option<crate::runtime::did_startup::WalletStartupResult>>>,
+    environment: crate::config::Environment,  // Store environment for network-specific initialization
+    bootstrap_validators: Arc<RwLock<Vec<BootstrapValidator>>>, // Store bootstrap validators for multi-node genesis
 }
 
 impl BlockchainComponent {
@@ -680,6 +904,8 @@ impl BlockchainComponent {
             blockchain: Arc::new(RwLock::new(None)),
             mining_handle: Arc::new(RwLock::new(None)),
             user_wallet: Arc::new(RwLock::new(None)),
+            environment: crate::config::Environment::Development,  // Default to dev
+            bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -690,6 +916,41 @@ impl BlockchainComponent {
             blockchain: Arc::new(RwLock::new(None)),
             mining_handle: Arc::new(RwLock::new(None)),
             user_wallet: Arc::new(RwLock::new(user_wallet)),
+            environment: crate::config::Environment::Development,  // Default to dev
+            bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+    
+    /// NEW: Create with wallet and environment for network-specific blockchain
+    pub fn new_with_wallet_and_environment(
+        user_wallet: Option<crate::runtime::did_startup::WalletStartupResult>,
+        environment: crate::config::Environment,
+    ) -> Self {
+        Self {
+            status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
+            start_time: Arc::new(RwLock::new(None)),
+            blockchain: Arc::new(RwLock::new(None)),
+            mining_handle: Arc::new(RwLock::new(None)),
+            user_wallet: Arc::new(RwLock::new(user_wallet)),
+            environment,
+            bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+    
+    /// Create with wallet, environment and bootstrap validators for multi-node networks
+    pub fn new_with_full_config(
+        user_wallet: Option<crate::runtime::did_startup::WalletStartupResult>,
+        environment: crate::config::Environment,
+        bootstrap_validators: Vec<BootstrapValidator>,
+    ) -> Self {
+        Self {
+            status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
+            start_time: Arc::new(RwLock::new(None)),
+            blockchain: Arc::new(RwLock::new(None)),
+            mining_handle: Arc::new(RwLock::new(None)),
+            user_wallet: Arc::new(RwLock::new(user_wallet)),
+            environment,
+            bootstrap_validators: Arc::new(RwLock::new(bootstrap_validators)),
         }
     }
     
@@ -714,74 +975,52 @@ impl BlockchainComponent {
         }
     }
 
-    // Create genesis funding to bootstrap the system with UTXOs
+    // Create genesis funding to bootstrap the system with UTXOs for multi-node network
     async fn create_genesis_funding(
         blockchain: &mut Blockchain,
-        user_wallet: Option<&crate::runtime::did_startup::WalletStartupResult>,
+        genesis_validators: Vec<GenesisValidator>,
+        environment: &crate::config::Environment,
     ) -> Result<()> {
-        info!("Creating genesis funding for identity-based transaction system...");
+        info!("Creating genesis funding for multi-validator identity-based transaction system...");
+        info!("Initializing {} genesis validators", genesis_validators.len());
+        
+        // Validate we have validators
+        if genesis_validators.is_empty() {
+            return Err(anyhow::anyhow!("No genesis validators provided - network requires at least one validator"));
+        }
+        
+        info!("Multi-validator mode: {} validators for production network", genesis_validators.len());
         
         // Initialize outputs vector for genesis transaction
         let mut genesis_outputs = Vec::new();
+        let mut total_validator_stake = 0u64;
         
-        // Create genesis wallet UTXOs for identity-linked wallets
-        if let Some(wallet_data) = user_wallet {
-            info!("Using identity-linked wallet: {} (Identity: {}, Wallet: {})", 
-                wallet_data.wallet_name, 
-                hex::encode(&wallet_data.node_identity_id.0[..8]),
-                hex::encode(&wallet_data.node_wallet_id.0[..8]));
+        // Create UTXOs for each validator based on their stake
+        for (index, validator) in genesis_validators.iter().enumerate() {
+            let validator_id_hex = hex::encode(&validator.identity_id.0[..8]);
+            info!("Creating validator {} UTXO: {} ZHTP stake (Identity: {})", 
+                  index + 1, validator.stake, validator_id_hex);
             
-            // Create user's identity-linked wallet UTXO in genesis block for initial funding
-            let user_wallet_output = TransactionOutput {
+            // Create validator stake UTXO
+            let validator_output = TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(
-                    format!("identity_wallet_commitment_{}", hex::encode(&wallet_data.node_identity_id.0[..8])).as_bytes()
+                    format!("validator_stake_commitment_{}_{}", validator_id_hex, validator.stake).as_bytes()
                 ),
                 note: lib_blockchain::types::hash::blake3_hash(
-                    format!("identity_wallet_note_{}", hex::encode(&wallet_data.node_identity_id.0[..8])).as_bytes()
+                    format!("validator_stake_note_{}_{}", validator_id_hex, index).as_bytes()
                 ),
-                recipient: PublicKey::new(format!("identity_{}", hex::encode(&wallet_data.node_identity_id.0[..8])).as_bytes().to_vec()),
+                recipient: PublicKey::new(validator.identity_id.as_bytes().to_vec()),
             };
             
-            // Add user wallet output to genesis transaction outputs
-            genesis_outputs.push(user_wallet_output);
+            genesis_outputs.push(validator_output);
+            total_validator_stake += validator.stake;
             
-            info!("Created identity-linked wallet UTXO for identity: {} (wallet: {}, address: {})", 
-                hex::encode(&wallet_data.node_identity_id.0[..8]),
-                wallet_data.wallet_name, 
-                wallet_data.wallet_address);
-            info!("Identity-linked wallet will receive genesis funding for network operations");
+            info!("   - Validator {}: {} ZHTP (ID: {})", 
+                  index + 1, validator.stake, validator_id_hex);
         }
         
-        // Create validator identities for BFT consensus (minimum 4 required)
-        info!("Setting up identity-based validation for BFT consensus...");
-        
-        // User identity becomes the primary validator (validator #1)
-        if let Some(wallet_data) = user_wallet {
-            info!("User identity '{}' with wallet '{}' registered as primary validator", 
-                hex::encode(&wallet_data.node_identity_id.0[..8]),
-                wallet_data.wallet_name);
-        }
-        
-        // Create 3 additional validator identities to meet BFT minimum of 4 validators
-        // Note: In production these would be real identities with wallets
-        let additional_validators = vec![
-            ("ValidatorBeta", "zhtp:validator:beta"),
-            ("ValidatorGamma", "zhtp:validator:gamma"), 
-            ("ValidatorDelta", "zhtp:validator:delta"),
-        ];
-        
-        info!("Creating {} additional validator identities for BFT consensus...", additional_validators.len());
-        
-        for (name, identity_address) in &additional_validators {
-            // Create identity ID from address for tracking
-            let identity_id_bytes = lib_blockchain::types::hash::blake3_hash(identity_address.as_bytes());
-            
-            info!("Created validator identity: {} ({})", name, &identity_id_bytes.to_hex()[..16]);
-        }
-        
-        info!("Total validators: 1 user identity + 3 network identities = 4 identities for BFT consensus");
-        
-
+        info!("Total validator stake: {} ZHTP across {} validators", 
+              total_validator_stake, genesis_validators.len());
         
         // Access the genesis block (first block in the blockchain)
         if blockchain.blocks.is_empty() {
@@ -790,16 +1029,7 @@ impl BlockchainComponent {
         
         let genesis_block = &mut blockchain.blocks[0];
         
-        // Add user wallet funding if available
-        if let Some(wallet_data) = user_wallet {
-            genesis_outputs.push(TransactionOutput {
-                commitment: lib_blockchain::types::hash::blake3_hash(b"user_wallet_commitment_100000"),
-                note: lib_blockchain::types::hash::blake3_hash(b"user_wallet_note"),
-                recipient: PublicKey::new(wallet_data.node_wallet_id.as_bytes().to_vec()),
-            });
-        }
-        
-        // Add system funding pools
+        // Add system funding pools (unchanged amounts for network operation)
         genesis_outputs.extend(vec![
             // System UBI funding pool
             TransactionOutput {
@@ -821,46 +1051,22 @@ impl BlockchainComponent {
             },
         ]);
         
-        // Add network validator wallet UTXOs for staking rewards (3 additional validators)
-        let additional_validators = vec![
-            ("ValidatorBeta", "zhtp:validator:beta"),
-            ("ValidatorGamma", "zhtp:validator:gamma"), 
-            ("ValidatorDelta", "zhtp:validator:delta"),
-        ];
-        
-        for (name, wallet_address) in &additional_validators {
-            let wallet_id_bytes = lib_blockchain::types::hash::blake3_hash(wallet_address.as_bytes());
-            genesis_outputs.push(TransactionOutput {
-                commitment: lib_blockchain::types::hash::blake3_hash(
-                    format!("network_validator_{}_commitment_50000", name.to_lowercase()).as_bytes()
-                ),
-                note: lib_blockchain::types::hash::blake3_hash(
-                    format!("network_validator_{}_note", name.to_lowercase()).as_bytes()
-                ),
-                recipient: PublicKey::new(wallet_id_bytes.as_bytes().to_vec()),
-            });
-        }
-        
-        // Create genesis funding transaction signed by user wallet (primary validator)
-        let genesis_signature = if let Some(wallet_data) = user_wallet {
+        // Create genesis funding transaction signed by first validator (network bootstrap)
+        let genesis_signature = if let Some(first_validator) = genesis_validators.first() {
+            let validator_id_hex = hex::encode(&first_validator.identity_id.0[..8]);
             Signature {
-                signature: format!("user_wallet_{}_genesis_signature", hex::encode(&wallet_data.node_wallet_id.as_bytes()[..8])).as_bytes().to_vec(),
-                public_key: PublicKey::new(wallet_data.node_wallet_id.as_bytes().to_vec()),
+                signature: format!("validator_{}_genesis_signature", validator_id_hex).as_bytes().to_vec(),
+                public_key: PublicKey::new(first_validator.identity_id.as_bytes().to_vec()),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: 0, // Genesis timestamp
             }
         } else {
-            // Fallback signature if no user wallet (shouldn't happen)
-            Signature {
-                signature: b"genesis_fallback_signature".to_vec(),
-                public_key: PublicKey::new(b"genesis_fallback_key".to_vec()),
-                algorithm: SignatureAlgorithm::Dilithium2,
-                timestamp: 0, // Genesis timestamp
-            }
+            return Err(anyhow::anyhow!("No validators available for genesis signature"));
         };
         
         let genesis_tx = Transaction {
             version: 1,
+            chain_id: environment.chain_id(),
             transaction_type: lib_blockchain::types::TransactionType::Transfer,
             inputs: vec![], // Genesis transaction has no inputs
             outputs: genesis_outputs.clone(),
@@ -869,6 +1075,7 @@ impl BlockchainComponent {
             memo: b"Genesis funding transaction for ZHTP system".to_vec(),
             wallet_data: None,
             identity_data: None,
+            validator_data: None,
         };
         
         // Add genesis transaction to the genesis block
@@ -883,19 +1090,70 @@ impl BlockchainComponent {
             blockchain.utxo_set.insert(utxo_hash, output.clone());
         }
         
-        info!("Genesis funding created: {} UTXOs with funding pools", 
+        info!("Genesis funding created: {} UTXOs with validator stakes and funding pools", 
               genesis_outputs.len());
         
-        if let Some(wallet_data) = user_wallet {
-            info!("   - User Wallet: 100,000 ZHTP (wallet: {})", 
-                  hex::encode(&wallet_data.node_wallet_id.as_bytes()[0..8]));
+        for (index, validator) in genesis_validators.iter().enumerate() {
+            info!("   - Validator {}: {} ZHTP (ID: {})", 
+                  index + 1, validator.stake, hex::encode(&validator.identity_id.0[..8]));
         }
         
-        info!("   - UBI Pool: 500,000 ZHTP (commitment-based)");
-        info!("   - Mining Pool: 300,000 ZHTP (commitment-based)");  
-        info!("   - Development Pool: 200,000 ZHTP (commitment-based)");
-        info!("   - Network Validator Wallets: 3 × 50,000 ZHTP (150,000 total for network validation)");
+        info!("   - UBI Pool: 500,000 ZHTP");
+        info!("   - Mining Pool: 300,000 ZHTP");
+        info!("   - Development Pool: 200,000 ZHTP");
+        info!("   - Total validator stake: {} ZHTP", total_validator_stake);
         info!("   - Total UTXO entries: {}", blockchain.utxo_set.len());
+        
+        // ========================================================================
+        // Register all validator identities in blockchain with proper transactions
+        // ========================================================================
+        let mut registered_validators = 0;
+        
+        for (index, validator) in genesis_validators.iter().enumerate() {
+            let validator_did = format!("did:zhtp:{}", hex::encode(&validator.identity_id.0));
+            
+            // Create identity transaction data for each validator
+            // Genesis/system transactions don't require ownership proof (validation allows empty for system txs)
+            let validator_identity_data = lib_blockchain::transaction::core::IdentityTransactionData {
+                did: validator_did.clone(),
+                display_name: format!("Genesis Validator {}", index + 1),
+                public_key: validator.identity_id.as_bytes().to_vec(),
+                ownership_proof: vec![],  // Empty for genesis/system transactions (bypasses validation)
+                identity_type: "validator".to_string(),
+                did_document_hash: lib_blockchain::types::hash::blake3_hash(validator_did.as_bytes()),
+                created_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                registration_fee: 0,  // Genesis identity has no fee (system transaction)
+                dao_fee: 0,
+            };
+            
+            // Register validator identity using proper method (creates transaction + adds to pending pool)
+            match blockchain.register_identity(validator_identity_data) {
+                Ok(tx_hash) => {
+                    registered_validators += 1;
+                    info!("✅ Genesis validator {} registered with transaction: {}", 
+                          index + 1, hex::encode(tx_hash));
+                    info!("   - DID: {}", validator_did);
+                    info!("   - Identity ID: {}", hex::encode(&validator.identity_id.0[..16]));
+                    info!("   - Stake: {} ZHTP", validator.stake);
+                    info!("   - Storage: {} GB", validator.storage_provided);
+                    info!("   - Commission: {}.{}%", 
+                          validator.commission_rate / 100, validator.commission_rate % 100);
+                }
+                Err(e) => {
+                    // If registration fails (e.g., already exists), just log warning but continue
+                    warn!("Validator {} identity registration failed (may already exist): {}", 
+                          index + 1, e);
+                }
+            }
+        }
+        
+        info!("✅ Genesis validator identities registered: {}/{}", 
+              registered_validators, genesis_validators.len());
+        info!("   - Pending transactions: {}", blockchain.pending_transactions.len());
+        info!("   - Identities in registry: {}", blockchain.identity_registry.len());
         
         Ok(())
     }
@@ -913,6 +1171,7 @@ impl Component for BlockchainComponent {
 
     async fn start(&self) -> Result<()> {
         info!("Starting blockchain component with shared blockchain service...");
+        info!("🌐 Network Environment: {}", self.environment);
         
         *self.status.write().await = ComponentStatus::Starting;
         
@@ -927,22 +1186,53 @@ impl Component for BlockchainComponent {
                 *self.blockchain.write().await = Some(blockchain_clone);
             }
             Err(_) => {
-                // If no shared blockchain exists, initialize one and set it globally
-                info!("Initializing new shared blockchain instance...");
+                // If no shared blockchain exists, initialize one for the correct network
+                info!("Initializing new shared blockchain instance for {} network...", self.environment);
+                
+                // Initialize shared blockchain (GenesisConfig is handled internally)
                 let shared_blockchain = lib_blockchain::initialize_shared_blockchain();
                 
-                let blockchain_clone = {
+                // Create genesis funding to bootstrap the system with UTXOs
+                {
                     let mut blockchain_guard = shared_blockchain.write().await;
+                    let bootstrap_validators_guard = self.bootstrap_validators.read().await;
                     
-                    // Create genesis funding to bootstrap the system with UTXOs
-                    let user_wallet_guard = self.user_wallet.read().await;
-                    let user_wallet = user_wallet_guard.as_ref();
-                    Self::create_genesis_funding(&mut *blockchain_guard, user_wallet).await?;
+                    // Convert BootstrapValidator to GenesisValidator
+                    let genesis_validators: Vec<GenesisValidator> = bootstrap_validators_guard
+                        .iter()
+                        .cloned()
+                        .map(GenesisValidator::from)
+                        .collect();
                     
+                    // If no bootstrap validators configured, create single validator from user wallet for dev mode
+                    let genesis_validators = if genesis_validators.is_empty() {
+                        let user_wallet_guard = self.user_wallet.read().await;
+                        if let Some(wallet_data) = user_wallet_guard.as_ref() {
+                            vec![GenesisValidator {
+                                identity_id: wallet_data.node_identity_id.clone(),
+                                stake: 100_000, // Default dev stake
+                                storage_provided: 1000, // Default dev storage (1TB)  
+                                commission_rate: 500, // 5% commission
+                                endpoints: vec!["127.0.0.1:8080".to_string()],
+                                consensus_key: None,
+                            }]
+                        } else {
+                            return Err(anyhow::anyhow!("No validators configured and no user wallet available"));
+                        }
+                    } else {
+                        genesis_validators
+                    };
+                    
+                    Self::create_genesis_funding(&mut *blockchain_guard, genesis_validators, &self.environment).await?;
+                }
+                
+                // Get the blockchain from shared instance (don't clone it)
+                let blockchain_for_component = {
+                    let blockchain_guard = shared_blockchain.read().await;
                     blockchain_guard.clone()
                 };
                 
-                *self.blockchain.write().await = Some(blockchain_clone);
+                *self.blockchain.write().await = Some(blockchain_for_component);
             }
         }
         
@@ -956,7 +1246,7 @@ impl Component for BlockchainComponent {
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
         
-        info!("Blockchain component started with shared blockchain service");
+        info!("✅ Blockchain component started with shared blockchain service for {} network", self.environment);
         Ok(())
     }
 
@@ -1114,7 +1404,7 @@ impl Component for BlockchainComponent {
                     info!("Creating economic transactions...");
                     
                     // Create UBI distribution transaction
-                    match Self::create_ubi_transaction().await {
+                    match Self::create_ubi_transaction(&self.environment).await {
                         Ok(ubi_tx) => {
                             match blockchain.add_pending_transaction(ubi_tx.clone()) {
                                 Ok(()) => {
@@ -1130,8 +1420,11 @@ impl Component for BlockchainComponent {
                         }
                     }
                     
-                    // Create reward transaction for network services
-                    match Self::create_reward_transaction().await {
+                    // Create reward transaction for network services (example with placeholder node ID)
+                    // Note: In production, use the actual node ID from NetworkComponent.get_node_id()
+                    let example_node_id = [2u8; 32]; // Placeholder for testing
+                    let reward_amount = 500; // 500 ZHTP tokens
+                    match Self::create_reward_transaction(example_node_id, reward_amount, &self.environment).await {
                         Ok(reward_tx) => {
                             match blockchain.add_pending_transaction(reward_tx.clone()) {
                                 Ok(()) => {
@@ -1208,7 +1501,7 @@ impl Component for BlockchainComponent {
 
 impl BlockchainComponent {
     /// Create UBI distribution transaction using lib-economy
-    async fn create_ubi_transaction() -> Result<lib_blockchain::Transaction> {
+    async fn create_ubi_transaction(environment: &crate::config::Environment) -> Result<lib_blockchain::Transaction> {
         use lib_economy::transactions::creation::create_ubi_distributions;
         use lib_economy::wasm::IdentityId;
         
@@ -1225,26 +1518,33 @@ impl BlockchainComponent {
         
         // Convert economics transaction to blockchain transaction
         let economics_tx = &ubi_distributions[0];
-        Self::convert_economics_to_system_tx(economics_tx).await
+        Self::convert_economics_to_system_tx(economics_tx, environment).await
     }
 
-    /// Create reward transaction using lib-economy  
-    async fn create_reward_transaction() -> Result<lib_blockchain::Transaction> {
+    /// Create reward transaction using lib-economy
+    /// 
+    /// # Arguments
+    /// * `node_id` - The 32-byte unique identifier of the node receiving the reward
+    /// * `reward_amount` - The amount of ZHTP tokens to award
+    /// * `environment` - The node's environment configuration
+    pub async fn create_reward_transaction(
+        node_id: [u8; 32],
+        reward_amount: u64,
+        environment: &crate::config::Environment
+    ) -> Result<lib_blockchain::Transaction> {
         use lib_economy::transactions::creation::create_reward_transaction;
         
         // Create reward for network services (routing, storage, etc.)
-        let network_participant = [2u8; 32]; // In production this would be a node
-        let reward_amount = 500; // 500 ZHTP tokens for network services
-        
-        let reward_tx = create_reward_transaction(network_participant, reward_amount)?;
+        let reward_tx = create_reward_transaction(node_id, reward_amount)?;
         
         // Convert economics transaction to blockchain transaction
-        Self::convert_economics_to_system_tx(&reward_tx).await
+        Self::convert_economics_to_system_tx(&reward_tx, environment).await
     }
 
     /// Convert economics transaction to blockchain transaction format as system transaction
     async fn convert_economics_to_system_tx(
-        economics_tx: &lib_economy::transactions::Transaction
+        economics_tx: &lib_economy::transactions::Transaction,
+        environment: &crate::config::Environment,
     ) -> Result<lib_blockchain::Transaction> {
         use lib_blockchain::{Transaction, TransactionOutput};
         // Removed unused TransactionInput  
@@ -1275,7 +1575,7 @@ impl BlockchainComponent {
         };
 
         // Create properly signed transaction using system keypair
-        let signature = Self::create_system_signature(economics_tx, &inputs, &outputs, blockchain_tx_type.clone()).await?;
+        let signature = Self::create_system_signature(economics_tx, &inputs, &outputs, blockchain_tx_type.clone(), environment).await?;
 
         // Create memo with transaction details
         let memo = format!(
@@ -1288,6 +1588,7 @@ impl BlockchainComponent {
         // Create the blockchain transaction as SYSTEM TRANSACTION (no inputs, no ZK proofs needed)
         Ok(Transaction {
             version: 1,
+            chain_id: environment.chain_id(),
             transaction_type: blockchain_tx_type,
             inputs, // Empty inputs = system transaction (creates new money like mining)
             outputs,
@@ -1296,6 +1597,7 @@ impl BlockchainComponent {
             wallet_data: None,
             memo,
             identity_data: None,
+            validator_data: None,
         })
     }
 
@@ -1305,6 +1607,7 @@ impl BlockchainComponent {
         inputs: &[lib_blockchain::TransactionInput],
         outputs: &[lib_blockchain::TransactionOutput],
         tx_type: lib_blockchain::types::TransactionType,
+        environment: &crate::config::Environment,
     ) -> Result<lib_blockchain::integration::crypto_integration::Signature> {
         use lib_crypto::{generate_keypair, sign_message};
         // Removed unused KeyPair
@@ -1322,12 +1625,12 @@ impl BlockchainComponent {
         
         let temp_transaction = lib_blockchain::Transaction {
             version: 1,
+            chain_id: environment.chain_id(),
             transaction_type: tx_type,
             inputs: inputs.to_vec(),
             outputs: outputs.to_vec(),
             fee: economics_tx.total_fee,
             signature: temp_signature,
-            wallet_data: None,
             memo: format!(
                 "System TX: {} {} ZHTP from {:?} to {:?}", 
                 economics_tx.tx_type.description(), 
@@ -1336,6 +1639,8 @@ impl BlockchainComponent {
                 economics_tx.to
             ).into_bytes(),
             identity_data: None,
+            wallet_data: None,
+            validator_data: None,
         };
         
         // Create signing hash using the exact same method as blockchain validation
@@ -1494,15 +1799,109 @@ pub struct ConsensusComponent {
     status: Arc<RwLock<ComponentStatus>>,
     start_time: Arc<RwLock<Option<Instant>>>,
     consensus_engine: Arc<RwLock<Option<ConsensusEngine>>>,
+    validator_manager: Arc<RwLock<ValidatorManager>>,
+    blockchain: Arc<RwLock<Option<Arc<RwLock<Blockchain>>>>>,
+    environment: crate::config::Environment,
 }
 
 impl ConsensusComponent {
-    pub fn new() -> Self {
+    pub fn new(environment: crate::config::Environment) -> Self {
+        // Create ValidatorManager with development mode based on environment
+        let development_mode = matches!(environment, crate::config::Environment::Development);
+        let validator_manager = ValidatorManager::new_with_development_mode(
+            100,  // max_validators: Support up to 100 validators
+            100_000_000,  // min_stake: 100 ZHTP minimum stake (storage is now optional)
+            development_mode,
+        );
+        
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
             consensus_engine: Arc::new(RwLock::new(None)),
+            validator_manager: Arc::new(RwLock::new(validator_manager)),
+            blockchain: Arc::new(RwLock::new(None)),
+            environment,
         }
+    }
+    
+    /// Set the blockchain reference for validator synchronization
+    pub async fn set_blockchain(&self, blockchain: Arc<RwLock<Blockchain>>) {
+        *self.blockchain.write().await = Some(blockchain);
+    }
+    
+    /// Synchronize validators from blockchain to validator manager
+    /// 
+    /// This reads all active validators from the blockchain's validator_registry
+    /// and registers them with the consensus ValidatorManager.
+    pub async fn sync_validators_from_blockchain(&self) -> Result<()> {
+        let blockchain_opt = self.blockchain.read().await;
+        let blockchain = match blockchain_opt.as_ref() {
+            Some(bc) => bc,
+            None => {
+                warn!("Cannot sync validators: blockchain not set");
+                return Ok(());
+            }
+        };
+        
+        let bc = blockchain.read().await;
+        let active_validators = bc.get_active_validators();
+        
+        if active_validators.is_empty() {
+            debug!("No active validators found in blockchain registry");
+            return Ok(());
+        }
+        
+        let mut validator_manager = self.validator_manager.write().await;
+        let mut synced_count = 0;
+        let mut skipped_count = 0;
+        
+        for validator_info in active_validators {
+            // Convert string identity_id to Hash (IdentityId type in lib-consensus)
+            let identity_hash = lib_crypto::Hash::from_bytes(&lib_crypto::hashing::hash_blake3(validator_info.identity_id.as_bytes()));
+            
+            // Check if validator is already registered in consensus
+            if validator_manager.get_validator(&identity_hash).is_some() {
+                skipped_count += 1;
+                continue;
+            }
+            
+            // Register validator in consensus layer
+            match validator_manager.register_validator(
+                identity_hash.clone(),
+                validator_info.stake,
+                validator_info.storage_provided,
+                validator_info.consensus_key.clone(),
+                validator_info.commission_rate as u8,
+            ) {
+                Ok(_) => {
+                    synced_count += 1;
+                    info!(
+                        "Synced validator {} to consensus (stake: {} ZHTP, storage: {} bytes)",
+                        validator_info.identity_id,
+                        validator_info.stake,
+                        validator_info.storage_provided
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to sync validator {} to consensus: {}",
+                        validator_info.identity_id, e
+                    );
+                }
+            }
+        }
+        
+        info!(
+            "Validator sync complete: {} new validators registered, {} already registered",
+            synced_count, skipped_count
+        );
+        
+        Ok(())
+    }
+    
+    /// Get the validator manager for external access
+    pub async fn get_validator_manager(&self) -> Arc<RwLock<ValidatorManager>> {
+        self.validator_manager.clone()
     }
 }
 
@@ -1521,8 +1920,15 @@ impl Component for ConsensusComponent {
         
         *self.status.write().await = ComponentStatus::Starting;
         
-        // Initialize consensus engine
-        let config = ConsensusConfig::default();
+        // Initialize consensus engine with development mode based on environment
+        let mut config = ConsensusConfig::default();
+        
+        // Enable development mode for Development environment
+        config.development_mode = matches!(self.environment, crate::config::Environment::Development);
+        if config.development_mode {
+            info!("🧪 Development mode enabled - single validator consensus allowed");
+        }
+        
         let consensus_engine = lib_consensus::init_consensus(config)?;
         
         info!("Consensus engine initialized with hybrid PoS");
@@ -1530,6 +1936,12 @@ impl Component for ConsensusComponent {
         info!("Byzantine fault tolerance active");
         
         *self.consensus_engine.write().await = Some(consensus_engine);
+        
+        // Synchronize validators from blockchain if blockchain is set
+        if let Err(e) = self.sync_validators_from_blockchain().await {
+            warn!("Failed to sync validators from blockchain during startup: {}", e);
+        }
+        
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
         
@@ -1807,6 +2219,8 @@ pub struct ProtocolsComponent {
     unified_server: Arc<RwLock<Option<crate::unified_server::ZhtpUnifiedServer>>>,
     zdns_server: Arc<RwLock<Option<ZdnsServer>>>,
     lib_integration: Arc<RwLock<Option<ZhtpIntegration>>>,
+    environment: crate::config::environment::Environment,  // NEW: Network-specific environment
+    api_port: u16,  // Port from configuration
 }
 
 impl std::fmt::Debug for ProtocolsComponent {
@@ -1822,13 +2236,15 @@ impl std::fmt::Debug for ProtocolsComponent {
 }
 
 impl ProtocolsComponent {
-    pub fn new() -> Self {
+    pub fn new(environment: crate::config::environment::Environment, api_port: u16) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
             unified_server: Arc::new(RwLock::new(None)),
             zdns_server: Arc::new(RwLock::new(None)),
             lib_integration: Arc::new(RwLock::new(None)),
+            environment,  // Store environment for network-specific paths
+            api_port,     // Store port from configuration
         }
     }
 }
@@ -1894,23 +2310,26 @@ impl Component for ProtocolsComponent {
         
         info!("Creating ZHTP Unified Server (consolidates all protocols)...");
         
-        // Create unified server that handles ALL protocols on port 9333
+        // Create unified server that handles ALL protocols on configured port
         let mut unified_server = crate::unified_server::ZhtpUnifiedServer::new(
             blockchain.clone(),
             storage.clone(),
             identity_manager.clone(),
             economic_model.clone(),
+            self.api_port,  // Use port from configuration
         ).await?;
         
         // Initialize ZHTP authentication manager with blockchain identity
         info!(" Initializing ZHTP authentication and relay protocols...");
         
-        // Load or create node identity for blockchain authentication
-        let node_identity_path = std::path::Path::new("data/node_identity.json");
+        // Load or create node identity for blockchain authentication (network-specific path)
+        let data_dir = self.environment.data_directory();
+        let node_identity_path = format!("{}/node_identity.json", data_dir);
+        let node_identity_path = std::path::Path::new(&node_identity_path);
         
         if node_identity_path.exists() {
             // Load existing node identity
-            info!(" Loading node identity from data/node_identity.json");
+            info!(" Loading node identity from {}", node_identity_path.display());
             match std::fs::read_to_string(node_identity_path) {
                 Ok(json_str) => {
                     match serde_json::from_str::<lib_identity::ZhtpIdentity>(&json_str) {

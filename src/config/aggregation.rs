@@ -29,6 +29,11 @@ pub struct NodeConfig {
     pub consensus_config: ConsensusConfig,
     pub economics_config: EconomicsConfig,
     pub protocols_config: ProtocolsConfig,
+    pub rewards_config: RewardsConfig,
+    
+    // Validator configuration (Gap 5)
+    #[serde(default)]
+    pub validator_config: Option<ValidatorConfig>,
     
     // Cross-package coordination
     pub port_assignments: HashMap<String, u16>,
@@ -84,6 +89,10 @@ pub struct NetworkConfig {
     pub protocols: Vec<String>, // bluetooth, wifi_direct, lorawan, tcp
     pub bootstrap_peers: Vec<String>,
     pub long_range_relays: bool,
+    
+    // Bootstrap validators for multi-node genesis (Gap 5)
+    #[serde(default)]
+    pub bootstrap_validators: Vec<BootstrapValidator>,
 }
 
 /// Blockchain configuration
@@ -133,6 +142,84 @@ pub struct ProtocolsConfig {
     pub api_port: u16,
     pub max_connections: usize,
     pub request_timeout_ms: u64,
+}
+
+/// Automatic rewards configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RewardsConfig {
+    // Global reward settings
+    pub enabled: bool,
+    pub auto_claim: bool,
+    
+    // Routing rewards
+    pub routing_rewards_enabled: bool,
+    pub routing_check_interval_secs: u64,
+    pub routing_minimum_threshold: u64,
+    pub routing_max_batch_size: u64,
+    
+    // Storage rewards
+    pub storage_rewards_enabled: bool,
+    pub storage_check_interval_secs: u64,
+    pub storage_minimum_threshold: u64,
+    pub storage_max_batch_size: u64,
+    
+    // Rate limiting
+    pub max_claims_per_hour: u32,
+    pub cooldown_period_secs: u64,
+}
+
+impl Default for RewardsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_claim: true,
+            routing_rewards_enabled: true,
+            routing_check_interval_secs: 600,  // 10 minutes
+            routing_minimum_threshold: 100,
+            routing_max_batch_size: 10_000,
+            storage_rewards_enabled: true,
+            storage_check_interval_secs: 600,  // 10 minutes
+            storage_minimum_threshold: 100,
+            storage_max_batch_size: 10_000,
+            max_claims_per_hour: 6,  // Once every 10 minutes
+            cooldown_period_secs: 600,
+        }
+    }
+}
+
+/// Validator node configuration (Gap 5)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatorConfig {
+    pub enabled: bool,
+    pub identity_id: String,  // DID or identity hash
+    pub stake: u64,           // Minimum stake required (REQUIRED)
+    pub storage_provided: u64, // Storage capacity in bytes (OPTIONAL - set to 0 for pure validators)
+    pub consensus_key_path: String, // Path to consensus keypair
+    pub commission_rate: u16, // Commission percentage (0-10000 = 0-100%)
+}
+
+impl Default for ValidatorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            identity_id: String::new(),
+            stake: 1000 * 1_000_000, // 1000 ZHTP minimum stake
+            storage_provided: 0, // 0 = pure validator (no storage), can be increased for storage bonus
+            consensus_key_path: "./data/consensus_key.pem".to_string(),
+            commission_rate: 500, // 5% default
+        }
+    }
+}
+
+/// Bootstrap validator for multi-node genesis (Gap 5)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootstrapValidator {
+    pub identity_id: String,
+    pub consensus_key: String, // Public key as hex or base64
+    pub stake: u64,
+    pub storage_provided: u64,
+    pub commission_rate: u16,
+    pub endpoints: Vec<String>, // Network endpoints
 }
 
 /// Resource allocation across packages
@@ -288,6 +375,7 @@ impl Default for NodeConfig {
                 ],
                 bootstrap_peers: vec!["127.0.0.1:9333".to_string()],
                 long_range_relays: false,
+                bootstrap_validators: Vec::new(), // Gap 5: Empty by default
             },
             
             blockchain_config: BlockchainConfig {
@@ -327,6 +415,10 @@ impl Default for NodeConfig {
                 request_timeout_ms: 30000,
             },
             
+            rewards_config: RewardsConfig::default(),
+            
+            validator_config: None, // Gap 5: Disabled by default
+            
             port_assignments: HashMap::new(),
             resource_allocations: ResourceAllocations {
                 max_memory_mb: 2048,
@@ -353,7 +445,12 @@ impl NodeConfig {
     
     /// Apply CLI argument overrides to configuration
     pub fn apply_cli_overrides(&mut self, args: &CliArgs) -> Result<()> {
-        self.network_config.mesh_port = args.mesh_port;
+        // Only override mesh_port if explicitly specified via CLI
+        if let Some(port) = args.mesh_port {
+            self.network_config.mesh_port = port;
+            tracing::info!("CLI override: mesh_port = {}", port);
+        }
+        
         self.mesh_mode = if args.pure_mesh { MeshMode::PureMesh } else { MeshMode::Hybrid };
         self.environment = args.environment;
         self.data_directory = args.data_dir.to_string_lossy().to_string();
@@ -364,7 +461,7 @@ impl NodeConfig {
         }
         
         // Update port assignments
-        self.port_assignments.insert("mesh".to_string(), args.mesh_port);
+        self.port_assignments.insert("mesh".to_string(), self.network_config.mesh_port);
         self.port_assignments.insert("dht".to_string(), self.storage_config.dht_port);
         self.port_assignments.insert("api".to_string(), self.protocols_config.api_port);
         

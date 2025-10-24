@@ -102,8 +102,10 @@ impl ZhtpRequestHandler for IdentityHandler {
 // Request/Response structures following lib-identity patterns
 #[derive(Deserialize)]
 struct CreateIdentityRequest {
-    identity_type: String,
+    display_name: String,
+    identity_type: Option<String>,  // Optional, defaults to "human"
     recovery_options: Option<Vec<String>>,
+    password: Option<String>,  // Optional password for identity
 }
 
 #[derive(Serialize)]
@@ -132,8 +134,9 @@ impl IdentityHandler {
     async fn handle_create_identity(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let req_data: CreateIdentityRequest = serde_json::from_slice(&request.body)?;
         
-        // Parse identity type
-        let identity_type = match req_data.identity_type.as_str() {
+        // Parse identity type (defaults to human if not specified)
+        let identity_type_str = req_data.identity_type.as_deref().unwrap_or("human");
+        let identity_type = match identity_type_str {
             "human" => IdentityType::Human,
             "organization" => IdentityType::Organization,
             "device" => IdentityType::Device,
@@ -147,16 +150,21 @@ impl IdentityHandler {
             let mut economic_model = self.economic_model.write().await;
             let citizenship_result = identity_manager
                 .create_citizen_identity(
-                    format!("Citizen_{}", std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)?
-                        .as_secs()), // Display name
+                    req_data.display_name.clone(), // Use provided display name
                     req_data.recovery_options.unwrap_or_default(),
                     &mut *economic_model,
                 )
                 .await?;
             
-            //  FIX: Create blockchain transaction for the identity registration
-            tracing::error!(" BLOCKCHAIN TRANSACTION CREATION STARTING - DEBUG LOG");
+            // Set password if provided
+            if let Some(password) = &req_data.password {
+                if let Err(e) = identity_manager.set_identity_password(&citizenship_result.identity_id, password) {
+                    tracing::warn!("Failed to set identity password: {}", e);
+                }
+            }
+            
+            //  Create blockchain transactions for identity + all 3 wallets
+            tracing::info!(" Creating blockchain transactions for identity and wallets");
             let did_string = format!("did:zhtp:{}", citizenship_result.identity_id);
             
             // Create proper ownership proof by signing the DID with identity data
@@ -214,7 +222,7 @@ impl IdentityHandler {
                 Vec::new(), // No additional data needed
             );
             
-            // Submit transaction to shared blockchain
+            // Submit identity transaction to shared blockchain
             match self.submit_transaction_to_blockchain(transaction).await {
                 Ok(tx_hash) => {
                     tracing::info!(" Identity transaction submitted to blockchain: {}", tx_hash);
@@ -222,6 +230,66 @@ impl IdentityHandler {
                 Err(e) => {
                     tracing::warn!("Failed to submit identity transaction to blockchain: {}", e);
                 }
+            }
+            
+            // Create and submit wallet transactions for all 3 wallets
+            use lib_blockchain::transaction::WalletTransactionData;
+            
+            // Primary Wallet
+            let primary_wallet_tx = WalletTransactionData {
+                wallet_id: lib_blockchain::Hash::from(citizenship_result.primary_wallet_id.0),
+                wallet_type: "Primary".to_string(),
+                wallet_name: "Primary Wallet".to_string(),
+                alias: None,
+                public_key: keypair.public_key.dilithium_pk.to_vec(),
+                owner_identity_id: Some(lib_blockchain::Hash::from(citizenship_result.identity_id.0)),
+                seed_commitment: lib_crypto::hash_blake3(citizenship_result.wallet_seed_phrases.primary_wallet_seeds.words.join(" ").as_bytes()).into(),
+                created_at: citizenship_result.dao_registration.registered_at,
+                registration_fee: 0,  // System wallets are free
+                capabilities: 0xFFFF,  // Full capabilities
+                initial_balance: citizenship_result.welcome_bonus.bonus_amount,  // Welcome bonus goes to primary
+            };
+            
+            if let Err(e) = self.submit_wallet_to_blockchain(primary_wallet_tx).await {
+                tracing::warn!("Failed to submit primary wallet to blockchain: {}", e);
+            }
+            
+            // UBI Wallet
+            let ubi_wallet_tx = WalletTransactionData {
+                wallet_id: lib_blockchain::Hash::from(citizenship_result.ubi_wallet_id.0),
+                wallet_type: "UBI".to_string(),
+                wallet_name: "UBI Wallet".to_string(),
+                alias: None,
+                public_key: keypair.public_key.dilithium_pk.to_vec(),
+                owner_identity_id: Some(lib_blockchain::Hash::from(citizenship_result.identity_id.0)),
+                seed_commitment: lib_crypto::hash_blake3(citizenship_result.wallet_seed_phrases.ubi_wallet_seeds.words.join(" ").as_bytes()).into(),
+                created_at: citizenship_result.dao_registration.registered_at,
+                registration_fee: 0,  // System wallets are free
+                capabilities: 0xFFFF,  // Full capabilities
+                initial_balance: 0,  // UBI payments come later
+            };
+            
+            if let Err(e) = self.submit_wallet_to_blockchain(ubi_wallet_tx).await {
+                tracing::warn!("Failed to submit UBI wallet to blockchain: {}", e);
+            }
+            
+            // Savings Wallet
+            let savings_wallet_tx = WalletTransactionData {
+                wallet_id: lib_blockchain::Hash::from(citizenship_result.savings_wallet_id.0),
+                wallet_type: "Savings".to_string(),
+                wallet_name: "Savings Wallet".to_string(),
+                alias: None,
+                public_key: keypair.public_key.dilithium_pk.to_vec(),
+                owner_identity_id: Some(lib_blockchain::Hash::from(citizenship_result.identity_id.0)),
+                seed_commitment: lib_crypto::hash_blake3(citizenship_result.wallet_seed_phrases.savings_wallet_seeds.words.join(" ").as_bytes()).into(),
+                created_at: citizenship_result.dao_registration.registered_at,
+                registration_fee: 0,  // System wallets are free
+                capabilities: 0xFFFF,  // Full capabilities
+                initial_balance: 0,  // Starts empty
+            };
+            
+            if let Err(e) = self.submit_wallet_to_blockchain(savings_wallet_tx).await {
+                tracing::warn!("Failed to submit savings wallet to blockchain: {}", e);
             }
             
             CreateIdentityResponse {
@@ -236,13 +304,14 @@ impl IdentityHandler {
             // Create basic identity (non-human)
             // For now, return a placeholder response
             // Generate proper random identity ID for non-human identities
-            let identity_data = format!("{}:{}", req_data.identity_type, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+            let identity_type_for_hash = req_data.identity_type.as_deref().unwrap_or("unknown");
+            let identity_data = format!("{}:{}", identity_type_for_hash, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
             let identity_id = lib_crypto::hash_blake3(identity_data.as_bytes());
             
             CreateIdentityResponse {
                 status: "identity_created".to_string(),
                 identity_id: hex::encode(identity_id),
-                identity_type: req_data.identity_type,
+                identity_type: req_data.identity_type.unwrap_or_else(|| "unknown".to_string()),
                 access_level: "Visitor".to_string(),
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
@@ -365,5 +434,60 @@ impl IdentityHandler {
                 Err(anyhow::anyhow!("Failed to submit transaction: {}", e))
             }
         }
+    }
+    
+    /// Submit a wallet registration transaction to the blockchain
+    async fn submit_wallet_to_blockchain(&self, wallet_data: lib_blockchain::transaction::WalletTransactionData) -> Result<String> {
+        use lib_blockchain::transaction::Transaction;
+        use lib_blockchain::integration::{Signature, PublicKey, SignatureAlgorithm};
+        
+        // Generate keypair for wallet transaction signature
+        let keypair = lib_crypto::KeyPair::generate()
+            .map_err(|e| anyhow::anyhow!("Failed to generate keypair: {}", e))?;
+        
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        
+        // Create temporary transaction to get hash for signing
+        let temp_transaction = Transaction::new_wallet_registration(
+            wallet_data.clone(),
+            vec![], // Empty outputs
+            Signature {
+                signature: vec![0; 2420], // Temporary signature
+                public_key: PublicKey::new(keypair.public_key.dilithium_pk.to_vec()),
+                algorithm: SignatureAlgorithm::Dilithium2,
+                timestamp,
+            },
+            Vec::new(), // Empty data
+        );
+        
+        // Get the transaction hash for signing
+        let tx_hash = temp_transaction.hash();
+        
+        // Sign the transaction hash
+        let crypto_signature = keypair.sign(tx_hash.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Failed to sign wallet transaction: {}", e))?;
+        
+        // Create final signed transaction
+        let transaction = Transaction::new_wallet_registration(
+            wallet_data.clone(),
+            vec![], // Empty outputs
+            Signature {
+                signature: crypto_signature.signature,
+                public_key: PublicKey::new(keypair.public_key.dilithium_pk.to_vec()),
+                algorithm: SignatureAlgorithm::Dilithium2,
+                timestamp,
+            },
+            Vec::new(), // Empty data
+        );
+        
+        // Submit to blockchain
+        let tx_hash = self.submit_transaction_to_blockchain(transaction).await?;
+        tracing::info!(" Wallet transaction submitted: {} ({})", 
+            &tx_hash[..16], 
+            wallet_data.wallet_type);
+        
+        Ok(tx_hash)
     }
 }

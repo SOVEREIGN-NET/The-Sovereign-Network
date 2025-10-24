@@ -1,12 +1,12 @@
-# Storage Node Configuration
-# Optimized for distributed storage services and DHT participation
-# Suitable for: Storage providers, IPFS-like services, data availability
+# Mainnet Storage Node Configuration
+# Optimized for distributed storage services and DHT participation on MAINNET
+# Suitable for: Production storage providers, -like services, data availability
 
 # Core Node Settings
 mesh_mode = "Hybrid"
 security_level = "High"
 environment = "Mainnet"
-data_directory = "./data/storage-node"
+data_directory = "./data/mainnet-storage"  # Mainnet-specific directory
 
 [crypto_config]
 post_quantum_enabled = true
@@ -45,10 +45,12 @@ long_range_relays = false
 
 [blockchain_config]
 network_id = "zhtp-mainnet"
+chain_id = 1  # Mainnet chain ID
 block_time_seconds = 5
 max_block_size = 1048576  # Smaller blocks, focus on storage
 zk_transactions = true
 smart_contracts = false  # Disable smart contracts to save resources
+enforce_chain_id = true  # CRITICAL: Prevent testnet tx replay
 
 [consensus_config]
 consensus_type = "Hybrid"

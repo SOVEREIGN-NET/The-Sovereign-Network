@@ -18,6 +18,9 @@ pub mod shared_dht;
 pub mod blockchain_provider;
 pub mod mesh_router_provider;
 pub mod did_startup;
+pub mod routing_rewards;
+pub mod storage_rewards;
+pub mod reward_orchestrator;
 #[cfg(test)]
 pub mod test_api_integration;
 
@@ -166,6 +169,9 @@ pub struct RuntimeOrchestrator {
     startup_order: Vec<ComponentId>,
     shared_blockchain: Arc<RwLock<Option<SharedBlockchainService>>>,
     user_wallet: Arc<RwLock<Option<crate::runtime::did_startup::WalletStartupResult>>>,
+    
+    // Unified reward orchestrator
+    reward_orchestrator: Arc<RwLock<Option<Arc<reward_orchestrator::RewardOrchestrator>>>>,
 }
 
 impl RuntimeOrchestrator {
@@ -192,6 +198,7 @@ impl RuntimeOrchestrator {
             shutdown_signal: Arc::new(Mutex::new(Some(shutdown_tx))),
             shared_blockchain: Arc::new(RwLock::new(None)),
             user_wallet: Arc::new(RwLock::new(None)),
+            reward_orchestrator: Arc::new(RwLock::new(None)),
             startup_order: vec![
                 ComponentId::Crypto,      // Foundation layer
                 ComponentId::ZK,          // Zero-knowledge proofs
@@ -312,13 +319,16 @@ impl RuntimeOrchestrator {
         self.register_component(Arc::new(IdentityComponent::new())).await?;
         self.register_component(Arc::new(StorageComponent::new())).await?;
         self.register_component(Arc::new(NetworkComponent::new())).await?;
-        // Pass user wallet to blockchain component for proper genesis funding
+        // Pass user wallet, environment AND bootstrap validators to blockchain component for proper network initialization
         let user_wallet_guard = self.user_wallet.read().await;
         let user_wallet = user_wallet_guard.clone();
-        self.register_component(Arc::new(BlockchainComponent::new_with_wallet(user_wallet))).await?;
-        self.register_component(Arc::new(ConsensusComponent::new())).await?;
+        let environment = self.config.environment;  // Get environment from config
+        let api_port = self.config.protocols_config.api_port;  // Get API port from config
+        let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();  // Get bootstrap validators from config
+        self.register_component(Arc::new(BlockchainComponent::new_with_full_config(user_wallet, environment, bootstrap_validators))).await?;
+        self.register_component(Arc::new(ConsensusComponent::new(environment))).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
-        self.register_component(Arc::new(ProtocolsComponent::new())).await?;
+        self.register_component(Arc::new(ProtocolsComponent::new(environment, api_port))).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         
         info!("All components registered successfully");
@@ -405,6 +415,22 @@ impl RuntimeOrchestrator {
                         if let Err(e) = self.initialize_shared_blockchain().await {
                             warn!("Failed to initialize shared blockchain service: {}", e);
                         }
+                        
+                        // Start unified reward orchestrator after blockchain is ready
+                        if let Err(e) = self.start_reward_orchestrator().await {
+                            warn!("Failed to start reward orchestrator: {}", e);
+                        } else {
+                            info!("Reward orchestrator started successfully");
+                        }
+                    }
+                    
+                    // Wire blockchain to consensus component after consensus starts
+                    if component_id == ComponentId::Consensus {
+                        if let Err(e) = self.wire_blockchain_to_consensus().await {
+                            warn!("Failed to wire blockchain to consensus: {}", e);
+                        } else {
+                            info!("Blockchain successfully wired to consensus component");
+                        }
                     }
                     
                     // Send start notification to other components
@@ -436,6 +462,11 @@ impl RuntimeOrchestrator {
     /// Stop all components in reverse order with timeout
     pub async fn shutdown_all_components(&self) -> Result<()> {
         info!("Shutting down all ZHTP components...");
+        
+        // Stop unified reward orchestrator first
+        if let Err(e) = self.stop_reward_orchestrator().await {
+            warn!("Failed to stop reward orchestrator: {}", e);
+        }
         
         // Set overall shutdown timeout
         let shutdown_future = async {
@@ -572,6 +603,11 @@ impl RuntimeOrchestrator {
     pub async fn get_detailed_health(&self) -> Result<HashMap<ComponentId, ComponentHealth>> {
         let health = self.component_health.read().await;
         Ok(health.clone())
+    }
+
+    /// Get the node configuration
+    pub fn get_config(&self) -> &NodeConfig {
+        &self.config
     }
 
     /// Send a message to a specific component
@@ -896,6 +932,105 @@ impl RuntimeOrchestrator {
         }
         
         warn!("Failed to initialize shared blockchain service - blockchain component not found");
+        Ok(())
+    }
+    
+    /// Wire the blockchain to the consensus component for validator synchronization
+    /// 
+    /// This connects the blockchain's validator registry to the consensus layer's
+    /// ValidatorManager, enabling multi-node consensus.
+    pub async fn wire_blockchain_to_consensus(&self) -> Result<()> {
+        info!("Wiring blockchain to consensus component...");
+        
+        // Get the blockchain Arc from BlockchainComponent
+        let blockchain_arc = if let Some(component) = self.components.read().await.get(&ComponentId::Blockchain) {
+            if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
+                blockchain_comp.get_initialized_blockchain().await?
+            } else {
+                return Err(anyhow::anyhow!("Blockchain component type mismatch"));
+            }
+        } else {
+            return Err(anyhow::anyhow!("Blockchain component not found"));
+        };
+        
+        // Get the ConsensusComponent and set the blockchain reference
+        if let Some(component) = self.components.read().await.get(&ComponentId::Consensus) {
+            if let Some(consensus_comp) = component.as_any().downcast_ref::<ConsensusComponent>() {
+                // Set the blockchain reference
+                consensus_comp.set_blockchain(blockchain_arc).await;
+                
+                // Sync validators from blockchain to consensus
+                consensus_comp.sync_validators_from_blockchain().await?;
+                
+                info!("Blockchain successfully connected to consensus validator manager");
+                return Ok(());
+            }
+        }
+        
+        Err(anyhow::anyhow!("Consensus component not found"))
+    }
+
+    /// Start the unified reward orchestrator
+    async fn start_reward_orchestrator(&self) -> Result<()> {
+        // Get NetworkComponent
+        let network_component = if let Some(component) = self.components.read().await.get(&ComponentId::Network) {
+            if let Some(network_comp) = component.as_any().downcast_ref::<NetworkComponent>() {
+                Arc::new(network_comp.clone())
+            } else {
+                warn!("Network component found but type mismatch");
+                return Err(anyhow::anyhow!("Network component type mismatch"));
+            }
+        } else {
+            warn!("Network component not found");
+            return Err(anyhow::anyhow!("Network component not found"));
+        };
+
+        // Get BlockchainComponent's blockchain Arc
+        let blockchain_arc = if let Some(component) = self.components.read().await.get(&ComponentId::Blockchain) {
+            if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
+                blockchain_comp.get_initialized_blockchain().await?
+            } else {
+                warn!("Blockchain component found but type mismatch");
+                return Err(anyhow::anyhow!("Blockchain component type mismatch"));
+            }
+        } else {
+            warn!("Blockchain component not found");
+            return Err(anyhow::anyhow!("Blockchain component not found"));
+        };
+
+        // Wrap blockchain_arc in Option to match expected type
+        let blockchain_with_option = Arc::new(RwLock::new(Some(
+            (*blockchain_arc.read().await).clone()
+        )));
+
+        // Convert rewards config to orchestrator config
+        let orchestrator_config = reward_orchestrator::RewardOrchestratorConfig::from(&self.config.rewards_config);
+
+        // Create the unified reward orchestrator with configuration
+        let orchestrator = Arc::new(reward_orchestrator::RewardOrchestrator::with_config(
+            network_component,
+            blockchain_with_option,
+            self.config.environment.clone(),
+            orchestrator_config,
+        ));
+
+        // Start all enabled reward processors
+        orchestrator.start_all().await?;
+
+        // Store the orchestrator instance
+        *self.reward_orchestrator.write().await = Some(orchestrator);
+
+        info!("Unified reward orchestrator started successfully");
+        Ok(())
+    }
+
+    /// Stop the unified reward orchestrator
+    async fn stop_reward_orchestrator(&self) -> Result<()> {
+        if let Some(orchestrator) = self.reward_orchestrator.write().await.take() {
+            info!("Stopping unified reward orchestrator...");
+            orchestrator.stop_all().await?;
+            info!("Unified reward orchestrator stopped");
+        }
         Ok(())
     }
 

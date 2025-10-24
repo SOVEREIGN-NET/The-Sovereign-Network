@@ -30,6 +30,20 @@ impl Default for Environment {
     }
 }
 
+impl Environment {
+    /// Returns the chain ID for this environment
+    /// - Mainnet: 0x01
+    /// - Testnet: 0x02
+    /// - Development: 0x03
+    pub fn chain_id(&self) -> u8 {
+        match self {
+            Environment::Mainnet => 0x01,
+            Environment::Testnet => 0x02,
+            Environment::Development => 0x03,
+        }
+    }
+}
+
 /// Environment-specific configuration settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvironmentConfig {
@@ -135,6 +149,52 @@ pub struct MemorySettings {
 }
 
 impl Environment {
+    /// Get network-specific data directory
+    /// 
+    /// Returns the base data directory path for this environment.
+    /// Each environment uses a separate directory to prevent data contamination.
+    pub fn data_directory(&self) -> String {
+        match self {
+            Environment::Development => "./data/dev".to_string(),
+            Environment::Testnet => "./data/testnet".to_string(),
+            Environment::Mainnet => "./data/mainnet".to_string(),
+        }
+    }
+    
+    /// Get blockchain database path for this environment
+    pub fn blockchain_db_path(&self) -> String {
+        format!("{}/blockchain.db", self.data_directory())
+    }
+    
+    /// Get wallet database path for this environment
+    pub fn wallet_db_path(&self) -> String {
+        format!("{}/wallet.db", self.data_directory())
+    }
+    
+    /// Get identity registry database path for this environment
+    pub fn identity_db_path(&self) -> String {
+        format!("{}/identity.db", self.data_directory())
+    }
+    
+    /// Get state database path for this environment
+    pub fn state_db_path(&self) -> String {
+        format!("{}/state.db", self.data_directory())
+    }
+    
+    /// Get network configuration path for this environment
+    pub fn network_config_path(&self) -> String {
+        match self {
+            Environment::Development => "./configs/full-node.toml".to_string(),
+            Environment::Testnet => "./configs/testnet-full-node.toml".to_string(),
+            Environment::Mainnet => "./configs/mainnet-full-node.toml".to_string(),
+        }
+    }
+    
+    /// Get logs directory for this environment
+    pub fn logs_directory(&self) -> String {
+        format!("{}/logs", self.data_directory())
+    }
+    
     /// Get default configuration for this environment
     pub fn get_default_config(&self) -> EnvironmentConfig {
         match self {
@@ -411,4 +471,9 @@ fn get_available_memory_mb() -> usize {
     {
         2048 // Conservative default
     }
+}
+
+impl Environment {
+    // NOTE: GenesisConfig is handled internally by lib_blockchain
+    // The to_genesis_config() method has been removed as it's not needed
 }

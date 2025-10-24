@@ -23,10 +23,12 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus, Zh
 use lib_network::protocols::wifi_direct::WiFiDirectMeshProtocol;
 use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
 use lib_network::dht::relay::ZhtpRelayProtocol;
-use lib_network::dht::protocol::{DhtPacket, DhtPacketPayload, DhtOperation, ZhtpRelayQuery, ZhtpRelayResponse};
-use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptionSession, ZhtpKeyExchangeInit, ZhtpKeyExchangeResponse};
-use lib_network::protocols::zhtp_auth::{ZhtpAuthManager, ZhtpAuthChallenge, ZhtpAuthResponse, NodeCapabilities};
+use lib_network::dht::protocol::ZhtpRelayQuery;
+use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptionSession, ZhtpKeyExchangeResponse};
+use lib_network::protocols::zhtp_auth::{ZhtpAuthManager, ZhtpAuthResponse, NodeCapabilities};
 use lib_network::types::mesh_message::ZhtpMeshMessage;
+use lib_network::routing::message_routing::MeshMessageRouter;
+use lib_network::mesh::server::ZhtpMeshServer;
 
 use lib_network::MeshConnection;
 use lib_blockchain::Blockchain;
@@ -58,7 +60,7 @@ pub enum IncomingProtocol {
     Bluetooth,
     /// Network bootstrap connections
     Bootstrap,
-    /// Unknown protocol
+    /// bootstrap protocol
     Unknown,
 }
 
@@ -166,6 +168,7 @@ impl Middleware for AuthMiddleware {
            request.uri.starts_with("/api/v1/dns/") ||
            request.uri.starts_with("/api/v1/blockchain/") ||
            request.uri.starts_with("/api/v1/storage/") ||
+           request.uri.starts_with("/api/v1/identity/") ||  // Allow identity creation without auth
            request.uri.starts_with("/api/marketplace/") ||
            request.uri.starts_with("/api/content/") ||
            request.uri.starts_with("/api/wallet/") {
@@ -232,8 +235,6 @@ impl HttpRouter {
         // Read HTTP request with dynamic buffer sizing based on Content-Length
         // First, read headers to determine content length
         let mut header_buffer = vec![0; 8192]; // Initial buffer for headers
-        let mut total_read = 0;
-        let mut headers_complete = false;
         
         // Read initial chunk
         let bytes_read = stream.read(&mut header_buffer).await
@@ -243,12 +244,12 @@ impl HttpRouter {
             return Ok(());
         }
         
-        total_read = bytes_read;
+        let mut total_read = bytes_read;
         
         // Check if headers are complete (look for \r\n\r\n)
         let header_data = String::from_utf8_lossy(&header_buffer[..total_read]);
         if let Some(header_end) = header_data.find("\r\n\r\n") {
-            headers_complete = true;
+            // Headers are complete
             
             // Parse Content-Length from headers
             let mut content_length: Option<usize> = None;
@@ -856,7 +857,6 @@ impl MetricsHistory {
 }
 
 /// UDP mesh protocol routing and handling
-#[derive(Debug)]
 pub struct MeshRouter {
     connections: Arc<RwLock<HashMap<PublicKey, MeshConnection>>>,
     server_id: Uuid,
@@ -887,6 +887,8 @@ pub struct MeshRouter {
     metrics_history: Arc<RwLock<MetricsHistory>>,
     latency_samples_blocks: Arc<RwLock<Vec<u64>>>,  // For percentile calculations
     latency_samples_txs: Arc<RwLock<Vec<u64>>>,
+    // Phase 2.5: Multi-hop routing with rewards
+    mesh_message_router: Arc<RwLock<MeshMessageRouter>>,
 }
 
 impl MeshRouter {
@@ -924,6 +926,9 @@ impl MeshRouter {
             }
         });
         
+        // Phase 2.5: Clone connections before moving for router initialization
+        let connections_for_router = connections.clone();
+        
         Self {
             connections,
             server_id,
@@ -949,6 +954,13 @@ impl MeshRouter {
             metrics_history: Arc::new(RwLock::new(MetricsHistory::new(720, 60))), // 12 hours at 1-min intervals
             latency_samples_blocks: Arc::new(RwLock::new(Vec::new())),
             latency_samples_txs: Arc::new(RwLock::new(Vec::new())),
+            // Phase 2.5: Create multi-hop message router with shared connections and empty relay map
+            mesh_message_router: Arc::new(RwLock::new(
+                MeshMessageRouter::new(
+                    connections_for_router, 
+                    Arc::new(RwLock::new(HashMap::new()))
+                )
+            )),
         }
     }
     
@@ -1337,10 +1349,9 @@ impl MeshRouter {
         let connections = self.connections.clone();
         let recent_blocks = self.recent_blocks.clone();
         let recent_transactions = self.recent_transactions.clone();
-        let identity_manager = self.identity_manager.clone();
         let udp_socket = self.udp_socket.clone();
-        let bluetooth_protocol = self.bluetooth_protocol.clone();
         let broadcast_metrics = self.broadcast_metrics.clone();
+        // TODO: Add bluetooth_protocol when NetworkProtocol::Bluetooth variant is implemented
         
         // Spawn task to process broadcast messages from blockchain
         tokio::spawn(async move {
@@ -1358,7 +1369,8 @@ impl MeshRouter {
                             }
                         };
                         
-                        // Get local node's public key (use empty vec for now - TODO: get from identity manager)
+                        // Get local node's public key
+                        // TODO: Implement proper node identity retrieval
                         let sender_pubkey = lib_crypto::PublicKey::new(vec![]);
                         
                         // Create NewBlock message
@@ -1382,7 +1394,7 @@ impl MeshRouter {
                         let conns = connections.read().await;
                         let mut success_count = 0;
                         
-                        for (peer_key, connection) in conns.iter() {
+                        for (_peer_key, connection) in conns.iter() {
                             match &connection.protocol {
                                 lib_network::protocols::NetworkProtocol::UDP => {
                                     if let Some(ref sock) = *udp_socket.read().await {
@@ -1395,9 +1407,11 @@ impl MeshRouter {
                                         }
                                     }
                                 }
-                                _ => {} // TODO: Add other protocols as needed
+                                _ => {} // Other protocols can be added as needed
                             }
                         }
+                        
+                        // TODO: Add Bluetooth mesh broadcasting when NetworkProtocol::Bluetooth is implemented
                         
                         info!("📤 Block {} broadcast to {} peers", block.height(), success_count);
                         
@@ -1452,7 +1466,7 @@ impl MeshRouter {
                         let conns = connections.read().await;
                         let mut success_count = 0;
                         
-                        for (peer_key, connection) in conns.iter() {
+                        for (_peer_key, connection) in conns.iter() {
                             match &connection.protocol {
                                 lib_network::protocols::NetworkProtocol::UDP => {
                                     if let Some(ref sock) = *udp_socket.read().await {
@@ -1503,6 +1517,14 @@ impl MeshRouter {
         *self.udp_socket.write().await = Some(socket);
     }
     
+    /// Set mesh server for reward tracking (Phase 2.5)
+    /// This links the router to the mesh server so routing rewards can be recorded
+    pub async fn set_mesh_server(&self, mesh_server: Arc<RwLock<ZhtpMeshServer>>) {
+        let mut router = self.mesh_message_router.write().await;
+        router.set_mesh_server(mesh_server);
+        info!("✅ Phase 2.5: Mesh server linked to router for reward tracking");
+    }
+    
     /// Get a clone of the connections Arc for sharing with other components
     pub fn get_connections(&self) -> Arc<RwLock<HashMap<PublicKey, MeshConnection>>> {
         self.connections.clone()
@@ -1518,81 +1540,44 @@ impl MeshRouter {
         self.identity_manager.clone()
     }
     
-    /// Send a mesh message to a specific peer
-    /// This method looks up the peer connection and routes the message through the appropriate protocol
-    pub async fn send_to_peer(&self, peer_id: &PublicKey, message: ZhtpMeshMessage) -> Result<()> {
-        // Look up the peer's connection info
-        let connections = self.connections.read().await;
-        let connection = connections.get(peer_id)
-            .ok_or_else(|| anyhow::anyhow!("Peer not connected: {:?}", peer_id))?;
-        
-        // Serialize message to bincode
-        let message_data = bincode::serialize(&message)
-            .context("Failed to serialize mesh message")?;
-        
-        // Phase 4: Track bytes sent
-        let bytes_sent = message_data.len() as u64;
-        
-        // Get peer address
-        let peer_address = connection.peer_address.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Peer address not available"))?;
-        
-        // Route through appropriate protocol based on connection type
-        match &connection.protocol {
-            lib_network::protocols::NetworkProtocol::BluetoothLE | 
-            lib_network::protocols::NetworkProtocol::BluetoothClassic => {
-                info!(" Sending mesh message to peer via Bluetooth ({}) - {} bytes", peer_address, message_data.len());
+    /// Get sender's public key from identity manager (for routing)
+    async fn get_sender_public_key(&self) -> Result<PublicKey> {
+        if let Some(ref identity_mgr) = self.identity_manager {
+            let mgr = identity_mgr.read().await;
+            // Get the first identity (typically the node's identity)
+            if let Some(identity) = mgr.list_identities().first() {
+                // Convert Vec<u8> to PublicKey with proper array conversion
+                let mut key_id = [0u8; 32];
+                let len = identity.public_key.len().min(32);
+                key_id[..len].copy_from_slice(&identity.public_key[..len]);
                 
-                // Get bluetooth protocol instance
-                let bluetooth = self.bluetooth_protocol.read().await;
-                if let Some(ref protocol) = *bluetooth {
-                    // Send via Bluetooth GATT
-                    protocol.send_mesh_message(peer_address, &message_data).await?;
-                    info!(" Bluetooth message sent successfully");
-                    
-                    // Phase 4: Track bytes sent
-                    self.track_bytes_sent(bytes_sent).await;
-                    
-                    Ok(())
-                } else {
-                    warn!("Bluetooth protocol not initialized");
-                    Err(anyhow::anyhow!("Bluetooth protocol not available"))
-                }
-            }
-            lib_network::protocols::NetworkProtocol::WiFiDirect => {
-                info!(" Sending mesh message to peer via WiFi Direct ({})", peer_address);
-                // WiFi Direct would use TCP socket - implementation similar to Bluetooth
-                warn!("WiFi Direct send not yet fully implemented");
-                Ok(())
-            }
-            lib_network::protocols::NetworkProtocol::UDP => {
-                info!(" Sending mesh message to peer via UDP ({}) - {} bytes", peer_address, message_data.len());
-                
-                // Parse peer address
-                let peer_addr: SocketAddr = peer_address.parse()
-                    .context("Invalid peer UDP address")?;
-                
-                // Get UDP socket instance
-                let socket = self.udp_socket.read().await;
-                if let Some(ref sock) = *socket {
-                    // Send via UDP
-                    sock.send_to(&message_data, peer_addr).await?;
-                    info!(" UDP message sent successfully");
-                    
-                    // Phase 4: Track bytes sent
-                    self.track_bytes_sent(bytes_sent).await;
-                    
-                    Ok(())
-                } else {
-                    warn!("UDP socket not initialized");
-                    Err(anyhow::anyhow!("UDP socket not available"))
-                }
-            }
-            protocol => {
-                warn!("Unsupported protocol for peer messaging: {:?}", protocol);
-                Err(anyhow::anyhow!("Unsupported protocol: {:?}", protocol))
+                return Ok(PublicKey {
+                    key_id,
+                    dilithium_pk: vec![], // Empty for now, can be added later
+                    kyber_pk: vec![],     // Empty for now, can be added later
+                });
             }
         }
+        Err(anyhow::anyhow!("No identity available for sender public key"))
+    }
+    
+    /// Send a mesh message to a specific peer using multi-hop routing (Phase 2.5)
+    /// This method uses MeshMessageRouter for intelligent path finding and reward tracking
+    pub async fn send_to_peer(&self, peer_id: &PublicKey, message: ZhtpMeshMessage) -> Result<()> {
+        info!("🚀 Phase 2.5: Routing message via multi-hop router to {:?}", 
+              hex::encode(&peer_id.key_id[0..8.min(peer_id.key_id.len())]));
+        
+        // Get sender's public key
+        let sender = self.get_sender_public_key().await?;
+        
+        // Use the multi-hop message router for intelligent routing
+        let router = self.mesh_message_router.read().await;
+        let message_id = router.route_message(message, peer_id.clone(), sender).await?;
+        
+        info!("✅ Message routed successfully! Message ID: {}", message_id);
+        info!("   Multi-hop routing with protocol bonuses and quality tracking active");
+        
+        Ok(())
     }
     
     /// Broadcast a message to all connected peers (excluding optional sender)
@@ -1799,6 +1784,7 @@ impl MeshRouter {
                                     match blockchain_lock.evaluate_and_merge_chain(complete_data).await {
                                         Ok(merge_result) => {
                                             info!(" Blockchain imported successfully from peer");
+                                            info!("   Merge result: {:?}", merge_result);
                                             info!("   New blockchain height: {}", blockchain_lock.get_height());
                                         }
                                         Err(e) => error!("Failed to import blockchain: {}", e),
@@ -1847,10 +1833,11 @@ impl MeshRouter {
                     
                     const MAX_BLOCKS_PER_MINUTE: u32 = 10; // Configurable limit
                     if !rate_limit.check_and_increment_block(MAX_BLOCKS_PER_MINUTE) {
-                        warn!("⚠️ Rate limit exceeded for peer {} - rejecting block {}", &sender_key[..16], height);
+                        let violations = rate_limit.get_violations();
+                        warn!("⚠️ Rate limit exceeded for peer {} (violations: {}) - rejecting block {}", 
+                              &sender_key[..16], violations, height);
                         
                         // Record violation in reputation
-                        let violations = rate_limit.get_violations();
                         drop(rate_limits);
                         
                         let mut reputations = self.peer_reputations.write().await;
@@ -1927,6 +1914,7 @@ impl MeshRouter {
                                 token_contracts: HashMap::new(),
                                 web4_contracts: HashMap::new(),
                                 contract_blocks: HashMap::new(),
+                                validator_registry: HashMap::new(),
                             };
                             
                             let serialized = match bincode::serialize(&import_data) {
@@ -2780,13 +2768,74 @@ impl MeshRouter {
             &mut economic_model
         ).await.map_err(|e| anyhow::anyhow!("Failed to create citizen identity: {}", e))?;
             
+        // ⚠️ CRITICAL: Drop the write lock BEFORE acquiring read lock to prevent deadlock
+        drop(manager);
+            
         info!("Created identity with ID: {}", identity_result.identity_id);
         
         // Record identity and wallets on blockchain
-        let identity_json = serde_json::to_value(&identity_result).unwrap_or_default();
-        self.record_identity_on_blockchain(&identity_json).await.unwrap_or_else(|e| {
-            warn!("Failed to record identity on blockchain: {}", e);
+        // Convert identity_id to hex string for blockchain registration
+        info!("🔍 Step 1: Converting identity_id to hex...");
+        let identity_id_hex = hex::encode(&identity_result.identity_id.0);
+        info!("🔍 Step 2: Identity ID hex: {}", identity_id_hex);
+        
+        // Get the identity from manager to extract public key and ownership proof
+        info!("🔍 Step 3: Acquiring read lock on identity manager...");
+        let manager_read = identity_manager.read().await;
+        info!("🔍 Step 4: Retrieving identity from manager...");
+        let identity = manager_read.get_identity(&identity_result.identity_id)
+            .ok_or_else(|| {
+                error!("❌ Identity not found in manager after creation!");
+                anyhow::anyhow!("Identity not found in manager after creation")
+            })?;
+        info!("🔍 Step 5: Identity retrieved successfully");
+        let public_key = identity.public_key.clone();
+        
+        // Extract the proof_data from ZeroKnowledgeProof as bytes for blockchain
+        info!("🔍 Step 6: Extracting ownership proof...");
+        let ownership_proof_bytes = identity.ownership_proof.proof_data.clone();
+        info!("🔍 Step 7: Dropping read lock...");
+        drop(manager_read);
+        
+        info!("🔍 Step 8: Building identity JSON...");
+        let identity_json = serde_json::json!({
+            "identity_id": identity_id_hex,
+            "citizenship_result": {
+                "identity_id": identity_id_hex,
+                "primary_wallet_id": hex::encode(&identity_result.primary_wallet_id.0),
+                "ubi_wallet_id": hex::encode(&identity_result.ubi_wallet_id.0),
+                "savings_wallet_id": hex::encode(&identity_result.savings_wallet_id.0),
+                "wallet_seed_phrases": {
+                    "primary": identity_result.wallet_seed_phrases.primary_wallet_seeds.words.join(" "),
+                    "ubi": identity_result.wallet_seed_phrases.ubi_wallet_seeds.words.join(" "),
+                    "savings": identity_result.wallet_seed_phrases.savings_wallet_seeds.words.join(" ")
+                },
+                "privacy_credentials": {
+                    "public_key": hex::encode(&public_key),
+                    "ownership_proof": hex::encode(&ownership_proof_bytes)
+                },
+                "created_at": identity_result.privacy_credentials.created_at
+            }
         });
+        
+        // Try blockchain registration with timeout to prevent hanging
+        info!("🔗 Attempting blockchain registration...");
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.record_identity_on_blockchain(&identity_json)
+        ).await {
+            Ok(Ok(())) => {
+                info!("✅ Identity successfully registered on blockchain");
+            }
+            Ok(Err(e)) => {
+                error!("⚠️ BLOCKCHAIN REGISTRATION FAILED: {}", e);
+                error!("   Error details: {:?}", e);
+            }
+            Err(_) => {
+                error!("⚠️ BLOCKCHAIN REGISTRATION TIMEOUT - operation took >5 seconds");
+            }
+        }
+        info!("🔗 Blockchain registration attempt complete (continuing with response)");
         
         // Distribute DID document to DHT network
         self.distribute_identity_to_dht(&identity_json).await.unwrap_or_else(|e| {
@@ -3170,16 +3219,22 @@ impl MeshRouter {
     
     /// Record identity and wallets on blockchain for immutable proof
     async fn record_identity_on_blockchain(&self, identity_result: &serde_json::Value) -> Result<()> {
-        info!("Recording identity and wallets on blockchain...");
+        info!("🔗 Starting blockchain registration...");
         
         // Get shared blockchain instance
+        info!("🔗 Getting shared blockchain instance...");
         let blockchain = lib_blockchain::get_shared_blockchain().await?;
+        info!("🔗 Acquiring blockchain write lock...");
         let mut blockchain_guard = blockchain.write().await;
+        info!("🔗 Blockchain lock acquired successfully");
         
         // Extract identity data from JSON result
+        info!("🔗 Extracting identity_id from JSON...");
         let identity_id_str = identity_result.get("identity_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing identity_id string"))?;
+        
+        info!("🔗 Identity ID extracted: {}", identity_id_str);
         
         // Parse identity_id from hex string to Hash
         let identity_id_bytes = hex::decode(identity_id_str)
@@ -4049,6 +4104,12 @@ impl BluetoothRouter {
                         // Parse and process mesh handshake
                         if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&data) {
                             info!("🤝 GATT handshake from: {}", handshake.node_id);
+                            
+                            // Track connected device
+                            let device_key = handshake.node_id.to_string();
+                            let device_info = format!("Bluetooth device (protocols: {:?})", handshake.protocols);
+                            connected_devices.write().await.insert(device_key.clone(), device_info);
+                            info!("   Tracked device: {}", device_key);
                             // TODO: Add to mesh connections (need mesh_router ref)
                         }
                     }
@@ -4243,36 +4304,39 @@ impl BluetoothClassicRouter {
             return Err(anyhow::anyhow!("Windows Bluetooth feature not enabled"));
         }
         
-        use lib_network::protocols::bluetooth::classic::BluetoothClassicProtocol;
-        use lib_crypto::PublicKey;
+        #[cfg(any(not(target_os = "windows"), feature = "windows-bluetooth"))]
+        {
+            use lib_network::protocols::bluetooth::classic::BluetoothClassicProtocol;
+            use lib_crypto::PublicKey;
+            
+            // Create Bluetooth Classic protocol instance
+            let bluetooth_classic = BluetoothClassicProtocol::new(self.node_id)?;
+            
+            // Initialize ZHTP authentication with blockchain public key
+            info!(" Initializing ZHTP authentication for Bluetooth Classic...");
+            let blockchain_pubkey = PublicKey::new(self.node_id.to_vec());
+            if let Err(e) = bluetooth_classic.initialize_zhtp_auth(blockchain_pubkey).await {
+                warn!("  Bluetooth Classic auth initialization failed: {}", e);
+                warn!("Continuing without authentication - connections may be insecure");
+            } else {
+                info!(" Bluetooth Classic ZHTP authentication initialized");
+            }
         
-        // Create Bluetooth Classic protocol instance
-        let bluetooth_classic = BluetoothClassicProtocol::new(self.node_id)?;
-        
-        // Initialize ZHTP authentication with blockchain public key
-        info!(" Initializing ZHTP authentication for Bluetooth Classic...");
-        let blockchain_pubkey = PublicKey::new(self.node_id.to_vec());
-        if let Err(e) = bluetooth_classic.initialize_zhtp_auth(blockchain_pubkey).await {
-            warn!("  Bluetooth Classic auth initialization failed: {}", e);
-            warn!("Continuing without authentication - connections may be insecure");
-        } else {
-            info!(" Bluetooth Classic ZHTP authentication initialized");
+            // Initialize RFCOMM advertising
+            if let Err(e) = bluetooth_classic.start_advertising().await {
+                warn!("Bluetooth Classic advertising failed to start: {}", e);
+                return Err(anyhow::anyhow!("Bluetooth Classic advertising initialization failed: {}", e));
+            }
+            
+            // Store the protocol instance
+            *self.protocol.write().await = Some(bluetooth_classic);
+            
+            info!("Bluetooth Classic RFCOMM initialized - discoverable as 'ZHTP-CLASSIC-{}'", 
+                  hex::encode(&self.node_id[..4]));
+            info!("High-throughput mesh (375 KB/s) available via Bluetooth Classic");
+            
+            Ok(())
         }
-        
-        // Initialize RFCOMM advertising
-        if let Err(e) = bluetooth_classic.start_advertising().await {
-            warn!("Bluetooth Classic advertising failed to start: {}", e);
-            return Err(anyhow::anyhow!("Bluetooth Classic advertising initialization failed: {}", e));
-        }
-        
-        // Store the protocol instance
-        *self.protocol.write().await = Some(bluetooth_classic);
-        
-        info!("Bluetooth Classic RFCOMM initialized - discoverable as 'ZHTP-CLASSIC-{}'", 
-              hex::encode(&self.node_id[..4]));
-        info!("High-throughput mesh (375 KB/s) available via Bluetooth Classic");
-        
-        Ok(())
     }
     
     /// Handle incoming Bluetooth Classic RFCOMM connection
@@ -4421,9 +4485,10 @@ impl BluetoothClassicRouter {
                     
                     // Attempt to connect
                     match protocol.connect_to_peer(&device.address, service.channel).await {
-                        Ok(stream) => {
+                        Ok(_stream) => {
                             info!(" Connected to {} via Bluetooth Classic RFCOMM!", device.address);
                             connected_count += 1;
+                            // TODO: Spawn task to handle stream or store for later use
                             
                             // Create mesh connection entry
                             let peer_pubkey = lib_crypto::PublicKey::new(device.address.as_bytes().to_vec());
@@ -4665,9 +4730,9 @@ impl ZhtpUnifiedServer {
         storage: Arc<RwLock<UnifiedStorageSystem>>,
         identity_manager: Arc<RwLock<IdentityManager>>,
         economic_model: Arc<RwLock<EconomicModel>>,
+        port: u16, // Port from configuration
     ) -> Result<Self> {
         let server_id = Uuid::new_v4();
-        let port = 9333; // Single port for all protocols
         
         info!("Creating ZHTP Unified Server (ID: {})", server_id);
         info!("Port: {} (HTTP + UDP + WiFi + Bootstrap)", port);
@@ -4822,6 +4887,12 @@ impl ZhtpUnifiedServer {
         // Register Web4 handler
         let web4_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(web4_handler);
         http_router.register_handler("/api/v1/web4".to_string(), web4_handler);
+        
+        // Validator management
+        let validator_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::ValidatorHandler::new(blockchain.clone())
+        );
+        http_router.register_handler("/api/v1/validator".to_string(), validator_handler);
         
         // Protocol management
         let protocol_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
@@ -5444,6 +5515,8 @@ impl Clone for MeshRouter {
             metrics_history: self.metrics_history.clone(),
             latency_samples_blocks: self.latency_samples_blocks.clone(),
             latency_samples_txs: self.latency_samples_txs.clone(),
+            // Phase 2.5: Multi-hop routing
+            mesh_message_router: self.mesh_message_router.clone(),
         }
     }
 }

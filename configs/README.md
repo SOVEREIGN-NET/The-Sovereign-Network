@@ -34,7 +34,7 @@ This directory contains pre-configured templates for different types of ZHTP nod
 
 ### 3. **Storage Node** (`storage-node.toml`)
 **Purpose**: Distributed storage services and DHT participation  
-**Best for**: Storage providers, IPFS-like services, data availability
+**Best for**: Storage providers, -like services, data availability
 
 **Features**:
 - **Large storage capacity (5TB)**
