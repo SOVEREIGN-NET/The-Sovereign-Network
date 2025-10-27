@@ -106,8 +106,8 @@ linux-bluetooth = ["lib-network/enhanced-parsing"]  # Linux uses BlueZ via D-Bus
 macos-bluetooth = ["lib-network/macos-corebluetooth"]
 
 # Node type profiles
-validator = ["full-blockchain", "lib-proofs/plonky2-backend"]  # Full validator node
-relay = ["basic-blockchain", "lib-proofs/verify-only"]  # Relay node (verify only, no proving)
+validator = ["full-blockchain", "lib-proofs/production"]  # Full validator node
+relay = ["basic-blockchain", "lib-proofs/std"]  # Relay node (verify only, no proving)
 edge = ["minimal-blockchain"]  # Edge node (routing only)
 
 # Raspberry Pi optimized profile - minimal features for low-memory compilation
