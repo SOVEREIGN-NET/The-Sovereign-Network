@@ -39,9 +39,29 @@ pricing_tier = "warm"
 [network_config]
 mesh_port = 33444
 max_peers = 50  # Optimized for mesh routing
-protocols = ["bluetooth", "wifi_direct", "lorawan"]  # NO TCP - Pure mesh
+protocols = ["bluetooth_le", "wifi_direct", "lorawan"]  # BLE only (not classic) - Pure mesh
 bootstrap_peers = []  # Mesh discovery only
 long_range_relays = true  # CRITICAL for pure mesh mode
+
+# Protocol-specific settings
+[network_config.bluetooth]
+use_classic = false        # ❌ Classic too power-hungry for edge nodes
+use_ble = true            # ✅ BLE only - battery-efficient
+ble_advertising = true    # Beacon mode for discovery
+ble_scan_interval_ms = 1000  # Scan every 1 second
+
+# Bandwidth management strategy
+[network_config.bandwidth_management]
+prefer_low_power = true    # Prefer BLE over WiFi when possible
+auto_protocol_switch = true  # Automatically switch to WiFi for large transfers
+large_transfer_threshold = 102400  # Switch to WiFi for >100KB transfers
+sync_via_wifi_only = true  # Use WiFi Direct for blockchain sync
+
+# Edge node optimization - don't need full blocks
+[network_config.sync_strategy]
+headers_only = true        # Only sync block headers via BLE
+selective_tx_download = true  # Only download transactions we need
+lazy_dht_loading = true    # Load DHT content on-demand
 
 [blockchain_config]
 network_id = "zhtp-mainnet"

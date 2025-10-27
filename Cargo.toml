@@ -97,6 +97,7 @@ yaml = ["dep:serde_yaml"]  # Optional YAML output support
 # Blockchain features
 full-blockchain = ["lib-blockchain", "lib-blockchain/wasm-runtime"]  # Full blockchain with WASM contracts
 basic-blockchain = ["lib-blockchain"]  # Basic blockchain without WASM (saves ~500MB RAM during compile)
+minimal-blockchain = []  # No blockchain validation, DHT storage only
 
 # Platform-specific Bluetooth features (automatically enabled on respective platforms)
 platform-bluetooth = []  # Auto-enable Bluetooth for current platform
@@ -104,8 +105,13 @@ windows-bluetooth = ["lib-network/windows-gatt"]
 linux-bluetooth = ["lib-network/enhanced-parsing"]  # Linux uses BlueZ via D-Bus
 macos-bluetooth = ["lib-network/macos-corebluetooth"]
 
+# Node type profiles
+validator = ["full-blockchain", "lib-proofs/plonky2-backend"]  # Full validator node
+relay = ["basic-blockchain", "lib-proofs/verify-only"]  # Relay node (verify only, no proving)
+edge = ["minimal-blockchain"]  # Edge node (routing only)
+
 # Raspberry Pi optimized profile - minimal features for low-memory compilation
-rpi = ["basic-blockchain"]  # Raspberry Pi optimized build (no WASM runtime)
+rpi = ["basic-blockchain", "relay"]  # Raspberry Pi optimized build (no WASM runtime)
 
 [profile.dev]
 # Faster compilation, less memory usage
@@ -128,4 +134,23 @@ lto = false             # Disable LTO = much faster, less memory
 codegen-units = 256     # More codegen units = more parallelism, less memory per unit
 debug = false
 strip = true            # Strip symbols to reduce binary size
+
+[profile.edge]
+# Edge node: ultra-lightweight for mesh routing
+inherits = "release"
+opt-level = "s"         # Optimize for SIZE not speed
+lto = false             # No LTO
+codegen-units = 256
+debug = false
+strip = true
+panic = "abort"         # No unwinding = smaller binary
+overflow-checks = false # Disable overflow checks for smaller code
+
+[profile.dev-fast]
+# Fast development iteration
+inherits = "dev"
+opt-level = 1           # Minimal optimization
+incremental = true
+debug = true
+split-debuginfo = "unpacked"
 
