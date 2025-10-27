@@ -1710,9 +1710,9 @@ impl MeshRouter {
             
             // Handle blockchain-specific messages
             match &mesh_message {
-                ZhtpMeshMessage::BlockchainRequest { requester, request_id, from_height } => {
-                    info!(" Blockchain request received from {:?} (request_id: {}, from_height: {:?})", 
-                          hex::encode(&requester.key_id[0..8]), request_id, from_height);
+                ZhtpMeshMessage::BlockchainRequest { requester, request_id, request_type } => {
+                    info!(" Blockchain request received from {:?} (request_id: {}, request_type: {:?})", 
+                          hex::encode(&requester.key_id[0..8]), request_id, request_type);
                     
                     // Export and send blockchain chunks directly
                     match crate::runtime::blockchain_provider::get_global_blockchain().await {
