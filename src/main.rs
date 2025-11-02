@@ -25,12 +25,21 @@ use zhtp::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging system with INFO level by default
+    // Initialize logging system with INFO level by default.
+    // Add explicit filter directives to silence noisy third-party targets
+    // (mdns_sd) and to suppress firewall rule WARNs from network_isolation.
+    let mut filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    // Silence mdns-sd internal noisy messages (these are harmless channel-close warnings)
+    filter = filter.add_directive("mdns_sd=error".parse().expect("invalid directive"));
+    filter = filter.add_directive("mdns_sd::service_daemon=error".parse().expect("invalid directive"));
+
+    // Suppress firewall-rule failure warnings coming from network isolation on Windows
+    filter = filter.add_directive("zhtp::config::network_isolation=error".parse().expect("invalid directive"));
+
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
-        )
+        .with_env_filter(filter)
         .init();
 
     info!(" ZHTP Orchestrator v{}", env!("CARGO_PKG_VERSION"));

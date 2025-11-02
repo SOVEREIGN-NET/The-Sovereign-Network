@@ -11,6 +11,12 @@ repository = "https://github.com/zhtp/zhtp"
 name = "zhtp"
 path = "src/main.rs"
 
+# Main library (for orchestrator binary and tests)
+[lib]
+name = "zhtp"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib", "staticlib"]  # rlib for Rust, cdylib for Android, staticlib for iOS
+
 [dependencies]
 # All ZHTP package dependencies - must be completed first
 lib-crypto = { path = "../lib-crypto" }
@@ -81,6 +87,19 @@ features = [
     "Networking_Proximity"
 ]
 
+# Android-specific dependencies (for JNI mobile library)
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+log = "0.4"
+android_logger = "0.13"  # Android logcat integration
+ctor = "0.2"  # Constructor/destructor attributes
+
+# iOS-specific dependencies (for C FFI mobile library)
+[target.'cfg(target_os = "ios")'.dependencies]
+log = "0.4"
+oslog = "0.2"  # iOS unified logging system
+ctor = "0.2"  # Constructor/destructor attributes
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.8"
@@ -100,8 +119,9 @@ basic-blockchain = ["lib-blockchain"]  # Basic blockchain without WASM (saves ~5
 minimal-blockchain = []  # No blockchain validation, DHT storage only
 
 # Platform-specific Bluetooth features (automatically enabled on respective platforms)
+# Note: Windows WinRT APIs are now always available on Windows without feature flags
 platform-bluetooth = []  # Auto-enable Bluetooth for current platform
-windows-bluetooth = ["lib-network/windows-gatt"]
+windows-bluetooth = []  # Windows WinRT APIs automatically available on Windows
 linux-bluetooth = ["lib-network/enhanced-parsing"]  # Linux uses BlueZ via D-Bus
 macos-bluetooth = ["lib-network/macos-corebluetooth"]
 
@@ -109,6 +129,11 @@ macos-bluetooth = ["lib-network/macos-corebluetooth"]
 validator = ["full-blockchain", "lib-proofs/production"]  # Full validator node
 relay = ["basic-blockchain", "lib-proofs/std"]  # Relay node (verify only, no proving)
 edge = ["minimal-blockchain"]  # Edge node (routing only)
+
+# Mobile profiles
+mobile = ["minimal-blockchain"]  # Base mobile configuration (minimal features)
+android = ["mobile"]  # Android mobile app
+ios = ["mobile"]  # iOS mobile app
 
 # Raspberry Pi optimized profile - minimal features for low-memory compilation
 rpi = ["basic-blockchain", "relay"]  # Raspberry Pi optimized build (no WASM runtime)
@@ -154,3 +179,20 @@ incremental = true
 debug = true
 split-debuginfo = "unpacked"
 
+[profile.mobile]
+# Mobile optimized: small binary size, reasonable performance
+inherits = "release"
+opt-level = "z"         # Optimize aggressively for size
+lto = "fat"             # Full LTO for smaller binary
+codegen-units = 1       # Single codegen unit for best LTO
+strip = true            # Strip all symbols
+panic = "abort"         # Abort on panic (no unwinding)
+overflow-checks = false
+
+[profile.android]
+# Android release profile
+inherits = "mobile"
+
+[profile.ios]
+# iOS release profile
+inherits = "mobile"

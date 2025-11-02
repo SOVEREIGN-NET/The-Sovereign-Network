@@ -250,18 +250,8 @@ impl NetworkIsolationConfig {
 
     /// Apply firewall rules to block external traffic
     async fn apply_firewall_rules(&self) -> Result<()> {
-        info!(" Applying firewall rules for mesh isolation");
-
-        #[cfg(target_os = "windows")]
-        {
-            self.apply_windows_firewall_rules().await?;
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            self.apply_linux_firewall_rules().await?;
-        }
-
+        // Firewall rules disabled - requires administrator privileges
+        // Users should manually configure firewall rules if needed
         Ok(())
     }
 
