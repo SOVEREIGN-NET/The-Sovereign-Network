@@ -287,12 +287,22 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
                     println!("Network peers: {}", existing_network_info.peer_count);
                     println!("Blockchain height: {}", existing_network_info.blockchain_height);
                     
+                    // Tell orchestrator we're joining existing network (don't create genesis)
+                    if let Err(e) = orchestrator.set_joined_existing_network(true).await {
+                        eprintln!("Warning: Failed to set network join status: {}", e);
+                    }
+                    
                     // Step 2a: Handle identity for existing network
                     handle_existing_network_identity(&existing_network_info).await?
                 }
                 Err(_) => {
                     println!("No existing ZHTP network found or connection failed");
                     println!("Starting new genesis network...");
+                    
+                    // Tell orchestrator we're creating new network (create genesis)
+                    if let Err(e) = orchestrator.set_joined_existing_network(false).await {
+                        eprintln!("Warning: Failed to set network create status: {}", e);
+                    }
                     
                     // Step 2b: Handle identity for new genesis network (pass environment)
                     handle_genesis_network_identity(&node_config.environment).await?

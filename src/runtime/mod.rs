@@ -170,6 +170,9 @@ pub struct RuntimeOrchestrator {
     shared_blockchain: Arc<RwLock<Option<SharedBlockchainService>>>,
     user_wallet: Arc<RwLock<Option<crate::runtime::did_startup::WalletStartupResult>>>,
     
+    // Track if we joined an existing network (vs creating genesis)
+    joined_existing_network: Arc<RwLock<bool>>,
+    
     // Unified reward orchestrator
     reward_orchestrator: Arc<RwLock<Option<Arc<reward_orchestrator::RewardOrchestrator>>>>,
 }
@@ -198,6 +201,7 @@ impl RuntimeOrchestrator {
             shutdown_signal: Arc::new(Mutex::new(Some(shutdown_tx))),
             shared_blockchain: Arc::new(RwLock::new(None)),
             user_wallet: Arc::new(RwLock::new(None)),
+            joined_existing_network: Arc::new(RwLock::new(false)),
             reward_orchestrator: Arc::new(RwLock::new(None)),
             startup_order: vec![
                 ComponentId::Crypto,      // Foundation layer
@@ -325,7 +329,8 @@ impl RuntimeOrchestrator {
         let environment = self.config.environment;  // Get environment from config
         let api_port = self.config.protocols_config.api_port;  // Get API port from config
         let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();  // Get bootstrap validators from config
-        self.register_component(Arc::new(BlockchainComponent::new_with_full_config(user_wallet, environment, bootstrap_validators))).await?;
+        let joined_existing_network = *self.joined_existing_network.read().await;  // Check if we joined existing network
+        self.register_component(Arc::new(BlockchainComponent::new_with_full_config(user_wallet, environment, bootstrap_validators, joined_existing_network))).await?;
         self.register_component(Arc::new(ConsensusComponent::new(environment))).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ProtocolsComponent::new(environment, api_port))).await?;
@@ -348,6 +353,18 @@ impl RuntimeOrchestrator {
         let mut user_wallet = self.user_wallet.write().await;
         *user_wallet = Some(wallet);
         info!("User wallet stored in orchestrator for component initialization");
+        Ok(())
+    }
+
+    /// Set whether we joined an existing network (vs creating genesis)
+    pub async fn set_joined_existing_network(&self, joined: bool) -> Result<()> {
+        let mut joined_network = self.joined_existing_network.write().await;
+        *joined_network = joined;
+        if joined {
+            info!("✅ Orchestrator: Joining existing network - genesis will NOT be created");
+        } else {
+            info!("🆕 Orchestrator: Creating new genesis network");
+        }
         Ok(())
     }
 

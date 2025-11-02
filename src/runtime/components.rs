@@ -894,6 +894,7 @@ pub struct BlockchainComponent {
     user_wallet: Arc<RwLock<Option<crate::runtime::did_startup::WalletStartupResult>>>,
     environment: crate::config::Environment,  // Store environment for network-specific initialization
     bootstrap_validators: Arc<RwLock<Vec<BootstrapValidator>>>, // Store bootstrap validators for multi-node genesis
+    joined_existing_network: bool,  // If true, skip genesis creation (we're joining existing network)
 }
 
 impl BlockchainComponent {
@@ -906,6 +907,7 @@ impl BlockchainComponent {
             user_wallet: Arc::new(RwLock::new(None)),
             environment: crate::config::Environment::Development,  // Default to dev
             bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
+            joined_existing_network: false,  // Default: create genesis
         }
     }
 
@@ -918,6 +920,7 @@ impl BlockchainComponent {
             user_wallet: Arc::new(RwLock::new(user_wallet)),
             environment: crate::config::Environment::Development,  // Default to dev
             bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
+            joined_existing_network: false,  // Default: create genesis
         }
     }
     
@@ -934,6 +937,7 @@ impl BlockchainComponent {
             user_wallet: Arc::new(RwLock::new(user_wallet)),
             environment,
             bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
+            joined_existing_network: false,  // Default: create genesis
         }
     }
     
@@ -942,6 +946,7 @@ impl BlockchainComponent {
         user_wallet: Option<crate::runtime::did_startup::WalletStartupResult>,
         environment: crate::config::Environment,
         bootstrap_validators: Vec<BootstrapValidator>,
+        joined_existing_network: bool,
     ) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
@@ -951,6 +956,7 @@ impl BlockchainComponent {
             user_wallet: Arc::new(RwLock::new(user_wallet)),
             environment,
             bootstrap_validators: Arc::new(RwLock::new(bootstrap_validators)),
+            joined_existing_network,
         }
     }
     
@@ -1186,53 +1192,65 @@ impl Component for BlockchainComponent {
                 *self.blockchain.write().await = Some(blockchain_clone);
             }
             Err(_) => {
-                // If no shared blockchain exists, initialize one for the correct network
-                info!("Initializing new shared blockchain instance for {} network...", self.environment);
-                
-                // Initialize shared blockchain (GenesisConfig is handled internally)
-                let shared_blockchain = lib_blockchain::initialize_shared_blockchain();
-                
-                // Create genesis funding to bootstrap the system with UTXOs
-                {
-                    let mut blockchain_guard = shared_blockchain.write().await;
-                    let bootstrap_validators_guard = self.bootstrap_validators.read().await;
-                    
-                    // Convert BootstrapValidator to GenesisValidator
-                    let genesis_validators: Vec<GenesisValidator> = bootstrap_validators_guard
-                        .iter()
-                        .cloned()
-                        .map(GenesisValidator::from)
-                        .collect();
-                    
-                    // If no bootstrap validators configured, create single validator from user wallet for dev mode
-                    let genesis_validators = if genesis_validators.is_empty() {
-                        let user_wallet_guard = self.user_wallet.read().await;
-                        if let Some(wallet_data) = user_wallet_guard.as_ref() {
-                            vec![GenesisValidator {
-                                identity_id: wallet_data.node_identity_id.clone(),
-                                stake: 100_000, // Default dev stake
-                                storage_provided: 1000, // Default dev storage (1TB)  
-                                commission_rate: 500, // 5% commission
-                                endpoints: vec!["127.0.0.1:8080".to_string()],
-                                consensus_key: None,
-                            }]
-                        } else {
-                            return Err(anyhow::anyhow!("No validators configured and no user wallet available"));
-                        }
-                    } else {
-                        genesis_validators
+                // If no shared blockchain exists, check if we should create genesis or join existing network
+                if self.joined_existing_network {
+                    info!("✅ Joining existing network - skipping genesis creation");
+                    info!("   Blockchain will sync from network peers");
+                    // Initialize empty blockchain, will sync from peers
+                    let shared_blockchain = lib_blockchain::initialize_shared_blockchain();
+                    let blockchain_for_component = {
+                        let blockchain_guard = shared_blockchain.read().await;
+                        blockchain_guard.clone()
                     };
+                    *self.blockchain.write().await = Some(blockchain_for_component);
+                } else {
+                    // No shared blockchain exists AND we're not joining existing - initialize genesis
+                    info!("Initializing new shared blockchain instance for {} network...", self.environment);
                     
-                    Self::create_genesis_funding(&mut *blockchain_guard, genesis_validators, &self.environment).await?;
+                    // Initialize shared blockchain (GenesisConfig is handled internally)
+                    let shared_blockchain = lib_blockchain::initialize_shared_blockchain();
+                    
+                    // Create genesis funding to bootstrap the system with UTXOs
+                    {
+                        let mut blockchain_guard = shared_blockchain.write().await;
+                        let bootstrap_validators_guard = self.bootstrap_validators.read().await;
+                        
+                        // Convert BootstrapValidator to GenesisValidator
+                        let genesis_validators: Vec<GenesisValidator> = bootstrap_validators_guard
+                            .iter()
+                            .cloned()
+                            .map(GenesisValidator::from)
+                            .collect();
+                        
+                        // If no bootstrap validators configured, create single validator from user wallet for dev mode
+                        let genesis_validators = if genesis_validators.is_empty() {
+                            let user_wallet_guard = self.user_wallet.read().await;
+                            if let Some(wallet_data) = user_wallet_guard.as_ref() {
+                                vec![GenesisValidator {
+                                    identity_id: wallet_data.node_identity_id.clone(),
+                                    stake: 100_000, // Default dev stake
+                                    storage_provided: 1000, // Default dev storage (1TB)  
+                                    commission_rate: 500, // 5% commission
+                                    endpoints: vec!["127.0.0.1:8080".to_string()],
+                                    consensus_key: None,
+                                }]
+                            } else {
+                                return Err(anyhow::anyhow!("No validators configured and no user wallet available"));
+                            }
+                        } else {
+                            genesis_validators
+                        };
+                        
+                        Self::create_genesis_funding(&mut *blockchain_guard, genesis_validators, &self.environment).await?;
+                    }
+                    
+                    // Get the blockchain from shared instance
+                    let blockchain_for_component = {
+                        let blockchain_guard = shared_blockchain.read().await;
+                        blockchain_guard.clone()
+                    };
+                    *self.blockchain.write().await = Some(blockchain_for_component);
                 }
-                
-                // Get the blockchain from shared instance (don't clone it)
-                let blockchain_for_component = {
-                    let blockchain_guard = shared_blockchain.read().await;
-                    blockchain_guard.clone()
-                };
-                
-                *self.blockchain.write().await = Some(blockchain_for_component);
             }
         }
         
