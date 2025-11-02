@@ -3989,6 +3989,7 @@ pub struct WiFiRouter {
     connected_devices: Arc<RwLock<HashMap<String, String>>>,
     node_id: [u8; 32],
     protocol: Arc<RwLock<Option<WiFiDirectMeshProtocol>>>,
+    initialized: Arc<RwLock<bool>>, // Track if already initialized to prevent re-creating protocol
 }
 
 /// Bluetooth mesh protocol router for phone connectivity
@@ -4026,11 +4027,21 @@ impl WiFiRouter {
             connected_devices: Arc::new(RwLock::new(HashMap::new())),
             node_id,
             protocol: Arc::new(RwLock::new(None)),
+            initialized: Arc::new(RwLock::new(false)),
         }
     }
     
     /// Initialize WiFi Direct with mDNS service discovery
     pub async fn initialize(&self) -> Result<()> {
+        // Check if already initialized - prevent re-creating protocol and losing discovered peers
+        {
+            let already_initialized = *self.initialized.read().await;
+            if already_initialized {
+                debug!("WiFi Direct already initialized, skipping re-initialization");
+                return Ok(());
+            }
+        }
+        
         info!("🔷 Initializing WiFi Direct P2P + mDNS service discovery...");
         info!("   Node ID: {:?}", hex::encode(&self.node_id[..8]));
         
@@ -4047,6 +4058,9 @@ impl WiFiRouter {
                         
                         // Store the initialized protocol
                         *self.protocol.write().await = Some(wifi_protocol);
+                        
+                        // Mark as initialized to prevent re-initialization
+                        *self.initialized.write().await = true;
                         
                         info!("🔷 WiFi Direct mesh fully initialized:");
                         info!("   ✓ P2P device discovery active");
@@ -5707,6 +5721,7 @@ impl Clone for WiFiRouter {
             node_id: self.node_id,
             connected_devices: self.connected_devices.clone(),
             protocol: self.protocol.clone(),
+            initialized: self.initialized.clone(),
         }
     }
 }
