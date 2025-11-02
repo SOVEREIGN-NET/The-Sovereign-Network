@@ -358,33 +358,39 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
 }
 
 /// Attempt to bootstrap to an existing ZHTP mesh network
-async fn attempt_mesh_bootstrap(orchestrator: &mut RuntimeOrchestrator, environment: &Environment) -> Result<ExistingNetworkInfo> {
+async fn attempt_mesh_bootstrap(_orchestrator: &mut RuntimeOrchestrator, environment: &Environment) -> Result<ExistingNetworkInfo> {
     println!("Scanning for existing ZHTP network...");
     
-    // Only perform peer discovery without component registration
-    // Component registration will happen later in start_all_components()
-    println!(" Starting network component for discovery...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+    // Initialize DHT and perform ACTIVE peer discovery
+    println!(" Initializing DHT for peer discovery...");
+    let node_identity = create_or_load_node_identity(environment).await?;
+    initialize_global_dht_safe(node_identity.clone()).await?;
     
-    // Check if we found any ZHTP peers without starting a full network component
-    // This will be replaced by the proper network component startup later
-    let peer_count = check_discovered_peers(environment).await?;
+    // Start actual discovery mechanisms (mDNS + DHT bootstrap)
+    println!(" Discovering peers via mDNS, UDP multicast, and DHT bootstrap...");
+    let discovered_peers = perform_active_peer_discovery(&node_identity, environment).await?;
+    
+    let peer_count = discovered_peers.len();
     
     if peer_count > 0 {
-        println!("Found {} ZHTP peers", peer_count);
+        println!("✅ Found {} ZHTP peers on network", peer_count);
+        for (i, peer) in discovered_peers.iter().enumerate() {
+            println!("   {}. {}", i + 1, peer);
+        }
         
         // Try to connect to blockchain via peers
-        let blockchain_info = fetch_blockchain_info_from_peers().await?;
+        let blockchain_info = fetch_blockchain_info_from_discovered_peers(&discovered_peers).await?;
         
         Ok(ExistingNetworkInfo {
-            peer_count,
+            peer_count: peer_count as u32,
             blockchain_height: blockchain_info.height,
             network_id: blockchain_info.network_id,
-            bootstrap_peers: blockchain_info.peers,
-            environment: environment.clone(),  // Propagate environment for data paths
+            bootstrap_peers: discovered_peers,
+            environment: environment.clone(),
         })
     } else {
-        Err(anyhow!("No ZHTP peers discovered"))
+        println!("ℹ️  No ZHTP peers found - will create genesis network");
+        Err(anyhow!("No network peers found"))
     }
 }
 
@@ -519,6 +525,195 @@ async fn import_identity_from_mesh(network_info: &ExistingNetworkInfo) -> Result
     
     println!(" Falling back to manual wallet creation...");
     handle_genesis_network_identity(&network_info.environment).await
+}
+
+/// Perform ACTIVE peer discovery using all available methods
+async fn perform_active_peer_discovery(node_identity: &ZhtpIdentity, environment: &Environment) -> Result<Vec<String>> {
+    use lib_network::dht::bootstrap::DHTBootstrap;
+    
+    let mut all_discovered_peers = Vec::new();
+    
+    // Method 1: DHT Enhanced Bootstrap (includes mDNS)
+    println!("   → Method 1: DHT bootstrap with mDNS discovery");
+    let mut dht_bootstrap = DHTBootstrap::new(Default::default());
+    
+    // Start with empty bootstrap list - will use mDNS to find local peers
+    match tokio::time::timeout(
+        tokio::time::Duration::from_secs(5),
+        dht_bootstrap.enhance_bootstrap(&[])
+    ).await {
+        Ok(Ok(peers)) => {
+            println!("     ✓ DHT/mDNS found {} peers", peers.len());
+            all_discovered_peers.extend(peers);
+        }
+        Ok(Err(e)) => {
+            println!("     ✗ DHT/mDNS discovery failed: {}", e);
+        }
+        Err(_) => {
+            println!("     ⏱ DHT/mDNS discovery timeout");
+        }
+    }
+    
+    // Method 2: Check UDP multicast announcements
+    println!("   → Method 2: UDP multicast peer discovery");
+    match tokio::time::timeout(
+        tokio::time::Duration::from_secs(3),
+        discover_via_multicast()
+    ).await {
+        Ok(Ok(peers)) => {
+            println!("     ✓ Multicast found {} peers", peers.len());
+            all_discovered_peers.extend(peers);
+        }
+        Ok(Err(e)) => {
+            println!("     ✗ Multicast discovery failed: {}", e);
+        }
+        Err(_) => {
+            println!("     ⏱ Multicast discovery timeout");
+        }
+    }
+    
+    // Method 3: Try common local ports
+    println!("   → Method 3: Scanning common ZHTP ports on subnet");
+    match tokio::time::timeout(
+        tokio::time::Duration::from_secs(3),
+        scan_local_subnet_for_zhtp(environment)
+    ).await {
+        Ok(Ok(peers)) => {
+            println!("     ✓ Port scan found {} peers", peers.len());
+            all_discovered_peers.extend(peers);
+        }
+        Ok(Err(e)) => {
+            println!("     ✗ Port scan failed: {}", e);
+        }
+        Err(_) => {
+            println!("     ⏱ Port scan timeout");
+        }
+    }
+    
+    // Deduplicate and return
+    all_discovered_peers.sort();
+    all_discovered_peers.dedup();
+    
+    Ok(all_discovered_peers)
+}
+
+/// Discover peers via UDP multicast announcements
+async fn discover_via_multicast() -> Result<Vec<String>> {
+    use tokio::net::UdpSocket;
+    use std::net::{Ipv4Addr, SocketAddr};
+    
+    const ZHTP_MULTICAST_ADDR: &str = "224.0.1.75";
+    const ZHTP_MULTICAST_PORT: u16 = 37775;
+    
+    let socket = UdpSocket::bind(format!("0.0.0.0:{}", ZHTP_MULTICAST_PORT)).await?;
+    let multicast_addr: Ipv4Addr = ZHTP_MULTICAST_ADDR.parse()?;
+    socket.join_multicast_v4(multicast_addr, Ipv4Addr::UNSPECIFIED)?;
+    
+    let mut discovered = Vec::new();
+    let mut buf = [0u8; 1024];
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(2);
+    
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(
+            tokio::time::Duration::from_millis(500),
+            socket.recv_from(&mut buf)
+        ).await {
+            Ok(Ok((len, addr))) => {
+                if let Ok(announcement) = String::from_utf8(buf[..len].to_vec()) {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&announcement) {
+                        if let Some(mesh_port) = parsed.get("mesh_port").and_then(|p| p.as_u64()) {
+                            let peer_addr = format!("zhtp://{}:{}", addr.ip(), mesh_port);
+                            if !discovered.contains(&peer_addr) {
+                                discovered.push(peer_addr);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    
+    Ok(discovered)
+}
+
+/// Scan local subnet for ZHTP nodes on common ports
+async fn scan_local_subnet_for_zhtp(environment: &Environment) -> Result<Vec<String>> {
+    use tokio::net::TcpStream;
+    use std::net::{IpAddr, Ipv4Addr};
+    
+    let mut discovered = Vec::new();
+    
+    // Get local IP to determine subnet
+    let local_ip = get_local_ip_address().await?;
+    
+    // Parse to get subnet (assumes /24)
+    if let IpAddr::V4(ipv4) = local_ip {
+        let octets = ipv4.octets();
+        let subnet_base = format!("{}.{}.{}", octets[0], octets[1], octets[2]);
+        
+        // Common ZHTP ports to check
+        let ports = vec![9333, 33446];
+        
+        // Scan a small range around our IP
+        let our_last_octet = octets[3];
+        let scan_range: Vec<u8> = (1..=254)
+            .filter(|&i| i != our_last_octet) // Skip ourselves
+            .take(20) // Limit scan to avoid slowdown
+            .collect();
+        
+        for last_octet in scan_range {
+            for &port in &ports {
+                let target = format!("{}.{}:{}", subnet_base, last_octet, port);
+                
+                // Quick TCP connection test
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_millis(100),
+                    TcpStream::connect(&target)
+                ).await {
+                    Ok(Ok(_stream)) => {
+                        let peer_addr = format!("zhtp://{}", target);
+                        discovered.push(peer_addr);
+                    }
+                    _ => continue,
+                }
+            }
+        }
+    }
+    
+    Ok(discovered)
+}
+
+/// Get local IP address
+async fn get_local_ip_address() -> Result<std::net::IpAddr> {
+    use tokio::net::UdpSocket;
+    
+    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+    socket.connect("8.8.8.8:80").await?;
+    Ok(socket.local_addr()?.ip())
+}
+
+/// Fetch blockchain info from discovered peers
+async fn fetch_blockchain_info_from_discovered_peers(peers: &[String]) -> Result<BlockchainInfo> {
+    // Try to get blockchain info from the shared blockchain instance
+    let height = match crate::runtime::shared_blockchain::get_shared_blockchain() {
+        Ok(blockchain_service) => {
+            blockchain_service.get_height().await.unwrap_or(0)
+        },
+        Err(_) => 0,
+    };
+    
+    let network_id = if peers.is_empty() {
+        "zhtp-genesis".to_string()
+    } else {
+        "zhtp-mainnet".to_string()
+    };
+    
+    Ok(BlockchainInfo {
+        height,
+        network_id,
+        peers: peers.to_vec(),
+    })
 }
 
 /// Check for discovered peers (using shared DHT instance)
