@@ -2390,6 +2390,14 @@ impl Component for ProtocolsComponent {
                             
                             info!(" Node identity loaded: ID={}", hex::encode(&node_identity.id.as_bytes()[..8]));
                             
+                            // Register the node identity with the identity manager so it's available for PeerAnnouncement signing
+                            {
+                                let mut mgr = identity_manager.write().await;
+                                mgr.add_identity(node_identity.clone());
+                                info!("✅ Node identity registered with identity manager for mesh signing");
+                                info!("   Identity count: {}", mgr.list_identities().len());
+                            }
+                            
                             // Initialize authentication manager
                             if let Err(e) = unified_server.initialize_auth_manager(blockchain_pubkey).await {
                                 warn!("Failed to initialize ZHTP auth manager: {}", e);
