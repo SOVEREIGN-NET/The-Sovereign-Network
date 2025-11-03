@@ -1195,8 +1195,8 @@ impl Component for BlockchainComponent {
                 // If no shared blockchain exists, check if we should create genesis or join existing network
                 if self.joined_existing_network {
                     info!("✅ Joining existing network - skipping genesis creation");
-                    info!("   Blockchain will sync from network peers");
-                    // Initialize empty blockchain, will sync from peers
+                    info!("   Blockchain will sync from network peers after API server starts");
+                    // Initialize empty blockchain, will sync from peers via ProtocolsComponent
                     let shared_blockchain = lib_blockchain::initialize_shared_blockchain();
                     let blockchain_for_component = {
                         let blockchain_guard = shared_blockchain.read().await;
@@ -2290,7 +2290,29 @@ impl Component for ProtocolsComponent {
         // 🔗 Try to bootstrap blockchain from existing network peers first
         let blockchain = match try_bootstrap_blockchain().await {
             Ok(synced_blockchain) => {
-                info!(" Bootstrapped blockchain from network peers");
+                info!("✅ Successfully bootstrapped blockchain from network peers");
+                info!("   Height: {}, UTXOs: {}, Identities: {}", 
+                    synced_blockchain.height,
+                    synced_blockchain.utxo_set.len(),
+                    synced_blockchain.identity_registry.len()
+                );
+                
+                // Update the shared blockchain instance with synced state
+                match lib_blockchain::get_shared_blockchain().await {
+                    Ok(shared_blockchain) => {
+                        let mut blockchain_guard = shared_blockchain.write().await;
+                        *blockchain_guard = synced_blockchain.clone();
+                        info!(" Updated shared blockchain instance with synced state");
+                    }
+                    Err(_) => {
+                        // If no shared blockchain exists, initialize it with synced state
+                        let shared_blockchain = lib_blockchain::initialize_shared_blockchain();
+                        let mut blockchain_guard = shared_blockchain.write().await;
+                        *blockchain_guard = synced_blockchain.clone();
+                        info!(" Initialized shared blockchain with synced state");
+                    }
+                }
+                
                 Arc::new(RwLock::new(synced_blockchain))
             }
             Err(e) => {
