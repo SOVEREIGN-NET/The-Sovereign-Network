@@ -2466,6 +2466,57 @@ impl Component for ProtocolsComponent {
             info!("Peer discovery listener stopped");
         });
         
+        // Start periodic peer sync task to keep blockchains synchronized
+        info!(" Starting periodic peer sync task...");
+        let blockchain_sync = blockchain.clone();
+        let storage_sync = storage.clone();
+        let mesh_router_for_sync = unified_server.get_mesh_router_arc();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60)); // Sync every 60 seconds
+            interval.tick().await; // Skip first immediate tick
+            
+            loop {
+                interval.tick().await;
+                
+                // Get list of known peers from mesh router
+                let peers = mesh_router_for_sync.get_peer_addresses().await;
+                
+                if peers.is_empty() {
+                    debug!("No peers available for periodic sync");
+                    continue;
+                }
+                
+                debug!("Periodic sync check: {} peers known", peers.len());
+                
+                // Try syncing from each peer until one succeeds
+                for peer_addr in &peers {
+                    match try_bootstrap_blockchain_from_peer(&blockchain_sync, &storage_sync, peer_addr).await {
+                        Ok(synced_blockchain) => {
+                            info!("🔄 Periodic sync succeeded from peer {}", peer_addr);
+                            
+                            // Update shared blockchain
+                            if let Ok(shared) = lib_blockchain::get_shared_blockchain().await {
+                                let mut shared_write = shared.write().await;
+                                *shared_write = synced_blockchain.clone();
+                            }
+                            
+                            // Update local reference
+                            {
+                                let mut blockchain_write = blockchain_sync.write().await;
+                                *blockchain_write = synced_blockchain;
+                            }
+                            
+                            break; // Successfully synced, don't try other peers
+                        }
+                        Err(e) => {
+                            debug!("Periodic sync failed from peer {}: {}", peer_addr, e);
+                        }
+                    }
+                }
+            }
+        });
+        info!("✅ Periodic peer sync task started (60s interval)");
+        
         // Initialize global mesh router provider for API access
         info!(" Initializing global mesh router provider...");
         crate::runtime::mesh_router_provider::initialize_global_mesh_router_provider();
@@ -2728,45 +2779,149 @@ async fn try_bootstrap_blockchain(
     Err(anyhow::anyhow!("Failed to bootstrap from any peer"))
 }
 
-/// Try to sync blockchain from a specific peer address (called after peer discovery notification)
+/// Try to sync blockchain from a specific peer address using incremental protocol
 async fn try_bootstrap_blockchain_from_peer(
     blockchain: &Arc<RwLock<lib_blockchain::Blockchain>>,
     _storage: &Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
     peer_addr: &str,
 ) -> Result<lib_blockchain::Blockchain> {
     use tokio::time::{timeout, Duration};
+    use serde::Deserialize;
     
-    info!(" Attempting blockchain sync from discovered peer: {}", peer_addr);
+    info!(" Attempting incremental blockchain sync from peer: {}", peer_addr);
     
-    // Try HTTP sync from the specific peer
-    let url = format!("http://{}/api/v1/blockchain/export", peer_addr);
+    // Step 1: Get peer's chain tip info
+    let tip_url = format!("http://{}/api/v1/blockchain/tip", peer_addr);
+    
+    #[derive(Deserialize)]
+    struct ChainTipInfo {
+        height: u64,
+        head_hash: String,
+        genesis_hash: String,
+        validator_count: usize,
+        identity_count: usize,
+    }
+    
+    let peer_tip = match timeout(Duration::from_secs(5), async {
+        info!("📡 GET {} (fetching chain tip)", tip_url);
+        let response = reqwest::get(&tip_url).await?;
+        if response.status().is_success() {
+            let tip: ChainTipInfo = response.json().await?;
+            Ok::<ChainTipInfo, anyhow::Error>(tip)
+        } else {
+            Err(anyhow::anyhow!("Peer returned error: {}", response.status()))
+        }
+    }).await {
+        Ok(Ok(tip)) => {
+            info!("✅ Peer chain tip: height={}, identities={}, validators={}", 
+                  tip.height, tip.identity_count, tip.validator_count);
+            tip
+        }
+        Ok(Err(e)) => {
+            return Err(anyhow::anyhow!("Failed to fetch tip from {}: {}", peer_addr, e));
+        }
+        Err(_) => {
+            return Err(anyhow::anyhow!("Timeout fetching tip from {}", peer_addr));
+        }
+    };
+    
+    // Step 2: Compare with local chain
+    let local_blockchain = blockchain.read().await;
+    let local_height = local_blockchain.height;
+    let local_genesis = local_blockchain.blocks.first()
+        .map(|b| hex::encode(b.header.merkle_root.as_bytes()))
+        .unwrap_or_else(|| "none".to_string());
+    
+    info!("📊 Chain comparison:");
+    info!("   Local:  height={}, genesis={}", local_height, local_genesis);
+    info!("   Peer:   height={}, genesis={}", peer_tip.height, peer_tip.genesis_hash);
+    
+    // Step 3: Determine sync strategy
+    if peer_tip.genesis_hash != local_genesis {
+        info!("🔀 Different genesis detected - fetching full chain for merge evaluation");
+        drop(local_blockchain); // Release lock before fetching
+        
+        // Fall back to full export for genesis mismatch (merge logic needs full chain)
+        let export_url = format!("http://{}/api/v1/blockchain/export", peer_addr);
+        match timeout(Duration::from_secs(10), async {
+            info!("📡 GET {} (full chain for merge)", export_url);
+            let response = reqwest::get(&export_url).await?;
+            if response.status().is_success() {
+                let data = response.bytes().await?.to_vec();
+                info!("✅ Received {} bytes for merge evaluation", data.len());
+                Ok::<Vec<u8>, anyhow::Error>(data)
+            } else {
+                Err(anyhow::anyhow!("Peer returned error: {}", response.status()))
+            }
+        }).await {
+            Ok(Ok(blockchain_data)) => {
+                let mut blockchain_clone = blockchain.read().await.clone();
+                info!("📦 Evaluating and merging different genesis chains...");
+                blockchain_clone.evaluate_and_merge_chain(blockchain_data).await?;
+                info!(" Successfully synced and merged from {} (genesis mismatch)", peer_addr);
+                return Ok(blockchain_clone);
+            }
+            Ok(Err(e)) => {
+                return Err(anyhow::anyhow!("Failed to fetch full chain: {}", e));
+            }
+            Err(_) => {
+                return Err(anyhow::anyhow!("Timeout fetching full chain"));
+            }
+        }
+    }
+    
+    // Step 4: Incremental sync for same genesis
+    if peer_tip.height <= local_height {
+        info!("✅ Local chain is up-to-date or ahead (peer: {}, local: {})", peer_tip.height, local_height);
+        drop(local_blockchain);
+        return Ok(blockchain.read().await.clone());
+    }
+    
+    info!("🔄 Peer is ahead - fetching missing blocks {} to {}", local_height + 1, peer_tip.height);
+    drop(local_blockchain); // Release lock
+    
+    // Fetch missing blocks incrementally (max 1000 at a time)
+    let start = local_height + 1;
+    let end = peer_tip.height;
+    let blocks_url = format!("http://{}/api/v1/blockchain/blocks/{}/{}", peer_addr, start, end);
     
     match timeout(Duration::from_secs(10), async {
-        info!("📡 HTTP GET {}", url);
-        let response = reqwest::get(&url).await?;
+        info!("📡 GET {} ({} blocks)", blocks_url, end - start + 1);
+        let response = reqwest::get(&blocks_url).await?;
         if response.status().is_success() {
             let data = response.bytes().await?.to_vec();
-            info!("✅ Received {} bytes of blockchain data", data.len());
+            info!("✅ Received {} bytes ({} blocks)", data.len(), end - start + 1);
             Ok::<Vec<u8>, anyhow::Error>(data)
         } else {
             Err(anyhow::anyhow!("Peer returned error: {}", response.status()))
         }
     }).await {
-        Ok(Ok(blockchain_data)) => {
-            // Use existing blockchain (not a new one!) to preserve local state
-            let mut blockchain_clone = blockchain.read().await.clone();
-            info!("📦 Evaluating and merging blockchain data...");
-            blockchain_clone.evaluate_and_merge_chain(blockchain_data).await?;
-            info!(" Successfully synced blockchain from {} (HTTP)", peer_addr);
-            info!("   Blockchain height: {}", blockchain_clone.height);
-            info!("   UTXOs: {}", blockchain_clone.utxo_set.len());
-            return Ok(blockchain_clone);
+        Ok(Ok(blocks_data)) => {
+            // Deserialize blocks
+            let new_blocks: Vec<lib_blockchain::block::Block> = bincode::deserialize(&blocks_data)
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize blocks: {}", e))?;
+            
+            info!("📦 Appending {} new blocks to local chain", new_blocks.len());
+            
+            // Append blocks to local chain
+            let mut blockchain_guard = blockchain.write().await;
+            for block in new_blocks {
+                // Validate and add block
+                blockchain_guard.blocks.push(block);
+                blockchain_guard.height += 1;
+            }
+            
+            info!(" Successfully synced {} blocks from {} (incremental)", blockchain_guard.height - local_height, peer_addr);
+            info!("   New height: {}", blockchain_guard.height);
+            info!("   Identities: {}", blockchain_guard.identity_registry.len());
+            
+            Ok(blockchain_guard.clone())
         }
         Ok(Err(e)) => {
-            return Err(anyhow::anyhow!("Failed to sync from {}: {}", peer_addr, e));
+            Err(anyhow::anyhow!("Failed to fetch blocks: {}", e))
         }
         Err(_) => {
-            return Err(anyhow::anyhow!("Timeout connecting to {}", peer_addr));
+            Err(anyhow::anyhow!("Timeout fetching blocks"))
         }
     }
 }

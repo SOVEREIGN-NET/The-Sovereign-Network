@@ -970,6 +970,14 @@ impl MeshRouter {
         self.broadcast_metrics.read().await.clone()
     }
     
+    /// Get list of connected peer addresses
+    pub async fn get_peer_addresses(&self) -> Vec<String> {
+        self.connections.read().await
+            .values()
+            .filter_map(|conn| conn.peer_address.clone())
+            .collect()
+    }
+    
     /// Get peer reputation (for monitoring/admin purposes)
     pub async fn get_peer_reputation(&self, peer_id: &str) -> Option<PeerReputation> {
         self.peer_reputations.read().await.get(peer_id).cloned()

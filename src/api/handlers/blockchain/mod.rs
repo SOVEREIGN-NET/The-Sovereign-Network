@@ -76,6 +76,13 @@ impl ZhtpRequestHandler for BlockchainHandler {
             (ZhtpMethod::Post, "/api/v1/blockchain/import") => {
                 self.handle_import_chain(request).await
             }
+            // New incremental sync endpoints
+            (ZhtpMethod::Get, "/api/v1/blockchain/tip") => {
+                self.handle_get_chain_tip(request).await
+            }
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/blocks/") => {
+                self.handle_get_block_range(request).await
+            }
             (ZhtpMethod::Post, "/api/v1/blockchain/transaction/estimate-fee") => {
                 self.handle_estimate_transaction_fee(request).await
             }
@@ -1459,6 +1466,105 @@ impl BlockchainHandler {
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
             "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Get chain tip info (height and head hash) for incremental sync
+    async fn handle_get_chain_tip(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let blockchain = self.blockchain.read().await;
+        
+        #[derive(Serialize)]
+        struct ChainTipInfo {
+            height: u64,
+            head_hash: String,
+            total_work: String,
+            validator_count: usize,
+            identity_count: usize,
+            genesis_hash: String,
+        }
+        
+        let head_hash = blockchain.blocks.last()
+            .map(|b| hex::encode(b.header.block_hash.as_bytes()))
+            .unwrap_or_else(|| "none".to_string());
+            
+        let genesis_hash = blockchain.blocks.first()
+            .map(|b| hex::encode(b.header.merkle_root.as_bytes()))
+            .unwrap_or_else(|| "none".to_string());
+        
+        let tip_info = ChainTipInfo {
+            height: blockchain.height,
+            head_hash,
+            total_work: blockchain.total_work.to_string(),
+            validator_count: blockchain.validator_registry.len(),
+            identity_count: blockchain.identity_registry.len(),
+            genesis_hash,
+        };
+        
+        let json_response = serde_json::to_vec(&tip_info)?;
+        tracing::info!("📊 Served chain tip: height={}, identities={}, validators={}", 
+                      tip_info.height, tip_info.identity_count, tip_info.validator_count);
+        
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Get block range for incremental sync (e.g., /blocks/10/20 returns blocks 10-20)
+    async fn handle_get_block_range(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Parse start/end from URI: /api/v1/blockchain/blocks/{start}/{end}
+        let parts: Vec<&str> = request.uri.split('/').collect();
+        if parts.len() < 7 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Invalid block range format. Use: /api/v1/blockchain/blocks/{start}/{end}".to_string(),
+            ));
+        }
+        
+        let start: u64 = parts[5].parse()
+            .map_err(|_| anyhow::anyhow!("Invalid start block number"))?;
+        let end: u64 = parts[6].parse()
+            .map_err(|_| anyhow::anyhow!("Invalid end block number"))?;
+        
+        if end < start {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "End block must be >= start block".to_string(),
+            ));
+        }
+        
+        if end - start > 1000 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Block range too large (max 1000 blocks per request)".to_string(),
+            ));
+        }
+        
+        let blockchain = self.blockchain.read().await;
+        
+        // Validate range is within chain
+        if start as usize >= blockchain.blocks.len() {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                format!("Start block {} beyond chain height {}", start, blockchain.height),
+            ));
+        }
+        
+        let actual_end = std::cmp::min(end as usize, blockchain.blocks.len() - 1);
+        let blocks_slice = &blockchain.blocks[start as usize..=actual_end];
+        
+        // Serialize blocks
+        let serialized_blocks = bincode::serialize(blocks_slice)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize blocks: {}", e))?;
+        
+        tracing::info!("📦 Serving blocks {}-{} ({} blocks, {} bytes)", 
+                      start, actual_end, blocks_slice.len(), serialized_blocks.len());
+        
+        Ok(ZhtpResponse::success_with_content_type(
+            serialized_blocks,
+            "application/octet-stream".to_string(),
             None,
         ))
     }
