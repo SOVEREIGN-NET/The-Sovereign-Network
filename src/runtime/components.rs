@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -117,7 +118,7 @@ fn create_default_storage_config() -> Result<lib_storage::UnifiedStorageConfig> 
     
     Ok(UnifiedStorageConfig {
         node_id: Hash([1u8; 32]), // Simple node ID wrapped in Hash
-        addresses: vec!["127.0.0.1:8080".to_string()],
+        addresses: vec![], // Empty addresses = no DHT network binding (DHT handled by lib-network layer)
         economic_config: Default::default(), // Use default for EconomicManagerConfig
         storage_config: StorageConfig {
             max_storage_size: 1024 * 1024 * 1024, // 1GB
@@ -2430,36 +2431,49 @@ impl Component for ProtocolsComponent {
         info!(" Starting peer discovery listener for blockchain sync...");
         let blockchain_clone = blockchain.clone();
         let storage_clone = storage.clone();
+        let unified_server_clone = unified_server.clone();
         let api_port = self.api_port;
         tokio::spawn(async move {
             let mut rx = peer_discovery_rx;
             info!("🔔 Peer discovery listener active - will trigger blockchain sync on peer discovery");
             
-            while let Some(peer_addr) = rx.recv().await {
-                info!("🔔 Peer discovered post-startup: {} - attempting blockchain sync...", peer_addr);
+            while let Some(peer_addr_str) = rx.recv().await {
+                info!("🔔 Peer discovered post-startup: {} - establishing UDP mesh connection...", peer_addr_str);
                 
-                // Call try_bootstrap_blockchain_from_peer to sync from the specific discovered peer
-                match try_bootstrap_blockchain_from_peer(&blockchain_clone, &storage_clone, &peer_addr).await {
-                    Ok(synced_blockchain) => {
-                        info!("✅ Successfully synced blockchain from peer {}", peer_addr);
-                        
-                        // Update the shared blockchain instance
-                        if let Ok(shared) = lib_blockchain::get_shared_blockchain().await {
-                            let mut shared_write = shared.write().await;
-                            *shared_write = synced_blockchain.clone();
-                            info!("✅ Shared blockchain updated with synced state");
+                // Parse peer address
+                if let Ok(peer_addr) = peer_addr_str.parse::<SocketAddr>() {
+                    // First, establish UDP mesh connection
+                    if let Err(e) = unified_server_clone.establish_udp_connection(peer_addr).await {
+                        warn!("Failed to establish UDP connection to {}: {}", peer_addr, e);
+                    } else {
+                        info!("✅ UDP mesh connection established to {}", peer_addr);
+                    }
+                    
+                    // Then, trigger HTTP-based blockchain sync from this peer
+                    match try_bootstrap_blockchain_from_peer(&blockchain_clone, &storage_clone, &peer_addr_str).await {
+                        Ok(synced_blockchain) => {
+                            info!("✅ Successfully synced blockchain from peer {}", peer_addr_str);
+                            
+                            // Update the shared blockchain instance
+                            if let Ok(shared) = lib_blockchain::get_shared_blockchain().await {
+                                let mut shared_write = shared.write().await;
+                                *shared_write = synced_blockchain.clone();
+                                info!("✅ Shared blockchain updated with synced state");
+                            }
+                            
+                            // Also update the local reference
+                            {
+                                let mut blockchain_write = blockchain_clone.write().await;
+                                *blockchain_write = synced_blockchain;
+                                info!("✅ Local blockchain reference updated");
+                            }
                         }
-                        
-                        // Also update the local reference
-                        {
-                            let mut blockchain_write = blockchain_clone.write().await;
-                            *blockchain_write = synced_blockchain;
-                            info!("✅ Local blockchain reference updated");
+                        Err(e) => {
+                            warn!("⚠️ Could not sync blockchain from peer {}: {}", peer_addr_str, e);
                         }
                     }
-                    Err(e) => {
-                        warn!("⚠️ Could not sync blockchain from peer {}: {}", peer_addr, e);
-                    }
+                } else {
+                    warn!("Failed to parse peer address: {}", peer_addr_str);
                 }
             }
             

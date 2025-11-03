@@ -26,11 +26,11 @@ pub struct Web4Handler {
 }
 
 impl Web4Handler {
-    /// Create new Web4 API handler
-    pub async fn new() -> ZhtpResult<Self> {
-        info!("Initializing Web4 API handler");
+    /// Create new Web4 API handler with existing storage system (avoids creating duplicates)
+    pub async fn new(storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>) -> ZhtpResult<Self> {
+        info!("Initializing Web4 API handler with existing storage system");
         
-        let web4_manager = lib_network::initialize_web4_system().await
+        let web4_manager = lib_network::initialize_web4_system_with_storage(storage).await
             .map_err(|e| anyhow::anyhow!("Failed to initialize Web4 system: {}", e))?;
         
         info!(" Web4 API handler initialized successfully");
