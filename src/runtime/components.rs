@@ -1064,7 +1064,8 @@ impl BlockchainComponent {
                 signature: format!("validator_{}_genesis_signature", validator_id_hex).as_bytes().to_vec(),
                 public_key: PublicKey::new(first_validator.identity_id.as_bytes().to_vec()),
                 algorithm: SignatureAlgorithm::Dilithium2,
-                timestamp: 0, // Genesis timestamp
+                // Use fixed genesis timestamp to match genesis block timestamp
+                timestamp: 1730419200, // November 1, 2025 00:00:00 UTC
             }
         } else {
             return Err(anyhow::anyhow!("No validators available for genesis signature"));
