@@ -2729,7 +2729,7 @@ async fn try_bootstrap_blockchain(
 
 /// Try to sync blockchain from a specific peer address (called after peer discovery notification)
 async fn try_bootstrap_blockchain_from_peer(
-    _blockchain: &Arc<RwLock<lib_blockchain::Blockchain>>,
+    blockchain: &Arc<RwLock<lib_blockchain::Blockchain>>,
     _storage: &Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
     peer_addr: &str,
 ) -> Result<lib_blockchain::Blockchain> {
@@ -2752,14 +2752,14 @@ async fn try_bootstrap_blockchain_from_peer(
         }
     }).await {
         Ok(Ok(blockchain_data)) => {
-            // Create empty blockchain and import
-            let mut blockchain = lib_blockchain::Blockchain::new()?;
+            // Use existing blockchain (not a new one!) to preserve local state
+            let mut blockchain_clone = blockchain.read().await.clone();
             info!("📦 Evaluating and merging blockchain data...");
-            blockchain.evaluate_and_merge_chain(blockchain_data).await?;
+            blockchain_clone.evaluate_and_merge_chain(blockchain_data).await?;
             info!(" Successfully synced blockchain from {} (HTTP)", peer_addr);
-            info!("   Blockchain height: {}", blockchain.height);
-            info!("   UTXOs: {}", blockchain.utxo_set.len());
-            return Ok(blockchain);
+            info!("   Blockchain height: {}", blockchain_clone.height);
+            info!("   UTXOs: {}", blockchain_clone.utxo_set.len());
+            return Ok(blockchain_clone);
         }
         Ok(Err(e)) => {
             return Err(anyhow::anyhow!("Failed to sync from {}: {}", peer_addr, e));
