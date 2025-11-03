@@ -548,8 +548,9 @@ async fn perform_active_peer_discovery(node_identity: &ZhtpIdentity, environment
     let mut dht_bootstrap = DHTBootstrap::new(Default::default());
     
     // Start with empty bootstrap list - will use mDNS to find local peers
+    // INCREASED TIMEOUT: WiFi Direct/mDNS can take 8-10 seconds to discover peers
     match tokio::time::timeout(
-        tokio::time::Duration::from_secs(5),
+        tokio::time::Duration::from_secs(15),
         dht_bootstrap.enhance_bootstrap(&[])
     ).await {
         Ok(Ok(peers)) => {
@@ -566,8 +567,9 @@ async fn perform_active_peer_discovery(node_identity: &ZhtpIdentity, environment
     
     // Method 2: Check UDP multicast announcements
     println!("   → Method 2: UDP multicast peer discovery");
+    // INCREASED TIMEOUT: UDP multicast may need extra time on some networks
     match tokio::time::timeout(
-        tokio::time::Duration::from_secs(3),
+        tokio::time::Duration::from_secs(10),
         discover_via_multicast()
     ).await {
         Ok(Ok(peers)) => {
