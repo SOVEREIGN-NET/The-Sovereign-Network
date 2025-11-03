@@ -2288,7 +2288,7 @@ impl Component for ProtocolsComponent {
         info!("Initializing backend components for unified server...");
         
         // 🔗 Try to bootstrap blockchain from existing network peers first
-        let blockchain = match try_bootstrap_blockchain().await {
+        let blockchain = match try_bootstrap_blockchain(&Arc::new(RwLock::new(lib_blockchain::Blockchain::new()?)), &Arc::new(RwLock::new(lib_storage::UnifiedStorageSystem::new(create_default_storage_config()?).await?)), self.api_port).await {
             Ok(synced_blockchain) => {
                 info!("✅ Successfully bootstrapped blockchain from network peers");
                 info!("   Height: {}, UTXOs: {}, Identities: {}", 
@@ -2350,13 +2350,17 @@ impl Component for ProtocolsComponent {
         
         info!("Creating ZHTP Unified Server (consolidates all protocols)...");
         
-        // Create unified server that handles ALL protocols on configured port
-        let mut unified_server = crate::unified_server::ZhtpUnifiedServer::new(
+        // Create peer discovery notification channel for blockchain sync trigger
+        let (peer_discovery_tx, peer_discovery_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        
+        // Create unified server with peer discovery notification
+        let mut unified_server = crate::unified_server::ZhtpUnifiedServer::new_with_peer_notification(
             blockchain.clone(),
             storage.clone(),
             identity_manager.clone(),
             economic_model.clone(),
             self.api_port,  // Use port from configuration
+            Some(peer_discovery_tx),
         ).await?;
         
         // Initialize ZHTP authentication manager with blockchain identity
@@ -2415,6 +2419,46 @@ impl Component for ProtocolsComponent {
         
         // Start the unified server (replaces all separate servers!)
         unified_server.start().await?;
+        
+        // Start background task to listen for peer discovery notifications
+        info!(" Starting peer discovery listener for blockchain sync...");
+        let blockchain_clone = blockchain.clone();
+        let storage_clone = storage.clone();
+        let api_port = self.api_port;
+        tokio::spawn(async move {
+            let mut rx = peer_discovery_rx;
+            info!("🔔 Peer discovery listener active - will trigger blockchain sync on peer discovery");
+            
+            while let Some(peer_addr) = rx.recv().await {
+                info!("🔔 Peer discovered post-startup: {} - attempting blockchain sync...", peer_addr);
+                
+                // Call try_bootstrap_blockchain to sync from the discovered peer
+                match try_bootstrap_blockchain(&blockchain_clone, &storage_clone, api_port).await {
+                    Ok(synced_blockchain) => {
+                        info!("✅ Successfully synced blockchain after peer discovery");
+                        
+                        // Update the shared blockchain instance
+                        if let Ok(shared) = lib_blockchain::get_shared_blockchain().await {
+                            let mut shared_write = shared.write().await;
+                            *shared_write = synced_blockchain.clone();
+                            info!("✅ Shared blockchain updated with synced state");
+                        }
+                        
+                        // Also update the local reference
+                        {
+                            let mut blockchain_write = blockchain_clone.write().await;
+                            *blockchain_write = synced_blockchain;
+                            info!("✅ Local blockchain reference updated");
+                        }
+                    }
+                    Err(e) => {
+                        warn!("⚠️ Could not sync blockchain after peer discovery: {}", e);
+                    }
+                }
+            }
+            
+            info!("Peer discovery listener stopped");
+        });
         
         // Initialize global mesh router provider for API access
         info!(" Initializing global mesh router provider...");
@@ -2594,9 +2638,12 @@ impl Component for ProtocolsComponent {
 }
 
 // Helper function to bootstrap blockchain from network
-async fn try_bootstrap_blockchain() -> Result<lib_blockchain::Blockchain> {
+async fn try_bootstrap_blockchain(
+    _blockchain: &Arc<RwLock<lib_blockchain::Blockchain>>,
+    _storage: &Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+    _api_port: u16,
+) -> Result<lib_blockchain::Blockchain> {
     use lib_network::dht::bootstrap::{DHTBootstrap, DHTBootstrapEnhancements};
-    use lib_network::blockchain_sync::BlockchainSyncManager;
     use tokio::time::{timeout, Duration};
     
     info!(" Discovering network peers for blockchain bootstrap...");

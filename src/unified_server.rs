@@ -3990,6 +3990,7 @@ pub struct WiFiRouter {
     node_id: [u8; 32],
     protocol: Arc<RwLock<Option<WiFiDirectMeshProtocol>>>,
     initialized: Arc<RwLock<bool>>, // Track if already initialized to prevent re-creating protocol
+    peer_discovery_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 }
 
 /// Bluetooth mesh protocol router for phone connectivity
@@ -4014,6 +4015,12 @@ type ClassicProtocol = lib_network::protocols::bluetooth::classic::BluetoothClas
 
 impl WiFiRouter {
     pub fn new() -> Self {
+        Self::new_with_peer_notification(None)
+    }
+    
+    pub fn new_with_peer_notification(
+        peer_discovery_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>
+    ) -> Self {
         let node_id = {
             let mut id = [0u8; 32];
             let uuid = Uuid::new_v4();
@@ -4028,6 +4035,7 @@ impl WiFiRouter {
             node_id,
             protocol: Arc::new(RwLock::new(None)),
             initialized: Arc::new(RwLock::new(false)),
+            peer_discovery_tx,
         }
     }
     
@@ -4045,8 +4053,8 @@ impl WiFiRouter {
         info!("🔷 Initializing WiFi Direct P2P + mDNS service discovery...");
         info!("   Node ID: {:?}", hex::encode(&self.node_id[..8]));
         
-        // Create WiFi Direct mesh protocol instance (synchronous constructor)
-        match WiFiDirectMeshProtocol::new(self.node_id) {
+        // Create WiFi Direct mesh protocol instance with peer discovery notification
+        match WiFiDirectMeshProtocol::new_with_peer_notification(self.node_id, self.peer_discovery_tx.clone()) {
             Ok(mut wifi_protocol) => {
                 info!("✅ WiFi Direct protocol created successfully");
                 
@@ -4853,6 +4861,18 @@ impl ZhtpUnifiedServer {
         economic_model: Arc<RwLock<EconomicModel>>,
         port: u16, // Port from configuration
     ) -> Result<Self> {
+        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None).await
+    }
+    
+    /// Create new unified server with peer discovery notification channel
+    pub async fn new_with_peer_notification(
+        blockchain: Arc<RwLock<Blockchain>>,
+        storage: Arc<RwLock<UnifiedStorageSystem>>,
+        identity_manager: Arc<RwLock<IdentityManager>>,
+        economic_model: Arc<RwLock<EconomicModel>>,
+        port: u16,
+        peer_discovery_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    ) -> Result<Self> {
         let server_id = Uuid::new_v4();
         
         info!("Creating ZHTP Unified Server (ID: {})", server_id);
@@ -4865,7 +4885,7 @@ impl ZhtpUnifiedServer {
         // Initialize protocol routers
         let mut http_router = HttpRouter::new();
         let mut mesh_router = MeshRouter::new(server_id, session_manager.clone());
-        let wifi_router = WiFiRouter::new();
+        let wifi_router = WiFiRouter::new_with_peer_notification(peer_discovery_tx);
         let bluetooth_router = BluetoothRouter::new();
         let bluetooth_classic_router = BluetoothClassicRouter::new();
         
@@ -5722,6 +5742,7 @@ impl Clone for WiFiRouter {
             connected_devices: self.connected_devices.clone(),
             protocol: self.protocol.clone(),
             initialized: self.initialized.clone(),
+            peer_discovery_tx: self.peer_discovery_tx.clone(),
         }
     }
 }
