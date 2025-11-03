@@ -2432,10 +2432,10 @@ impl Component for ProtocolsComponent {
             while let Some(peer_addr) = rx.recv().await {
                 info!("🔔 Peer discovered post-startup: {} - attempting blockchain sync...", peer_addr);
                 
-                // Call try_bootstrap_blockchain to sync from the discovered peer
-                match try_bootstrap_blockchain(&blockchain_clone, &storage_clone, api_port).await {
+                // Call try_bootstrap_blockchain_from_peer to sync from the specific discovered peer
+                match try_bootstrap_blockchain_from_peer(&blockchain_clone, &storage_clone, &peer_addr).await {
                     Ok(synced_blockchain) => {
-                        info!("✅ Successfully synced blockchain after peer discovery");
+                        info!("✅ Successfully synced blockchain from peer {}", peer_addr);
                         
                         // Update the shared blockchain instance
                         if let Ok(shared) = lib_blockchain::get_shared_blockchain().await {
@@ -2452,7 +2452,7 @@ impl Component for ProtocolsComponent {
                         }
                     }
                     Err(e) => {
-                        warn!("⚠️ Could not sync blockchain after peer discovery: {}", e);
+                        warn!("⚠️ Could not sync blockchain from peer {}: {}", peer_addr, e);
                     }
                 }
             }
@@ -2720,4 +2720,47 @@ async fn try_bootstrap_blockchain(
     }
     
     Err(anyhow::anyhow!("Failed to bootstrap from any peer"))
+}
+
+/// Try to sync blockchain from a specific peer address (called after peer discovery notification)
+async fn try_bootstrap_blockchain_from_peer(
+    _blockchain: &Arc<RwLock<lib_blockchain::Blockchain>>,
+    _storage: &Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+    peer_addr: &str,
+) -> Result<lib_blockchain::Blockchain> {
+    use tokio::time::{timeout, Duration};
+    
+    info!(" Attempting blockchain sync from discovered peer: {}", peer_addr);
+    
+    // Try HTTP sync from the specific peer
+    let url = format!("http://{}/api/v1/blockchain/export", peer_addr);
+    
+    match timeout(Duration::from_secs(10), async {
+        info!("📡 HTTP GET {}", url);
+        let response = reqwest::get(&url).await?;
+        if response.status().is_success() {
+            let data = response.bytes().await?.to_vec();
+            info!("✅ Received {} bytes of blockchain data", data.len());
+            Ok::<Vec<u8>, anyhow::Error>(data)
+        } else {
+            Err(anyhow::anyhow!("Peer returned error: {}", response.status()))
+        }
+    }).await {
+        Ok(Ok(blockchain_data)) => {
+            // Create empty blockchain and import
+            let mut blockchain = lib_blockchain::Blockchain::new()?;
+            info!("📦 Evaluating and merging blockchain data...");
+            blockchain.evaluate_and_merge_chain(blockchain_data).await?;
+            info!(" Successfully synced blockchain from {} (HTTP)", peer_addr);
+            info!("   Blockchain height: {}", blockchain.height);
+            info!("   UTXOs: {}", blockchain.utxo_set.len());
+            return Ok(blockchain);
+        }
+        Ok(Err(e)) => {
+            return Err(anyhow::anyhow!("Failed to sync from {}: {}", peer_addr, e));
+        }
+        Err(_) => {
+            return Err(anyhow::anyhow!("Timeout connecting to {}", peer_addr));
+        }
+    }
 }
