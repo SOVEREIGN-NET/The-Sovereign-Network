@@ -1087,6 +1087,11 @@ impl BlockchainComponent {
         // Add genesis transaction to the genesis block
         genesis_block.transactions.push(genesis_tx.clone());
         
+        // Recalculate and update the genesis block's merkle root after adding the transaction
+        let updated_merkle_root = lib_blockchain::transaction::hashing::calculate_transaction_merkle_root(&genesis_block.transactions);
+        genesis_block.header.merkle_root = updated_merkle_root;
+        info!("Genesis block merkle root updated: {}", hex::encode(updated_merkle_root.as_bytes()));
+        
         // Create UTXOs from genesis transaction outputs and add to UTXO set
         let genesis_tx_id = lib_blockchain::types::hash::blake3_hash(b"genesis_funding_transaction");
         for (index, output) in genesis_outputs.iter().enumerate() {
