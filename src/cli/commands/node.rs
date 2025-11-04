@@ -277,15 +277,6 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             println!("Starting runtime orchestrator...");
             let mut orchestrator = RuntimeOrchestrator::new(node_config.clone()).await?;
             
-            // CRITICAL: Start Network component FIRST so this node is discoverable
-            println!("Initializing network for peer discovery...");
-            if let Err(e) = orchestrator.start_component(ComponentId::Network).await {
-                eprintln!("Warning: Failed to start network component early: {}", e);
-            }
-            
-            // Small delay to let network component start broadcasting
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            
             println!("Attempting to connect to existing ZHTP mesh network...");
             
             // Step 1: Try to bootstrap to existing network (pass environment for network-specific paths)
