@@ -2043,7 +2043,7 @@ impl MeshRouter {
                             info!(" All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
                             info!("   Importing blockchain data...");
                             
-                            // Import the blockchain
+                            // Import the blockchain directly into the shared instance
                             match lib_blockchain::get_shared_blockchain().await {
                                 Ok(blockchain_arc) => {
                                     let mut blockchain_lock = blockchain_arc.write().await;
@@ -2054,34 +2054,11 @@ impl MeshRouter {
                                             info!("   Merge result: {:?}", merge_result);
                                             info!("   New blockchain height: {}", blockchain_lock.get_height());
                                             
-                                            // CRITICAL: Also update lib_blockchain shared instance
-                                            // The mining loop and other components use lib_blockchain::get_shared_blockchain()
-                                            // which is a DIFFERENT Arc than runtime::blockchain_provider's instance!
-                                            // We must sync both to ensure consistency.
-                                            drop(blockchain_lock); // Release lock before cloning Arc
+                                            // Blockchain is already updated in-place by evaluate_and_merge_chain()
+                                            // No need to clone or sync - all components use the same shared instance
+                                            drop(blockchain_lock); // Release write lock
                                             
-                                            match lib_blockchain::get_shared_blockchain().await {
-                                                Ok(shared_blockchain) => {
-                                                    let mut shared_lock = shared_blockchain.write().await;
-                                                    let imported_data = blockchain_arc.read().await.clone();
-                                                    
-                                                    // CRITICAL: Preserve the broadcast_sender before merging!
-                                                    // The broadcast channel must survive blockchain syncs
-                                                    let broadcast_sender_backup = shared_lock.broadcast_sender.clone();
-                                                    
-                                                    // Replace blockchain data
-                                                    *shared_lock = imported_data;
-                                                    
-                                                    // Restore the broadcast sender
-                                                    shared_lock.broadcast_sender = broadcast_sender_backup;
-                                                    
-                                                    info!("✅ Synced blockchain to lib_blockchain shared instance (broadcast channel preserved)");
-                                                }
-                                                Err(e) => {
-                                                    warn!("⚠️ Could not sync to lib_blockchain shared instance: {}", e);
-                                                    warn!("   Mining loop may show stale data until next sync");
-                                                }
-                                            }
+                                            info!("✅ Blockchain merge complete - all components automatically updated");
                                         }
                                         Err(e) => error!("Failed to import blockchain: {}", e),
                                     }
