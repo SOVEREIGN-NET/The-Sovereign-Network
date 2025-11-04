@@ -1606,18 +1606,51 @@ impl MeshRouter {
     /// Send a mesh message to a specific peer using multi-hop routing (Phase 2.5)
     /// This method uses MeshMessageRouter for intelligent path finding and reward tracking
     pub async fn send_to_peer(&self, peer_id: &PublicKey, message: ZhtpMeshMessage) -> Result<()> {
-        info!("🚀 Phase 2.5: Routing message via multi-hop router to {:?}", 
+        info!("� Sending message directly to peer {:?}", 
               hex::encode(&peer_id.key_id[0..8.min(peer_id.key_id.len())]));
         
-        // Get sender's public key
-        let sender = self.get_sender_public_key().await?;
+        // Get peer's connection info
+        let connections = self.connections.read().await;
+        let connection = connections.get(peer_id)
+            .ok_or_else(|| anyhow::anyhow!("Peer not found in connections"))?;
         
-        // Use the multi-hop message router for intelligent routing
-        let router = self.mesh_message_router.read().await;
-        let message_id = router.route_message(message, peer_id.clone(), sender).await?;
+        let peer_address = connection.peer_address.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Peer has no address"))?;
         
-        info!("✅ Message routed successfully! Message ID: {}", message_id);
-        info!("   Multi-hop routing with protocol bonuses and quality tracking active");
+        // Serialize message
+        let serialized = bincode::serialize(&message)
+            .context("Failed to serialize message")?;
+        
+        // Send based on protocol type
+        match &connection.protocol {
+            lib_network::protocols::NetworkProtocol::UDP => {
+                let socket = self.udp_socket.read().await;
+                if let Some(ref sock) = *socket {
+                    let peer_addr: SocketAddr = peer_address.parse()
+                        .context("Failed to parse peer address")?;
+                    
+                    sock.send_to(&serialized, peer_addr).await
+                        .context("Failed to send UDP packet")?;
+                    
+                    info!("✅ Sent {} bytes via UDP to {}", serialized.len(), peer_addr);
+                } else {
+                    return Err(anyhow::anyhow!("UDP socket not available"));
+                }
+            }
+            lib_network::protocols::NetworkProtocol::BluetoothLE | 
+            lib_network::protocols::NetworkProtocol::BluetoothClassic => {
+                let bluetooth = self.bluetooth_protocol.read().await;
+                if let Some(ref protocol) = *bluetooth {
+                    protocol.send_mesh_message(peer_address, &serialized).await?;
+                    info!("✅ Sent {} bytes via Bluetooth to {}", serialized.len(), peer_address);
+                } else {
+                    return Err(anyhow::anyhow!("Bluetooth protocol not available"));
+                }
+            }
+            _ => {
+                return Err(anyhow::anyhow!("Unsupported protocol: {:?}", connection.protocol));
+            }
+        }
         
         Ok(())
     }
