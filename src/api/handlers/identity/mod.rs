@@ -223,12 +223,13 @@ impl IdentityHandler {
             );
             
             // Submit identity transaction to shared blockchain
+            tracing::info!(" Attempting to submit identity transaction to blockchain...");
             match self.submit_transaction_to_blockchain(transaction).await {
                 Ok(tx_hash) => {
                     tracing::info!(" Identity transaction submitted to blockchain: {}", tx_hash);
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to submit identity transaction to blockchain: {}", e);
+                    tracing::error!(" Failed to submit identity transaction to blockchain: {}", e);
                 }
             }
             
@@ -416,18 +417,39 @@ impl IdentityHandler {
     
     /// Submit a transaction to the shared blockchain
     async fn submit_transaction_to_blockchain(&self, transaction: Transaction) -> Result<String> {
+        tracing::info!("📝 Getting shared blockchain instance for transaction submission...");
+        
         // Get the shared blockchain instance
         match lib_blockchain::get_shared_blockchain().await {
             Ok(shared_blockchain) => {
-                let mut blockchain = shared_blockchain.write().await;
+                tracing::info!("✅ Got shared blockchain, acquiring write lock...");
                 
-                // Add transaction to pending pool
-                blockchain.add_pending_transaction(transaction.clone())?;
-                
-                let tx_hash = transaction.hash().to_string();
-                tracing::info!(" Transaction submitted to blockchain mempool: {}", &tx_hash[..16]);
-                
-                Ok(tx_hash)
+                // Add timeout to prevent infinite blocking
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(10),
+                    shared_blockchain.write()
+                ).await {
+                    Ok(mut blockchain) => {
+                        tracing::info!("✅ Write lock acquired, adding transaction to mempool...");
+                        
+                        // Add transaction to pending pool
+                        blockchain.add_pending_transaction(transaction.clone())?;
+                        
+                        let tx_hash = transaction.hash().to_string();
+                        tracing::info!(" Transaction submitted to blockchain mempool: {}", &tx_hash[..16]);
+                        
+                        // Explicitly drop lock
+                        drop(blockchain);
+                        tracing::info!("✅ Write lock released");
+                        
+                        Ok(tx_hash)
+                    }
+                    Err(_) => {
+                        tracing::error!("❌ TIMEOUT: Failed to acquire write lock on blockchain after 10 seconds!");
+                        tracing::error!("   This indicates a deadlock - another task is holding the lock");
+                        Err(anyhow::anyhow!("Blockchain write lock timeout - possible deadlock"))
+                    }
+                }
             }
             Err(e) => {
                 tracing::error!("Failed to get shared blockchain: {}", e);

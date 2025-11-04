@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{info, warn, debug};
+use tracing::{info, warn, debug, error};
 
 use super::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 
@@ -1294,7 +1294,9 @@ impl Component for BlockchainComponent {
         };
         
         let mining_handle = tokio::spawn(async move {
+            info!("🚀 Mining task spawned, starting mining loop...");
             Self::real_mining_loop(blockchain_clone, validator_manager_clone, node_identity_clone).await;
+            error!("❌ Mining loop exited unexpectedly!");
         });
         
         *self.mining_handle.write().await = Some(mining_handle);
