@@ -490,18 +490,35 @@ impl BlockchainHandler {
         // Generate transaction hash
         let tx_hash = transaction.hash();
         
-        let response_data = TransactionSubmissionResponse {
-            status: "transaction_submitted".to_string(),
-            transaction_hash: tx_hash.to_string(),
-            message: format!("Transaction from {} to {} for amount {} submitted", req_data.from, req_data.to, req_data.amount),
-        };
+        // Drop the read lock and add transaction to mempool
+        drop(blockchain);
         
-        let json_response = serde_json::to_vec(&response_data)?;
-        Ok(ZhtpResponse::success_with_content_type(
-            json_response,
-            "application/json".to_string(),
-            None,
-        ))
+        let mut blockchain_write = self.blockchain.write().await;
+        match blockchain_write.add_pending_transaction(transaction) {
+            Ok(()) => {
+                tracing::info!("✅ Transaction {} added to mempool", tx_hash);
+                
+                let response_data = TransactionSubmissionResponse {
+                    status: "transaction_submitted".to_string(),
+                    transaction_hash: tx_hash.to_string(),
+                    message: format!("Transaction from {} to {} for amount {} submitted to mempool", req_data.from, req_data.to, req_data.amount),
+                };
+                
+                let json_response = serde_json::to_vec(&response_data)?;
+                Ok(ZhtpResponse::success_with_content_type(
+                    json_response,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                tracing::error!("❌ Failed to add transaction to mempool: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    format!("Transaction validation failed: {}", e),
+                ))
+            }
+        }
     }
     
     /// Handle getting validators information from consensus system
