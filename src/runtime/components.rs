@@ -2407,21 +2407,31 @@ impl Component for ProtocolsComponent {
                 shared_blockchain
             }
             Err(e) => {
-                info!("ℹ️  Could not bootstrap from peers ({}), checking local storage", e);
-                // Get shared blockchain instance or create new
+                info!("ℹ️  Could not bootstrap from peers ({}), checking for shared blockchain", e);
+                // ProtocolsComponent should NOT create genesis - that's BlockchainComponent's job!
+                // Wait for BlockchainComponent to initialize the shared blockchain with proper genesis funding
                 match lib_blockchain::get_shared_blockchain().await {
                     Ok(shared_blockchain) => {
-                        info!("📡 Using existing shared blockchain instance");
+                        info!("📡 Using existing shared blockchain instance from BlockchainComponent");
                         shared_blockchain
                     }
                     Err(_) => {
-                        info!("🆕 Creating new genesis blockchain");
-                        let new_blockchain = lib_blockchain::Blockchain::new()?;
-                        let shared = lib_blockchain::initialize_shared_blockchain();
-                        let mut blockchain_guard = shared.write().await;
-                        *blockchain_guard = new_blockchain;
-                        drop(blockchain_guard);
-                        shared
+                        // BlockchainComponent hasn't started yet - wait for it with timeout
+                        info!("⏳ Waiting for BlockchainComponent to initialize shared blockchain (up to 30 seconds)...");
+                        let mut attempts = 0;
+                        loop {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                            attempts += 1;
+                            
+                            if let Ok(shared_blockchain) = lib_blockchain::get_shared_blockchain().await {
+                                info!("✅ Shared blockchain initialized by BlockchainComponent (waited {} ms)", attempts * 500);
+                                break shared_blockchain;
+                            }
+                            
+                            if attempts >= 60 {  // 30 seconds
+                                return Err(anyhow::anyhow!("Timeout waiting for BlockchainComponent to initialize blockchain"));
+                            }
+                        }
                     }
                 }
             }

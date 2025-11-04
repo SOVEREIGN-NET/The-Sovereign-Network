@@ -351,8 +351,18 @@ impl RuntimeOrchestrator {
     pub async fn set_user_wallet(&self, wallet: crate::runtime::did_startup::WalletStartupResult) -> Result<()> {
         // Store wallet in orchestrator for use during component creation
         let mut user_wallet = self.user_wallet.write().await;
-        *user_wallet = Some(wallet);
+        *user_wallet = Some(wallet.clone());
         info!("User wallet stored in orchestrator for component initialization");
+        
+        // CRITICAL: Also push wallet to BlockchainComponent if already registered
+        let components = self.components.read().await;
+        if let Some(component) = components.get(&ComponentId::Blockchain) {
+            if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
+                blockchain_comp.set_user_wallet(wallet).await;
+                info!("✅ User wallet propagated to BlockchainComponent");
+            }
+        }
+        
         Ok(())
     }
 

@@ -286,7 +286,7 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             // Start minimal components needed for network discovery:
             // 1. Crypto (for keypairs)
             // 2. Network (for mesh server and peer discovery)
-            // 3. Protocols (for ZHTP API server on port 9333)
+            // NOTE: Do NOT start Protocols yet - it needs BlockchainComponent to initialize shared blockchain first
             orchestrator.register_all_components().await?;
             
             println!("   → Starting CryptoComponent...");
@@ -294,9 +294,6 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             
             println!("   → Starting NetworkComponent...");
             orchestrator.start_component(crate::runtime::ComponentId::Network).await?;
-            
-            println!("   → Starting ProtocolsComponent (ZHTP API server)...");
-            orchestrator.start_component(crate::runtime::ComponentId::Protocols).await?;
             
             // Wait a moment for network stack to fully initialize, but poll for readiness
             println!("   → Waiting for network stack to initialize (polling for readiness)...");
@@ -362,16 +359,26 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             
             println!("⚙️  Starting remaining system components...");
             
-            // Start remaining components (skip already-started Crypto, Network, Protocols)
-            // The blockchain component will now know if we're joining or creating genesis
+            // CRITICAL ORDER: Start Blockchain BEFORE Protocols!
+            // BlockchainComponent creates the shared blockchain with proper genesis funding.
+            // ProtocolsComponent needs that shared blockchain to exist when it starts.
+            
+            // Start remaining components (skip already-started Crypto, Network)
             orchestrator.start_component(crate::runtime::ComponentId::ZK).await?;
             orchestrator.start_component(crate::runtime::ComponentId::Identity).await?;
             orchestrator.start_component(crate::runtime::ComponentId::Storage).await?;
             // Network already started above
+            
+            // Start BlockchainComponent FIRST - it creates shared blockchain with genesis funding
             orchestrator.start_component(crate::runtime::ComponentId::Blockchain).await?;
+            
+            // Start Consensus BEFORE Protocols for validator coordination
             orchestrator.start_component(crate::runtime::ComponentId::Consensus).await?;
+            
+            // Now start Protocols - it will use the shared blockchain created by BlockchainComponent
+            orchestrator.start_component(crate::runtime::ComponentId::Protocols).await?;
+            
             orchestrator.start_component(crate::runtime::ComponentId::Economics).await?;
-            // Protocols already started above
             orchestrator.start_component(crate::runtime::ComponentId::Api).await?;
             
             println!("Blockchain component started - Mining ready!");

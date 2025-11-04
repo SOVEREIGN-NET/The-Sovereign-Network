@@ -1938,7 +1938,7 @@ impl MeshRouter {
                     }
                     
                     // Export and send blockchain chunks directly via UDP to sender's address
-                    match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                    match lib_blockchain::get_shared_blockchain().await {
                         Ok(blockchain_arc) => {
                             let blockchain_lock = blockchain_arc.read().await;
                             
@@ -2044,7 +2044,7 @@ impl MeshRouter {
                             info!("   Importing blockchain data...");
                             
                             // Import the blockchain
-                            match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                            match lib_blockchain::get_shared_blockchain().await {
                                 Ok(blockchain_arc) => {
                                     let mut blockchain_lock = blockchain_arc.write().await;
                                     
@@ -2184,7 +2184,7 @@ impl MeshRouter {
                     }
                     
                     // Get blockchain and try to add block
-                    match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                    match lib_blockchain::get_shared_blockchain().await {
                         Ok(blockchain_arc) => {
                             let blockchain = blockchain_arc.read().await;
                             
@@ -2389,7 +2389,7 @@ impl MeshRouter {
                     }
                     
                     // Add to mempool
-                    match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                    match lib_blockchain::get_shared_blockchain().await {
                         Ok(blockchain_arc) => {
                             let mut blockchain = blockchain_arc.write().await;
                             

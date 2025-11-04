@@ -19,17 +19,27 @@ use lib_blockchain::Blockchain;
 use lib_blockchain::types::Hash;
 
 /// Clean blockchain handler implementation
+/// 
+/// NOTE: This handler does NOT store a blockchain reference.
+/// Instead, it fetches the current shared blockchain on every request
+/// to ensure it always sees the latest state (including transactions
+/// added via mesh protocol).
 pub struct BlockchainHandler {
-    blockchain: Arc<RwLock<Blockchain>>,
     contract_states: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 }
 
 impl BlockchainHandler {
-    pub fn new(blockchain: Arc<RwLock<Blockchain>>) -> Self {
+    pub fn new(_blockchain: Arc<RwLock<Blockchain>>) -> Self {
+        // We ignore the passed blockchain reference and always fetch from global provider
         Self { 
-            blockchain,
             contract_states: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+    
+    /// Get the current shared blockchain instance
+    /// This ensures we always see the latest state
+    async fn get_blockchain(&self) -> anyhow::Result<Arc<RwLock<Blockchain>>> {
+        lib_blockchain::get_shared_blockchain().await
     }
 }
 
@@ -292,7 +302,8 @@ struct BroadcastTransactionRequest {
 impl BlockchainHandler {
     /// Handle blockchain status request
     async fn handle_blockchain_status(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         
         let response_data = BlockchainStatusResponse {
             status: "active".to_string(),
@@ -332,7 +343,8 @@ impl BlockchainHandler {
     
     /// Handle latest block request
     async fn handle_latest_block(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         let latest_block = blockchain.latest_block();
         
         let response_data = if let Some(block) = latest_block {
@@ -374,7 +386,8 @@ impl BlockchainHandler {
         let block_id = path_parts.get(5)
             .ok_or_else(|| anyhow::anyhow!("Block ID required"))?;
         
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         
         // Try to parse as height first, then as hash
         let block = if let Ok(height) = block_id.parse::<u64>() {
@@ -448,7 +461,8 @@ impl BlockchainHandler {
         }
         
         // Create actual transaction using the provided fields
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         // Get current blockchain height for validation
         let current_height = blockchain.blocks.len();
         
@@ -493,7 +507,9 @@ impl BlockchainHandler {
         // Drop the read lock and add transaction to mempool
         drop(blockchain);
         
-        let mut blockchain_write = self.blockchain.write().await;
+        let blockchain_arc = self.get_blockchain().await
+            .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
+        let mut blockchain_write = blockchain_arc.write().await;
         match blockchain_write.add_pending_transaction(transaction) {
             Ok(()) => {
                 tracing::info!("✅ Transaction {} added to mempool", tx_hash);
@@ -523,7 +539,8 @@ impl BlockchainHandler {
     
     /// Handle getting validators information from consensus system
     async fn handle_get_validators(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         
         // Get consensus status and validators from the consensus coordinator
         let validators_info = if let Some(coordinator_arc) = blockchain.get_consensus_coordinator() {
@@ -588,7 +605,8 @@ impl BlockchainHandler {
         let address_str = path_parts.get(4)
             .ok_or_else(|| anyhow::anyhow!("Address required"))?;
         
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         
         // Try to parse address as hash for wallet balance lookup
         let balance_info = if let Ok(address_hash) = lib_crypto::Hash::from_hex(address_str) {
@@ -643,11 +661,14 @@ impl BlockchainHandler {
 
     /// Handle mempool status request
     async fn handle_get_mempool_status(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         
         // Get pending transactions and calculate stats
         let pending_txs = blockchain.get_pending_transactions();
         let transaction_count = pending_txs.len();
+        
+        tracing::info!("Mempool API: {} pending transactions in blockchain", transaction_count);
         
         // Calculate mempool statistics
         let total_fees: u64 = pending_txs.iter().map(|tx| tx.fee).sum();
@@ -678,7 +699,8 @@ impl BlockchainHandler {
 
     /// Handle pending transactions request
     async fn handle_get_pending_transactions(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         
         // Get pending transactions from blockchain
         let pending_txs = blockchain.get_pending_transactions();
@@ -719,7 +741,8 @@ impl BlockchainHandler {
         let tx_hash_str = path_parts.get(5)
             .ok_or_else(|| anyhow::anyhow!("Transaction hash required"))?;
         
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         
         // Try to parse the hash
         let tx_hash = match Hash::from_hex(tx_hash_str) {
@@ -817,7 +840,8 @@ impl BlockchainHandler {
     async fn handle_estimate_transaction_fee(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let req_data: FeeEstimateRequest = serde_json::from_slice(&request.body)?;
         
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         
         // Use provided transaction size or estimate a typical size
         let tx_size = req_data.transaction_size.unwrap_or(250); // Typical transaction size
@@ -871,7 +895,9 @@ impl BlockchainHandler {
         
         // For now, we'll create a simple transaction from the hex data
         // In a implementation, you'd deserialize the hex data into a Transaction
-        let mut blockchain = self.blockchain.write().await;
+        let blockchain_arc = self.get_blockchain().await
+            .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
+        let mut blockchain = blockchain_arc.write().await;
         
         // Parse the hex transaction data into a Transaction
         let transaction = match hex::decode(&req_data.transaction_data) {
@@ -942,7 +968,8 @@ impl BlockchainHandler {
         let tx_hash_str = path_parts.get(5)
             .ok_or_else(|| anyhow::anyhow!("Transaction hash required"))?;
         
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         
         // Try to parse the hash
         let tx_hash = match Hash::from_hex(tx_hash_str) {
@@ -1197,7 +1224,8 @@ impl BlockchainHandler {
         // Create creator public key (in production, use authenticated user's key)
         let creator = PublicKey::new(vec![0u8; 32]); // Placeholder
         
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
         let current_height = blockchain.get_height();
         drop(blockchain);
         
@@ -1212,7 +1240,9 @@ impl BlockchainHandler {
         );
         
         // Store contract in blockchain (simplified - in production, include in block)
-        let mut blockchain = self.blockchain.write().await;
+        let blockchain_arc = self.get_blockchain().await
+            .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
+        let mut blockchain = blockchain_arc.write().await;
         
         // Create a transaction for the contract deployment
         let tx_data = format!("CONTRACT_DEPLOY:{}:{}", req_data.name, hex::encode(&contract_id));
@@ -1446,7 +1476,8 @@ impl BlockchainHandler {
 
     /// Export entire blockchain for sync
     async fn handle_export_chain(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await.map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
+        let blockchain = blockchain_arc.read().await;
         let exported_data = blockchain.export_chain()
             .map_err(|e| anyhow::anyhow!("Failed to export blockchain: {}", e))?;
         
@@ -1461,7 +1492,9 @@ impl BlockchainHandler {
 
     /// Import blockchain from another node
     async fn handle_import_chain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let mut blockchain = self.blockchain.write().await;
+        let blockchain_arc = self.get_blockchain().await
+            .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
+        let mut blockchain = blockchain_arc.write().await;
         
         blockchain.evaluate_and_merge_chain(request.body).await
             .map_err(|e| anyhow::anyhow!("Failed to import blockchain: {}", e))?;
@@ -1489,7 +1522,8 @@ impl BlockchainHandler {
 
     /// Get chain tip info (height and head hash) for incremental sync
     async fn handle_get_chain_tip(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await.map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
+        let blockchain = blockchain_arc.read().await;
         
         #[derive(Serialize)]
         struct ChainTipInfo {
@@ -1559,7 +1593,8 @@ impl BlockchainHandler {
             ));
         }
         
-        let blockchain = self.blockchain.read().await;
+        let blockchain_arc = self.get_blockchain().await.map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
+        let blockchain = blockchain_arc.read().await;
         
         // Validate range is within chain
         if start as usize >= blockchain.blocks.len() {
