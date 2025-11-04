@@ -277,16 +277,59 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             println!("Starting runtime orchestrator...");
             let mut orchestrator = RuntimeOrchestrator::new(node_config.clone()).await?;
             
-            println!("Attempting to connect to existing ZHTP mesh network...");
+            // ================================================================
+            // NEW APPROACH: Start network components FIRST, then discover peers
+            // ================================================================
             
-            // Step 1: Try to bootstrap to existing network (pass environment for network-specific paths)
+            println!("🔌 Starting network components for peer discovery...");
+            
+            // Start minimal components needed for network discovery:
+            // 1. Crypto (for keypairs)
+            // 2. Network (for mesh server and peer discovery)
+            // 3. Protocols (for ZHTP API server on port 9333)
+            orchestrator.register_all_components().await?;
+            
+            println!("   → Starting CryptoComponent...");
+            orchestrator.start_component(crate::runtime::ComponentId::Crypto).await?;
+            
+            println!("   → Starting NetworkComponent...");
+            orchestrator.start_component(crate::runtime::ComponentId::Network).await?;
+            
+            println!("   → Starting ProtocolsComponent (ZHTP API server)...");
+            orchestrator.start_component(crate::runtime::ComponentId::Protocols).await?;
+            
+            // Wait a moment for network stack to fully initialize, but poll for readiness
+            println!("   → Waiting for network stack to initialize (polling for readiness)...");
+            let mut network_ready = false;
+            // Poll lib_network::get_mesh_status for up to 10 seconds
+            for _ in 0..20 {
+                match lib_network::get_mesh_status().await {
+                    Ok(status) => {
+                        println!("   → Network stack ready: {} peers (connectivity {:.1}%)", status.active_peers, status.connectivity_percentage);
+                        network_ready = true;
+                        break;
+                    }
+                    Err(_) => {
+                        // Not yet ready - wait and retry
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    }
+                }
+            }
+
+            if !network_ready {
+                println!("   ⚠️ Network stack did not report ready within timeout; proceeding with discovery anyway (may be slower)");
+            } else {
+                println!("✅ Network components reported ready - attempting peer discovery...");
+            }
+            
+            // NOW try to bootstrap to existing network (network is listening!)
             let mesh_connection_result = attempt_mesh_bootstrap(&mut orchestrator, &node_config.environment).await;
             
             let startup_result = match mesh_connection_result {
                 Ok(existing_network_info) => {
-                    println!("Connected to existing ZHTP network!");
-                    println!("Network peers: {}", existing_network_info.peer_count);
-                    println!("Blockchain height: {}", existing_network_info.blockchain_height);
+                    println!("🌐 Connected to existing ZHTP network!");
+                    println!("   Network peers: {}", existing_network_info.peer_count);
+                    println!("   Blockchain height: {}", existing_network_info.blockchain_height);
                     
                     // Tell orchestrator we're joining existing network (don't create genesis)
                     if let Err(e) = orchestrator.set_joined_existing_network(true).await {
@@ -297,8 +340,8 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
                     handle_existing_network_identity(&existing_network_info).await?
                 }
                 Err(_) => {
-                    println!("No existing ZHTP network found or connection failed");
-                    println!("Starting new genesis network...");
+                    println!("ℹ️  No existing ZHTP network found or connection failed");
+                    println!("🆕 Starting new genesis network...");
                     
                     // Tell orchestrator we're creating new network (create genesis)
                     if let Err(e) = orchestrator.set_joined_existing_network(false).await {
@@ -310,17 +353,26 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
                 }
             };
             
-            println!("User wallet established: {}", startup_result.wallet_name);
+            println!("✅ User wallet established: {}", startup_result.wallet_name);
             
-            // Pass user wallet to orchestrator before starting components
+            // Pass user wallet to orchestrator before starting remaining components
             if let Err(e) = orchestrator.set_user_wallet(startup_result).await {
                 eprintln!("Warning: Failed to set user wallet: {}", e);
             }
             
-            println!(" Starting system components...");
+            println!("⚙️  Starting remaining system components...");
             
-            // Start all components in proper order (blockchain, consensus, etc.)
-            orchestrator.start_all_components().await?;
+            // Start remaining components (skip already-started Crypto, Network, Protocols)
+            // The blockchain component will now know if we're joining or creating genesis
+            orchestrator.start_component(crate::runtime::ComponentId::ZK).await?;
+            orchestrator.start_component(crate::runtime::ComponentId::Identity).await?;
+            orchestrator.start_component(crate::runtime::ComponentId::Storage).await?;
+            // Network already started above
+            orchestrator.start_component(crate::runtime::ComponentId::Blockchain).await?;
+            orchestrator.start_component(crate::runtime::ComponentId::Consensus).await?;
+            orchestrator.start_component(crate::runtime::ComponentId::Economics).await?;
+            // Protocols already started above
+            orchestrator.start_component(crate::runtime::ComponentId::Api).await?;
             
             println!("Blockchain component started - Mining ready!");
             println!("Consensus engine started - Validators active!");
@@ -370,15 +422,17 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
 
 /// Attempt to bootstrap to an existing ZHTP mesh network
 async fn attempt_mesh_bootstrap(_orchestrator: &mut RuntimeOrchestrator, environment: &Environment) -> Result<ExistingNetworkInfo> {
-    println!("Scanning for existing ZHTP network...");
+    println!("🔍 Scanning for existing ZHTP network...");
+    println!("   (Network components are now listening and can be discovered)");
     
     // Initialize DHT and perform ACTIVE peer discovery
-    println!(" Initializing DHT for peer discovery...");
+    println!("📡 Initializing DHT for peer discovery...");
     let node_identity = create_or_load_node_identity(environment).await?;
     initialize_global_dht_safe(node_identity.clone()).await?;
     
     // Start actual discovery mechanisms (mDNS + DHT bootstrap)
-    println!(" Discovering peers via mDNS, UDP multicast, and DHT bootstrap...");
+    println!("🔎 Discovering peers via mDNS, UDP multicast, and DHT bootstrap...");
+    println!("   (This may take up to 30 seconds for thorough network scanning)");
     let discovered_peers = perform_active_peer_discovery(&node_identity, environment).await?;
     
     let peer_count = discovered_peers.len();
