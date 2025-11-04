@@ -2053,6 +2053,24 @@ impl MeshRouter {
                                             info!(" Blockchain imported successfully from peer");
                                             info!("   Merge result: {:?}", merge_result);
                                             info!("   New blockchain height: {}", blockchain_lock.get_height());
+                                            
+                                            // CRITICAL: Also update lib_blockchain shared instance
+                                            // The mining loop and other components use lib_blockchain::get_shared_blockchain()
+                                            // which is a DIFFERENT Arc than runtime::blockchain_provider's instance!
+                                            // We must sync both to ensure consistency.
+                                            drop(blockchain_lock); // Release lock before cloning Arc
+                                            
+                                            match lib_blockchain::get_shared_blockchain().await {
+                                                Ok(shared_blockchain) => {
+                                                    let mut shared_lock = shared_blockchain.write().await;
+                                                    *shared_lock = blockchain_arc.read().await.clone();
+                                                    info!("✅ Synced blockchain to lib_blockchain shared instance");
+                                                }
+                                                Err(e) => {
+                                                    warn!("⚠️ Could not sync to lib_blockchain shared instance: {}", e);
+                                                    warn!("   Mining loop may show stale data until next sync");
+                                                }
+                                            }
                                         }
                                         Err(e) => error!("Failed to import blockchain: {}", e),
                                     }
