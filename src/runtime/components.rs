@@ -2304,35 +2304,45 @@ impl Component for ProtocolsComponent {
                     synced_blockchain.identity_registry.len()
                 );
                 
-                // Update the shared blockchain instance with synced state
-                match lib_blockchain::get_shared_blockchain().await {
-                    Ok(shared_blockchain) => {
-                        let mut blockchain_guard = shared_blockchain.write().await;
+                // Update or initialize the shared blockchain instance with synced state
+                let shared_blockchain = match lib_blockchain::get_shared_blockchain().await {
+                    Ok(shared) => {
+                        let mut blockchain_guard = shared.write().await;
                         *blockchain_guard = synced_blockchain.clone();
-                        info!(" Updated shared blockchain instance with synced state");
+                        info!("📡 Updated shared blockchain instance with synced state");
+                        drop(blockchain_guard);
+                        shared
                     }
                     Err(_) => {
                         // If no shared blockchain exists, initialize it with synced state
-                        let shared_blockchain = lib_blockchain::initialize_shared_blockchain();
-                        let mut blockchain_guard = shared_blockchain.write().await;
+                        let shared = lib_blockchain::initialize_shared_blockchain();
+                        let mut blockchain_guard = shared.write().await;
                         *blockchain_guard = synced_blockchain.clone();
-                        info!(" Initialized shared blockchain with synced state");
+                        info!("📡 Initialized shared blockchain with synced state");
+                        drop(blockchain_guard);
+                        shared
                     }
-                }
+                };
                 
-                Arc::new(RwLock::new(synced_blockchain))
+                // CRITICAL: Return the shared blockchain Arc, not a new instance
+                shared_blockchain
             }
             Err(e) => {
-                info!(" Could not bootstrap from peers ({}), checking local storage", e);
+                info!("ℹ️  Could not bootstrap from peers ({}), checking local storage", e);
                 // Get shared blockchain instance or create new
                 match lib_blockchain::get_shared_blockchain().await {
                     Ok(shared_blockchain) => {
-                        let blockchain_guard = shared_blockchain.read().await;
-                        Arc::new(RwLock::new(blockchain_guard.clone()))
+                        info!("📡 Using existing shared blockchain instance");
+                        shared_blockchain
                     }
                     Err(_) => {
-                        info!(" Creating new genesis blockchain");
-                        Arc::new(RwLock::new(lib_blockchain::Blockchain::new()?))
+                        info!("🆕 Creating new genesis blockchain");
+                        let new_blockchain = lib_blockchain::Blockchain::new()?;
+                        let shared = lib_blockchain::initialize_shared_blockchain();
+                        let mut blockchain_guard = shared.write().await;
+                        *blockchain_guard = new_blockchain;
+                        drop(blockchain_guard);
+                        shared
                     }
                 }
             }

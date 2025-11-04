@@ -5190,6 +5190,7 @@ impl ZhtpUnifiedServer {
         let (broadcast_sender, broadcast_receiver) = tokio::sync::mpsc::unbounded_channel();
         
         // Configure blockchain to use broadcast channel
+        // NOTE: 'blockchain' should BE the shared instance, not a separate copy
         {
             let mut blockchain_write = blockchain.write().await;
             blockchain_write.set_broadcast_channel(broadcast_sender);
