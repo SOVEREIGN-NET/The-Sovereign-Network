@@ -5419,8 +5419,13 @@ impl ZhtpUnifiedServer {
         info!(" Binding UDP socket on {}...", bind_addr);
         let udp_socket = UdpSocket::bind(&bind_addr).await
             .context(format!("Failed to bind UDP socket on {}", bind_addr))?;
-        self.udp_socket = Some(Arc::new(udp_socket));
+        let udp_socket_arc = Arc::new(udp_socket);
+        self.udp_socket = Some(udp_socket_arc.clone());
         info!(" UDP socket bound successfully on port {}", self.port);
+        
+        // Set UDP socket in mesh router so it can send messages
+        self.mesh_router.set_udp_socket(udp_socket_arc).await;
+        info!("✅ UDP socket configured in mesh router");
         
         *self.is_running.write().await = true;
         
