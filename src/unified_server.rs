@@ -1878,6 +1878,65 @@ impl MeshRouter {
                     info!(" Blockchain request received from {:?} at {} (request_id: {}, request_type: {:?})", 
                           hex::encode(&requester.key_id[0..8]), addr, request_id, request_type);
                     
+                    // Check if this requester is already registered as a peer
+                    let is_new_requester = {
+                        let connections = self.connections.read().await;
+                        !connections.contains_key(requester)
+                    };
+                    
+                    // If this is a new peer (we never received their PeerAnnouncement), register them now
+                    // This handles the race condition where PeerAnnouncement was sent before our UDP listener was ready
+                    if is_new_requester {
+                        info!("🔄 BlockchainRequest from unregistered peer - registering now (missed PeerAnnouncement)");
+                        
+                        let mut connections = self.connections.write().await;
+                        let current_time = std::time::SystemTime::now();
+                        let current_timestamp = current_time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                        
+                        let connection = MeshConnection {
+                            peer_id: requester.clone(),
+                            protocol: lib_network::protocols::NetworkProtocol::UDP,
+                            peer_address: Some(addr.to_string()),
+                            signal_strength: 1.0,
+                            bandwidth_capacity: 1_000_000,
+                            latency_ms: 50,
+                            connected_at: current_timestamp,
+                            data_transferred: 0,
+                            tokens_earned: 0,
+                            stability_score: 1.0,
+                            zhtp_authenticated: true, // Implicit auth via BlockchainRequest
+                            quantum_secure: true,
+                            peer_dilithium_pubkey: Some(requester.dilithium_pk.clone()),
+                            kyber_shared_secret: None,
+                            trust_score: 0.7,
+                        };
+                        connections.insert(requester.clone(), connection);
+                        drop(connections); // Release lock
+                        
+                        info!("✅ Registered peer from BlockchainRequest - requesting their blockchain too");
+                        
+                        // Send BlockchainRequest back to this peer for bidirectional sync
+                        match self.get_sender_public_key().await {
+                            Ok(our_pubkey) => {
+                                let our_request_id = uuid::Uuid::new_v4().as_u128() as u64;
+                                let request_message = ZhtpMeshMessage::BlockchainRequest {
+                                    requester: our_pubkey,
+                                    request_id: our_request_id,
+                                    request_type: lib_network::types::mesh_message::BlockchainRequestType::FullChain,
+                                };
+                                
+                                if let Err(e) = self.send_to_peer(requester, request_message).await {
+                                    warn!("Failed to send BlockchainRequest back to peer: {}", e);
+                                } else {
+                                    info!("📤 Sent BlockchainRequest back to peer for bidirectional sync");
+                                }
+                            }
+                            Err(e) => {
+                                warn!("⚠️ Could not get sender public key for bidirectional BlockchainRequest: {}", e);
+                            }
+                        }
+                    }
+                    
                     // Export and send blockchain chunks directly via UDP to sender's address
                     match crate::runtime::blockchain_provider::get_global_blockchain().await {
                         Ok(blockchain_arc) => {
