@@ -4850,6 +4850,12 @@ impl BootstrapRouter {
         let request_str = String::from_utf8_lossy(data);
         debug!("Bootstrap request content: {}", request_str);
         
+        // Check if this is a bootstrap RESPONSE (not a request) - don't respond to responses!
+        if request_str.contains("\"server_id\"") && request_str.contains("\"capabilities\"") {
+            debug!("Received bootstrap response from {} - not responding to avoid loop", addr);
+            return Ok(vec![]); // Return empty response to indicate no action needed
+        }
+        
         // Create bootstrap response with server capabilities
         let response_data = serde_json::json!({
             "server_id": self.server_id,
