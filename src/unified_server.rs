@@ -2063,8 +2063,19 @@ impl MeshRouter {
                                             match lib_blockchain::get_shared_blockchain().await {
                                                 Ok(shared_blockchain) => {
                                                     let mut shared_lock = shared_blockchain.write().await;
-                                                    *shared_lock = blockchain_arc.read().await.clone();
-                                                    info!("✅ Synced blockchain to lib_blockchain shared instance");
+                                                    let imported_data = blockchain_arc.read().await.clone();
+                                                    
+                                                    // CRITICAL: Preserve the broadcast_sender before merging!
+                                                    // The broadcast channel must survive blockchain syncs
+                                                    let broadcast_sender_backup = shared_lock.broadcast_sender.clone();
+                                                    
+                                                    // Replace blockchain data
+                                                    *shared_lock = imported_data;
+                                                    
+                                                    // Restore the broadcast sender
+                                                    shared_lock.broadcast_sender = broadcast_sender_backup;
+                                                    
+                                                    info!("✅ Synced blockchain to lib_blockchain shared instance (broadcast channel preserved)");
                                                 }
                                                 Err(e) => {
                                                     warn!("⚠️ Could not sync to lib_blockchain shared instance: {}", e);
