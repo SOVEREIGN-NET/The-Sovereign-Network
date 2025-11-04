@@ -5740,7 +5740,12 @@ impl ZhtpUnifiedServer {
     
     /// Detect protocol type from UDP packet data
     fn detect_udp_protocol(data: &[u8]) -> IncomingProtocol {
-        // Try to parse as text first
+        // Try to parse as bincode ZhtpMeshMessage first (PeerAnnouncement, NewBlock, etc.)
+        if let Ok(_) = bincode::deserialize::<ZhtpMeshMessage>(data) {
+            return IncomingProtocol::ZhtpMeshUdp;
+        }
+        
+        // Try to parse as text second (bootstrap, JSON)
         if let Ok(text) = std::str::from_utf8(data) {
             // ZHTP mesh JSON detection
             if text.contains("\"ZhtpRequest\"") || text.contains("\"ZhtpResponse\"") {
