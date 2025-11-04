@@ -1777,7 +1777,9 @@ impl MeshRouter {
                     let current_time = std::time::SystemTime::now();
                     let current_timestamp = current_time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                     
-                    if !connections.contains_key(sender) {
+                    let is_new_peer = !connections.contains_key(sender);
+                    
+                    if is_new_peer {
                         let connection = MeshConnection {
                             peer_id: sender.clone(),
                             protocol: lib_network::protocols::NetworkProtocol::UDP,
@@ -1805,6 +1807,30 @@ impl MeshRouter {
                             conn.zhtp_authenticated = true;
                         }
                         debug!("Updated peer address and timestamp for authenticated peer at {}", addr);
+                    }
+                    drop(connections); // Release lock before async operations
+                    
+                    // If this is a new peer, request their blockchain via UDP mesh
+                    if is_new_peer {
+                        info!("🔄 New peer detected - requesting blockchain via UDP mesh");
+                        
+                        // Get our own public key for the request
+                        if let Ok(our_pubkey) = self.get_sender_public_key().await {
+                            let request_id = uuid::Uuid::new_v4().as_u128() as u64; // Convert to u64
+                            let request_message = ZhtpMeshMessage::BlockchainRequest {
+                                requester: our_pubkey,
+                                request_id,
+                                request_type: lib_network::types::mesh_message::BlockchainRequestType::FullChain,
+                            };
+                            
+                            // Send blockchain request via UDP mesh
+                            if let Err(e) = self.send_to_peer(sender, request_message).await {
+                                warn!("Failed to request blockchain from new peer via UDP: {}", e);
+                                info!("   HTTP fallback will be used by periodic sync task");
+                            } else {
+                                info!("📤 Sent BlockchainRequest via UDP mesh to new peer");
+                            }
+                        }
                     }
                     
                     return Ok(None);
