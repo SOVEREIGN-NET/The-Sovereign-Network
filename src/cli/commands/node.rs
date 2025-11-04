@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow};
 use crate::cli::{NodeArgs, NodeAction, ZhtpCli};
 use crate::config::environment::Environment;  // NEW: For network-specific data paths
 use crate::runtime::RuntimeOrchestrator;
+use crate::runtime::ComponentId;
 use crate::runtime::did_startup::{WalletStartupManager, WalletStartupResult};
 use crate::runtime::shared_dht::{initialize_global_dht_safe, get_dht_client};
 use lib_identity::ZhtpIdentity;
@@ -275,6 +276,15 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
             
             println!("Starting runtime orchestrator...");
             let mut orchestrator = RuntimeOrchestrator::new(node_config.clone()).await?;
+            
+            // CRITICAL: Start Network component FIRST so this node is discoverable
+            println!("Initializing network for peer discovery...");
+            if let Err(e) = orchestrator.start_component(ComponentId::Network).await {
+                eprintln!("Warning: Failed to start network component early: {}", e);
+            }
+            
+            // Small delay to let network component start broadcasting
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             
             println!("Attempting to connect to existing ZHTP mesh network...");
             
@@ -707,13 +717,38 @@ async fn get_local_ip_address() -> Result<std::net::IpAddr> {
 
 /// Fetch blockchain info from discovered peers
 async fn fetch_blockchain_info_from_discovered_peers(peers: &[String]) -> Result<BlockchainInfo> {
-    // Try to get blockchain info from the shared blockchain instance
-    let height = match crate::runtime::shared_blockchain::get_shared_blockchain() {
-        Ok(blockchain_service) => {
-            blockchain_service.get_height().await.unwrap_or(0)
-        },
-        Err(_) => 0,
-    };
+    // Don't query local blockchain (it's not started yet!)
+    // Instead, query the first discovered peer for blockchain info
+    let mut height = 0u64;
+    
+    for peer in peers {
+        // Try to extract HTTP API port from peer address
+        // peer format might be: "zhtp://192.168.1.137:9333" or similar
+        if let Some(api_url) = peer.strip_prefix("zhtp://").or_else(|| peer.strip_prefix("http://")) {
+            let http_url = format!("http://{}/api/v1/blockchain/info", api_url);
+            
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(2),
+                reqwest::get(&http_url)
+            ).await {
+                Ok(Ok(response)) => {
+                    if let Ok(json) = response.json::<serde_json::Value>().await {
+                        if let Some(h) = json.get("height").and_then(|v| v.as_u64()) {
+                            height = h;
+                            println!("     📊 Peer {} reports blockchain height: {}", api_url, height);
+                            break; // Got valid response
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    println!("     ⚠️ Failed to query peer {}: {}", api_url, e);
+                }
+                Err(_) => {
+                    println!("     ⏱ Timeout querying peer {}", api_url);
+                }
+            }
+        }
+    }
     
     let network_id = if peers.is_empty() {
         "zhtp-genesis".to_string()
