@@ -1798,8 +1798,12 @@ impl BlockchainComponent {
         let mut block_counter = 1u64;
         let mut consensus_round = 0u32;
         
+        info!("🔨 Mining loop started - checking every 30 seconds");
+        
         loop {
+            debug!("⏰ Mining loop tick #{}", block_counter);
             interval.tick().await;
+            debug!("✅ Mining loop tick #{} completed, fetching blockchain...", block_counter);
             
             // Use shared blockchain provider to get the current blockchain state
             match lib_blockchain::get_shared_blockchain().await {
