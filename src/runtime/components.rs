@@ -2450,36 +2450,16 @@ impl Component for ProtocolsComponent {
                 
                 // Parse peer address
                 if let Ok(peer_addr) = peer_addr_str.parse::<SocketAddr>() {
-                    // First, establish UDP mesh connection
+                    // Establish UDP mesh connection - blockchain sync happens automatically
+                    // via UDP BlockchainRequest/BlockchainData messages sent in PeerAnnouncement handler
                     if let Err(e) = unified_server_clone.establish_udp_connection(peer_addr).await {
                         warn!("Failed to establish UDP connection to {}: {}", peer_addr, e);
                     } else {
                         info!("✅ UDP mesh connection established to {}", peer_addr);
+                        info!("   Blockchain sync will occur via UDP BlockchainRequest/BlockchainData messages");
                     }
                     
-                    // Then, trigger HTTP-based blockchain sync from this peer
-                    match try_bootstrap_blockchain_from_peer(&blockchain_clone, &storage_clone, &peer_addr_str).await {
-                        Ok(synced_blockchain) => {
-                            info!("✅ Successfully synced blockchain from peer {}", peer_addr_str);
-                            
-                            // Update the shared blockchain instance
-                            if let Ok(shared) = lib_blockchain::get_shared_blockchain().await {
-                                let mut shared_write = shared.write().await;
-                                *shared_write = synced_blockchain.clone();
-                                info!("✅ Shared blockchain updated with synced state");
-                            }
-                            
-                            // Also update the local reference
-                            {
-                                let mut blockchain_write = blockchain_clone.write().await;
-                                *blockchain_write = synced_blockchain;
-                                info!("✅ Local blockchain reference updated");
-                            }
-                        }
-                        Err(e) => {
-                            warn!("⚠️ Could not sync blockchain from peer {}: {}", peer_addr_str, e);
-                        }
-                    }
+                    // HTTP blockchain sync DISABLED - using UDP mesh protocol only
                 } else {
                     warn!("Failed to parse peer address: {}", peer_addr_str);
                 }
@@ -2489,6 +2469,9 @@ impl Component for ProtocolsComponent {
         });
         
         // Start periodic peer sync task to keep blockchains synchronized
+        // DISABLED: Using UDP BlockchainRequest/BlockchainData messages only
+        info!(" Periodic HTTP sync task DISABLED - using UDP mesh protocol for blockchain sync");
+        /*
         info!(" Starting periodic peer sync task...");
         let blockchain_sync = blockchain.clone();
         let storage_sync = storage.clone();
@@ -2538,6 +2521,7 @@ impl Component for ProtocolsComponent {
             }
         });
         info!("✅ Periodic peer sync task started (60s interval)");
+        */
         
         // Initialize global mesh router provider for API access
         info!(" Initializing global mesh router provider...");
@@ -2892,9 +2876,51 @@ async fn try_bootstrap_blockchain_from_peer(
         }
     }
     
-    // Step 4: Incremental sync for same genesis
-    if peer_tip.height <= local_height {
-        info!("✅ Local chain is up-to-date or ahead (peer: {}, local: {})", peer_tip.height, local_height);
+    // Step 4: Check if we need to sync even at same height
+    if peer_tip.height < local_height {
+        info!("✅ Local chain is ahead (peer: {}, local: {})", peer_tip.height, local_height);
+        drop(local_blockchain);
+        return Ok(blockchain.read().await.clone());
+    }
+    
+    // If same height, check if peer has more identities/data
+    if peer_tip.height == local_height {
+        if peer_tip.identity_count > local_blockchain.identity_registry.len() {
+            info!("🔄 Same height but peer has more identities ({} vs {}) - syncing full chain for merge", 
+                  peer_tip.identity_count, local_blockchain.identity_registry.len());
+            
+            // Fetch full chain for merge evaluation
+            let export_url = format!("http://{}/api/v1/blockchain/export", peer_addr);
+            match timeout(Duration::from_secs(10), async {
+                info!("📡 GET {} (full chain for merge)", export_url);
+                let response = reqwest::get(&export_url).await?;
+                if response.status().is_success() {
+                    let data = response.bytes().await?.to_vec();
+                    info!("✅ Received {} bytes for merge evaluation", data.len());
+                    Ok::<Vec<u8>, anyhow::Error>(data)
+                } else {
+                    Err(anyhow::anyhow!("Peer returned error: {}", response.status()))
+                }
+            }).await {
+                Ok(Ok(blockchain_data)) => {
+                    drop(local_blockchain); // Release lock before merge
+                    let mut blockchain_clone = blockchain.read().await.clone();
+                    info!("📦 Evaluating and merging chains with more peer data...");
+                    blockchain_clone.evaluate_and_merge_chain(blockchain_data).await?;
+                    info!(" Successfully synced and merged additional data from {}", peer_addr);
+                    return Ok(blockchain_clone);
+                }
+                Ok(Err(e)) => {
+                    warn!("⚠️ Failed to fetch full chain for merge: {}", e);
+                }
+                Err(_) => {
+                    warn!("⚠️ Timeout fetching full chain for merge");
+                }
+            }
+        } else {
+            info!("✅ Local chain is up-to-date (peer: {} identities, local: {} identities)", 
+                  peer_tip.identity_count, local_blockchain.identity_registry.len());
+        }
         drop(local_blockchain);
         return Ok(blockchain.read().await.clone());
     }

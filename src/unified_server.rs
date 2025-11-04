@@ -1815,20 +1815,26 @@ impl MeshRouter {
                         info!("🔄 New peer detected - requesting blockchain via UDP mesh");
                         
                         // Get our own public key for the request
-                        if let Ok(our_pubkey) = self.get_sender_public_key().await {
-                            let request_id = uuid::Uuid::new_v4().as_u128() as u64; // Convert to u64
-                            let request_message = ZhtpMeshMessage::BlockchainRequest {
-                                requester: our_pubkey,
-                                request_id,
-                                request_type: lib_network::types::mesh_message::BlockchainRequestType::FullChain,
-                            };
-                            
-                            // Send blockchain request via UDP mesh
-                            if let Err(e) = self.send_to_peer(sender, request_message).await {
-                                warn!("Failed to request blockchain from new peer via UDP: {}", e);
-                                info!("   HTTP fallback will be used by periodic sync task");
-                            } else {
-                                info!("📤 Sent BlockchainRequest via UDP mesh to new peer");
+                        match self.get_sender_public_key().await {
+                            Ok(our_pubkey) => {
+                                let request_id = uuid::Uuid::new_v4().as_u128() as u64; // Convert to u64
+                                let request_message = ZhtpMeshMessage::BlockchainRequest {
+                                    requester: our_pubkey,
+                                    request_id,
+                                    request_type: lib_network::types::mesh_message::BlockchainRequestType::FullChain,
+                                };
+                                
+                                // Send blockchain request via UDP mesh
+                                if let Err(e) = self.send_to_peer(sender, request_message).await {
+                                    warn!("Failed to request blockchain from new peer via UDP: {}", e);
+                                    info!("   HTTP fallback will be used by periodic sync task");
+                                } else {
+                                    info!("📤 Sent BlockchainRequest via UDP mesh to new peer");
+                                }
+                            }
+                            Err(e) => {
+                                warn!("⚠️ Could not get sender public key for BlockchainRequest: {}", e);
+                                warn!("   Cannot send UDP BlockchainRequest - HTTP fallback will be used");
                             }
                         }
                     }
