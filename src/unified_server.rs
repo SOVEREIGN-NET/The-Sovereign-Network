@@ -1875,10 +1875,10 @@ impl MeshRouter {
                     return Ok(None);
                 }
                 ZhtpMeshMessage::BlockchainRequest { requester, request_id, request_type } => {
-                    info!(" Blockchain request received from {:?} (request_id: {}, request_type: {:?})", 
-                          hex::encode(&requester.key_id[0..8]), request_id, request_type);
+                    info!(" Blockchain request received from {:?} at {} (request_id: {}, request_type: {:?})", 
+                          hex::encode(&requester.key_id[0..8]), addr, request_id, request_type);
                     
-                    // Export and send blockchain chunks directly
+                    // Export and send blockchain chunks directly via UDP to sender's address
                     match crate::runtime::blockchain_provider::get_global_blockchain().await {
                         Ok(blockchain_arc) => {
                             let blockchain_lock = blockchain_arc.read().await;
@@ -1888,32 +1888,42 @@ impl MeshRouter {
                                 Ok(blockchain_data) => {
                                     info!(" Exported {} bytes of blockchain data", blockchain_data.len());
                                     
-                                    // Get connection info for chunking
-                                    let connections = self.connections.read().await;
-                                    if let Some(connection) = connections.get(requester) {
-                                        // Chunk data based on protocol
-                                        match lib_network::blockchain_sync::BlockchainSyncManager::chunk_blockchain_data_for_protocol(
-                                            *request_id,
-                                            blockchain_data,
-                                            &connection.protocol
-                                        ) {
-                                            Ok(chunk_messages) => {
-                                                let chunk_count = chunk_messages.len();
-                                                info!(" Sending {} blockchain chunks to peer", chunk_count);
-                                                
-                                                let mut successful_chunks = 0;
-                                                let mut failed_chunks = 0;
-                                                
+                                    // Chunk data for UDP protocol (always UDP since request came via UDP)
+                                    match lib_network::blockchain_sync::BlockchainSyncManager::chunk_blockchain_data_for_protocol(
+                                        *request_id,
+                                        blockchain_data,
+                                        &lib_network::protocols::NetworkProtocol::UDP
+                                    ) {
+                                        Ok(chunk_messages) => {
+                                            let chunk_count = chunk_messages.len();
+                                            info!(" Sending {} blockchain chunks to {}", chunk_count, addr);
+                                            
+                                            let mut successful_chunks = 0;
+                                            let mut failed_chunks = 0;
+                                            
+                                            // Get UDP socket for direct sending
+                                            let socket_guard = self.udp_socket.read().await;
+                                            if let Some(ref socket) = *socket_guard {
                                                 // Send each chunk with retry logic
                                                 for (idx, chunk_message) in chunk_messages.into_iter().enumerate() {
                                                     let mut attempts = 0;
                                                     const MAX_ATTEMPTS: u32 = 3;
                                                     let mut success = false;
                                                     
+                                                    // Serialize chunk message once
+                                                    let serialized = match bincode::serialize(&chunk_message) {
+                                                        Ok(data) => data,
+                                                        Err(e) => {
+                                                            error!("Failed to serialize chunk {}: {}", idx + 1, e);
+                                                            failed_chunks += 1;
+                                                            continue;
+                                                        }
+                                                    };
+                                                    
                                                     while attempts < MAX_ATTEMPTS && !success {
                                                         attempts += 1;
                                                         
-                                                        match self.send_to_peer(requester, chunk_message.clone()).await {
+                                                        match socket.send_to(&serialized, addr).await {
                                                             Ok(_) => {
                                                                 success = true;
                                                                 successful_chunks += 1;
@@ -1938,16 +1948,16 @@ impl MeshRouter {
                                                 }
                                                 
                                                 if failed_chunks == 0 {
-                                                    info!(" All {} blockchain chunks sent successfully", chunk_count);
+                                                    info!(" All {} blockchain chunks sent successfully to {}", chunk_count, addr);
                                                 } else {
                                                     warn!("⚠️ Blockchain sync incomplete: {}/{} chunks sent, {} failed", 
                                                           successful_chunks, chunk_count, failed_chunks);
                                                 }
+                                            } else {
+                                                error!("UDP socket not available to send blockchain chunks");
                                             }
-                                            Err(e) => error!("Failed to chunk blockchain data: {}", e),
                                         }
-                                    } else {
-                                        warn!("No connection found for requester");
+                                        Err(e) => error!("Failed to chunk blockchain data: {}", e),
                                     }
                                 }
                                 Err(e) => error!("Failed to export blockchain: {}", e),
