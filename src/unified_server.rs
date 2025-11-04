@@ -5756,43 +5756,45 @@ impl ZhtpUnifiedServer {
     pub async fn establish_udp_connection(&self, peer_addr: SocketAddr) -> Result<()> {
         info!("🔗 Establishing UDP mesh connection to {}", peer_addr);
         
-        // Get our node's public key and private key from identity manager
+        // Get our node's public key from identity manager
         let mgr = self.identity_manager.read().await;
-        let (sender_pubkey, signature, timestamp) = if let Some(identity) = mgr.list_identities().first() {
+        let sender_pubkey = if let Some(identity) = mgr.list_identities().first() {
             let mut key_id = [0u8; 32];
             let len = identity.public_key.len().min(32);
             key_id[..len].copy_from_slice(&identity.public_key[..len]);
             
-            let pubkey = lib_crypto::PublicKey {
+            lib_crypto::PublicKey {
                 key_id,
                 dilithium_pk: vec![],
                 kyber_pk: vec![],
-            };
-            
-            // Create signature data: (sender.key_id || timestamp)
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            
-            let mut sig_data = Vec::new();
-            sig_data.extend_from_slice(&key_id);
-            sig_data.extend_from_slice(&timestamp.to_le_bytes());
-            
-            // Sign with identity's private key
-            let signature = match mgr.sign_with_identity(&identity.id, &sig_data).await {
-                Ok(sig) => sig.signature,
-                Err(e) => {
-                    warn!("Failed to sign PeerAnnouncement: {}", e);
-                    return Err(anyhow::anyhow!("Signature failed: {}", e));
-                }
-            };
-            
-            (pubkey, signature, timestamp)
+            }
         } else {
             return Err(anyhow::anyhow!("No identity available for PeerAnnouncement"));
         };
         drop(mgr); // Release lock
+        
+        // Sign with auth manager's Dilithium2 key instead of identity manager
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        
+        let mut sig_data = Vec::new();
+        sig_data.extend_from_slice(&sender_pubkey.key_id);
+        sig_data.extend_from_slice(&timestamp.to_le_bytes());
+        
+        let signature = if let Some(ref auth_mgr) = *self.mesh_router.zhtp_auth_manager.read().await {
+            match auth_mgr.sign_message(&sig_data) {
+                Ok(sig) => sig,
+                Err(e) => {
+                    warn!("Failed to sign PeerAnnouncement: {}", e);
+                    return Err(anyhow::anyhow!("Signature failed: {}", e));
+                }
+            }
+        } else {
+            warn!("Auth manager not initialized, using empty signature");
+            vec![] // Fallback to empty signature if auth manager not initialized
+        };
         
         // Create a MeshConnection entry for this peer (we'll update it when they respond)
         let current_timestamp = std::time::SystemTime::now()
