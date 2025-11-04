@@ -20,6 +20,7 @@ use lib_identity::{self, IdentityManager};
 use lib_blockchain::{self, Blockchain, Transaction, TransactionOutput};
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
 use lib_consensus::{self, ConsensusEngine, ConsensusConfig, ValidatorManager};
+use lib_identity::IdentityId;
 use lib_protocols::{ZdnsServer, ZhtpIntegration, ZdnsConfig, IntegrationConfig};
 
 // Import configuration types for multi-node genesis
@@ -896,6 +897,8 @@ pub struct BlockchainComponent {
     environment: crate::config::Environment,  // Store environment for network-specific initialization
     bootstrap_validators: Arc<RwLock<Vec<BootstrapValidator>>>, // Store bootstrap validators for multi-node genesis
     joined_existing_network: bool,  // If true, skip genesis creation (we're joining existing network)
+    validator_manager: Arc<RwLock<Option<Arc<RwLock<ValidatorManager>>>>>,  // Reference to consensus validator manager
+    node_identity: Arc<RwLock<Option<IdentityId>>>,  // This node's identity for consensus
 }
 
 impl BlockchainComponent {
@@ -909,6 +912,8 @@ impl BlockchainComponent {
             environment: crate::config::Environment::Development,  // Default to dev
             bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
             joined_existing_network: false,  // Default: create genesis
+            validator_manager: Arc::new(RwLock::new(None)),
+            node_identity: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -922,6 +927,8 @@ impl BlockchainComponent {
             environment: crate::config::Environment::Development,  // Default to dev
             bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
             joined_existing_network: false,  // Default: create genesis
+            validator_manager: Arc::new(RwLock::new(None)),
+            node_identity: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -939,6 +946,8 @@ impl BlockchainComponent {
             environment,
             bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
             joined_existing_network: false,  // Default: create genesis
+            validator_manager: Arc::new(RwLock::new(None)),
+            node_identity: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -958,7 +967,19 @@ impl BlockchainComponent {
             environment,
             bootstrap_validators: Arc::new(RwLock::new(bootstrap_validators)),
             joined_existing_network,
+            validator_manager: Arc::new(RwLock::new(None)),
+            node_identity: Arc::new(RwLock::new(None)),
         }
+    }
+    
+    /// Set consensus validator manager for coordinated mining
+    pub async fn set_validator_manager(&self, validator_manager: Arc<RwLock<ValidatorManager>>) {
+        *self.validator_manager.write().await = Some(validator_manager);
+    }
+    
+    /// Set node identity for consensus participation
+    pub async fn set_node_identity(&self, node_identity: IdentityId) {
+        *self.node_identity.write().await = Some(node_identity);
     }
     
     /// Set user wallet for genesis funding
@@ -1261,10 +1282,19 @@ impl Component for BlockchainComponent {
             }
         }
         
-        // Start mining loop with funded transactions
+        // Start mining loop with funded transactions and consensus coordination
         let blockchain_clone = self.blockchain.clone();
+        let validator_manager_clone = {
+            let vm_guard = self.validator_manager.read().await;
+            vm_guard.clone()
+        };
+        let node_identity_clone = {
+            let id_guard = self.node_identity.read().await;
+            id_guard.clone()
+        };
+        
         let mining_handle = tokio::spawn(async move {
-            Self::real_mining_loop(blockchain_clone).await;
+            Self::real_mining_loop(blockchain_clone, validator_manager_clone, node_identity_clone).await;
         });
         
         *self.mining_handle.write().await = Some(mining_handle);
@@ -1758,9 +1788,15 @@ impl BlockchainComponent {
     }
 
     /// mining loop with actual blockchain operations using shared blockchain
-    async fn real_mining_loop(blockchain: Arc<RwLock<Option<Blockchain>>>) {
+    /// and consensus coordination
+    async fn real_mining_loop(
+        blockchain: Arc<RwLock<Option<Blockchain>>>,
+        validator_manager: Option<Arc<RwLock<ValidatorManager>>>,
+        node_identity: Option<IdentityId>,
+    ) {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         let mut block_counter = 1u64;
+        let mut consensus_round = 0u32;
         
         loop {
             interval.tick().await;
@@ -1770,31 +1806,74 @@ impl BlockchainComponent {
                 Ok(shared_blockchain) => {
                     let blockchain_guard = shared_blockchain.read().await;
                     let pending_count = blockchain_guard.pending_transactions.len();
+                    let current_height = blockchain_guard.height;
+                    
                     info!("Mining check #{} - Height: {}, Pending: {}, UTXOs: {}, Identities: {}", 
                         block_counter,
-                        blockchain_guard.height, 
+                        current_height, 
                         pending_count,
                         blockchain_guard.utxo_set.len(),
                         blockchain_guard.identity_registry.len()
                     );
                     
-                    // If we have pending transactions, try to mine a block
+                    // If we have pending transactions, check consensus before mining
                     if pending_count > 0 {
-                        drop(blockchain_guard); // Release read lock before mining
-                        info!("Mining block #{} with {} pending transactions...", block_counter, pending_count);
+                        // Check if consensus coordination is enabled
+                        let should_mine = if let (Some(ref vm), Some(ref node_id)) = (&validator_manager, &node_identity) {
+                            let vm_guard = vm.read().await;
+                            
+                            // Check if there are any active validators
+                            if vm_guard.get_active_validators().is_empty() {
+                                // No validators yet - any node can mine (bootstrap phase)
+                                debug!("⛏️ Bootstrap mode: No validators registered, mining without consensus");
+                                true
+                            } else {
+                                // Select proposer using consensus
+                                let next_height = current_height + 1;
+                                if let Some(proposer) = vm_guard.select_proposer(next_height, consensus_round) {
+                                    let is_proposer = &proposer.identity == node_id;
+                                    if is_proposer {
+                                        info!("🎯 CONSENSUS: This node selected as block proposer for height {} (round {})", 
+                                            next_height, consensus_round);
+                                    } else {
+                                        info!("⏸️ CONSENSUS: Waiting - proposer is {:?} (round {})", 
+                                            hex::encode(&proposer.identity.as_bytes()[..8]), consensus_round);
+                                    }
+                                    is_proposer
+                                } else {
+                                    warn!("⚠️ CONSENSUS: No proposer selected, falling back to permissionless mining");
+                                    true
+                                }
+                            }
+                        } else {
+                            // No consensus configured - mine without coordination
+                            debug!("⛏️ Mining without consensus coordination (validator manager not configured)");
+                            true
+                        };
                         
-                        let mut blockchain_guard = shared_blockchain.write().await;
-                        match Self::mine_real_block(&mut *blockchain_guard).await {
-                            Ok(()) => {
-                                info!("Block #{} mined successfully!", block_counter);
-                                block_counter += 1;
+                        if should_mine {
+                            drop(blockchain_guard); // Release read lock before mining
+                            info!("Mining block #{} with {} pending transactions...", block_counter, pending_count);
+                            
+                            let mut blockchain_guard = shared_blockchain.write().await;
+                            match Self::mine_real_block(&mut *blockchain_guard).await {
+                                Ok(()) => {
+                                    info!("Block #{} mined successfully!", block_counter);
+                                    block_counter += 1;
+                                    consensus_round = 0; // Reset round after successful block
+                                }
+                                Err(e) => {
+                                    warn!("Failed to mine block #{}: {}", block_counter, e);
+                                    consensus_round += 1; // Increment round on failure
+                                }
                             }
-                            Err(e) => {
-                                warn!("Failed to mine block #{}: {}", block_counter, e);
-                            }
+                        } else {
+                            // Not our turn - increment round for next iteration
+                            consensus_round = (consensus_round + 1) % 10; // Rotate through rounds
                         }
                     } else {
                         debug!("No pending transactions to mine");
+                        consensus_round = 0; // Reset when no pending transactions
                     }
                 }
                 Err(e) => {
