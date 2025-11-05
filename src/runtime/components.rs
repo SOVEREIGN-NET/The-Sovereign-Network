@@ -1829,12 +1829,18 @@ impl BlockchainComponent {
                             let vm_guard = vm.read().await;
                             
                             // Check if there are any active validators
-                            if vm_guard.get_active_validators().is_empty() {
+                            let active_validators = vm_guard.get_active_validators();
+                            info!("🔍 CONSENSUS CHECK: {} active validators in validator manager", active_validators.len());
+                            
+                            if active_validators.is_empty() {
                                 // No validators yet - any node can mine (bootstrap phase)
-                                debug!("⛏️ Bootstrap mode: No validators registered, mining without consensus");
+                                warn!("⛏️ BOOTSTRAP MODE: No validators registered in consensus, mining without coordination");
+                                warn!("   → This means validator sync from blockchain failed!");
+                                warn!("   → Check blockchain.validator_registry.len() = {}", blockchain_guard.validator_registry.len());
                                 true
                             } else {
                                 // Select proposer using consensus
+                                info!("✅ CONSENSUS ACTIVE: {} validators registered", active_validators.len());
                                 let next_height = current_height + 1;
                                 if let Some(proposer) = vm_guard.select_proposer(next_height, consensus_round) {
                                     let is_proposer = &proposer.identity == node_id;
@@ -1853,7 +1859,7 @@ impl BlockchainComponent {
                             }
                         } else {
                             // No consensus configured - mine without coordination
-                            debug!("⛏️ Mining without consensus coordination (validator manager not configured)");
+                            warn!("⛏️ Mining without consensus coordination (validator manager not configured)");
                             true
                         };
                         
