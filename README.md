@@ -8,7 +8,7 @@ This repository contains multiple interconnected libraries and services:
 
 ### node download
 
-git clone --recurse-submodules https://github.com/SOVEREIGN-NET/Sov-Net-Full.git
+git clone --recurse-submodules https://github.com/SOVEREIGN-NET/The-Sovereign-Network.git
 
 ### Core Libraries
 - **`lib-blockchain/`** - Core blockchain implementation with UTXO model and smart contracts
