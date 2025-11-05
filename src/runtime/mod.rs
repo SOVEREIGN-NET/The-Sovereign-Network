@@ -983,11 +983,32 @@ impl RuntimeOrchestrator {
         // Get the ConsensusComponent and set the blockchain reference
         if let Some(component) = self.components.read().await.get(&ComponentId::Consensus) {
             if let Some(consensus_comp) = component.as_any().downcast_ref::<ConsensusComponent>() {
-                // Set the blockchain reference
+                // Set the blockchain reference in consensus
                 consensus_comp.set_blockchain(blockchain_arc).await;
                 
                 // Sync validators from blockchain to consensus
                 consensus_comp.sync_validators_from_blockchain().await?;
+                
+                // Get the validator manager from consensus
+                let validator_manager = consensus_comp.get_validator_manager().await;
+                
+                // Wire validator manager and node identity back to BlockchainComponent for mining coordination
+                if let Some(component) = self.components.read().await.get(&ComponentId::Blockchain) {
+                    if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
+                        // Set validator manager
+                        blockchain_comp.set_validator_manager(validator_manager).await;
+                        info!("✅ Validator manager connected to blockchain mining loop");
+                        
+                        // Set node owner identity from wallet startup (secure node identity)
+                        let wallet_guard = self.user_wallet.read().await;
+                        if let Some(ref wallet_data) = *wallet_guard {
+                            blockchain_comp.set_node_identity(wallet_data.node_identity_id.clone()).await;
+                            info!("✅ Node owner identity connected: {}", hex::encode(&wallet_data.node_identity_id.0[..8]));
+                        } else {
+                            warn!("⚠️  Node owner identity not available yet - mining will use bootstrap mode");
+                        }
+                    }
+                }
                 
                 info!("Blockchain successfully connected to consensus validator manager");
                 return Ok(());
