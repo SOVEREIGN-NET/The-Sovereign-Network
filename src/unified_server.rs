@@ -5416,15 +5416,23 @@ impl ZhtpUnifiedServer {
         info!("⏭️  IP Scanner: DISABLED (inefficient, replaced by broadcast)");
         
         // Initialize Bluetooth LE discovery (pass mesh_connections for GATT handler)
-        let bluetooth_le_status = if let Err(e) = self.bluetooth_router.initialize(self.mesh_router.connections.clone()).await {
-            warn!("❌ Bluetooth LE: FAILED - {}", e);
-            warn!("   → Continuing without Bluetooth LE support");
-            "FAILED"
-        } else {
-            info!("✅ Bluetooth LE: ACTIVE (100m range)");
-            info!("   → Low-power device-to-device mesh");
-            "ACTIVE"
-        };
+        // Spawn as background task to avoid blocking HTTP server startup
+        let bluetooth_router_clone = self.bluetooth_router.clone();
+        let mesh_connections_clone = self.mesh_router.connections.clone();
+        tokio::spawn(async move {
+            info!("Initializing Bluetooth mesh protocol for phone connectivity...");
+            match bluetooth_router_clone.initialize(mesh_connections_clone).await {
+                Ok(_) => {
+                    info!("✅ Bluetooth LE: ACTIVE (100m range)");
+                    info!("   → Low-power device-to-device mesh");
+                }
+                Err(e) => {
+                    warn!("❌ Bluetooth LE: FAILED - {}", e);
+                    warn!("   → Continuing without Bluetooth LE support");
+                }
+            }
+        });
+        let bluetooth_le_status = "INITIALIZING";
         
         // Initialize Bluetooth Classic for high-throughput mesh
         let bluetooth_classic_status = if let Err(e) = self.bluetooth_classic_router.initialize().await {

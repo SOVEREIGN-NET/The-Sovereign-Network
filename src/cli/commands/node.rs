@@ -519,6 +519,14 @@ async fn handle_existing_network_identity(network_info: &ExistingNetworkInfo) ->
 
 /// Handle wallet setup when creating a new genesis network
 async fn handle_genesis_network_identity(environment: &Environment) -> Result<WalletStartupResult> {
+    // Check for auto-start environment variable
+    if let Ok(auto_mode) = std::env::var("ZHTP_AUTO_START") {
+        if auto_mode == "quick" || auto_mode == "3" {
+            println!("\n Quick start mode (via ZHTP_AUTO_START)...");
+            return WalletStartupManager::quick_start_wallet().await;
+        }
+    }
+
     println!("\nCreating New ZHTP Genesis Network");
     println!("====================================");
     println!("No existing network found. You'll be creating a new genesis network.");
@@ -531,14 +539,14 @@ async fn handle_genesis_network_identity(environment: &Environment) -> Result<Wa
     println!();
     println!("Note: Your DID will own this node. The node routes rewards to your wallets.");
     println!();
-    
+
     loop {
         print!("Enter your choice (1-3): ");
         std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        
+
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).unwrap();
-        
+
         match input.trim() {
             "1" => {
                 println!("\n Creating new digital identity with wallets...");
