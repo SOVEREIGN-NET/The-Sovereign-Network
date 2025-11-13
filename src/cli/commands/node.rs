@@ -12,6 +12,16 @@ use std::io::{self, Write};
 use blake3;
 
 // ============================================================================
+// Auto-Start Constants
+// ============================================================================
+
+/// Quick start mode for ZHTP_AUTO_START environment variable
+const AUTO_START_QUICK: &str = "quick";
+
+/// Legacy numeric option for quick start (option 3 from old menu)
+const AUTO_START_LEGACY_OPTION_3: &str = "3";
+
+// ============================================================================
 // Password Utility Functions
 // ============================================================================
 
@@ -521,8 +531,8 @@ async fn handle_existing_network_identity(network_info: &ExistingNetworkInfo) ->
 async fn handle_genesis_network_identity(environment: &Environment) -> Result<WalletStartupResult> {
     // Check for auto-start environment variable
     if let Ok(auto_mode) = std::env::var("ZHTP_AUTO_START") {
-        if auto_mode == "quick" || auto_mode == "3" {
-            println!("\n Quick start mode (via ZHTP_AUTO_START)...");
+        if auto_mode == AUTO_START_QUICK || auto_mode == AUTO_START_LEGACY_OPTION_3 {
+            println!("\n Quick start mode (via ZHTP_AUTO_START={})...", auto_mode);
             return WalletStartupManager::quick_start_wallet().await;
         }
     }

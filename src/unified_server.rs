@@ -4274,6 +4274,7 @@ pub struct BluetoothRouter {
     connected_devices: Arc<RwLock<HashMap<String, String>>>,
     node_id: [u8; 32],
     protocol: Arc<RwLock<Option<BluetoothMeshProtocol>>>,
+    status: Arc<RwLock<String>>,
 }
 
 /// Bluetooth Classic RFCOMM router for high-throughput mesh
@@ -4283,6 +4284,7 @@ pub struct BluetoothClassicRouter {
     active_streams: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<lib_network::protocols::bluetooth::classic::RfcommStream>>>>>, // Store RFCOMM streams
     node_id: [u8; 32],
     protocol: Arc<RwLock<Option<lib_network::protocols::bluetooth::classic::BluetoothClassicProtocol>>>,
+    status: Arc<RwLock<String>>,
 }
 
 // Type alias for cleaner code
@@ -4428,18 +4430,26 @@ impl BluetoothRouter {
             id[16..].copy_from_slice(uuid_bytes); // Fill remaining with same UUID
             id
         };
-        
+
         Self {
             connected_devices: Arc::new(RwLock::new(HashMap::new())),
             node_id,
             protocol: Arc::new(RwLock::new(None)),
+            status: Arc::new(RwLock::new("NOT_STARTED".to_string())),
         }
     }
     
+    /// Get current initialization status
+    pub async fn get_status(&self) -> String {
+        self.status.read().await.clone()
+    }
+
     /// Initialize Bluetooth mesh protocol for phone connectivity
     pub async fn initialize(&self, mesh_connections: Arc<RwLock<HashMap<PublicKey, lib_network::mesh::connection::MeshConnection>>>) -> Result<()> {
+        // Set status to INITIALIZING
+        *self.status.write().await = "INITIALIZING".to_string();
         info!("Initializing Bluetooth mesh protocol for phone connectivity...");
-        
+
         // Create Bluetooth mesh protocol instance
         let mut bluetooth_protocol = BluetoothMeshProtocol::new(self.node_id)?;
         
@@ -4526,10 +4536,13 @@ impl BluetoothRouter {
             info!("GATT message handler stopped");
         });
         
-        info!("Bluetooth mesh protocol initialized - discoverable as 'ZHTP-{}'", 
+        info!("Bluetooth mesh protocol initialized - discoverable as 'ZHTP-{}'",
               hex::encode(&self.node_id[..4]));
         info!("Your phone can now discover and connect to this ZHTP node via Bluetooth");
-        
+
+        // Set status to ACTIVE on successful initialization
+        *self.status.write().await = "ACTIVE".to_string();
+
         Ok(())
     }
     
@@ -4684,11 +4697,19 @@ impl BluetoothClassicRouter {
             active_streams: Arc::new(RwLock::new(HashMap::new())),
             node_id,
             protocol: Arc::new(RwLock::new(None)),
+            status: Arc::new(RwLock::new("NOT_STARTED".to_string())),
         }
+    }
+
+    /// Get current initialization status
+    pub async fn get_status(&self) -> String {
+        self.status.read().await.clone()
     }
     
     /// Initialize Bluetooth Classic RFCOMM protocol for high-throughput mesh
     pub async fn initialize(&self) -> Result<()> {
+        // Set status to INITIALIZING
+        *self.status.write().await = "INITIALIZING".to_string();
         info!("Initializing Bluetooth Classic RFCOMM protocol for high-throughput mesh...");
         
         // Check if Windows Bluetooth feature is enabled on Windows
@@ -4728,10 +4749,13 @@ impl BluetoothClassicRouter {
             // Store the protocol instance
             *self.protocol.write().await = Some(bluetooth_classic);
             
-            info!("Bluetooth Classic RFCOMM initialized - discoverable as 'ZHTP-CLASSIC-{}'", 
+            info!("Bluetooth Classic RFCOMM initialized - discoverable as 'ZHTP-CLASSIC-{}'",
                   hex::encode(&self.node_id[..4]));
             info!("High-throughput mesh (375 KB/s) available via Bluetooth Classic");
-            
+
+            // Set status to ACTIVE on successful initialization
+            *self.status.write().await = "ACTIVE".to_string();
+
             Ok(())
         }
     }
@@ -5055,7 +5079,7 @@ pub struct ZhtpUnifiedServer {
     mesh_router: MeshRouter,
     wifi_router: WiFiRouter,
     bluetooth_router: BluetoothRouter,
-    bluetooth_classic_router: BluetoothClassicRouter,
+    pub bluetooth_classic_router: BluetoothClassicRouter,  // Public for status API
     bootstrap_router: BootstrapRouter,
     
     // Shared backend state (from ZHTP orchestrator)
@@ -5071,6 +5095,9 @@ pub struct ZhtpUnifiedServer {
     is_running: Arc<RwLock<bool>>,
     server_id: Uuid,
     port: u16,
+
+    // Background task handles for lifecycle management
+    bluetooth_init_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl ZhtpUnifiedServer {
@@ -5218,6 +5245,8 @@ impl ZhtpUnifiedServer {
             economic_model.clone(),
             session_manager.clone(),
             Arc::new(mesh_router.clone()),
+            Arc::new(bluetooth_router.clone()),
+            Arc::new(bluetooth_classic_router.clone()),
         ).await?;
         
         Ok(Self {
@@ -5238,9 +5267,16 @@ impl ZhtpUnifiedServer {
             is_running: Arc::new(RwLock::new(false)),
             server_id,
             port,
+            bluetooth_init_handle: Arc::new(RwLock::new(None)),
         })
     }
-    
+
+    /// Get current Bluetooth initialization status
+    /// Returns one of: NOT_STARTED, INITIALIZING, ACTIVE, FAILED, TIMEOUT
+    pub async fn get_bluetooth_status(&self) -> String {
+        self.bluetooth_router.get_status().await
+    }
+
     /// Initialize QUIC mesh protocol (uses port 9334 to avoid UDP conflicts)
     async fn init_quic_mesh(port: u16, server_id: Uuid) -> Result<QuicMeshProtocol> {
         // QUIC uses UDP port 9334 to avoid conflicts with:
@@ -5276,6 +5312,8 @@ impl ZhtpUnifiedServer {
         _economic_model: Arc<RwLock<EconomicModel>>,
         _session_manager: Arc<SessionManager>,
         mesh_router: Arc<MeshRouter>,
+        bluetooth_le_router: Arc<BluetoothRouter>,
+        bluetooth_classic_router: Arc<BluetoothClassicRouter>,
     ) -> Result<()> {
         info!("Registering comprehensive API handlers...");
         
@@ -5363,7 +5401,13 @@ impl ZhtpUnifiedServer {
             ProtocolHandler::new()
         );
         http_router.register_handler("/api/v1/protocol".to_string(), protocol_handler);
-        
+
+        // Bluetooth status monitoring
+        let bluetooth_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::BluetoothHandler::new(bluetooth_le_router, bluetooth_classic_router)
+        );
+        http_router.register_handler("/api/v1/bluetooth".to_string(), bluetooth_handler);
+
         info!("All API handlers registered successfully");
         Ok(())
     }
@@ -5416,34 +5460,77 @@ impl ZhtpUnifiedServer {
         info!("⏭️  IP Scanner: DISABLED (inefficient, replaced by broadcast)");
         
         // Initialize Bluetooth LE discovery (pass mesh_connections for GATT handler)
-        // Spawn as background task to avoid blocking HTTP server startup
+        // Spawn as background task with timeout to avoid blocking HTTP server startup
         let bluetooth_router_clone = self.bluetooth_router.clone();
         let mesh_connections_clone = self.mesh_router.connections.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             info!("Initializing Bluetooth mesh protocol for phone connectivity...");
-            match bluetooth_router_clone.initialize(mesh_connections_clone).await {
-                Ok(_) => {
+
+            // Wrap initialization with 60-second timeout
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                bluetooth_router_clone.initialize(mesh_connections_clone)
+            ).await {
+                Ok(Ok(_)) => {
                     info!("✅ Bluetooth LE: ACTIVE (100m range)");
                     info!("   → Low-power device-to-device mesh");
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
+                    // Update status to FAILED on error
+                    *bluetooth_router_clone.status.write().await = "FAILED".to_string();
                     warn!("❌ Bluetooth LE: FAILED - {}", e);
+                    warn!("   → Continuing without Bluetooth LE support");
+                }
+                Err(_) => {
+                    // Update status to TIMEOUT on timeout
+                    *bluetooth_router_clone.status.write().await = "TIMEOUT".to_string();
+                    warn!("❌ Bluetooth LE: TIMEOUT after 60s");
                     warn!("   → Continuing without Bluetooth LE support");
                 }
             }
         });
-        let bluetooth_le_status = "INITIALIZING";
+
+        // Store handle for lifecycle management (shutdown/cancellation)
+        *self.bluetooth_init_handle.write().await = Some(handle);
+
+        // Read actual status from BluetoothRouter
+        let bluetooth_le_status = self.bluetooth_router.get_status().await;
         
         // Initialize Bluetooth Classic for high-throughput mesh
-        let bluetooth_classic_status = if let Err(e) = self.bluetooth_classic_router.initialize().await {
-            warn!("❌ Bluetooth Classic: FAILED - {}", e);
-            warn!("   → Continuing without Bluetooth Classic support");
-            "FAILED"
-        } else {
-            info!("✅ Bluetooth Classic: ACTIVE (375 KB/s RFCOMM)");
-            info!("   → High-bandwidth device-to-device connections");
-            "ACTIVE"
-        };
+        // Spawn as background task with timeout to avoid blocking (same as BLE)
+        let bluetooth_classic_clone = self.bluetooth_classic_router.clone();
+        let classic_handle = tokio::spawn(async move {
+            info!("Initializing Bluetooth Classic RFCOMM protocol...");
+
+            // Wrap initialization with 60-second timeout
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                bluetooth_classic_clone.initialize()
+            ).await {
+                Ok(Ok(_)) => {
+                    info!("✅ Bluetooth Classic: ACTIVE (375 KB/s RFCOMM)");
+                    info!("   → High-bandwidth device-to-device connections");
+                }
+                Ok(Err(e)) => {
+                    // Update status to FAILED on error
+                    *bluetooth_classic_clone.status.write().await = "FAILED".to_string();
+                    warn!("❌ Bluetooth Classic: FAILED - {}", e);
+                    warn!("   → Continuing without Bluetooth Classic support");
+                }
+                Err(_) => {
+                    // Update status to TIMEOUT on timeout
+                    *bluetooth_classic_clone.status.write().await = "TIMEOUT".to_string();
+                    warn!("❌ Bluetooth Classic: TIMEOUT after 60s");
+                    warn!("   → Continuing without Bluetooth Classic support");
+                }
+            }
+        });
+
+        // Store handle for lifecycle management (not used yet, but prepared for future shutdown logic)
+        let _ = classic_handle;  // Acknowledge we're intentionally not storing it yet
+
+        // Read actual status from BluetoothClassicRouter
+        let bluetooth_classic_status = self.bluetooth_classic_router.get_status().await;
         
         // Initialize WiFi Direct + mDNS
         let wifi_direct_status = if let Err(e) = self.wifi_router.initialize().await {
@@ -5469,7 +5556,7 @@ impl ZhtpUnifiedServer {
         info!("═══════════════════════════════════════════════════════════════");
         
         // Inform user about what's working
-        let active_count = [multicast_status, wifi_direct_status, bluetooth_le_status, bluetooth_classic_status]
+        let active_count = [multicast_status, wifi_direct_status, bluetooth_le_status.as_str(), bluetooth_classic_status.as_str()]
             .iter()
             .filter(|&&s| s == "ACTIVE")
             .count();

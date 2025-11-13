@@ -51,6 +51,10 @@ desktop.ini
 lib-node.toml
 zhtp-config.toml
 
+# Local development tools and documentation
+.localdocs/
+.local-tools/
+
 # Runtime and temporary files
 /tmp/
 /temp/
