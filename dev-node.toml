@@ -1,0 +1,52 @@
+# ZHTP Development Node Configuration
+# Use this to run a dev node alongside production node
+
+[network]
+listen_address = "0.0.0.0:19848"  # Different from default 19847
+public_address = "127.0.0.1:19848"
+bootstrap_peers = []
+max_connections = 50
+connection_timeout = 30
+heartbeat_interval = 60
+
+[node]
+name = "zhtp-dev-node"
+data_dir = "./data-dev"  # Separate data directory
+validator = false
+mining_enabled = true
+
+[consensus]
+min_validators = 1  # Dev mode, lower threshold
+block_time = 2000  # Faster blocks for dev
+finalization_depth = 6
+stake_threshold = 100
+
+[storage]
+dht_enabled = true
+storage_quota = 5368709120  # 5GB for dev
+replication_factor = 2
+gc_interval = 3600
+
+[security]
+enable_tls = false  # Disabled for local dev
+auth_required = false  # Easier dev experience
+rate_limit = 10000
+
+[dns]
+enabled = true
+listen_address = "0.0.0.0:5354"  # Different from default 5353
+authoritative_domains = ["zhtp", "dev.zhtp"]
+cache_ttl = 300
+
+[logging]
+level = "debug"  # More verbose for dev
+file_path = "./logs/dev-node.log"
+max_file_size = 10485760  # 10MB
+max_files = 5
+
+[api]
+listen_address = "0.0.0.0:8001"  # Different from prod (8000)
+enable_cors = true
+rate_limit_requests_per_minute = 10000
+request_timeout_seconds = 30
+max_request_body_size = 10485760  # 10MB

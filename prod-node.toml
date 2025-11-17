@@ -1,0 +1,52 @@
+# ZHTP Production Node Configuration
+# Use this to run a production node alongside dev node
+
+[network]
+listen_address = "0.0.0.0:19847"  # Default production port
+public_address = "127.0.0.1:19847"
+bootstrap_peers = []  # Add real seeders for mainnet
+max_connections = 100
+connection_timeout = 30
+heartbeat_interval = 60
+
+[node]
+name = "zhtp-prod-node"
+data_dir = "./data-prod"  # Separate data directory
+validator = true
+mining_enabled = false  # Production validators don't mine
+
+[consensus]
+min_validators = 3
+block_time = 5000  # 5 second blocks
+finalization_depth = 12
+stake_threshold = 1000
+
+[storage]
+dht_enabled = true
+storage_quota = 107374182400  # 100GB for production
+replication_factor = 3
+gc_interval = 3600
+
+[security]
+enable_tls = true
+auth_required = true
+rate_limit = 1000
+
+[dns]
+enabled = true
+listen_address = "0.0.0.0:5353"  # Standard DNS port
+authoritative_domains = ["zhtp"]
+cache_ttl = 300
+
+[logging]
+level = "info"  # Production logging
+file_path = "./logs/prod-node.log"
+max_file_size = 104857600  # 100MB
+max_files = 10
+
+[api]
+listen_address = "0.0.0.0:8000"  # Production API port
+enable_cors = false
+rate_limit_requests_per_minute = 1000
+request_timeout_seconds = 60
+max_request_body_size = 5242880  # 5MB
