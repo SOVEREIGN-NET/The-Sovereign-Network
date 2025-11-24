@@ -1,0 +1,40 @@
+[package]
+name = "lib-storage"
+version = "0.1.0"
+edition = "2021"
+description = "ZHTP Unified Storage System - DHT + Economic Storage Layer"
+license = "MIT"
+
+[lib]
+name = "lib_storage"
+path = "src/lib.rs"
+
+[dependencies]
+# ZHTP Package Dependencies
+lib-crypto = { path = "../lib-crypto" }
+lib-proofs = { path = "../lib-proofs" }
+lib-identity = { path = "../lib-identity" }
+
+# Production Dependencies for Storage System
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+blake3 = "1.5"
+bincode = "1.3"
+reed-solomon-erasure = "6.0"
+anyhow = "1.0"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+tempfile = "3.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+lz4_flex = "0.11"
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = []
+testing = []

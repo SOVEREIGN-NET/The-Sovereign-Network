@@ -1,0 +1,21 @@
+[package]
+name = "rlibdht"
+version = "0.1.0"
+edition = "2021"
+authors = ["DrBrad <brad@bradeagle.com>"]
+description = "Rust DHT library"
+license = "MIT"
+repository = "https://github.com/sectorrent/rlibdht"
+readme = "README.md"
+keywords = ["dht", "kademlia", "torrent", "bittorrent"]
+categories = ["network-programming", "command-line-utilities"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rlibbencode = "0.1.0"
+#rlibbencode = { git = "https://github.com/sectorrent/rlibbencode" }
+
+[lib]
+name = "rlibdht"
+path = "src/lib.rs"

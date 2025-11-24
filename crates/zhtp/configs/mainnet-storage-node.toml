@@ -1,0 +1,101 @@
+# Mainnet Storage Node Configuration
+# Optimized for distributed storage provision on MAINNET
+# Suitable for: Production storage providers, mainnet data hosts
+
+# Core Node Settings
+mesh_mode = "Hybrid"
+security_level = "Maximum"
+environment = "Production"
+data_directory = "./data/mainnet-storage"
+
+[crypto_config]
+post_quantum_enabled = true
+dilithium_level = 5  # Maximum security for mainnet
+kyber_level = 1024
+hybrid_mode = true
+memory_security = true
+
+[zk_config]
+plonky2_enabled = true
+proof_cache_size = 2000
+circuit_cache_enabled = true
+parallel_proving = true
+verification_threads = 8
+
+[identity_config]
+auto_citizenship = true
+ubi_registration = true
+dao_auto_join = true
+recovery_modes = ["mnemonic", "social", "hardware"]
+reputation_enabled = true
+
+[storage_config]
+dht_port = 33444  # Mainnet DHT port
+storage_capacity_gb = 2000  # Large storage for mainnet
+replication_factor = 3
+erasure_coding = true
+pricing_tier = "cold"  # Cost-effective storage
+
+[network_config]
+mesh_port = 33446  # Mainnet mesh port
+max_peers = 150
+protocols = ["tcp", "bluetooth", "wifi_direct"]
+bootstrap_peers = [
+    "mainnet-seed1.sovereign.net:9333",
+    "mainnet-seed2.sovereign.net:9333"
+]
+long_range_relays = false
+
+[blockchain_config]
+network_id = "zhtp-mainnet"
+chain_id = 1  # MAINNET chain ID
+block_time_seconds = 10
+max_block_size = 2097152  # 2MB blocks
+zk_transactions = true
+smart_contracts = true
+enforce_chain_id = true
+
+[consensus_config]
+consensus_type = "Hybrid"
+dao_enabled = true
+validator_enabled = false  # Storage nodes don't validate
+min_stake = 0
+reward_multipliers = {}
+
+[economics_config]
+ubi_enabled = true
+daily_ubi_amount = 10
+dao_fee_percentage = 2.5
+mesh_rewards = true
+
+[economics_config.token_economics]
+total_supply = 1000000000
+inflation_rate = 2.0
+burn_rate = 1.0
+reward_pool_percentage = 15.0
+
+[protocols_config]
+lib_enabled = true
+zdns_enabled = true
+api_port = 9333  # Mainnet API port
+max_connections = 1000
+request_timeout_ms = 30000
+
+[resource_allocations]
+max_memory_mb = 4096  # 4GB for mainnet storage
+max_cpu_threads = 8
+max_disk_gb = 5000  # 5TB for storage node
+bandwidth_allocation = {}
+
+[integration_settings]
+event_bus_enabled = true
+service_discovery = true
+health_check_interval_ms = 30000
+cross_package_timeouts = {}
+
+[logging]
+level = "info"
+file_logging = true
+console_logging = true
+structured_logging = true
+performance_metrics = true

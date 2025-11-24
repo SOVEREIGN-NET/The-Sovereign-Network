@@ -1,0 +1,75 @@
+# Cargo build configuration for ZHTP
+# Optimizes compilation for different platforms
+
+[build]
+# Use all available CPU cores, but can be overridden with -j flag
+# jobs = 1  # Uncomment for Raspberry Pi / low-memory systems
+
+[target.aarch64-unknown-linux-gnu]
+# Raspberry Pi 3/4/5 (64-bit)
+linker = "aarch64-linux-gnu-gcc"
+
+[target.armv7-unknown-linux-gnueabihf]
+# Raspberry Pi 2/3 (32-bit)
+linker = "arm-linux-gnueabihf-gcc"
+
+# ============================================================================
+# MOBILE TARGETS - Android and iOS
+# ============================================================================
+
+[target.aarch64-linux-android]
+# Android ARM64 (primary target for modern devices)
+# Requires: ANDROID_NDK_HOME environment variable
+# Install: rustup target add aarch64-linux-android
+linker = "aarch64-linux-android21-clang"
+ar = "aarch64-linux-android-ar"
+
+[target.armv7-linux-androideabi]
+# Android ARMv7 (older devices)
+linker = "armv7a-linux-androideabi21-clang"
+ar = "arm-linux-androideabi-ar"
+
+[target.i686-linux-android]
+# Android x86 (emulator)
+linker = "i686-linux-android21-clang"
+ar = "i686-linux-android-ar"
+
+[target.x86_64-linux-android]
+# Android x86_64 (emulator)
+linker = "x86_64-linux-android21-clang"
+ar = "x86_64-linux-android-ar"
+
+[target.aarch64-apple-ios]
+# iOS ARM64 (physical devices - iPhone/iPad)
+# Requires: Xcode with iOS SDK
+# Install: rustup target add aarch64-apple-ios
+# No custom linker needed - uses Apple's toolchain
+
+[target.aarch64-apple-ios-sim]
+# iOS ARM64 Simulator (M1/M2 Macs)
+# Install: rustup target add aarch64-apple-ios-sim
+
+[target.x86_64-apple-ios]
+# iOS x86_64 Simulator (Intel Macs)
+# Install: rustup target add x86_64-apple-ios
+
+[profile.dev]
+# Development builds - fast compilation
+split-debuginfo = "unpacked"  # Faster linking on Linux
+
+[profile.rpi]
+# Raspberry Pi optimized profile
+inherits = "release"
+
+# Reduce memory usage during compilation
+[net]
+git-fetch-with-cli = true  # Use system git instead of built-in (saves memory)
+
+# Registry settings
+[registries.crates-io]
+protocol = "sparse"  # Faster, less memory
+
+# Environment variables for low-memory systems
+[env]
+# Reduce LLVM memory usage
+CARGO_PROFILE_RELEASE_LTO = "false"

@@ -1,0 +1,89 @@
+# Development Node Configuration
+# For testing and development with relaxed security and resource requirements
+# Suitable for: Development, testing, local experiments
+
+# Core Node Settings
+mesh_mode = "Hybrid"
+security_level = "Medium"  # Relaxed for development
+environment = "Development"
+data_directory = "./data/dev-node"
+
+[crypto_config]
+post_quantum_enabled = false  # Faster for development
+dilithium_level = 2  # Lower security for speed
+kyber_level = 512
+hybrid_mode = false
+memory_security = false
+
+[zk_config]
+plonky2_enabled = true
+proof_cache_size = 100  # Small cache for development
+circuit_cache_enabled = false
+parallel_proving = false
+verification_threads = 2
+
+[identity_config]
+auto_citizenship = true
+ubi_registration = true
+dao_auto_join = true
+recovery_modes = ["mnemonic"]
+reputation_enabled = false  # Simplified for development
+
+[storage_config]
+dht_port = 33442
+storage_capacity_gb = 10  # Minimal storage for development
+replication_factor = 1
+erasure_coding = false
+pricing_tier = "hot"
+
+[network_config]
+mesh_port = 33444
+max_peers = 20  # Small network for development
+protocols = ["tcp"]  # TCP only for simplicity
+bootstrap_peers = ["127.0.0.1:9333"]  # Localhost bootstrap
+long_range_relays = false
+
+[blockchain_config]
+network_id = "zhtp-dev"
+block_time_seconds = 2  # Faster blocks for development
+max_block_size = 1048576
+zk_transactions = false  # Simplified for development
+smart_contracts = true
+
+[consensus_config]
+consensus_type = "Hybrid"
+dao_enabled = true
+validator_enabled = false  # Can be enabled for testing
+min_stake = 100  # Lower stake for development
+reward_multipliers = {}
+
+[economics_config]
+ubi_enabled = true
+daily_ubi_amount = 100  # Higher for testing
+dao_fee_percentage = 1.0  # Lower fees for development
+mesh_rewards = false
+
+[economics_config.token_economics]
+total_supply = 1000000
+inflation_rate = 0.0  # No inflation in development
+burn_rate = 0.0
+reward_pool_percentage = 5.0
+
+[protocols_config]
+lib_enabled = true
+zdns_enabled = true
+api_port = 9333
+max_connections = 100
+request_timeout_ms = 10000  # Shorter timeouts for development
+
+[resource_allocations]
+max_memory_mb = 512  # Minimal resources
+max_cpu_threads = 2
+max_disk_gb = 50
+bandwidth_allocation = {}
+
+[integration_settings]
+event_bus_enabled = true
+service_discovery = true
+health_check_interval_ms = 10000  # Frequent checks for development
+cross_package_timeouts = {}

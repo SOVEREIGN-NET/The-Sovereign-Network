@@ -1,0 +1,7 @@
+# Cargo configuration for lib-network
+
+[build]
+# Allow the objc crate's deprecated cargo-clippy cfg check
+# This is needed because objc 0.2.x uses the old #[cfg(feature = "cargo-clippy")] syntax
+# which has been deprecated in favor of the clippy tool attribute
+rustflags = ["--check-cfg=cfg(cargo_clippy)"]

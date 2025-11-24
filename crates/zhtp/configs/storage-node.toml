@@ -1,0 +1,96 @@
+# Mainnet Storage Node Configuration
+# Optimized for distributed storage services and DHT participation on MAINNET
+# Suitable for: Production storage providers, -like services, data availability
+
+# Core Node Settings
+mesh_mode = "Hybrid"
+security_level = "High"
+environment = "Mainnet"
+data_directory = "./data/mainnet-storage"  # Mainnet-specific directory
+
+[crypto_config]
+post_quantum_enabled = true
+dilithium_level = 3
+kyber_level = 768
+hybrid_mode = true
+memory_security = true
+
+[zk_config]
+plonky2_enabled = true
+proof_cache_size = 1500  # Moderate cache for storage nodes
+circuit_cache_enabled = true
+parallel_proving = false  # Conserve CPU for storage operations
+verification_threads = 4
+
+[identity_config]
+auto_citizenship = true
+ubi_registration = true
+dao_auto_join = true
+recovery_modes = ["mnemonic", "biometric"]
+reputation_enabled = true
+
+[storage_config]
+dht_port = 33442
+# Storage allocation for dedicated storage nodes:
+blockchain_storage_gb = 500      # Blockchain data (full history)
+hosted_storage_gb = 5000         # LARGE hosted storage (primary purpose)
+personal_storage_gb = 0          # Personal files (unlimited, not counted)
+# Legacy field (backward compatibility):
+storage_capacity_gb = 5000  # LARGE storage capacity - primary purpose
+replication_factor = 3
+erasure_coding = true
+pricing_tier = "cold"  # Optimized for bulk storage
+
+[network_config]
+mesh_port = 33444
+max_peers = 100  # Moderate peer count, focus on storage
+protocols = ["tcp", "bluetooth", "wifi_direct"]
+bootstrap_peers = ["100.94.204.6:9333", "storage.sovereign.net:9333"]
+long_range_relays = false
+
+[blockchain_config]
+network_id = "zhtp-mainnet"
+chain_id = 1  # Mainnet chain ID
+block_time_seconds = 5
+max_block_size = 1048576  # Smaller blocks, focus on storage
+zk_transactions = true
+smart_contracts = false  # Disable smart contracts to save resources
+enforce_chain_id = true  # CRITICAL: Prevent testnet tx replay
+
+[consensus_config]
+consensus_type = "Hybrid"
+dao_enabled = true
+validator_enabled = false  # Storage nodes don't validate
+min_stake = 1000
+reward_multipliers = { "storage" = 3.0 }  # High storage rewards
+
+[economics_config]
+ubi_enabled = true
+daily_ubi_amount = 50
+dao_fee_percentage = 2.0
+mesh_rewards = true
+
+[economics_config.token_economics]
+total_supply = 1000000000
+inflation_rate = 2.0
+burn_rate = 1.0
+reward_pool_percentage = 20.0  # Higher rewards for storage provision
+
+[protocols_config]
+lib_enabled = true
+zdns_enabled = true
+api_port = 9333
+max_connections = 1000
+request_timeout_ms = 45000  # Longer timeouts for storage operations
+
+[resource_allocations]
+max_memory_mb = 2048  # Moderate RAM, more disk I/O focused
+max_cpu_threads = 8
+max_disk_gb = 10000  # LARGE disk allocation
+bandwidth_allocation = { "storage" = 2000000, "dht" = 1000000 }
+
+[integration_settings]
+event_bus_enabled = true
+service_discovery = true
+health_check_interval_ms = 60000  # Less frequent checks, focus on storage
+cross_package_timeouts = { "storage" = 30000, "dht" = 25000 }

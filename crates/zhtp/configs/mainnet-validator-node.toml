@@ -1,0 +1,101 @@
+# Mainnet Validator Node Configuration
+# Optimized for consensus participation and block validation on MAINNET
+# Suitable for: Production validators, staked validators, mainnet consensus
+
+# Core Node Settings
+mesh_mode = "Hybrid"
+security_level = "Maximum"  # CRITICAL: Maximum security for mainnet
+environment = "Production"
+data_directory = "./data/mainnet-validator"
+
+[crypto_config]
+post_quantum_enabled = true
+dilithium_level = 5  # MAXIMUM security for mainnet
+kyber_level = 1024   # MAXIMUM security for mainnet
+hybrid_mode = true
+memory_security = true
+
+[zk_config]
+plonky2_enabled = true
+proof_cache_size = 5000  # Large cache for mainnet production
+circuit_cache_enabled = true
+parallel_proving = true
+verification_threads = 16  # More threads for production
+
+[identity_config]
+auto_citizenship = true
+ubi_registration = true
+dao_auto_join = true
+recovery_modes = ["mnemonic", "social", "hardware"]  # All recovery options
+reputation_enabled = true
+
+[storage_config]
+dht_port = 33444  # Mainnet DHT port
+storage_capacity_gb = 500  # Higher storage for mainnet validators
+replication_factor = 3     # Higher replication for production
+erasure_coding = true
+pricing_tier = "hot"  # Fast storage for validators
+
+[network_config]
+mesh_port = 33446  # Mainnet mesh port
+max_peers = 200    # Higher peer count for mainnet
+protocols = ["tcp", "bluetooth", "wifi_direct"]
+bootstrap_peers = [
+    "mainnet-seed1.sovereign.net:9333",
+    "mainnet-seed2.sovereign.net:9333"
+]
+long_range_relays = true
+
+[blockchain_config]
+network_id = "zhtp-mainnet"
+chain_id = 1  # MAINNET chain ID
+block_time_seconds = 10  # Slower for security
+max_block_size = 2097152  # 2MB blocks for mainnet
+zk_transactions = true
+smart_contracts = true
+enforce_chain_id = true  # CRITICAL: Prevent testnet tx replay
+
+[consensus_config]
+consensus_type = "Hybrid"
+dao_enabled = true
+validator_enabled = true  # THIS IS A VALIDATOR
+min_stake = 10000  # High stake requirement for mainnet
+reward_multipliers = {}
+
+[economics_config]
+ubi_enabled = true
+daily_ubi_amount = 10  # Lower UBI for mainnet economics
+dao_fee_percentage = 2.5  # Standard fees for mainnet
+mesh_rewards = true
+
+[economics_config.token_economics]
+total_supply = 1000000000
+inflation_rate = 2.0  # Lower inflation for mainnet
+burn_rate = 1.0
+reward_pool_percentage = 15.0
+
+[protocols_config]
+lib_enabled = true
+zdns_enabled = true
+api_port = 9333  # Mainnet API port
+max_connections = 2000
+request_timeout_ms = 30000
+
+[resource_allocations]
+max_memory_mb = 8192  # 8GB for mainnet validator
+max_cpu_threads = 16
+max_disk_gb = 2000  # 2TB for mainnet
+bandwidth_allocation = {}
+
+[integration_settings]
+event_bus_enabled = true
+service_discovery = true
+health_check_interval_ms = 30000
+cross_package_timeouts = {}
+
+[logging]
+level = "info"  # Production logging
+file_logging = true
+console_logging = true
+structured_logging = true
+performance_metrics = true

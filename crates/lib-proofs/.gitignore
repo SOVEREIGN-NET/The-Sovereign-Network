@@ -1,0 +1,10 @@
+/target
+
+# Build artifacts
+target/
+Cargo.lock
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb

@@ -1,0 +1,45 @@
+[package]
+name = "lib-consensus"
+version = "0.1.0"
+edition = "2021"
+authors = ["ZHTP Developers"]
+description = "ZHTP Consensus Engine - Multi-layered consensus with PoS, PoStorage, PoUW, and Byzantine Fault Tolerance"
+license = "MIT"
+
+[dependencies]
+# Core dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tokio = { version = "1.0", features = ["full"] }
+rand = "0.8"
+hex = "0.4"
+
+# ZHTP package dependencies
+lib-crypto = { path = "../lib-crypto" }
+lib-identity = { path = "../lib-identity" }
+# lib-storage = { path = "../lib-storage" }  # TODO: Implement storage module
+lib-proofs = { path = "../lib-proofs" }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Collections and data structures
+indexmap = "1.9"
+dashmap = "5.4"
+
+[dev-dependencies]
+tokio-test = "0.4"
+proptest = "1.0"
+tracing-subscriber = "0.3"
+
+[features]
+default = ["full"]
+full = ["dao", "byzantine", "rewards", "ubi"]
+dao = []
+byzantine = []
+rewards = []
+ubi = []
+testing = []

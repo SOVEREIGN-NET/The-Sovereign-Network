@@ -1,0 +1,11 @@
+# Bootstrap configuration for Mac to connect to Windows node
+# Use this on the Mac: ./target/debug/zhtp node start --config configs/mac-bootstrap.toml
+
+[network]
+bootstrap_peers = ["192.168.1.245:9333"]
+mesh_port = 9333
+
+[discovery]
+# Still enable multicast in case router gets fixed
+enable_multicast = true
+multicast_interval_secs = 30

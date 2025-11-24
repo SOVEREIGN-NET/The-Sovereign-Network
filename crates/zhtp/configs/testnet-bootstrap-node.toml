@@ -1,0 +1,249 @@
+# Testnet Bootstrap Node Configuration
+# Purpose: Public seed node for testnet network discovery
+# Role: Accept incoming connections from testnet nodes, provide peer discovery
+# Note: Testnet has relaxed resource requirements for easier testing
+
+mesh_mode = "Hybrid"
+security_level = "High"  # High but not maximum (easier for testing)
+environment = "Testnet"
+data_directory = "./data/testnet-bootstrap"
+
+[node]
+name = "TestnetBootstrap"
+description = "ZHTP Testnet Bootstrap Seed Node"
+mesh_port = 33445  # Different from mainnet (33444)
+api_port = 9334    # Different from mainnet (9333)
+public_node = true  # Accept all incoming connections
+advertise_externally = true
+max_peers = 200     # Lower than mainnet (500)
+
+# Moderate resource requirements for testnet
+min_ram_mb = 2048
+min_storage_gb = 50
+min_cpu_cores = 2
+
+[blockchain_config]
+network_id = "zhtp-testnet"
+chain_id = 2  # Testnet chain ID
+enforce_chain_id = true  # CRITICAL: Prevent mainnet tx on testnet
+
+# Blockchain settings (faster than mainnet for testing)
+block_time_seconds = 5  # Faster blocks for testing
+max_block_size = 2097152  # 2MB
+max_transactions_per_block = 4096
+
+# Features
+zk_transactions = true
+smart_contracts = true
+ubi_enabled = true
+dao_enabled = true
+
+# Bootstrap nodes don't validate
+validator_enabled = false
+mining_enabled = false
+
+# Storage services
+storage_node = true
+storage_capacity_gb = 50
+replication_factor = 2  # Lower replication for testnet
+
+[network_config]
+# Bootstrap nodes are the first peers
+bootstrap_peers = []
+
+# Network addresses to advertise
+# NOTE: Replace with actual DNS/IP before deployment
+advertise_address = "testnet-seed1.sovereign.net:9334"
+external_ip = "0.0.0.0"
+
+# Network protocols
+protocols = ["tcp", "quic"]
+mesh_port = 33445
+max_peers = 200
+min_peers = 5
+target_peers = 50
+
+# Connection settings
+connection_timeout_seconds = 30
+heartbeat_interval_seconds = 60
+peer_discovery_interval_seconds = 300
+
+# NAT traversal
+upnp_enabled = true
+nat_pmp_enabled = true
+
+# Long-range relay
+long_range_relays = false  # Not needed for testnet
+
+[security]
+security_level = "High"  # Not "Maximum" for easier testing
+
+# Post-quantum cryptography (moderate level)
+dilithium_level = 3     # CRYSTALS-Dilithium Level 3 (moderate security)
+kyber_level = 768       # Kyber-768 (moderate security)
+
+# Signature verification
+require_signatures = true
+verify_all_transactions = true
+verify_all_blocks = true
+
+# Rate limiting (more relaxed for testing)
+rate_limit_enabled = true
+max_requests_per_second = 500
+max_connections_per_ip = 20
+ban_duration_minutes = 30
+
+# Firewall rules
+allow_incoming = true
+allow_outgoing = true
+whitelist_enabled = false
+blacklist_enabled = true
+
+[consensus]
+consensus_mode = "Observer"
+sync_mode = "Full"
+pruning_enabled = false
+
+[storage]
+storage_backend = "RocksDB"
+data_directory = "./data/testnet-bootstrap"
+
+# Storage paths
+blockchain_db = "./data/testnet-bootstrap/blockchain"
+wallet_db = "./data/testnet-bootstrap/wallets"
+identity_db = "./data/testnet-bootstrap/identities"
+state_db = "./data/testnet-bootstrap/state"
+contracts_db = "./data/testnet-bootstrap/contracts"
+
+# Performance settings (lower than mainnet)
+cache_size_mb = 1024
+write_buffer_mb = 256
+max_open_files = 500
+
+# Backup settings
+auto_backup_enabled = true
+backup_interval_hours = 24
+backup_retention_days = 3  # Shorter retention for testnet
+
+[api]
+enabled = true
+host = "0.0.0.0"
+port = 9334  # Testnet API port
+
+# API endpoints
+enable_blockchain_api = true
+enable_wallet_api = true
+enable_identity_api = true
+enable_storage_api = true
+enable_metrics_api = true
+enable_faucet_api = true  # TESTNET ONLY: Faucet for free tokens
+
+# CORS
+cors_enabled = true
+cors_origins = ["*"]
+
+# Rate limiting (relaxed)
+api_rate_limit = 200
+api_burst_limit = 400
+
+[logging]
+log_level = "Debug"  # More verbose for testnet
+log_file = "./logs/testnet-bootstrap.log"
+log_rotation = "Daily"
+log_retention_days = 7
+
+# Detailed logging
+log_peer_connections = true
+log_transactions = true  # Enabled for testnet debugging
+log_blocks = true
+log_api_requests = true
+
+[metrics]
+enabled = true
+prometheus_port = 9092  # Different from mainnet (9090)
+metrics_interval_seconds = 60
+
+# Health checks
+health_check_enabled = true
+health_check_port = 9093  # Different from mainnet (9091)
+health_check_interval_seconds = 30
+
+[economic]
+# Universal Basic Income (higher for testing)
+ubi_enabled = true
+ubi_amount_per_day = 50  # 50 ZHTP per day (testnet rate - more generous)
+ubi_distribution_hour = 0
+
+# DAO participation
+dao_enabled = true
+dao_voting_enabled = true
+dao_proposal_enabled = true
+
+# Testnet faucet settings
+faucet_enabled = true
+faucet_amount = 1000  # 1000 ZHTP per request
+faucet_cooldown_hours = 1
+faucet_max_per_address = 10000
+
+[web4]
+web4_enabled = true
+web4_port = 8081  # Different from mainnet (8080)
+web4_storage_enabled = true
+_gateway_enabled = false
+
+[mesh]
+mesh_mode = "Hybrid"
+mesh_protocols = ["tcp", "quic"]
+mesh_encryption = true
+
+# Bluetooth and WiFi Direct disabled for server
+bluetooth_enabled = false
+wifi_direct_enabled = false
+
+#  features (testing)
+tor_integration = false
+i2p_integration = false
+
+[maintenance]
+# Automatic updates (more aggressive for testnet)
+auto_update_enabled = true  # Auto-update for testnet
+update_check_interval_hours = 6
+
+# Resource monitoring
+monitor_resources = true
+max_cpu_percent = 85
+max_memory_percent = 90
+max_disk_percent = 95
+
+# Automatic cleanup
+auto_cleanup_enabled = true
+cleanup_interval_days = 3
+keep_blocks = 0  # Keep all blocks
+
+[advanced]
+# Thread pool sizes (smaller for testnet)
+worker_threads = 4
+blocking_threads = 8
+
+# Network buffer sizes
+send_buffer_kb = 512
+recv_buffer_kb = 512
+
+# Consensus parameters
+block_validation_threads = 2
+transaction_validation_threads = 4
+
+# Zero-knowledge proof settings
+zk_proof_threads = 2
+proof_cache_size_mb = 512
+
+[testing]
+# TESTNET-SPECIFIC: Testing and debugging features
+penetration_testing_mode = true
+allow_test_transactions = true
+skip_pow_validation = false  # Still validate PoW
+reset_on_error = false
+
+# Stress testing
+stress_test_mode = false
+max_test_transactions = 10000

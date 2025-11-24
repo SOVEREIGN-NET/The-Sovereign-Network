@@ -1,0 +1,124 @@
+# Mainnet Edge Node Configuration  
+# Optimized for mesh networking and  on MAINNET
+# Suitable for: Production mesh relays, rural connectivity, censorship resistance
+
+# Core Node Settings
+mesh_mode = "PureMesh"  #  mode
+security_level = "High"
+environment = "Mainnet"
+data_directory = "./data/mainnet-edge"  # Mainnet-specific directory
+
+[crypto_config]
+post_quantum_enabled = true
+dilithium_level = 3
+kyber_level = 768
+hybrid_mode = true
+memory_security = true
+
+[zk_config]
+plonky2_enabled = true
+proof_cache_size = 500  # Small cache for edge nodes
+circuit_cache_enabled = false  # Conserve resources
+parallel_proving = false
+verification_threads = 2
+
+[identity_config]
+auto_citizenship = true
+ubi_registration = true
+dao_auto_join = true
+recovery_modes = ["mnemonic"]  # Simple recovery for edge nodes
+reputation_enabled = true
+
+[storage_config]
+dht_port = 33442
+# Storage allocation for edge nodes (constrained devices):
+blockchain_storage_gb = 20      # Blockchain data (headers only + selective data)
+hosted_storage_gb = 0           # Don't host data for others (edge node marker)
+personal_storage_gb = 0         # Personal files (not used for edge detection)
+# Legacy field (backward compatibility):
+storage_capacity_gb = 20
+replication_factor = 2
+erasure_coding = false  # Conserve CPU
+pricing_tier = "warm"
+
+[network_config]
+mesh_port = 33444
+max_peers = 50  # Optimized for mesh routing
+protocols = ["bluetooth_le", "wifi_direct", "lorawan"]  # BLE only (not classic) - Pure mesh
+bootstrap_peers = []  # Mesh discovery only
+long_range_relays = true  # CRITICAL for pure mesh mode
+
+# Protocol-specific settings
+[network_config.bluetooth]
+use_classic = false        #  Classic too power-hungry for edge nodes
+use_ble = true            #  BLE only - battery-efficient
+ble_advertising = true    # Beacon mode for discovery
+ble_scan_interval_ms = 1000  # Scan every 1 second
+
+# Bandwidth management strategy
+[network_config.bandwidth_management]
+prefer_low_power = true    # Prefer BLE over WiFi when possible
+auto_protocol_switch = true  # Automatically switch to WiFi for large transfers
+large_transfer_threshold = 102400  # Switch to WiFi for >100KB transfers
+sync_via_wifi_only = true  # Use WiFi Direct for blockchain sync
+
+# Edge node optimization - don't need full blocks
+[network_config.sync_strategy]
+headers_only = true        # Only sync block headers via BLE
+selective_tx_download = true  # Only download transactions we need
+lazy_dht_loading = true    # Load DHT content on-demand
+
+[blockchain_config]
+network_id = "zhtp-mainnet"
+chain_id = 1  # Mainnet chain ID
+block_time_seconds = 5
+max_block_size = 524288  # Smaller blocks for bandwidth efficiency
+zk_transactions = true
+smart_contracts = false  # Conserve resources
+enforce_chain_id = true  # CRITICAL: Prevent testnet tx replay
+
+[consensus_config]
+consensus_type = "Hybrid"
+dao_enabled = true
+validator_enabled = false  # Edge nodes don't validate
+min_stake = 1000
+reward_multipliers = { "routing" = 2.0 }  # High routing rewards
+
+[economics_config]
+ubi_enabled = true
+daily_ubi_amount = 50
+dao_fee_percentage = 2.0
+mesh_rewards = true  # IMPORTANT for mesh incentives
+
+[economics_config.token_economics]
+total_supply = 1000000000
+inflation_rate = 2.0
+burn_rate = 1.0
+reward_pool_percentage = 25.0  # Highest rewards for mesh infrastructure
+
+[protocols_config]
+lib_enabled = true
+zdns_enabled = true
+api_port = 9333
+max_connections = 500  # Lower connection limit
+request_timeout_ms = 60000  # Longer timeouts for mesh routing
+
+[resource_allocations]
+max_memory_mb = 1024  # Minimal RAM for edge devices
+max_cpu_threads = 4
+max_disk_gb = 200
+bandwidth_allocation = { "routing" = 1500000, "mesh" = 1000000 }
+
+[integration_settings]
+event_bus_enabled = true
+service_discovery = true
+health_check_interval_ms = 45000
+cross_package_timeouts = { "network" = 20000, "routing" = 15000 }
+
+#  specific settings
+[isp_bypass_config]
+enabled = true
+prefer_mesh_routes = true
+fallback_to_internet = false  # Pure mesh - no fallback
+long_range_relay_timeout_ms = 15000
+mesh_route_priority = 255  # Maximum preference for mesh routes

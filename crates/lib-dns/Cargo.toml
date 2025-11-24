@@ -1,0 +1,17 @@
+[package]
+name = "rlibdns"
+version = "0.1.1"
+edition = "2021"
+authors = ["DrBrad <brad@bradeagle.com>"]
+description = "Rust DNS Library"
+license = "MIT"
+repository = "https://github.com/ethernaught/rlibdns"
+readme = "README.md"
+keywords = ["dns", "resolver"]
+categories = ["network-programming", "command-line-utilities"]
+
+[dependencies]
+
+[lib]
+name = "rlibdns"
+path = "src/lib.rs"
