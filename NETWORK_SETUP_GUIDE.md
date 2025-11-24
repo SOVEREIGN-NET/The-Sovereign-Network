@@ -19,14 +19,14 @@
 **Node 1 (Bootstrap Validator):**
 ```powershell
 $env:ZHTP_AUTO_WALLET="1"
-cd H:\SOV-NET\sovereign-mono-repo
+cd sovereign-mono-repo
 .\target\release\zhtp.exe node start --config crates\zhtp\configs\test-node1.toml
 ```
 
 **Node 2 (Secondary Validator):**
 ```powershell
 $env:ZHTP_AUTO_WALLET="1"
-cd H:\SOV-NET\sovereign-mono-repo
+cd sovereign-mono-repo
 .\target\release\zhtp.exe node start --config crates\zhtp\configs\test-node2.toml
 ```
 
@@ -86,7 +86,7 @@ bootstrap_peers = ["127.0.0.1:9001", "localhost:9001"]
 
 ```bash
 # Build release version
-cd H:\SOV-NET\sovereign-mono-repo
+cd sovereign-mono-repo
 cargo build --release -p zhtp
 
 # Executables created:

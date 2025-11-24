@@ -46,13 +46,13 @@ https://gitea-server.tail80f6f6.ts.net/Scasino983/sov-net.git
 
 **Main Repository:**
 ```bash
-cd H:\SOV-NET\sovereign-mono-repo
+cd sovereign-mono-repo
 git push origin main
 ```
 
 **ZHTP Submodule** (requires separate push):
 ```bash
-cd H:\SOV-NET\sovereign-mono-repo\crates\zhtp
+cd sovereign-mono-repo/crates/zhtp
 git push origin peters
 ```
 
