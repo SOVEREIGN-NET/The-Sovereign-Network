@@ -1,0 +1,29 @@
+# Rust build artifacts
+/target/
+**/target/
+Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Debug files
+*.pdb
+
+# Backup files
+*.bak
+*.backup
+
+# Log files
+*.log
+
+# Test artifacts
+*.profraw
+*.profdata
