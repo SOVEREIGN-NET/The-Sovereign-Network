@@ -27,3 +27,8 @@ Thumbs.db
 # Test artifacts
 *.profraw
 *.profdata
+
+# Runtime data
+data/
+problems
+Node_print.txt
