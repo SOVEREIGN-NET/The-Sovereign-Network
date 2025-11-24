@@ -1,0 +1,107 @@
+DHT IMPLEMENTATION (7 Issues)
+Most of these issues have correct code, just not plugged in the correct place(lib-network). Such as the kademlia routing tables, which are in lib-storage. The real problem of these issues stems from using the dht in lib-network instead of lib-storage.
+ 
+ 
+No Kademlia routing table
+Location: lib-network/src/dht/mod.rs Lines 117-150
+Problem: The DhtService only has simple Vec<PeerInfo>. No k-bucket structure, no XOR distance metric, no proper Kademlia node organization.
+Fix Required:
+Create KademliaRoutingTable with 256 k-buckets
+Implement XOR distance calculation
+Add bucket management (insertion, eviction, ping)
+Implement closest node lookup
+Estimated Effort: 20-25 hours
+
+Note: this logic already exists in lib-storage, just not correctly plugged in.
+FindNode returns random peers
+Location: zhtp/src/server/mesh/udp_handler.rs Lines 915-940
+Problem: The handle_dht_find_node() just returns first 20 connected peers (connections.iter().take(20)) instead of calculating XOR distance and returning closest nodes.
+Fix Required: Calculate XOR distance to target, sort peers by distance, return k closest nodes. Integrate with Kademlia routing table.
+
+ No DHT content storage
+Location: dht (missing storage.rs)
+Problem: No DHT storage implementation. Can't store key-value pairs, no replication tracking, no TTL management, no caching.
+Fix Required:
+Create DhtStorage with key-value map
+Implement TTL/expiration tracking
+Add replication to k closest nodes
+Implement local caching of retrieved values
+Add storage quota enforcement
+No iterative lookup algorithm
+Location: Entire DHT implementation (missing feature)
+Problem: No recursive/iterative Kademlia lookup. When searching for key, should query α (3) closest nodes in parallel, discover closer nodes, and iteratively narrow search.
+Fix Required:
+Create IterativeLookup state machine
+Implement parallel queries with α parallelism
+Track queried nodes to avoid loops
+Stop when k closest are all queried
+Return k closest nodes found
+Estimated Effort: 15-20 hours
+No republishing mechanism
+Location: Entire DHT implementation (missing feature)
+Problem: DHT content expires without republishing. No background task to refresh stored data before TTL expires.
+Fix Required:
+Create background republishing task
+Track data expiration times
+Republish data hourly (or based on TTL)
+Replicate to new closest nodes as network changes
+Blockchain doesn't index DHT content
+Location: core.rs
+Problem: No DhtPublish transaction type. DHT content isn't anchored to blockchain, no proof of publication time, no on-chain content index.
+Fix Required:
+Add DhtPublish transaction type with content_hash, dht_key, metadata, replication_nodes
+Implement transaction validation
+Create blockchain query for DHT content lookup
+Add indexing for efficient searches
+No DHT content verification
+Location: Entire DHT implementation (missing feature)
+Problem: When retrieving content from DHT, no verification that content matches key hash, no signature verification, no blockchain proof validation. Malicious nodes can return fake data.
+Fix Required:
+Verify hash(content) == key
+Verify publisher signature
+Check blockchain anchor/proof
+Implement content authenticity scoring
+ 
+
+
+ BLE EDGE NODE SYNC (6 Issues)
+ Headers received but never stored
+Location: zhtp/src/server/protocols/bluetooth_le.rs Lines 244-260
+Problem: When GattMessage::HeadersResponse is received, code only logs the event. Headers aren't stored in blockchain structure, validated, or used to request next batch.
+Fix Required: Implement header storage, validation, and progressive sync. Store headers in edge blockchain structure, validate chain continuity, request next batch automatically.
+
+No edge blockchain implementation
+Location: src (missing edge_node.rs)
+Problem: No specialized blockchain for edge nodes that stores only headers (not full blocks), maintains limited memory footprint, tracks monitored addresses, and stores relevant UTXOs.
+Fix Required: Create EdgeNodeBlockchain struct with: header storage, memory limits, address monitoring, UTXO tracking, SPV verification support.
+
+Missing SPV proof system
+Location: lib-blockchain/src/validation/ (missing spv.rs)
+Problem: No Simplified Payment Verification implementation. Edge nodes can't verify transactions are in blocks without downloading full blocks. No merkle proof generation or verification.
+Fix Required:
+Create MerkleProof structure
+Implement merkle root computation
+Add proof generation for full nodes
+Add proof verification for edge nodes
+Extend GATT protocol with proof request/response
+BLE message chunking not handled
+Location: zhtp/src/server/protocols/bluetooth_le.rs Lines 180-200
+Problem: The send_gatt_message() serializes and sends messages without considering BLE's 512-byte MTU limit. Large HeadersResponse messages fail silently.
+Fix Required: Implement message chunking for BLE MTU. Split large messages into <512 byte chunks, add reassembly on receive, handle partial message tracking.
+
+No address monitoring system
+Location: lib-network/src/blockchain_sync/edge_node_sync.rs Lines 1-50
+Problem: The EdgeNodeSyncManager has no mechanism to register wallet addresses to monitor. Edge nodes can't subscribe to notifications when transactions affecting their addresses appear.
+Fix Required: Add address registration, transaction filtering, notification callbacks. Integrate with header sync to scan for relevant transactions.
+No battery/resource management
+Location: Entire BLE implementation (missing feature)
+Problem: No battery level tracking or sync frequency adjustment. Edge nodes sync continuously regardless of power state, draining mobile batteries.
+Fix Required:
+Add battery level monitoring
+Implement adaptive sync frequency (5min low battery, 30sec normal)
+Add user-configurable power modes
+Throttle sync based on device state
+ 
+
+
+ 
