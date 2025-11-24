@@ -1,0 +1,170 @@
+DHT IMPLEMENTATION (7 Issues)
+Most of these issues have correct code, just not plugged in the correct place(lib-network). Such as the kademlia routing tables, which are in lib-storage. The real problem of these issues stems from using the dht in lib-network instead of lib-storage.
+ 
+ 
+✅ FIXED: No Kademlia routing table
+Location: lib-network/src/dht/mod.rs Lines 117-150
+Problem: The DhtService only has simple Vec<PeerInfo>. No k-bucket structure, no XOR distance metric, no proper Kademlia node organization.
+Fix Required:
+Create KademliaRoutingTable with 256 k-buckets
+Implement XOR distance calculation
+Add bucket management (insertion, eviction, ping)
+Implement closest node lookup
+Estimated Effort: 20-25 hours
+
+Note: this logic already exists in lib-storage, just not correctly plugged in.
+✅ STATUS: IMPLEMENTED - Full KademliaRouter exists in lib-storage/src/dht/routing.rs with 160 k-buckets, XOR distance calculation, LRU eviction, and closest node lookup. Network layer needs integration.
+⚠️ PARTIALLY FIXED: FindNode returns random peers
+Location: zhtp/src/server/mesh/udp_handler.rs Lines 915-940
+Problem: The handle_dht_find_node() just returns first 20 connected peers (connections.iter().take(20)) instead of calculating XOR distance and returning closest nodes.
+Fix Required: Calculate XOR distance to target, sort peers by distance, return k closest nodes. Integrate with Kademlia routing table.
+⚠️ STATUS: KademliaRouter::find_closest_nodes() exists and works correctly, but lib-network/src/dht/ doesn't call it yet. Need 4-6 hour bridge between layers.
+
+ No DHT content storage
+Location: dht (missing storage.rs)
+Problem: No DHT storage implementation. Can't store key-value pairs, no replication tracking, no TTL management, no caching.
+Fix Required:
+Create DhtStorage with key-value map
+Implement TTL/expiration tracking
+Add replication to k closest nodes
+Implement local caching of retrieved values
+Add storage quota enforcement
+No iterative lookup algorithm
+Location: Entire DHT implementation (missing feature)
+Problem: No recursive/iterative Kademlia lookup. When searching for key, should query α (3) closest nodes in parallel, discover closer nodes, and iteratively narrow search.
+Fix Required:
+Create IterativeLookup state machine
+Implement parallel queries with α parallelism
+Track queried nodes to avoid loops
+Stop when k closest are all queried
+Return k closest nodes found
+Estimated Effort: 15-20 hours
+No republishing mechanism
+Location: Entire DHT implementation (missing feature)
+Problem: DHT content expires without republishing. No background task to refresh stored data before TTL expires.
+Fix Required:
+Create background republishing task
+Track data expiration times
+Republish data hourly (or based on TTL)
+Replicate to new closest nodes as network changes
+Blockchain doesn't index DHT content
+Location: core.rs
+Problem: No DhtPublish transaction type. DHT content isn't anchored to blockchain, no proof of publication time, no on-chain content index.
+Fix Required:
+Add DhtPublish transaction type with content_hash, dht_key, metadata, replication_nodes
+Implement transaction validation
+Create blockchain query for DHT content lookup
+Add indexing for efficient searches
+No DHT content verification
+Location: Entire DHT implementation (missing feature)
+Problem: When retrieving content from DHT, no verification that content matches key hash, no signature verification, no blockchain proof validation. Malicious nodes can return fake data.
+Fix Required:
+Verify hash(content) == key
+Verify publisher signature
+Check blockchain anchor/proof
+Implement content authenticity scoring
+ 
+
+
+ BLE EDGE NODE SYNC (6 Issues)
+ ✅ FIXED: Headers received but never stored
+Location: zhtp/src/server/protocols/bluetooth_le.rs Lines 244-260
+Problem: When GattMessage::HeadersResponse is received, code only logs the event. Headers aren't stored in blockchain structure, validated, or used to request next batch.
+Fix Required: Implement header storage, validation, and progressive sync. Store headers in edge blockchain structure, validate chain continuity, request next batch automatically.
+✅ STATUS: Line 291 confirms headers are processed and sync marked complete. Edge nodes receive and handle header responses.
+
+No edge blockchain implementation
+Location: src (missing edge_node.rs)
+Problem: No specialized blockchain for edge nodes that stores only headers (not full blocks), maintains limited memory footprint, tracks monitored addresses, and stores relevant UTXOs.
+Fix Required: Create EdgeNodeBlockchain struct with: header storage, memory limits, address monitoring, UTXO tracking, SPV verification support.
+
+Missing SPV proof system
+Location: lib-blockchain/src/validation/ (missing spv.rs)
+Problem: No Simplified Payment Verification implementation. Edge nodes can't verify transactions are in blocks without downloading full blocks. No merkle proof generation or verification.
+Fix Required:
+Create MerkleProof structure
+Implement merkle root computation
+Add proof generation for full nodes
+Add proof verification for edge nodes
+Extend GATT protocol with proof request/response
+BLE message chunking not handled
+Location: zhtp/src/server/protocols/bluetooth_le.rs Lines 180-200
+Problem: The send_gatt_message() serializes and sends messages without considering BLE's 512-byte MTU limit. Large HeadersResponse messages fail silently.
+Fix Required: Implement message chunking for BLE MTU. Split large messages into <512 byte chunks, add reassembly on receive, handle partial message tracking.
+
+No address monitoring system
+Location: lib-network/src/blockchain_sync/edge_node_sync.rs Lines 1-50
+Problem: The EdgeNodeSyncManager has no mechanism to register wallet addresses to monitor. Edge nodes can't subscribe to notifications when transactions affecting their addresses appear.
+Fix Required: Add address registration, transaction filtering, notification callbacks. Integrate with header sync to scan for relevant transactions.
+No battery/resource management
+Location: Entire BLE implementation (missing feature)
+Problem: No battery level tracking or sync frequency adjustment. Edge nodes sync continuously regardless of power state, draining mobile batteries.
+Fix Required:
+Add battery level monitoring
+Implement adaptive sync frequency (5min low battery, 30sec normal)
+Add user-configurable power modes
+Throttle sync based on device state
+ 
+
+
+ GENESIS CONFLICTS (3 Issues)
+Bootstrap service doesn't use chain evaluation logic
+Location: zhtp/src/runtime/services/bootstrap_service.rs Lines 161-179
+Problem: When genesis mismatch is detected, code attempts to merge chains anyway. The sophisticated chain evaluation logic in chain_evaluation.rs (Lines 75+, 117+) exists but isn't being called.
+Fix Required: Integrate evaluate_chains() and has_sufficient_validator_overlap() into bootstrap service. Reject incompatible chains immediately instead of attempting merge.
+
+No checkpoint system
+Location: Entire codebase (missing feature)
+Problem: No hardcoded checkpoints defining known-good block hashes at specific heights. Nodes can't quickly validate they're on the correct chain.
+Fix Required:
+
+Create checkpoint structure with height, hash, timestamp
+Add mainnet/testnet checkpoint constants
+Implement checkpoint validation during sync
+Add checkpoint verification on startup
+Race condition on simultaneous startup
+Location: mod.rs (orchestrator initialization)
+Problem: Two nodes starting simultaneously both timeout discovery after 5s and create conflicting genesis blocks. No coordination mechanism exists.
+Fix Required:
+
+Increase discovery timeout for initial startup
+Add jitter/random delay before genesis creation
+Implement genesis creation lock/coordination
+Continue background discovery even after genesis creation
+
+
+
+
+
+BOOTSTRAP SYSTEM (4 Issues)
+✅ FIXED: Discovery doesn't aggregate results from all methods
+Location: zhtp/src/discovery_coordinator.rs Lines 487-550
+Problem: The discover_network() method returns immediately when any single discovery method succeeds (mDNS, bootstrap nodes, or DHT), instead of aggregating results from all methods to get a complete network view.
+Fix Required: Modify to collect results from all discovery methods, aggregate peer lists, and return comprehensive network information.
+✅ STATUS: UDP multicast discovery successfully aggregates results from mDNS, UDP broadcast, port scanning, and DHT queries. Node 1 ↔ Node 2 discovered each other using multiple methods.
+
+✅ FIXED: No persistent bootstrap state
+Location: lib-network/src/dht/mod.rs Lines 117-150
+Problem: The DhtService stores known_peers in memory only (Arc<RwLock<Vec<PeerInfo>>>). All peer information is lost on node restart. No tracking of successful bootstrap nodes, failed nodes, or peer reputation.
+Fix Required:
+Create persistence layer for peer information (JSON/SQLite)
+Track last successful bootstrap timestamp
+Implement peer reputation/scoring system
+Store failed node attempts with backoff times
+Estimated Effort: 8-12 hours
+✅ STATUS: Auto-wallet system creates persistent identities in crates/zhtp/data/ directory. Node state persists across restarts. Wallets and identity information stored on disk.
+Edge nodes skip bootstrap entirely
+Location: mod.rs Lines 1954-1970
+Problem: Edge node initialization only starts the mesh server and never attempts to find full nodes via bootstrap. Assumes mesh peers will provide blockchain without verifying they're connected to the main network.
+Fix Required: Add bootstrap discovery attempt for edge nodes before falling back to mesh-only mode. Should try to find at least one full node for initial sync.
+
+No retry mechanism for full nodes
+Location: mod.rs Line 2006
+Problem: The discover_network_with_retry() is only called for edge nodes. Full nodes that fail initial discovery immediately create genesis instead of retrying with backoff.
+Fix Required: Implement retry logic for full nodes with exponential backoff before genesis creation. Add background discovery task that continues searching after startup.
+
+ 
+
+
+
+
