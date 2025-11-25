@@ -1,14 +1,19 @@
 //! DHT (Distributed Hash Table) Implementation
 //! 
-//! Protocol-agnostic DHT with Kademlia routing that works over:
+//! **ARCHITECTURE NOTE:**
+//! This module is a thin transport/protocol layer that uses lib-storage's DHT as the backend.
+//! 
+//! - **lib-storage/dht**: Core Kademlia implementation (routing tables, storage, replication)
+//! - **lib-network/dht**: Transport protocols and enhancements (BLE, WiFi Direct, relay, mDNS, caching)
+//! 
+//! All DHT storage operations internally use `lib_storage::dht::DhtStorage`.
+//! This module adds protocol-agnostic transport layers that work over:
 //! - UDP (traditional)
 //! - Bluetooth LE (for edge devices)
 //! - WiFi Direct
 //! - LoRaWAN
 //! 
 //! This enables pure BLE devices to fully participate in DHT without UDP/WiFi.
-//! 
-//! Uses lib-storage's DHT backend for actual storage/routing operations.
 
 pub mod protocol;
 pub mod relay;
@@ -35,6 +40,10 @@ pub use transport::{DhtTransport, PeerId, UdpDhtTransport, BleDhtTransport, Mult
 // Re-export main types
 pub use relay::ZhtpRelayProtocol;
 // Note: DhtCache is internal, not re-exported
+
+// Backward compatibility type alias for tests and examples
+// All DHT operations internally use lib_storage::dht::DhtStorage
+pub type DHTClient = ZkDHTIntegration;
 
 /// Wrapper for DHT integration with mesh networking
 pub struct ZkDHTIntegration {

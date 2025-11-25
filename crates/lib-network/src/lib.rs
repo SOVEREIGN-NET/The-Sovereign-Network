@@ -23,7 +23,7 @@ pub use crate::blockchain_sync::{BlockchainSyncManager, EdgeNodeSyncManager};
 
 
 // Native binary DHT protocol with lib-storage backend
-pub use crate::dht::{initialize_dht_client, serve_web4_page, call_native_dht_client, ZkDHTIntegration, DHTNetworkStatus};
+pub use crate::dht::{initialize_dht_client, serve_web4_page, call_native_dht_client, ZkDHTIntegration, DHTClient, DHTNetworkStatus};
 
 // Web4 domain registry and content publishing
 pub use crate::web4::{Web4Manager, DomainRegistry, ContentPublisher, initialize_web4_system, initialize_web4_system_with_storage};
