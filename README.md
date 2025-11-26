@@ -183,7 +183,17 @@ MIT OR Apache-2.0
 
 ## 👥 Authors
 
-Sovereign Network Team
+**Sovereign Network Team**
+
+| Contributor | Role |
+|-------------|------|
+| Seth Ramsay | Founder |
+| Peter Rutherford | Lead Developer |
+| Brad Eagle | Developer |
+| David Edwards | Developer |
+| David Scott | Developer |
+| Hugo Perez | Developer |
+| Stephen Casino | Developer |
 
 ---
 
