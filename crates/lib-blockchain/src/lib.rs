@@ -18,6 +18,7 @@ pub mod mempool;
 pub mod integration;
 pub mod utils;
 pub mod edge_node_state;
+pub mod dht_index;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
@@ -30,6 +31,7 @@ pub use block::*;
 pub use blockchain::{Blockchain, BlockchainImport, BlockchainBroadcastMessage, EconomicsTransaction, ValidatorInfo};
 pub use mempool::*;
 pub use utils::*;
+pub use dht_index::*;
 
 // Re-export enhanced integrations
 pub use integration::enhanced_zk_crypto::{

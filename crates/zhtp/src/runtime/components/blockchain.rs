@@ -8,6 +8,7 @@ use tracing::{info, warn, error, debug};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::services::{GenesisFundingService, TransactionBuilder, GenesisValidator};
+use crate::runtime::dht_indexing::index_block_in_dht;
 use crate::config::aggregation::BootstrapValidator;
 use lib_blockchain::{Blockchain, Transaction, TransactionOutput};
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
@@ -263,6 +264,9 @@ impl BlockchainComponent {
                 
                 if !blockchain.economics_transactions.is_empty() {
                     info!("Economics Transactions: {}", blockchain.economics_transactions.len());
+                }
+                if let Err(e) = index_block_in_dht(&new_block).await {
+                    warn!("DHT indexing failed (mining): {}", e);
                 }
             }
             Err(e) => {

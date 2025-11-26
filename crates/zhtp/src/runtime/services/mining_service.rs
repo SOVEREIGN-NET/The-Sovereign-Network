@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::{info, warn, debug};
+use crate::runtime::dht_indexing::index_block_in_dht;
 
 use lib_blockchain::Blockchain;
 use lib_consensus::ValidatorManager;
@@ -134,6 +135,9 @@ impl MiningService {
                 // Log economic transactions stored
                 if !blockchain.economics_transactions.is_empty() {
                     info!("Economics Transactions: {}", blockchain.economics_transactions.len());
+                }
+                if let Err(e) = index_block_in_dht(&new_block).await {
+                    warn!("DHT indexing failed (mining_service): {}", e);
                 }
             }
             Err(e) => {

@@ -14,8 +14,6 @@ use chrono;
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus};
 use lib_network::ZkDHTIntegration;
-// Removed unused DHTQuery, DHTQueryResponse, ZhtpQueryOptions
-use lib_network::dht::protocol::CachePreference;
 // Removed unused ZhtpHeaders, NetworkStatus
 use lib_identity::ZhtpIdentity;
 
@@ -609,8 +607,7 @@ impl DhtHandler {
 
         let mut dht = client.write().await;
         match dht.store_content(&store_request.domain, &store_request.path, store_request.content).await {
-            Ok(()) => {
-                let content_hash = "stored".to_string(); // store_content returns ()
+            Ok(content_hash) => {
                 let response = DhtStoreResponse {
                     content_hash: content_hash.clone(),
                     success: true,

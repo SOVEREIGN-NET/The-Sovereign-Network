@@ -17,6 +17,7 @@ use crate::integration::economic_integration::{EconomicTransactionProcessor, Tre
 use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, ConsensusStatus};
 use crate::integration::storage_integration::{BlockchainStorageManager, BlockchainStorageConfig, StorageOperationResult};
 use lib_consensus::{WelfareService, WelfareAuditEntry, ServicePerformanceMetrics, OutcomeReport};
+use lib_storage::dht::storage::DhtStorage;
 
 /// Messages for real-time blockchain synchronization
 #[derive(Debug, Clone)]
@@ -570,6 +571,25 @@ impl Blockchain {
             warn!("   Edge node sync will fall back to headers-only");
         } else {
             debug!(" Recursive proof generated for block {}", block.height());
+        }
+
+        Ok(())
+    }
+
+    /// Add a block and index it into the DHT for fast lookup.
+    ///
+    /// This is a convenience wrapper so callers can keep blockchain processing
+    /// and DHT indexing in lockstep without wiring their own hooks.
+    pub async fn add_block_with_dht_indexing(
+        &mut self,
+        block: Block,
+        dht_storage: std::sync::Arc<tokio::sync::Mutex<DhtStorage>>,
+    ) -> Result<()> {
+        self.add_block(block.clone())?;
+
+        {
+            let mut guard = dht_storage.lock().await;
+            crate::dht_index::index_block(&mut *guard, &block).await?;
         }
 
         Ok(())

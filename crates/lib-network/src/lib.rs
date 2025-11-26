@@ -23,7 +23,8 @@ pub use crate::blockchain_sync::{BlockchainSyncManager, EdgeNodeSyncManager};
 
 
 // Native binary DHT protocol with lib-storage backend
-pub use crate::dht::{initialize_dht_client, serve_web4_page, call_native_dht_client, ZkDHTIntegration, DHTClient, DHTNetworkStatus};
+// DHT client layer is deprecated; kept temporarily for compatibility
+pub use crate::dht::{initialize_dht_client, ZkDHTIntegration, DHTNetworkStatus, DHTClient};
 
 // Web4 domain registry and content publishing
 pub use crate::web4::{Web4Manager, DomainRegistry, ContentPublisher, initialize_web4_system, initialize_web4_system_with_storage};
@@ -55,6 +56,7 @@ pub use lib_economy as economics;
 pub use lib_protocols as api;
 pub use lib_storage; // Direct access to storage backend
 pub use lib_identity;
+use crate::dht::serve_web4_page;
 
 // Public API convenience functions
 pub use crate::testing::test_utils::create_test_mesh_server;
@@ -135,7 +137,7 @@ pub async fn initialize_mesh_with_dht(identity: lib_identity::ZhtpIdentity) -> R
     let mesh_server = crate::testing::test_utils::create_test_mesh_server().await?;
     
     // Initialize DHT client with lib-storage backend
-    initialize_dht_client().await?;
+    let _ = initialize_dht_client(identity).await?;
     
     info!("Mesh network with DHT client integration ready");
     Ok((mesh_server, ()))

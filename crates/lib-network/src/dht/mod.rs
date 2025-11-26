@@ -26,6 +26,10 @@ pub mod transport;
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use lib_identity::ZhtpIdentity;
+use tokio::sync::RwLock;
+use std::sync::Arc;
+use lib_crypto::hashing::hash_blake3;
+use hex;
 
 // Re-export lib-storage's DHT types (the actual backend)
 pub use lib_storage::dht::{
@@ -41,20 +45,21 @@ pub use transport::{DhtTransport, PeerId, UdpDhtTransport, BleDhtTransport, Mult
 pub use relay::ZhtpRelayProtocol;
 // Note: DhtCache is internal, not re-exported
 
-// Backward compatibility type alias for tests and examples
-// All DHT operations internally use lib_storage::dht::DhtStorage
-pub type DHTClient = ZkDHTIntegration;
-
 /// Wrapper for DHT integration with mesh networking
 pub struct ZkDHTIntegration {
-    storage: DhtStorage,
+    storage: Arc<RwLock<DhtStorage>>,
 }
 
 impl ZkDHTIntegration {
     pub fn new() -> Self {
         Self {
-            storage: DhtStorage::new_default(),
+            storage: Arc::new(RwLock::new(DhtStorage::new_default())),
         }
+    }
+
+    /// Create an integration from an existing DhtStorage (preferred path).
+    pub fn from_storage(storage: DhtStorage) -> Self {
+        Self { storage: Arc::new(RwLock::new(storage)) }
     }
     
     pub async fn initialize(&mut self, _identity: ZhtpIdentity) -> Result<()> {
@@ -64,16 +69,27 @@ impl ZkDHTIntegration {
     
     pub async fn resolve_content(&mut self, domain: &str, path: &str) -> Result<Option<Vec<u8>>> {
         let key = format!("{}{}", domain, path);
-        self.storage.get(&key).await
+        let mut storage = self.storage.write().await;
+        storage.get(&key).await
     }
-    
-    pub async fn store_content(&mut self, domain: &str, path: &str, content: Vec<u8>) -> Result<()> {
+
+    pub async fn store_content(&mut self, domain: &str, path: &str, content: Vec<u8>) -> Result<String> {
         let key = format!("{}{}", domain, path);
-        self.storage.store(key, content, None).await
+        let hash = hash_blake3(&content);
+        let hash_hex = hex::encode(hash);
+
+        let mut storage = self.storage.write().await;
+        // Store by domain/path for lookup
+        storage.store(key, content.clone(), None).await?;
+        // Store by hash for direct fetch
+        storage.store(hash_hex.clone(), content, None).await?;
+
+        Ok(hash_hex)
     }
-    
+
     pub async fn get_network_status(&self) -> Result<DHTNetworkStatus> {
-        let stats = self.storage.get_storage_stats();
+        let storage = self.storage.read().await;
+        let stats = storage.get_storage_stats();
         Ok(DHTNetworkStatus {
             total_nodes: stats.total_entries as u32,
             connected_nodes: 1, // Local node
@@ -90,13 +106,21 @@ impl ZkDHTIntegration {
     // Additional methods for compatibility with old DHTClient API
     
     pub async fn fetch_content(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
-        self.storage.get(key).await
+        let mut storage = self.storage.write().await;
+        storage.get(key).await
     }
     
     pub async fn discover_peers(&self) -> Result<Vec<String>> {
         // Return list of known DHT nodes
-        let nodes = self.storage.get_known_nodes();
-        Ok(nodes.iter().map(|n| format!("{:?}", n.id)).collect())
+        let storage = self.storage.read().await;
+        let nodes = storage.get_known_nodes();
+        Ok(nodes
+            .iter()
+            .map(|n| {
+                let addr = n.addresses.first().cloned().unwrap_or_default();
+                format!("{}@{}", hex::encode(n.id.as_bytes()), addr)
+            })
+            .collect())
     }
     
     pub async fn connect_to_peer(&mut self, _peer_address: &str) -> Result<()> {
@@ -115,13 +139,77 @@ impl ZkDHTIntegration {
     }
     
     pub async fn get_dht_statistics(&self) -> Result<std::collections::HashMap<String, f64>> {
-        let stats = self.storage.get_storage_stats();
+        let storage = self.storage.read().await;
+        let stats = storage.get_storage_stats();
         let mut map = std::collections::HashMap::new();
         map.insert("queries_sent".to_string(), 0.0);
         map.insert("queries_received".to_string(), 0.0);
         map.insert("storage_used".to_string(), stats.total_size as f64);
         map.insert("total_keys".to_string(), stats.total_entries as f64);
         Ok(map)
+    }
+
+    pub fn get_storage_system(&self) -> Arc<RwLock<DhtStorage>> {
+        self.storage.clone()
+    }
+
+    pub async fn get_cache_stats(&self) -> std::collections::HashMap<String, u64> {
+        // Placeholder: lib-storage currently has no cache metrics exposed
+        std::collections::HashMap::new()
+    }
+}
+
+/// Backward-compatible DHT client that wraps ZkDHTIntegration with shared storage.
+pub struct DHTClient {
+    inner: ZkDHTIntegration,
+}
+
+impl DHTClient {
+    pub async fn new(_identity: ZhtpIdentity) -> Result<Self> {
+        Ok(Self {
+            inner: ZkDHTIntegration::new(),
+        })
+    }
+
+    pub fn from_integration(inner: ZkDHTIntegration) -> Self {
+        Self { inner }
+    }
+
+    pub fn get_storage_system(&self) -> Arc<RwLock<DhtStorage>> {
+        self.inner.get_storage_system()
+    }
+
+    pub async fn store_content(&mut self, domain: &str, path: &str, content: Vec<u8>) -> Result<String> {
+        self.inner.store_content(domain, path, content).await
+    }
+
+    pub async fn resolve_content(&mut self, domain: &str, path: &str) -> Result<Option<String>> {
+        if let Some(bytes) = self.inner.resolve_content(domain, path).await? {
+            let hash_hex = hex::encode(hash_blake3(&bytes));
+            Ok(Some(hash_hex))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn fetch_content(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
+        self.inner.fetch_content(key).await
+    }
+
+    pub async fn get_cache_stats(&self) -> std::collections::HashMap<String, u64> {
+        self.inner.get_cache_stats().await
+    }
+
+    pub async fn get_dht_statistics(&self) -> Result<std::collections::HashMap<String, f64>> {
+        self.inner.get_dht_statistics().await
+    }
+
+    pub async fn get_network_status(&self) -> Result<DHTNetworkStatus> {
+        self.inner.get_network_status().await
+    }
+
+    pub async fn discover_peers(&self) -> Result<Vec<String>> {
+        self.inner.discover_peers().await
     }
 }
 
@@ -172,8 +260,6 @@ pub async fn serve_web4_page(domain: &str, path: &str) -> Result<String> {
 }
 
 /// Initialize DHT client (legacy compatibility function)
-/// With ZkDHTIntegration, initialization is handled through the constructor
-pub async fn initialize_dht_client() -> Result<()> {
-    // This is now handled by ZkDHTIntegration::new() at the application layer
-    Ok(())
+pub async fn initialize_dht_client(identity: ZhtpIdentity) -> Result<DHTClient> {
+    DHTClient::new(identity).await
 }

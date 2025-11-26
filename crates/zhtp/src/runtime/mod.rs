@@ -35,6 +35,7 @@ pub mod network_blockchain_provider;
 pub mod mesh_router_provider;
 pub mod bootstrap_peers_provider;  // FIX: Global access to bootstrap peers for UnifiedServer
 pub mod did_startup;
+pub mod dht_indexing;
 pub mod routing_rewards;
 pub mod storage_rewards;
 pub mod reward_orchestrator;

@@ -125,7 +125,7 @@ async fn demo_web4_serving(dht_client: &mut DHTClient) -> Result<()> {
     let zhtp_url = format!("zhtp://{}{}", domain, path);
     info!("Serving Web4 page: {}", zhtp_url);
     
-    let page_response = serve_web4_page_through_mesh(dht_client, &zhtp_url).await?;
+    let page_response = serve_web4_page_through_mesh(&zhtp_url).await?;
     
     // Display the response
     info!("Web4 page response:");

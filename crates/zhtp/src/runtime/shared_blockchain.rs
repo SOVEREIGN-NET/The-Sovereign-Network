@@ -6,7 +6,8 @@
 use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{RwLock, mpsc::{self, UnboundedSender}};
-use tracing::{info, error};
+use tracing::{info, error, warn};
+use crate::runtime::dht_indexing::index_block_in_dht;
 use lib_blockchain::{Blockchain, Transaction, Block, BlockHeader, Hash, Difficulty};
 
 /// Shared blockchain service that manages a single blockchain instance
@@ -182,6 +183,9 @@ impl SharedBlockchainService {
                         match blockchain.add_block_with_proof(new_block.clone()).await {
                             Ok(()) => {
                                 info!("Block mined successfully at height {} with recursive proof", blockchain.height);
+                                if let Err(e) = index_block_in_dht(&new_block).await {
+                                    warn!("DHT indexing failed (shared_blockchain): {}", e);
+                                }
                                 Ok(new_block)
                             }
                             Err(e) => {

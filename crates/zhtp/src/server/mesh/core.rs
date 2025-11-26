@@ -9,6 +9,10 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 use anyhow::Result;
 use lib_crypto::PublicKey;
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::net::SocketAddr;
+use lib_crypto::PostQuantumSignature;
+use tokio::runtime::Handle;
 
 /// Rate limiting state for ZHTP getter requests (100 req/30s per identity)
 #[derive(Debug, Clone)]
@@ -24,7 +28,7 @@ impl ZhtpRateLimitState {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         Self {
             request_count: 0,
             window_start: now,
@@ -185,9 +189,30 @@ impl MeshRouter {
             let hash_bytes = lib_crypto::hash_blake3(server_id.as_bytes());
             lib_crypto::Hash::from_bytes(&hash_bytes)
         };
-        let dht_storage = Arc::new(tokio::sync::Mutex::new(
-            DhtStorage::new(local_node_id, 10000)
-        ));
+        let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
+        let local_node = lib_storage::types::dht_types::DhtNode {
+            id: local_node_id.clone(),
+            addresses: vec![bind_addr.to_string()],
+            public_key: PostQuantumSignature::default(),
+            last_seen: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            reputation: 1000,
+            storage_info: None,
+        };
+        let dht_storage_instance = Handle::current().block_on(async {
+            DhtStorage::new_with_network(local_node, bind_addr, 10000).await
+        }).expect("Failed to initialize network-enabled DHT storage");
+        let dht_storage = Arc::new(tokio::sync::Mutex::new(dht_storage_instance));
+        // Kick off DHT background processing so network-enabled storage stays in sync
+        {
+            let dht_storage_task = dht_storage.clone();
+            tokio::spawn(async move {
+                let mut storage = dht_storage_task.lock().await;
+                let _ = storage.start_network_processing().await;
+            });
+        }
         
         Self {
             connections,
@@ -233,6 +258,11 @@ impl MeshRouter {
             // Initialize rate limiter for ZHTP getters
             zhtp_rate_limits: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Expose the shared DHT storage handle for consumers that need to index data.
+    pub fn dht_storage(&self) -> Arc<tokio::sync::Mutex<DhtStorage>> {
+        self.dht_storage.clone()
     }
     
     /// Get broadcast metrics
