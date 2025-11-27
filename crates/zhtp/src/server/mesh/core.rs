@@ -12,7 +12,7 @@ use lib_crypto::PublicKey;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::net::SocketAddr;
 use lib_crypto::PostQuantumSignature;
-use tokio::runtime::Handle;
+use tracing::debug;
 
 /// Rate limiting state for ZHTP getter requests (100 req/30s per identity)
 #[derive(Debug, Clone)]
@@ -141,9 +141,6 @@ pub struct MeshRouter {
 
 impl MeshRouter {
     pub fn new(server_id: Uuid, session_manager: Arc<SessionManager>) -> Self {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        use tracing::debug;
-        
         // Create shared connections map
         let connections = Arc::new(RwLock::new(HashMap::new()));
         
@@ -184,7 +181,7 @@ impl MeshRouter {
         // Clone connections for router initialization
         let connections_for_router = connections.clone();
         
-        // Initialize DHT storage with Kademlia routing
+        // Initialize DHT storage with Kademlia routing (deferred to avoid runtime nesting)
         let local_node_id: lib_crypto::Hash = {
             let hash_bytes = lib_crypto::hash_blake3(server_id.as_bytes());
             lib_crypto::Hash::from_bytes(&hash_bytes)
@@ -201,16 +198,30 @@ impl MeshRouter {
             reputation: 1000,
             storage_info: None,
         };
-        let dht_storage_instance = Handle::current().block_on(async {
-            DhtStorage::new_with_network(local_node, bind_addr, 10000).await
-        }).expect("Failed to initialize network-enabled DHT storage");
+        
+        // Create DHT storage synchronously (no network init yet) - 10GB max
+        let dht_storage_instance = DhtStorage::new(local_node_id.clone(), 10_000_000_000);
         let dht_storage = Arc::new(tokio::sync::Mutex::new(dht_storage_instance));
-        // Kick off DHT background processing so network-enabled storage stays in sync
+        
+        // Spawn async task to initialize network and start processing
+        // This avoids the "cannot block_on inside runtime" panic
         {
             let dht_storage_task = dht_storage.clone();
+            let local_node_for_task = local_node;
+            let bind_addr_for_task = bind_addr;
             tokio::spawn(async move {
-                let mut storage = dht_storage_task.lock().await;
-                let _ = storage.start_network_processing().await;
+                // Initialize network-enabled DHT asynchronously
+                match DhtStorage::new_with_network(local_node_for_task, bind_addr_for_task, 10_000_000_000).await {
+                    Ok(mut network_storage) => {
+                        let _ = network_storage.start_network_processing().await;
+                        let mut storage = dht_storage_task.lock().await;
+                        *storage = network_storage;
+                        debug!("DHT network storage initialized successfully");
+                    }
+                    Err(e) => {
+                        debug!("DHT network initialization failed (using local-only mode): {}", e);
+                    }
+                }
             });
         }
         
