@@ -246,6 +246,14 @@ pub enum NetworkAction {
     Peers,
     /// Test network connectivity
     Test,
+    /// Ping a specific peer node
+    Ping {
+        /// Target address (e.g., 192.168.1.164:9002 or node ID)
+        target: String,
+        /// Number of pings to send
+        #[arg(short, long, default_value = "3")]
+        count: u32,
+    },
 }
 
 /// Blockchain operation commands
