@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-CONFIG_FILE="${1:-crates/zhtp/configs/test-node1.toml}"
+CONFIG_FILE="${1:-zhtp/configs/test-node1.toml}"
 
 echo "🚀 Starting ZHTP Orchestrator Node..."
 echo "📋 Config: $CONFIG_FILE"

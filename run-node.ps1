@@ -2,7 +2,7 @@
 # PowerShell version for Windows
 
 param(
-    [string]$ConfigFile = "crates\zhtp\configs\test-node1.toml"
+    [string]$ConfigFile = "zhtp\configs\test-node1.toml"
 )
 
 Write-Host "🚀 Starting ZHTP Orchestrator Node..." -ForegroundColor Cyan

@@ -254,15 +254,14 @@ zhtp.exe consensus stake --amount 1000
 ### Repository Structure:
 ```
 sovereign-mono-repo/
-├── crates/
-│   ├── zhtp/              # Main orchestrator
-│   ├── lib-blockchain/     # Blockchain implementation
-│   ├── lib-identity/       # Identity & wallet system
-│   ├── lib-network/        # Mesh networking
-│   ├── lib-consensus/      # Validator consensus
-│   ├── lib-crypto/         # Post-quantum crypto
-│   └── lib-proofs/         # Zero-knowledge proofs
-├── configs/
+├── zhtp/                   # Main orchestrator
+├── lib-blockchain/         # Blockchain implementation
+├── lib-identity/           # Identity & wallet system
+├── lib-network/            # Mesh networking
+├── lib-consensus/          # Validator consensus
+├── lib-crypto/             # Post-quantum crypto
+├── lib-proofs/             # Zero-knowledge proofs
+├── zhtp/configs/
 │   ├── test-node1.toml
 │   └── test-node2.toml
 └── target/release/
@@ -271,8 +270,8 @@ sovereign-mono-repo/
 
 ### Getting Help:
 - GitHub Issues: Report bugs and feature requests
-- Documentation: `crates/zhtp/docs/`
-- API Reference: `crates/zhtp/docs/api-reference.md`
+- Documentation: `zhtp/docs/`
+- API Reference: `zhtp/docs/api-reference.md`
 
 ---
 

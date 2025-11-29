@@ -2,18 +2,18 @@
 resolver = "2"
 
 members = [
-    "crates/lib-blockchain",
-    "crates/lib-consensus",
-    "crates/lib-crypto",
-    "crates/lib-dht",
-    "crates/lib-dns",
-    "crates/lib-economy",
-    "crates/lib-identity",
-    "crates/lib-network",
-    "crates/lib-proofs",
-    "crates/lib-protocols",
-    "crates/lib-storage",
-    "crates/zhtp",
+    "lib-blockchain",
+    "lib-consensus",
+    "lib-crypto",
+    "lib-dht",
+    "lib-dns",
+    "lib-economy",
+    "lib-identity",
+    "lib-network",
+    "lib-proofs",
+    "lib-protocols",
+    "lib-storage",
+    "zhtp",
 ]
 
 [workspace.package]

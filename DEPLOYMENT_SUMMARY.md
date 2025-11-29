@@ -12,7 +12,7 @@
 ### Code Changes Made:
 
 #### 1. **Auto-Wallet Environment Variable Support**
-**File:** `crates/zhtp/src/runtime/did_startup.rs`
+**File:** `zhtp/src/runtime/did_startup.rs`
 
 Added environment variable check for non-interactive wallet generation:
 ```rust
@@ -29,8 +29,8 @@ if let Ok(auto_mode) = std::env::var("ZHTP_AUTO_WALLET") {
 
 #### 2. **Bootstrap Peer Configuration Fix**
 **Files:** 
-- `crates/zhtp/configs/test-node1.toml`
-- `crates/zhtp/configs/test-node2.toml`
+- `zhtp/configs/test-node1.toml`
+- `zhtp/configs/test-node2.toml`
 
 **Before:**
 ```toml
@@ -264,7 +264,7 @@ cargo build --release -p zhtp
 
 # 3. Run with auto-wallet
 $env:ZHTP_AUTO_WALLET="1"
-.\target\release\zhtp.exe node start --config crates/zhtp/configs/test-node1.toml
+.\target\release\zhtp.exe node start --config zhtp/configs/test-node1.toml
 ```
 
 ### For Production:

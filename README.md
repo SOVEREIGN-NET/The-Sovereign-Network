@@ -6,7 +6,7 @@ A complete, self-contained repository containing all the Rust code needed to bui
 
 This mono-repo contains:
 
-### Core Libraries (`crates/lib-*`)
+### Core Libraries (`lib-*`)
 - **lib-blockchain** - Blockchain data structures and consensus
 - **lib-consensus** - Consensus mechanisms and validation
 - **lib-crypto** - Cryptographic primitives with post-quantum support
@@ -39,7 +39,7 @@ This mono-repo contains:
 ./run-node.sh
 
 # Run with custom config
-./run-node.sh crates/zhtp/configs/test-node2.toml
+./run-node.sh zhtp/configs/test-node2.toml
 ```
 
 **Windows (PowerShell):**
@@ -60,12 +60,12 @@ This mono-repo contains:
 cargo build --release --workspace
 
 # Run the orchestrator
-./target/release/zhtp-orchestrator --config crates/zhtp/configs/test-node1.toml
+./target/release/zhtp-orchestrator --config zhtp/configs/test-node1.toml
 ```
 
 ## 📋 Configuration
 
-Node configuration files are in `crates/zhtp/configs/`:
+Node configuration files are in `zhtp/configs/`:
 - `test-node1.toml` - Default node configuration
 - `test-node2.toml` - Secondary node for testing multi-node networks
 
@@ -82,12 +82,12 @@ To test a multi-node network:
 
 **Terminal 1:**
 ```bash
-./run-node.sh crates/zhtp/configs/test-node1.toml
+./run-node.sh zhtp/configs/test-node1.toml
 ```
 
 **Terminal 2:**
 ```bash
-./run-node.sh crates/zhtp/configs/test-node2.toml
+./run-node.sh zhtp/configs/test-node2.toml
 ```
 
 Nodes will automatically discover each other via:
@@ -103,22 +103,21 @@ sovereign-mono-repo/
 ├── Cargo.toml              # Workspace configuration
 ├── build.sh / build.ps1    # Build scripts
 ├── run-node.sh / run-node.ps1  # Node launcher scripts
-├── crates/
-│   ├── lib-blockchain/     # Blockchain library
-│   ├── lib-consensus/      # Consensus library
-│   ├── lib-crypto/         # Crypto library
-│   ├── lib-dht/            # DHT library
-│   ├── lib-dns/            # DNS library
-│   ├── lib-economy/        # Economy library
-│   ├── lib-identity/       # Identity library
-│   ├── lib-network/        # Network library
-│   ├── lib-proofs/         # Proofs library
-│   ├── lib-protocols/      # Protocols library
-│   ├── lib-storage/        # Storage library
-│   └── zhtp/               # Main orchestrator
-│       ├── src/            # Source code
-│       ├── configs/        # Configuration files
-│       └── Cargo.toml      # Package manifest
+├── lib-blockchain/         # Blockchain library
+├── lib-consensus/          # Consensus library
+├── lib-crypto/             # Crypto library
+├── lib-dht/                # DHT library
+├── lib-dns/                # DNS library
+├── lib-economy/            # Economy library
+├── lib-identity/           # Identity library
+├── lib-network/            # Network library
+├── lib-proofs/             # Proofs library
+├── lib-protocols/          # Protocols library
+├── lib-storage/            # Storage library
+├── zhtp/                   # Main orchestrator
+│   ├── src/                # Source code
+│   ├── configs/            # Configuration files
+│   └── Cargo.toml          # Package manifest
 └── target/                 # Build artifacts (gitignored)
 ```
 
@@ -197,4 +196,4 @@ MIT OR Apache-2.0
 
 ---
 
-**Need Help?** Check the individual crate README files in `crates/` for library-specific documentation.
+**Need Help?** Check the individual crate README files in each `lib-*/` folder for library-specific documentation.
