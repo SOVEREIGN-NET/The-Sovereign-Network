@@ -1,4 +1,4 @@
-                                                                                                                                                                                                      # ZHTP Node Connection & Blockchain Sync Guide
+# ZHTP Node Connection & Blockchain Sync Guide
 
 ## Overview
 
@@ -12,7 +12,7 @@ When you connect to a ZHTP node, the following happens automatically:
 
 ## What Data Do You Need To Connect?
 
-### Minimum Required
+### Minimum                                                                                                                                                                                               Required
 | Data | Example | Description |
 |------|---------|-------------|
 | **IP Address** | `192.168.1.164` | Node's network address |

@@ -1,0 +1,48 @@
+[submodule "lib-blockchain"]
+	path = lib-blockchain
+	url = https://github.com/SOVEREIGN-NET/lib-blockchain.git
+	branch = casino-approved-code
+[submodule "lib-consensus"]
+	path = lib-consensus
+	url = https://github.com/SOVEREIGN-NET/lib-consensus.git
+	branch = casino-approved-code
+[submodule "lib-crypto"]
+	path = lib-crypto
+	url = https://github.com/SOVEREIGN-NET/lib-crypto.git
+	branch = casino-approved-code
+[submodule "lib-dht"]
+	path = lib-dht
+	url = https://github.com/SOVEREIGN-NET/lib-dht.git
+	branch = casino-approved-code
+[submodule "lib-dns"]
+	path = lib-dns
+	url = https://github.com/SOVEREIGN-NET/lib-dns.git
+	branch = casino-approved-code
+[submodule "lib-economy"]
+	path = lib-economy
+	url = https://github.com/SOVEREIGN-NET/lib-economy.git
+	branch = casino-approved-code
+[submodule "lib-identity"]
+	path = lib-identity
+	url = https://github.com/SOVEREIGN-NET/lib-identity.git
+	branch = casino-approved-code
+[submodule "lib-network"]
+	path = lib-network
+	url = https://github.com/SOVEREIGN-NET/lib-network.git
+	branch = casino-approved-code
+[submodule "lib-proofs"]
+	path = lib-proofs
+	url = https://github.com/SOVEREIGN-NET/lib-proofs.git
+	branch = casino-approved-code
+[submodule "lib-protocols"]
+	path = lib-protocols
+	url = https://github.com/SOVEREIGN-NET/lib-protocols.git
+	branch = casino-approved-code
+[submodule "lib-storage"]
+	path = lib-storage
+	url = https://github.com/SOVEREIGN-NET/lib-storage.git
+	branch = casino-approved-code
+[submodule "zhtp"]
+	path = zhtp
+	url = https://github.com/SOVEREIGN-NET/zhtp.git
+	branch = casino-approved-code
