@@ -476,14 +476,15 @@ impl RuntimeOrchestrator {
         info!("    NODE Public Key (first 32): {}", hex::encode(&wallet.node_private_data.quantum_keypair.public_key[..32]));
         drop(genesis_private_data);
         
-        // Try to store private keys in global IdentityManager if already available
+        // Try to store identities in global IdentityManager if already available
+        // Note: Private keys are now stored in identity.private_key field (P1-7)
         if let Ok(identity_manager_arc) = crate::runtime::identity_manager_provider::get_global_identity_manager().await {
             let mut manager = identity_manager_arc.write().await;
-            manager.add_identity_with_private_data(wallet.user_identity.clone(), wallet.user_private_data.clone());
-            manager.add_identity_with_private_data(wallet.node_identity.clone(), wallet.node_private_data.clone());
-            info!(" Stored private keys for genesis identities in IdentityManager");
+            manager.add_identity(wallet.user_identity.clone());
+            manager.add_identity(wallet.node_identity.clone());
+            info!(" Stored genesis identities in IdentityManager");
         } else {
-            info!("  IdentityManager not yet initialized - private keys will be loaded when IdentityComponent starts");
+            info!("  IdentityManager not yet initialized - identities will be loaded when IdentityComponent starts");
         }
         
         // CRITICAL: Check if we're joining existing network - if so, DON'T create genesis!
@@ -2236,7 +2237,7 @@ pub async fn create_or_load_node_identity(
         access_level: lib_identity::types::AccessLevel::FullCitizen,
         metadata: std::collections::HashMap::new(),
         private_data_id: Some(identity_id.clone()),
-        wallet_manager: lib_identity::wallets::IdentityWallets::new(identity_id),
+        wallet_manager: lib_identity::wallets::WalletManager::new(identity_id.clone()),
         attestations: Vec::new(),
         created_at: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs(),
         last_active: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs(),
