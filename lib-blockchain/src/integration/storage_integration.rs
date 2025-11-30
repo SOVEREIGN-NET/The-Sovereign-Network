@@ -1083,16 +1083,33 @@ impl BlockchainStorageManager {
     async fn create_system_identity(&self) -> Result<ZhtpIdentity> {
         // Create a system identity for storage operations
         use lib_identity::types::{IdentityType, AccessLevel};
-        use lib_identity::wallets::IdentityWallets;
+        use lib_identity::wallets::WalletManager;
         use lib_proofs::ZeroKnowledgeProof;
+        use lib_crypto::PublicKey;
         use std::collections::HashMap;
 
         let system_id = IdentityId::from_bytes(&[255u8; 32]); // Reserved system ID
 
+        // Create system DID
+        let system_did = "did:zhtp:system".to_string();
+
+        // Create system NodeId (deterministic)
+        let system_node_id = lib_identity::types::NodeId::from_did_device(&system_did, "system-node")
+            .unwrap_or_else(|_| lib_identity::types::NodeId::from_bytes([255u8; 32]));
+
+        // Initialize device_node_ids with system node
+        let mut device_node_ids = HashMap::new();
+        device_node_ids.insert("system-node".to_string(), system_node_id);
+
         Ok(ZhtpIdentity {
             id: system_id.clone(),
             identity_type: IdentityType::Agent, // Use Agent instead of System
-            public_key: vec![0u8; 32], // System public key
+            did: system_did,
+            public_key: PublicKey::new(vec![0u8; 32]), // System public key
+            private_key: None,
+            node_id: system_node_id,
+            device_node_ids,
+            primary_device: "system-node".to_string(),
             ownership_proof: ZeroKnowledgeProof {
                 proof_system: "system".to_string(),
                 proof_data: vec![],
@@ -1107,7 +1124,7 @@ impl BlockchainStorageManager {
             access_level: AccessLevel::FullCitizen, // Use FullCitizen instead of System
             metadata: HashMap::new(),
             private_data_id: None,
-            wallet_manager: IdentityWallets::new(system_id),
+            wallet_manager: WalletManager::new(system_id.clone()),
             did_document_hash: None,
             attestations: vec![],
             created_at: 0,
@@ -1122,6 +1139,13 @@ impl BlockchainStorageManager {
             next_wallet_index: 0,
             password_hash: None,
             master_seed_phrase: None,
+            zk_identity_secret: [0u8; 32], // System identity - zeroed secrets
+            zk_credential_hash: [0u8; 32],
+            wallet_master_seed: [0u8; 64],
+            dao_member_id: "system".to_string(),
+            dao_voting_power: 0, // System has no voting power
+            citizenship_verified: false,
+            jurisdiction: None,
         })
     }
 
