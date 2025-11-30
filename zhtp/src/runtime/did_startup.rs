@@ -8,13 +8,13 @@ use anyhow::{Result, anyhow};
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use lib_identity::{create_user_identity_with_wallet, create_node_device_identity, ZhtpIdentity, IdentityId};
-use lib_identity::wallets::WalletId;
+use lib_identity::{ZhtpIdentity, IdentityId};
+use lib_identity::wallets::{WalletId, WalletManager};
 use lib_identity::types::IdentityType;
 use lib_network::ZkDHTIntegration;
 use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_proofs::ZeroKnowledgeProof;
-use lib_crypto::hash_blake3;
+use lib_crypto::{hash_blake3, KeyPair};
 // Core wallet functionality with mesh network integration
 
 /// Node wallet startup options
@@ -1014,4 +1014,86 @@ impl WalletStartupManager {
         
         Ok(())
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Helper Functions for P1-7 Identity Creation
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Create a user identity with attached wallet (P1-7 compatible)
+///
+/// Returns: (identity, wallet_id, seed_phrase, private_data)
+async fn create_user_identity_with_wallet(
+    node_name: String,
+    wallet_name: String,
+    wallet_alias: Option<String>,
+) -> Result<(ZhtpIdentity, WalletId, String, lib_identity::identity::PrivateIdentityData)> {
+    use lib_identity::wallets::WalletType;
+
+    // Generate new identity using P1-7 seed-anchored architecture
+    let mut identity = ZhtpIdentity::new_unified(
+        IdentityType::Human,
+        Some(25), // Default age
+        Some("US".to_string()), // Default jurisdiction
+        &node_name,
+        None, // Generate random seed
+    )?;
+
+    // Create wallet using WalletManager
+    let (wallet_id, recovery_phrase) = identity.wallet_manager.create_wallet_with_seed_phrase(
+        WalletType::Primary,
+        wallet_name,
+        wallet_alias,
+    ).await?;
+
+    // Convert RecoveryPhrase to String
+    let seed_phrase = recovery_phrase.to_string();
+
+    // Create PrivateIdentityData from the identity's private key
+    let private_key = identity.private_key.as_ref()
+        .ok_or_else(|| anyhow!("Identity missing private key"))?;
+
+    let private_data = lib_identity::identity::PrivateIdentityData::new(
+        private_key.dilithium_sk.clone(),
+        private_key.dilithium_pk.clone(),
+        [0u8; 32], // TODO: Extract actual seed from identity if available
+        vec![seed_phrase.clone()],
+    );
+
+    Ok((identity, wallet_id, seed_phrase, private_data))
+}
+
+/// Create a node device identity (owned by a user) (P1-7 compatible)
+///
+/// Returns: (identity, private_data)
+async fn create_node_device_identity(
+    owner_id: IdentityId,
+    reward_wallet_id: WalletId,
+    device_name: String,
+) -> Result<(ZhtpIdentity, lib_identity::identity::PrivateIdentityData)> {
+    // Generate device identity using P1-7 seed-anchored architecture
+    let mut identity = ZhtpIdentity::new_unified(
+        IdentityType::Device,
+        None, // Devices don't have age
+        None, // Devices don't have jurisdiction
+        &device_name,
+        None, // Generate random seed
+    )?;
+
+    // Set owner and reward wallet
+    identity.owner_identity_id = Some(owner_id);
+    identity.reward_wallet_id = Some(reward_wallet_id);
+
+    // Create PrivateIdentityData from the identity's private key
+    let private_key = identity.private_key.as_ref()
+        .ok_or_else(|| anyhow!("Identity missing private key"))?;
+
+    let private_data = lib_identity::identity::PrivateIdentityData::new(
+        private_key.dilithium_sk.clone(),
+        private_key.dilithium_pk.clone(),
+        [0u8; 32], // TODO: Extract actual seed from identity if available
+        vec![],
+    );
+
+    Ok((identity, private_data))
 }
