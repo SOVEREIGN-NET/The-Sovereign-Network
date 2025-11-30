@@ -519,19 +519,13 @@ impl DomainRegistry {
             };
             
             // Create uploader identity (use domain owner or anonymous)
-            // Use the original content hash for the proof (before compression)
-            let proof_hash = hash_blake3(&content);
-            let uploader = lib_identity::ZhtpIdentity::new(
+            // Use new_unified for simpler creation (generates keypair internally)
+            let uploader = lib_identity::ZhtpIdentity::new_unified(
                 lib_identity::types::identity_types::IdentityType::Human,
-                format!("web4_publisher_{}", domain).as_bytes().to_vec(),
-                lib_proofs::ZeroKnowledgeProof {
-                    proof_system: "Plonky2".to_string(),
-                    proof_data: proof_hash.to_vec(),
-                    public_inputs: domain.as_bytes().to_vec(),
-                    verification_key: domain.as_bytes().to_vec(),
-                    plonky2_proof: None,
-                    proof: proof_hash.to_vec(),
-                }
+                Some(25), // Default age
+                Some("US".to_string()), // Default jurisdiction
+                &format!("web4_publisher_{}", domain),
+                None, // Random seed
             ).map_err(|e| anyhow!("Failed to create uploader identity: {}", e))?;
             
             // Store in DHT via UnifiedStorageSystem (NO CACHE FALLBACK - DHT ONLY)
@@ -681,17 +675,13 @@ impl DomainRegistry {
             .map_err(|_| anyhow!("Failed to convert hash to array"))?);
         
         // Create download request with anonymous requester
-        let requester = lib_identity::ZhtpIdentity::new(
+        // Use new_unified for simpler creation (generates keypair internally)
+        let requester = lib_identity::ZhtpIdentity::new_unified(
             lib_identity::types::identity_types::IdentityType::Human,
-            b"web4_retriever".to_vec(),
-            lib_proofs::ZeroKnowledgeProof {
-                proof_system: "Plonky2".to_string(),
-                proof_data: content_hash.as_bytes().to_vec(),
-                public_inputs: b"retrieve".to_vec(),
-                verification_key: b"web4_vk".to_vec(),
-                plonky2_proof: None,
-                proof: content_hash.as_bytes().to_vec(),
-            }
+            Some(25), // Default age
+            Some("US".to_string()), // Default jurisdiction
+            "web4_retriever",
+            None, // Random seed
         ).map_err(|e| anyhow!("Failed to create requester identity: {}", e))?;
         
         let download_request = lib_storage::DownloadRequest {
