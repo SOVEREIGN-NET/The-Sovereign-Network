@@ -385,46 +385,31 @@ impl StorageHandler {
                 let token = &auth_header[7..];
                 // In a implementation, this would decode the JWT token to get identity
                 // For now, create an identity based on the token
-                ZhtpIdentity::new(
+                ZhtpIdentity::new_unified(
                     IdentityType::Human,
-                    token.as_bytes().to_vec(),
-                    ZeroKnowledgeProof {
-                        proof_system: "Plonky2".to_string(),
-                        proof_data: token.as_bytes().to_vec(),
-                        public_inputs: b"authenticated_user".to_vec(),
-                        verification_key: token.as_bytes().to_vec(),
-                        plonky2_proof: None,
-                        proof: token.as_bytes().to_vec(),
-                    }
+                    Some(25), // Default age
+                    Some("US".to_string()), // Default jurisdiction
+                    &format!("auth-{}", &token[..std::cmp::min(8, token.len())]),
+                    None, // Random seed
                 ).map_err(|e| anyhow::anyhow!("Failed to create authenticated identity: {}", e))?
             } else {
                 // Invalid auth format, create anonymous identity
-                ZhtpIdentity::new(
+                ZhtpIdentity::new_unified(
                     IdentityType::Human,
-                    b"anonymous_user".to_vec(),
-                    ZeroKnowledgeProof {
-                        proof_system: "Plonky2".to_string(),
-                        proof_data: b"anonymous_proof".to_vec(),
-                        public_inputs: b"anonymous_inputs".to_vec(),
-                        verification_key: b"anonymous_vk".to_vec(),
-                        plonky2_proof: None,
-                        proof: b"anonymous".to_vec(),
-                    }
+                    Some(25), // Default age
+                    Some("US".to_string()), // Default jurisdiction
+                    "anonymous-user",
+                    None, // Random seed
                 ).map_err(|e| anyhow::anyhow!("Failed to create anonymous identity: {}", e))?
             }
         } else {
             // No authentication provided, create anonymous identity
-            ZhtpIdentity::new(
+            ZhtpIdentity::new_unified(
                 IdentityType::Human,
-                b"anonymous_user".to_vec(),
-                ZeroKnowledgeProof {
-                    proof_system: "Plonky2".to_string(),
-                    proof_data: b"anonymous_proof".to_vec(),
-                    public_inputs: b"anonymous_inputs".to_vec(),
-                    verification_key: b"anonymous_vk".to_vec(),
-                    plonky2_proof: None,
-                    proof: b"anonymous".to_vec(),
-                }
+                Some(25), // Default age
+                Some("US".to_string()), // Default jurisdiction
+                "anonymous-user",
+                None, // Random seed
             ).map_err(|e| anyhow::anyhow!("Failed to create anonymous identity: {}", e))?
         };
         

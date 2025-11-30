@@ -768,19 +768,15 @@ impl WalletStartupManager {
 
     /// Create a temporary identity for mesh discovery operations
     async fn create_discovery_identity() -> Result<ZhtpIdentity> {
-        // Generate ephemeral key for discovery
-        let discovery_key = hash_blake3(b"mesh-wallet-discovery");
-        let public_key = discovery_key.to_vec();
-        
-        // Create zero-knowledge proof for discovery operations
-        let ownership_proof = ZeroKnowledgeProof::default();
-        
-        let discovery_identity = ZhtpIdentity::new(
+        // Create discovery identity using P1-7 architecture
+        let discovery_identity = ZhtpIdentity::new_unified(
             IdentityType::Device,
-            public_key,
-            ownership_proof,
+            None, // No age for device
+            None, // No jurisdiction for device
+            "mesh-wallet-discovery",
+            None, // Random seed
         )?;
-        
+
         Ok(discovery_identity)
     }
 
@@ -1055,7 +1051,7 @@ async fn create_user_identity_with_wallet(
 
     let private_data = lib_identity::identity::PrivateIdentityData::new(
         private_key.dilithium_sk.clone(),
-        private_key.dilithium_pk.clone(),
+        identity.public_key.dilithium_pk.clone(),
         [0u8; 32], // TODO: Extract actual seed from identity if available
         vec![seed_phrase.clone()],
     );
@@ -1090,7 +1086,7 @@ async fn create_node_device_identity(
 
     let private_data = lib_identity::identity::PrivateIdentityData::new(
         private_key.dilithium_sk.clone(),
-        private_key.dilithium_pk.clone(),
+        identity.public_key.dilithium_pk.clone(),
         [0u8; 32], // TODO: Extract actual seed from identity if available
         vec![],
     );

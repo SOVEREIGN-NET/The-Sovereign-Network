@@ -616,7 +616,7 @@ impl IdentityHandler {
             "message": sign_req.message,
             "signature": signature_hex,
             "signature_algorithm": "CRYSTALS-Dilithium2",
-            "public_key": hex::encode(&identity.public_key),
+            "public_key": hex::encode(&identity.public_key.as_bytes()),
         });
         
         Ok(ZhtpResponse::json(&response_body, None)?)

@@ -618,7 +618,7 @@ async fn create_identity_direct(
                 "savings": identity_result.wallet_seed_phrases.savings_wallet_seeds.words.join(" ")
             },
             "privacy_credentials": {
-                "public_key": hex::encode(&public_key),
+                "public_key": hex::encode(&public_key.as_bytes()),
                 "ownership_proof": hex::encode(&ownership_proof_bytes)
             },
             "primary_wallet_pubkey": hex::encode(&primary_pubkey),

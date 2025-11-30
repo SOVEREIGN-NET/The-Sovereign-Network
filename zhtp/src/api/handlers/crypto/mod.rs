@@ -177,7 +177,7 @@ impl CryptoHandler {
 
         let response = SignMessageResponse {
             signature: hex::encode(&signature.signature),
-            public_key: hex::encode(&public_key),
+            public_key: hex::encode(&public_key.as_bytes()),
             algorithm: "Dilithium2".to_string(),
             message_hash: hex::encode(message_hash.as_slice()),
         };

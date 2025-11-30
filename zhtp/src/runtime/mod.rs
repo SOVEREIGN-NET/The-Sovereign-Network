@@ -1624,12 +1624,12 @@ impl RuntimeOrchestrator {
         };
         
         // Lock identity manager and perform sync
-        let mut identity_manager = identity_manager_arc.write().await;
-        
-        // Call the sync method with extracted balance data
-        identity_manager.sync_wallet_balances(&wallet_balances)?;
-        
-        info!(" Wallet balance sync completed successfully");
+        let _identity_manager = identity_manager_arc.write().await;
+
+        // TODO: Wallet balance sync removed in P1-7 - wallets are now managed within identity
+        // The WalletManager within each ZhtpIdentity handles wallet state
+
+        info!(" Wallet balance sync skipped (P1-7: wallets managed within identity)");
         Ok(())
     }
 
@@ -1745,16 +1745,15 @@ impl RuntimeOrchestrator {
             })
             .collect();
         
-        // Get transaction components (private key, amounts, wallet pubkey)
-        let (private_key_bytes, total_input, change_amount, wallet_pubkey) = identity_mgr.create_payment_transaction(
-            identity_id,
-            selected_utxos_crypto.clone(),
-            recipient_pubkey,
-            amount,
-            fee,
-        )?;
-        
+        // TODO: P1-7 - create_payment_transaction method removed
+        // Need to implement transaction creation using new WalletManager API
+        // For now, return error as this functionality needs to be reimplemented
         drop(identity_mgr_opt);
+
+        return Err(anyhow::anyhow!(
+            "Payment transaction creation not yet implemented in P1-7 architecture. \
+             This functionality needs to be reimplemented using the new WalletManager API."
+        ));
         
         info!("💳 Building payment transaction: {} ZHTP to recipient, {} ZHTP change", amount, change_amount);
         

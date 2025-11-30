@@ -217,7 +217,7 @@ impl Web4Handler {
             info!(" DEBUG SIGNATURE VERIFICATION:");
             info!("   Message: {}", signed_message);
             info!("   Signature length: {} bytes", signature_bytes.len());
-            info!("   Public key length: {} bytes", owner_identity.public_key.len());
+            info!("   Public key length: {} bytes", owner_identity.public_key.size());
             info!("   Expected public key length: 1312 (Dilithium2)");
             
             // Verify signature using owner's public key
@@ -971,23 +971,12 @@ impl Web4Handler {
     pub fn deserialize_identity(&self, identity_str: &str) -> Result<ZhtpIdentity, String> {
         // In production, this would properly deserialize from JSON/base64
         // For now, create a test identity from the string
-        let identity_bytes = identity_str.as_bytes();
-        let mut id_bytes = [0u8; 32];
-        
-        // Take first 32 bytes or pad with zeros
-        let copy_len = std::cmp::min(identity_bytes.len(), 32);
-        id_bytes[..copy_len].copy_from_slice(&identity_bytes[..copy_len]);
-
-        ZhtpIdentity::new(
+        ZhtpIdentity::new_unified(
             lib_identity::types::IdentityType::Human,
-            vec![0u8; 32],
-            ZeroKnowledgeProof::new(
-                "Plonky2".to_string(),
-                vec![0u8; 32],
-                vec![0u8; 32],
-                vec![0u8; 32],
-                None,
-            ),
+            Some(25), // Default age
+            Some("US".to_string()), // Default jurisdiction
+            &format!("web4-{}", &identity_str[..std::cmp::min(8, identity_str.len())]),
+            None, // Random seed
         ).map_err(|e| format!("Failed to create identity: {}", e))
     }
 
