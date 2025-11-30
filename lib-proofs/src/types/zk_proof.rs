@@ -7,7 +7,7 @@ use serde::{Serialize, Deserialize};
 use crate::plonky2::Plonky2Proof;
 
 /// Zero-knowledge proof (unified approach matching ZHTPDEV-main65)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ZkProof {
     /// Proof system identifier (always "Plonky2" for unified system)
     pub proof_system: String,
@@ -21,6 +21,64 @@ pub struct ZkProof {
     pub plonky2_proof: Option<Plonky2Proof>,
     /// Deprecated proof format (kept for data structure compatibility only)
     pub proof: Vec<u8>,
+}
+
+fn default_version() -> String {
+    "v0".to_string()
+}
+
+impl Serialize for ZkProof {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("ZkProof", 7)?;
+        state.serialize_field("version", &default_version())?;
+        state.serialize_field("proof_system", &self.proof_system)?;
+        state.serialize_field("proof_data", &self.proof_data)?;
+        state.serialize_field("public_inputs", &self.public_inputs)?;
+        state.serialize_field("verification_key", &self.verification_key)?;
+        state.serialize_field("plonky2_proof", &self.plonky2_proof)?;
+        state.serialize_field("proof", &self.proof)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ZkProof {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct MaybeVersionedProof {
+            version: Option<String>,
+            proof_system: String,
+            proof_data: Vec<u8>,
+            public_inputs: Vec<u8>,
+            verification_key: Vec<u8>,
+            plonky2_proof: Option<Plonky2Proof>,
+            proof: Vec<u8>,
+        }
+
+        let mv: MaybeVersionedProof = MaybeVersionedProof::deserialize(deserializer)?;
+        let version = mv.version.unwrap_or_else(|| {
+            tracing::warn!("Missing version field in proof; assuming v0");
+            default_version()
+        });
+        if version != "v0" {
+            tracing::warn!("ZkProof version mismatch: {}", version);
+        }
+
+        Ok(ZkProof {
+            proof_system: mv.proof_system,
+            proof_data: mv.proof_data,
+            public_inputs: mv.public_inputs,
+            verification_key: mv.verification_key,
+            plonky2_proof: mv.plonky2_proof,
+            proof: mv.proof,
+        })
+    }
 }
 
 impl ZkProof {
@@ -203,6 +261,7 @@ impl ZkProofType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json;
 
     #[test]
     fn test_zk_proof_creation() {
@@ -250,5 +309,33 @@ mod tests {
         let proof = ZkProof::default();
         assert!(proof.is_empty());
         assert!(proof.is_plonky2());
+    }
+
+    #[test]
+    fn test_proof_serialization_includes_version() {
+        let proof = ZkProof::new(
+            "Plonky2".to_string(),
+            vec![1, 2, 3],
+            vec![4, 5, 6],
+            vec![7, 8, 9],
+            None,
+        );
+        let json = serde_json::to_string(&proof).expect("serialize");
+        assert!(json.contains("\"version\":\"v0\""));
+        assert!(json.contains("\"proof_system\":\"Plonky2\""));
+    }
+
+    #[test]
+    fn test_proof_deserialization_accepts_legacy_without_version() {
+        let legacy = r#"{
+            "proof_system":"Plonky2",
+            "proof_data":[1,2],
+            "public_inputs":[3,4],
+            "verification_key":[5,6],
+            "plonky2_proof":null,
+            "proof":[]
+        }"#;
+        let proof: ZkProof = serde_json::from_str(legacy).expect("deserialize legacy");
+        assert_eq!(proof.proof_system, "Plonky2");
     }
 }

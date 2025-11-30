@@ -320,8 +320,8 @@ impl ZhtpIdentity {
         let keypair = lib_crypto::KeyPair::generate()
             .map_err(|e| anyhow!("Failed to generate PQC keypair: {}", e))?;
 
-        // Step 10: Initialize WalletManager
-        let wallet_manager = crate::wallets::WalletManager::new(id.clone());
+        // Step 10: Initialize WalletManager (seeded for deterministic recovery)
+        let wallet_manager = crate::wallets::WalletManager::from_master_seed(id.clone(), wallet_master_seed);
 
         // Step 11: Initialize device_node_ids HashMap with primary device
         let mut device_node_ids = HashMap::new();
@@ -331,8 +331,16 @@ impl ZhtpIdentity {
         let citizenship_verified = false;
         let dao_voting_power = 1;
 
-        // Step 13: Generate placeholder ownership_proof
-        let ownership_proof = ZeroKnowledgeProof::default();
+        // Step 13: Placeholder ownership proof (to be replaced with SignaturePopV1 in ADR-0003)
+        // TODO: Implement real SignaturePopV1 when ADR-0003 V1 proofs land.
+        let ownership_proof = ZeroKnowledgeProof {
+            proof_system: "dilithium-pop-placeholder-v0".to_string(),
+            proof_data: b"TODO:SignaturePopV1".to_vec(),
+            public_inputs: did.as_bytes().to_vec(),
+            verification_key: keypair.public_key.dilithium_pk.clone(),
+            plonky2_proof: None,
+            proof: vec![],
+        };
 
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
