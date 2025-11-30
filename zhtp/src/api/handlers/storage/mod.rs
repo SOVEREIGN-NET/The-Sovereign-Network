@@ -218,23 +218,21 @@ impl StorageHandler {
         {
             match lib_crypto::Hash::from_hex(wallet_id_str) {
                 Ok(wallet_id) => {
-                    // Create a minimal ZhtpIdentity for the owner
-                    let owner_identity = ZhtpIdentity::new(
+                    // Create a minimal ZhtpIdentity for the owner using P1-7 architecture
+                    let owner_identity = ZhtpIdentity::new_unified(
                         IdentityType::Human,
-                        wallet_id.as_bytes().to_vec(),
-                        ZeroKnowledgeProof::new(
-                            "wallet_upload".to_string(),
-                            vec![],
-                            vec![],
-                            vec![],
-                            None,
-                        ),
+                        Some(25), // Default age
+                        Some("US".to_string()), // Default jurisdiction
+                        &format!("wallet-{}", hex::encode(&wallet_id.0[..8])),
+                        None, // Random seed
                     ).unwrap_or_else(|_| {
                         // Fallback identity if creation fails
-                        ZhtpIdentity::new(
+                        ZhtpIdentity::new_unified(
                             IdentityType::Human,
-                            vec![0u8; 32],
-                            ZeroKnowledgeProof::new("default".to_string(), vec![], vec![], vec![], None),
+                            Some(25),
+                            Some("US".to_string()),
+                            "default-user",
+                            None,
                         ).unwrap()
                     });
                     
