@@ -568,40 +568,53 @@ impl ZhtpUnifiedServer {
         };
         
         // Initialize Bluetooth LE discovery (pass mesh_connections and peer notification channel for GATT handler)
+        // Spawn as background task to avoid blocking HTTP server startup
+        let bluetooth_router_clone = self.bluetooth_router.clone();
+        let mesh_connections_clone = self.mesh_router.connections.clone();
         let bluetooth_provider = self.mesh_router.blockchain_provider.read().await.clone();
-        let bluetooth_le_status = if let Err(e) = self.bluetooth_router.initialize(
-            self.mesh_router.connections.clone(), 
-            Some(ble_peer_tx), 
-            our_public_key,
-            bluetooth_provider,
-            self.mesh_router.sync_coordinator.clone(),
-            Arc::new(self.mesh_router.clone()),
-        ).await {
-            warn!(" Bluetooth LE: FAILED - {}", e);
-            warn!("   → Continuing without Bluetooth LE support");
-            "FAILED"
-        } else {
-            // Store bluetooth protocol in mesh router for send_to_peer()
-            // CRITICAL: Must be set BEFORE spawning peer discovery listener task
-            let protocol_opt = self.bluetooth_router.get_protocol().await;
-            info!(" DEBUG: get_protocol() returned: {}", if protocol_opt.is_some() { "Some(protocol)" } else { "None" });
-            
-            if let Some(protocol) = protocol_opt {
-                *self.mesh_router.bluetooth_protocol.write().await = Some(protocol.clone());
-                info!(" Bluetooth protocol registered with MeshRouter for message routing");
-                
-                // Verify it was set correctly
-                let verify = self.mesh_router.bluetooth_protocol.read().await;
-                info!(" DEBUG: Verified mesh_router.bluetooth_protocol is now: {}", 
-                      if verify.is_some() { "Some(protocol)" } else { "None" });
-            } else {
-                warn!(" Bluetooth protocol not available after initialization - BLE sync will fail");
+        let ble_peer_tx_clone = ble_peer_tx.clone();
+        let our_public_key_clone = our_public_key.clone();
+        let sync_coordinator_clone = self.mesh_router.sync_coordinator.clone();
+        let mesh_router_clone = Arc::new(self.mesh_router.clone());
+        let mesh_router_bluetooth_protocol = self.mesh_router.bluetooth_protocol.clone();
+
+        tokio::spawn(async move {
+            info!("Initializing Bluetooth mesh protocol for phone connectivity...");
+            match bluetooth_router_clone.initialize(
+                mesh_connections_clone,
+                Some(ble_peer_tx_clone),
+                our_public_key_clone,
+                bluetooth_provider,
+                sync_coordinator_clone,
+                mesh_router_clone,
+            ).await {
+                Ok(_) => {
+                    // Store bluetooth protocol in mesh router for send_to_peer()
+                    let protocol_opt = bluetooth_router_clone.get_protocol().await;
+                    info!(" DEBUG: get_protocol() returned: {}", if protocol_opt.is_some() { "Some(protocol)" } else { "None" });
+
+                    if let Some(protocol) = protocol_opt {
+                        *mesh_router_bluetooth_protocol.write().await = Some(protocol.clone());
+                        info!(" Bluetooth protocol registered with MeshRouter for message routing");
+
+                        // Verify it was set correctly
+                        let verify = mesh_router_bluetooth_protocol.read().await;
+                        info!(" DEBUG: Verified mesh_router.bluetooth_protocol is now: {}",
+                              if verify.is_some() { "Some(protocol)" } else { "None" });
+                    } else {
+                        warn!(" Bluetooth protocol not available after initialization - BLE sync will fail");
+                    }
+
+                    info!("✅ Bluetooth LE: ACTIVE (100m range)");
+                    info!("   → Low-power device-to-device mesh");
+                }
+                Err(e) => {
+                    warn!("❌ Bluetooth LE: FAILED - {}", e);
+                    warn!("   → Continuing without Bluetooth LE support");
+                }
             }
-            
-            info!(" Bluetooth LE: ACTIVE (100m range)");
-            info!("   → Low-power device-to-device mesh");
-            "ACTIVE"
-        };
+        });
+        let bluetooth_le_status = "INITIALIZING";
         
         // IMPORTANT: Clone mesh_router AFTER bluetooth_protocol is set above
         // This ensures the spawned task has access to the protocol
