@@ -138,16 +138,12 @@ impl Web4Handler {
         }
 
         // Create a simple DHT client for content storage
-        let identity = ZhtpIdentity::new(
+        let identity = ZhtpIdentity::new_unified(
             lib_identity::types::IdentityType::Device,
-            vec![99u8; 32],
-            lib_proofs::ZeroKnowledgeProof::new(
-                "Plonky2".to_string(),
-                vec![99u8; 32],
-                vec![99u8; 32],
-                vec![99u8; 32],
-                None,
-            ),
+            None, // No age for device
+            None, // No jurisdiction for device
+            "web4-content-publisher",
+            None, // Random seed
         ).map_err(|e| anyhow!("Failed to create identity: {}", e))?;
 
         // Initialize global DHT and get client
@@ -277,16 +273,12 @@ impl Web4Handler {
         }
 
         // Create DHT client for content update
-        let identity = ZhtpIdentity::new(
+        let identity = ZhtpIdentity::new_unified(
             lib_identity::types::IdentityType::Device,
-            vec![100u8; 32],
-            lib_proofs::ZeroKnowledgeProof::new(
-                "Plonky2".to_string(),
-                vec![100u8; 32],
-                vec![100u8; 32],
-                vec![100u8; 32],
-                None,
-            ),
+            None, // No age for device
+            None, // No jurisdiction for device
+            "web4-content-updater",
+            None, // Random seed
         ).map_err(|e| anyhow!("Failed to create identity: {}", e))?;
 
         // Initialize global DHT and get client

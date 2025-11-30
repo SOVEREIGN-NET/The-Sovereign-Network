@@ -31,7 +31,7 @@ impl BootstrapService {
         
         // Load the node's persistent identity to get a real public key
         let node_identity = crate::runtime::create_or_load_node_identity(environment).await?;
-        let local_public_key = lib_crypto::PublicKey::new(node_identity.public_key.clone());
+        let local_public_key = node_identity.public_key.clone();
         let mut bootstrap = DHTBootstrap::new(enhancements, local_public_key);
         
         // Use enhance_bootstrap to discover peers

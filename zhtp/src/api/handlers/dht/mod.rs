@@ -968,56 +968,26 @@ impl DhtHandler {
 
     /// Create a default identity for DHT operations
     fn create_default_dht_identity(&self) -> ZhtpIdentity {
-        use lib_identity::types::{IdentityType, AccessLevel};
-        use lib_identity::wallets::IdentityWallets;
-        use lib_identity::{IdentityId, ZhtpIdentity};
-        use lib_proofs::ZeroKnowledgeProof;
-        use std::collections::HashMap;
+        use lib_identity::types::IdentityType;
+        use lib_identity::ZhtpIdentity;
 
-        let identity_id = IdentityId::from_bytes(&[42u8; 32]); // Fixed ID for DHT operations
-        
-        ZhtpIdentity {
-            id: identity_id.clone(),
-            identity_type: IdentityType::Device, // DHT service identity
-            public_key: vec![1, 2, 3, 4, 5, 6, 7, 8], // Placeholder public key
-            ownership_proof: ZeroKnowledgeProof {
-                proof_system: "dht_service".to_string(),
-                proof_data: vec![],
-                public_inputs: vec![],
-                verification_key: vec![],
-                plonky2_proof: None,
-                proof: vec![],
-            },
-            credentials: HashMap::new(),
-            reputation: 100, // High reputation for DHT service
-            age: None, // Services don't have age
-            access_level: AccessLevel::FullCitizen, // Full access for DHT operations
-            metadata: {
-                let mut metadata = HashMap::new();
-                metadata.insert("type".to_string(), "dht_service".to_string());
-                metadata.insert("version".to_string(), "1.0".to_string());
-                metadata
-            },
-            private_data_id: None,
-            wallet_manager: IdentityWallets::new(identity_id),
-            did_document_hash: None,
-            attestations: vec![],
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            last_active: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            recovery_keys: vec![],
-            owner_identity_id: None,  // Service identity has no owner
-            reward_wallet_id: None,   // Service identity doesn't need rewards
-            encrypted_master_seed: None,  // Service identities don't use seed-based HD wallets
-            next_wallet_index: 0,
-            password_hash: None,
-            master_seed_phrase: None,
-        }
+        // Create DHT service identity using P1-7 architecture
+        ZhtpIdentity::new_unified(
+            IdentityType::Device,
+            None, // No age for service
+            None, // No jurisdiction for service
+            "dht-service",
+            Some([42u8; 64]), // Fixed seed for deterministic DHT service identity
+        ).unwrap_or_else(|_| {
+            // Fallback to random seed if fixed seed fails
+            ZhtpIdentity::new_unified(
+                IdentityType::Device,
+                None,
+                None,
+                "dht-service-fallback",
+                None,
+            ).expect("Failed to create DHT service identity")
+        })
     }
 
     /// Update handler statistics
