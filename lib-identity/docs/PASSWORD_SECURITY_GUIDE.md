@@ -10,7 +10,7 @@ SOVEREIGN_NET provides a **two-layer password security system**:
 
 ---
 
-##  Layer 1: Master 20-Word Seed Phrase
+## 🔑 Layer 1: Master 20-Word Seed Phrase
 
 ### What It Does
 - **Universal Recovery**: Can recover entire DID and all wallets on any device
@@ -47,7 +47,7 @@ identity_manager.set_identity_password(&identity_id, "newPassword123")?;
 
 ---
 
-##  Layer 2: DID Password (Optional)
+## 🔐 Layer 2: DID Password (Optional)
 
 ### What It Does
 - **Convenient Sign-In**: Password-based authentication on your device
@@ -56,9 +56,9 @@ identity_manager.set_identity_password(&identity_id, "newPassword123")?;
 - **Removable**: Can remove password if desired
 
 ### Requirements
--  Identity must be **imported** via 20-word seed phrase first
--  Minimum 8 characters
--  Cannot set password on "created" identities (must import first)
+- ✅ Identity must be **imported** via 20-word seed phrase first
+- ✅ Minimum 8 characters
+- ❌ Cannot set password on "created" identities (must import first)
 
 ### Usage Examples
 
@@ -85,10 +85,10 @@ let validation = identity_manager.validate_identity_password(
 )?;
 
 if validation.valid {
-    println!(" Signed in successfully!");
+    println!("✅ Signed in successfully!");
     // Grant access to DID operations
 } else {
-    println!(" Invalid password!");
+    println!("❌ Invalid password!");
 }
 ```
 
@@ -101,7 +101,7 @@ identity_manager.change_identity_password(
     "newPassword456"
 )?;
 
-println!(" Password changed successfully!");
+println!("🔄 Password changed successfully!");
 ```
 
 #### Remove Password
@@ -126,9 +126,9 @@ println!("🔓 Password removed - DID no longer requires password");
 - **Flexible**: Add, change, or remove wallet passwords anytime
 
 ### Requirements
--  Minimum 6 characters (shorter than DID passwords)
--  Optional - only for wallets you want extra security
--  Works even if DID has no password
+- ✅ Minimum 6 characters (shorter than DID passwords)
+- ✅ Optional - only for wallets you want extra security
+- ✅ Works even if DID has no password
 
 ### Usage Examples
 
@@ -144,7 +144,7 @@ wallet_manager.set_wallet_password(
     "savingsPass123"
 )?;
 
-println!(" Savings wallet now requires password!");
+println!("🔐 Savings wallet now requires password!");
 ```
 
 #### Use Protected Wallet
@@ -164,7 +164,7 @@ if validation.valid {
         "Transfer".to_string()
     )?;
 } else {
-    println!(" Invalid wallet password!");
+    println!("❌ Invalid wallet password!");
 }
 ```
 
@@ -177,7 +177,7 @@ wallet_manager.change_wallet_password(
     "newWalletPass456"
 )?;
 
-println!(" Wallet password changed!");
+println!("🔄 Wallet password changed!");
 ```
 
 #### Remove Wallet Password
@@ -205,7 +205,7 @@ if wallet_manager.wallet_has_password(&wallet_id) {
 
 ---
 
-##  Recommended Security Strategy
+## 🎯 Recommended Security Strategy
 
 ### For Most Users
 1. **Always secure your 20-word seed phrase** offline (paper, metal plate)
@@ -229,7 +229,7 @@ for (name, wallet_id) in important_wallets {
         &wallet_id,
         &format!("{}SecurePass", name)
     )?;
-    println!(" Protected {} wallet", name);
+    println!("🔐 Protected {} wallet", name);
 }
 ```
 
@@ -253,7 +253,7 @@ for (name, wallet_id) in important_wallets {
 
 ---
 
-##  Complete Example: Full Setup
+## 📋 Complete Example: Full Setup
 
 ```rust
 use lib_identity::identity::IdentityManager;
@@ -269,9 +269,9 @@ async fn complete_security_setup() -> Result<()> {
         &mut economic_model,
     ).await?;
     
-    println!(" CRITICAL: Write down this 20-word seed phrase:");
+    println!("📝 CRITICAL: Write down this 20-word seed phrase:");
     println!("{}", result.master_seed_phrase.words.join(" "));
-    println!("\n  Store in multiple secure offline locations!");
+    println!("\n⚠️  Store in multiple secure offline locations!");
     
     // 2. Set DID password for convenient sign-in
     let identity_id = result.identity_id;
@@ -279,7 +279,7 @@ async fn complete_security_setup() -> Result<()> {
         &identity_id,
         "myDidPassword123"
     )?;
-    println!(" DID password set");
+    println!("✅ DID password set");
     
     // 3. Get wallet manager
     let identity = identity_manager.get_identity(&identity_id).unwrap();
@@ -296,7 +296,7 @@ async fn complete_security_setup() -> Result<()> {
             &wallet_id,
             &format!("{}SecurePass", name)
         )?;
-        println!(" Protected {} wallet", name);
+        println!("🔐 Protected {} wallet", name);
     }
     
     println!("\n✨ Complete security setup finished!");
@@ -310,25 +310,25 @@ async fn complete_security_setup() -> Result<()> {
 
 ---
 
-##  Important Security Notes
+## ⚠️ Important Security Notes
 
 ### DO:
--  Write 20-word seed phrase on paper/metal
--  Store in multiple secure offline locations
--  Use strong, unique passwords (8+ characters)
--  Change passwords if you suspect compromise
--  Add wallet passwords to high-value wallets
+- ✅ Write 20-word seed phrase on paper/metal
+- ✅ Store in multiple secure offline locations
+- ✅ Use strong, unique passwords (8+ characters)
+- ✅ Change passwords if you suspect compromise
+- ✅ Add wallet passwords to high-value wallets
 
 ### DON'T:
--  Store seed phrase digitally (no photos, no cloud)
--  Share seed phrase with anyone (not even support)
--  Use same password for DID and wallets
--  Forget to backup seed phrase before creating DID
--  Rely only on passwords (seed phrase is ultimate backup)
+- ❌ Store seed phrase digitally (no photos, no cloud)
+- ❌ Share seed phrase with anyone (not even support)
+- ❌ Use same password for DID and wallets
+- ❌ Forget to backup seed phrase before creating DID
+- ❌ Rely only on passwords (seed phrase is ultimate backup)
 
 ---
 
-##  Why Multiple Files?
+## 🔧 Why Multiple Files?
 
 The codebase is **modular** for maintainability:
 

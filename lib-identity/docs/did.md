@@ -479,7 +479,7 @@ println!("Failed resolutions: {}", batch_resolution.failed_count);
 for (did, result) in &batch_resolution.results {
     match result {
         Ok(document) => {
-            println!(" {}: Resolved", did);
+            println!("✓ {}: Resolved", did);
         },
         Err(error) => {
             println!("✗ {}: {}", did, error);

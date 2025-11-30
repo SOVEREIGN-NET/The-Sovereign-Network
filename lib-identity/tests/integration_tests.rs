@@ -21,7 +21,8 @@ async fn test_complete_citizen_onboarding_flow() {
     
     // Create a new citizen identity with complete onboarding
     let citizenship_result = manager.create_citizen_identity(
-        vec!["test recovery phrase".to_string()],
+        "Test Citizen".to_string(),
+        vec!["test@example.com".to_string()],
         &mut economic_model,
     ).await.expect("Failed to create citizen identity");
     
@@ -244,24 +245,24 @@ async fn test_wallet_integration() {
     let owner_id = Hash([42u8; 32]);
     let mut wallet_manager = WalletManager::new(owner_id.clone());
     
-    // Create different types of wallets
-    let primary_wallet = wallet_manager.create_wallet(
+    // Create different types of wallets with seed phrases
+    let (primary_wallet, _seed1) = wallet_manager.create_wallet_with_seed_phrase(
         WalletType::Primary,
         "Primary Wallet".to_string(),
         Some("primary".to_string()),
-    ).expect("Failed to create primary wallet");
-    
-    let ubi_wallet = wallet_manager.create_wallet(
+    ).await.expect("Failed to create primary wallet");
+
+    let (ubi_wallet, _seed2) = wallet_manager.create_wallet_with_seed_phrase(
         WalletType::UBI,
         "UBI Wallet".to_string(),
         Some("ubi".to_string()),
-    ).expect("Failed to create UBI wallet");
-    
-    let savings_wallet = wallet_manager.create_wallet(
+    ).await.expect("Failed to create UBI wallet");
+
+    let (savings_wallet, _seed3) = wallet_manager.create_wallet_with_seed_phrase(
         WalletType::Savings,
         "Savings Wallet".to_string(),
         Some("savings".to_string()),
-    ).expect("Failed to create savings wallet");
+    ).await.expect("Failed to create savings wallet");
     
     // Test wallet retrieval
     assert!(wallet_manager.get_wallet(&primary_wallet).is_some());
@@ -340,12 +341,12 @@ async fn test_citizenship_system_integration() {
     let mut citizen_results = Vec::new();
     
     for i in 0..3 {
-        let result = manager.onboard_new_citizen(
+        let result = manager.create_citizen_identity(
             format!("Citizen {}", i + 1),
-            vec![format!("recovery phrase for citizen {}", i + 1)],
+            vec![format!("recovery@citizen{}.com", i + 1)],
             &mut economic_model,
-        ).await.expect("Failed to onboard citizen");
-        
+        ).await.expect("Failed to create citizen");
+
         citizen_results.push(result);
     }
     
@@ -374,8 +375,19 @@ async fn test_citizenship_system_integration() {
 
 async fn create_test_identity() -> identity::ZhtpIdentity {
     use lib_proofs::ZeroKnowledgeProof;
-    
-    let public_key = vec![42u8; 32];
+
+    // Use realistic Dilithium2 key sizes for testing
+    // Dilithium2: PK = 1312 bytes, SK = 2528 bytes
+    let public_key = lib_crypto::PublicKey {
+        dilithium_pk: vec![42u8; 1312],  // Real Dilithium2 public key size
+        kyber_pk: vec![],
+        key_id: [42u8; 32],
+    };
+    let private_key = lib_crypto::PrivateKey {
+        dilithium_sk: vec![1u8; 2528],   // Real Dilithium2 secret key size
+        kyber_sk: vec![],
+        master_seed: vec![],
+    };
     let ownership_proof = ZeroKnowledgeProof {
         proof_system: "Test".to_string(),
         proof_data: vec![1, 2, 3, 4],
@@ -384,10 +396,15 @@ async fn create_test_identity() -> identity::ZhtpIdentity {
         plonky2_proof: None,
         proof: vec![],
     };
-    
+
     identity::ZhtpIdentity::new(
         IdentityType::Human,
         public_key,
+        private_key,
+        "test_device".to_string(),
+        Some(30),
+        Some("US".to_string()),
+        false,  // Not a verified citizen in test
         ownership_proof,
     ).expect("Failed to create test identity")
 }

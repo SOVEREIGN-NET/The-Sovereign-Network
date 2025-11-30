@@ -386,8 +386,20 @@ impl QuantumWallet {
     ) -> Result<Self, anyhow::Error> {
         let mut wallet = Self::new(wallet_type, name, alias, owner_id, public_key);
         
-        // Generate 24-word seed phrase using pure function
-        let seed_phrase = crate::recovery::generate_recovery_phrase(24)?;
+        // Generate 20-word seed phrase
+        let mut recovery_manager = crate::recovery::RecoveryPhraseManager::new();
+        let wallet_id_str = hex::encode(&wallet.id.0);
+        let wallet_descriptor = format!("wallet {}", &wallet_id_str[..16]); // Use first 16 chars for readability
+        
+        let seed_options = crate::recovery::PhraseGenerationOptions {
+            word_count: 20,
+            language: "english".to_string(),
+            entropy_source: crate::recovery::EntropySource::SystemRandom,
+            include_checksum: true,
+            custom_wordlist: None,
+        };
+        
+        let seed_phrase = recovery_manager.generate_recovery_phrase(&wallet_descriptor, seed_options).await?;
         
         // Generate seed commitment for blockchain verification
         let seed_text = seed_phrase.words.join(" ");
@@ -395,7 +407,6 @@ impl QuantumWallet {
         let seed_commitment = format!("zhtp:wallet:commitment:{}", hex::encode(commitment_hash));
         
         // Encrypt seed phrase for storage
-        let wallet_id_str = hex::encode(&wallet.id.0);
         let encrypted_seed = Self::encrypt_seed_phrase(&seed_text, &wallet_id_str)?;
         
         wallet.seed_phrase = Some(seed_phrase);
@@ -437,9 +448,20 @@ impl QuantumWallet {
             public_key,
         );
         
-        // Generate 24-word seed phrase for the DAO wallet
-        let seed_phrase = crate::recovery::generate_recovery_phrase(24)?;
+        // Generate 20-word seed phrase for the DAO wallet
+        let mut recovery_manager = crate::recovery::RecoveryPhraseManager::new();
         let wallet_id_str = hex::encode(&wallet.id.0);
+        let dao_descriptor = format!("DAO wallet {}", &wallet_id_str[..16]);
+        
+        let seed_options = crate::recovery::PhraseGenerationOptions {
+            word_count: 20,
+            language: "english".to_string(),
+            entropy_source: crate::recovery::EntropySource::SystemRandom,
+            include_checksum: true,
+            custom_wordlist: None,
+        };
+        
+        let seed_phrase = recovery_manager.generate_recovery_phrase(&dao_descriptor, seed_options).await?;
         
         // Generate seed commitment
         let seed_text = seed_phrase.words.join(" ");
@@ -474,7 +496,7 @@ impl QuantumWallet {
         
         wallet.dao_properties = Some(dao_properties);
         
-        println!(" Created {} DAO wallet: {} (DID required)", 
+        println!("✓ Created {} DAO wallet: {} (DID required)", 
                 if is_nonprofit { "NonProfit" } else { "ForProfit" },
                 wallet.name);
         
@@ -753,7 +775,7 @@ impl QuantumWallet {
         if let Some(ref mut dao_props) = self.dao_properties {
             if !dao_props.authorized_controllers.contains(&new_controller) {
                 dao_props.authorized_controllers.push(new_controller);
-                println!(" Added new controller to DAO wallet: {}", self.name);
+                println!("✓ Added new controller to DAO wallet: {}", self.name);
             }
         }
         
@@ -773,7 +795,7 @@ impl QuantumWallet {
         if let Some(ref mut dao_props) = self.dao_properties {
             if !dao_props.authorized_dao_controllers.contains(&dao_controller) {
                 dao_props.authorized_dao_controllers.push(dao_controller);
-                println!(" Added DAO controller to DAO wallet: {}", self.name);
+                println!("✓ Added DAO controller to DAO wallet: {}", self.name);
             }
         }
         
@@ -798,7 +820,7 @@ impl QuantumWallet {
                 dao_props.authorized_dao_controllers.push(parent_dao_id.clone());
             }
             
-            println!(" Set parent DAO for {}: {}", self.name, hex::encode(&parent_dao_id.0[..8]));
+            println!("✓ Set parent DAO for {}: {}", self.name, hex::encode(&parent_dao_id.0[..8]));
         }
         
         Ok(())
@@ -817,7 +839,7 @@ impl QuantumWallet {
         if let Some(ref mut dao_props) = self.dao_properties {
             if !dao_props.child_dao_wallets.contains(&child_dao_id) {
                 dao_props.child_dao_wallets.push(child_dao_id.clone());
-                println!(" Added child DAO to {}: {}", self.name, hex::encode(&child_dao_id.0[..8]));
+                println!("✓ Added child DAO to {}: {}", self.name, hex::encode(&child_dao_id.0[..8]));
             }
         }
         

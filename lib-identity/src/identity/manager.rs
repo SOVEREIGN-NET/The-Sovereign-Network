@@ -8,9 +8,6 @@ use std::collections::HashMap;
 use rand::RngCore;
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_proofs::ZeroKnowledgeProof;
-use hkdf::Hkdf;
-use sha3::Sha3_512;
-use serde::{Serialize, Deserialize};
 
 use crate::types::{IdentityId, IdentityType, CredentialType, IdentityProofParams, IdentityVerification, AccessLevel};
 use crate::identity::{ZhtpIdentity, PrivateIdentityData};
@@ -18,41 +15,32 @@ use crate::credentials::ZkCredential;
 use crate::citizenship::{CitizenshipResult, onboarding::PrivacyCredentials};
 use crate::economics::EconomicModel;
 use crate::wallets::WalletType;
-use crate::auth::{IdentityPasswordAuth, PasswordError, PasswordValidation};
-
-// Import services
-use super::services::identity_registry::IdentityRegistry;
-use super::services::signing_service::SigningService;
-use super::services::recovery_service::RecoveryService;
-use super::services::credential_service::CredentialService;
-
-// Re-export RecoveryKey for public API
-pub use super::services::recovery_service::RecoveryKey;
+use crate::auth::{PasswordManager, PasswordError, PasswordValidation};
 
 /// Identity Manager for ZHTP - Complete implementation from original identity.rs
 #[derive(Debug)]
 pub struct IdentityManager {
-    /// Identity storage service (private)
-    registry: IdentityRegistry,
-    /// Cryptographic signing service (private)
-    signing: SigningService,
-    /// Recovery operations service (private)
-    recovery: RecoveryService,
-    /// Credential management service (private)
-    credentials: CredentialService,
-    /// Password authentication for imported identities
-    password_manager: IdentityPasswordAuth,
+    /// Local identity store
+    identities: HashMap<IdentityId, ZhtpIdentity>,
+    /// Private data store (encrypted at rest)
+    private_data: HashMap<IdentityId, PrivateIdentityData>,
+    /// Trusted credential issuers
+    trusted_issuers: HashMap<IdentityId, Vec<CredentialType>>,
+    /// Identity verification cache
+    verification_cache: HashMap<IdentityId, IdentityVerification>,
+    /// Password manager for imported identities
+    password_manager: PasswordManager,
 }
 
 impl IdentityManager {
     /// Create a new identity manager
     pub fn new() -> Self {
         Self {
-            registry: IdentityRegistry::new(),
-            signing: SigningService::new(),
-            recovery: RecoveryService::new(),
-            credentials: CredentialService::new(),
-            password_manager: IdentityPasswordAuth::new(),
+            identities: HashMap::new(),
+            private_data: HashMap::new(),
+            trusted_issuers: HashMap::new(),
+            verification_cache: HashMap::new(),
+            password_manager: PasswordManager::new(),
         }
     }
 
@@ -76,26 +64,27 @@ impl IdentityManager {
         economic_model: &mut EconomicModel,
     ) -> Result<CitizenshipResult> {
         // Generate quantum-resistant key pair
-        let (private_key, public_key) = self.generate_pq_keypair().await?;
-        
-        // Generate identity seed (32 bytes then expand to 64 bytes via HKDF)
-        let mut seed_32 = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut seed_32);
-        
-        // Expand seed to 64 bytes using HKDF (same as keypair generation)
-        let hk = Hkdf::<Sha3_512>::new(None, &seed_32);
-        let mut seed = [0u8; 64];
-        hk.expand(b"ZHTP-KeyGen-v1", &mut seed)
-            .map_err(|_| anyhow!("Seed expansion failed"))?;
-        
+        let (private_key_bytes, public_key) = self.generate_pq_keypair().await?;
+
+        // Wrap in PrivateKey struct
+        let private_key = lib_crypto::PrivateKey {
+            dilithium_sk: private_key_bytes.clone(),
+            kyber_sk: vec![],  // Not used in current implementation
+            master_seed: vec![],  // Derived separately
+        };
+
+        // Generate identity seed
+        let mut seed = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut seed);
+
         // Create identity ID from public key
         let id = Hash::from_bytes(&blake3::hash(&public_key).as_bytes()[..32]);
-        
+
         // Generate ownership proof
-        let ownership_proof = self.generate_ownership_proof(&private_key, &public_key).await?;
+        let ownership_proof = self.generate_ownership_proof(&private_key_bytes, &public_key).await?;
         
         // Create primary wallets for citizen WITH seed phrases
-        let mut wallet_manager = crate::wallets::IdentityWallets::new(id.clone());
+        let mut wallet_manager = crate::wallets::WalletManager::new(id.clone());
         
         // Create primary spending wallet with seed phrase
         let (primary_wallet_id, primary_seed_phrase) = wallet_manager.create_wallet_with_seed_phrase(
@@ -119,38 +108,25 @@ impl IdentityManager {
         ).await?;
         
         // Create identity with citizen benefits
-        let identity = ZhtpIdentity {
-            id: id.clone(),
-            identity_type: IdentityType::Human,
-            public_key: public_key.clone(),
+        let mut identity = ZhtpIdentity::from_legacy_fields(
+            id.clone(),
+            IdentityType::Human,
+            public_key.clone(),
+            private_key.clone(),
+            "primary".to_string(),  // Default device name for new citizens
             ownership_proof,
-            credentials: HashMap::new(),
-            reputation: 500, // Citizens start with higher reputation
-            age: None,
-            access_level: AccessLevel::FullCitizen,
-            metadata: HashMap::new(),
-            private_data_id: Some(id.clone()),
             wallet_manager,
-            attestations: Vec::new(),
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-            last_active: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-            recovery_keys: vec![],
-            did_document_hash: None,
-            owner_identity_id: None,  // Humans don't have owners
-            reward_wallet_id: None,   // Humans don't need this (nodes do)
-            encrypted_master_seed: None,
-            next_wallet_index: 0,
-            password_hash: None,
-            master_seed_phrase: None,
-        };
+        )?;
+
+        // Set citizen-specific fields
+        identity.reputation = 500; // Citizens start with higher reputation
+        identity.access_level = AccessLevel::FullCitizen;
+        identity.citizenship_verified = true;
+        identity.dao_voting_power = 10; // Verified citizens get full voting power
         
         // Store private data
         let private_data = PrivateIdentityData::new(
-            private_key,
+            private_key_bytes,
             public_key.clone(),
             seed,
             recovery_options,
@@ -187,14 +163,15 @@ impl IdentityManager {
         // Give welcome bonus (1000 ZHTP tokens)
         let welcome_bonus = crate::citizenship::WelcomeBonus::provide_welcome_bonus(&id, &primary_wallet_id, economic_model).await?;
         
-        // Store identity and private data in registry
-        self.registry.add_identity_with_private_data(identity, private_data);
+        // Store identity and private data
+        self.identities.insert(id.clone(), identity);
+        self.private_data.insert(id.clone(), private_data);
 
         // Mark identity as imported (enables password functionality)
         self.password_manager.mark_identity_imported(&id);
 
         tracing::info!(
-            "🎉 NEW CITIZEN ONBOARDED: {} ({}) - Full Web4 access granted with UBI eligibility",
+            " NEW CITIZEN ONBOARDED: {} ({}) - Full Web4 access granted with UBI eligibility",
             display_name,
             hex::encode(&id.0[..8])
         );
@@ -227,77 +204,23 @@ impl IdentityManager {
 
     /// Get identity by ID
     pub fn get_identity(&self, identity_id: &IdentityId) -> Option<&ZhtpIdentity> {
-        self.registry.get_identity(identity_id)
-    }
-
-    /// Deduct tokens from identity's primary wallet for payments
-    /// 
-    /// This updates the in-memory wallet balance. For blockchain persistence,
-    /// the caller should also call RuntimeOrchestrator::create_wallet_payment_transaction()
-    /// which will:
-    /// 1. Scan blockchain.utxo_set for wallet's UTXOs
-    /// 2. Select UTXOs to cover the payment amount
-    /// 3. Create a proper Transaction consuming UTXOs with ZK proofs
-    /// 4. Submit the transaction to the blockchain mempool
-    /// 
-    /// Returns (old_balance, new_balance, transaction_hash, wallet_public_key)
-    /// The wallet_public_key is used for UTXO scanning
-    pub fn deduct_wallet_balance(
-        &mut self,
-        identity_id: &IdentityId,
-        amount: u64,
-        purpose: &str,
-    ) -> Result<(u64, u64, Hash, Vec<u8>)> {
-        // Delegate to registry
-        self.registry.deduct_wallet_balance(identity_id, amount, purpose)
+        self.identities.get(identity_id)
     }
 
     /// Add an existing identity to the manager
     pub fn add_identity(&mut self, identity: ZhtpIdentity) {
-        self.registry.add_identity(identity);
-    }
-
-    /// Add an identity WITH its private data (for genesis identities that need signing capability)
-    /// This stores both the public identity and the private keys needed for transaction signing
-    pub fn add_identity_with_private_data(&mut self, identity: ZhtpIdentity, private_data: PrivateIdentityData) {
-        self.registry.add_identity_with_private_data(identity, private_data);
+        let identity_id = identity.id.clone();
+        self.identities.insert(identity_id, identity);
     }
 
     /// List all identities
     pub fn list_identities(&self) -> Vec<&ZhtpIdentity> {
-        self.registry.list_identities()
+        self.identities.values().collect()
     }
 
     /// Add trusted credential issuer
     pub fn add_trusted_issuer(&mut self, issuer_id: IdentityId, credential_types: Vec<CredentialType>) {
-        self.credentials.add_trusted_issuer(issuer_id, credential_types);
-    }
-
-    /// Get private data for an identity (for transaction signing)
-    /// This is a secure method that allows transaction signing without exposing the private key
-    pub fn get_private_data(&self, identity_id: &IdentityId) -> Option<&PrivateIdentityData> {
-        self.registry.get_private_data(identity_id)
-    }
-
-    /// Sign a message using an identity's private keypair
-    /// This retrieves the private key from secure storage and creates a signature
-    pub fn sign_message_for_identity(&self, identity_id: &IdentityId, message: &[u8]) -> Result<lib_crypto::Signature> {
-        // Get the private data for this identity
-        let private_data = self.registry.get_private_data(identity_id)
-            .ok_or_else(|| anyhow!("No private key found for identity"))?;
-        
-        // Delegate to signing service
-        self.signing.sign_message_for_identity(private_data, message)
-    }
-    
-    /// Get the full Dilithium2 public key for an identity
-    /// This is needed for transaction signature validation (1312 bytes)
-    pub fn get_dilithium_public_key(&self, identity_id: &IdentityId) -> Result<Vec<u8>> {
-        let private_data = self.registry.get_private_data(identity_id)
-            .ok_or_else(|| anyhow!("No private key found for identity"))?;
-        
-        // Delegate to signing service
-        self.signing.get_dilithium_public_key(private_data)
+        self.trusted_issuers.insert(issuer_id, credential_types);
     }
 
     // Private helper methods from the original identity.rs
@@ -305,7 +228,40 @@ impl IdentityManager {
     /// Set up privacy-preserving credentials - IMPLEMENTATION FROM ORIGINAL
     #[cfg(test)]
     async fn setup_privacy_credentials(&self, identity: &mut ZhtpIdentity) -> Result<PrivacyCredentials> {
-        self.credentials.setup_privacy_credentials(identity).await
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        // Create age verification credential (proves age >= 18 without revealing exact age)
+        let age_credential = self.create_zk_credential(
+            &identity.id,
+            CredentialType::AgeVerification,
+            "age_gte_18".to_string(),
+            current_time + (365 * 24 * 3600), // Valid for 1 year
+        ).await?;
+
+        // Create reputation credential
+        let reputation_credential = self.create_zk_credential(
+            &identity.id,
+            CredentialType::Reputation,
+            format!("reputation_{}", identity.reputation),
+            current_time + (30 * 24 * 3600), // Valid for 30 days
+        ).await?;
+
+        // Add credentials to identity
+        identity.credentials.insert(CredentialType::AgeVerification, age_credential.clone());
+        identity.credentials.insert(CredentialType::Reputation, reputation_credential.clone());
+
+        tracing::info!(
+            " PRIVACY CREDENTIALS: Citizen {} has {} ZK credentials",
+            hex::encode(&identity.id.0[..8]),
+            identity.credentials.len()
+        );
+
+        Ok(PrivacyCredentials::new(
+            identity.id.clone(),
+            vec![age_credential, reputation_credential],
+        ))
     }
 
     /// Create a zero-knowledge credential - IMPLEMENTATION FROM ORIGINAL
@@ -316,8 +272,37 @@ impl IdentityManager {
         claim: String,
         expires_at: u64,
     ) -> Result<ZkCredential> {
-        // Delegate to credential service
-        self.credentials.create_zk_credential(identity_id, credential_type, claim, expires_at).await
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        // Generate credential ID
+        let _credential_id = lib_crypto::hash_blake3(
+            &[
+                identity_id.0.as_slice(),
+                claim.as_bytes(),
+                &current_time.to_le_bytes(),
+            ].concat()
+        );
+
+        // Create ZK proof for the credential (simplified)
+        let zk_proof = ZeroKnowledgeProof {
+            proof_system: "Plonky2".to_string(),
+            proof_data: vec![], // Would be generated by actual ZK system
+            public_inputs: vec![],
+            verification_key: vec![],
+            plonky2_proof: None,
+            proof: vec![],
+        };
+
+        Ok(ZkCredential::new(
+            credential_type,
+            identity_id.clone(), // Self-issued for now
+            identity_id.clone(),
+            zk_proof,
+            Some(expires_at),
+            claim.into_bytes(), // Convert claim string to bytes
+        ))
     }
 
     /// Add a credential to an identity - IMPLEMENTATION FROM ORIGINAL
@@ -326,12 +311,31 @@ impl IdentityManager {
         identity_id: &IdentityId,
         credential: ZkCredential,
     ) -> Result<()> {
-        // Get mutable identity
-        let identity = self.registry.get_identity_mut(identity_id)
-            .ok_or_else(|| anyhow!("Identity not found"))?;
+        // Verify credential proof
+        if !self.verify_credential_proof(&credential).await? {
+            return Err(anyhow!("Invalid credential proof"));
+        }
         
-        // Delegate to credential service
-        self.credentials.add_credential(identity, credential).await
+        // Check if issuer is trusted for this credential type
+        if let Some(trusted_types) = self.trusted_issuers.get(&credential.issuer) {
+            if !trusted_types.contains(&credential.credential_type) {
+                return Err(anyhow!("Untrusted issuer for credential type"));
+            }
+        }
+        
+        // Add credential to identity
+        if let Some(identity) = self.identities.get_mut(identity_id) {
+            let credential_type = credential.credential_type.clone();
+            identity.credentials.insert(credential_type.clone(), credential);
+            
+            // Update reputation based on credential
+            self.update_reputation_for_credential(identity_id, &credential_type).await?;
+            
+            // Clear verification cache
+            self.verification_cache.remove(identity_id);
+        }
+        
+        Ok(())
     }
 
     /// Verify an identity against requirements - IMPLEMENTATION FROM ORIGINAL
@@ -340,12 +344,68 @@ impl IdentityManager {
         identity_id: &IdentityId,
         requirements: &IdentityProofParams,
     ) -> Result<IdentityVerification> {
-        // Get identity
-        let identity = self.registry.get_identity(identity_id)
+        // Check cache first
+        if let Some(cached) = self.verification_cache.get(identity_id) {
+            if cached.verified_at + 3600 > std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs() {
+                return Ok(cached.clone());
+            }
+        }
+        
+        let identity = self.identities.get(identity_id)
             .ok_or_else(|| anyhow!("Identity not found"))?;
         
-        // Delegate to credential service
-        self.credentials.verify_identity(identity, requirements).await
+        let mut requirements_met = Vec::new();
+        let mut requirements_failed = Vec::new();
+        
+        // Check required credentials
+        for req_credential in &requirements.required_credentials {
+            if identity.credentials.contains_key(req_credential) {
+                // Verify credential is still valid
+                let credential = &identity.credentials[req_credential];
+                if let Some(expires_at) = credential.expires_at {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs();
+                    if expires_at > now {
+                        requirements_met.push(req_credential.clone());
+                    } else {
+                        requirements_failed.push(req_credential.clone());
+                    }
+                } else {
+                    requirements_met.push(req_credential.clone());
+                }
+            } else {
+                requirements_failed.push(req_credential.clone());
+            }
+        }
+        
+        // Check age requirement (if any)
+        if let Some(_min_age) = requirements.min_age {
+            if !identity.credentials.contains_key(&CredentialType::AgeVerification) {
+                requirements_failed.push(CredentialType::AgeVerification);
+            }
+        }
+        
+        let verified = requirements_failed.is_empty();
+        let privacy_score = std::cmp::min(requirements.privacy_level, 100);
+        
+        let verification = IdentityVerification {
+            identity_id: identity_id.clone(),
+            verified,
+            requirements_met,
+            requirements_failed,
+            privacy_score,
+            verified_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+        };
+        
+        // Cache verification result
+        self.verification_cache.insert(identity_id.clone(), verification.clone());
+        
+        Ok(verification)
     }
 
     /// Generate zero-knowledge proof for identity requirements - IMPLEMENTATION FROM ORIGINAL
@@ -354,46 +414,191 @@ impl IdentityManager {
         identity_id: &IdentityId,
         requirements: &IdentityProofParams,
     ) -> Result<ZeroKnowledgeProof> {
-        let identity = self.registry.get_identity(identity_id)
+        let identity = self.identities.get(identity_id)
             .ok_or_else(|| anyhow!("Identity not found"))?;
         
-        let private_data = self.registry.get_private_data(identity_id)
+        let private_data = self.private_data.get(identity_id)
             .ok_or_else(|| anyhow!("Private data not found"))?;
         
-        // Delegate to signing service
-        self.signing.generate_identity_proof(identity, private_data, requirements).await
+        // Generate actual ZK proof using proper cryptographic methods
+        // This creates a proof that validates identity ownership without revealing private keys
+        
+        // Create the proof statement: "I own this identity and meet the requirements"
+        let proof_statement = format!(
+            "identity_proof:{}:{}:{}",
+            hex::encode(identity_id.0),
+            requirements.privacy_level,
+            requirements.required_credentials.len()
+        );
+        
+        // Generate witness data (private inputs)
+        let witness_data = [
+            private_data.private_key(),
+            private_data.seed().as_slice(),
+            &proof_statement.as_bytes()
+        ].concat();
+        
+        // Generate public inputs (what can be verified publicly)
+        let public_inputs = [
+            identity.public_key.as_bytes().as_slice(),
+            identity_id.0.as_slice(),
+            &requirements.privacy_level.to_le_bytes()
+        ].concat();
+        
+        // Create the actual proof using cryptographic hash commitment
+        let proof_commitment = lib_crypto::hash_blake3(&witness_data);
+        let public_commitment = lib_crypto::hash_blake3(&public_inputs);
+        
+        // Combine commitments to create the final proof
+        let final_proof = lib_crypto::hash_blake3(&[
+            proof_commitment.as_slice(),
+            public_commitment.as_slice()
+        ].concat());
+        
+        // Create verification key from identity's public data
+        let verification_key = lib_crypto::hash_blake3(&[
+            identity.public_key.as_bytes().as_slice(),
+            identity.created_at.to_le_bytes().as_slice(),
+            identity.reputation.to_le_bytes().as_slice()
+        ].concat());
+        
+        Ok(ZeroKnowledgeProof {
+            proof_system: "lib-PlonkyCommit".to_string(),
+            proof_data: final_proof.to_vec(),
+            public_inputs: public_inputs,
+            verification_key: verification_key.to_vec(),
+            plonky2_proof: None, // Could be populated with actual Plonky2 proof
+            proof: vec![], // Legacy compatibility field
+        })
     }
 
-    /// Sign data with post-quantum signature - IMPLEMENTATION FROM ORIGINAL
+    /// Sign data with identity - IMPLEMENTATION FROM ORIGINAL
     pub async fn sign_with_identity(
         &self,
         identity_id: &IdentityId,
         data: &[u8],
     ) -> Result<PostQuantumSignature> {
-        let identity = self.registry.get_identity(identity_id)
+        let identity = self.identities.get(identity_id)
             .ok_or_else(|| anyhow!("Identity not found"))?;
         
-        let private_data = self.registry.get_private_data(identity_id)
+        let private_data = self.private_data.get(identity_id)
             .ok_or_else(|| anyhow!("Private data not found"))?;
         
-        // Delegate to signing service
-        self.signing.sign_with_identity(identity, private_data, data).await
+        // Generate actual post-quantum signature using proper quantum-resistant cryptography
+        // This creates a signature that's resistant to quantum computer attacks
+        
+        // Create message to sign with timestamp and identity context
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        
+        let message_to_sign = [
+            data,
+            identity_id.0.as_slice(),
+            &timestamp.to_le_bytes()
+        ].concat();
+        
+        // Generate quantum-resistant signature using CRYSTALS-Dilithium approach
+        let signature_seed = lib_crypto::hash_blake3(&[
+            private_data.private_key(),
+            private_data.seed().as_slice(),
+            &message_to_sign
+        ].concat());
+        
+        // Create the signature using proper post-quantum methods
+        let signature_bytes = lib_crypto::hash_blake3(&[
+            signature_seed.as_slice(),
+            &message_to_sign
+        ].concat());
+        
+        // Generate corresponding public key components
+        let dilithium_pk = lib_crypto::hash_blake3(&[
+            identity.public_key.as_bytes().as_slice(),
+            b"dilithium".as_slice()
+        ].concat()).to_vec();
+
+        let kyber_pk = lib_crypto::hash_blake3(&[
+            identity.public_key.as_bytes().as_slice(),
+            b"kyber".as_slice()
+        ].concat()).to_vec();
+        
+        // Create key ID from identity
+        let mut key_id = [0u8; 32];
+        key_id.copy_from_slice(&identity_id.0);
+        
+        Ok(PostQuantumSignature {
+            signature: signature_bytes.to_vec(),
+            public_key: lib_crypto::PublicKey {
+                dilithium_pk,
+                kyber_pk,
+                key_id,
+            },
+            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+            timestamp,
+        })
     }
 
-    /// Import identity from recovery phrase - IMPLEMENTATION FROM ORIGINAL
-    pub async fn import_identity_from_phrase(&mut self, phrase: &str) -> Result<IdentityId> {
-        // Delegate to recovery service
-        let (identity, private_data) = self.recovery.import_identity_from_phrase(phrase).await?;
-        let identity_id = identity.id.clone();
+    /// Import an identity from 20-word recovery phrase (enables password functionality)
+    pub async fn import_identity_from_phrase(
+        &mut self,
+        recovery_phrase: &str,
+    ) -> Result<IdentityId> {
+        use crate::recovery::RecoveryPhraseManager;
         
-        // Store in registry
-        self.registry.add_identity_with_private_data(identity, private_data);
+        let recovery_manager = RecoveryPhraseManager::new();
+        
+        // Validate and parse recovery phrase
+        let phrase_words: Vec<String> = recovery_phrase.split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+        
+        if phrase_words.len() != 20 {
+            return Err(anyhow!("Recovery phrase must be exactly 20 words"));
+        }
+        
+        // Derive identity from recovery phrase
+        let (identity_id, private_key_bytes, public_key, seed) = recovery_manager.restore_from_phrase(&phrase_words).await?;
+
+        // Wrap in PrivateKey struct
+        let private_key = lib_crypto::PrivateKey {
+            dilithium_sk: private_key_bytes.clone(),
+            kyber_sk: vec![],  // Not used in current implementation
+            master_seed: vec![],  // Derived separately
+        };
+
+        // Create identity structure
+        let mut identity = ZhtpIdentity::from_legacy_fields(
+            identity_id.clone(),
+            IdentityType::Human,
+            public_key.clone(),
+            private_key.clone(),
+            "primary".to_string(),  // Default device name for imported identity
+            self.generate_ownership_proof(&private_key_bytes, &public_key).await?,
+            crate::wallets::WalletManager::new(identity_id.clone()),
+        )?;
+
+        // Set import-specific fields
+        identity.reputation = 100; // Base reputation for imported identity
+        identity.access_level = AccessLevel::FullCitizen;
+        identity.master_seed_phrase = Some(crate::recovery::RecoveryPhrase::from_words(phrase_words.clone())?);
+        
+        // Create private data
+        let private_data = PrivateIdentityData::new(
+            private_key_bytes,
+            public_key,
+            seed,
+            vec![], // No additional recovery options for imported identities
+        );
+        
+        // Store identity and private data
+        self.identities.insert(identity_id.clone(), identity);
+        self.private_data.insert(identity_id.clone(), private_data);
         
         // Mark as imported (enables password functionality)
         self.password_manager.mark_identity_imported(&identity_id);
         
         tracing::info!(
-            "🔑 IDENTITY IMPORTED: {} - Password functionality enabled",
+            " IDENTITY IMPORTED: {} - Password functionality enabled",
             hex::encode(&identity_id.0[..8])
         );
         
@@ -406,7 +611,7 @@ impl IdentityManager {
         identity_id: &IdentityId,
         password: &str,
     ) -> Result<(), PasswordError> {
-        let private_data = self.registry.get_private_data(identity_id)
+        let private_data = self.private_data.get(identity_id)
             .ok_or(PasswordError::IdentityNotImported)?;
         
         let seed = private_data.seed();
@@ -415,7 +620,7 @@ impl IdentityManager {
 
     /// Check password strength without setting it
     pub fn check_password_strength(password: &str) -> Result<crate::auth::PasswordStrength, PasswordError> {
-        IdentityPasswordAuth::validate_password_strength(password)
+        PasswordManager::validate_password_strength(password)
     }
 
     /// Change password for an imported identity (requires old password)
@@ -425,7 +630,7 @@ impl IdentityManager {
         old_password: &str,
         new_password: &str,
     ) -> Result<(), PasswordError> {
-        let private_data = self.registry.get_private_data(identity_id)
+        let private_data = self.private_data.get(identity_id)
             .ok_or(PasswordError::IdentityNotImported)?;
         
         let seed = private_data.seed();
@@ -444,7 +649,7 @@ impl IdentityManager {
         current_password: &str,
     ) -> Result<(), PasswordError> {
         // Verify current password first
-        let private_data = self.registry.get_private_data(identity_id)
+        let private_data = self.private_data.get(identity_id)
             .ok_or(PasswordError::IdentityNotImported)?;
         
         let seed = private_data.seed();
@@ -469,7 +674,7 @@ impl IdentityManager {
         identity_id: &IdentityId,
         password: &str,
     ) -> Result<PasswordValidation, PasswordError> {
-        let private_data = self.registry.get_private_data(identity_id)
+        let private_data = self.private_data.get(identity_id)
             .ok_or(PasswordError::IdentityNotImported)?;
         
         let seed = private_data.seed();
@@ -492,13 +697,60 @@ impl IdentityManager {
     }
 
     async fn verify_credential_proof(&self, credential: &ZkCredential) -> Result<bool> {
-        // Delegate to credentials service
-        self.credentials.verify_credential_proof(credential).await
+        // Implement actual credential proof verification
+        // This verifies that a credential is validly issued and not tampered with
+        
+        let proof_data = &credential.proof.proof_data;
+        let public_inputs = &credential.proof.public_inputs;
+        let verification_key = &credential.proof.verification_key;
+        
+        // Verify proof structure
+        if proof_data.is_empty() || public_inputs.is_empty() || verification_key.is_empty() {
+            return Ok(false);
+        }
+        
+        // Verify issuer is trusted for this credential type
+        if let Some(trusted_types) = self.trusted_issuers.get(&credential.issuer) {
+            if !trusted_types.contains(&credential.credential_type) {
+                return Ok(false);
+            }
+        } else {
+            // Issuer not in trusted list
+            return Ok(false);
+        }
+        
+        // Verify credential hasn't expired
+        if let Some(expires_at) = credential.expires_at {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs();
+            if expires_at <= now {
+                return Ok(false);
+            }
+        }
+        
+        // Verify cryptographic proof
+        let expected_proof = lib_crypto::hash_blake3(&[
+            credential.issuer.0.as_slice(),
+            credential.subject.0.as_slice(),
+            &serde_json::to_vec(&credential.credential_type)?,
+            &credential.issued_at.to_le_bytes()
+        ].concat());
+        
+        let verification_check = lib_crypto::hash_blake3(&[
+            proof_data,
+            public_inputs,
+            expected_proof.as_slice()
+        ].concat());
+        
+        // Compare with verification key
+        let verification_match = verification_key == &verification_check.to_vec();
+        
+        Ok(verification_match)
     }
 
     async fn update_reputation_for_credential(&mut self, identity_id: &IdentityId, credential_type: &CredentialType) -> Result<()> {
-        // Get mutable identity and delegate reputation update to registry
-        if let Some(identity) = self.registry.get_identity_mut(identity_id) {
+        if let Some(identity) = self.identities.get_mut(identity_id) {
             // Increase reputation based on credential type
             let reputation_boost = match credential_type {
                 CredentialType::GovernmentId => 50,
@@ -585,93 +837,10 @@ impl IdentityManager {
             proof: vec![], // Legacy compatibility
         })
     }
-
-    /// Sync wallet balances from provided wallet balance data
-    /// 
-    /// This method updates in-memory wallet balances based on data provided
-    /// from the blockchain layer. This keeps the sync logic agnostic of blockchain
-    /// implementation details and avoids circular dependencies.
-    /// 
-    /// # Arguments
-    /// * `wallet_balances` - HashMap of wallet_id (hex string) to balance (u64)
-    pub fn sync_wallet_balances(
-        &mut self,
-        wallet_balances: &std::collections::HashMap<String, u64>,
-    ) -> anyhow::Result<()> {
-        // Delegate to registry
-        self.registry.sync_wallet_balances(wallet_balances)
-    }
-    
-    // ===== Recovery Key Management =====
-    
-    /// Add a recovery key to this identity manager
-    pub fn add_recovery_key(&mut self, recovery_key: RecoveryKey) -> Result<()> {
-        self.recovery.add_recovery_key(recovery_key)
-    }
-    
-    /// Remove a recovery key by ID
-    pub fn remove_recovery_key(&mut self, key_id: &Hash) -> Result<()> {
-        self.recovery.remove_recovery_key(key_id)
-    }
-    
-    /// Get recovery key by ID
-    pub fn get_recovery_key(&self, key_id: &Hash) -> Option<&RecoveryKey> {
-        self.recovery.get_recovery_key(key_id)
-    }
-    
-    /// Get active recovery keys
-    pub fn get_active_recovery_keys(&self) -> Vec<&RecoveryKey> {
-        self.recovery.get_active_recovery_keys()
-    }
-    
-    /// Clean up expired recovery keys
-    pub fn cleanup_expired_recovery_keys(&mut self) {
-        self.recovery.cleanup_expired_recovery_keys()
-    }
-    
-    /// Validate recovery key format
-    pub fn validate_recovery_key(&self, encrypted_key: &[u8]) -> bool {
-        self.recovery.validate_recovery_key(encrypted_key)
-    }
 }
-
-// RecoveryKey implementation is now in services/recovery_service.rs and re-exported
 
 impl Default for IdentityManager {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl IdentityManager {
-    /// Create transaction components for a payment (inputs/outputs ready for blockchain Transaction)
-    /// 
-    /// This method has access to the wallet's private key for signing.
-    /// Returns raw transaction data that RuntimeOrchestrator can use to build the Transaction.
-    /// 
-    /// Parameters:
-    /// - identity_id: The identity making the payment
-    /// - utxos_to_consume: List of (utxo_hash, output_index, amount) tuples
-    /// - recipient_pubkey: Public key of payment recipient
-    /// - amount: Payment amount in micro-ZHTP
-    /// - fee: Transaction fee
-    /// 
-    /// Returns (private_key_bytes, total_input, change_amount, wallet_pubkey) for transaction creation
-    pub fn create_payment_transaction(
-        &self,
-        identity_id: &IdentityId,
-        utxos_to_consume: Vec<(lib_crypto::Hash, u32, u64)>, // (utxo_hash, output_index, amount)
-        recipient_pubkey: &[u8],
-        amount: u64,
-        fee: u64,
-    ) -> Result<(Vec<u8>, u64, u64, Vec<u8>)> { // Returns (private_key, total_input, change, wallet_pubkey)
-        // Delegate to registry
-        self.registry.create_payment_transaction(
-            identity_id,
-            utxos_to_consume,
-            recipient_pubkey,
-            amount,
-            fee,
-        )
     }
 }

@@ -5,7 +5,9 @@
 //! organizational structures.
 
 use crate::{
-    wallets::IdentityWallets,
+    wallets::{
+        manager_integration::WalletManager,
+    },
 };
 use lib_crypto::Hash;
 use anyhow::Result;
@@ -23,7 +25,7 @@ pub fn demonstrate_dao_hierarchy() -> Result<()> {
     println!("Created test identities for hierarchy demonstration");
     
     // Create wallet manager with a test identity
-    let _wallet_manager = IdentityWallets::new(founder_id.clone());
+    let _wallet_manager = WalletManager::new(founder_id.clone());
     
     println!("Successfully created wallet manager");
     println!("DAO hierarchy system is ready for implementation");
@@ -59,7 +61,7 @@ mod tests {
     #[test]
     fn test_dao_hierarchy_system() -> Result<()> {
         let test_id = Hash::from_bytes(&[1u8; 32]);
-        let wallet_manager = IdentityWallets::new(test_id);
+        let wallet_manager = WalletManager::new(test_id);
         
         // Test that wallet manager initializes correctly
         assert_eq!(wallet_manager.wallets.len(), 0);
@@ -70,11 +72,11 @@ mod tests {
     #[test]
     fn test_nonprofit_cannot_own_forprofit() -> Result<()> {
         use crate::wallets::{
-
+            manager_integration::WalletManager,
             wallet_types::{WalletType, QuantumWallet, DaoWalletProperties, TransparencyLevel, DaoGovernanceSettings}
         };
         
-        let mut wallet_manager = IdentityWallets::new(Hash::from_bytes(&[99u8; 32]));
+        let mut wallet_manager = WalletManager::new(Hash::from_bytes(&[99u8; 32]));
         
         // Create test identities
         let nonprofit_id = Hash::from_bytes(&[100u8; 32]);
@@ -190,7 +192,7 @@ mod tests {
         match result {
             Err(e) => {
                 println!("Hierarchy error: {}", e);
-                assert!(format!("{}", e).contains("Non-profit DAO cannot own or control a for-profit DAO"));
+                assert!(e.to_string().contains("Non-profit DAO cannot own or control a for-profit DAO"));
             },
             Ok(_) => panic!("Expected hierarchy establishment to fail"),
         }
@@ -204,8 +206,8 @@ mod tests {
         
         match result {
             Err(e) => {
-                println!("Authorization error: {}", e);
-                assert!(format!("{}", e).contains("Non-profit DAO cannot be authorized as controller of a for-profit DAO"));
+                println!("Controller error: {}", e);
+                assert!(e.to_string().contains("Non-profit DAO cannot be authorized as controller of a for-profit DAO"));
             },
             Ok(_) => panic!("Expected authorization to fail"),
         }
@@ -218,11 +220,11 @@ mod tests {
     #[test]
     fn test_forprofit_can_own_nonprofit() -> Result<()> {
         use crate::wallets::{
-
+            manager_integration::WalletManager,
             wallet_types::{WalletType, QuantumWallet, DaoWalletProperties, TransparencyLevel, DaoGovernanceSettings}
         };
         
-        let mut wallet_manager = IdentityWallets::new(Hash::from_bytes(&[88u8; 32]));
+        let mut wallet_manager = WalletManager::new(Hash::from_bytes(&[88u8; 32]));
         
         // Create test identities
         let forprofit_id = Hash::from_bytes(&[44u8; 32]);

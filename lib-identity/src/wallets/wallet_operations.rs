@@ -2,10 +2,9 @@
 
 use anyhow::Result;
 use lib_crypto::Hash;
-use crate::wallets::{IdentityWallets, WalletId};
-use crate::WalletType;
+use crate::wallets::{WalletManager, WalletId, WalletType};
 
-impl IdentityWallets {
+impl WalletManager {
     /// Create a basic wallet for testing purposes (bypasses seed phrase requirement)
     #[cfg(test)]
     pub fn create_wallet_for_testing(
@@ -485,7 +484,7 @@ mod tests {
     #[test]
     fn test_ubi_distribution() {
         let owner_id = Hash([1u8; 32]);
-        let mut manager = IdentityWallets::new(owner_id);
+        let mut manager = WalletManager::new(owner_id);
         
         // Create UBI wallets
         let ubi_wallet1 = manager.create_wallet_for_testing(
@@ -516,7 +515,7 @@ mod tests {
     #[test]
     fn test_cross_wallet_transaction() {
         let owner_id = Hash([1u8; 32]);
-        let mut manager = IdentityWallets::new(owner_id);
+        let mut manager = WalletManager::new(owner_id);
         
         let wallet1 = manager.create_wallet_for_testing(
             crate::wallets::WalletType::Primary,
@@ -552,7 +551,7 @@ mod tests {
     #[test]
     fn test_wallet_health_check() {
         let owner_id = Hash([1u8; 32]);
-        let mut manager = IdentityWallets::new(owner_id);
+        let mut manager = WalletManager::new(owner_id);
         
         // Create some wallets
         let _wallet1 = manager.create_wallet_for_testing(
@@ -579,7 +578,7 @@ mod tests {
     #[test]
     fn test_staking_rewards_generation() {
         let owner_id = Hash([1u8; 32]);
-        let mut manager = IdentityWallets::new(owner_id);
+        let mut manager = WalletManager::new(owner_id);
         
         let wallet1 = manager.create_wallet_for_testing(
             crate::wallets::WalletType::Primary,
@@ -617,7 +616,7 @@ mod tests {
     #[test]
     fn test_bulk_transfer() {
         let owner_id = Hash([1u8; 32]);
-        let mut manager = IdentityWallets::new(owner_id);
+        let mut manager = WalletManager::new(owner_id);
         
         let source_wallet = manager.create_wallet_for_testing(
             crate::wallets::WalletType::Primary,

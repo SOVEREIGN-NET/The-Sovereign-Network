@@ -1,9 +1,9 @@
 //! Multi-wallet management operations
 
 use anyhow::Result;
-use crate::wallets::{IdentityWallets, WalletType, WalletId, WalletSummary};
+use crate::wallets::{WalletManager, WalletType, WalletId, WalletSummary};
 
-impl IdentityWallets {
+impl WalletManager {
     /// Create multiple wallets for a new citizen with proper seed phrase recovery
     pub async fn create_citizen_wallets_with_seed_phrases(&mut self) -> Result<CitizenWalletSetWithSeeds> {
         // Create primary wallet with seed phrase

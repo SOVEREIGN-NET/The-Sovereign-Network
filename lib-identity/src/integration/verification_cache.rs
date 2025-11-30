@@ -147,7 +147,7 @@ impl VerificationCache {
         self.cache.insert(cache_key.clone(), entry);
         self.stats.total_entries = self.cache.len();
 
-        println!(" Stored verification result in cache: {} (expires in {} minutes)", cache_key, ttl);
+        println!("✓ Stored verification result in cache: {} (expires in {} minutes)", cache_key, ttl);
         Ok(cache_key)
     }
 
@@ -249,7 +249,7 @@ impl VerificationCache {
         }
 
         self.stats.total_entries = self.cache.len();
-        println!(" Evicted {} cache entries", evict_count);
+        println!("✓ Evicted {} cache entries", evict_count);
         
         Ok(())
     }
@@ -274,7 +274,7 @@ impl VerificationCache {
         self.stats.last_cleanup = current_time;
         
         if expired_count > 0 {
-            println!(" Cleaned up {} expired cache entries", expired_count);
+            println!("✓ Cleaned up {} expired cache entries", expired_count);
         }
         
         expired_count
@@ -285,7 +285,7 @@ impl VerificationCache {
         let cleared_count = self.cache.len();
         self.cache.clear();
         self.stats.total_entries = 0;
-        println!(" Cleared {} cache entries", cleared_count);
+        println!("✓ Cleared {} cache entries", cleared_count);
     }
 
     /// Get cache statistics
@@ -351,7 +351,7 @@ impl VerificationCache {
         self.stats.total_entries = self.cache.len();
         
         if removed_count > 0 {
-            println!(" Removed {} cache entries for identity {}", removed_count, identity_id);
+            println!("✓ Removed {} cache entries for identity {}", removed_count, identity_id);
         }
         
         removed_count

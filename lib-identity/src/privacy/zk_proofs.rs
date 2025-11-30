@@ -87,7 +87,7 @@ pub fn generate_ownership_proof(
 ) -> Result<OwnershipProof, String> {
     // Generate quantum-resistant signature for ownership proof
     let private_key = private_data.private_key();
-    let public_key = identity.public_key.clone();
+    let public_key = identity.public_key.as_bytes();
 
     // Create signature over challenge
     let signature = sign_challenge(private_key, challenge)?;
@@ -170,10 +170,10 @@ fn generate_citizenship_proof(identity: &ZhtpIdentity) -> Result<Vec<u8>, String
     Ok(proof_data)
 }
 
-fn generate_reputation_proof(identity: &ZhtpIdentity, threshold: u32) -> Result<Vec<u8>, String> {
+fn generate_reputation_proof(identity: &ZhtpIdentity, threshold: u64) -> Result<Vec<u8>, String> {
     // Prove reputation >= threshold
     let reputation = identity.reputation;
-    
+
     if reputation < threshold {
         return Err("Reputation requirement not met".to_string());
     }
