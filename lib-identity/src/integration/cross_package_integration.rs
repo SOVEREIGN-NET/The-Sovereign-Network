@@ -154,7 +154,7 @@ impl CrossPackageIntegration {
                         self.crypto_connection.quantum_ready = quantum_ready.as_bool().unwrap_or(false);
                     }
                     
-                    println!(" Crypto package connection established");
+                    println!("✓ Crypto package connection established");
                 } else {
                     return Err("Failed to authenticate with crypto package".into());
                 }
@@ -190,7 +190,7 @@ impl CrossPackageIntegration {
                         self.zk_connection.proof_cache_size = cache_size.as_u64().unwrap_or(0) as usize;
                     }
                     
-                    println!(" ZK package connection established");
+                    println!("✓ ZK package connection established");
                 } else {
                     return Err("Failed to load ZK circuits".into());
                 }
@@ -229,7 +229,7 @@ impl CrossPackageIntegration {
                         self.economics_connection.market_data_fresh = market_fresh.as_bool().unwrap_or(false);
                     }
                     
-                    println!(" Economics package connection established");
+                    println!("✓ Economics package connection established");
                 } else {
                     return Err("Failed to connect to economics system".into());
                 }
@@ -269,7 +269,7 @@ impl CrossPackageIntegration {
                         self.network_connection.mesh_health = mesh_health.as_f64().unwrap_or(0.0) as f32;
                     }
                     
-                    println!(" Network package connection established");
+                    println!("✓ Network package connection established");
                 } else {
                     return Err("Failed to register with network service".into());
                 }
@@ -382,7 +382,7 @@ impl CrossPackageIntegration {
             parameters: serde_json::json!({
                 "identity_id": identity_id,
                 "amount": amount,
-                "currency": "SOV",
+                "currency": "ZHTP",
                 "reason": "monthly_ubi"
             }),
             identity_context: Some(identity_id.to_string()),

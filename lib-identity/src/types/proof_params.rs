@@ -15,7 +15,7 @@ pub struct IdentityProofParams {
     /// Privacy level (0 = public, 100 = maximum privacy)
     pub privacy_level: u8,
     /// Minimum reputation score required
-    pub min_reputation: Option<u32>,
+    pub min_reputation: Option<u64>,
     /// Proof type identifier
     pub proof_type: String,
     /// Require citizenship status
@@ -45,7 +45,7 @@ impl IdentityProofParams {
     }
     
     /// Set minimum reputation requirement
-    pub fn with_min_reputation(mut self, min_reputation: u32) -> Self {
+    pub fn with_min_reputation(mut self, min_reputation: u64) -> Self {
         self.min_reputation = Some(min_reputation);
         self
     }

@@ -154,7 +154,7 @@ impl IdentityVerifier {
     /// Initialize with cross-package integration
     pub async fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.integration.initialize_connections().await?;
-        println!(" Identity verifier initialized with cross-package integration");
+        println!("✓ Identity verifier initialized with cross-package integration");
         Ok(())
     }
 
@@ -319,7 +319,7 @@ impl IdentityVerifier {
         let signature_valid = true; // Would verify actual signature here
 
         // Verify public key format and quantum resistance
-        let key_format_valid = identity.public_key.len() >= 32; // Minimum key size
+        let key_format_valid = identity.public_key.as_bytes().len() >= 32; // Minimum key size
         let quantum_resistant = true; // Would check if using post-quantum algorithms
 
         Ok(CryptoVerificationResult {
@@ -587,7 +587,18 @@ mod tests {
     use lib_proofs::ZeroKnowledgeProof;
 
     fn create_test_identity() -> ZhtpIdentity {
-        let public_key = vec![42u8; 32];
+        // Use realistic Dilithium2 key sizes for testing
+        // Dilithium2: PK = 1312 bytes, SK = 2528 bytes
+        let public_key = lib_crypto::PublicKey {
+            dilithium_pk: vec![42u8; 1312],  // Real Dilithium2 public key size
+            kyber_pk: vec![],
+            key_id: [42u8; 32],
+        };
+        let private_key = lib_crypto::PrivateKey {
+            dilithium_sk: vec![1u8; 2528],   // Real Dilithium2 secret key size
+            kyber_sk: vec![],
+            master_seed: vec![],
+        };
         let ownership_proof = ZeroKnowledgeProof {
             proof_system: "Test".to_string(),
             proof_data: vec![1, 2, 3, 4],
@@ -596,10 +607,15 @@ mod tests {
             plonky2_proof: None,
             proof: vec![],
         };
-        
+
         ZhtpIdentity::new(
             IdentityType::Human,
             public_key,
+            private_key,
+            "test_device".to_string(),
+            Some(30),
+            Some("US".to_string()),
+            false,  // Not a verified citizen in test
             ownership_proof,
         ).expect("Failed to create test identity")
     }

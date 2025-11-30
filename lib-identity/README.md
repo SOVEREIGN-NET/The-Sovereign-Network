@@ -8,6 +8,7 @@
 
 - **Zero-Knowledge Credentials**: Privacy-preserving identity verification and attestation
 - **Quantum-Resistant Security**: Integration with CRYSTALS-Dilithium and Kyber algorithms
+- **Device-Level Identity**: Deterministic NodeId derivation for multi-device support
 - **Citizen Onboarding**: Complete digital identity lifecycle management
 - **Selective Disclosure**: Reveal only necessary identity attributes
 - **Biometric Recovery**: Secure identity recovery mechanisms
@@ -38,6 +39,8 @@ assert!(manager.verify_age_requirement(&proof, 18).await?);
 ```
 
 ## Architecture
+
+**Seed-Anchored Identity**: This library implements a seed-based deterministic identity model where the cryptographic seed is the root of trust. See [ADR-0001](docs/adr/0001-seed-anchored-identity.md) for the complete architecture decision and rationale.
 
 ```
 src/

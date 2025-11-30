@@ -134,7 +134,8 @@ async fn main() -> Result<()> {
         60000, // 60K ZHTP (exceeds 50K limit)
         None,
         "Large investment (should fail)".to_string(),
-        creator_did_2.clone(),
+        Some(creator_did_2.clone()),
+        None,
     ) {
         Ok(_) => println!(" This should not happen!"),
         Err(e) => println!("Correctly blocked: {}", e),

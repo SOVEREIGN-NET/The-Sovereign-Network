@@ -143,36 +143,36 @@ fn create_verification_methods(
     let mut methods = Vec::new();
     
     // Primary quantum-resistant authentication key
-    let primary_key_multibase = encode_public_key_multibase(&identity.public_key)?;
+    let primary_key_multibase = encode_public_key_multibase(&identity.public_key.as_bytes())?;
     methods.push(VerificationMethod {
         id: format!("{}#primary", did),
         verification_type: "PostQuantumSignature2024".to_string(),
         controller: did.to_string(),
         public_key_multibase: primary_key_multibase,
     });
-    
+
     // Authentication method
     methods.push(VerificationMethod {
         id: format!("{}#authentication", did),
         verification_type: "PostQuantumAuthentication2024".to_string(),
         controller: did.to_string(),
-        public_key_multibase: encode_public_key_multibase(&identity.public_key)?,
+        public_key_multibase: encode_public_key_multibase(&identity.public_key.as_bytes())?,
     });
-    
+
     // Assertion method for credentials
     methods.push(VerificationMethod {
         id: format!("{}#assertion", did),
         verification_type: "PostQuantumAssertion2024".to_string(),
         controller: did.to_string(),
-        public_key_multibase: encode_public_key_multibase(&identity.public_key)?,
+        public_key_multibase: encode_public_key_multibase(&identity.public_key.as_bytes())?,
     });
-    
+
     // Key agreement for encryption
     methods.push(VerificationMethod {
         id: format!("{}#keyAgreement", did),
         verification_type: "PostQuantumKeyAgreement2024".to_string(),
         controller: did.to_string(),
-        public_key_multibase: encode_public_key_multibase(&identity.public_key)?,
+        public_key_multibase: encode_public_key_multibase(&identity.public_key.as_bytes())?,
     });
     
     Ok(methods)

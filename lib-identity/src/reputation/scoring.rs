@@ -11,13 +11,13 @@ use std::collections::HashMap;
 /// Reputation score breakdown
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReputationBreakdown {
-    pub base_score: u32,           // Starting reputation
-    pub credential_bonus: u32,     // Points from verified credentials
-    pub citizen_bonus: u32,        // Bonus for citizenship
-    pub activity_bonus: u32,       // Points from network activity
-    pub verification_bonus: u32,   // Points from verifying others
-    pub penalty_deductions: u32,   // Deductions from violations
-    pub total_score: u32,          // Final reputation score (0-1000)
+    pub base_score: u64,           // Starting reputation
+    pub credential_bonus: u64,     // Points from verified credentials
+    pub citizen_bonus: u64,        // Bonus for citizenship
+    pub activity_bonus: u64,       // Points from network activity
+    pub verification_bonus: u64,   // Points from verifying others
+    pub penalty_deductions: u64,   // Deductions from violations
+    pub total_score: u64,          // Final reputation score (0-1000)
     pub reputation_tier: String,   // Reputation tier classification
 }
 
@@ -73,13 +73,13 @@ pub fn calculate_reputation_score(
     let reputation_tier = determine_reputation_tier(total_score);
     
     ReputationBreakdown {
-        base_score,
-        credential_bonus,
-        citizen_bonus,
-        activity_bonus,
-        verification_bonus,
-        penalty_deductions,
-        total_score,
+        base_score: base_score as u64,
+        credential_bonus: credential_bonus as u64,
+        citizen_bonus: citizen_bonus as u64,
+        activity_bonus: activity_bonus as u64,
+        verification_bonus: verification_bonus as u64,
+        penalty_deductions: penalty_deductions as u64,
+        total_score: total_score as u64,
         reputation_tier: reputation_tier.to_string(),
     }
 }
@@ -213,7 +213,7 @@ pub fn update_reputation_score(
 }
 
 /// Get reputation requirements for access levels
-pub fn get_reputation_requirements() -> HashMap<String, u32> {
+pub fn get_reputation_requirements() -> HashMap<String, u64> {
     let mut requirements = HashMap::new();
     
     requirements.insert("BasicAccess".to_string(), 0);

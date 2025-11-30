@@ -6,6 +6,9 @@ pub mod ubi_registration;
 pub mod web4_access;
 pub mod welcome_bonus;
 
+#[cfg(test)]
+pub mod citizenship_tests;
+
 // Re-exports
 pub use onboarding::CitizenshipResult;
 pub use dao_registration::DaoRegistration;

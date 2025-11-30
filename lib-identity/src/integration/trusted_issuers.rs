@@ -133,7 +133,7 @@ impl TrustedIssuersRegistry {
         // Add to registry
         self.issuers.insert(issuer.issuer_id.clone(), issuer.clone());
         
-        println!(" Added trusted issuer: {} ({})", issuer.name, issuer.issuer_id);
+        println!("✓ Added trusted issuer: {} ({})", issuer.name, issuer.issuer_id);
         Ok(())
     }
 
@@ -142,7 +142,7 @@ impl TrustedIssuersRegistry {
         if self.issuers.remove(issuer_id).is_some() {
             // Also remove from cache
             self.verification_cache.retain(|k, _| !k.starts_with(issuer_id));
-            println!(" Removed trusted issuer: {}", issuer_id);
+            println!("✓ Removed trusted issuer: {}", issuer_id);
             Ok(())
         } else {
             Err(format!("Issuer {} not found", issuer_id).into())

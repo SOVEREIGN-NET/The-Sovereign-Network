@@ -354,7 +354,7 @@ impl ProofGenerator {
         let mut proof_data = Vec::new();
         
         // Include identity public key
-        proof_data.extend_from_slice(&identity.public_key);
+        proof_data.extend_from_slice(&identity.public_key.as_bytes());
         
         // Include required identity attributes
         for attr in &request.required_attributes {
@@ -410,7 +410,7 @@ impl ProofGenerator {
     ) -> Result<(Vec<u8>, Vec<u8>, PrivacyLevel), Box<dyn std::error::Error>> {
         // Ownership proof using digital signature
         let mut proof_data = Vec::new();
-        proof_data.extend_from_slice(&identity.public_key);
+        proof_data.extend_from_slice(&identity.public_key.as_bytes());
         
         if let Some(challenge) = &request.challenge {
             proof_data.extend_from_slice(challenge);

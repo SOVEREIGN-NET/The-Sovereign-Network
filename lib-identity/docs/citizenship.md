@@ -217,7 +217,7 @@ if progression_status.eligible {
     println!("Requirements met:");
     
     for requirement in &progression_status.met_requirements {
-        println!(" {}", requirement.description);
+        println!("✓ {}", requirement.description);
     }
     
     if !progression_status.pending_requirements.is_empty() {

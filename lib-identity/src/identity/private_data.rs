@@ -3,12 +3,12 @@
 use lib_crypto::Hash;
 
 /// Private identity data (never transmitted) - based on original identity.rs
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PrivateIdentityData {
     /// Private signing key
     pub private_key: Vec<u8>,
-    /// Identity seed for key derivation (64 bytes - expanded via HKDF)
-    pub seed: [u8; 64],
+    /// Identity seed for key derivation
+    pub seed: [u8; 32],
     /// Recovery phrases
     pub recovery_phrases: Vec<String>,
     /// Biometric templates (hashed)
@@ -18,7 +18,7 @@ pub struct PrivateIdentityData {
 }
 
 /// Quantum-resistant keypair
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct QuantumKeypair {
     /// Private signing key
     pub private_key: Vec<u8>,
@@ -28,7 +28,7 @@ pub struct QuantumKeypair {
 
 impl PrivateIdentityData {
     /// Create new private identity data
-    pub fn new(private_key: Vec<u8>, public_key: Vec<u8>, seed: [u8; 64], recovery_phrases: Vec<String>) -> Self {
+    pub fn new(private_key: Vec<u8>, public_key: Vec<u8>, seed: [u8; 32], recovery_phrases: Vec<String>) -> Self {
         Self {
             private_key: private_key.clone(),
             seed,
@@ -52,7 +52,7 @@ impl PrivateIdentityData {
     }
     
     /// Get seed reference
-    pub fn seed(&self) -> &[u8; 64] {
+    pub fn seed(&self) -> &[u8; 32] {
         &self.seed
     }
 }
