@@ -209,7 +209,7 @@ impl ZhtpEconomics {
     /// Get economic statistics
     pub fn get_economic_stats(&self) -> EconomicStats {
         // Use lib-economy for fee tracking
-        use lib_identity::wallets::IdentityWallets;
+        use lib_identity::wallets::WalletManager;
         
         // In a implementation, this would query the economic state
         // For now, we'll use the economic model to provide estimates

@@ -305,11 +305,26 @@ impl ZhtpIntegration {
                     // Generate keypair for this identity
                     let keypair = lib_crypto::KeyPair::generate()
                         .map_err(|e| ProtocolError::IdentityError(format!("Failed to generate keypair: {}", e)))?;
-                    
+
+                    // Generate DID for uploader
+                    let uploader_did = format!("did:zhtp:temp-{}", hex::encode(&uploader_id.as_bytes()[..16]));
+
+                    // Generate NodeId for uploader
+                    let uploader_node_id = lib_identity::types::NodeId::from_did_device(&uploader_did, "uploader-device")
+                        .unwrap_or_else(|_| lib_identity::types::NodeId::from_bytes([0u8; 32]));
+
+                    let mut device_node_ids = std::collections::HashMap::new();
+                    device_node_ids.insert("uploader-device".to_string(), uploader_node_id);
+
                     let uploader = lib_identity::ZhtpIdentity {
                         id: uploader_id.clone(),
                         identity_type: lib_identity::IdentityType::Human,
-                        public_key: keypair.public_key.as_bytes().to_vec(),
+                        did: uploader_did,
+                        public_key: keypair.public_key,
+                        private_key: Some(keypair.private_key),
+                        node_id: uploader_node_id,
+                        device_node_ids,
+                        primary_device: "uploader-device".to_string(),
                         ownership_proof: lib_proofs::ZeroKnowledgeProof::new(
                             "identity_ownership".to_string(),
                             uploader_id.to_string().as_bytes().to_vec(),
@@ -328,7 +343,7 @@ impl ZhtpIntegration {
                             meta
                         },
                         private_data_id: None,
-                        wallet_manager: lib_identity::wallets::IdentityWallets::new(uploader_id),
+                        wallet_manager: lib_identity::wallets::WalletManager::new(uploader_id.clone()),
                         did_document_hash: None,
                         attestations: vec![],
                         created_at: chrono::Utc::now().timestamp() as u64,
@@ -340,6 +355,13 @@ impl ZhtpIntegration {
                         next_wallet_index: 0,
                         password_hash: None,
                         master_seed_phrase: None,
+                        zk_identity_secret: [0u8; 32], // Ephemeral identity - zeroed
+                        zk_credential_hash: [0u8; 32],
+                        wallet_master_seed: [0u8; 64],
+                        dao_member_id: format!("temp-{}", hex::encode(&uploader_id.as_bytes()[..8])),
+                        dao_voting_power: 1, // Unverified human
+                        citizenship_verified: false,
+                        jurisdiction: None,
                     };
 
                     match self.storage.store_content(&request.body, metadata, uploader, request).await {
@@ -361,12 +383,27 @@ impl ZhtpIntegration {
                     Some(session) => {
                         // Use the authenticated identity from the session
                         let identity_id = session.identity_id;
-                        
+
+                        // Generate DID for requester
+                        let requester_did = format!("did:zhtp:session-{}", hex::encode(&identity_id.as_bytes()[..16]));
+
+                        // Generate NodeId for requester
+                        let requester_node_id = lib_identity::types::NodeId::from_did_device(&requester_did, "requester-device")
+                            .unwrap_or_else(|_| lib_identity::types::NodeId::from_bytes([0u8; 32]));
+
+                        let mut device_node_ids = std::collections::HashMap::new();
+                        device_node_ids.insert("requester-device".to_string(), requester_node_id);
+
                         // Create ZhtpIdentity for storage retrieval from authenticated session
                         let requester = lib_identity::ZhtpIdentity {
                             id: identity_id.clone(),
                             identity_type: lib_identity::IdentityType::Human,
-                            public_key: vec![0u8; 32], // This would be extracted from session
+                            did: requester_did,
+                            public_key: lib_crypto::PublicKey::new(vec![0u8; 32]), // This would be extracted from session
+                            private_key: None,
+                            node_id: requester_node_id,
+                            device_node_ids,
+                            primary_device: "requester-device".to_string(),
                             ownership_proof: lib_proofs::ZeroKnowledgeProof::new(
                                 "authenticated".to_string(),
                                 vec![0u8; 32],
@@ -380,7 +417,7 @@ impl ZhtpIntegration {
                             access_level: session.access_level,
                             metadata: std::collections::HashMap::new(),
                             private_data_id: None,
-                            wallet_manager: lib_identity::wallets::IdentityWallets::new(identity_id),
+                            wallet_manager: lib_identity::wallets::WalletManager::new(identity_id.clone()),
                             did_document_hash: None,
                             attestations: vec![],
                             created_at: chrono::Utc::now().timestamp() as u64,
@@ -392,6 +429,13 @@ impl ZhtpIntegration {
                             next_wallet_index: 0,
                             password_hash: None,
                             master_seed_phrase: None,
+                            zk_identity_secret: [0u8; 32], // Session identity - zeroed
+                            zk_credential_hash: [0u8; 32],
+                            wallet_master_seed: [0u8; 64],
+                            dao_member_id: format!("session-{}", hex::encode(&identity_id.as_bytes()[..8])),
+                            dao_voting_power: 1, // Unverified human
+                            citizenship_verified: false,
+                            jurisdiction: None,
                         };
                         
                         match self.storage.retrieve_content(content_id, requester, request).await {
