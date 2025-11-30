@@ -15,7 +15,28 @@ This is a **monorepo** - all libraries are in this repository as regular directo
 
 ## 🏗️ Architecture
 
-This mono-repo contains:
+### Identity Architecture (Seed-Anchored)
+
+**Seed is the root of trust** - all identity components derive from a single seed:
+
+- **DID**: `did:zhtp:{Blake3(seed || "ZHTP_DID_V1")}`
+- **NodeId**: `Blake3("ZHTP_NODE_V2:" + DID + ":" + device)` → 32 bytes
+- **Secrets**: Derived deterministically from seed
+- **PQC Keypairs**: Random attachments (Dilithium2, Kyber512) - can be rotated
+
+**Constructors:**
+```rust
+ZhtpIdentity::new_unified(identity_type, age, jurisdiction, primary_device, seed?)
+```
+- `seed=None` → random seed (exportable for multi-device)
+- `seed=Some(...)` → deterministic identity (same seed → same DID/NodeIds)
+
+### Proof Architecture (Versioned)
+
+**V0 (Current):** `ProofEnvelope { version="v0", proof: ZkProof }` wraps legacy proofs
+**V1 (Planned):** Typed/governed proofs with full validation
+
+All proof serialization includes version markers for forward compatibility.
 
 ### Core Libraries (`lib-*`)
 - **lib-blockchain** - Blockchain data structures and consensus
@@ -24,9 +45,9 @@ This mono-repo contains:
 - **lib-dht** - Distributed Hash Table for peer discovery
 - **lib-dns** - DNS resolution and management
 - **lib-economy** - Economic models and token management
-- **lib-identity** - Identity and authentication
+- **lib-identity** - Seed-anchored identity and authentication (ADR-0001)
 - **lib-network** - Network layer and mesh networking
-- **lib-proofs** - Zero-knowledge proofs and verification
+- **lib-proofs** - Versioned zero-knowledge proofs (ADR-0003)
 - **lib-protocols** - Protocol definitions and handlers
 - **lib-storage** - Distributed storage layer
 
