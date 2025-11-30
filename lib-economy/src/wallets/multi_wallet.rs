@@ -467,7 +467,7 @@ impl MultiWalletManager {
         Ok(serde_json::json!({
             "identity": {
                 "node_id": hex::encode(self.identity.id.clone()),
-                "public_key": hex::encode(&self.identity.public_key),
+                "public_key": hex::encode(&self.identity.public_key.dilithium_pk),
                 "identity_type": format!("{:?}", self.identity.identity_type)
             },
             "total_balance": total_balance,
