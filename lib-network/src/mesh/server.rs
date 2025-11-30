@@ -1898,18 +1898,34 @@ impl ZhtpMeshServer {
 /// Create a default identity for mesh server DHT operations
 /// TODO: This should be replaced with proper server identity management
 fn create_default_mesh_identity() -> lib_identity::ZhtpIdentity {
-    use lib_identity::types::{IdentityType, AccessLevel};
-    use lib_identity::wallets::IdentityWallets;
+    use lib_identity::types::{IdentityType, AccessLevel, NodeId};
+    use lib_identity::wallets::WalletManager;
     use lib_identity::{IdentityId, ZhtpIdentity};
     use lib_proofs::ZeroKnowledgeProof;
+    use lib_crypto::PublicKey;
     use std::collections::HashMap;
 
     let identity_id = IdentityId::from_bytes(&[42u8; 32]); // Fixed ID for mesh server
-    
+
+    // Create mesh server DID
+    let mesh_did = "did:zhtp:mesh-server".to_string();
+
+    // Generate NodeId for mesh server
+    let mesh_node_id = NodeId::from_did_device(&mesh_did, "mesh-device")
+        .unwrap_or_else(|_| NodeId::from_bytes([42u8; 32]));
+
+    let mut device_node_ids = HashMap::new();
+    device_node_ids.insert("mesh-device".to_string(), mesh_node_id);
+
     ZhtpIdentity {
         id: identity_id.clone(),
         identity_type: IdentityType::Device, // Mesh server is a device/service
-        public_key: vec![1, 2, 3, 4, 5], // Placeholder public key
+        did: mesh_did,
+        public_key: PublicKey::new(vec![1, 2, 3, 4, 5]), // Placeholder public key
+        private_key: None,
+        node_id: mesh_node_id,
+        device_node_ids,
+        primary_device: "mesh-device".to_string(),
         ownership_proof: ZeroKnowledgeProof {
             proof_system: "mesh_server".to_string(),
             proof_data: vec![],
@@ -1929,7 +1945,7 @@ fn create_default_mesh_identity() -> lib_identity::ZhtpIdentity {
             metadata
         },
         private_data_id: None,
-        wallet_manager: IdentityWallets::new(identity_id),
+        wallet_manager: WalletManager::new(identity_id.clone()),
         did_document_hash: None,
         attestations: vec![],
         created_at: std::time::SystemTime::now()
@@ -1947,6 +1963,13 @@ fn create_default_mesh_identity() -> lib_identity::ZhtpIdentity {
         next_wallet_index: 0,
         password_hash: None,
         master_seed_phrase: None,
+        zk_identity_secret: [0u8; 32], // Mesh server - zeroed secrets
+        zk_credential_hash: [0u8; 32],
+        wallet_master_seed: [0u8; 64],
+        dao_member_id: "mesh-server".to_string(),
+        dao_voting_power: 0, // System service has no voting power
+        citizenship_verified: false,
+        jurisdiction: None,
     }
 }
 
