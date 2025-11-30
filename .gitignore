@@ -4,5 +4,29 @@ docs/ZHTPPM/
 .DS_Store
 
 target/
-
 Cargo.lock
+
+# Backup files
+*.bak
+*.backup
+
+# Log files
+*.log
+
+# Test artifacts
+*.profraw
+*.profdata
+
+# Runtime data
+data/
+problems
+PROBLEMS_STATUS_REPORT.md
+PUSH_INSTRUCTIONS.md
+now/
+
+# Local notes (not committed)
+LOCAL_NOTES.md
+SECURITY_REPORT.md
+SECURITY_AUDIT.md
+SECURITY_AUDIT_*.md
+ISSUES_RESOLVED.md
