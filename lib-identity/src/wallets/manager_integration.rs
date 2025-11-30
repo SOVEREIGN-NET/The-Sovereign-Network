@@ -25,6 +25,9 @@ pub struct WalletManager {
     /// Optional password protection for individual wallets
     #[serde(skip)]
     pub wallet_password_manager: WalletPasswordManager,
+    /// Optional master seed for deterministic wallet recovery (not serialized)
+    #[serde(skip)]
+    pub master_seed: Option<[u8; 64]>,
 }
 
 impl WalletManager {
@@ -42,7 +45,15 @@ impl WalletManager {
             total_balance: 0,
             created_at: current_time,
             wallet_password_manager: WalletPasswordManager::new(),
+            master_seed: None,
         }
+    }
+
+    /// Create a new wallet manager seeded for deterministic recovery
+    pub fn from_master_seed(owner_id: IdentityId, master_seed: [u8; 64]) -> Self {
+        let mut manager = Self::new(owner_id);
+        manager.master_seed = Some(master_seed);
+        manager
     }
     
     /// DEPRECATED: Standalone wallets are no longer allowed
