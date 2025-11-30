@@ -1,21 +1,10 @@
-# Rust build artifacts
-/target/
-**/target/
-Cargo.lock
+PROJECT_BOARD.md
+docs/ZHTPPM/
 
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS files
 .DS_Store
-Thumbs.db
 
-# Debug files
-*.pdb
+target/
+Cargo.lock
 
 # Backup files
 *.bak
@@ -41,7 +30,3 @@ SECURITY_REPORT.md
 SECURITY_AUDIT.md
 SECURITY_AUDIT_*.md
 ISSUES_RESOLVED.md
-
-docs/ZHTPPM/
-
-PROJECT_BOARD.md
