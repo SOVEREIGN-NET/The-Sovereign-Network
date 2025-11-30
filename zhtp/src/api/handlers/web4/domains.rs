@@ -224,7 +224,7 @@ impl Web4Handler {
             let is_valid = lib_crypto::verify_signature(
                 signed_message.as_bytes(),
                 &signature_bytes,
-                &owner_identity.public_key
+                &owner_identity.public_key.as_bytes()
             ).map_err(|e| anyhow!("Signature verification error: {}", e))?;
             
             info!(" DEBUG: Signature verification result: {}", is_valid);
@@ -290,12 +290,8 @@ impl Web4Handler {
             
             // CRITICAL: Get the FULL Dilithium2 public key from the identity (1312 bytes)
             // This must match what's stored in wallet_registry for transaction validation
-            let identity_dilithium_pubkey = identity_mgr
-                .get_dilithium_public_key(&check_identity.id)
-                .map_err(|e| {
-                    error!(" Failed to retrieve Dilithium2 public key: {}", e);
-                    anyhow!("No public key found for identity")
-                })?;
+            // P1-7: Get public key directly from identity
+            let identity_dilithium_pubkey = check_identity.public_key.dilithium_pk.clone();
             
             // For UTXO matching, use the 32-byte identity hash (what's in UTXO recipients)
             let identity_hash_for_utxo = check_identity.id.0.to_vec();
@@ -487,14 +483,26 @@ impl Web4Handler {
         // STEP 6: Sign the transaction hash with identity keypair
         // ========================================================================
         let identity_mgr = self.identity_manager.read().await;
-        
-        // Sign the TRANSACTION HASH (not a custom message!)
-        let keypair_signature = identity_mgr.sign_message_for_identity(
-            &owner_identity_id, 
-            tx_hash.as_bytes()  // Sign the actual transaction hash
-        ).map_err(|e| anyhow!("Failed to sign transaction: {}", e))?;
-        
+
+        // Get identity for signing
+        let identity = identity_mgr.get_identity(&owner_identity_id)
+            .ok_or_else(|| anyhow!("Owner identity not found"))?;
+
+        // Get private key from identity (P1-7: private keys stored in identity)
+        let private_key = identity.private_key.as_ref()
+            .ok_or_else(|| anyhow!("Identity missing private key"))?;
+
+        // Create keypair for signing
+        let keypair = lib_crypto::KeyPair {
+            private_key: private_key.clone(),
+            public_key: identity.public_key.clone(),
+        };
+
         drop(identity_mgr); // Release lock before continuing
+
+        // Sign the TRANSACTION HASH (not a custom message!)
+        let keypair_signature = lib_crypto::sign_message(&keypair, tx_hash.as_bytes())
+            .map_err(|e| anyhow!("Failed to sign transaction: {}", e))?;
         
         info!(" Transaction hash signed with identity keypair (Dilithium2 signature)");
         

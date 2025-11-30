@@ -160,17 +160,29 @@ impl CryptoHandler {
             "utf8" | _ => sign_req.message.as_bytes().to_vec(),
         };
 
-        // Sign the message using identity manager
+        // Get identity and sign the message
         let identity_mgr = self.identity_manager.read().await;
-        let signature = identity_mgr.sign_message_for_identity(&identity_id, &message_bytes)
-            .map_err(|e| anyhow!("Failed to sign message: {}", e))?;
+        let identity = identity_mgr.get_identity(&identity_id)
+            .ok_or_else(|| anyhow!("Identity not found"))?;
+
+        // Get private key from identity (P1-7: private keys stored in identity)
+        let private_key = identity.private_key.as_ref()
+            .ok_or_else(|| anyhow!("Identity missing private key"))?;
+
+        // Create keypair for signing
+        let keypair = lib_crypto::KeyPair {
+            private_key: private_key.clone(),
+            public_key: identity.public_key.clone(),
+        };
 
         // Get public key (clone it before dropping the lock)
-        let public_key = identity_mgr.get_identity(&identity_id)
-            .ok_or_else(|| anyhow!("Identity not found"))?
-            .public_key.clone();
-        
+        let public_key = identity.public_key.clone();
+
         drop(identity_mgr);
+
+        // Sign the message using lib_crypto
+        let signature = lib_crypto::sign_message(&keypair, &message_bytes)
+            .map_err(|e| anyhow!("Failed to sign message: {}", e))?;
 
         // Calculate message hash for reference
         let message_hash = lib_crypto::hash_blake3(&message_bytes);

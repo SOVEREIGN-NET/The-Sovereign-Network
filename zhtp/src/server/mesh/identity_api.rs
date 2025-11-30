@@ -889,42 +889,42 @@ async fn create_standalone_wallet_direct(request_data: serde_json::Value) -> Res
     
     info!("💳 Creating user identity with wallet: {} for node: {}", wallet_name, node_name);
     
-    // Create user identity with wallet
-    let (user_identity, wallet_id, seed_phrase, _user_private_data) = lib_identity::create_user_identity_with_wallet(
+    // Create user identity with wallet (P1-7: returns IDs only, not full identities)
+    let (user_identity_id, wallet_id, seed_phrase) = lib_identity::create_user_identity_with_wallet(
         node_name.clone(),
         wallet_name.clone(),
         wallet_alias.clone()
     ).await?;
-    
-    info!("✅ User identity created: {}", hex::encode(&user_identity.id.0[..8]));
-    
-    // Create node device identity owned by the user
+
+    info!("✅ User identity created: {}", hex::encode(&user_identity_id.0[..8]));
+
+    // Create node device identity owned by the user (P1-7: returns ID only)
     info!("⚙️ Creating node device identity...");
     let node_device_name = format!("{}-device", node_name);
-    let (node_identity, _node_private_data) = lib_identity::create_node_device_identity(
-        user_identity.id.clone(),
+    let node_identity_id = lib_identity::create_node_device_identity(
+        user_identity_id.clone(),
         wallet_id.clone(),
         node_device_name,
     ).await?;
     
-    info!("✅ Created complete identity setup - User: {}, Node Device: {}, Wallet: {}", 
-        hex::encode(&user_identity.id.0[..8]),
-        hex::encode(&node_identity.id.0[..8]),
+    info!("✅ Created complete identity setup - User: {}, Node Device: {}, Wallet: {}",
+        hex::encode(&user_identity_id.0[..8]),
+        hex::encode(&node_identity_id.0[..8]),
         hex::encode(&wallet_id.0[..8]));
-    
+
     // Record identity-wallet pair on blockchain
-    record_standalone_wallet_on_blockchain(&user_identity.id, &wallet_id, &wallet_type_str, &wallet_name, &wallet_alias, &seed_phrase).await
+    record_standalone_wallet_on_blockchain(&user_identity_id, &wallet_id, &wallet_type_str, &wallet_name, &wallet_alias, &seed_phrase).await
         .unwrap_or_else(|e| warn!("Failed to record identity-wallet on blockchain: {}", e));
-    
+
     // Distribute identity-wallet info to DHT
-    distribute_standalone_wallet_to_dht(&user_identity.id, &wallet_id, &wallet_type_str, &wallet_name).await
+    distribute_standalone_wallet_to_dht(&user_identity_id, &wallet_id, &wallet_type_str, &wallet_name).await
         .unwrap_or_else(|e| warn!("Failed to distribute identity-wallet to DHT: {}", e));
-    
+
     // Return wallet creation result with identity
     Ok(serde_json::json!({
         "success": true,
-        "user_identity_id": user_identity.id,
-        "node_identity_id": node_identity.id,
+        "user_identity_id": user_identity_id,
+        "node_identity_id": node_identity_id,
         "wallet_id": wallet_id,
         "wallet_type": wallet_type_str,
         "wallet_name": wallet_name,

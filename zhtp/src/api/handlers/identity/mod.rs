@@ -595,15 +595,25 @@ impl IdentityHandler {
             .map_err(|e| anyhow::anyhow!("Invalid identity ID hex: {}", e))?;
         let identity_hash = lib_crypto::Hash::from_bytes(&identity_id_bytes);
         
-        // Get identity and sign message using identity manager
+        // Get identity and sign message
         let manager = self.identity_manager.read().await;
         let identity = manager.get_identity(&identity_hash)
             .ok_or_else(|| anyhow::anyhow!("Identity not found: {}", sign_req.identity_id))?;
-        
-        // Sign the message using identity manager (which has access to private keys)
-        let signature = manager.sign_message_for_identity(&identity_hash, sign_req.message.as_bytes())
+
+        // Get private key from identity (P1-7: private keys stored in identity)
+        let private_key = identity.private_key.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Identity missing private key"))?;
+
+        // Create keypair for signing
+        let keypair = lib_crypto::KeyPair {
+            private_key: private_key.clone(),
+            public_key: identity.public_key.clone(),
+        };
+
+        // Sign the message using lib_crypto
+        let signature = lib_crypto::sign_message(&keypair, sign_req.message.as_bytes())
             .map_err(|e| anyhow::anyhow!("Failed to sign message: {}", e))?;
-        
+
         // Convert signature to hex
         let signature_hex = hex::encode(&signature.signature);
         
