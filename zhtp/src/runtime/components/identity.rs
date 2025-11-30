@@ -85,30 +85,21 @@ impl Component for IdentityComponent {
         
         let genesis_ids = self.genesis_identities.read().await.clone();
         let genesis_private = self.genesis_private_data.read().await.clone();
-        
-        let _identity_manager = if genesis_ids.is_empty() {
-            info!("No genesis identities - initializing empty IdentityManager");
-            lib_identity::initialize_identity_system().await?
-        } else if genesis_private.is_empty() {
-            info!("  Initializing IdentityManager with {} genesis identities (PUBLIC DATA ONLY)", genesis_ids.len());
-            lib_identity::initialize_identity_system_with_identities(genesis_ids.clone()).await?
-        } else {
-            info!(" Initializing IdentityManager with {} genesis identities and {} private keys", 
-                genesis_ids.len(), genesis_private.len());
-            
-            let mut identities_with_private = Vec::new();
+
+        let mut identity_manager = lib_identity::initialize_identity_system().await?;
+
+        if !genesis_ids.is_empty() {
+            info!(" Adding {} genesis identities to IdentityManager", genesis_ids.len());
             for identity in &genesis_ids {
-                if let Some((_, private_data)) = genesis_private.iter().find(|(id, _)| id == &identity.id) {
-                    identities_with_private.push((identity.clone(), private_data.clone()));
-                    info!(" Loaded private key for identity: {} (type: {:?})", 
-                        hex::encode(&identity.id.0[..8]), identity.identity_type);
-                } else {
-                    warn!("  No private key found for identity: {}", hex::encode(&identity.id.0[..8]));
-                }
+                identity_manager.add_identity(identity.clone());
+                info!(" Added identity: {} (type: {:?})",
+                    hex::encode(&identity.id.0[..8]), identity.identity_type);
             }
-            
-            lib_identity::initialize_identity_system_with_identities_and_private_data(identities_with_private).await?
-        };
+        } else {
+            info!("No genesis identities - IdentityManager initialized empty");
+        }
+
+        let _identity_manager = identity_manager;
         
         if !genesis_ids.is_empty() {
             info!("Funding genesis primary wallets with 5000 ZHTP welcome bonus...");

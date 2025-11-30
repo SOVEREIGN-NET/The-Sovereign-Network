@@ -159,7 +159,7 @@ impl Component for ProtocolsComponent {
         let identities = mgr.list_identities();
         if !identities.is_empty() {
             let node_identity = if identities.len() >= 2 { &identities[1] } else { &identities[0] };
-            let blockchain_pubkey = lib_crypto::PublicKey::new(node_identity.public_key.clone());
+            let blockchain_pubkey = node_identity.public_key.clone();
             let _ = unified_server.initialize_auth_manager(blockchain_pubkey).await;
         }
         drop(mgr);

@@ -3,7 +3,7 @@
 use lib_crypto::Hash;
 
 /// Private identity data (never transmitted) - based on original identity.rs
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PrivateIdentityData {
     /// Private signing key
     pub private_key: Vec<u8>,
@@ -18,7 +18,7 @@ pub struct PrivateIdentityData {
 }
 
 /// Quantum-resistant keypair
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QuantumKeypair {
     /// Private signing key
     pub private_key: Vec<u8>,

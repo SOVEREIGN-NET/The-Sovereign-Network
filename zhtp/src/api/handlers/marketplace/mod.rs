@@ -360,14 +360,17 @@ impl MarketplaceHandler {
         identity_id_array.copy_from_slice(&identity_id_bytes);
         let identity_id: IdentityId = lib_crypto::Hash(identity_id_array);
         
-        // Get buyer's private key from identity manager
+        // Get buyer's identity and private key (P1-7: private keys stored in identity)
         let identity_mgr = self.identity_manager.read().await;
-        let private_data = identity_mgr.get_private_data(&identity_id)
+        let identity = identity_mgr.get_identity(&identity_id)
+            .ok_or_else(|| anyhow!("Identity not found for buyer {}", hex::encode(&identity_id)))?;
+
+        let private_key = identity.private_key.as_ref()
             .ok_or_else(|| anyhow!("Private key not found for buyer identity {}", hex::encode(&identity_id)))?;
-        
-        let identity_private_key_bytes = private_data.quantum_keypair.private_key.clone();
-        let identity_seed = private_data.seed.clone();
-        let wallet_pubkey = private_data.quantum_keypair.public_key.clone();
+
+        let identity_private_key_bytes = private_key.dilithium_sk.clone();
+        let identity_seed = [0u8; 32]; // TODO: P1-7 - seed not directly accessible, may need to be stored separately
+        let wallet_pubkey = identity.public_key.dilithium_pk.clone();
         drop(identity_mgr);
         
         // ========================================================================

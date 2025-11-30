@@ -109,15 +109,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_dht_singleton_pattern() {
-        // Create test identity
-        let keypair = generate_keypair().unwrap();
-        let public_key = keypair.public_key.dilithium_pk.clone();
-        let ownership_proof = ZeroKnowledgeProof::default();
-        
-        let identity = ZhtpIdentity::new(
+        // Create test identity using P1-7 architecture
+        let identity = ZhtpIdentity::new_unified(
             lib_identity::IdentityType::Device,
-            public_key.to_vec(),
-            ownership_proof,
+            None, // No age for device
+            None, // No jurisdiction for device
+            "test-dht-device",
+            None, // Random seed
         ).unwrap();
 
         // Test initialization

@@ -1050,7 +1050,7 @@ impl ZhtpUnifiedServer {
         let identity = &identities[0];
         
         // Create PublicKey from identity's public_key field (Dilithium2 public key)
-        let blockchain_pubkey = lib_crypto::PublicKey::new(identity.public_key.clone());
+        let blockchain_pubkey = identity.public_key.clone();
         
         info!(" Using identity {} for WiFi Direct authentication", hex::encode(&identity.id.0[..8]));
         info!("   Public key: {}...", hex::encode(&blockchain_pubkey.as_bytes()[..8]));

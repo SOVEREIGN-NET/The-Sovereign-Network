@@ -50,9 +50,10 @@ impl MeshRouter {
                         let sender_pubkey = if let Some(identity_mgr) = identity_manager.as_ref() {
                             let mgr = identity_mgr.read().await;
                             if let Some(identity) = mgr.list_identities().first() {
+                                let pubkey_bytes = identity.public_key.as_bytes();
                                 let mut key_id = [0u8; 32];
-                                let len = identity.public_key.len().min(32);
-                                key_id[..len].copy_from_slice(&identity.public_key[..len]);
+                                let len = pubkey_bytes.len().min(32);
+                                key_id[..len].copy_from_slice(&pubkey_bytes[..len]);
                                 lib_crypto::PublicKey {
                                     key_id,
                                     dilithium_pk: vec![],
@@ -131,9 +132,10 @@ impl MeshRouter {
                         let sender_pubkey = if let Some(identity_mgr) = identity_manager.as_ref() {
                             let mgr = identity_mgr.read().await;
                             if let Some(identity) = mgr.list_identities().first() {
+                                let pubkey_bytes = identity.public_key.as_bytes();
                                 let mut key_id = [0u8; 32];
-                                let len = identity.public_key.len().min(32);
-                                key_id[..len].copy_from_slice(&identity.public_key[..len]);
+                                let len = pubkey_bytes.len().min(32);
+                                key_id[..len].copy_from_slice(&pubkey_bytes[..len]);
                                 lib_crypto::PublicKey {
                                     key_id,
                                     dilithium_pk: vec![],
@@ -272,9 +274,10 @@ impl MeshRouter {
         if let Some(identity_mgr) = self.identity_manager.as_ref() {
             let mgr = identity_mgr.read().await;
             if let Some(identity) = mgr.list_identities().first() {
+                let pubkey_bytes = identity.public_key.as_bytes();
                 let mut key_id = [0u8; 32];
-                let len = identity.public_key.len().min(32);
-                key_id[..len].copy_from_slice(&identity.public_key[..len]);
+                let len = pubkey_bytes.len().min(32);
+                key_id[..len].copy_from_slice(&pubkey_bytes[..len]);
                 
                 return Ok(PublicKey {
                     key_id,
