@@ -2,6 +2,17 @@
 
 A complete, self-contained repository containing all the Rust code needed to build and run ZHTP (Zero-Trust Hybrid Protocol) orchestrator nodes for the Sovereign Network.
 
+## 📌 Repository Structure
+
+**Default Branch:** `casino-dht-consolidation`
+
+This is a **monorepo** - all libraries are in this repository as regular directories (not git submodules). For alpha development, all work happens here.
+
+**Git Strategy:**
+- `casino-dht-consolidation` - main development branch (default)
+- Feature branches created from `casino-dht-consolidation`
+- All lib-* crates are regular directories in this repo
+
 ## 🏗️ Architecture
 
 This mono-repo contains:
