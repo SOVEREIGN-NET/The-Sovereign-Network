@@ -176,15 +176,16 @@ impl ZhtpIdentity {
         device_node_ids.insert(primary_device.clone(), node_id);
 
         // 5. Derive all secrets from master keypair (deterministic)
-        // Age and jurisdiction are REQUIRED for credential derivation (no implicit defaults)
+        // Age and jurisdiction are REQUIRED for Human identities only
         let zk_identity_secret = Self::derive_zk_secret(&private_key.dilithium_sk)?;
-        let age_val = age.ok_or_else(|| anyhow!("Age is required for credential derivation"))?;
-        let juris_val = jurisdiction.as_deref().ok_or_else(|| anyhow!("Jurisdiction is required for credential derivation"))?;
-        let zk_credential_hash = Self::derive_credential_hash(
-            &zk_identity_secret,
-            age_val,
-            juris_val
-        )?;
+        let zk_credential_hash = if identity_type == IdentityType::Human {
+            let age_val = age.ok_or_else(|| anyhow!("Age is required for Human identity credential derivation"))?;
+            let juris_val = jurisdiction.as_deref().ok_or_else(|| anyhow!("Jurisdiction is required for Human identity credential derivation"))?;
+            Self::derive_credential_hash(&zk_identity_secret, age_val, juris_val)?
+        } else {
+            // For non-Human identities (Device, Organization, etc.), use default credential hash
+            [0u8; 32]
+        };
         let wallet_master_seed = Self::derive_wallet_seed(&private_key.dilithium_sk)?;
         let dao_member_id = Self::derive_dao_member_id(&did)?;
 
@@ -301,14 +302,15 @@ impl ZhtpIdentity {
         let zk_identity_secret = Self::derive_zk_secret_from_seed(&seed)?;
 
         // Step 6: Derive zk_credential_hash from zk_secret + age + jurisdiction
-        // Age and jurisdiction are REQUIRED for credential derivation (no implicit defaults)
-        let age_val = age.ok_or_else(|| anyhow!("Age is required for credential derivation"))?;
-        let juris_val = jurisdiction.as_deref().ok_or_else(|| anyhow!("Jurisdiction is required for credential derivation"))?;
-        let zk_credential_hash = Self::derive_credential_hash(
-            &zk_identity_secret,
-            age_val,
-            juris_val
-        )?;
+        // Age and jurisdiction are REQUIRED for Human identities only
+        let zk_credential_hash = if identity_type == IdentityType::Human {
+            let age_val = age.ok_or_else(|| anyhow!("Age is required for Human identity credential derivation"))?;
+            let juris_val = jurisdiction.as_deref().ok_or_else(|| anyhow!("Jurisdiction is required for Human identity credential derivation"))?;
+            Self::derive_credential_hash(&zk_identity_secret, age_val, juris_val)?
+        } else {
+            // For non-Human identities (Device, Organization, etc.), use default credential hash
+            [0u8; 32]
+        };
 
         // Step 7: Derive wallet_master_seed from seed (64 bytes via XOF)
         let wallet_master_seed = Self::derive_wallet_seed_from_seed(&seed)?;
@@ -359,7 +361,7 @@ impl ZhtpIdentity {
             ownership_proof,
             credentials: HashMap::new(),
             reputation: 0,
-            age: Some(age_val),
+            age,
             access_level: AccessLevel::default(),
             metadata: HashMap::new(),
             private_data_id: Some(id),
@@ -381,7 +383,7 @@ impl ZhtpIdentity {
             dao_member_id,
             dao_voting_power,
             citizenship_verified,
-            jurisdiction: Some(juris_val.to_string()),
+            jurisdiction,
         })
     }
 
@@ -723,16 +725,16 @@ impl ZhtpIdentity {
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
         // SECURITY: Re-derive all cryptographic secrets from private_key
-        // Age and jurisdiction are REQUIRED for credential derivation
-        let age_val = age.ok_or_else(|| anyhow!("Age is required for secret derivation"))?;
-        let juris_val = jurisdiction.as_deref().ok_or_else(|| anyhow!("Jurisdiction is required for secret derivation"))?;
-
+        // Age and jurisdiction are REQUIRED for Human identities only
         let zk_identity_secret = Self::derive_zk_secret(&private_key.dilithium_sk)?;
-        let zk_credential_hash = Self::derive_credential_hash(
-            &zk_identity_secret,
-            age_val,
-            juris_val
-        )?;
+        let zk_credential_hash = if identity_type == IdentityType::Human {
+            let age_val = age.ok_or_else(|| anyhow!("Age is required for Human identity secret derivation"))?;
+            let juris_val = jurisdiction.as_deref().ok_or_else(|| anyhow!("Jurisdiction is required for Human identity secret derivation"))?;
+            Self::derive_credential_hash(&zk_identity_secret, age_val, juris_val)?
+        } else {
+            // For non-Human identities (Device, Organization, etc.), use default credential hash
+            [0u8; 32]
+        };
         let wallet_master_seed = Self::derive_wallet_seed(&private_key.dilithium_sk)?;
 
         // Reconstruct identity with all restored fields
