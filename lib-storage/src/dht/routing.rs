@@ -41,8 +41,7 @@ impl KademliaRouter {
     
     /// Calculate XOR distance between two node IDs
     pub fn calculate_distance(&self, a: &NodeId, b: &NodeId) -> u32 {
-        let xor_bytes = a.xor_distance(b);
-        Self::leading_bit_index(&xor_bytes)
+        a.kademlia_distance(b)
     }
     
     /// Get bucket index for a given distance
@@ -343,16 +342,6 @@ impl KademliaRouter {
         
         bucket_index == local_bucket_index && self.is_bucket_full(bucket_index)
     }
-
-    /// Determine the most significant differing bit from XOR distance bytes
-    fn leading_bit_index(xor_bytes: &[u8; 32]) -> u32 {
-        for (i, byte) in xor_bytes.iter().enumerate() {
-            if *byte != 0 {
-                return (i as u32 * 8) + (7 - byte.leading_zeros());
-            }
-        }
-        0
-    }
 }
 
 /// Routing table statistics
@@ -423,8 +412,7 @@ mod tests {
         let id_a = NodeId::from_bytes([0xAA; 32]);
         let id_b = NodeId::from_bytes([0x0F; 32]);
 
-        let xor = id_a.xor_distance(&id_b);
-        let expected = KademliaRouter::leading_bit_index(&xor);
+        let expected = id_a.kademlia_distance(&id_b);
         let distance = router.calculate_distance(&id_a, &id_b);
 
         assert_eq!(distance, expected);
