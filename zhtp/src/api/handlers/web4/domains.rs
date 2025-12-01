@@ -217,14 +217,14 @@ impl Web4Handler {
             info!(" DEBUG SIGNATURE VERIFICATION:");
             info!("   Message: {}", signed_message);
             info!("   Signature length: {} bytes", signature_bytes.len());
-            info!("   Public key length: {} bytes", owner_identity.public_key.len());
+            info!("   Public key length: {} bytes", owner_identity.public_key.as_bytes().len());
             info!("   Expected public key length: 1312 (Dilithium2)");
             
             // Verify signature using owner's public key
             let is_valid = lib_crypto::verify_signature(
                 signed_message.as_bytes(),
                 &signature_bytes,
-                &owner_identity.public_key
+                owner_identity.public_key.as_bytes().as_slice()
             ).map_err(|e| anyhow!("Signature verification error: {}", e))?;
             
             info!(" DEBUG: Signature verification result: {}", is_valid);
@@ -290,12 +290,7 @@ impl Web4Handler {
             
             // CRITICAL: Get the FULL Dilithium2 public key from the identity (1312 bytes)
             // This must match what's stored in wallet_registry for transaction validation
-            let identity_dilithium_pubkey = identity_mgr
-                .get_dilithium_public_key(&check_identity.id)
-                .map_err(|e| {
-                    error!(" Failed to retrieve Dilithium2 public key: {}", e);
-                    anyhow!("No public key found for identity")
-                })?;
+            let identity_dilithium_pubkey = check_identity.public_key.dilithium_pk.clone();
             
             // For UTXO matching, use the 32-byte identity hash (what's in UTXO recipients)
             let identity_hash_for_utxo = check_identity.id.0.to_vec();
@@ -489,10 +484,10 @@ impl Web4Handler {
         let identity_mgr = self.identity_manager.read().await;
         
         // Sign the TRANSACTION HASH (not a custom message!)
-        let keypair_signature = identity_mgr.sign_message_for_identity(
-            &owner_identity_id, 
-            tx_hash.as_bytes()  // Sign the actual transaction hash
-        ).map_err(|e| anyhow!("Failed to sign transaction: {}", e))?;
+        let keypair_signature = identity_mgr
+            .sign_with_identity(&owner_identity_id, tx_hash.as_bytes())
+            .await
+            .map_err(|e| anyhow!("Failed to sign transaction: {}", e))?;
         
         drop(identity_mgr); // Release lock before continuing
         
@@ -978,16 +973,12 @@ impl Web4Handler {
         let copy_len = std::cmp::min(identity_bytes.len(), 32);
         id_bytes[..copy_len].copy_from_slice(&identity_bytes[..copy_len]);
 
-        ZhtpIdentity::new(
+        ZhtpIdentity::new_unified(
             lib_identity::types::IdentityType::Human,
-            vec![0u8; 32],
-            ZeroKnowledgeProof::new(
-                "Plonky2".to_string(),
-                vec![0u8; 32],
-                vec![0u8; 32],
-                vec![0u8; 32],
-                None,
-            ),
+            Some(25),
+            Some("US".to_string()),
+            &format!("identity-{}", hex::encode(&id_bytes[..8])),
+            None,
         ).map_err(|e| format!("Failed to create identity: {}", e))
     }
 
@@ -995,12 +986,12 @@ impl Web4Handler {
     pub fn deserialize_proof(&self, proof_str: &str) -> Result<ZeroKnowledgeProof, String> {
         // In production, this would properly deserialize from JSON/base64
         // For now, create a simple proof from the string
-        Ok(ZeroKnowledgeProof::new(
-            "Plonky2".to_string(),
-            proof_str.as_bytes().to_vec(),
-            proof_str.as_bytes().to_vec(),
-            proof_str.as_bytes().to_vec(),
-            None,
+        let proof_bytes = proof_str.as_bytes().to_vec();
+        Ok(ZeroKnowledgeProof::from_legacy_label(
+            "Plonky2",
+            Some(proof_bytes.clone()),
+            proof_bytes.clone(),
+            proof_bytes,
         ))
     }
 

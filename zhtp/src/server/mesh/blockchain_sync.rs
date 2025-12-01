@@ -50,14 +50,7 @@ impl MeshRouter {
                         let sender_pubkey = if let Some(identity_mgr) = identity_manager.as_ref() {
                             let mgr = identity_mgr.read().await;
                             if let Some(identity) = mgr.list_identities().first() {
-                                let mut key_id = [0u8; 32];
-                                let len = identity.public_key.len().min(32);
-                                key_id[..len].copy_from_slice(&identity.public_key[..len]);
-                                lib_crypto::PublicKey {
-                                    key_id,
-                                    dilithium_pk: vec![],
-                                    kyber_pk: vec![],
-                                }
+                                identity.public_key.clone()
                             } else {
                                 warn!("No identity available for sender - skipping block broadcast");
                                 continue;
@@ -131,14 +124,7 @@ impl MeshRouter {
                         let sender_pubkey = if let Some(identity_mgr) = identity_manager.as_ref() {
                             let mgr = identity_mgr.read().await;
                             if let Some(identity) = mgr.list_identities().first() {
-                                let mut key_id = [0u8; 32];
-                                let len = identity.public_key.len().min(32);
-                                key_id[..len].copy_from_slice(&identity.public_key[..len]);
-                                lib_crypto::PublicKey {
-                                    key_id,
-                                    dilithium_pk: vec![],
-                                    kyber_pk: vec![],
-                                }
+                                identity.public_key.clone()
                             } else {
                                 warn!("No identity available for sender - skipping transaction broadcast");
                                 continue;
@@ -272,15 +258,7 @@ impl MeshRouter {
         if let Some(identity_mgr) = self.identity_manager.as_ref() {
             let mgr = identity_mgr.read().await;
             if let Some(identity) = mgr.list_identities().first() {
-                let mut key_id = [0u8; 32];
-                let len = identity.public_key.len().min(32);
-                key_id[..len].copy_from_slice(&identity.public_key[..len]);
-                
-                return Ok(PublicKey {
-                    key_id,
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
-                });
+                return Ok(identity.public_key.clone());
             }
         }
         Err(anyhow::anyhow!("No identity available for sender public key"))

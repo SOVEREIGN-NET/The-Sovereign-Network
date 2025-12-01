@@ -1,0 +1,392 @@
+    Configured for testnet
+
+ User wallet established: QuickTestWallet
+2025-12-01T12:48:27.817903Z  INFO zhtp::runtime: User wallet stored in orchestrator for component initialization   
+2025-12-01T12:48:27.818598Z  INFO zhtp::runtime: Stored 2 genesis identities (public data) for IdentityManager registration
+2025-12-01T12:48:27.818845Z  INFO zhtp::runtime:  Stored 2 private keys in secure memory (never stored on blockchain)
+2025-12-01T12:48:27.818942Z  INFO zhtp::runtime:     USER Identity ID: b85a8a128d1bc89136fc6a6d5f9437772710f975c599a1c31663c8cc798c4765
+2025-12-01T12:48:27.819029Z  INFO zhtp::runtime:     NODE Identity ID: fbbcdff22d20f3c5a74e56c64a4a2f2ee9ff0a2d4c5f38115a824c5bb2fdf0ba
+2025-12-01T12:48:27.819128Z  INFO zhtp::runtime:     USER Public Key (first 32): b85a8a128d1bc89136fc6a6d5f9437772710f975c599a1c31663c8cc798c4765
+2025-12-01T12:48:27.819214Z  INFO zhtp::runtime:     NODE Public Key (first 32): fbbcdff22d20f3c5a74e56c64a4a2f2ee9ff0a2d4c5f38115a824c5bb2fdf0ba
+2025-12-01T12:48:27.819289Z  INFO zhtp::runtime::identity_manager_provider: Initializing global identity manager provider
+2025-12-01T12:48:27.819362Z  INFO zhtp::runtime:   IdentityManager not yet initialized - private keys will be loaded when IdentityComponent starts
+2025-12-01T12:48:27.819432Z  INFO zhtp::runtime:  Creating NEW genesis network with user wallet funding...
+2025-12-01T12:48:27.819501Z  INFO zhtp::runtime:  Development mode: Set blockchain difficulty to 0x1fffffff (easy mining)
+2025-12-01T12:48:27.819570Z  WARN zhtp::runtime:   No primary wallet found in user identity - genesis will not fund user wallet
+2025-12-01T12:48:27.819622Z  INFO zhtp::runtime::services::genesis_funding: Creating genesis funding for multi-validator identity-based transaction system...
+2025-12-01T12:48:27.819663Z  INFO zhtp::runtime::services::genesis_funding: Initializing 1 genesis validators      
+2025-12-01T12:48:27.819728Z  INFO zhtp::runtime::services::genesis_funding: Multi-validator mode: 1 validators for production network
+2025-12-01T12:48:27.820627Z  INFO zhtp::runtime::services::genesis_funding: Creating validator 1 UTXO: 1000 ZHTP stake (Identity: b85a8a128d1bc891)
+2025-12-01T12:48:27.821059Z  INFO zhtp::runtime::services::genesis_funding:    - Validator 1: 1000 ZHTP (ID: b85a8a128d1bc891)
+2025-12-01T12:48:27.821210Z  INFO zhtp::runtime::services::genesis_funding: Total validator stake: 1000 ZHTP across 1 validators
+2025-12-01T12:48:27.821293Z  INFO zhtp::runtime::services::genesis_funding: Genesis block merkle root updated: b1f8213892bcb9be6a4be391f25d52d552e40415260bea3110fccecff0c1c7c6
+2025-12-01T12:48:27.821353Z  INFO zhtp::runtime::services::genesis_funding: Genesis funding created: 4 UTXOs with validator stakes and funding pools
+2025-12-01T12:48:27.821464Z  INFO zhtp::runtime::services::genesis_funding:    - Validator 1: 1000 ZHTP (ID: b85a8a128d1bc891)
+2025-12-01T12:48:27.821533Z  INFO zhtp::runtime::services::genesis_funding:    - UBI Pool: 500,000 ZHTP
+2025-12-01T12:48:27.821726Z  INFO zhtp::runtime::services::genesis_funding:    - Mining Pool: 300,000 ZHTP
+2025-12-01T12:48:27.821801Z  INFO zhtp::runtime::services::genesis_funding:    - Development Pool: 200,000 ZHTP    
+2025-12-01T12:48:27.822302Z  INFO zhtp::runtime::services::genesis_funding:    - Total validator stake: 1000 ZHTP  
+2025-12-01T12:48:27.822606Z  INFO zhtp::runtime::services::genesis_funding:    - Total UTXO entries: 4
+2025-12-01T12:48:27.822727Z  INFO zhtp::runtime::services::genesis_funding:   Validator registration will occur after USER identity is registered
+2025-12-01T12:48:27.823140Z  INFO zhtp::runtime::services::genesis_funding:  Registering USER identity on blockchain: did:zhtp:b85a8a128d1bc89136fc6a6d5f9437772710f975c599a1c31663c8cc798c4765
+2025-12-01T12:48:27.823250Z  INFO zhtp::runtime::services::genesis_funding:    - User controls 1 node device(s)    
+2025-12-01T12:48:27.823361Z  INFO zhtp::runtime::services::genesis_funding:      Node 1: fbbcdff22d20f3c5a74e56c64a4a2f2e...
+2025-12-01T12:48:27.823429Z  INFO lib_blockchain::blockchain: Verifying transaction with identity verification enabled
+2025-12-01T12:48:27.823471Z  INFO lib_blockchain::blockchain: System transaction: true
+2025-12-01T12:48:27.823509Z  INFO lib_blockchain::blockchain: Transaction type: IdentityRegistration
+2025-12-01T12:48:27.823554Z  INFO lib_blockchain::blockchain: Transaction validation passed with identity verification
+2025-12-01T12:48:27.823605Z  INFO zhtp::runtime::services::genesis_funding:  Genesis USER identity registered with transaction: 9127dd9fe79d18ac0915e253a5e55fa1dedada01c9aa221ac2fb96b65ed45e97
+2025-12-01T12:48:27.823638Z  INFO zhtp::runtime::services::genesis_funding:    - DID: did:zhtp:b85a8a128d1bc89136fc6a6d5f9437772710f975c599a1c31663c8cc798c4765
+2025-12-01T12:48:27.823692Z  INFO zhtp::runtime::services::genesis_funding:    - Identity ID: b85a8a128d1bc89136fc6a6d5f9437772710f975c599a1c31663c8cc798c4765
+2025-12-01T12:48:27.823734Z  INFO zhtp::runtime::services::genesis_funding:    - Identity type: Human
+2025-12-01T12:48:27.823777Z  INFO zhtp::runtime::services::genesis_funding:  Registering validators in validator_registry (USER identity already registered)...
+2025-12-01T12:48:27.823823Z  INFO zhtp::runtime::services::genesis_funding:  Registering validator 1: did:zhtp:b85a8a128d1bc89136fc6a6d5f9437772710f975c599a1c31663c8cc798c4765
+2025-12-01T12:48:27.823866Z  INFO zhtp::runtime::services::genesis_funding:    - Node device: fbbcdff22d20f3c5a74e56c64a4a2f2e
+2025-12-01T12:48:27.823910Z  INFO lib_blockchain::blockchain: Verifying transaction with identity verification enabled
+2025-12-01T12:48:27.823944Z  INFO lib_blockchain::blockchain: System transaction: true
+2025-12-01T12:48:27.823977Z  INFO lib_blockchain::blockchain: Transaction type: IdentityRegistration
+2025-12-01T12:48:27.824014Z  INFO lib_blockchain::blockchain: Transaction validation passed with identity verification
+2025-12-01T12:48:27.824058Z  INFO lib_blockchain::blockchain:  Validator did:zhtp:b85a8a128d1bc89136fc6a6d5f9437772710f975c599a1c31663c8cc798c4765 registered with 1000 ZHTP stake and 0 bytes storage
+2025-12-01T12:48:27.824141Z  INFO zhtp::runtime::services::genesis_funding:  Genesis validator 1 registered in validator_registry
+2025-12-01T12:48:27.824200Z  INFO zhtp::runtime::services::genesis_funding:    - Validator TX: fb82ee0261890d5567769813328d17e0c8b7e76f486f46f331dd6abf4246aac5
+2025-12-01T12:48:27.824241Z  INFO zhtp::runtime::services::genesis_funding:    - Stake: 1000 ZHTP
+2025-12-01T12:48:27.824274Z  INFO zhtp::runtime::services::genesis_funding:    - Storage: 0 GB
+2025-12-01T12:48:27.824310Z  INFO zhtp::runtime::services::genesis_funding:    - Commission: 5.0%
+2025-12-01T12:48:27.824350Z  INFO zhtp::runtime::services::genesis_funding:  Validator registration complete: 1/1 validators registered
+2025-12-01T12:48:27.824391Z  INFO zhtp::runtime::services::genesis_funding:    - Pending transactions: 2
+2025-12-01T12:48:27.824447Z  INFO zhtp::runtime::services::genesis_funding:    - Identities in registry: 1
+2025-12-01T12:48:27.824476Z  INFO zhtp::runtime::services::genesis_funding:    Genesis block finalized - Height: 0, UTXOs: 4, Identities: 1, Pending: 2
+2025-12-01T12:48:27.824520Z  INFO zhtp::runtime::blockchain_provider: Initializing global blockchain provider      
+2025-12-01T12:48:27.824570Z  INFO zhtp::runtime::blockchain_provider: Global blockchain instance set
+2025-12-01T12:48:27.824633Z  INFO zhtp::runtime:  Global blockchain provider initialized with user wallet funding  
+  Registering remaining system components...
+2025-12-01T12:48:27.824724Z  INFO zhtp::runtime: Registering all ZHTP component instances...
+2025-12-01T12:48:27.824766Z  INFO zhtp::runtime: Registering component: zk
+2025-12-01T12:48:27.824810Z  INFO zhtp::runtime:  Registering Identity component with 2 genesis identities and 2 private keys
+2025-12-01T12:48:27.824865Z  INFO zhtp::runtime: Registering component: identity
+2025-12-01T12:48:27.824915Z  INFO zhtp::runtime: Registering component: storage
+2025-12-01T12:48:27.824982Z  INFO zhtp::runtime: Registering component: blockchain
+2025-12-01T12:48:27.825034Z  INFO zhtp::runtime: Registering component: consensus
+2025-12-01T12:48:27.825079Z  INFO zhtp::runtime: Registering component: economics
+2025-12-01T12:48:27.825128Z  INFO zhtp::runtime: Registering component: protocols
+2025-12-01T12:48:27.825174Z  INFO zhtp::runtime: Registering component: api
+2025-12-01T12:48:27.825216Z  INFO zhtp::runtime: All components registered successfully
+  Starting remaining system components...
+2025-12-01T12:48:27.825297Z  INFO zhtp::runtime:  Starting all ZHTP components...
+2025-12-01T12:48:27.825330Z  INFO zhtp::runtime: Registering all ZHTP component instances...
+2025-12-01T12:48:27.825368Z  INFO zhtp::runtime: All components registered successfully
+2025-12-01T12:48:27.825406Z  INFO zhtp::runtime:  Using existing global blockchain instance (genesis already set)  
+2025-12-01T12:48:27.825433Z  INFO zhtp::runtime: Component crypto is already running, skipping start
+2025-12-01T12:48:28.336824Z  INFO zhtp::runtime:  Starting component: zk
+2025-12-01T12:48:28.336933Z  INFO zhtp::runtime::components::zk: Starting ZK component with lib-proofs implementation...
+2025-12-01T12:48:28.336986Z  INFO zhtp::runtime::components::zk: Zero-knowledge proof system initialized
+2025-12-01T12:48:28.337012Z  INFO zhtp::runtime::components::zk: Privacy-preserving computations ready
+2025-12-01T12:48:28.337040Z  INFO zhtp::runtime::components::zk: ZK component started with zero-knowledge proofs   
+2025-12-01T12:48:28.337091Z  INFO zhtp::runtime: Component zk started successfully
+2025-12-01T12:48:28.846231Z  INFO zhtp::runtime:  Starting component: identity
+2025-12-01T12:48:28.846545Z  INFO zhtp::runtime::components::identity: Starting identity component with lib-identity implementation...
+2025-12-01T12:48:28.846671Z  INFO zhtp::runtime::components::identity:  Initializing IdentityManager with 2 genesis identities and 2 private keys
+2025-12-01T12:48:28.846743Z  INFO zhtp::runtime::components::identity:  Loaded private key for identity: b85a8a128d1bc891 (type: Human)
+2025-12-01T12:48:28.846828Z  INFO zhtp::runtime::components::identity:  Loaded private key for identity: fbbcdff22d20f3c5 (type: Device)
+2025-12-01T12:48:28.846897Z  INFO lib_identity: Initializing identity system with 2 identities (private data included)
+2025-12-01T12:48:28.846961Z  INFO zhtp::runtime::components::identity: Funding genesis primary wallets with 5000 ZHTP welcome bonus...
+2025-12-01T12:48:28.847095Z  INFO zhtp::runtime::components::identity: Identity management system initialized      
+2025-12-01T12:48:28.847145Z  INFO zhtp::runtime::components::identity: Ready for citizen onboarding and zero-knowledge identity verification
+2025-12-01T12:48:28.847206Z  INFO zhtp::runtime::identity_manager_provider: Global identity manager instance set   
+2025-12-01T12:48:28.847261Z  INFO zhtp::runtime::components::identity:  Identity manager registered globally for component access
+2025-12-01T12:48:28.847314Z  INFO zhtp::runtime::components::identity: Identity component started with ZK identity system
+2025-12-01T12:48:28.847378Z  INFO zhtp::runtime: Component identity started successfully
+2025-12-01T12:48:29.355542Z  INFO zhtp::runtime:  Starting component: storage
+2025-12-01T12:48:29.355691Z  INFO zhtp::runtime::components::storage: Starting storage component with lib-storage implementation...
+2025-12-01T12:48:29.356167Z  INFO zhtp::runtime::components::storage: unified storage system initialized successfully
+2025-12-01T12:48:29.356296Z  INFO zhtp::runtime::components::storage: -style content addressing ready
+2025-12-01T12:48:29.356353Z  INFO zhtp::runtime::components::storage: DHT network integration active
+2025-12-01T12:48:29.356411Z  INFO zhtp::runtime::components::storage: Economic incentives for storage providers enabled
+2025-12-01T12:48:29.356533Z  INFO zhtp::runtime::components::storage: Storage system stored in component state     
+2025-12-01T12:48:29.356597Z  INFO zhtp::runtime::components::storage: Storage component started with decentralized storage
+2025-12-01T12:48:29.356704Z  INFO zhtp::runtime: Component storage started successfully
+2025-12-01T12:48:29.865563Z  INFO zhtp::runtime: Component network is already running, skipping start
+2025-12-01T12:48:30.376713Z  INFO zhtp::runtime:  Starting component: blockchain
+2025-12-01T12:48:30.377223Z  INFO zhtp::runtime::components::blockchain: Starting blockchain component with shared blockchain service...
+2025-12-01T12:48:30.377336Z  INFO zhtp::runtime::components::blockchain:  Network Environment: Development
+2025-12-01T12:48:30.377529Z  INFO zhtp::runtime::components::blockchain: ✓ Using existing global blockchain instance
+2025-12-01T12:48:30.377732Z  INFO zhtp::runtime::components::blockchain:  Blockchain component started
+2025-12-01T12:48:30.377832Z  INFO zhtp::runtime: Component blockchain started successfully
+2025-12-01T12:48:30.377899Z  INFO zhtp::runtime::blockchain_provider: Global blockchain instance set
+2025-12-01T12:48:30.377936Z  INFO zhtp::runtime: Global blockchain provider updated
+2025-12-01T12:48:30.378078Z  INFO zhtp::runtime: Shared blockchain service initialized
+2025-12-01T12:48:30.378187Z  INFO zhtp::runtime:  Syncing wallet balances from blockchain wallet registry...       
+2025-12-01T12:48:30.378291Z  INFO zhtp::runtime:  Scanning blockchain wallet_registry (total entries: 0)...        
+2025-12-01T12:48:30.378373Z  INFO zhtp::runtime:  Extracted 0 wallet balance entries from blockchain
+2025-12-01T12:48:30.377749Z  INFO zhtp::runtime::components::blockchain:  Mining task spawned, starting mining loop...
+2025-12-01T12:48:30.378456Z  INFO zhtp::runtime::components::blockchain:  Mining loop started - waiting 2 seconds for consensus to wire...
+2025-12-01T12:48:30.378413Z  INFO zhtp::runtime:  Wallet balance sync completed successfully
+2025-12-01T12:48:30.378602Z  INFO zhtp::runtime:  Wallet balances synced from blockchain wallet registry
+2025-12-01T12:48:30.888418Z  INFO zhtp::runtime:  Starting component: consensus
+2025-12-01T12:48:30.888627Z  INFO zhtp::runtime::components::consensus: Starting consensus component with lib-consensus implementation...
+2025-12-01T12:48:30.888676Z  INFO zhtp::runtime::components::consensus:  Development mode enabled - single validator consensus allowed for testing
+2025-12-01T12:48:30.888744Z  INFO zhtp::runtime::components::consensus:     Production deployment requires minimum 4 validators for BFT
+2025-12-01T12:48:30.888786Z  INFO lib_consensus:  Initializing ZHTP consensus system
+2025-12-01T12:48:30.888835Z  INFO lib_consensus::dao::dao_engine: DAO engine initialized (blockchain-backed)       
+2025-12-01T12:48:30.888875Z  INFO zhtp::runtime::components::consensus: Consensus engine initialized with hybrid PoS
+2025-12-01T12:48:30.888913Z  INFO zhtp::runtime::components::consensus: Validator management ready
+2025-12-01T12:48:30.888947Z  INFO zhtp::runtime::components::consensus: Byzantine fault tolerance active
+2025-12-01T12:48:30.888983Z  INFO zhtp::runtime::components::consensus: Consensus component started with consensus mechanisms
+2025-12-01T12:48:30.889026Z  INFO zhtp::runtime: Component consensus started successfully
+2025-12-01T12:48:30.889054Z  INFO zhtp::runtime: Wiring blockchain to consensus component...
+2025-12-01T12:48:30.889112Z  INFO lib_consensus::validators::validator_manager: Registered new validator Hash([184, 90, 138, 18, 141, 27, 200, 145, 54, 252, 106, 109, 95, 148, 55, 119, 39, 16, 249, 117, 197, 153, 161, 195, 22, 99, 200, 204, 121, 140, 71, 101]) with 1000 ZHTP stake and 0 bytes storage
+2025-12-01T12:48:30.889176Z  INFO lib_consensus::validators::validator_manager: Synced validator Hash([184, 90, 138, 18, 141, 27, 200, 145, 54, 252, 106, 109, 95, 148, 55, 119, 39, 16, 249, 117, 197, 153, 161, 195, 22, 99, 200, 204, 121, 140, 71, 101]) (stake: 1000, storage: 0)
+2025-12-01T12:48:30.889245Z  INFO lib_consensus::validators::validator_manager: Validator sync complete: 1 new, 0 skipped
+2025-12-01T12:48:30.889290Z  INFO zhtp::runtime::components::consensus: Validator sync complete: 1 new validators registered, 0 already registered
+2025-12-01T12:48:30.889330Z  INFO zhtp::runtime:  Validator manager connected to blockchain mining loop
+2025-12-01T12:48:30.889413Z  INFO zhtp::runtime:  Node owner identity connected: fbbcdff22d20f3c5
+2025-12-01T12:48:30.889453Z  INFO zhtp::runtime: Blockchain successfully connected to consensus validator manager  
+2025-12-01T12:48:30.889487Z  INFO zhtp::runtime:  Blockchain successfully wired to consensus component
+2025-12-01T12:48:31.401582Z  INFO zhtp::runtime:  Starting component: economics
+2025-12-01T12:48:31.401767Z  INFO zhtp::runtime::components::economics: Starting economics component with lib-economy implementation...
+2025-12-01T12:48:31.401890Z  INFO zhtp::runtime::components::economics: Universal Basic Income system initialized  
+2025-12-01T12:48:31.401943Z  INFO zhtp::runtime::components::economics: Token economics ready
+2025-12-01T12:48:31.401979Z  INFO zhtp::runtime::components::economics: Resource sharing incentives active
+2025-12-01T12:48:31.402029Z  INFO zhtp::runtime::components::economics: Economics component started with UBI system
+2025-12-01T12:48:31.402077Z  INFO zhtp::runtime: Component economics started successfully
+2025-12-01T12:48:31.909480Z  INFO zhtp::runtime:  Starting component: protocols
+2025-12-01T12:48:31.909675Z  INFO zhtp::runtime::components::protocols: Starting protocols component with ZHTP Unified Server...
+2025-12-01T12:48:31.909781Z  INFO lib_protocols:  Initializing ZHTP Protocol Stack v1.0
+2025-12-01T12:48:31.909839Z  INFO lib_protocols: Web4 Internet Infrastructure Ready
+2025-12-01T12:48:31.909898Z  INFO lib_protocols: DAO fee system active for UBI funding
+2025-12-01T12:48:31.909943Z  INFO lib_protocols: Post-quantum cryptography enabled
+2025-12-01T12:48:31.910008Z  INFO lib_protocols: Mesh networking ready for
+2025-12-01T12:48:31.910058Z  INFO zhtp::runtime::components::protocols: Initializing backend components for unified server...
+2025-12-01T12:48:31.910102Z  INFO zhtp::runtime::components::protocols:  Using existing global blockchain instance...
+2025-12-01T12:48:31.910143Z  INFO zhtp::runtime::components::protocols:  ✓ Global blockchain found - continuing with synced data
+2025-12-01T12:48:31.910189Z  INFO zhtp::runtime::components::protocols:  Getting shared IdentityManager...
+2025-12-01T12:48:31.910875Z  INFO zhtp::runtime::components::protocols: Creating ZHTP Unified Server...
+2025-12-01T12:48:31.910946Z  INFO zhtp::unified_server: Creating ZHTP Unified Server (ID: 895c5010-a220-4192-b590-96cf9114ec10)
+2025-12-01T12:48:31.910993Z  INFO zhtp::unified_server: Port: 9333 (HTTP + UDP + WiFi + Bootstrap)
+2025-12-01T12:48:31.911040Z  INFO zhtp::session_manager:  Session cleanup task started (runs every 5 minutes)      
+2025-12-01T12:48:31.911105Z  INFO zhtp::unified_server:  Discovery coordinator initialized - all protocols will report to single coordinator
+2025-12-01T12:48:31.911116Z  INFO zhtp::discovery_coordinator: 📡 Discovery event listener started
+2025-12-01T12:48:31.911201Z  INFO zhtp::server::mesh::blockchain_sync: 📡 Blockchain broadcast channel connected to mesh router
+2025-12-01T12:48:31.911569Z  INFO zhtp::server::mesh::blockchain_sync: 📡 Blockchain broadcast processing task started
+2025-12-01T12:48:31.911646Z  INFO zhtp::server::protocols::wifi: 🌐 Initializing WiFi Direct P2P + mDNS service discovery...
+2025-12-01T12:48:31.911747Z  INFO zhtp::server::protocols::wifi:    Node ID: "4b226a3aeaf84469"
+2025-12-01T12:48:31.911952Z  INFO zhtp::server::protocols::wifi: ✅ WiFi Direct protocol created successfully      
+2025-12-01T12:48:31.912058Z  WARN lib_network::protocols::wifi_direct:   WiFi Direct is DISABLED - cannot start discovery
+2025-12-01T12:48:31.912140Z  WARN lib_network::protocols::wifi_direct:    Call enable() first to activate WiFi Direct protocol
+2025-12-01T12:48:31.912205Z  INFO zhtp::server::protocols::wifi: 🔒 WiFi Direct protocol ready but DISABLED (security default)
+2025-12-01T12:48:31.912253Z  INFO zhtp::server::protocols::wifi:    Use /api/v1/protocols/wifi-direct/enable to activate
+2025-12-01T12:48:31.912365Z  INFO zhtp::unified_server:  WiFi Direct protocol initialized but DISABLED by default  
+2025-12-01T12:48:31.912486Z  INFO zhtp::unified_server:    Use API endpoint /api/v1/protocols/wifi-direct/enable to activate
+2025-12-01T12:48:31.912569Z  INFO lib_network::protocols::quic_mesh:  Initializing QUIC mesh protocol on 0.0.0.0:9334
+2025-12-01T12:48:31.913023Z  INFO lib_network::protocols::quic_mesh:  QUIC endpoint listening on 0.0.0.0:9334      
+2025-12-01T12:48:31.913133Z  INFO zhtp::unified_server: ✅ MeshMessageHandler injected into QUIC protocol for blockchain sync
+2025-12-01T12:48:31.913183Z  INFO lib_network::protocols::quic_mesh:  Starting QUIC message receiver...
+2025-12-01T12:48:31.913231Z  INFO zhtp::unified_server:  QUIC mesh protocol ready on UDP port 9334
+2025-12-01T12:48:31.913275Z  INFO zhtp::unified_server:  QUIC mesh protocol initialized on UDP port 9334
+2025-12-01T12:48:31.913319Z  INFO zhtp::server::mesh::blockchain_sync: 🔐 QUIC mesh protocol configured (quantum-safe + reliable transport)
+2025-12-01T12:48:31.913362Z  INFO zhtp::server::mesh::core: 📡 DHT handler registered for pure UDP mesh protocol   
+2025-12-01T12:48:31.913414Z  INFO zhtp::unified_server: Registering comprehensive API handlers on HTTP and ZHTP routers...
+2025-12-01T12:48:31.913521Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/blockchain
+2025-12-01T12:48:31.913705Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/v1/blockchain      
+2025-12-01T12:48:31.913854Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/identity
+2025-12-01T12:48:31.913963Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/v1/identity        
+2025-12-01T12:48:31.914069Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/storage
+2025-12-01T12:48:31.914150Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/v1/storage
+2025-12-01T12:48:31.914218Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/wallet
+2025-12-01T12:48:31.914263Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/v1/wallet
+2025-12-01T12:48:31.914344Z  INFO lib_consensus::dao::dao_engine: DAO engine initialized (blockchain-backed)       
+2025-12-01T12:48:31.914416Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/dao
+2025-12-01T12:48:31.914470Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/v1/dao
+2025-12-01T12:48:31.914511Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/crypto
+2025-12-01T12:48:31.914536Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/v1/crypto
+2025-12-01T12:48:31.914560Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/dht
+2025-12-01T12:48:31.914626Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/v1/dht
+2025-12-01T12:48:31.914684Z  INFO zhtp::api::handlers::web4: Initializing Web4 API handler with existing storage system
+2025-12-01T12:48:31.914733Z  INFO lib_network::web4: Web4 domain registry and content publishing system initialized with existing storage
+2025-12-01T12:48:31.914775Z  INFO zhtp::api::handlers::web4:  Web4 API handler initialized successfully
+2025-12-01T12:48:31.914813Z  INFO zhtp::api::handlers::wallet_content: Initializing Wallet Content API handler     
+2025-12-01T12:48:31.914848Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/wallet
+2025-12-01T12:48:31.914885Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/content
+2025-12-01T12:48:31.915281Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/wallet
+2025-12-01T12:48:31.915351Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/content
+2025-12-01T12:48:31.915397Z  INFO zhtp::api::handlers::marketplace: Initializing Marketplace API handler
+2025-12-01T12:48:31.915444Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/marketplace
+2025-12-01T12:48:31.915520Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/marketplace        
+2025-12-01T12:48:31.915734Z  INFO zhtp::api::handlers::dns: DNS handler initialized with empty registry - ready for domain deployments
+2025-12-01T12:48:31.915823Z  INFO zhtp::api::handlers::dns: DNS handler connected to Web4Manager
+2025-12-01T12:48:31.916050Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/dns
+2025-12-01T12:48:31.916118Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/v1/dns
+2025-12-01T12:48:31.916177Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/web4
+2025-12-01T12:48:31.916232Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/v1/web4
+2025-12-01T12:48:31.916606Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/validator
+2025-12-01T12:48:31.917758Z  INFO zhtp::server::zhtp::router: 📝 Registering ZHTP handler: /api/v1/validator       
+2025-12-01T12:48:31.917830Z  INFO zhtp::server::http::router: Registering HTTP handler: /api/v1/protocol
+2025-12-01T12:48:31.917904Z  INFO zhtp::unified_server: All API handlers registered successfully
+2025-12-01T12:48:31.917960Z  INFO zhtp::server::zhtp::compatibility: 🔄 HTTP compatibility layer initialized (deprecated - use native ZHTP)
+2025-12-01T12:48:31.917998Z  INFO zhtp::unified_server:  QUIC handler initialized for native ZHTP-over-QUIC        
+2025-12-01T12:48:31.918054Z  INFO zhtp::server::mesh::core: 🔀 ZHTP router registered for UDP endpoint routing     
+2025-12-01T12:48:31.918091Z  INFO zhtp::unified_server:  ZHTP router registered with mesh router for UDP endpoint handling
+2025-12-01T12:48:31.918125Z  INFO zhtp::runtime::components::protocols:  Setting up blockchain provider...
+2025-12-01T12:48:31.918178Z  INFO zhtp::server::mesh::blockchain_sync: ✅ Blockchain provider injected into QUIC MeshMessageHandler
+2025-12-01T12:48:31.918219Z  INFO zhtp::server::mesh::blockchain_sync: ⛓️ Blockchain provider configured for edge nnode sync
+2025-12-01T12:48:31.918261Z  INFO zhtp::server::mesh::core: 🔐 Initializing ZHTP authentication manager...
+2025-12-01T12:48:31.918360Z  INFO lib_network::protocols::zhtp_auth:  Initializing ZHTP authentication manager with post-quantum security
+2025-12-01T12:48:31.918490Z  INFO lib_network::protocols::zhtp_auth:  Generated Dilithium2 keypair (post-quantum secure)
+2025-12-01T12:48:31.918532Z  INFO zhtp::server::mesh::core: ✅ ZHTP authentication manager initialized
+2025-12-01T12:48:31.918559Z  INFO zhtp::server::mesh::core: Initializing ZHTP relay protocol with post-quantum encryption...
+2025-12-01T12:48:31.918694Z  INFO lib_network::dht::relay:  Initializing ZHTP relay protocol with post-quantum security
+2025-12-01T12:48:31.918723Z  INFO zhtp::server::mesh::core: ✅ ZHTP relay protocol initialized (Dilithium2 + Kyber512 + ChaCha20)
+2025-12-01T12:48:31.918783Z  INFO zhtp::unified_server:  Initializing WiFi Direct ZHTP authentication...
+2025-12-01T12:48:31.918849Z  INFO zhtp::unified_server:  Using identity b85a8a128d1bc891 for WiFi Direct authentication
+2025-12-01T12:48:31.918882Z  INFO zhtp::unified_server:    Public key: b85a8a128d1bc891...
+2025-12-01T12:48:31.918909Z  INFO lib_network::protocols::wifi_direct:  Initializing ZHTP authentication for WiFi Direct
+2025-12-01T12:48:31.918935Z  INFO lib_network::protocols::wifi_direct:    Post-quantum Dilithium2 signatures enabled
+2025-12-01T12:48:31.918961Z  INFO lib_network::protocols::wifi_direct:    Only ZHTP nodes with blockchain identity can connect
+2025-12-01T12:48:31.919007Z  INFO lib_network::protocols::zhtp_auth:  Initializing ZHTP authentication manager with post-quantum security
+2025-12-01T12:48:31.919120Z  INFO lib_network::protocols::zhtp_auth:  Generated Dilithium2 keypair (post-quantum secure)
+2025-12-01T12:48:31.919159Z  INFO lib_network::protocols::wifi_direct:  WiFi Direct authentication initialized     
+2025-12-01T12:48:31.919183Z  INFO lib_network::protocols::wifi_direct:     Non-ZHTP devices will be rejected       
+2025-12-01T12:48:31.919223Z  INFO zhtp::unified_server:  WiFi Direct authentication initialized successfully       
+2025-12-01T12:48:31.919262Z  INFO zhtp::unified_server:     Non-ZHTP devices will be rejected
+2025-12-01T12:48:31.919286Z  INFO zhtp::unified_server:     Hidden SSID mode enabled
+2025-12-01T12:48:31.919330Z  INFO zhtp::runtime::components::protocols: Starting unified server on port 9333...    
+2025-12-01T12:48:31.919375Z  INFO zhtp::unified_server: Starting ZHTP Unified Server on port 9333
+2025-12-01T12:48:31.919430Z  INFO zhtp::unified_server:  Applying network isolation for ISP-free mesh operation... 
+2025-12-01T12:48:32.392369Z  INFO zhtp::runtime::components::blockchain:  Starting mining checks every 30 seconds
+2025-12-01T12:48:32.407791Z  INFO zhtp::runtime::components::blockchain: Mining check #1 - Height: 0, Pending: 2, UTXOs: 4, Identities: 1
+2025-12-01T12:48:32.407927Z  INFO zhtp::runtime::components::blockchain:  CONSENSUS: This node selected as proposer
+2025-12-01T12:48:32.407962Z  INFO zhtp::runtime::components::blockchain: Mining block with 2 transactions
+2025-12-01T12:48:32.407998Z  INFO zhtp::runtime::components::blockchain: Mining system transaction block with difficulty: 0x1fffffff
+2025-12-01T12:48:32.408044Z  INFO zhtp::runtime::components::blockchain: ⛏️ Mining block with PoW (difficulty: 0x1ffffffff)...
+2025-12-01T12:48:32.408285Z  INFO zhtp::runtime::components::blockchain:  Block mined with nonce: 1422
+2025-12-01T12:48:32.408677Z  INFO lib_blockchain::blockchain: Starting block verification for height 1
+2025-12-01T12:48:32.408758Z  INFO lib_blockchain::blockchain: Verifying transaction with identity verification enabled
+2025-12-01T12:48:32.408904Z  INFO lib_blockchain::blockchain: System transaction: true
+2025-12-01T12:48:32.408981Z  INFO lib_blockchain::blockchain: Transaction type: IdentityRegistration
+2025-12-01T12:48:32.409015Z  INFO lib_blockchain::blockchain: Transaction validation passed with identity verification
+2025-12-01T12:48:32.409044Z  INFO lib_blockchain::blockchain: Verifying transaction with identity verification enabled
+2025-12-01T12:48:32.409070Z  INFO lib_blockchain::blockchain: System transaction: true
+2025-12-01T12:48:32.409120Z  INFO lib_blockchain::blockchain: Transaction type: IdentityRegistration
+2025-12-01T12:48:32.409176Z  INFO lib_blockchain::blockchain: Transaction validation passed with identity verification
+2025-12-01T12:48:32.409229Z  INFO lib_blockchain::blockchain: Block verification successful for height 1
+2025-12-01T12:48:32.409371Z  INFO lib_blockchain::blockchain: Initializing recursive proof aggregator
+2025-12-01T12:48:32.409508Z  INFO lib_blockchain::blockchain: Recursive proof aggregator initialized successfully  
+2025-12-01T12:48:32.409603Z  INFO zhtp::runtime::components::blockchain: BLOCK MINED SUCCESSFULLY!
+2025-12-01T12:48:32.409650Z  INFO zhtp::runtime::components::blockchain: Block Hash: Hash([0, 82, 204, 100, 15, 23, 225, 135, 211, 213, 37, 41, 202, 118, 90, 214, 86, 168, 142, 71, 142, 34, 203, 152, 148, 92, 232, 248, 106, 21, 208, 174])
+2025-12-01T12:48:32.409723Z  INFO zhtp::runtime::components::blockchain: Block Height: 1
+2025-12-01T12:48:32.409778Z  INFO zhtp::runtime::components::blockchain: Transactions in Block: 2
+2025-12-01T12:48:32.409832Z  INFO zhtp::runtime::components::blockchain: Total UTXOs: 4
+2025-12-01T12:48:32.409880Z  INFO zhtp::runtime::components::blockchain: Identity Registry: 1 entries
+2025-12-01T12:48:32.409935Z  INFO zhtp::runtime::components::blockchain: Block #1 mined successfully!
+2025-12-01T12:48:32.409991Z  INFO zhtp::server::mesh::blockchain_sync: 📡 Broadcasting new block 1 to mesh network 
+2025-12-01T12:48:32.410067Z  INFO zhtp::server::mesh::blockchain_sync: 📤 Block 1 broadcast to 0 peers
+2025-12-01T12:48:34.184424Z ERROR zhtp::config::network_isolation:  ISOLATION FAILED: Can still reach 8.8.8.8
+2025-12-01T12:48:34.211758Z ERROR zhtp::config::network_isolation:  ISOLATION FAILED: Can still reach 1.1.1.1
+2025-12-01T12:48:34.270773Z ERROR zhtp::config::network_isolation:  ISOLATION FAILED: Can still reach google.com
+2025-12-01T12:48:34.278146Z ERROR zhtp::config::network_isolation:  Network isolation FAILED - internet access still possible!
+2025-12-01T12:48:34.278211Z  INFO zhtp::unified_server:  Network isolation applied - mesh is now ISP-free
+2025-12-01T12:48:34.278236Z  INFO zhtp::unified_server:  ZHTP relay protocol already initialized (authentication active)
+2025-12-01T12:48:34.278322Z  INFO zhtp::unified_server: ═══════════════════════════════════════════════════════════════
+2025-12-01T12:48:34.279682Z  INFO zhtp::unified_server:   PEER DISCOVERY METHODS - STATUS REPORT
+2025-12-01T12:48:34.279820Z  INFO zhtp::unified_server: ═══════════════════════════════════════════════════════════════
+2025-12-01T12:48:34.279900Z  INFO zhtp::unified_server:  UDP Multicast: ACTIVE (started in Phase 1, reusing existing discovery)
+2025-12-01T12:48:34.279986Z  INFO zhtp::unified_server:    → Already broadcasting every 30s from Phase 1 initialization
+2025-12-01T12:48:34.280027Z  INFO zhtp::unified_server:    → Connected to discovery coordinator ✓
+2025-12-01T12:48:34.280055Z  INFO zhtp::unified_server:   IP Scanner: DISABLED (inefficient, replaced by broadcast)
+2025-12-01T12:48:34.280120Z  INFO zhtp::unified_server:   Bluetooth Classic: SKIPPED (focusing on BLE implementation)
+2025-12-01T12:48:34.280138Z  INFO zhtp::unified_server: Initializing Bluetooth mesh protocol for phone connectivity...
+2025-12-01T12:48:34.280152Z  INFO zhtp::unified_server:  BLE peer discovery listener active - will trigger sync via BLE (coordinated with other protocols)
+2025-12-01T12:48:34.280243Z  INFO zhtp::unified_server:    → Will be enabled later for high-bandwidth transfers    
+2025-12-01T12:48:34.280376Z  INFO zhtp::server::protocols::bluetooth_le: 📱 Initializing Bluetooth mesh protocol for phone connectivity...
+2025-12-01T12:48:34.280588Z  INFO zhtp::unified_server:  WiFi Direct P2P: ACTIVE (200m range)
+2025-12-01T12:48:34.280690Z  INFO lib_network::protocols::bluetooth::common:  Windows: Detecting Bluetooth MAC address via PowerShell
+2025-12-01T12:48:34.280779Z  INFO zhtp::unified_server:    → Direct device connections without router
+2025-12-01T12:48:34.280918Z  INFO zhtp::unified_server:  mDNS/Bonjour: ACTIVE (_zhtp._tcp.local)
+2025-12-01T12:48:34.280978Z  INFO zhtp::unified_server:    → Automatic service discovery on local network
+2025-12-01T12:48:34.281034Z  INFO zhtp::unified_server: ───────────────────────────────────────────────────────────────
+2025-12-01T12:48:34.281069Z  INFO zhtp::unified_server:   DISCOVERY SUMMARY:
+2025-12-01T12:48:34.281109Z  INFO zhtp::unified_server:     UDP Multicast:      ACTIVE (Phase 1)
+2025-12-01T12:48:34.281147Z  INFO zhtp::unified_server:     mDNS/Bonjour:       ACTIVE
+2025-12-01T12:48:34.281175Z  INFO zhtp::unified_server:     WiFi Direct P2P:    ACTIVE
+2025-12-01T12:48:34.281204Z  INFO zhtp::unified_server:     Bluetooth LE:       INITIALIZING
+2025-12-01T12:48:34.281236Z  INFO zhtp::unified_server:     Bluetooth Classic:  DISABLED
+2025-12-01T12:48:34.281273Z  INFO zhtp::unified_server:     IP Scanner:         DISABLED
+2025-12-01T12:48:34.281311Z  INFO zhtp::unified_server: ═══════════════════════════════════════════════════════════════
+2025-12-01T12:48:34.281354Z  INFO zhtp::unified_server:   1 discovery method active - limited peer discovery       
+2025-12-01T12:48:34.281385Z  INFO zhtp::unified_server:    For best results, enable WiFi Direct and Bluetooth      
+2025-12-01T12:48:34.281420Z  INFO zhtp::unified_server: ═══════════════════════════════════════════════════════════════
+2025-12-01T12:48:34.281462Z  INFO zhtp::unified_server:  QUIC-Only Mode: Native ZHTP protocol over QUIC transport  
+2025-12-01T12:48:34.281494Z  INFO zhtp::unified_server:  TCP/UDP deprecated - using QUIC for all networking        
+2025-12-01T12:48:34.281535Z  INFO zhtp::unified_server:  ✅ QUIC handler started - Native ZHTP-over-QUIC ready     
+2025-12-01T12:48:34.281581Z  INFO zhtp::unified_server:  Starting Bluetooth LE mesh handler...
+2025-12-01T12:48:34.281615Z  WARN zhtp::unified_server: Bluetooth LE protocol not initialized - skipping handler   
+2025-12-01T12:48:34.281648Z  INFO zhtp::unified_server:  Starting Bluetooth Classic RFCOMM mesh handler...
+2025-12-01T12:48:34.281711Z  WARN zhtp::unified_server: Bluetooth Classic protocol not initialized - skipping handler
+2025-12-01T12:48:34.281786Z  INFO zhtp::unified_server:  Starting LoRaWAN mesh handler...
+2025-12-01T12:48:34.281812Z  INFO zhtp::unified_server:  LoRaWAN mesh protocol ready (requires LoRa hardware)      
+2025-12-01T12:48:34.281836Z  INFO zhtp::unified_server:  Long-range mesh capability available
+2025-12-01T12:48:34.281858Z  INFO zhtp::unified_server: ZHTP Unified Server online
+2025-12-01T12:48:34.281887Z  INFO zhtp::unified_server: Protocols: BLE + BT Classic + WiFi Direct + LoRaWAN + ZHTP Relay
+2025-12-01T12:48:34.281917Z  INFO zhtp::unified_server:  ZHTP relay: Encrypted DHT queries with Dilithium2 + Kyber512 + ChaCha20
+2025-12-01T12:48:34.281950Z  INFO zhtp::unified_server:  Verifying network isolation...
+2025-12-01T12:48:34.281551Z  INFO zhtp::unified_server: 🚀 Starting QUIC accept loop on endpoint...
+2025-12-01T12:48:34.282093Z  INFO zhtp::server::quic_handler: 🌐 QUIC handler started - listening for connections  
+2025-12-01T12:48:34.313943Z  WARN zhtp::unified_server:  NETWORK ISOLATION FAILED - Internet access still possible!
+2025-12-01T12:48:34.314039Z  WARN zhtp::unified_server:  Check firewall and routing configuration
+2025-12-01T12:48:34.314132Z  INFO zhtp::runtime::components::protocols: Protocols component started
+2025-12-01T12:48:34.314211Z  INFO zhtp::runtime: Component protocols started successfully
+2025-12-01T12:48:34.829658Z  INFO zhtp::runtime::reward_orchestrator: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.829776Z  INFO zhtp::runtime::reward_orchestrator:  Starting Unified Reward Orchestrator
+2025-12-01T12:48:34.829874Z  INFO zhtp::runtime::reward_orchestrator: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.829934Z  INFO zhtp::runtime::reward_orchestrator:    Routing rewards: ENABLED
+2025-12-01T12:48:34.829995Z  INFO zhtp::runtime::reward_orchestrator:    Storage rewards: ENABLED
+2025-12-01T12:48:34.830023Z  INFO zhtp::runtime::reward_orchestrator: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.830069Z  INFO zhtp::runtime::routing_rewards: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.830141Z  INFO zhtp::runtime::routing_rewards:  Starting Routing Reward Processor
+2025-12-01T12:48:34.830191Z  INFO zhtp::runtime::routing_rewards: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.830247Z  INFO zhtp::runtime::routing_rewards:    Check interval: 600s
+2025-12-01T12:48:34.830283Z  INFO zhtp::runtime::routing_rewards:    Minimum threshold: 100 ZHTP
+2025-12-01T12:48:34.830310Z  INFO zhtp::runtime::routing_rewards:    Max batch size: 10000 ZHTP
+2025-12-01T12:48:34.830355Z  INFO zhtp::runtime::routing_rewards: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.830427Z  INFO zhtp::runtime::reward_orchestrator:  Routing reward processor started
+2025-12-01T12:48:34.830480Z  INFO zhtp::runtime::storage_rewards: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.830533Z  INFO zhtp::runtime::storage_rewards:  Starting Storage Reward Processor
+2025-12-01T12:48:34.830573Z  INFO zhtp::runtime::storage_rewards: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.830626Z  INFO zhtp::runtime::storage_rewards:    Check interval: 600s
+2025-12-01T12:48:34.830666Z  INFO zhtp::runtime::storage_rewards:    Minimum threshold: 100 ZHTP
+2025-12-01T12:48:34.830708Z  INFO zhtp::runtime::storage_rewards:    Max batch size: 10000 ZHTP
+2025-12-01T12:48:34.830751Z  INFO zhtp::runtime::storage_rewards: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.830802Z  INFO zhtp::runtime::reward_orchestrator:  Storage reward processor started
+2025-12-01T12:48:34.830857Z  INFO zhtp::runtime::reward_orchestrator: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.830915Z  INFO zhtp::runtime::reward_orchestrator:  Reward Orchestrator Started: 2 processor(s) active
+2025-12-01T12:48:34.830959Z  INFO zhtp::runtime::reward_orchestrator: ═══════════════════════════════════════════════════════
+2025-12-01T12:48:34.830819Z  INFO zhtp::runtime::routing_rewards:  [ROUTING] Checking routing rewards (cycle 1)... 
+2025-12-01T12:48:34.831109Z  INFO zhtp::runtime::routing_rewards:    [ROUTING]  Stats:
+2025-12-01T12:48:34.831134Z  INFO zhtp::runtime::routing_rewards:       [ROUTING] Tokens earned: 0 SOV
+2025-12-01T12:48:34.831158Z  INFO zhtp::runtime::routing_rewards:       [ROUTING] Bytes routed: 0 bytes (0.00 MB)  
+2025-12-01T12:48:34.831185Z  INFO zhtp::runtime::routing_rewards:       [ROUTING] Messages routed: 0
+2025-12-01T12:48:34.831011Z  INFO zhtp::runtime: Unified reward orchestrator started successfully
+2025-12-01T12:48:34.831283Z  INFO zhtp::runtime:  Reward orchestrator started (mesh server ready for statistics)   
+2025-12-01T12:48:34.845216Z  INFO zhtp::runtime::storage_rewards:  Checking storage rewards (cycle 1)...
+2025-12-01T12:48:34.845405Z  INFO zhtp::runtime::storage_rewards:     Stats:
+2025-12-01T12:48:34.845495Z  INFO zhtp::runtime::storage_rewards:       Tokens earned: 0 SOV
+2025-12-01T12:48:34.845572Z  INFO zhtp::runtime::storage_rewards:       Items stored: 0
+2025-12-01T12:48:34.845710Z  INFO zhtp::runtime::storage_rewards:       Bytes stored: 0 bytes (0.00 MB)
+2025-12-01T12:48:34.845806Z  INFO zhtp::runtime::storage_rewards:       Retrievals served: 0
+2025-12-01T12:48:34.845879Z  INFO zhtp::runtime::storage_rewards:       Storage duration: 0 hours
+2025-12-01T12:48:35.342283Z  INFO zhtp::runtime:  All components started successfully
+ZHTP orchestrator fully operational!
+Press Ctrl+C to stop the node
+2025-12-01T12:48:35.342511Z  INFO zhtp::runtime:  Starting main operational loop...
+2025-12-01T12:48:36.754381Z  INFO lib_network::protocols::bluetooth::common:  Detected Windows Bluetooth MAC: FC-B0-DE-9E-35-C4
+2025-12-01T12:48:36.754510Z  INFO lib_network::protocols::bluetooth:  Blockchain provider configured for BLE edge sync
+2025-12-01T12:48:36.754573Z  INFO zhtp::server::protocols::bluetooth_le: ✅ BLE edge sync enabled - will serve headers/proofs to mobile devices
+2025-12-01T12:48:36.754632Z  INFO lib_network::protocols::bluetooth:  GATT message channel configured
+2025-12-01T12:48:36.754686Z  INFO zhtp::server::protocols::bluetooth_le: ✅ GATT message channel connected to BluetoothRouter
+2025-12-01T12:48:36.754744Z  WARN lib_network::protocols::bluetooth:   Windows limitation: Phone discovery requires manual pairing
+2025-12-01T12:48:36.754849Z  INFO lib_network::protocols::bluetooth: Starting Bluetooth LE mesh discovery...       
+2025-12-01T12:48:36.754927Z  INFO lib_network::protocols::bluetooth:  DEBUG: About to initialize_bluetooth_stack...
+2025-12-01T12:48:36.755003Z  INFO lib_network::protocols::bluetooth: Initializing Bluetooth stack for mesh networking...
+2025-12-01T12:48:36.755063Z  INFO lib_network::protocols::bluetooth: Enabling Windows Bluetooth for mesh networking...
+Network receive error: deadline has elapsed
+2025-12-01T12:48:40.351093Z  INFO zhtp::runtime: ZHTP system fully operational - ready for identity and transaction testing

@@ -2,9 +2,9 @@
 
 use anyhow::{Result, anyhow};
 use lib_crypto::PublicKey;
-use lib_proofs::{ZkProof, types::ZkProofType};
-use lib_proofs::plonky2::ZkProofSystem;
-use lib_identity::{IdentityManager};
+use lib_identity::IdentityManager;
+use lib_proofs::{ZeroKnowledgeProof, types::ProofType};
+use lib_proofs::plonky2::{Plonky2Proof, ZkProofSystem};
 use tracing::{info, warn, error};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -45,16 +45,18 @@ pub async fn generate_ubi_proof(
         1,  // default verification level
     ) {
         Ok(plonky2_proof) => {
-            // Create ZeroKnowledgeProof for UBI distribution  
-            let ubi_proof = lib_proofs::ZeroKnowledgeProof {
-                proof_system: "ZHTP-UBI-Distribution".to_string(),
-                proof_data: plonky2_proof.proof.clone(),
-                public_inputs: vec![amount.to_le_bytes().to_vec(), round.to_le_bytes().to_vec()].concat(),
-                verification_key: vec![], // Simplified for now
-                plonky2_proof: Some(plonky2_proof),
-                proof: vec![], // Legacy field
-            };
-            
+            let serialized_inner = bincode::serialize(&plonky2_proof)
+                .map_err(|e| anyhow!("Failed to encode Plonky2 proof: {}", e))?;
+            let public_inputs = [amount.to_le_bytes(), round.to_le_bytes()].concat();
+            // Create ZeroKnowledgeProof for UBI distribution
+            let ubi_proof = ZeroKnowledgeProof::new(
+                ProofType::UsageRateProofV1,
+                Some(plonky2_proof.verification_key_hash.to_vec()),
+                None,
+                public_inputs,
+                serialized_inner,
+            );
+
             // Serialize the proof
             let serialized = serde_json::to_vec(&ubi_proof)
                 .map_err(|e| anyhow!("Failed to serialize UBI proof: {}", e))?;
@@ -74,12 +76,12 @@ pub async fn verify_ubi_proof(proof: &[u8]) -> Result<bool> {
     info!("Verifying UBI distribution proof ({} bytes)", proof.len());
     
     // Parse the ZK proof
-    let zk_proof: lib_proofs::ZeroKnowledgeProof = serde_json::from_slice(proof)
+    let zk_proof: ZeroKnowledgeProof = serde_json::from_slice(proof)
         .map_err(|e| anyhow!("Failed to parse UBI proof: {}", e))?;
     
     // Verify it's a UBI distribution proof (check proof system type)
-    if zk_proof.proof_system != "ZHTP-UBI-Distribution" {
-        return Err(anyhow!("Invalid proof system for UBI verification"));
+    if zk_proof.proof_type != ProofType::UsageRateProofV1 {
+        return Err(anyhow!("Invalid proof type for UBI verification"));
     }
     
     // Create ZK proof system for verification
@@ -100,31 +102,32 @@ pub async fn verify_ubi_proof(proof: &[u8]) -> Result<bool> {
             .map_err(|_| anyhow!("Invalid round in UBI proof"))?
     );
     
-    // Use the plonky2 proof if available
-    if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
-        // Verify the proof using the ZK system
-        match zk_system.verify_identity(plonky2_proof) {
-            Ok(is_valid) => {
-                if is_valid {
-                    info!("UBI distribution proof verified successfully for amount: {}, round: {}", amount, round);
-                    
-                    // Additional validation against economics system
-                    verify_ubi_economic_constraints(amount, round).await?;
-                    
-                    Ok(true)
-                } else {
-                    warn!("UBI distribution proof verification failed");
-                    Ok(false)
-                }
-            },
-            Err(e) => {
-                error!("UBI proof verification error: {}", e);
+    let plonky2_proof: Plonky2Proof = bincode::deserialize(&zk_proof.proof_data)
+        .map_err(|e| anyhow!("Failed to decode inner Plonky2 proof: {}", e))?;
+
+    // Verify the proof using the ZK system
+    match zk_system.verify_identity(&plonky2_proof) {
+        Ok(is_valid) => {
+            if is_valid {
+                info!(
+                    "UBI distribution proof verified successfully for amount: {}, round: {}",
+                    amount,
+                    round
+                );
+
+                // Additional validation against economics system
+                verify_ubi_economic_constraints(amount, round).await?;
+
+                Ok(true)
+            } else {
+                warn!("UBI distribution proof verification failed");
                 Ok(false)
             }
         }
-    } else {
-        warn!("No plonky2 proof found in UBI proof");
-        Ok(false)
+        Err(e) => {
+            error!("UBI proof verification error: {}", e);
+            Ok(false)
+        }
     }
 }
 

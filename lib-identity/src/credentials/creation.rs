@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use std::collections::HashMap;
 use lib_crypto::Hash;
-use lib_proofs::ZeroKnowledgeProof;
+use lib_proofs::{ZeroKnowledgeProof};
+use lib_proofs::types::ProofType;
 use crate::types::{IdentityId, CredentialType};
 use crate::credentials::ZkCredential;
 
@@ -222,14 +223,13 @@ impl CredentialFactory {
             public_inputs.as_slice(),
         ].concat());
 
-        Ok(ZeroKnowledgeProof {
-            proof_system: "lib-CredentialProof".to_string(),
-            proof_data: proof_data.to_vec(),
-            public_inputs: public_inputs.to_vec(),
-            verification_key: verification_key.to_vec(),
-            plonky2_proof: None,
-            proof: vec![],
-        })
+        Ok(ZeroKnowledgeProof::new(
+            ProofType::CredentialProofV1,
+            None,
+            Some(verification_key.to_vec()),
+            public_inputs.to_vec(),
+            proof_data.to_vec(),
+        ))
     }
 
     /// Generate age verification proof
@@ -242,14 +242,13 @@ impl CredentialFactory {
         data.extend_from_slice(&self.factory_id.0);
         let proof_data = lib_crypto::hash_blake3(&data);
 
-        Ok(ZeroKnowledgeProof {
-            proof_system: "lib-AgeProof".to_string(),
-            proof_data: proof_data.to_vec(),
-            public_inputs: vec![18], // Minimum age
-            verification_key: proof_data.to_vec(),
-            plonky2_proof: None,
-            proof: vec![],
-        })
+        Ok(ZeroKnowledgeProof::new(
+            ProofType::IdentityAttributeZkV1,
+            None,
+            Some(proof_data.to_vec()),
+            vec![18],
+            proof_data.to_vec(),
+        ))
     }
 
     /// Generate reputation proof
@@ -262,14 +261,13 @@ impl CredentialFactory {
         data.extend_from_slice(&self.factory_id.0);
         let proof_data = lib_crypto::hash_blake3(&data);
 
-        Ok(ZeroKnowledgeProof {
-            proof_system: "lib-ReputationProof".to_string(),
-            proof_data: proof_data.to_vec(),
-            public_inputs: score.to_le_bytes().to_vec(),
-            verification_key: proof_data.to_vec(),
-            plonky2_proof: None,
-            proof: vec![],
-        })
+        Ok(ZeroKnowledgeProof::new(
+            ProofType::CredentialProofV1,
+            None,
+            Some(proof_data.to_vec()),
+            score.to_le_bytes().to_vec(),
+            proof_data.to_vec(),
+        ))
     }
 
     /// Create empty credential for failed cases
@@ -283,14 +281,13 @@ impl CredentialFactory {
             credential_type,
             issuer: self.factory_id.clone(),
             subject: subject_id,
-            proof: ZeroKnowledgeProof {
-                proof_system: "lib-EmptyProof".to_string(),
-                proof_data: vec![],
-                public_inputs: vec![],
-                verification_key: vec![],
-                plonky2_proof: None,
-                proof: vec![],
-            },
+            proof: ZeroKnowledgeProof::new(
+                ProofType::CredentialProofV1,
+                None,
+                None,
+                vec![],
+                vec![],
+            ),
             issued_at: current_time,
             expires_at: None,
             metadata: vec![],

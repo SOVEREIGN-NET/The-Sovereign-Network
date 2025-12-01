@@ -5,6 +5,7 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use lib_crypto::{Hash, PublicKey, PrivateKey};
 use lib_proofs::ZeroKnowledgeProof;
+use lib_proofs::types::ProofType;
 
 use crate::types::{IdentityId, IdentityType, CredentialType, IdentityProofParams, IdentityVerification, AccessLevel, NodeId};
 use crate::credentials::ZkCredential;
@@ -333,14 +334,13 @@ impl ZhtpIdentity {
 
         // Step 13: Placeholder ownership proof (to be replaced with SignaturePopV1 in ADR-0003)
         // TODO: Implement real SignaturePopV1 when ADR-0003 V1 proofs land.
-        let ownership_proof = ZeroKnowledgeProof {
-            proof_system: "dilithium-pop-placeholder-v0".to_string(),
-            proof_data: b"TODO:SignaturePopV1".to_vec(),
-            public_inputs: did.as_bytes().to_vec(),
-            verification_key: keypair.public_key.dilithium_pk.clone(),
-            plonky2_proof: None,
-            proof: vec![],
-        };
+        let ownership_proof = ZeroKnowledgeProof::new(
+            ProofType::SignaturePopV1,
+            None,
+            Some(keypair.public_key.dilithium_pk.clone()),
+            did.as_bytes().to_vec(),
+            b"TODO:SignaturePopV1".to_vec(),
+        );
 
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?

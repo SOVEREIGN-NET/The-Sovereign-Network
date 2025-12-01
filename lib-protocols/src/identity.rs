@@ -631,12 +631,11 @@ impl ZkCredentialExt for ZkCredential {
         let subject = Hash::from_bytes(&lib_crypto::hash_blake3(token.as_bytes()));
         
         // Create a basic ZK proof structure (this would be replaced with proof)
-        let proof = ZeroKnowledgeProof::new(
-            "Bearer".to_string(),
+        let proof = ZeroKnowledgeProof::from_legacy_label(
+            "Bearer",
+            None,
             token.as_bytes().to_vec(),
             subject.to_string().as_bytes().to_vec(),
-            Vec::new(),
-            None, // No Plonky2 proof for bearer tokens
         );
         
         Ok(ZkCredential::new(

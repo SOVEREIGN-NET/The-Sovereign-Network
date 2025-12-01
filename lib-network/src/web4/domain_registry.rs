@@ -319,12 +319,11 @@ impl DomainRegistry {
             expires_at: web4_contract.created_at + (365 * 24 * 60 * 60), // 1 year default
             content_mappings,
             metadata: domain_metadata,
-            ownership_proof: ZeroKnowledgeProof::new(
-                "Web4Contract".to_string(),
+            ownership_proof: ZeroKnowledgeProof::from_legacy_label(
+                "Web4Contract",
+                Some(web4_contract.owner.as_bytes().to_vec()),
                 web4_contract.contract_id.as_bytes().to_vec(),
                 web4_contract.domain.as_bytes().to_vec(),
-                web4_contract.owner.as_bytes().to_vec(),
-                None,
             ),
             transfer_history: Vec::new(), // Not tracked in current contract version
         })
@@ -584,12 +583,11 @@ impl DomainRegistry {
         // Generate proof hash (in production this would be a proper ZK proof)
         let proof_hash = hash_blake3(&proof_data);
         
-        Ok(ZeroKnowledgeProof::new(
-            "Plonky2".to_string(),
+        Ok(ZeroKnowledgeProof::from_legacy_label(
+            "Plonky2",
+            Some(owner.id.0.to_vec()),
+            owner.id.0.to_vec(),
             proof_hash.to_vec(),
-            owner.id.0.to_vec(),
-            owner.id.0.to_vec(),
-            None,
         ))
     }
 
@@ -597,8 +595,15 @@ impl DomainRegistry {
     async fn verify_registration_proof(&self, request: &DomainRegistrationRequest) -> Result<bool> {
         // In production, this would verify the ZK proof
         // For now, just check that proof is present and valid format
-        Ok(!request.registration_proof.proof_data.is_empty() && 
-           !request.registration_proof.verification_key.is_empty())
+        Ok(
+            !request.registration_proof.proof_data.is_empty()
+                && request
+                    .registration_proof
+                    .verification_key
+                    .as_ref()
+                    .map(|key| !key.is_empty())
+                    .unwrap_or(false),
+        )
     }
 
     /// Verify transfer proof
@@ -611,9 +616,15 @@ impl DomainRegistry {
     ) -> Result<bool> {
         // In production, this would verify the ZK proof for transfer authorization
         // For now, just check proof format and that it references both identities
-        Ok(!proof.proof_data.is_empty() && 
-           proof.verification_key.len() >= 32 && // Must contain both identity references
-           !domain.is_empty())
+        Ok(
+            !proof.proof_data.is_empty()
+                && proof
+                    .verification_key
+                    .as_ref()
+                    .map(|key| key.len() >= 32)
+                    .unwrap_or(false)
+                && !domain.is_empty(),
+        )
     }
 
     /// Calculate registration fee based on domain and duration
@@ -772,15 +783,12 @@ impl Web4Manager {
         metadata: DomainMetadata,
     ) -> Result<DomainRegistrationResponse> {
         // Create registration proof (simplified for now)
-        let registration_proof = ZeroKnowledgeProof::new(
-            "Plonky2".to_string(),
-            hash_blake3(&[
-                owner.id.0.as_slice(),
-                domain.as_bytes(),
-            ].concat()).to_vec(),
+        let proof_bytes = hash_blake3(&[owner.id.0.as_slice(), domain.as_bytes()].concat()).to_vec();
+        let registration_proof = ZeroKnowledgeProof::from_legacy_label(
+            "Plonky2",
+            Some(owner.id.0.to_vec()),
             owner.id.0.to_vec(),
-            owner.id.0.to_vec(),
-            None,
+            proof_bytes,
         );
 
         let request = DomainRegistrationRequest {

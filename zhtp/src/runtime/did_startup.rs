@@ -13,8 +13,6 @@ use lib_identity::wallets::WalletId;
 use lib_identity::types::IdentityType;
 use lib_network::ZkDHTIntegration;
 use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
-use lib_proofs::ZeroKnowledgeProof;
-use lib_crypto::hash_blake3;
 // Core wallet functionality with mesh network integration
 
 /// Node wallet startup options
@@ -768,17 +766,12 @@ impl WalletStartupManager {
 
     /// Create a temporary identity for mesh discovery operations
     async fn create_discovery_identity() -> Result<ZhtpIdentity> {
-        // Generate ephemeral key for discovery
-        let discovery_key = hash_blake3(b"mesh-wallet-discovery");
-        let public_key = discovery_key.to_vec();
-        
-        // Create zero-knowledge proof for discovery operations
-        let ownership_proof = ZeroKnowledgeProof::default();
-        
-        let discovery_identity = ZhtpIdentity::new(
+        let discovery_identity = ZhtpIdentity::new_unified(
             IdentityType::Device,
-            public_key,
-            ownership_proof,
+            None,
+            None,
+            "mesh-discovery",
+            None,
         )?;
         
         Ok(discovery_identity)

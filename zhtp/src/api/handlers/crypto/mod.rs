@@ -161,23 +161,28 @@ impl CryptoHandler {
         };
 
         // Sign the message using identity manager
-        let identity_mgr = self.identity_manager.read().await;
-        let signature = identity_mgr.sign_message_for_identity(&identity_id, &message_bytes)
-            .map_err(|e| anyhow!("Failed to sign message: {}", e))?;
+        let (signature, public_key) = {
+            let identity_mgr = self.identity_manager.read().await;
+            let signature = identity_mgr
+                .sign_with_identity(&identity_id, &message_bytes)
+                .await
+                .map_err(|e| anyhow!("Failed to sign message: {}", e))?;
 
-        // Get public key (clone it before dropping the lock)
-        let public_key = identity_mgr.get_identity(&identity_id)
-            .ok_or_else(|| anyhow!("Identity not found"))?
-            .public_key.clone();
-        
-        drop(identity_mgr);
+            let public_key = identity_mgr
+                .get_identity(&identity_id)
+                .ok_or_else(|| anyhow!("Identity not found"))?
+                .public_key
+                .clone();
+
+            (signature, public_key)
+        };
 
         // Calculate message hash for reference
         let message_hash = lib_crypto::hash_blake3(&message_bytes);
 
         let response = SignMessageResponse {
             signature: hex::encode(&signature.signature),
-            public_key: hex::encode(&public_key),
+            public_key: hex::encode(public_key.as_bytes()),
             algorithm: "Dilithium2".to_string(),
             message_hash: hex::encode(message_hash.as_slice()),
         };

@@ -601,7 +601,9 @@ impl IdentityHandler {
             .ok_or_else(|| anyhow::anyhow!("Identity not found: {}", sign_req.identity_id))?;
         
         // Sign the message using identity manager (which has access to private keys)
-        let signature = manager.sign_message_for_identity(&identity_hash, sign_req.message.as_bytes())
+        let signature = manager
+            .sign_with_identity(&identity_hash, sign_req.message.as_bytes())
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to sign message: {}", e))?;
         
         // Convert signature to hex
@@ -616,7 +618,7 @@ impl IdentityHandler {
             "message": sign_req.message,
             "signature": signature_hex,
             "signature_algorithm": "CRYSTALS-Dilithium2",
-            "public_key": hex::encode(&identity.public_key),
+            "public_key": hex::encode(identity.public_key.as_bytes()),
         });
         
         Ok(ZhtpResponse::json(&response_body, None)?)

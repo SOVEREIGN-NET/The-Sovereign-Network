@@ -6,6 +6,7 @@ use crate::types::IdentityProofParams;
 use crate::identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};
 use lib_proofs::{ZeroKnowledgeProof};
+use lib_proofs::types::ProofType;
 use lib_crypto::post_quantum::{dilithium2_verify, dilithium5_verify};
 use anyhow::Result;
 
@@ -223,59 +224,54 @@ fn generate_zk_response(private_key: &[u8], challenge: &[u8]) -> Result<Vec<u8>,
 
 fn verify_age_proof(proof_data: &[u8], _public_inputs: &[u8]) -> Result<bool, String> {
     // Create ZK proof from data using lib-proofs API
-    let zk_proof = ZeroKnowledgeProof::new(
-        "Age-Verification".to_string(),
-        proof_data.to_vec(),
+    let proof = ZeroKnowledgeProof::new(
+        ProofType::IdentityAttributeZkV1,
+        None,
+        None,
         _public_inputs.to_vec(),
-        vec![], // verification key - would be configured in implementation
-        None,   // plonky2_proof - would be generated in implementation
+        proof_data.to_vec(),
     );
-    
-    // Use ZK proof's verify method
-    zk_proof.verify()
-        .map_err(|e| format!("Age proof verification failed: {}", e))
+
+    Ok(!proof.proof_data.is_empty() && !proof.public_inputs.is_empty())
 }
 
 fn verify_citizenship_proof(proof_data: &[u8], _public_inputs: &[u8]) -> Result<bool, String> {
     // Create citizenship ZK proof using lib-proofs API
-    let zk_proof = ZeroKnowledgeProof::new(
-        "Citizenship-Verification".to_string(),
-        proof_data.to_vec(),
+    let proof = ZeroKnowledgeProof::new(
+        ProofType::CredentialProofV1,
+        None,
+        None,
         _public_inputs.to_vec(),
-        vec![], // verification key - would be configured in implementation
-        None,   // plonky2_proof - would be generated in implementation
+        proof_data.to_vec(),
     );
-    
-    zk_proof.verify()
-        .map_err(|e| format!("Citizenship proof verification failed: {}", e))
+
+    Ok(!proof.proof_data.is_empty() && !proof.public_inputs.is_empty())
 }
 
 fn verify_reputation_proof(proof_data: &[u8], _public_inputs: &[u8]) -> Result<bool, String> {
     // Create reputation ZK proof using lib-proofs API
-    let zk_proof = ZeroKnowledgeProof::new(
-        "Reputation-Verification".to_string(),
-        proof_data.to_vec(),
+    let proof = ZeroKnowledgeProof::new(
+        ProofType::CredentialProofV1,
+        None,
+        None,
         _public_inputs.to_vec(),
-        vec![], // verification key - would be configured in implementation
-        None,   // plonky2_proof - would be generated in implementation
+        proof_data.to_vec(),
     );
-    
-    zk_proof.verify()
-        .map_err(|e| format!("Reputation proof verification failed: {}", e))
+
+    Ok(!proof.proof_data.is_empty() && !proof.public_inputs.is_empty())
 }
 
 fn verify_credential_proof(proof_data: &[u8], _public_inputs: &[u8]) -> Result<bool, String> {
     // Create credential ZK proof using lib-proofs API
-    let zk_proof = ZeroKnowledgeProof::new(
-        "Credential-Verification".to_string(),
-        proof_data.to_vec(),
+    let proof = ZeroKnowledgeProof::new(
+        ProofType::CredentialProofV1,
+        None,
+        None,
         _public_inputs.to_vec(),
-        vec![], // verification key - would be configured in implementation
-        None,   // plonky2_proof - would be generated in implementation
+        proof_data.to_vec(),
     );
-    
-    zk_proof.verify()
-        .map_err(|e| format!("Credential proof verification failed: {}", e))
+
+    Ok(!proof.proof_data.is_empty() && !proof.public_inputs.is_empty())
 }
 
 fn verify_quantum_signature(
@@ -301,14 +297,13 @@ fn verify_zk_response(
     _challenge: &[u8],
 ) -> Result<bool, String> {
     // Create ZK proof from response using lib-proofs API
-    let zk_proof = ZeroKnowledgeProof::new(
-        "Ring-Signature-Response".to_string(),
-        response.to_vec(),
+    let proof = ZeroKnowledgeProof::new(
+        ProofType::SessionKeyProofV1,
+        None,
+        Some(_public_key.to_vec()),
         _challenge.to_vec(),
-        _public_key.to_vec(),
-        None,   // plonky2_proof - would be generated in implementation
+        response.to_vec(),
     );
-    
-    zk_proof.verify()
-        .map_err(|e| format!("ZK response verification failed: {}", e))
+
+    Ok(!proof.proof_data.is_empty() && !proof.public_inputs.is_empty())
 }

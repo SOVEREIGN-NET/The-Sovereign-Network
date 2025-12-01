@@ -204,9 +204,6 @@ impl Default for ZkProof {
     }
 }
 
-/// Type alias for backward compatibility with other modules
-pub type ZeroKnowledgeProof = ZkProof;
-
 /// Zero-knowledge proof type enumeration
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZkProofType {

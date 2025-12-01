@@ -37,6 +37,7 @@ use anyhow::Result;
 
 // Re-export core types for unified ZK system
 pub use types::zk_proof::ZkProof;
+pub use types::ProofEnvelope;
 pub use transaction::transaction_proof::ZkTransactionProof;
 pub use merkle::{tree::*, proof_generation::*, verification::*};
 pub use range::range_proof::ZkRangeProof;
@@ -79,8 +80,8 @@ pub mod state;
 // NEW: Recursive proof system for hierarchical aggregation
 pub mod recursive;
 
-// Type aliases for backward compatibility
-pub use types::zk_proof::ZkProof as ZeroKnowledgeProof;
+// Type alias for legacy callers still importing ZeroKnowledgeProof
+pub use types::ProofEnvelope as ZeroKnowledgeProof;
 pub use types::MerkleProof;
 
 /// Initialize the unified ZK proof system

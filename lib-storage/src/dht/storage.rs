@@ -242,16 +242,16 @@ impl DhtStorage {
 
     /// Convert ZeroKnowledgeProof to ZkProof for compatibility
     fn convert_to_zk_proof(&self, zk_proof: &ZeroKnowledgeProof) -> Result<ZkProof> {
-        // Convert the ZeroKnowledgeProof to our internal ZkProof format
-        let converted_proof = ZkProof::new(
-            zk_proof.proof_system.clone(),
+        let proof_system = format!("{:?}", zk_proof.proof_type);
+        let verification_key = zk_proof.verification_key.clone().unwrap_or_default();
+
+        Ok(ZkProof::new(
+            proof_system,
             zk_proof.proof_data.clone(),
             zk_proof.public_inputs.clone(),
-            zk_proof.verification_key.clone(),
-            zk_proof.plonky2_proof.clone(),
-        );
-        
-        Ok(converted_proof)
+            verification_key,
+            None,
+        ))
     }
 
     /// Verify zero-knowledge proof for DHT values using lib-proofs ZK system
@@ -868,24 +868,8 @@ impl DhtStorage {
         // This would use the full ZeroKnowledgeProof system for more complex proofs
         // For now, we'll validate the structure and basic integrity
         
-        if proof.proof_system.is_empty() || proof.proof_data.is_empty() {
+        if proof.proof_data.is_empty() || proof.public_inputs.is_empty() {
             return Ok(false);
-        }
-        
-        // Validate proof system type
-        match proof.proof_system.as_str() {
-            "plonky2" => {
-                // Validate Plonky2 proof if present
-                if let Some(ref plonky2_proof) = proof.plonky2_proof {
-                    // In a implementation, this would verify the Plonky2 proof
-                    return Ok(!plonky2_proof.proof.is_empty());
-                }
-            }
-            "groth16" | "nova" | "stark" => {
-                // Validate other proof systems
-                return Ok(proof.proof_data.len() >= 32); // Minimum proof size
-            }
-            _ => return Ok(false), // Unknown proof system
         }
         
         // Basic integrity check
@@ -897,7 +881,7 @@ impl DhtStorage {
             let input_hash = &proof.public_inputs[..32];
             return Ok(input_hash == expected_hash.as_bytes());
         }
-        
+
         Ok(false)
     }
     

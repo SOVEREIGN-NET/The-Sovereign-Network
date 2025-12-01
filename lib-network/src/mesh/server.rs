@@ -1926,14 +1926,12 @@ fn create_default_mesh_identity() -> lib_identity::ZhtpIdentity {
         node_id: mesh_node_id,
         device_node_ids,
         primary_device: "mesh-device".to_string(),
-        ownership_proof: ZeroKnowledgeProof {
-            proof_system: "mesh_server".to_string(),
-            proof_data: vec![],
-            public_inputs: vec![],
-            verification_key: vec![],
-            plonky2_proof: None,
-            proof: vec![],
-        },
+        ownership_proof: ZeroKnowledgeProof::from_legacy_label(
+            "mesh_server",
+            None,
+            Vec::new(),
+            Vec::new(),
+        ),
         credentials: HashMap::new(),
         reputation: 100, // High reputation for mesh server
         age: None, // Services don't have age

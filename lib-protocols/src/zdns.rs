@@ -734,6 +734,14 @@ impl Default for ZdnsConfig {
 pub mod web4_integration {
     use super::*;
     use lib_proofs::ZeroKnowledgeProof;
+
+    fn encode_optional_bytes(data: &Option<Vec<u8>>) -> String {
+        data.as_ref().map(hex::encode).unwrap_or_default()
+    }
+
+    fn proof_type_label(proof: &ZeroKnowledgeProof) -> String {
+        format!("{:?}", proof.proof_type)
+    }
     
     /// Web4 ZDNS bridge for domain resolution integration
     pub struct Web4ZdnsBridge {
@@ -758,6 +766,10 @@ pub mod web4_integration {
         ) -> Result<()> {
             tracing::info!(" Registering Web4 domain {} with ZDNS", domain);
             
+            let proof_hex = hex::encode(&ownership_proof.proof_data);
+            let verification_key_hex = encode_optional_bytes(&ownership_proof.verification_key);
+            let proof_type = proof_type_label(ownership_proof);
+
             // Create Web4 domain registry record
             let web4_record = ZdnsRecord {
                 name: domain.to_string(),
@@ -770,8 +782,8 @@ pub mod web4_integration {
                     "status": "active"
                 }).to_string(),
                 ttl: 3600, // 1 hour TTL
-                ownership_proof: hex::encode(&ownership_proof.proof_data),
-                pq_signature: hex::encode(&ownership_proof.verification_key),
+                ownership_proof: proof_hex.clone(),
+                pq_signature: verification_key_hex.clone(),
                 dao_fee_proof: "web4_registration_fee".to_string(),
                 priority: None,
                 weight: None,
@@ -804,12 +816,12 @@ pub mod web4_integration {
                 value: serde_json::json!({
                     "owner_id": owner_id,
                     "verification_method": "zero_knowledge_proof",
-                    "proof_type": ownership_proof.proof_system,
+                    "proof_type": proof_type.clone(),
                     "verified_at": chrono::Utc::now()
                 }).to_string(),
                 ttl: 7200, // 2 hour TTL for ownership records
-                ownership_proof: hex::encode(&ownership_proof.proof_data),
-                pq_signature: hex::encode(&ownership_proof.verification_key),
+                ownership_proof: proof_hex.clone(),
+                pq_signature: verification_key_hex.clone(),
                 dao_fee_proof: "web4_owner_verification".to_string(),
                 priority: None,
                 weight: None,
@@ -835,8 +847,8 @@ pub mod web4_integration {
                     record_type: ZdnsRecordType::WEB4CONTENT,
                     value: content_hash.clone(),
                     ttl: 1800, // 30 minutes TTL for content
-                    ownership_proof: hex::encode(&ownership_proof.proof_data),
-                    pq_signature: hex::encode(&ownership_proof.verification_key),
+                    ownership_proof: proof_hex.clone(),
+                    pq_signature: verification_key_hex.clone(),
                     dao_fee_proof: "web4_content_mapping".to_string(),
                     priority: None,
                     weight: None,
@@ -863,8 +875,8 @@ pub mod web4_integration {
                     record_type: ZdnsRecordType::WEB4DHT,
                     value: dht_node.clone(),
                     ttl: 900, // 15 minutes TTL for DHT nodes
-                    ownership_proof: hex::encode(&ownership_proof.proof_data),
-                    pq_signature: hex::encode(&ownership_proof.verification_key),
+                    ownership_proof: proof_hex.clone(),
+                    pq_signature: verification_key_hex.clone(),
                     dao_fee_proof: "web4_dht_node".to_string(),
                     priority: Some((i as u16) + 1), // Priority based on order
                     weight: Some(100),
@@ -1016,14 +1028,16 @@ pub mod web4_integration {
             ownership_proof: &ZeroKnowledgeProof,
         ) -> Result<()> {
             let full_name = format!("{}{}", domain, path);
+            let proof_hex = hex::encode(&ownership_proof.proof_data);
+            let verification_key_hex = encode_optional_bytes(&ownership_proof.verification_key);
             
             let content_record = ZdnsRecord {
                 name: full_name,
                 record_type: ZdnsRecordType::WEB4CONTENT,
                 value: content_hash.to_string(),
                 ttl: 1800, // 30 minutes TTL
-                ownership_proof: hex::encode(&ownership_proof.proof_data),
-                pq_signature: hex::encode(&ownership_proof.verification_key),
+                ownership_proof: proof_hex,
+                pq_signature: verification_key_hex,
                 dao_fee_proof: "web4_content_update".to_string(),
                 priority: None,
                 weight: None,

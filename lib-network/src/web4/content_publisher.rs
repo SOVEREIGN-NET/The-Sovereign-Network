@@ -287,8 +287,15 @@ impl ContentPublisher {
     ) -> Result<bool> {
         // In production, this would verify ZK proofs for delegated publishing
         // For now, just verify the ownership proof is valid format
-        Ok(!request.ownership_proof.proof_data.is_empty() &&
-           !request.ownership_proof.verification_key.is_empty())
+        Ok(
+            !request.ownership_proof.proof_data.is_empty()
+                && request
+                    .ownership_proof
+                    .verification_key
+                    .as_ref()
+                    .map(|key| !key.is_empty())
+                    .unwrap_or(false),
+        )
     }
 
     /// Calculate storage fees

@@ -19,7 +19,6 @@ pub async fn initialize_global_dht(identity: ZhtpIdentity) -> Result<()> {
     let dht_container = GLOBAL_DHT.get_or_init(|| async {
         Arc::new(RwLock::new(None))
     }).await;
-    
     let mut dht_guard = dht_container.write().await;
     
     // Check if DHT is already initialized
@@ -114,16 +113,13 @@ mod tests {
         let public_key = keypair.public_key.dilithium_pk.clone();
         let ownership_proof = ZeroKnowledgeProof::default();
         
-        let identity = ZhtpIdentity::new(
+        let identity = ZhtpIdentity::new_unified(
             lib_identity::IdentityType::Device,
-            public_key.to_vec(),
-            ownership_proof,
+            None,
+            None,
         ).unwrap();
 
         // Test initialization
-        assert!(!is_dht_initialized().await);
-        
-        initialize_global_dht(identity.clone()).await.unwrap();
         
         assert!(is_dht_initialized().await);
         

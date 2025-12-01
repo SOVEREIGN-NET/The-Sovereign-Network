@@ -325,12 +325,11 @@ impl ZhtpIntegration {
                         node_id: uploader_node_id,
                         device_node_ids,
                         primary_device: "uploader-device".to_string(),
-                        ownership_proof: lib_proofs::ZeroKnowledgeProof::new(
-                            "identity_ownership".to_string(),
+                        ownership_proof: lib_proofs::ZeroKnowledgeProof::from_legacy_label(
+                            "identity_ownership",
+                            None,
                             uploader_id.to_string().as_bytes().to_vec(),
                             request.body.clone(),
-                            vec![],
-                            None,
                         ),
                         credentials: std::collections::HashMap::new(),
                         reputation: 100,
@@ -404,12 +403,11 @@ impl ZhtpIntegration {
                             node_id: requester_node_id,
                             device_node_ids,
                             primary_device: "requester-device".to_string(),
-                            ownership_proof: lib_proofs::ZeroKnowledgeProof::new(
-                                "authenticated".to_string(),
-                                vec![0u8; 32],
-                                vec![0u8; 32],
-                                vec![],
+                            ownership_proof: lib_proofs::ZeroKnowledgeProof::from_legacy_label(
+                                "authenticated",
                                 None,
+                                vec![0u8; 32],
+                                vec![0u8; 32],
                             ),
                             credentials: std::collections::HashMap::new(),
                             reputation: 100,

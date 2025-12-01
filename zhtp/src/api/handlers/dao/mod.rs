@@ -2,12 +2,14 @@
 //! 
 //! Complete DAO governance system using lib-consensus DaoEngine
 
+use std::cmp::Reverse;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
 // Removed unused Serialize
 use serde_json::json;
+use base64::{engine::general_purpose, Engine as _};
 
 // ZHTP protocol imports
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
@@ -15,12 +17,16 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 // Import actual DAO system components
 use lib_consensus::{
-    DaoEngine, DaoProposalType, DaoProposalStatus, DaoVoteChoice,
+    DaoEngine, DaoProposalType, DaoVoteChoice,
     // Removed unused DaoProposal, DaoVote, DaoTreasury, DaoVoteTally, TreasuryTransaction, TreasuryTransactionType
 };
 use lib_identity::IdentityManager;
 // Removed unused Identity alias
 use lib_crypto::Hash;
+use lib_proofs::{ProofEnvelope, ProofType};
+use lib_blockchain::{Blockchain, transaction::{DaoProposalData, DaoVoteData}};
+use lib_blockchain::types::Hash as BlockchainHash;
+use crate::runtime::blockchain_provider::get_global_blockchain;
 
 /// Helper function to create JSON responses correctly
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -44,6 +50,7 @@ struct CreateProposalRequest {
     description: String,
     proposal_type: String,
     voting_period_days: u32,
+    ownership_proof: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +59,7 @@ struct CastVoteRequest {
     proposal_id: String,
     vote_choice: String,
     justification: Option<String>,
+    ownership_proof: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,20 +140,136 @@ impl DaoHandler {
         params
     }
 
+    fn decode_identity_proof(&self, proof_str: &str) -> Result<ProofEnvelope> {
+        let trimmed = proof_str.trim();
+        if trimmed.is_empty() {
+            return Err(anyhow!("Ownership proof is required"));
+        }
+
+        if trimmed.starts_with('{') {
+            return serde_json::from_str(trimmed)
+                .map_err(|e| anyhow!("Invalid ownership proof JSON: {}", e));
+        }
+
+        let candidates = [
+            general_purpose::STANDARD.decode(trimmed).ok(),
+            hex::decode(trimmed).ok(),
+            Some(trimmed.as_bytes().to_vec()),
+        ];
+
+        for candidate in candidates.into_iter().flatten() {
+            if let Ok(proof) = serde_json::from_slice::<ProofEnvelope>(&candidate) {
+                return Ok(proof);
+            }
+            if let Ok(proof) = bincode::deserialize::<ProofEnvelope>(&candidate) {
+                return Ok(proof);
+            }
+        }
+
+        Err(anyhow!(
+            "Unable to decode ownership proof; expected base64(JSON) or raw JSON text"
+        ))
+    }
+
+    fn validate_identity_proof(
+        &self,
+        identity: &lib_identity::ZhtpIdentity,
+        proof: &ProofEnvelope,
+    ) -> Result<()> {
+        const ALLOWED: [ProofType; 2] = [ProofType::SignaturePopV1, ProofType::DeviceDelegationV1];
+        if !ALLOWED.contains(&proof.proof_type) {
+            return Err(anyhow!(
+                "Unexpected proof type {:?}; expected ownership proof",
+                proof.proof_type
+            ));
+        }
+
+        if proof.public_inputs != identity.id.as_bytes() {
+            return Err(anyhow!("Ownership proof does not match identity"));
+        }
+
+        if let Some(vk) = &proof.verification_key {
+            if vk != identity.public_key.as_bytes() {
+                return Err(anyhow!(
+                    "Ownership proof verification key does not match identity public key"
+                ));
+            }
+        }
+
+        if proof.proof_data.is_empty() {
+            return Err(anyhow!("Ownership proof missing proof bytes"));
+        }
+
+        Ok(())
+    }
+
+    fn crypto_hash_to_blockchain(hash: &Hash) -> BlockchainHash {
+        BlockchainHash::from_slice(hash.as_bytes())
+    }
+
+    fn blockchain_hash_to_string(hash: &BlockchainHash) -> String {
+        hex::encode(hash.as_bytes())
+    }
+
+    fn classify_proposal_status(blockchain: &Blockchain, proposal: &DaoProposalData) -> String {
+        if blockchain
+            .get_dao_executions()
+            .into_iter()
+            .any(|exec| exec.proposal_id == proposal.proposal_id)
+        {
+            return "Executed".to_string();
+        }
+
+        let voting_end = proposal.created_at_height + proposal.voting_period_blocks;
+        if blockchain.height < voting_end {
+            return "Active".to_string();
+        }
+
+        if let Ok(true) = blockchain.has_proposal_passed(&proposal.proposal_id, proposal.quorum_required as u32) {
+            "Passed".to_string()
+        } else if let Ok(false) = blockchain.has_proposal_passed(&proposal.proposal_id, proposal.quorum_required as u32) {
+            "Failed".to_string()
+        } else {
+            "Unknown".to_string()
+        }
+    }
+
+    fn build_vote_summary(blockchain: &Blockchain, proposal_id: &BlockchainHash) -> serde_json::Value {
+        let (yes_votes, no_votes, abstain_votes, total_power) = blockchain.tally_dao_votes(proposal_id);
+        let approval_percentage = if total_power > 0 {
+            (yes_votes.saturating_mul(100)) / total_power
+        } else {
+            0
+        };
+        json!({
+            "total_votes": total_power,
+            "yes_votes": yes_votes,
+            "no_votes": no_votes,
+            "abstain_votes": abstain_votes,
+            "approval_percentage": approval_percentage
+        })
+    }
+
     /// Handle treasury status endpoint
     async fn handle_treasury_status(&self) -> Result<ZhtpResponse> {
-        let dao_engine = self.dao_engine.read().await;
-        let treasury = dao_engine.get_dao_treasury();
+        let blockchain = get_global_blockchain().await?;
+        let blockchain = blockchain.read().await;
+
+        let treasury_balance = blockchain.get_dao_treasury_balance().unwrap_or(0);
+        let treasury_wallet = blockchain.get_dao_treasury_wallet().ok();
+        let treasury_wallet_id = treasury_wallet
+            .map(|wallet| hex::encode(wallet.wallet_id.as_bytes()));
 
         let response = json!({
             "status": "success",
             "treasury": {
-                "total_balance": treasury.total_balance,
-                "available_balance": treasury.available_balance,
-                "allocated_funds": treasury.allocated_funds,
-                "reserved_funds": treasury.reserved_funds,
-                "transaction_count": treasury.transaction_history.len(),
-                "annual_budgets_count": treasury.annual_budgets.len()
+                "wallet_id": treasury_wallet_id,
+                "total_balance": treasury_balance,
+                "available_balance": treasury_balance,
+                "allocated_funds": 0u64,
+                "reserved_funds": 0u64,
+                "transaction_count": blockchain.get_dao_executions().len(),
+                "last_updated_height": blockchain.height,
             }
         });
 
@@ -154,31 +278,36 @@ impl DaoHandler {
 
     /// Handle treasury transactions endpoint
     async fn handle_treasury_transactions(&self, limit: Option<usize>, offset: Option<usize>) -> Result<ZhtpResponse> {
-        let dao_engine = self.dao_engine.read().await;
-        let treasury = dao_engine.get_dao_treasury();
+        let blockchain = get_global_blockchain().await?;
+        let blockchain = blockchain.read().await;
 
-        let limit = limit.unwrap_or(50).min(100); // Max 100 transactions per request
+        let limit = limit.unwrap_or(50).min(100);
         let offset = offset.unwrap_or(0);
 
-        let transactions: Vec<_> = treasury.transaction_history
-            .iter()
+        let mut executions = blockchain.get_dao_executions();
+        executions.sort_by_key(|exec| exec.executed_at);
+
+        let total_transactions = executions.len();
+        let transactions: Vec<_> = executions
+            .into_iter()
             .skip(offset)
             .take(limit)
-            .map(|tx| json!({
-                "id": Self::hash_to_string(&tx.id),
-                "transaction_type": format!("{:?}", tx.transaction_type),
-                "amount": tx.amount,
-                "recipient": tx.recipient.as_ref().map(|id| Self::hash_to_string(id)),
-                "source": tx.source.as_ref().map(|id| Self::hash_to_string(id)),
-                "proposal_id": tx.proposal_id.as_ref().map(|id| Self::hash_to_string(id)),
-                "timestamp": tx.timestamp,
-                "description": tx.description
-            }))
+            .map(|exec| {
+                json!({
+                    "proposal_id": Self::blockchain_hash_to_string(&exec.proposal_id),
+                    "executor": exec.executor,
+                    "execution_type": exec.execution_type,
+                    "recipient": exec.recipient,
+                    "amount": exec.amount,
+                    "executed_at": exec.executed_at,
+                    "executed_at_height": exec.executed_at_height,
+                })
+            })
             .collect();
 
         let response = json!({
             "status": "success",
-            "total_transactions": treasury.transaction_history.len(),
+            "total_transactions": total_transactions,
             "returned_count": transactions.len(),
             "offset": offset,
             "limit": limit,
@@ -190,16 +319,35 @@ impl DaoHandler {
 
     /// Handle create proposal endpoint
     async fn handle_create_proposal(&self, request_data: CreateProposalRequest) -> Result<ZhtpResponse> {
-        // Validate identity exists
-        let identity_manager = self.identity_manager.read().await;
         let proposer_id = Self::string_to_hash(&request_data.proposer_identity_id)?;
-        
-        if identity_manager.get_identity(&proposer_id).is_none() {
+        let ownership_proof = match self.decode_identity_proof(&request_data.ownership_proof) {
+            Ok(proof) => proof,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid ownership proof: {}", e)
+                ));
+            }
+        };
+
+        let identity_manager = self.identity_manager.read().await;
+        let proposer_identity = match identity_manager.get_identity(&proposer_id) {
+            Some(identity) => identity,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    "Proposer identity not found".to_string()
+                ));
+            }
+        };
+
+        if let Err(err) = self.validate_identity_proof(proposer_identity, &ownership_proof) {
             return Ok(create_error_response(
-                ZhtpStatus::BadRequest, 
-                "Proposer identity not found".to_string()
+                ZhtpStatus::Unauthorized,
+                format!("Ownership proof validation failed: {}", err)
             ));
         }
+        drop(identity_manager);
 
         // Parse proposal type
         let proposal_type = match Self::parse_proposal_type(&request_data.proposal_type) {
@@ -239,73 +387,65 @@ impl DaoHandler {
 
     /// Handle list proposals endpoint
     async fn handle_list_proposals(&self, query: ProposalListQuery) -> Result<ZhtpResponse> {
-        let dao_engine = self.dao_engine.read().await;
-        let all_proposals = dao_engine.get_dao_proposals();
+        let blockchain = get_global_blockchain().await?;
+        let blockchain = blockchain.read().await;
 
-        let limit = query.limit.unwrap_or(20).min(100); // Max 100 proposals per request
+        let mut proposals = blockchain.get_dao_proposals();
+        let total_proposals = proposals.len();
+
+        // Sort newest first for consistent pagination
+        proposals.sort_by_key(|proposal| Reverse(proposal.created_at));
+
+        if let Some(status_filter) = &query.status {
+            let expected = status_filter.to_lowercase();
+            proposals.retain(|proposal| {
+                Self::classify_proposal_status(&blockchain, proposal)
+                    .to_lowercase()
+                    == expected
+            });
+        }
+
+        if let Some(type_filter) = &query.proposal_type {
+            let expected = type_filter.to_lowercase();
+            proposals.retain(|proposal| proposal.proposal_type.to_lowercase() == expected);
+        }
+
+        let limit = query.limit.unwrap_or(20).min(100);
         let offset = query.offset.unwrap_or(0);
 
-        let mut filtered_proposals: Vec<_> = all_proposals.iter().collect();
-
-        // Filter by status if provided
-        if let Some(status_filter) = &query.status {
-            let target_status = match status_filter.to_lowercase().as_str() {
-                "draft" => Some(DaoProposalStatus::Draft),
-                "active" => Some(DaoProposalStatus::Active),
-                "passed" => Some(DaoProposalStatus::Passed),
-                "failed" => Some(DaoProposalStatus::Failed),
-                "executed" => Some(DaoProposalStatus::Executed),
-                "cancelled" => Some(DaoProposalStatus::Cancelled),
-                "expired" => Some(DaoProposalStatus::Expired),
-                _ => None,
-            };
-            if let Some(status) = target_status {
-                filtered_proposals.retain(|p| p.status == status);
-            }
-        }
-
-        // Filter by proposal type if provided
-        if let Some(type_filter) = &query.proposal_type {
-            if let Ok(proposal_type) = Self::parse_proposal_type(type_filter) {
-                filtered_proposals.retain(|p| p.proposal_type == proposal_type);
-            }
-        }
-
-        // Apply pagination
-        let paginated_proposals: Vec<_> = filtered_proposals
+        let paginated: Vec<_> = proposals
             .iter()
             .skip(offset)
             .take(limit)
-            .map(|proposal| json!({
-                "id": Self::hash_to_string(&proposal.id),
-                "title": proposal.title,
-                "description": proposal.description,
-                "proposer": Self::hash_to_string(&proposal.proposer),
-                "proposal_type": format!("{:?}", proposal.proposal_type),
-                "status": format!("{:?}", proposal.status),
-                "voting_start_time": proposal.voting_start_time,
-                "voting_end_time": proposal.voting_end_time,
-                "quorum_required": proposal.quorum_required,
-                "created_at": proposal.created_at,
-                "vote_tally": {
-                    "total_votes": proposal.vote_tally.total_votes,
-                    "yes_votes": proposal.vote_tally.yes_votes,
-                    "no_votes": proposal.vote_tally.no_votes,
-                    "abstain_votes": proposal.vote_tally.abstain_votes,
-                    "approval_percentage": proposal.vote_tally.approval_percentage(),
-                    "quorum_percentage": proposal.vote_tally.quorum_percentage()
-                }
-            }))
+            .map(|proposal| {
+                let status = Self::classify_proposal_status(&blockchain, proposal);
+                let vote_summary = Self::build_vote_summary(&blockchain, &proposal.proposal_id);
+                json!({
+                    "id": Self::blockchain_hash_to_string(&proposal.proposal_id),
+                    "title": proposal.title,
+                    "description": proposal.description,
+                    "proposer": proposal.proposer,
+                    "proposal_type": proposal.proposal_type,
+                    "status": status,
+                    "created_at": proposal.created_at,
+                    "created_at_height": proposal.created_at_height,
+                    "voting_period_blocks": proposal.voting_period_blocks,
+                    "voting_end_height": proposal.created_at_height + proposal.voting_period_blocks,
+                    "quorum_required": proposal.quorum_required,
+                    "execution_params": proposal.execution_params.as_ref().map(hex::encode),
+                    "vote_summary": vote_summary
+                })
+            })
             .collect();
 
         let response = json!({
             "status": "success",
-            "total_proposals": all_proposals.len(),
-            "filtered_count": filtered_proposals.len(),
-            "returned_count": paginated_proposals.len(),
+            "total_proposals": total_proposals,
+            "filtered_count": proposals.len(),
+            "returned_count": paginated.len(),
             "offset": offset,
             "limit": limit,
-            "proposals": paginated_proposals
+            "proposals": paginated
         });
 
         create_json_response(response)
@@ -321,36 +461,46 @@ impl DaoHandler {
             )),
         };
 
-        let dao_engine = self.dao_engine.read().await;
-        match dao_engine.get_dao_proposal_by_id(&proposal_id) {
+        let blockchain = get_global_blockchain().await?;
+        let blockchain = blockchain.read().await;
+        let bc_proposal_id = Self::crypto_hash_to_blockchain(&proposal_id);
+
+        match blockchain.get_dao_proposal(&bc_proposal_id) {
             Some(proposal) => {
+                let status = Self::classify_proposal_status(&blockchain, &proposal);
+                let vote_summary = Self::build_vote_summary(&blockchain, &proposal.proposal_id);
+                let detailed_votes = blockchain
+                    .get_dao_votes_for_proposal(&proposal.proposal_id)
+                    .into_iter()
+                    .map(|vote| {
+                        json!({
+                            "vote_id": Self::blockchain_hash_to_string(&vote.vote_id),
+                            "voter": vote.voter,
+                            "vote_choice": vote.vote_choice,
+                            "voting_power": vote.voting_power,
+                            "justification": vote.justification,
+                            "timestamp": vote.timestamp
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
                 let response = json!({
                     "status": "success",
                     "proposal": {
-                        "id": Self::hash_to_string(&proposal.id),
+                        "id": Self::blockchain_hash_to_string(&proposal.proposal_id),
                         "title": proposal.title,
                         "description": proposal.description,
-                        "proposer": Self::hash_to_string(&proposal.proposer),
-                        "proposal_type": format!("{:?}", proposal.proposal_type),
-                        "status": format!("{:?}", proposal.status),
-                        "voting_start_time": proposal.voting_start_time,
-                        "voting_end_time": proposal.voting_end_time,
-                        "quorum_required": proposal.quorum_required,
+                        "proposer": proposal.proposer,
+                        "proposal_type": proposal.proposal_type,
+                        "status": status,
                         "created_at": proposal.created_at,
                         "created_at_height": proposal.created_at_height,
-                        "vote_tally": {
-                            "total_votes": proposal.vote_tally.total_votes,
-                            "yes_votes": proposal.vote_tally.yes_votes,
-                            "no_votes": proposal.vote_tally.no_votes,
-                            "abstain_votes": proposal.vote_tally.abstain_votes,
-                            "total_eligible_power": proposal.vote_tally.total_eligible_power,
-                            "weighted_yes": proposal.vote_tally.weighted_yes,
-                            "weighted_no": proposal.vote_tally.weighted_no,
-                            "weighted_abstain": proposal.vote_tally.weighted_abstain,
-                            "approval_percentage": proposal.vote_tally.approval_percentage(),
-                            "quorum_percentage": proposal.vote_tally.quorum_percentage(),
-                            "weighted_approval_percentage": proposal.vote_tally.weighted_approval_percentage()
-                        }
+                        "voting_period_blocks": proposal.voting_period_blocks,
+                        "voting_end_height": proposal.created_at_height + proposal.voting_period_blocks,
+                        "quorum_required": proposal.quorum_required,
+                        "execution_params": proposal.execution_params.as_ref().map(hex::encode),
+                        "vote_summary": vote_summary,
+                        "votes": detailed_votes
                     }
                 });
                 create_json_response(response)
@@ -364,16 +514,35 @@ impl DaoHandler {
 
     /// Handle cast vote endpoint
     async fn handle_cast_vote(&self, request_data: CastVoteRequest) -> Result<ZhtpResponse> {
-        // Validate identity exists
-        let identity_manager = self.identity_manager.read().await;
         let voter_id = Self::string_to_hash(&request_data.voter_identity_id)?;
-        
-        if identity_manager.get_identity(&voter_id).is_none() {
+        let ownership_proof = match self.decode_identity_proof(&request_data.ownership_proof) {
+            Ok(proof) => proof,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid ownership proof: {}", e)
+                ));
+            }
+        };
+
+        let identity_manager = self.identity_manager.read().await;
+        let voter_identity = match identity_manager.get_identity(&voter_id) {
+            Some(identity) => identity,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    "Voter identity not found".to_string()
+                ));
+            }
+        };
+
+        if let Err(err) = self.validate_identity_proof(voter_identity, &ownership_proof) {
             return Ok(create_error_response(
-                ZhtpStatus::BadRequest, 
-                "Voter identity not found".to_string()
+                ZhtpStatus::Unauthorized,
+                format!("Ownership proof validation failed: {}", err)
             ));
         }
+        drop(identity_manager);
 
         // Parse proposal ID and vote choice
         let proposal_id = match Self::string_to_hash(&request_data.proposal_id) {
@@ -392,6 +561,41 @@ impl DaoHandler {
             )),
         };
 
+        let blockchain = get_global_blockchain().await?;
+        let blockchain = blockchain.read().await;
+        let bc_proposal_id = Self::crypto_hash_to_blockchain(&proposal_id);
+        let proposal = match blockchain.get_dao_proposal(&bc_proposal_id) {
+            Some(proposal) => proposal,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::NotFound,
+                    "Proposal not found".to_string()
+                ));
+            }
+        };
+
+        if Self::classify_proposal_status(&blockchain, &proposal) != "Active" {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Proposal is no longer accepting votes".to_string()
+            ));
+        }
+
+        let voter_hex = Self::hash_to_string(&voter_id);
+        if blockchain
+            .get_dao_votes_for_proposal(&proposal.proposal_id)
+            .into_iter()
+            .any(|vote| vote.voter.eq_ignore_ascii_case(&voter_hex))
+        {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Identity has already voted on this proposal".to_string()
+            ));
+        }
+
+        let voting_power = blockchain.calculate_user_voting_power(&voter_id);
+        drop(blockchain);
+
         // Cast vote using DaoEngine
         let mut dao_engine = self.dao_engine.write().await;
         match dao_engine.cast_dao_vote(
@@ -407,6 +611,7 @@ impl DaoHandler {
                     "proposal_id": request_data.proposal_id,
                     "vote_choice": request_data.vote_choice,
                     "voter_id": request_data.voter_identity_id,
+                    "voting_power": voting_power,
                     "message": "Vote cast successfully"
                 });
                 create_json_response(response)
@@ -437,8 +642,9 @@ impl DaoHandler {
             ));
         }
 
-        let dao_engine = self.dao_engine.read().await;
-        let voting_power = dao_engine.get_dao_voting_power(&identity_id);
+        let blockchain = get_global_blockchain().await?;
+        let blockchain = blockchain.read().await;
+        let voting_power = blockchain.calculate_user_voting_power(&identity_id);
 
         let response = json!({
             "status": "success",
@@ -465,32 +671,35 @@ impl DaoHandler {
             )),
         };
 
-        let dao_engine = self.dao_engine.read().await;
-        
-        // Check if proposal exists
-        if dao_engine.get_dao_proposal_by_id(&proposal_id).is_none() {
-            return Ok(create_error_response(
-                ZhtpStatus::NotFound,
-                "Proposal not found".to_string()
-            ));
-        }
+        let blockchain = get_global_blockchain().await?;
+        let blockchain = blockchain.read().await;
+        let bc_proposal_id = Self::crypto_hash_to_blockchain(&proposal_id);
 
-        // Get all votes (this would need to be implemented in DaoEngine)
-        // For now, we'll return the vote tally from the proposal
-        let proposal = dao_engine.get_dao_proposal_by_id(&proposal_id).unwrap();
+        let proposal = match blockchain.get_dao_proposal(&bc_proposal_id) {
+            Some(proposal) => proposal,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::NotFound,
+                    "Proposal not found".to_string()
+                ));
+            }
+        };
+
+        let votes = blockchain.get_dao_votes_for_proposal(&proposal.proposal_id);
+        let vote_summary = Self::build_vote_summary(&blockchain, &proposal.proposal_id);
 
         let response = json!({
             "status": "success",
             "proposal_id": proposal_id_str,
-            "vote_summary": {
-                "total_votes": proposal.vote_tally.total_votes,
-                "yes_votes": proposal.vote_tally.yes_votes,
-                "no_votes": proposal.vote_tally.no_votes,
-                "abstain_votes": proposal.vote_tally.abstain_votes,
-                "approval_percentage": proposal.vote_tally.approval_percentage(),
-                "quorum_percentage": proposal.vote_tally.quorum_percentage()
-            },
-            "message": "Vote details retrieved successfully"
+            "vote_summary": vote_summary,
+            "votes": votes.into_iter().map(|vote| json!({
+                "vote_id": Self::blockchain_hash_to_string(&vote.vote_id),
+                "voter": vote.voter,
+                "vote_choice": vote.vote_choice,
+                "voting_power": vote.voting_power,
+                "timestamp": vote.timestamp,
+                "justification": vote.justification
+            })).collect::<Vec<_>>()
         });
 
         create_json_response(response)
@@ -517,19 +726,40 @@ impl DaoHandler {
 
     /// Handle DAO statistics endpoint
     async fn handle_dao_stats(&self) -> Result<ZhtpResponse> {
-        let dao_engine = self.dao_engine.read().await;
-        let proposals = dao_engine.get_dao_proposals();
-        let treasury = dao_engine.get_dao_treasury();
+        let blockchain = get_global_blockchain().await?;
+        let blockchain = blockchain.read().await;
+        let proposals = blockchain.get_dao_proposals();
 
-        // Calculate statistics
+        let mut active = 0usize;
+        let mut passed = 0usize;
+        let mut executed = 0usize;
+        let mut failed = 0usize;
+        let mut total_votes = 0u64;
+
+        for proposal in &proposals {
+            match Self::classify_proposal_status(&blockchain, proposal).as_str() {
+                "Active" => active += 1,
+                "Passed" => passed += 1,
+                "Executed" => executed += 1,
+                "Failed" => failed += 1,
+                _ => {}
+            }
+
+            let (_yes, _no, _abstain, total_power) = blockchain.tally_dao_votes(&proposal.proposal_id);
+            total_votes += total_power;
+        }
+
         let total_proposals = proposals.len();
-        let active_proposals = proposals.iter().filter(|p| p.status == DaoProposalStatus::Active).count();
-        let passed_proposals = proposals.iter().filter(|p| p.status == DaoProposalStatus::Passed).count();
-        let executed_proposals = proposals.iter().filter(|p| p.status == DaoProposalStatus::Executed).count();
-
-        let total_votes: u64 = proposals.iter().map(|p| p.vote_tally.total_votes).sum();
         let avg_participation = if total_proposals > 0 {
             total_votes as f64 / total_proposals as f64
+        } else {
+            0.0
+        };
+
+        let treasury_balance = blockchain.get_dao_treasury_balance().unwrap_or(0);
+        let allocated = 0f64; // Placeholder until treasury allocations tracked on-chain
+        let utilization_rate = if treasury_balance > 0 {
+            allocated / treasury_balance as f64 * 100.0
         } else {
             0.0
         };
@@ -539,22 +769,19 @@ impl DaoHandler {
             "dao_statistics": {
                 "proposals": {
                     "total": total_proposals,
-                    "active": active_proposals,
-                    "passed": passed_proposals,
-                    "executed": executed_proposals
+                    "active": active,
+                    "passed": passed,
+                    "executed": executed,
+                    "failed": failed
                 },
                 "voting": {
                     "total_votes_cast": total_votes,
                     "average_participation": avg_participation
                 },
                 "treasury": {
-                    "total_balance": treasury.total_balance,
-                    "available_balance": treasury.available_balance,
-                    "utilization_rate": if treasury.total_balance > 0 {
-                        (treasury.allocated_funds as f64 / treasury.total_balance as f64) * 100.0
-                    } else {
-                        0.0
-                    }
+                    "total_balance": treasury_balance,
+                    "available_balance": treasury_balance,
+                    "utilization_rate": utilization_rate
                 }
             }
         });

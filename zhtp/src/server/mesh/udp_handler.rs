@@ -1032,11 +1032,11 @@ impl MeshRouter {
         }
 
         // Validate ZK Proof (The "Privacy Layer")
-        if let Some(proof) = &request.auth_proof {
-             info!("🔐 ZK Auth Proof Present: System={} (Verifying...)", proof.proof_system);
-             // In a full implementation, we would call proof.verify() here
-        } else {
-             debug!("ℹ️ No ZK Auth Proof provided (Public/Unauthenticated Request)");
+           if let Some(proof) = &request.auth_proof {
+               info!("🔐 ZK Auth Proof Present: Type={:?} (Verifying...)", proof.proof_type);
+               // In a full implementation, we would call proof.verify() here
+           } else {
+               debug!("ℹ️ No ZK Auth Proof provided (Public/Unauthenticated Request)");
         }
 
         // Process Request (The "Application Layer")

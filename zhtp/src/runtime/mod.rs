@@ -10,6 +10,7 @@ use tokio::time::{Duration, Instant};
 use std::time::SystemTime;
 use std::path::PathBuf;
 use tracing::{info, warn, error, debug};
+use lib_proofs::types::ProofType;
 
 use super::config::NodeConfig;
 // Removed ZK coordinator - using unified lib-proofs system directly
@@ -815,7 +816,7 @@ impl RuntimeOrchestrator {
                     let identity_data = lib_blockchain::transaction::IdentityTransactionData {
                         did: format!("did:zhtp:{}", hex::encode(&identity.id.0)),
                         display_name: format!("User {}", hex::encode(&identity.id.0[..4])),
-                        public_key: identity.public_key.clone(),
+                        public_key: identity.public_key.as_bytes(),
                         ownership_proof: vec![], // Convert ZK proof to bytes if needed
                         identity_type: format!("{:?}", identity.identity_type),
                         did_document_hash: identity.did_document_hash
@@ -2218,37 +2219,26 @@ pub async fn create_or_load_node_identity(
     let public_key = keypair.public_key.dilithium_pk.clone();
     let identity_id = lib_crypto::Hash::from_bytes(&public_key);
     
-    let node_identity = lib_identity::ZhtpIdentity {
-        id: identity_id.clone(),
-        identity_type: lib_identity::types::IdentityType::Device,
-        public_key: public_key.to_vec(),
-        ownership_proof: lib_proofs::ZeroKnowledgeProof {
-            proof_system: "NodeIdentity".to_string(),
-            proof_data: vec![],
-            public_inputs: vec![],
-            verification_key: vec![],
-            plonky2_proof: None,
-            proof: vec![],
-        },
-        credentials: std::collections::HashMap::new(),
-        reputation: 100,
-        age: None,
-        access_level: lib_identity::types::AccessLevel::FullCitizen,
-        metadata: std::collections::HashMap::new(),
-        private_data_id: Some(identity_id.clone()),
-        wallet_manager: lib_identity::wallets::IdentityWallets::new(identity_id),
-        attestations: Vec::new(),
-        created_at: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs(),
-        last_active: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs(),
-        recovery_keys: vec![],
-        did_document_hash: None,
-        owner_identity_id: None,
-        reward_wallet_id: None,
-        encrypted_master_seed: None,
-        next_wallet_index: 0,
-        password_hash: None,
-        master_seed_phrase: None,
-    };
+    let ownership_proof = lib_proofs::ProofEnvelope::new(
+        ProofType::DeviceDelegationV1,
+        None,
+        Some(public_key.clone()),
+        identity_id.0.to_vec(),
+        vec![],
+    );
+
+    let mut node_identity = lib_identity::ZhtpIdentity::from_legacy_fields(
+        identity_id.clone(),
+        lib_identity::types::IdentityType::Device,
+        public_key,
+        keypair.private_key,
+        "primary".to_string(),
+        ownership_proof,
+        lib_identity::wallets::WalletManager::new(identity_id.clone()),
+    )?;
+
+    node_identity.reputation = 100;
+    node_identity.access_level = lib_identity::types::AccessLevel::FullCitizen;
     
     // Save identity
     tokio::fs::create_dir_all(&data_path).await?;

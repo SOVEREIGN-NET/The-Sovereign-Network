@@ -290,7 +290,10 @@ impl GenesisFundingService {
                 registration_fee: 0,
                 dao_fee: 0,
                 controlled_nodes: controlled_node_ids,
-                owned_wallets: vec![hex::encode(&user_primary_wallet_id.as_ref().unwrap().0.0)],
+                owned_wallets: user_primary_wallet_id
+                    .as_ref()
+                    .map(|(wallet_id, _)| vec![hex::encode(&wallet_id.0)])
+                    .unwrap_or_default(),
             };
             
             match blockchain.register_identity(user_identity_data) {
