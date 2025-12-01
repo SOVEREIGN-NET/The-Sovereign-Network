@@ -332,11 +332,11 @@ impl UnifiedStorageSystem {
         Ok(self.stats.clone())
     }
 
-    /// Add peer to DHT network
-    pub async fn add_peer(&mut self, peer_address: String) -> Result<()> {
+    /// Add peer to DHT network with identity-derived NodeId
+    pub async fn add_peer(&mut self, peer_address: String, node_id: NodeId) -> Result<()> {
         // Parse peer info and add to DHT
         let node_info = DhtNode {
-            id: NodeId::from_bytes(rand::random::<[u8; 32]>()),
+            id: node_id,
             addresses: vec![peer_address],
             public_key: PostQuantumSignature {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,

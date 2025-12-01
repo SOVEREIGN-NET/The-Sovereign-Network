@@ -333,11 +333,12 @@ println!("Retrieved identity: {}", retrieved_identity.id);
 pub async fn add_peer(&mut self, peer_address: String) -> Result<()>
 ```
 
-Add a peer to the DHT network.
+Add a peer to the DHT network with their identity-derived NodeId.
 
 **Example:**
 ```rust
-system.add_peer("192.168.1.100:33445".to_string()).await?;
+let peer_node_id = lib_storage::NodeId::from_bytes(rand::random::<[u8; 32]>());
+system.add_peer("192.168.1.100:33445".to_string(), peer_node_id).await?;
 ```
 
 ### perform_maintenance
@@ -817,11 +818,12 @@ println!("Retrieved identity: {}", retrieved_identity.id);
 pub async fn add_peer(&mut self, peer_address: String) -> Result<()>
 ```
 
-Add a peer to the DHT network.
+Add a peer to the DHT network with their identity-derived NodeId.
 
 **Example:**
 ```rust
-system.add_peer("192.168.1.100:33445".to_string()).await?;
+let peer_node_id = lib_storage::NodeId::from_bytes(rand::random::<[u8; 32]>());
+system.add_peer("192.168.1.100:33445".to_string(), peer_node_id).await?;
 ```
 
 ### perform_maintenance
