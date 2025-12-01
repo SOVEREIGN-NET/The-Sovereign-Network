@@ -68,7 +68,7 @@ impl ZhtpServer {
         // For storage, we'll use a placeholder - in implementation this would be proper storage
         let storage = Arc::new(RwLock::new(
             lib_storage::UnifiedStorageSystem::new(lib_storage::UnifiedStorageConfig {
-                node_id: lib_storage::types::NodeId::from(lib_crypto::Hash::from_bytes(b"node_001")),
+                node_id: lib_identity::NodeId::from_bytes([1u8; 32]),
                 addresses: vec!["127.0.0.1:8000".to_string()],
                 economic_config: lib_storage::EconomicManagerConfig::default(),
                 storage_config: lib_storage::StorageConfig {

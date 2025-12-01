@@ -230,6 +230,11 @@ impl UnifiedStorageSystem {
         })
     }
 
+    /// Get the node's stable identity-derived NodeId
+    pub fn get_node_id(&self) -> NodeId {
+        self.config.node_id
+    }
+
     /// Upload content with full economic integration
     pub async fn upload_content(
         &mut self,
@@ -333,10 +338,10 @@ impl UnifiedStorageSystem {
     }
 
     /// Add peer to DHT network
-    pub async fn add_peer(&mut self, peer_address: String) -> Result<()> {
+    pub async fn add_peer(&mut self, peer_address: String, node_id: NodeId) -> Result<()> {
         // Parse peer info and add to DHT
         let node_info = DhtNode {
-            id: NodeId::from_bytes(rand::random::<[u8; 32]>()),
+            id: node_id,
             addresses: vec![peer_address],
             public_key: PostQuantumSignature {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
