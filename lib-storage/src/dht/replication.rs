@@ -103,7 +103,7 @@ impl DhtReplication {
 
         // Create DHT store message for replication
         let _message = crate::types::dht_types::DhtMessage {
-            message_id: hex::encode(&blake3::hash(&[key.as_bytes(), value, &target_node.id.as_bytes()].concat()).as_bytes()[..8]),
+            message_id: hex::encode(&blake3::hash(&[key.as_bytes(), value, target_node.id.as_bytes() as &[u8]].concat()).as_bytes()[..8]),
             message_type: crate::types::dht_types::DhtMessageType::Store,
             sender_id: self.local_id.clone(),
             target_id: Some(target_node.id.clone()),

@@ -78,7 +78,7 @@ impl DhtStorage {
     /// Create default storage (for convenience)
     pub fn new_default() -> Self {
         Self::new(
-            Hash::from_bytes(&[0u8; 32]), // Default node ID
+            NodeId::from_bytes([0u8; 32]), // Default node ID
             1_000_000_000, // 1GB default storage
         )
     }
@@ -135,7 +135,8 @@ impl DhtStorage {
     /// Replicate data to DHT network
     async fn replicate_to_dht(&mut self, key: &str, data: &[u8]) -> Result<()> {
         // Find closest nodes for this key
-        let target_key = Hash::from_bytes(&blake3::hash(key.as_bytes()).as_bytes()[..32]);
+        let key_hash = Hash::from_bytes(&blake3::hash(key.as_bytes()).as_bytes()[..32]);
+        let target_key = NodeId::from_storage_hash(&key_hash);
         let closest_nodes = self.router.find_closest_nodes(&target_key, 3);
         
         if let Some(network) = &self.network {
@@ -163,7 +164,8 @@ impl DhtStorage {
     /// Retrieve data from DHT network
     async fn retrieve_from_dht(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
         // Find closest nodes for this key
-        let target_key = Hash::from_bytes(&blake3::hash(key.as_bytes()).as_bytes()[..32]);
+        let key_hash = Hash::from_bytes(&blake3::hash(key.as_bytes()).as_bytes()[..32]);
+        let target_key = NodeId::from_storage_hash(&key_hash);
         let closest_nodes = self.router.find_closest_nodes(&target_key, 5);
         
         if let Some(network) = &self.network {
@@ -299,7 +301,7 @@ impl DhtStorage {
         
         // Generate cryptographic access key from node identity and request context
         let node_key_material = self.local_node_id.as_bytes();
-        let access_key = blake3::hash(&[node_key_material, value_hash.as_bytes()].concat());
+        let access_key = blake3::hash(&[node_key_material as &[u8], value_hash.as_bytes()].concat());
         let access_key_u64 = u64::from_be_bytes([
             access_key.as_bytes()[0], access_key.as_bytes()[1],
             access_key.as_bytes()[2], access_key.as_bytes()[3],
@@ -605,7 +607,7 @@ impl DhtStorage {
         let data_hash = blake3::hash(value);
         let key_hash = blake3::hash(key.as_bytes());
         let node_commitment = blake3::hash(&[
-            self.local_node_id.as_bytes(),
+            self.local_node_id.as_bytes() as &[u8],
             key_hash.as_bytes(),
             data_hash.as_bytes(),
         ].concat());
@@ -671,10 +673,10 @@ impl DhtStorage {
         let commitment_data = [
             key.as_bytes(),
             value,
-            &self.local_node_id.as_bytes(),
+            self.local_node_id.as_bytes() as &[u8],
             &timestamp.to_be_bytes(),
         ].concat();
-        
+
         Ok(blake3::hash(&commitment_data))
     }
 
@@ -1400,7 +1402,7 @@ impl DhtStorage {
         // Include node identity in checksum for authenticity verification
         let node_authenticated_hash = blake3::hash(&[
             hash.as_bytes(),
-            self.local_node_id.as_bytes(),
+            self.local_node_id.as_bytes() as &[u8],
         ].concat());
         
         // Return first 32 bytes for storage efficiency while maintaining security

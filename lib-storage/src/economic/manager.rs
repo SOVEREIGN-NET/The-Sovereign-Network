@@ -6,11 +6,11 @@
 //! - Reputation updates
 //! - Market operations
 
-use crate::types::{ContentHash, PenaltyType, RewardTier, EconomicManagerConfig, 
+use crate::types::{ContentHash, NodeId, PenaltyType, RewardTier, EconomicManagerConfig,
                    EconomicStorageRequest, EconomicQuote, EconomicStats, QualityMetrics, CostBreakdown, PenaltyClause,
                    StorageTier, EncryptionLevel, AccessPattern, QualityViolation,
                    PricingRequest}; // Add missing enum imports
-use crate::economic::{contracts::*, pricing::*, market::*, reputation::*, payments::*, 
+use crate::economic::{contracts::*, pricing::*, market::*, reputation::*, payments::*,
                       incentives::{IncentiveSystem, IncentiveConfig}, quality::*, penalties::*, rewards::*};
 use anyhow::{Result, anyhow};
 
@@ -130,7 +130,10 @@ impl EconomicStorageManager {
             cost_per_gb_day: base_cost / ((request.content.len() as u64 / (1024 * 1024 * 1024)).max(1) * request.requirements.duration_days as u64),
             duration_days: request.requirements.duration_days,
             recommended_nodes: storage_nodes.into_iter()
-                .map(|node_str| Hash::from_bytes(hex::decode(node_str).unwrap_or_default().as_slice()))
+                .map(|node_str| {
+                    let hash = Hash::from_bytes(hex::decode(node_str).unwrap_or_default().as_slice());
+                    NodeId::from_storage_hash(&hash)
+                })
                 .collect(),
             estimated_quality: quality_metrics,
             valid_until: std::time::SystemTime::now()
@@ -231,7 +234,7 @@ impl EconomicStorageManager {
             
             for node_id in &contract.nodes {
                 // Get provider's current performance for incentive calculation
-                if let Some(metrics) = self.quality_assurance.get_node_metrics(node_id).await? {
+                if let Some(metrics) = self.quality_assurance.get_node_metrics(&node_id.to_storage_hash()).await? {
                     let performance_snapshot = crate::types::PerformanceSnapshot::new(
                         metrics.uptime,
                         metrics.avg_response_time,
@@ -284,7 +287,7 @@ impl EconomicStorageManager {
 
         for node_id in &contract.nodes {
             // Get performance metrics from quality assurance
-            if let Some(metrics) = self.quality_assurance.get_node_metrics(node_id).await? {
+            if let Some(metrics) = self.quality_assurance.get_node_metrics(&node_id.to_storage_hash()).await? {
                 // Create performance snapshot for incentive system
                 let performance_snapshot = crate::types::PerformanceSnapshot::new(
                     metrics.uptime,
@@ -339,7 +342,7 @@ impl EconomicStorageManager {
                             timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
                             details: format!("Performance violation: {:?}", violation),
                         };
-                        self.reputation_system.record_violation(node_id.clone(), quality_violation).await?;
+                        self.reputation_system.record_violation(node_id.to_storage_hash(), quality_violation).await?;
 
                         // Update incentive system with penalty information
                         self.incentive_manager.record_penalty(
@@ -358,7 +361,7 @@ impl EconomicStorageManager {
                     data_integrity: metrics.data_integrity,
                     avg_response_time: metrics.avg_response_time,
                     total_storage_provided: metrics.bandwidth_utilization as u64 * 1_000_000, // Convert to bytes
-                    contracts_fulfilled: self.contract_manager.get_node_contract_count(node_id).await? as u32,
+                    contracts_fulfilled: self.contract_manager.get_node_contract_count(&node_id.to_storage_hash()).await? as u32,
                     current_tier: RewardTier::Basic, // Will be determined by reward tracker
                 };
 
