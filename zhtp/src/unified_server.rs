@@ -579,6 +579,13 @@ impl ZhtpUnifiedServer {
         let mesh_router_bluetooth_protocol = self.mesh_router.bluetooth_protocol.clone();
 
         tokio::spawn(async move {
+            // Check if Bluetooth should be disabled via environment variable
+            if std::env::var("DISABLE_BLUETOOTH").is_ok() {
+                warn!(" Bluetooth disabled via DISABLE_BLUETOOTH environment variable");
+                warn!(" Skipping Bluetooth initialization");
+                return;
+            }
+
             info!("Initializing Bluetooth mesh protocol for phone connectivity...");
             match bluetooth_router_clone.initialize(
                 mesh_connections_clone,
