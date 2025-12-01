@@ -52,7 +52,7 @@ pub struct StorageContract {
     /// Digital signatures
     pub signatures: ContractSignatures,
     /// Storage provider nodes
-    pub nodes: Vec<lib_crypto::Hash>,
+    pub nodes: Vec<NodeId>,
     /// Total contract cost
     pub total_cost: u64,
 }
