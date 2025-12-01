@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>ZHTP</string>
+    <key>CFBundleDisplayName</key>
+    <string>ZHTP Network Node</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.sovereign.zhtp</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleExecutable</key>
+    <string>zhtp</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <!-- Bluetooth Permissions -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>ZHTP uses Bluetooth to create mesh network connections with nearby devices for decentralized communication.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>ZHTP uses Bluetooth to advertise mesh network services and accept connections from nearby devices.</string>
+
+    <!-- Privacy - Bluetooth usage explanation (macOS 13+) -->
+    <key>NSBluetoothWhileInUseUsageDescription</key>
+    <string>ZHTP requires Bluetooth access to establish peer-to-peer mesh network connections.</string>
+
+    <!-- Local Network Permission (for mDNS/Bonjour) -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>ZHTP uses local network to discover and connect to nearby mesh network nodes.</string>
+
+    <!-- Bonjour Services -->
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_zhtp._tcp</string>
+        <string>_zhtp._udp</string>
+    </array>
+</dict>
+</plist>
