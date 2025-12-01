@@ -336,7 +336,7 @@ impl UnifiedStorageSystem {
     pub async fn add_peer(&mut self, peer_address: String) -> Result<()> {
         // Parse peer info and add to DHT
         let node_info = DhtNode {
-            id: Hash::from_bytes(&rand::random::<[u8; 32]>()),
+            id: NodeId::from_bytes(rand::random::<[u8; 32]>()),
             addresses: vec![peer_address],
             public_key: PostQuantumSignature {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
@@ -467,7 +467,7 @@ impl UnifiedStorageSystem {
 impl Default for UnifiedStorageConfig {
     fn default() -> Self {
         Self {
-            node_id: Hash::from_bytes(&rand::random::<[u8; 32]>()),
+            node_id: NodeId::from_bytes(rand::random::<[u8; 32]>()),
             addresses: vec!["127.0.0.1:33445".to_string()], // Bind to localhost only for local mesh operation
             economic_config: EconomicManagerConfig::default(),
             storage_config: StorageConfig {

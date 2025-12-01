@@ -1,6 +1,6 @@
 //! Core storage type definitions and type aliases
-//! 
-//! This module contains all the fundamental types used throughout the 
+//!
+//! This module contains all the fundamental types used throughout the
 //! lib-storage system, extracted from unified_storage.rs for modularization.
 
 use lib_crypto::Hash;
@@ -21,8 +21,9 @@ pub use config_types::*;
 pub use stats_types::*;
 pub use node_address::*;
 
-/// Node identifier for DHT routing
-pub type NodeId = Hash;
+/// Node identifier for DHT routing - imported from lib-identity
+/// Provides deterministic identity-based NodeIds derived from DIDs
+pub use lib_identity::NodeId;
 
 /// Content hash for addressing
 pub type ContentHash = Hash;

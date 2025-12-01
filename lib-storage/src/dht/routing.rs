@@ -338,8 +338,9 @@ impl KademliaRouter {
                 id_bytes[i + 24] ^= byte;
             }
         }
-        
-        lib_crypto::Hash::from_bytes(&hash_blake3(&id_bytes))
+
+        let hash = hash_blake3(&id_bytes);
+        NodeId::from_bytes(hash)
     }
 
     /// Split k-bucket (used when bucket is full and contains local node's bucket)
