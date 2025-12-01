@@ -351,6 +351,11 @@ pub struct ChallengeStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::hash_blake3;
+
+    fn content_hash(label: &str) -> ContentHash {
+        ContentHash::from_bytes(&hash_blake3(label.as_bytes()))
+    }
 
     #[test]
     fn test_proof_manager_creation() {
@@ -361,7 +366,7 @@ mod tests {
     #[test]
     fn test_generate_storage_challenge() {
         let mut manager = ProofManager::default();
-        let content_hash = ContentHash::from("test_content".to_string());
+        let content_hash = content_hash("test_content");
 
         let challenge = manager.generate_storage_challenge(
             content_hash.clone(),
@@ -378,7 +383,7 @@ mod tests {
     #[test]
     fn test_generate_retrieval_challenge() {
         let mut manager = ProofManager::default();
-        let content_hash = ContentHash::from("test_content".to_string());
+        let content_hash = content_hash("test_content");
 
         let challenge = manager.generate_retrieval_challenge(
             content_hash.clone(),
@@ -395,7 +400,7 @@ mod tests {
     #[test]
     fn test_challenge_stats() {
         let mut manager = ProofManager::default();
-        let content_hash = ContentHash::from("test".to_string());
+        let content_hash = content_hash("test");
 
         manager.generate_storage_challenge(
             content_hash.clone(),
@@ -420,9 +425,9 @@ mod tests {
     fn test_audit_batch_generation() {
         let mut manager = ProofManager::default();
         let content_list = vec![
-            (ContentHash::from("content1".to_string()), 10),
-            (ContentHash::from("content2".to_string()), 20),
-            (ContentHash::from("content3".to_string()), 15),
+            (content_hash("content1"), 10),
+            (content_hash("content2"), 20),
+            (content_hash("content3"), 15),
         ];
 
         let challenges = manager.generate_audit_batch(

@@ -282,7 +282,7 @@ mod tests {
     
     #[test]
     fn test_node_manager_creation() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let addresses = vec!["127.0.0.1:33442".to_string()];
         
         let manager = DhtNodeManager::new(node_id.clone(), addresses).unwrap();
@@ -293,12 +293,12 @@ mod tests {
     
     #[tokio::test]
     async fn test_add_and_get_node() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let addresses = vec!["127.0.0.1:33442".to_string()];
         let mut manager = DhtNodeManager::new(node_id, addresses).unwrap();
         
         let test_node = DhtNode {
-            id: Hash::from_bytes(&[2u8; 32]),
+            id: NodeId::from_bytes([2u8; 32]),
             addresses: vec!["127.0.0.1:33443".to_string()],
             public_key: PostQuantumSignature {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
@@ -323,11 +323,11 @@ mod tests {
     
     #[test]
     fn test_reputation_management() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let addresses = vec!["127.0.0.1:33442".to_string()];
         let mut manager = DhtNodeManager::new(node_id, addresses).unwrap();
         
-        let test_node_id = Hash::from_bytes(&[2u8; 32]);
+        let test_node_id = NodeId::from_bytes([2u8; 32]);
         
         // Add reputation for new node
         manager.reputation_scores.insert(test_node_id.clone(), 1000);
