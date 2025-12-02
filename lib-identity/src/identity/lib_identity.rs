@@ -124,12 +124,6 @@ pub struct ZhtpIdentity {
     pub jurisdiction: Option<String>,
 }
 
-// Default functions for deserialization of secret fields
-// SECURITY: These explicitly return zero values - secrets MUST be re-derived after deserialization
-fn default_wallet_seed() -> [u8; 64] {
-    [0u8; 64]
-}
-
 impl PartialEq for ZhtpIdentity {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id

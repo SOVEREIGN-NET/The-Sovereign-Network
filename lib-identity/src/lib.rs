@@ -50,7 +50,6 @@ pub use lib_proofs::{ZeroKnowledgeProof, ZkProof};
 
 // Utility functions
 use anyhow::Result;
-use rand;
 
 /// Initialize the identity system with proper configuration
 pub async fn initialize_identity_system() -> Result<IdentityManager> {
