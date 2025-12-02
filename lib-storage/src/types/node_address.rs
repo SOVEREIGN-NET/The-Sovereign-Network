@@ -588,7 +588,8 @@ mod tests {
         assert!(!governance_addr.controls_node());
         assert!(governance_addr.can_govern());
         
-        // Test address formats
+        // Test address formats - verify wallet identifier is present
+        // Note: Format may vary, checking for identifier presence rather than exact prefix
         assert!(format!("{}", user_addr).contains("alice_wallet"));
         assert!(format!("{}", operator_addr).contains("node_operator"));
         
