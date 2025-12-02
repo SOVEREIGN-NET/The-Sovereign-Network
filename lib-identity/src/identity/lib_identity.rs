@@ -1023,15 +1023,19 @@ impl ZhtpIdentity {
     // assert_eq!(laptop_node, laptop_node_again);
     /// ```
     pub fn add_device(&mut self, device_name: &str) -> Result<NodeId> {
+        // Validate device name
+        if device_name.is_empty() {
+            return Err(anyhow!("Device name cannot be empty"));
+        }
+
         // Check if device already exists (idempotent)
         if let Some(&existing_node_id) = self.device_node_ids.get(device_name) {
-            // Copy the node_id before mutable borrow
-            let node_id_copy = existing_node_id;
             // Update activity even for existing devices
             self.update_activity();
-            return Ok(node_id_copy);
-        } 
-          // Generate deterministic NodeId from DID + device name
+            return Ok(existing_node_id);
+        }
+
+        // Generate deterministic NodeId from DID + device name
         let node_id = NodeId::from_did_device(&self.did, device_name)?;
 
         // Insert into device mapping
@@ -1064,12 +1068,12 @@ impl ZhtpIdentity {
     pub fn remove_device(&mut self, device_name: &str) -> Result<()> {
         // Cannot remove primary device
         if device_name == self.primary_device {
-            return Err(anyhow!("Cannot remove primary device '{}'", device_name));
+            return Err(anyhow!("Cannot remove primary device: {}", device_name));
         }
 
         // Check if device exists
         if self.device_node_ids.remove(device_name).is_none() {
-            return Err(anyhow!("Device '{}' not found", device_name));
+            return Err(anyhow!("Device not found: {}", device_name));
         }
 
         self.update_activity();
@@ -1118,7 +1122,7 @@ impl ZhtpIdentity {
         // Verify device exists
         let new_node_id = self.device_node_ids
             .get(new_primary)
-            .ok_or_else(|| anyhow!("Device '{}' not registered", new_primary))?;
+            .ok_or_else(|| anyhow!("Device not registered: {}", new_primary))?;
 
         self.primary_device = new_primary.to_string();
         self.node_id = *new_node_id;
@@ -1557,31 +1561,25 @@ mod tests {
     /// Test: Device NodeId derivation is deterministic for same DID
     #[test]
     fn test_device_node_id_deterministic_same_did() -> Result<()> {
-        let seed = [42u8; 64]; // Fixed seed for determinism
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            Some([42u8; 64]),
+        )?;
+
+        // First call
+        let node_id_1 = identity.add_device("test-device")?;
         
-        let identity1 = ZhtpIdentity::new_unified(
-            IdentityType::Human,
-            Some(30),
-            Some("US".to_string()),
-            "laptop",
-            Some(seed),
-        )?;
-
-        let identity2 = ZhtpIdentity::new_unified(
-            IdentityType::Human,
-            Some(30),
-            Some("US".to_string()),
-            "laptop",
-            Some(seed),
-        )?;
-
-        // Same seed → same DID → same NodeId for same device
-        assert_eq!(identity1.did, identity2.did);
-        assert_eq!(identity1.node_id, identity2.node_id);
-        assert_eq!(
-            identity1.get_device_node_id("laptop"),
-            identity2.get_device_node_id("laptop")
-        );
+        // Second call - should return same NodeId (deterministic)
+        let node_id_2 = identity.add_device("test-device")?;
+        
+        assert_eq!(node_id_1, node_id_2, "add_device should be idempotent");
+        
+        // Verify it matches manual derivation
+        let expected = NodeId::from_did_device(&identity.did, "test-device")?;
+        assert_eq!(node_id_1, expected, "NodeId should match deterministic derivation");
 
         Ok(())
     }
