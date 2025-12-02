@@ -7,8 +7,20 @@ use crate::mesh::server::{ZhtpMeshServer, NetworkConfig};
 /// Create a test mesh server for development with implementations
 pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {
     use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
+    use lib_identity::{ZhtpIdentity, IdentityType, NodeId};
     
-    let node_id = hash_blake3(b"test-mesh-server");
+    // Create a proper identity using new_unified (seed-anchored architecture)
+    let identity = ZhtpIdentity::new_unified(
+        IdentityType::Human,
+        Some(25),  // age
+        Some("US".to_string()),  // jurisdiction
+        "test-device",  // primary device
+        None,  // random seed
+    )?;
+    
+    // Use the identity's NodeId (already derived from DID + device)
+    let node_id = identity.node_id;
+    
     let storage_config = UnifiedStorageConfig::default();
     let storage = UnifiedStorageSystem::new(storage_config).await?;
     
@@ -18,8 +30,8 @@ pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {
         NetworkProtocol::LoRaWAN,
     ];
     
-    // Create dummy owner key for testing 
-    let owner_key = lib_crypto::PublicKey::new(node_id.to_vec());
+    // Use the identity's public key
+    let owner_key = identity.public_key.clone();
     ZhtpMeshServer::new(node_id, owner_key, storage, protocols).await
 }
 

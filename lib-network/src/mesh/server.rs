@@ -8,6 +8,7 @@ use tracing::{info, warn, error, debug};
 use serde_json;
 
 use lib_crypto::{PublicKey, Signature};
+use lib_identity::NodeId;
 use crate::mesh::{MeshConnection, MeshProtocolStats};
 use crate::protocols::NetworkProtocol;
 
@@ -203,7 +204,7 @@ use lib_storage::UnifiedStorageSystem;
 /// Network configuration for mesh node
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
-    pub node_id: [u8; 32],
+    pub node_id: NodeId,
     pub listen_port: u16,
     pub max_peers: usize,
     pub protocols: Vec<NetworkProtocol>,
@@ -293,8 +294,8 @@ pub struct ZhtpMeshServer {
 /// MeshNode implementation for pure mesh networking
 #[derive(Debug)]
 pub struct MeshNode {
-    /// Node ID for this mesh node
-    pub node_id: [u8; 32],
+    /// Node ID for this mesh node (derived from identity)
+    pub node_id: NodeId,
     /// Supported protocols for mesh networking
     pub protocols: Vec<NetworkProtocol>,
     /// Maximum number of peers to connect to
@@ -682,10 +683,10 @@ impl ZhtpMeshServer {
         
         // Create temporary PublicKey from node_id for Bluetooth initialization
         // Note: In production, the main zhtp application provides the real PublicKey
-        let temp_public_key = lib_crypto::PublicKey::new(node_id.to_vec());
+        let temp_public_key = lib_crypto::PublicKey::new(node_id.as_bytes().to_vec());
         
         // Initialize Bluetooth LE mesh protocol
-        let bluetooth_protocol = BluetoothMeshProtocol::new(node_id, temp_public_key)?;
+        let bluetooth_protocol = BluetoothMeshProtocol::new(*node_id.as_bytes(), temp_public_key)?;
         let bluetooth_arc = Arc::new(RwLock::new(bluetooth_protocol));
         
         // Start discovery
@@ -727,7 +728,7 @@ impl ZhtpMeshServer {
         let node_id = self.mesh_node.read().await.node_id;
         
         // Initialize WiFi Direct mesh protocol
-        let wifi_protocol = WiFiDirectMeshProtocol::new(node_id)?;
+        let wifi_protocol = WiFiDirectMeshProtocol::new(*node_id.as_bytes())?;
         let wifi_arc = Arc::new(RwLock::new(wifi_protocol));
         
         // Start discovery
@@ -876,7 +877,7 @@ impl ZhtpMeshServer {
 
     /// Create a new ZHTP Mesh Server - The Internet
     pub async fn new(
-        node_id: [u8; 32], 
+        node_id: NodeId, 
         owner_key: PublicKey,  // Owner key for security
         storage: UnifiedStorageSystem, 
         protocols: Vec<NetworkProtocol>
@@ -1213,7 +1214,7 @@ impl ZhtpMeshServer {
             
             // Set node ID in handler
             let node = self.mesh_node.read().await;
-            let node_id = PublicKey::new(node.node_id.to_vec());
+            let node_id = PublicKey::new(node.node_id.as_bytes().to_vec());
             handler_guard.set_node_id(node_id);
         }
         
@@ -1896,81 +1897,20 @@ impl ZhtpMeshServer {
 }
 
 /// Create a default identity for mesh server DHT operations
-/// TODO: This should be replaced with proper server identity management
+/// Uses proper identity creation with deterministic seed for mesh server
 fn create_default_mesh_identity() -> lib_identity::ZhtpIdentity {
-    use lib_identity::types::{IdentityType, AccessLevel, NodeId};
-    use lib_identity::wallets::WalletManager;
-    use lib_identity::{IdentityId, ZhtpIdentity};
-    use lib_proofs::ZeroKnowledgeProof;
-    use lib_crypto::PublicKey;
-    use std::collections::HashMap;
+    use lib_identity::{ZhtpIdentity, IdentityType};
 
-    let identity_id = IdentityId::from_bytes(&[42u8; 32]); // Fixed ID for mesh server
-
-    // Create mesh server DID
-    let mesh_did = "did:zhtp:mesh-server".to_string();
-
-    // Generate NodeId for mesh server
-    let mesh_node_id = NodeId::from_did_device(&mesh_did, "mesh-device")
-        .unwrap_or_else(|_| NodeId::from_bytes([42u8; 32]));
-
-    let mut device_node_ids = HashMap::new();
-    device_node_ids.insert("mesh-device".to_string(), mesh_node_id);
-
-    ZhtpIdentity {
-        id: identity_id.clone(),
-        identity_type: IdentityType::Device, // Mesh server is a device/service
-        did: mesh_did,
-        public_key: PublicKey::new(vec![1, 2, 3, 4, 5]), // Placeholder public key
-        private_key: None,
-        node_id: mesh_node_id,
-        device_node_ids,
-        primary_device: "mesh-device".to_string(),
-        ownership_proof: ZeroKnowledgeProof {
-            proof_system: "mesh_server".to_string(),
-            proof_data: vec![],
-            public_inputs: vec![],
-            verification_key: vec![],
-            plonky2_proof: None,
-            proof: vec![],
-        },
-        credentials: HashMap::new(),
-        reputation: 100, // High reputation for mesh server
-        age: None, // Services don't have age
-        access_level: AccessLevel::FullCitizen, // Full access for mesh operations
-        metadata: {
-            let mut metadata = HashMap::new();
-            metadata.insert("type".to_string(), "mesh_server".to_string());
-            metadata.insert("version".to_string(), "1.0".to_string());
-            metadata
-        },
-        private_data_id: None,
-        wallet_manager: WalletManager::new(identity_id.clone()),
-        did_document_hash: None,
-        attestations: vec![],
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-        last_active: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-        recovery_keys: vec![],
-        owner_identity_id: None,  // Mesh server is autonomous/system service
-        reward_wallet_id: None,   // System service doesn't need reward wallet
-        encrypted_master_seed: None,  // System services don't use seed-based HD wallets
-        next_wallet_index: 0,
-        password_hash: None,
-        master_seed_phrase: None,
-        zk_identity_secret: [0u8; 32], // Mesh server - zeroed secrets
-        zk_credential_hash: [0u8; 32],
-        wallet_master_seed: [0u8; 64],
-        dao_member_id: "mesh-server".to_string(),
-        dao_voting_power: 0, // System service has no voting power
-        citizenship_verified: false,
-        jurisdiction: None,
-    }
+    // Create mesh server identity with fixed seed for deterministic behavior
+    let fixed_seed = [42u8; 64]; // Fixed seed ensures same identity across restarts
+    
+    ZhtpIdentity::new_unified(
+        IdentityType::Device, // Mesh server is a device/service
+        None, // No age for devices
+        None, // No jurisdiction for devices
+        "mesh-server-device", // Primary device name
+        Some(fixed_seed), // Fixed seed for deterministic mesh server identity
+    ).expect("Failed to create mesh server identity")
 }
 
 // Additional methods for ZhtpMeshServer
@@ -2030,19 +1970,17 @@ impl ZhtpMeshServer {
         stats.clone()
     }
     
-    /// Get the node's unique identifier as a 32-byte array
+    /// Get the node's unique identifier (derived from identity)
     /// 
-    /// Converts the server's UUID to a 32-byte array for use in blockchain
-    /// transactions and reward attribution. The UUID (16 bytes) is padded
-    /// with zeros to create a 32-byte identifier.
+    /// Returns the NodeId which is deterministically derived from the node's
+    /// DID and device name. This is used for DHT routing, blockchain transactions,
+    /// and reward attribution.
     /// 
     /// # Returns
-    /// A 32-byte array representing this node's unique identifier
-    pub fn get_node_id(&self) -> [u8; 32] {
-        let uuid_bytes = self.server_id.as_bytes();
-        let mut node_id = [0u8; 32];
-        node_id[..16].copy_from_slice(uuid_bytes);
-        node_id
+    /// The NodeId for this mesh node (async because mesh_node is behind RwLock)
+    pub async fn get_node_id(&self) -> NodeId {
+        let node = self.mesh_node.read().await;
+        node.node_id
     }
     
     // ==================== Storage Statistics Methods ====================

@@ -21,6 +21,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug, error};
 use serde::{Serialize, Deserialize};
+use lib_identity::NodeId;
 
 use quinn::{Endpoint, Connection, ServerConfig, ClientConfig, RecvStream, SendStream};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -29,9 +30,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use lib_crypto::{
     PublicKey, PrivateKey,
     symmetric::chacha20::{encrypt_data, decrypt_data},
-    random::generate_nonce,
 };
-use lib_crypto::types::Encapsulation;
 
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::messaging::message_handler::MeshMessageHandler;
@@ -44,8 +43,8 @@ pub struct QuicMeshProtocol {
     /// Active connections to peers (peer_pubkey -> connection)
     connections: Arc<RwLock<std::collections::HashMap<Vec<u8>, PqcQuicConnection>>>,
     
-    /// This node's identity
-    node_id: [u8; 32],
+    /// This node's identity (stored for future use in peer authentication)
+    node_id: NodeId,
     
     /// Local binding address
     local_addr: SocketAddr,
@@ -65,8 +64,8 @@ pub struct PqcQuicConnection {
     /// Peer's Dilithium public key (for signature verification)
     peer_dilithium_key: Option<Vec<u8>>,
     
-    /// Peer's node ID (32 bytes)
-    peer_node_id: Option<[u8; 32]>,
+    /// Peer's node ID (from lib_identity)
+    peer_node_id: Option<NodeId>,
     
     /// Peer address
     peer_addr: SocketAddr,
@@ -83,7 +82,7 @@ pub enum PqcHandshakeMessage {
     KyberPublicKey {
         kyber_pubkey: Vec<u8>,
         dilithium_pubkey: Vec<u8>,
-        node_id: [u8; 32],
+        node_id: NodeId,
     },
     
     /// Server responds with encrypted shared secret
@@ -98,7 +97,7 @@ pub enum PqcHandshakeMessage {
 
 impl QuicMeshProtocol {
     /// Create a new QUIC mesh protocol instance
-    pub fn new(node_id: [u8; 32], bind_addr: SocketAddr) -> Result<Self> {
+    pub fn new(node_id: NodeId, bind_addr: SocketAddr) -> Result<Self> {
         info!(" Initializing QUIC mesh protocol on {}", bind_addr);
         
         // Generate self-signed certificate for QUIC (TLS 1.3 requirement)
@@ -156,7 +155,7 @@ impl QuicMeshProtocol {
         // Store connection using peer's node_id as key
         let peer_key = pqc_conn.peer_node_id
             .ok_or_else(|| anyhow!("Peer node_id not set after handshake"))?;
-        self.connections.write().await.insert(peer_key.to_vec(), pqc_conn);
+        self.connections.write().await.insert(peer_key.as_bytes().to_vec(), pqc_conn);
         
         Ok(())
     }
@@ -199,7 +198,7 @@ impl QuicMeshProtocol {
         // Store connection using peer's node_id as key
         let peer_key = pqc_conn.peer_node_id
             .ok_or_else(|| anyhow!("Peer node_id not set after handshake"))?;
-        self.connections.write().await.insert(peer_key.to_vec(), pqc_conn);
+        self.connections.write().await.insert(peer_key.as_bytes().to_vec(), pqc_conn);
         
         Ok(())
     }
@@ -260,11 +259,11 @@ impl QuicMeshProtocol {
                                     
                                     // Store connection using peer's node_id as key
                                     if let Some(peer_id) = pqc_conn.peer_node_id {
-                                        conns.write().await.insert(peer_id.to_vec(), pqc_conn);
+                                        conns.write().await.insert(peer_id.as_bytes().to_vec(), pqc_conn);
                                         
                                         // Start receiving messages on this connection
                                         let conns_clone = Arc::clone(&conns);
-                                        let peer_id_vec = peer_id.to_vec();
+                                        let peer_id_vec = peer_id.as_bytes().to_vec();
                                         let handler_clone = handler.clone();
                                         
                                         tokio::spawn(async move {
@@ -443,7 +442,7 @@ impl PqcQuicConnection {
 
         let kyber_pubkey = kyber_keypair.public_key.kyber_pk.clone();
         let dilithium_pubkey = kyber_keypair.public_key.dilithium_pk.clone();
-        let node_id = kyber_keypair.public_key.key_id;
+        let node_id = NodeId::from_bytes(kyber_keypair.public_key.key_id);
         
         // Send our public keys
         let handshake_msg = PqcHandshakeMessage::KyberPublicKey {
@@ -628,7 +627,18 @@ mod tests {
     
     #[tokio::test]
     async fn test_quic_mesh_initialization() -> Result<()> {
-        let node_id = [1u8; 32];
+        use lib_identity::{ZhtpIdentity, IdentityType};
+        
+        // Create a proper identity using new_unified
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "quic-test-device",
+            None,
+        )?;
+        
+        let node_id = identity.node_id;
         let bind_addr = "127.0.0.1:0".parse().unwrap();
         
         let quic_mesh = QuicMeshProtocol::new(node_id, bind_addr)?;
@@ -642,8 +652,18 @@ mod tests {
     
     #[tokio::test]
     async fn test_quic_pqc_connection() -> Result<()> {
-        // Start server
-        let server_node_id = [1u8; 32];
+        use lib_identity::{ZhtpIdentity, IdentityType};
+        
+        // Create proper identity for server
+        let server_identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "quic-server-device",
+            None,
+        )?;
+        
+        let server_node_id = server_identity.node_id;
         let server_addr = "127.0.0.1:0".parse().unwrap();
         let server = QuicMeshProtocol::new(server_node_id, server_addr)?;
         let server_port = server.local_addr().port();
@@ -653,8 +673,16 @@ mod tests {
         // Wait for server to be ready
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         
-        // Start client
-        let client_node_id = [2u8; 32];
+        // Create proper identity for client
+        let client_identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "quic-client-device",
+            None,
+        )?;
+        
+        let client_node_id = client_identity.node_id;
         let client_addr = "127.0.0.1:0".parse().unwrap();
         let client = QuicMeshProtocol::new(client_node_id, client_addr)?;
         
@@ -675,8 +703,18 @@ mod tests {
     
     #[tokio::test]
     async fn test_encrypted_message_exchange() -> Result<()> {
-        // Setup server
-        let server_node_id = [1u8; 32];
+        use lib_identity::{ZhtpIdentity, IdentityType};
+        
+        // Create proper identity for server
+        let server_identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "quic-msg-server-device",
+            None,
+        )?;
+        
+        let server_node_id = server_identity.node_id;
         let server_addr = "127.0.0.1:0".parse().unwrap();
         let server = Arc::new(QuicMeshProtocol::new(server_node_id, server_addr)?);
         let server_port = server.local_addr().port();
@@ -684,8 +722,16 @@ mod tests {
         server.start_receiving().await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         
-        // Setup client
-        let client_node_id = [2u8; 32];
+        // Create proper identity for client
+        let client_identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "quic-msg-client-device",
+            None,
+        )?;
+        
+        let client_node_id = client_identity.node_id;
         let client_addr = "127.0.0.1:0".parse().unwrap();
         let client = Arc::new(QuicMeshProtocol::new(client_node_id, client_addr)?);
         
