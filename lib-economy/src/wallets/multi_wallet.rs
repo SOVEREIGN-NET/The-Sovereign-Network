@@ -831,15 +831,26 @@ mod tests {
     use lib_identity::types::{IdentityType, AccessLevel};
     use lib_identity::wallets::WalletManager;
     use lib_proofs::ZeroKnowledgeProof;
-    use lib_crypto::Hash;
+    use lib_crypto::{Hash, KeyPair, PublicKey};
 
     fn create_test_identity() -> Identity {
+        let keypair = KeyPair::generate().expect("keypair");
+        let public_key: PublicKey = keypair.public_key.clone();
+        let private_key = Some(keypair.private_key.clone());
+        let did = "did:zhtp:test_identity".to_string();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+
         Identity {
             id: Hash::from_bytes("test_identity".as_bytes()),
             identity_type: IdentityType::Human,
-            public_key: vec![1, 2, 3, 4],
+            did,
+            public_key,
+            private_key,
+            node_id: Hash::from_bytes("node_id".as_bytes()),
+            device_node_ids: HashMap::new(),
+            primary_device: "primary-device".to_string(),
             ownership_proof: ZeroKnowledgeProof::default(),
-            credentials: HashMap::new(),
+            credentials: HashMap::new(), // credential map empty in test
             reputation: 100,
             age: Some(25),
             access_level: AccessLevel::FullCitizen,
@@ -848,9 +859,22 @@ mod tests {
             wallet_manager: WalletManager::new(Hash::from_bytes("test_identity".as_bytes())),
             did_document_hash: Some(Hash::from_bytes("did_document".as_bytes())),
             attestations: vec![],
-            created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-            last_active: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            created_at: now,
+            last_active: now,
             recovery_keys: vec![],
+            owner_identity_id: None,
+            reward_wallet_id: None,
+            encrypted_master_seed: None,
+            next_wallet_index: 0,
+            password_hash: None,
+            master_seed_phrase: None,
+            zk_identity_secret: [0u8; 32],
+            zk_credential_hash: [0u8; 32],
+            wallet_master_seed: [0u8; 64],
+            citizenship_verified: false,
+            dao_member_id: String::new(),
+            dao_voting_power: 0,
+            jurisdiction: None,
         }
     }
 
