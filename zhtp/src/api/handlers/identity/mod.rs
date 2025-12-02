@@ -1,6 +1,9 @@
 //! Identity Handler Module
-//! 
+//!
 //! Clean, minimal identity management using lib-identity patterns
+
+pub mod login_handlers;
+pub mod password_reset;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -36,16 +39,28 @@ use lib_blockchain::{
 pub struct IdentityHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
     economic_model: Arc<RwLock<IdentityEconomicModel>>,
+    session_manager: Arc<crate::session_manager::SessionManager>,
+    rate_limiter: Arc<crate::api::middleware::RateLimiter>,
+    account_lockout: Arc<login_handlers::AccountLockout>,
+    csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
 }
 
 impl IdentityHandler {
     pub fn new(
         identity_manager: Arc<RwLock<IdentityManager>>,
         economic_model: Arc<RwLock<IdentityEconomicModel>>,
+        session_manager: Arc<crate::session_manager::SessionManager>,
+        rate_limiter: Arc<crate::api::middleware::RateLimiter>,
+        account_lockout: Arc<login_handlers::AccountLockout>,
+        csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
     ) -> Self {
         Self {
             identity_manager,
             economic_model,
+            session_manager,
+            rate_limiter,
+            account_lockout,
+            csrf_protection,
         }
     }
 }
@@ -58,6 +73,15 @@ impl ZhtpRequestHandler for IdentityHandler {
         let response = match (request.method, request.uri.as_str()) {
             (ZhtpMethod::Post, "/api/v1/identity/create") => {
                 self.handle_create_identity(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/signin") => {
+                self.handle_signin(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/login") => {
+                self.handle_login(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/password/recover") => {
+                self.handle_password_recovery(request).await
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/") => {
                 self.handle_get_identity(request).await
@@ -630,5 +654,46 @@ impl IdentityHandler {
         });
         
         Ok(ZhtpResponse::json(&response_body, None)?)
+    }
+
+    /// Handle signin request
+    /// POST /api/v1/identity/signin
+    async fn handle_signin(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        login_handlers::handle_signin(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            self.rate_limiter.clone(),
+            self.account_lockout.clone(),
+            self.csrf_protection.clone(),
+            &request,
+        )
+        .await
+    }
+
+    /// Handle login request (alias for signin)
+    /// POST /api/v1/identity/login
+    async fn handle_login(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        login_handlers::handle_login(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            self.rate_limiter.clone(),
+            self.account_lockout.clone(),
+            self.csrf_protection.clone(),
+            &request,
+        )
+        .await
+    }
+
+    /// Handle password recovery request (P0-8)
+    /// POST /api/v1/identity/password/recover
+    async fn handle_password_recovery(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        password_reset::handle_password_recovery(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+        )
+        .await
     }
 }
