@@ -263,11 +263,34 @@ pub struct PeerManagementStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::Hash;
+
+    fn dummy_pq_signature() -> lib_crypto::PostQuantumSignature {
+        lib_crypto::PostQuantumSignature {
+            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+            signature: vec![],
+            public_key: lib_crypto::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: [0u8; 32],
+            },
+            timestamp: 0,
+        }
+    }
+
+    fn build_node(id: NodeId, reputation: u32) -> DhtNode {
+        DhtNode {
+            id,
+            addresses: vec!["127.0.0.1:33442".to_string()],
+            public_key: dummy_pq_signature(),
+            last_seen: 0,
+            reputation,
+            storage_info: None,
+        }
+    }
     
     #[tokio::test]
     async fn test_peer_manager_creation() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let manager = DhtPeerManager::new(local_id, 100, 500);
         
         assert_eq!(manager.max_peers, 100);
@@ -277,27 +300,10 @@ mod tests {
     
     #[tokio::test]
     async fn test_add_peer() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let mut manager = DhtPeerManager::new(local_id, 100, 500);
         
-        let test_node = DhtNode {
-            id: Hash::from_bytes(&[2u8; 32]),
-            addresses: vec!["127.0.0.1:33442".to_string()],
-            public_key: lib_crypto::PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-                signature: vec![],
-                public_key: lib_crypto::PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
-                    ed25519_pk: vec![],
-                    key_id: [0u8; 32],
-                },
-                timestamp: 0,
-            },
-            last_seen: 0,
-            reputation: 1000,
-            storage_info: None,
-        };
+        let test_node = build_node(NodeId::from_bytes([2u8; 32]), 1000);
         
         manager.add_peer(test_node.clone()).await.unwrap();
         
@@ -307,27 +313,10 @@ mod tests {
     
     #[tokio::test]
     async fn test_reject_low_reputation_peer() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let mut manager = DhtPeerManager::new(local_id, 100, 500);
         
-        let low_rep_node = DhtNode {
-            id: Hash::from_bytes(&[2u8; 32]),
-            addresses: vec!["127.0.0.1:33442".to_string()],
-            public_key: lib_crypto::PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-                signature: vec![],
-                public_key: lib_crypto::PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
-                    ed25519_pk: vec![],
-                    key_id: [0u8; 32],
-                },
-                timestamp: 0,
-            },
-            last_seen: 0,
-            reputation: 100, // Below minimum of 500
-            storage_info: None,
-        };
+        let low_rep_node = build_node(NodeId::from_bytes([2u8; 32]), 100); // Below minimum of 500
         
         let result = manager.add_peer(low_rep_node).await;
         assert!(result.is_err());
@@ -336,27 +325,10 @@ mod tests {
     
     #[tokio::test]
     async fn test_update_peer_stats() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let mut manager = DhtPeerManager::new(local_id, 100, 500);
         
-        let test_node = DhtNode {
-            id: Hash::from_bytes(&[2u8; 32]),
-            addresses: vec!["127.0.0.1:33442".to_string()],
-            public_key: lib_crypto::PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-                signature: vec![],
-                public_key: lib_crypto::PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
-                    ed25519_pk: vec![],
-                    key_id: [0u8; 32],
-                },
-                timestamp: 0,
-            },
-            last_seen: 0,
-            reputation: 1000,
-            storage_info: None,
-        };
+        let test_node = build_node(NodeId::from_bytes([2u8; 32]), 1000);
         
         manager.add_peer(test_node.clone()).await.unwrap();
         manager.update_peer_stats(&test_node.id, 100, 50, 0.5, true).unwrap();

@@ -504,6 +504,7 @@ impl Default for EconomicStorageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PaymentPreferences;
 
     #[tokio::test]
     async fn test_economic_manager_creation() {
@@ -536,37 +537,38 @@ mod tests {
 
     /// Helper function to create test identity for testing
     fn create_test_identity() -> crate::ZhtpIdentity {
-        use lib_identity::types::{IdentityType, AccessLevel};
+        use lib_crypto::{PrivateKey, PublicKey};
+        use lib_identity::types::IdentityType;
         use lib_proofs::ZeroKnowledgeProof;
-        use std::collections::HashMap;
-        use lib_identity::IdentityId;
-        use lib_identity::wallets::WalletManager;
 
-        let identity_id = IdentityId::from_bytes(&[1u8; 32]);
-        crate::ZhtpIdentity {
-            id: identity_id.clone(),
-            identity_type: IdentityType::Human,
-            public_key: vec![1, 2, 3, 4, 5],
-            ownership_proof: ZeroKnowledgeProof {
-                proof_system: "test".to_string(),
-                proof_data: vec![],
-                public_inputs: vec![],
-                verification_key: vec![],
-                plonky2_proof: None,
-                proof: vec![],
-            },
-            credentials: HashMap::new(),
-            reputation: 100,
-            age: Some(25),
-            access_level: AccessLevel::FullCitizen,
-            metadata: HashMap::new(),
-            private_data_id: None,
-            wallet_manager: WalletManager::new(identity_id),
-            did_document_hash: None,
-            attestations: vec![],
-            created_at: 1234567890,
-            last_active: 1234567890,
-            recovery_keys: vec![],
-        }
+        let public_key = PublicKey {
+            dilithium_pk: vec![1, 2, 3],
+            kyber_pk: vec![],
+            key_id: [0u8; 32],
+        };
+        let private_key = PrivateKey {
+            dilithium_sk: vec![4, 5, 6],
+            kyber_sk: vec![],
+            master_seed: vec![7, 8, 9],
+        };
+        let ownership_proof = ZeroKnowledgeProof::new(
+            "test".to_string(),
+            vec![],
+            vec![],
+            vec![],
+            None,
+        );
+
+        crate::ZhtpIdentity::new(
+            IdentityType::Human,
+            public_key,
+            private_key,
+            "laptop".to_string(),
+            Some(25),
+            Some("us".to_string()),
+            true,
+            ownership_proof,
+        )
+        .expect("valid test identity")
     }
 }

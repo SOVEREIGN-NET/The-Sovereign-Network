@@ -218,17 +218,7 @@ mod tests {
             tags: vec!["test".to_string()],
             created_at: 12345678,
             // ... other fields would be here
-            owner: lib_identity::ZhtpIdentity::new(
-                lib_identity::types::IdentityType::Human,
-                vec![0u8; 32],
-                lib_proofs::ZeroKnowledgeProof::new(
-                    "test".to_string(),
-                    vec![],
-                    vec![],
-                    vec![],
-                    None,
-                ),
-            ).unwrap(),
+            owner: dummy_identity(),
             filename: "test.txt".to_string(),
             tier: crate::types::dht_types::StorageTier::Hot,
             encryption: crate::types::storage_types::EncryptionLevel::None,
@@ -254,5 +244,41 @@ mod tests {
         let wallet_content = manager.get_wallet_content(&wallet_id);
         assert_eq!(wallet_content.len(), 1);
         assert_eq!(wallet_content[0], content_hash);
+    }
+
+    fn dummy_identity() -> lib_identity::ZhtpIdentity {
+        use lib_crypto::{PrivateKey, PublicKey};
+        use lib_identity::types::IdentityType;
+        use lib_proofs::ZeroKnowledgeProof;
+
+        let public_key = PublicKey {
+            dilithium_pk: vec![1, 2, 3],
+            kyber_pk: vec![],
+            key_id: [0u8; 32],
+        };
+        let private_key = PrivateKey {
+            dilithium_sk: vec![4, 5, 6],
+            kyber_sk: vec![],
+            master_seed: vec![7, 8, 9],
+        };
+        let ownership_proof = ZeroKnowledgeProof::new(
+            "test".to_string(),
+            vec![],
+            vec![],
+            vec![],
+            None,
+        );
+
+        lib_identity::ZhtpIdentity::new(
+            IdentityType::Human,
+            public_key,
+            private_key,
+            "laptop".to_string(),
+            Some(25),
+            Some("us".to_string()),
+            true,
+            ownership_proof,
+        )
+        .expect("valid dummy identity")
     }
 }

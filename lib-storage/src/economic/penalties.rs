@@ -235,7 +235,7 @@ mod tests {
     fn test_penalty_enforcement() {
         let mut enforcer = PenaltyEnforcer::new();
         let contract_id = Hash::from_bytes(&[1u8; 32]);
-        let node_id = Hash::from_bytes(&[2u8; 32]);
+        let node_id = NodeId::from_bytes([2u8; 32]);
 
         let event = enforcer.enforce_penalty(
             contract_id,

@@ -1438,11 +1438,10 @@ pub struct StorageStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::Hash;
     
     #[tokio::test]
     async fn test_storage_creation() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let storage = DhtStorage::new(node_id, 1024 * 1024); // 1MB
         
         assert_eq!(storage.current_usage, 0);
@@ -1451,7 +1450,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_store_and_retrieve() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 1024 * 1024);
         
         let key = "test_key".to_string();
@@ -1472,7 +1471,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_capacity_limit() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 5); // Very small capacity
         
         let key = "test_key".to_string();
@@ -1485,7 +1484,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_remove() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 1024);
         
         let key = "test_key".to_string();
@@ -1507,7 +1506,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_expiry() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 1024);
         
         let key = "test_key".to_string();

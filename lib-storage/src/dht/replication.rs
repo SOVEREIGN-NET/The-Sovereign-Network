@@ -307,11 +307,10 @@ pub struct OverallReplicationStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::Hash;
     
     #[test]
     fn test_replication_creation() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let replication = DhtReplication::new(local_id, 3);
         
         assert_eq!(replication.default_replication_factor, 3);
@@ -321,7 +320,7 @@ mod tests {
     
     #[test]
     fn test_policy_management() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let mut replication = DhtReplication::new(local_id, 3);
         
         let policy = ReplicationPolicy {
@@ -340,7 +339,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_replicate_data_insufficient_nodes() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let mut replication = DhtReplication::new(local_id, 3);
         
         let key = "test_key".to_string();
@@ -353,7 +352,7 @@ mod tests {
     
     #[test]
     fn test_replication_stats() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let replication = DhtReplication::new(local_id, 3);
         
         let stats = replication.get_replication_stats();
@@ -365,7 +364,7 @@ mod tests {
     
     #[test]
     fn test_keys_needing_repair() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let mut replication = DhtReplication::new(local_id, 3);
         
         // Manually add a status that needs repair
@@ -373,7 +372,7 @@ mod tests {
             key: "test_key".to_string(),
             total_replicas: 1,
             required_replicas: 3,
-            replica_nodes: vec![Hash::from_bytes(&[2u8; 32])],
+            replica_nodes: vec![NodeId::from_bytes([2u8; 32])],
             failed_nodes: vec![],
             last_update: 12345,
             repair_needed: true,

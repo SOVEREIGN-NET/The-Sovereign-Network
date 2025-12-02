@@ -265,6 +265,36 @@ impl NodeId {
         result
     }
 
+    /// Calculate Kademlia distance to another NodeId
+    ///
+    /// This is the standard Kademlia distance metric, defined as the index
+    /// of the most significant bit of the XOR result between two NodeIds.
+    /// A smaller value means a shorter distance.
+    ///
+    /// # Returns
+    /// `u32` - The distance, where 0 is the closest possible.
+    ///
+    /// # Examples
+    /// ```
+    /// use lib_identity::types::NodeId;
+    ///
+    /// let node1 = NodeId::from_bytes([0b10000000; 32]);
+    /// let node2 = NodeId::from_bytes([0b00000000; 32]);
+    ///
+    /// // The most significant differing bit is at index 0
+    /// assert_eq!(node1.kademlia_distance(&node2), 0);
+    /// ```
+    pub fn kademlia_distance(&self, other: &Self) -> u32 {
+        let xor_bytes = self.xor_distance(other);
+        for (i, byte) in xor_bytes.iter().enumerate() {
+            if *byte != 0 {
+                return (i as u32 * 8) + (7 - byte.leading_zeros());
+            }
+        }
+        0
+    }
+
+
     /// Convert to 32-byte storage Hash
     ///
     /// Since NodeId is now 32 bytes (per ARCHITECTURE_CONSOLIDATION.md),
