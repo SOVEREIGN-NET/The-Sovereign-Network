@@ -12,6 +12,7 @@
 //! - No sensitive data in logs
 
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,88 @@ use crate::session_manager::SessionManager;
 
 // Rate limiting via dependency injection
 use crate::api::middleware::RateLimiter;
+
+/// Account lockout tracker
+#[derive(Clone)]
+pub struct AccountLockout {
+    failed_attempts: Arc<RwLock<HashMap<String, Vec<u64>>>>,
+    max_attempts: usize,
+    lockout_duration_seconds: u64,
+}
+
+impl AccountLockout {
+    pub fn new() -> Self {
+        Self {
+            failed_attempts: Arc::new(RwLock::new(HashMap::new())),
+            max_attempts: 5, // Lock after 5 failed attempts
+            lockout_duration_seconds: 900, // 15 minutes
+        }
+    }
+
+    /// Check if an identity is locked out
+    pub async fn is_locked_out(&self, identity_id: &str) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let attempts = self.failed_attempts.read().await;
+        if let Some(attempt_times) = attempts.get(identity_id) {
+            // Count recent failed attempts within lockout window
+            let recent_failures = attempt_times
+                .iter()
+                .filter(|&&t| now - t < self.lockout_duration_seconds)
+                .count();
+
+            recent_failures >= self.max_attempts
+        } else {
+            false
+        }
+    }
+
+    /// Record a failed login attempt
+    pub async fn record_failure(&self, identity_id: &str) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut attempts = self.failed_attempts.write().await;
+        let entry = attempts.entry(identity_id.to_string()).or_insert_with(Vec::new);
+
+        // Remove old attempts outside lockout window
+        entry.retain(|&t| now - t < self.lockout_duration_seconds);
+
+        // Add this failure
+        entry.push(now);
+    }
+
+    /// Clear failures on successful login
+    pub async fn clear_failures(&self, identity_id: &str) {
+        let mut attempts = self.failed_attempts.write().await;
+        attempts.remove(identity_id);
+    }
+
+    /// Cleanup old entries
+    pub async fn cleanup(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut attempts = self.failed_attempts.write().await;
+        attempts.retain(|_, times| {
+            times.retain(|&t| now - t < self.lockout_duration_seconds);
+            !times.is_empty()
+        });
+    }
+}
+
+impl Default for AccountLockout {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Request structure for signin/login
 #[derive(Debug, Deserialize)]
@@ -118,10 +201,11 @@ pub async fn handle_signin(
     identity_manager: Arc<RwLock<IdentityManager>>,
     session_manager: Arc<SessionManager>,
     rate_limiter: Arc<RateLimiter>,
+    account_lockout: Arc<AccountLockout>,
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
     let client_ip = extract_client_ip(request);
-    handle_signin_with_ip(request_body, identity_manager, session_manager, rate_limiter, &client_ip).await
+    handle_signin_with_ip(request_body, identity_manager, session_manager, rate_limiter, account_lockout, &client_ip).await
 }
 
 /// Handle signin request with IP address for rate limiting
@@ -130,6 +214,7 @@ pub async fn handle_signin_with_ip(
     identity_manager: Arc<RwLock<IdentityManager>>,
     session_manager: Arc<SessionManager>,
     rate_limiter: Arc<RateLimiter>,
+    account_lockout: Arc<AccountLockout>,
     client_ip: &str,
 ) -> ZhtpResult<ZhtpResponse> {
     let now = std::time::SystemTime::now()
@@ -216,6 +301,22 @@ pub async fn handle_signin_with_ip(
         .map_err(|e| anyhow::anyhow!("Invalid identity ID hex: {}", e))?;
     let identity_id = lib_crypto::Hash::from_bytes(&identity_id_bytes);
 
+    // P0-4: Check account lockout before attempting authentication
+    if account_lockout.is_locked_out(&identity_id_str).await {
+        AuthAuditLog {
+            timestamp: now,
+            ip_address: client_ip.to_string(),
+            success: false,
+            identity_exists: false,
+            failure_reason: Some("account_locked_out".to_string()),
+        }.log();
+
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::TooManyRequests,
+            "Account temporarily locked due to too many failed login attempts. Please try again later.".to_string(),
+        ));
+    }
+
     // P0-2: No sensitive data in logs (removed identity_id_str from logs)
     tracing::info!("Authentication attempt from IP: {}", client_ip);
 
@@ -258,6 +359,9 @@ pub async fn handle_signin_with_ip(
     let identity_data = match validation_result {
         Ok(Some(data)) => data,
         Ok(None) | Err(_) => {
+            // P0-4: Record failed attempt for account lockout
+            account_lockout.record_failure(&identity_id_str).await;
+
             // P0-2: Generic error message doesn't leak internal state
             AuthAuditLog {
                 timestamp: now,
@@ -275,6 +379,9 @@ pub async fn handle_signin_with_ip(
     };
 
     let (did, identity_type, access_level, created_at) = identity_data;
+
+    // P0-4: Clear failed attempts on successful authentication
+    account_lockout.clear_failures(&identity_id_str).await;
 
     // Create session (only after successful validation)
     let session_token = session_manager
@@ -325,10 +432,11 @@ pub async fn handle_login(
     identity_manager: Arc<RwLock<IdentityManager>>,
     session_manager: Arc<SessionManager>,
     rate_limiter: Arc<RateLimiter>,
+    account_lockout: Arc<AccountLockout>,
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
     // Login is identical to signin
-    handle_signin(request_body, identity_manager, session_manager, rate_limiter, request).await
+    handle_signin(request_body, identity_manager, session_manager, rate_limiter, account_lockout, request).await
 }
 
 #[cfg(test)]

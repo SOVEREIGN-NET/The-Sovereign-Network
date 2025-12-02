@@ -2,7 +2,7 @@
 //!
 //! Clean, minimal identity management using lib-identity patterns
 
-mod login_handlers;
+pub mod login_handlers;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -40,6 +40,7 @@ pub struct IdentityHandler {
     economic_model: Arc<RwLock<IdentityEconomicModel>>,
     session_manager: Arc<crate::session_manager::SessionManager>,
     rate_limiter: Arc<crate::api::middleware::RateLimiter>,
+    account_lockout: Arc<login_handlers::AccountLockout>,
 }
 
 impl IdentityHandler {
@@ -48,12 +49,14 @@ impl IdentityHandler {
         economic_model: Arc<RwLock<IdentityEconomicModel>>,
         session_manager: Arc<crate::session_manager::SessionManager>,
         rate_limiter: Arc<crate::api::middleware::RateLimiter>,
+        account_lockout: Arc<login_handlers::AccountLockout>,
     ) -> Self {
         Self {
             identity_manager,
             economic_model,
             session_manager,
             rate_limiter,
+            account_lockout,
         }
     }
 }
@@ -654,6 +657,7 @@ impl IdentityHandler {
             self.identity_manager.clone(),
             self.session_manager.clone(),
             self.rate_limiter.clone(),
+            self.account_lockout.clone(),
             &request,
         )
         .await
@@ -667,6 +671,7 @@ impl IdentityHandler {
             self.identity_manager.clone(),
             self.session_manager.clone(),
             self.rate_limiter.clone(),
+            self.account_lockout.clone(),
             &request,
         )
         .await

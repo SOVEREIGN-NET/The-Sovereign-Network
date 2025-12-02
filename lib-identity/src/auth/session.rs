@@ -1,10 +1,11 @@
 //! Session token management for authenticated users
-//! 
+//!
 //! Provides secure session tokens for authenticated identities
 
 use lib_crypto::hash_blake3;
 use crate::types::IdentityId;
 use anyhow::Result;
+use rand::RngCore;
 
 /// Session token for authenticated users
 #[derive(Debug, Clone)]
@@ -41,18 +42,23 @@ impl SessionToken {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
-        // Generate secure random token using identity and timestamp
+
+        // P0-3 FIX: Use OsRng for cryptographically secure random bytes (256 bits)
+        // OsRng uses OS entropy source (getrandom on Linux, BCryptGenRandom on Windows)
+        let mut random_bytes = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut random_bytes);
+
+        // Generate secure random token using identity, timestamp, and CSPRNG bytes
         let token_material = [
             identity_id.0.as_slice(),
             &now.to_le_bytes(),
-            &rand::random::<[u8; 32]>(),
+            &random_bytes,
             b"ZHTP_session_token_v1"
         ].concat();
-        
+
         let token_hash = hash_blake3(&token_material);
         let token = hex::encode(token_hash);
-        
+
         Ok(SessionToken {
             token,
             identity_id,

@@ -390,12 +390,16 @@ impl ZhtpUnifiedServer {
         // Start cleanup task to prevent memory leak
         rate_limiter.start_cleanup_task();
 
+        // Create account lockout tracker for per-identity brute force protection
+        let account_lockout = Arc::new(crate::api::handlers::identity::login_handlers::AccountLockout::new());
+
         let identity_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             IdentityHandler::new(
                 identity_manager.clone(),
                 identity_economic_model,
                 _session_manager.clone(),
-                rate_limiter
+                rate_limiter,
+                account_lockout,
             )
         );
         http_router.register_handler("/api/v1/identity".to_string(), identity_handler.clone());
