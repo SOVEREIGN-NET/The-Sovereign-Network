@@ -6,6 +6,7 @@ internal-docs/
 .DS_Store
 
 target/
+.cargo-temp/
 Cargo.lock
 
 # Backup files
