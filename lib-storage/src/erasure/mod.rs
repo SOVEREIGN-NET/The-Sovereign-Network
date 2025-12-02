@@ -794,14 +794,16 @@ mod tests {
     #[test]
     fn test_optimal_distribution() {
         let ec = ErasureCoding::new(4, 2).unwrap(); // 6 total shards
-        
+
+        let total_storage = 100 * 1024 * 1024; // 100MB to satisfy min per-node threshold
+
         // Test with more nodes than shards
-        let distribution = ec.calculate_optimal_distribution(1000, 10).unwrap();
+        let distribution = ec.calculate_optimal_distribution(total_storage, 10).unwrap();
         assert_eq!(distribution.len(), 10);
         assert_eq!(distribution.iter().sum::<usize>(), 6); // Total shards distributed
         
         // Test with exact number of nodes
-        let distribution = ec.calculate_optimal_distribution(1000, 6).unwrap();
+        let distribution = ec.calculate_optimal_distribution(total_storage, 6).unwrap();
         assert_eq!(distribution.len(), 6);
         assert!(distribution.iter().all(|&x| x == 1)); // One shard per node
     }

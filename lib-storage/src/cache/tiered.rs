@@ -84,7 +84,7 @@ impl TieredCache {
         // Check warm tier
         if let Some(data) = self.warm_cache.remove(key) {
             let data_clone = data.clone();
-            self.warm_size -= data.len();
+            self.warm_size = self.warm_size.saturating_sub(data.len());
 
             // Promote to hot if threshold met
             if access_count >= self.hot_threshold {
@@ -98,7 +98,7 @@ impl TieredCache {
         // Check cold tier
         if let Some(data) = self.cold_cache.remove(key) {
             let data_clone = data.clone();
-            self.cold_size -= data.len();
+            self.cold_size = self.cold_size.saturating_sub(data.len());
 
             // Promote to appropriate tier
             if access_count >= self.hot_threshold {

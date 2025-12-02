@@ -41,16 +41,7 @@ impl KademliaRouter {
     
     /// Calculate XOR distance between two node IDs
     pub fn calculate_distance(&self, a: &NodeId, b: &NodeId) -> u32 {
-        let a_bytes = a.as_bytes();
-        let b_bytes = b.as_bytes();
-        
-        for i in 0..32 {
-            let xor = a_bytes[i] ^ b_bytes[i];
-            if xor != 0 {
-                return (i as u32 * 8) + (7 - xor.leading_zeros());
-            }
-        }
-        0
+        a.kademlia_distance(b)
     }
     
     /// Get bucket index for a given distance
@@ -367,54 +358,11 @@ pub struct RoutingStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::Hash;
     
-    #[test]
-    fn test_router_creation() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
-        let router = KademliaRouter::new(local_id, 20);
-        
-        assert_eq!(router.routing_table.len(), 160);
-        assert_eq!(router.k, 20);
-    }
-    
-    #[test]
-    fn test_distance_calculation() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
-        let router = KademliaRouter::new(local_id, 20);
-        
-        let node_a = Hash::from_bytes(&[1u8; 32]);
-        let node_b = Hash::from_bytes(&[2u8; 32]);
-        
-        let distance = router.calculate_distance(&node_a, &node_b);
-        assert!(distance > 0);
-        
-        // Distance to self should be 0
-        let self_distance = router.calculate_distance(&node_a, &node_a);
-        assert_eq!(self_distance, 0);
-    }
-    
-    #[test]
-    fn test_bucket_index() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
-        let router = KademliaRouter::new(local_id, 20);
-        let distance_0 = 0;
-        let distance_10 = 10;
-        let distance_200 = 200;
-        
-        assert_eq!(router.get_bucket_index(distance_0), 0);
-        assert_eq!(router.get_bucket_index(distance_10), 10);
-        assert_eq!(router.get_bucket_index(distance_200), 159); // Capped at 159
-    }
-    
-    #[tokio::test]
-    async fn test_add_node() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
-        let mut router = KademliaRouter::new(local_id, 20);
-        
-        let test_node = DhtNode {
-            id: Hash::from_bytes(&[2u8; 32]),
-            addresses: vec!["127.0.0.1:33442".to_string()],
+    fn build_test_node(id: NodeId, port: u16) -> DhtNode {
+        DhtNode {
+            id,
+            addresses: vec![format!("127.0.0.1:{}", port)],
             public_key: lib_crypto::PostQuantumSignature {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
                 signature: vec![],
@@ -428,7 +376,67 @@ mod tests {
             last_seen: 0,
             reputation: 1000,
             storage_info: None,
-        };
+        }
+    }
+
+    #[test]
+    fn test_router_creation() {
+        let local_id = NodeId::from_bytes([1u8; 32]);
+        let router = KademliaRouter::new(local_id, 20);
+        
+        assert_eq!(router.routing_table.len(), 160);
+        assert_eq!(router.k, 20);
+    }
+    
+    #[test]
+    fn test_distance_calculation() {
+        let local_id = NodeId::from_bytes([1u8; 32]);
+        let router = KademliaRouter::new(local_id, 20);
+        
+        let node_a = NodeId::from_bytes([1u8; 32]);
+        let node_b = NodeId::from_bytes([2u8; 32]);
+        
+        let distance = router.calculate_distance(&node_a, &node_b);
+        assert!(distance > 0);
+        
+        // Distance to self should be 0
+        let self_distance = router.calculate_distance(&node_a, &node_a);
+        assert_eq!(self_distance, 0);
+    }
+
+    #[test]
+    fn test_calculate_distance_matches_nodeid_xor() {
+        let local_id = NodeId::from_bytes([0u8; 32]);
+        let router = KademliaRouter::new(local_id, 20);
+
+        let id_a = NodeId::from_bytes([0xAA; 32]);
+        let id_b = NodeId::from_bytes([0x0F; 32]);
+
+        let expected = id_a.kademlia_distance(&id_b);
+        let distance = router.calculate_distance(&id_a, &id_b);
+
+        assert_eq!(distance, expected);
+    }
+    
+    #[test]
+    fn test_bucket_index() {
+        let local_id = NodeId::from_bytes([1u8; 32]);
+        let router = KademliaRouter::new(local_id, 20);
+        let distance_0 = 0;
+        let distance_10 = 10;
+        let distance_200 = 200;
+        
+        assert_eq!(router.get_bucket_index(distance_0), 0);
+        assert_eq!(router.get_bucket_index(distance_10), 10);
+        assert_eq!(router.get_bucket_index(distance_200), 159); // Capped at 159
+    }
+    
+    #[tokio::test]
+    async fn test_add_node() {
+        let local_id = NodeId::from_bytes([1u8; 32]);
+        let mut router = KademliaRouter::new(local_id, 20);
+        
+        let test_node = build_test_node(NodeId::from_bytes([2u8; 32]), 33442);
         
         router.add_node(test_node).await.unwrap();
         
@@ -441,7 +449,7 @@ mod tests {
 
     #[test]
     fn test_k_value_functionality() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let k_value = 15;
         let router = KademliaRouter::new(local_id, k_value);
         
@@ -457,7 +465,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_k_bucket_limits() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let k_value = 3; // Small k for testing
         let mut router = KademliaRouter::new(local_id, k_value);
         
@@ -466,23 +474,10 @@ mod tests {
             let mut node_bytes = [1u8; 32];
             node_bytes[31] = i; // Small distance variation
             
-            let test_node = DhtNode {
-                id: Hash::from_bytes(&node_bytes),
-                addresses: vec![format!("127.0.0.1:{}", 33440 + i as u16)],
-                public_key: lib_crypto::PostQuantumSignature {
-                    algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-                    signature: vec![],
-                    public_key: lib_crypto::PublicKey {
-                        dilithium_pk: vec![],
-                        kyber_pk: vec![],
-                        key_id: [0u8; 32],
-                    },
-                    timestamp: 0,
-                },
-                last_seen: 0,
-                reputation: 1000,
-                storage_info: None,
-            };
+            let test_node = build_test_node(
+                NodeId::from_bytes(node_bytes),
+                33440 + i as u16,
+            );
             
             router.add_node(test_node).await.unwrap();
         }
@@ -493,11 +488,11 @@ mod tests {
 
     #[test]
     fn test_closest_nodes_k_limit() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let k_value = 5;
         let router = KademliaRouter::new(local_id, k_value);
         
-        let target = Hash::from_bytes(&[2u8; 32]);
+        let target = NodeId::from_bytes([2u8; 32]);
         
         // Request more nodes than k allows
         let closest = router.find_closest_nodes(&target, 20);
@@ -506,27 +501,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_bucket_maintenance() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let mut router = KademliaRouter::new(local_id, 20);
         
         // Add a node
-        let test_node = DhtNode {
-            id: Hash::from_bytes(&[2u8; 32]),
-            addresses: vec!["127.0.0.1:33442".to_string()],
-            public_key: lib_crypto::PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-                signature: vec![],
-                public_key: lib_crypto::PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
-                    key_id: [0u8; 32],
-                },
-                timestamp: 0,
-            },
-            last_seen: 0,
-            reputation: 1000,
-            storage_info: None,
-        };
+        let test_node = build_test_node(NodeId::from_bytes([2u8; 32]), 33442);
         
         router.add_node(test_node.clone()).await.unwrap();
         
@@ -545,7 +524,7 @@ mod tests {
 
     #[test]
     fn test_random_id_generation() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let router = KademliaRouter::new(local_id.clone(), 20);
         
         // Generate random IDs for different buckets
@@ -565,7 +544,7 @@ mod tests {
 
     #[test]
     fn test_bucket_refresh() {
-        let local_id = Hash::from_bytes(&[1u8; 32]);
+        let local_id = NodeId::from_bytes([1u8; 32]);
         let router = KademliaRouter::new(local_id, 20);
         
         // Test basic functionality - new router should not need refresh with long interval
@@ -587,5 +566,26 @@ mod tests {
         for &bucket_index in &one_second_check {
             assert!(bucket_index < 160, "Bucket index should be within valid range");
         }
+    }
+
+    #[tokio::test]
+    async fn test_nodeid_persistence_in_routing_table() {
+        let local_id = NodeId::from_did_device("did:zhtp:local", "laptop").unwrap();
+        let mut router = KademliaRouter::new(local_id, 20);
+
+        let peer_id = NodeId::from_did_device("did:zhtp:peer", "phone").unwrap();
+        let test_node = build_test_node(peer_id, 45000);
+
+        router.add_node(test_node.clone()).await.unwrap();
+
+        let distance = router.calculate_distance(&local_id, &peer_id);
+        let bucket_index = router.get_bucket_index(distance);
+        let bucket_nodes = router.get_bucket_nodes(bucket_index);
+
+        assert_eq!(bucket_nodes.len(), 1);
+        assert_eq!(bucket_nodes[0].id, peer_id);
+
+        let closest = router.find_closest_nodes(&peer_id, 1);
+        assert_eq!(closest.first().map(|n| n.id), Some(peer_id));
     }
 }

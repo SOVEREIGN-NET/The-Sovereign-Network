@@ -250,7 +250,12 @@ impl Default for VerificationStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::storage_types::ContentHash;
+    use crate::types::ContentHash;
+    use lib_crypto::hash_blake3;
+
+    fn content_hash(label: &str) -> ContentHash {
+        ContentHash::from_bytes(&hash_blake3(label.as_bytes()))
+    }
 
     #[test]
     fn test_verification_result() {
@@ -286,8 +291,8 @@ mod tests {
     fn test_storage_proof_verification_content_mismatch() {
         let verifier = ProofVerifier::default();
         
-        let content_hash1 = ContentHash::from("content1".to_string());
-        let content_hash2 = ContentHash::from("content2".to_string());
+        let content_hash1 = content_hash("content1");
+        let content_hash2 = content_hash("content2");
         
         let proof = StorageProof::new(
             content_hash1,
@@ -318,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_retrieval_proof_combined_hash() {
-        let content_hash = ContentHash::from("test".to_string());
+        let content_hash = content_hash("test");
         let sample_blocks = vec![
             vec![1, 2, 3],
             vec![4, 5, 6],

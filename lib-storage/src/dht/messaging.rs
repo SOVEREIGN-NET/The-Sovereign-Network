@@ -269,11 +269,23 @@ fn generate_response_id(original_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::Hash;
+
+    fn dummy_pq_signature() -> lib_crypto::PostQuantumSignature {
+        lib_crypto::PostQuantumSignature {
+            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+            signature: vec![],
+            public_key: lib_crypto::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: [0u8; 32],
+            },
+            timestamp: 0,
+        }
+    }
     
     #[tokio::test]
     async fn test_messaging_creation() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let messaging = DhtMessaging::new(node_id);
         
         assert_eq!(messaging.outgoing_queue.len(), 0);
@@ -282,35 +294,26 @@ mod tests {
     
     #[tokio::test]
     async fn test_queue_message() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let mut messaging = DhtMessaging::new(node_id);
         
         let test_message = DhtMessage {
             message_id: "test_msg".to_string(),
             message_type: DhtMessageType::Ping,
-            sender_id: Hash::from_bytes(&[1u8; 32]),
-            target_id: Some(Hash::from_bytes(&[2u8; 32])),
+            sender_id: NodeId::from_bytes([1u8; 32]),
+            target_id: Some(NodeId::from_bytes([2u8; 32])),
             key: None,
             value: None,
             nodes: None,
+            contract_data: None,
             timestamp: 12345,
             signature: None,
         };
         
         let test_node = DhtNode {
-            id: Hash::from_bytes(&[2u8; 32]),
+            id: NodeId::from_bytes([2u8; 32]),
             addresses: vec!["127.0.0.1:33442".to_string()],
-            public_key: lib_crypto::PostQuantumSignature {
-                algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-                signature: vec![],
-                public_key: lib_crypto::PublicKey {
-                    dilithium_pk: vec![],
-                    kyber_pk: vec![],
-                    ed25519_pk: vec![],
-                    key_id: [0u8; 32],
-                },
-                timestamp: 0,
-            },
+            public_key: dummy_pq_signature(),
             last_seen: 0,
             reputation: 1000,
             storage_info: None,
@@ -323,17 +326,18 @@ mod tests {
     
     #[tokio::test]
     async fn test_handle_ping() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let mut messaging = DhtMessaging::new(node_id);
         
         let ping_message = DhtMessage {
             message_id: "ping_test".to_string(),
             message_type: DhtMessageType::Ping,
-            sender_id: Hash::from_bytes(&[2u8; 32]),
-            target_id: Some(Hash::from_bytes(&[1u8; 32])),
+            sender_id: NodeId::from_bytes([2u8; 32]),
+            target_id: Some(NodeId::from_bytes([1u8; 32])),
             key: None,
             value: None,
             nodes: None,
+            contract_data: None,
             timestamp: 12345,
             signature: None,
         };
@@ -343,7 +347,7 @@ mod tests {
         assert!(response.is_some());
         if let Some(pong) = response {
             assert!(matches!(pong.message_type, DhtMessageType::Pong));
-            assert_eq!(pong.target_id, Some(Hash::from_bytes(&[2u8; 32])));
+            assert_eq!(pong.target_id, Some(NodeId::from_bytes([2u8; 32])));
         }
     }
     
@@ -357,7 +361,7 @@ mod tests {
     
     #[test]
     fn test_queue_stats() {
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
         let messaging = DhtMessaging::new(node_id);
         
         let stats = messaging.get_queue_stats();

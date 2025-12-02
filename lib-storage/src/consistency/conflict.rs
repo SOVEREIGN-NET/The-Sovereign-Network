@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn test_sum_merge() {
         let strategy = SumMergeStrategy;
-        let result = strategy.merge(vec![10, 20, 30]).unwrap();
+        let result = strategy.merge(vec![10i64, 20, 30]).unwrap();
         assert_eq!(result, 60);
     }
 

@@ -326,7 +326,7 @@ mod tests {
         let manager = StorageRewardTracker::new();
         
         let high_performance = ProviderPerformance {
-            node_id: Hash::from_bytes(&[1u8; 32]),
+            node_id: NodeId::from_bytes([1u8; 32]),
             reputation: 0.95,
             uptime: 0.999,
             data_integrity: 0.999,
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn test_reward_calculation() {
         let mut manager = StorageRewardTracker::new();
-        let node_id = Hash::from_bytes(&[1u8; 32]);
+        let node_id = NodeId::from_bytes([1u8; 32]);
 
         let performance = ProviderPerformance {
             node_id: node_id.clone(),
