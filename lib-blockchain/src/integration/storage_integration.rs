@@ -168,7 +168,7 @@ impl BlockchainStorageManager {
 
         // Create unified storage configuration with proper NodeId
         let random_bytes = rand::random::<[u8; 32]>();
-        let node_id = lib_storage::NodeId::from_bytes(random_bytes);
+        let node_id = lib_identity::NodeId::from_bytes(random_bytes);
         let storage_config = UnifiedStorageConfig {
             node_id,
             addresses: vec!["127.0.0.1:33445".to_string()],

@@ -136,7 +136,7 @@ impl StorageIntegration {
     pub async fn new(config: StorageConfig) -> Result<Self> {
         // Create unified storage system configuration
         let storage_config = UnifiedStorageConfig {
-            node_id: lib_crypto::Hash::from_bytes(&rand::random::<[u8; 32]>()),
+            node_id: lib_identity::NodeId::from_bytes(rand::random::<[u8; 32]>()),
             addresses: vec!["127.0.0.1:8080".to_string()], // Default addresses
             economic_config: lib_storage::types::economic_types::EconomicManagerConfig {
                 default_duration_days: 30,
