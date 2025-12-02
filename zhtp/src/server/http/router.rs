@@ -148,15 +148,111 @@ impl HttpRouter {
         if let Some(handler) = self.routes.get(path) {
             return Some(handler);
         }
-        
+
+        // Apply path aliases for backward compatibility (Issue #7)
+        let aliased_path = self.apply_path_aliases(path);
+        if let Some(handler) = self.routes.get(&aliased_path) {
+            return Some(handler);
+        }
+
         // Try prefix matching for API routes
         for (route_path, handler) in &self.routes {
             if path.starts_with(route_path) {
                 return Some(handler);
             }
         }
-        
+
+        // Try prefix matching with aliased path
+        for (route_path, handler) in &self.routes {
+            if aliased_path.starts_with(route_path) {
+                return Some(handler);
+            }
+        }
+
         None
+    }
+
+    /// Validate path segment to prevent traversal attacks
+    fn is_valid_path_segment(segment: &str) -> bool {
+        // Security checks
+        if segment.is_empty() || segment.len() > 128 {
+            return false;
+        }
+        if segment.contains("..") || segment.contains('/') || segment.contains('\\') {
+            return false;
+        }
+        true
+    }
+
+    /// Apply path aliases for backward compatibility with old API client paths
+    fn apply_path_aliases(&self, path: &str) -> String {
+        // Legacy paths -> /api/v1 paths
+        match path {
+            // Mesh/Network aliases
+            "/mesh/peers" => "/api/v1/blockchain/network/peers".to_string(),
+            p if p.starts_with("/mesh/") => format!("/api/v1{}", p),
+
+            // Node status aliases
+            "/node/status" => "/api/v1/protocol/info".to_string(),
+            p if p.starts_with("/node/") => format!("/api/v1/protocol{}", &p[5..]),
+
+            // Blockchain aliases
+            "/blockchain/info" => "/api/v1/blockchain/status".to_string(),
+            p if p.starts_with("/blockchain/") => format!("/api/v1{}", p),
+
+            // DAO aliases
+            "/dao/proposals" => "/api/v1/dao/proposals/list".to_string(),
+            "/dao/vote" => "/api/v1/dao/vote/cast".to_string(),
+            "/dao/treasury" => "/api/v1/dao/treasury/balance".to_string(),
+            p if p.starts_with("/dao/") => format!("/api/v1{}", p),
+
+            // Wallet aliases
+            p if p.starts_with("/wallet/") => format!("/api/v1{}", p),
+
+            // Contract aliases (Issue #8) - map /api/v1/contract to /api/v1/blockchain/contracts
+            "/api/v1/contract/deploy" => "/api/v1/blockchain/contracts/deploy".to_string(),
+            "/api/v1/contract/execute" => "/api/v1/blockchain/contracts/execute".to_string(),
+            p if p.starts_with("/api/v1/contract/query/") => {
+                let contract_id = &p["/api/v1/contract/query/".len()..];
+                // Security: Validate contract_id to prevent path traversal
+                if Self::is_valid_path_segment(contract_id) {
+                    format!("/api/v1/blockchain/contracts/{}/state", contract_id)
+                } else {
+                    path.to_string() // No aliasing for invalid input
+                }
+            }
+            p if p.starts_with("/api/v1/contract/") && p.ends_with("/metadata") => {
+                let contract_id = &p["/api/v1/contract/".len()..p.len() - "/metadata".len()];
+                // Security: Validate contract_id to prevent path traversal
+                if Self::is_valid_path_segment(contract_id) {
+                    format!("/api/v1/blockchain/contracts/{}", contract_id)
+                } else {
+                    path.to_string()
+                }
+            }
+            p if p.starts_with("/api/v1/contract/") && p.ends_with("/upgrade") => {
+                let contract_id = &p["/api/v1/contract/".len()..p.len() - "/upgrade".len()];
+                // Security: Validate contract_id to prevent path traversal
+                if Self::is_valid_path_segment(contract_id) {
+                    format!("/api/v1/blockchain/contracts/{}/upgrade", contract_id)
+                } else {
+                    path.to_string()
+                }
+            }
+            p if p.starts_with("/api/v1/contract/") => {
+                let contract_id = &p["/api/v1/contract/".len()..];
+                // Security: Validate contract_id to prevent path traversal
+                if Self::is_valid_path_segment(contract_id) {
+                    format!("/api/v1/blockchain/contracts/{}", contract_id)
+                } else {
+                    path.to_string()
+                }
+            }
+            p if p.starts_with("/contract/") => format!("/api/v1/blockchain{}", p),
+
+            // Already has /api/v1 prefix or no alias needed
+            _ => path.to_string(),
+        }
     }
     
     async fn process_middleware(&self, mut request: ZhtpRequest) -> Result<(ZhtpRequest, Option<ZhtpResponse>)> {
@@ -266,13 +362,18 @@ impl HttpRouter {
         
         let content_type = response.headers.get("content-type")
             .unwrap_or_else(|| "application/json".to_string());
-        
+
+        // Security: CORS restrictions (issue #8)
+        // TODO: Restrict to specific origins in production by passing request to this method
+        let cors_origin = "*"; // Allow all for now - needs request context for origin validation
+
         let mut http_response = String::new();
         http_response.push_str(status_line);
         http_response.push_str(&format!("Content-Type: {}\r\n", content_type));
-        http_response.push_str("Access-Control-Allow-Origin: *\r\n");
+        http_response.push_str(&format!("Access-Control-Allow-Origin: {}\r\n", cors_origin));
         http_response.push_str("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n");
         http_response.push_str("Access-Control-Allow-Headers: Content-Type, Authorization\r\n");
+        http_response.push_str("X-API-Version: 1.0\r\n"); // Issue #14
         http_response.push_str(&format!("Content-Length: {}\r\n", response.body.len()));
         http_response.push_str("Connection: close\r\n");
         http_response.push_str("\r\n");
