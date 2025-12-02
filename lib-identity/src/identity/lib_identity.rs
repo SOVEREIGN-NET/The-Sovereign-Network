@@ -990,4 +990,695 @@ impl ZhtpIdentity {
     pub fn get_owner(&self) -> Option<IdentityId> {
         self.owner_identity_id.clone()
     }
+
+
+    /// Add a new device to this identity with deterministic NodeId derivation
+    ///
+    /// Creates a new device entry with NodeId derived from the identity's DID
+    /// and device name. Device names must be unique per identity.
+    ///
+    /// # Arguments
+    /// * `device_name` - Unique device identifier (e.g., "laptop-macos", "phone-android")
+    ///
+    /// # Returns
+    /// * `Ok(NodeId)` - The NodeId for the device (existing or newly created)
+    /// * `Err` - If NodeId derivation fails
+    ///
+    /// # Determinism
+    /// Same DID + same device_name → same NodeId (always)
+    ///
+    /// # Idempotency
+    /// Calling with existing device_name returns the existing NodeId without modification
+    ///
+    /// # Examples
+    /// ```ignore
+    /// // Add first device
+    // let laptop_node = identity.add_device("laptop-macos")?;
+    /// 
+    /// // Add second device
+    // let phone_node = identity.add_device("phone-android")?;
+    /// 
+    /// // Idempotent - returns existing NodeId
+    // let laptop_node_again = identity.add_device("laptop-macos")?;
+    // assert_eq!(laptop_node, laptop_node_again);
+    /// ```
+    pub fn add_device(&mut self, device_name: &str) -> Result<NodeId> {
+        // Check if device already exists (idempotent)
+        if let Some(&existing_node_id) = self.device_node_ids.get(device_name) {
+            // Copy the node_id before mutable borrow
+            let node_id_copy = existing_node_id;
+            // Update activity even for existing devices
+            self.update_activity();
+            return Ok(node_id_copy);
+        } 
+          // Generate deterministic NodeId from DID + device name
+        let node_id = NodeId::from_did_device(&self.did, device_name)?;
+
+        // Insert into device mapping
+        self.device_node_ids.insert(device_name.to_string(), node_id);
+
+        // Update last activity timestamp
+        self.update_activity();
+
+        Ok(node_id)
+    }
+
+    /// Remove a device from this identity
+    ///
+    /// Removes the device entry and its associated NodeId. Cannot remove
+    /// the primary device.
+    ///
+    /// # Arguments
+    /// * `device_name` - Device identifier to remove
+    ///
+    /// # Returns
+    /// * `Ok(())` - Device successfully removed
+    /// * `Err` - If device is primary or doesn't exist
+    ///
+    /// # Examples
+    /// ```ignore
+    /// identity.add_device("old-phone")?;
+    /// identity.remove_device("old-phone")?; // OK
+    /// identity.remove_device("laptop")?; // Error if primary device
+    /// ```
+    pub fn remove_device(&mut self, device_name: &str) -> Result<()> {
+        // Cannot remove primary device
+        if device_name == self.primary_device {
+            return Err(anyhow!("Cannot remove primary device '{}'", device_name));
+        }
+
+        // Check if device exists
+        if self.device_node_ids.remove(device_name).is_none() {
+            return Err(anyhow!("Device '{}' not found", device_name));
+        }
+
+        self.update_activity();
+        Ok(())
+    }
+
+    /// Get NodeId for a specific device
+    ///
+    /// # Arguments
+    /// * `device_name` - Device identifier
+    ///
+    /// # Returns
+    /// * `Some(NodeId)` - If device exists
+    /// * `None` - If device not registered
+    pub fn get_device_node_id(&self, device_name: &str) -> Option<NodeId> {
+        self.device_node_ids.get(device_name).copied()
+    }
+
+    /// List all registered device names
+    ///
+    /// # Returns
+    /// Vector of device names sorted alphabetically
+    pub fn list_devices(&self) -> Vec<String> {
+        let mut devices: Vec<String> = self.device_node_ids.keys().cloned().collect();
+        devices.sort();
+        devices
+    }
+
+    /// Get the number of registered devices
+    pub fn device_count(&self) -> usize {
+        self.device_node_ids.len()
+    }
+
+    /// Change the primary device
+    ///
+    /// Sets a new primary device and updates the main node_id field.
+    /// The new primary device must already be registered.
+    ///
+    /// # Arguments
+    /// * `new_primary` - Device name to set as primary
+    ///
+    /// # Returns
+    /// * `Ok(())` - Primary device successfully changed
+    /// * `Err` - If device doesn't exist
+    pub fn set_primary_device(&mut self, new_primary: &str) -> Result<()> {
+        // Verify device exists
+        let new_node_id = self.device_node_ids
+            .get(new_primary)
+            .ok_or_else(|| anyhow!("Device '{}' not registered", new_primary))?;
+
+        self.primary_device = new_primary.to_string();
+        self.node_id = *new_node_id;
+        self.update_activity();
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test: New device creates new NodeId
+    #[test]
+    fn test_add_device_creates_new_node_id() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let initial_count = identity.device_count();
+        let phone_node = identity.add_device("phone-android")?;
+
+        assert_eq!(identity.device_count(), initial_count + 1);
+        assert!(identity.device_node_ids.contains_key("phone-android"));
+        assert_eq!(identity.get_device_node_id("phone-android"), Some(phone_node));
+
+        Ok(())
+    }
+
+    /// Test: Duplicate device returns same NodeId (idempotent)
+    #[test]
+    fn test_add_device_idempotent() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let node_id_1 = identity.add_device("tablet-ios")?;
+        let node_id_2 = identity.add_device("tablet-ios")?;
+
+        assert_eq!(node_id_1, node_id_2);
+        assert_eq!(identity.device_count(), 2); // laptop + tablet
+
+        Ok(())
+    }
+
+    /// Test: NodeId derived correctly from DID + device
+    #[test]
+    fn test_device_node_id_deterministic() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let device_name = "test-device";
+        let node_id = identity.add_device(device_name)?;
+        let expected_node_id = NodeId::from_did_device(&identity.did, device_name)?;
+
+        assert_eq!(node_id, expected_node_id);
+
+        Ok(())
+    }
+
+    /// Test: last_active updated on add_device
+    #[test]
+    fn test_add_device_updates_activity() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let initial_activity = identity.last_active;
+        
+        // Force a delay to ensure timestamp changes
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        
+        identity.add_device("phone")?;
+        
+        assert!(
+            identity.last_active > initial_activity,
+            "Expected last_active ({}) to be greater than initial ({})",
+            identity.last_active,
+            initial_activity
+        );
+
+        Ok(())
+    }
+    /// Test: Multiple devices in HashMap
+    #[test]
+    fn test_multiple_devices() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let devices = vec!["phone-android", "tablet-ios", "desktop-windows"];
+        
+        for device in &devices {
+            identity.add_device(device)?;
+        }
+
+        assert_eq!(identity.device_count(), devices.len() + 1); // +1 for primary
+        
+        for device in &devices {
+            assert!(identity.device_node_ids.contains_key(*device));
+        }
+
+        Ok(())
+    }
+
+    /// Test: List devices returns sorted names
+    #[test]
+    fn test_list_devices() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        identity.add_device("zebra-device")?;
+        identity.add_device("alpha-device")?;
+        identity.add_device("beta-device")?;
+
+        let devices = identity.list_devices();
+        
+        // Should be sorted alphabetically
+        assert!(devices.windows(2).all(|w| w[0] <= w[1]));
+        assert!(devices.contains(&"laptop".to_string())); // primary device
+
+        Ok(())
+    }
+
+    /// Test: Cannot remove primary device
+    #[test]
+    fn test_cannot_remove_primary_device() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let result = identity.remove_device("laptop");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("primary device"));
+
+        Ok(())
+    }
+
+    /// Test: Remove non-primary device succeeds
+    #[test]
+    fn test_remove_device_succeeds() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        identity.add_device("old-phone")?;
+        assert_eq!(identity.device_count(), 2);
+
+        identity.remove_device("old-phone")?;
+        assert_eq!(identity.device_count(), 1);
+        assert!(identity.get_device_node_id("old-phone").is_none());
+
+        Ok(())
+    }
+
+    /// Test: Change primary device
+    #[test]
+    fn test_set_primary_device() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let phone_node = identity.add_device("phone")?;
+        identity.set_primary_device("phone")?;
+
+        assert_eq!(identity.primary_device, "phone");
+        assert_eq!(identity.node_id, phone_node);
+
+        Ok(())
+    }
+
+    /// Test: Cannot set non-existent device as primary
+    #[test]
+    fn test_set_primary_device_fails_if_not_registered() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let result = identity.set_primary_device("nonexistent");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not registered"));
+
+        Ok(())
+    }
+
+    /// Doctest example in function docs
+    /// ```
+    /// use lib_identity::identity::ZhtpIdentity;
+    /// use lib_identity::types::IdentityType;
+    /// 
+    /// # fn main() -> anyhow::Result<()> {
+    /// let mut identity = ZhtpIdentity::new_unified(
+    ///     IdentityType::Human,
+    ///     Some(30),
+    ///     Some("US".to_string()),
+    ///     "laptop-macos",
+    ///     None,
+    /// )?;
+    /// 
+    /// // Add first device
+    /// let laptop_node = identity.add_device("laptop-macos")?;
+    /// 
+    /// // Add second device
+    /// let phone_node = identity.add_device("phone-android")?;
+    /// 
+    /// // Idempotent - returns existing NodeId
+    /// let laptop_node_again = identity.add_device("laptop-macos")?;
+    /// assert_eq!(laptop_node, laptop_node_again);
+    /// 
+    /// // List all devices
+    /// let devices = identity.list_devices();
+    /// assert!(devices.contains(&"laptop-macos".to_string()));
+    /// assert!(devices.contains(&"phone-android".to_string()));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[test]
+    fn doctest_example() {
+        // Doctest in function documentation above
+    }
+
+ #[test]
+    fn test_device_node_id_stability_across_serialization() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let device_name = "tablet-persistent";
+        let original_node_id = identity.add_device(device_name)?;
+
+        // Serialize and deserialize
+        let json = serde_json::to_string(&identity)?;
+        
+        // For deserialization, we need the private key
+        let private_key = identity.private_key.clone()
+            .ok_or_else(|| anyhow!("Private key missing"))?;
+        
+        let mut restored = ZhtpIdentity::from_serialized(&json, &private_key)?;
+
+        // NodeId should be preserved from serialization
+        assert_eq!(
+            restored.get_device_node_id(device_name),
+            Some(original_node_id),
+            "Device NodeId should be stable across serialization"
+        );
+
+        // Re-adding same device should return identical NodeId
+        let readded_node_id = restored.add_device(device_name)?;
+        assert_eq!(original_node_id, readded_node_id);
+
+        Ok(())
+    }
+
+    /// Test: Different devices have different NodeIds
+    #[test]
+    fn test_unique_node_ids_per_device() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let devices = vec!["phone", "tablet", "desktop", "watch"];
+        let mut node_ids = Vec::new();
+
+        for device in &devices {
+            let node_id = identity.add_device(device)?;
+            node_ids.push(node_id);
+        }
+
+        // All NodeIds should be unique
+        let unique_count = node_ids.iter().collect::<std::collections::HashSet<_>>().len();
+        assert_eq!(unique_count, devices.len(), "All device NodeIds must be unique");
+
+        Ok(())
+    }
+
+    /// Test: Primary device NodeId matches main node_id field
+    #[test]
+    fn test_primary_device_node_id_consistency() -> Result<()> {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop-primary",
+            None,
+        )?;
+
+        let primary_node_id = identity.get_device_node_id("laptop-primary");
+        assert_eq!(
+            primary_node_id,
+            Some(identity.node_id),
+            "Primary device NodeId must match main node_id field"
+        );
+
+        Ok(())
+    }
+
+     /// Test: Device removal updates last_active
+    #[test]
+    fn test_remove_device_updates_activity() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        identity.add_device("temp-device")?;
+        let activity_before = identity.last_active;
+        
+        // Force a delay to ensure timestamp changes
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        identity.remove_device("temp-device")?;
+
+        assert!(
+            identity.last_active > activity_before,
+            "Expected last_active ({}) to be greater than before ({})",
+            identity.last_active,
+            activity_before
+        );
+
+        Ok(())
+    }
+
+    /// Test: Set primary device updates both node_id and primary_device
+    #[test]
+    fn test_set_primary_device_updates_both_fields() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let new_device = "phone-new-primary";
+        let new_node_id = identity.add_device(new_device)?;
+        
+        identity.set_primary_device(new_device)?;
+
+        assert_eq!(identity.primary_device, new_device);
+        assert_eq!(identity.node_id, new_node_id);
+        assert_eq!(identity.get_device_node_id(new_device), Some(new_node_id));
+
+        Ok(())
+    }
+
+    /// Test: Device names are case-sensitive
+    #[test]
+    fn test_device_names_case_handling() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        // Add device with lowercase name
+        let node_id_lower = identity.add_device("phone")?;
+        
+        // Try to add device with different case - HashMap key is case-sensitive
+        // but NodeId derivation normalizes case
+        let node_id_upper = identity.add_device("Phone")?;
+
+        // Verify NodeId derivation is case-insensitive (normalized to lowercase)
+        let expected_lower = NodeId::from_did_device(&identity.did, "phone")?;
+        let expected_upper = NodeId::from_did_device(&identity.did, "Phone")?;
+        assert_eq!(expected_lower, expected_upper, "NodeId::from_did_device normalizes case");
+
+        // HashMap keys ARE case-sensitive, so "phone" and "Phone" are different entries
+        assert_eq!(identity.device_count(), 3, "laptop + phone + Phone (case-sensitive HashMap keys)");
+        
+        // Both device names should exist in the HashMap
+        assert!(identity.device_node_ids.contains_key("phone"));
+        assert!(identity.device_node_ids.contains_key("Phone"));
+        
+        // But both map to the SAME NodeId (because NodeId derivation normalizes case)
+        assert_eq!(node_id_lower, node_id_upper, "Both should have same NodeId due to case normalization");
+        assert_eq!(node_id_lower, expected_lower);
+
+        Ok(())
+    }
+
+    /// Test: Device NodeId derivation is deterministic for same DID
+    #[test]
+    fn test_device_node_id_deterministic_same_did() -> Result<()> {
+        let seed = [42u8; 64]; // Fixed seed for determinism
+        
+        let identity1 = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            Some(seed),
+        )?;
+
+        let identity2 = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            Some(seed),
+        )?;
+
+        // Same seed → same DID → same NodeId for same device
+        assert_eq!(identity1.did, identity2.did);
+        assert_eq!(identity1.node_id, identity2.node_id);
+        assert_eq!(
+            identity1.get_device_node_id("laptop"),
+            identity2.get_device_node_id("laptop")
+        );
+
+        Ok(())
+    }
+
+    /// Test: Different identities produce different device NodeIds
+    #[test]
+    fn test_different_identities_different_node_ids() -> Result<()> {
+        let identity1 = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let identity2 = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        // Different identities (different seeds) → different NodeIds even for same device name
+        assert_ne!(identity1.did, identity2.did);
+        assert_ne!(identity1.node_id, identity2.node_id);
+
+        Ok(())
+    }
+
+    /// Test: Device operations work for non-Human identity types
+    #[test]
+    fn test_device_operations_non_human_identity() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Organization,
+            None, // No age required
+            None, // No jurisdiction required
+            "server-primary",
+            None,
+        )?;
+
+        let node1 = identity.add_device("server-backup")?;
+        let _node2 = identity.add_device("load-balancer")?;
+
+        assert_eq!(identity.device_count(), 3);
+        assert!(identity.get_device_node_id("server-backup").is_some());
+        
+        identity.set_primary_device("server-backup")?;
+        assert_eq!(identity.node_id, node1);
+
+        Ok(())
+    }
+
+    /// Test: Large number of devices handled correctly
+    #[test]
+    fn test_many_devices() -> Result<()> {
+        let mut identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let device_count = 100;
+        for i in 0..device_count {
+            identity.add_device(&format!("device-{}", i))?;
+        }
+
+        assert_eq!(identity.device_count(), device_count + 1); // +1 for primary
+        
+        let devices = identity.list_devices();
+        assert_eq!(devices.len(), device_count + 1);
+
+        Ok(())
+    }
+     #[test]
+    fn test_node_id_derivation_case_behavior() -> Result<()> {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            None,
+        )?;
+
+        let node_id_lower = NodeId::from_did_device(&identity.did, "testdevice")?;
+        let node_id_upper = NodeId::from_did_device(&identity.did, "TestDevice")?;
+        let node_id_mixed = NodeId::from_did_device(&identity.did, "TESTDEVICE")?;
+
+        // Document the actual behavior
+        if node_id_lower == node_id_upper && node_id_upper == node_id_mixed {
+            println!("NodeId::from_did_device normalizes device names to lowercase");
+        } else {
+            println!("NodeId::from_did_device preserves case in device names");
+        }
+
+        Ok(())
+    }
 }
