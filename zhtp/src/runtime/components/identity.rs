@@ -196,10 +196,10 @@ impl Component for IdentityComponent {
 /// Helper function to create default storage configuration
 pub fn create_default_storage_config() -> Result<lib_storage::UnifiedStorageConfig> {
     use lib_storage::{UnifiedStorageConfig, StorageConfig, ErasureConfig, StorageTier};
-    use lib_crypto::Hash;
-    
+    use lib_identity::NodeId;
+
     Ok(UnifiedStorageConfig {
-        node_id: Hash([1u8; 32]),
+        node_id: NodeId::from_bytes([1u8; 32]),
         addresses: vec![],
         economic_config: Default::default(),
         storage_config: StorageConfig {

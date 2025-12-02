@@ -570,8 +570,8 @@ impl StorageIntegration {
             .map_err(|e| ProtocolError::StorageError(format!("Failed to get statistics: {}", e)))
     }
 
-    /// Add peer to storage network with identity-derived NodeId
-    pub async fn add_storage_peer(&mut self, peer_address: String, node_id: lib_storage::NodeId) -> Result<()> {
+    /// Add peer to storage network
+    pub async fn add_storage_peer(&mut self, peer_address: String, node_id: lib_identity::NodeId) -> Result<()> {
         self.storage_system.add_peer(peer_address, node_id).await
             .map_err(|e| ProtocolError::StorageError(format!("Failed to add peer: {}", e)))
     }
