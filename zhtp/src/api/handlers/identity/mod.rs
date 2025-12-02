@@ -654,6 +654,7 @@ impl IdentityHandler {
             self.identity_manager.clone(),
             self.session_manager.clone(),
             self.rate_limiter.clone(),
+            &request,
         )
         .await
     }
@@ -666,6 +667,7 @@ impl IdentityHandler {
             self.identity_manager.clone(),
             self.session_manager.clone(),
             self.rate_limiter.clone(),
+            &request,
         )
         .await
     }

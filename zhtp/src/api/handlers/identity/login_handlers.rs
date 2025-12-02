@@ -92,14 +92,36 @@ impl AuthAuditLog {
     }
 }
 
+/// Extract client IP from request headers
+fn extract_client_ip(request: &lib_protocols::types::ZhtpRequest) -> String {
+    // Try X-Real-IP first (from reverse proxy)
+    if let Some(ip) = request.headers.get("X-Real-IP") {
+        return ip;
+    }
+
+    // Try X-Forwarded-For (may contain multiple IPs, take first)
+    if let Some(forwarded) = request.headers.get("X-Forwarded-For") {
+        if let Some(first_ip) = forwarded.split(',').next() {
+            return first_ip.trim().to_string();
+        }
+    }
+
+    // Fallback to "unknown" if no IP headers found
+    // This should log a warning in production
+    tracing::warn!("No client IP found in request headers");
+    "unknown".to_string()
+}
+
 /// Handle signin request (POST /api/v1/identity/signin)
 pub async fn handle_signin(
     request_body: &[u8],
     identity_manager: Arc<RwLock<IdentityManager>>,
     session_manager: Arc<SessionManager>,
     rate_limiter: Arc<RateLimiter>,
+    request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
-    handle_signin_with_ip(request_body, identity_manager, session_manager, rate_limiter, "unknown").await
+    let client_ip = extract_client_ip(request);
+    handle_signin_with_ip(request_body, identity_manager, session_manager, rate_limiter, &client_ip).await
 }
 
 /// Handle signin request with IP address for rate limiting
@@ -211,9 +233,10 @@ pub async fn handle_signin_with_ip(
             manager.validate_identity_password(&identity_id, &password)
         } else {
             // Simulate password validation timing even when identity doesn't exist
-            // Use a dummy hash to maintain constant-time behavior
+            // P0-2 FIX: Use longer delay (500ms) to prevent timing attacks
+            // This makes enumeration attacks impractical (500ms × millions of DIDs = years)
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             let _ = lib_crypto::hash_blake3(password.as_bytes());
-            std::thread::sleep(std::time::Duration::from_millis(10)); // Simulate validation time
             Err(lib_identity::PasswordError::IdentityNotImported)
         };
 
@@ -302,9 +325,10 @@ pub async fn handle_login(
     identity_manager: Arc<RwLock<IdentityManager>>,
     session_manager: Arc<SessionManager>,
     rate_limiter: Arc<RateLimiter>,
+    request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
     // Login is identical to signin
-    handle_signin(request_body, identity_manager, session_manager, rate_limiter).await
+    handle_signin(request_body, identity_manager, session_manager, rate_limiter, request).await
 }
 
 #[cfg(test)]
