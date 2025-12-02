@@ -87,7 +87,7 @@ impl WalletManager {
         // Generate quantum-resistant public key
         let mut public_key = vec![0u8; 32];
         use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut public_key);
+        rand::rngs::OsRng.fill_bytes(&mut public_key);
         
         // Create the wallet with seed phrase
         let wallet = QuantumWallet::new_with_seed_phrase(
@@ -392,7 +392,7 @@ impl WalletManager {
         // Generate quantum-resistant public key
         let mut public_key = vec![0u8; 32];
         use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut public_key);
+        rand::rngs::OsRng.fill_bytes(&mut public_key);
         
         // Create the DAO wallet
         let wallet = QuantumWallet::new_dao_wallet(

@@ -250,7 +250,7 @@ impl ZhtpCrypto {
     pub fn generate_challenge(&self) -> Result<Vec<u8>> {
         use rand::RngCore;
         let mut challenge = vec![0u8; 32];
-        rand::thread_rng().fill_bytes(&mut challenge);
+        rand::rngs::OsRng.fill_bytes(&mut challenge);
         Ok(challenge)
     }
 

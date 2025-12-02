@@ -79,7 +79,7 @@ pub mod hash {
     /// Generate random hash (for testing)
     pub fn random_hash() -> Hash {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::OsRng;
         let mut bytes = [0u8; 32];
         rng.fill_bytes(&mut bytes);
         Hash::from_slice(&bytes)

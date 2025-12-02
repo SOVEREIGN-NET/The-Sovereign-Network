@@ -75,7 +75,8 @@ impl IdentityManager {
 
         // Generate identity seed
         let mut seed = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut seed);
+        use rand::RngCore;
+        rand::rngs::OsRng.fill_bytes(&mut seed);
 
         // Create identity ID from public key
         let id = Hash::from_bytes(&blake3::hash(&public_key).as_bytes()[..32]);
@@ -772,11 +773,12 @@ impl IdentityManager {
         
         // Generate high-entropy seed for key generation
         let mut seed = [0u8; 64];
-        rand::thread_rng().fill_bytes(&mut seed);
-        
+        use rand::RngCore;
+        rand::rngs::OsRng.fill_bytes(&mut seed);
+
         // Generate private key using CRYSTALS-Dilithium approach
         let mut private_key = vec![0u8; 64]; // Dilithium private key size
-        rand::thread_rng().fill_bytes(&mut private_key);
+        rand::rngs::OsRng.fill_bytes(&mut private_key);
         
         // Derive deterministic private key from seed
         let deterministic_private = lib_crypto::hash_blake3(&[

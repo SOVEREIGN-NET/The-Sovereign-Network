@@ -220,8 +220,9 @@ impl DHTBootstrap {
         // Generate random packet ID for ping
         let mut packet_id = [0u8; 16];
         let mut sender_id = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut packet_id);
-        rand::thread_rng().fill_bytes(&mut sender_id);
+        use rand::RngCore;
+        rand::rngs::OsRng.fill_bytes(&mut packet_id);
+        rand::rngs::OsRng.fill_bytes(&mut sender_id);
         
         // Create ZHTP DHT ping packet
         let header = DhtPacketHeader {
