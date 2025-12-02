@@ -4154,7 +4154,15 @@ mod tests {
     #[tokio::test]
     async fn test_bluetooth_mesh_creation() {
         let node_id = [1u8; 32];
-        let protocol = BluetoothMeshProtocol::new(node_id).unwrap();
+        // Create a test public key
+        let (dilithium_pk, _) = lib_crypto::post_quantum::dilithium2_keypair();
+        let (kyber_pk, _) = lib_crypto::post_quantum::kyber512_keypair();
+        let public_key = lib_crypto::PublicKey {
+            dilithium_pk,
+            kyber_pk,
+            key_id: node_id,
+        };
+        let protocol = BluetoothMeshProtocol::new(node_id, public_key).unwrap();
         
         assert_eq!(protocol.node_id, node_id);
         assert!(!protocol.discovery_active);
@@ -4163,7 +4171,15 @@ mod tests {
     #[tokio::test]
     async fn test_bluetooth_discovery() {
         let node_id = [1u8; 32];
-        let mut protocol = BluetoothMeshProtocol::new(node_id).unwrap();
+        // Create a test public key
+        let (dilithium_pk, _) = lib_crypto::post_quantum::dilithium2_keypair();
+        let (kyber_pk, _) = lib_crypto::post_quantum::kyber512_keypair();
+        let public_key = lib_crypto::PublicKey {
+            dilithium_pk,
+            kyber_pk,
+            key_id: node_id,
+        };
+        let mut protocol = BluetoothMeshProtocol::new(node_id, public_key).unwrap();
         
         let result = protocol.start_discovery().await;
         assert!(result.is_ok());

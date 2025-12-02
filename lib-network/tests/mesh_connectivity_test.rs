@@ -5,45 +5,36 @@
 
 use anyhow::Result;
 use lib_network::testing::test_utils::create_test_mesh_server;
-use lib_crypto::{generate_keypair, PublicKey, hash_blake3};
+use lib_crypto::{generate_keypair, PublicKey};
 use hex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Helper function to create a unique node ID for testing
-fn create_unique_node_id(prefix: &str) -> [u8; 32] {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let unique_string = format!("{}-{}", prefix, timestamp);
-    hash_blake3(unique_string.as_bytes())
-}
-
-/// Helper function to create a mesh server with a unique node ID  
+/// Helper function to create a mesh server with unique identity
 async fn create_unique_test_mesh_server(node_name: &str) -> Result<lib_network::mesh::server::ZhtpMeshServer> {
-    let node_id = create_unique_node_id(node_name);
+    use lib_identity::{ZhtpIdentity, IdentityType};
+    use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
     
-    #[cfg(feature = "lib-storage")]
-    {
-        use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
-        let storage_config = UnifiedStorageConfig::default();
-        let storage = UnifiedStorageSystem::new(storage_config).await?;
-        
-        let protocols = vec![
-            lib_network::protocols::NetworkProtocol::BluetoothLE,
-            lib_network::protocols::NetworkProtocol::WiFiDirect,
-            lib_network::protocols::NetworkProtocol::LoRaWAN,
-        ];
-        
-        let owner_key = PublicKey::new(node_id.to_vec());
-        lib_network::mesh::server::ZhtpMeshServer::new(node_id, owner_key, storage, protocols).await
-    }
+    // Create a proper unique identity for each test
+    let identity = ZhtpIdentity::new_unified(
+        IdentityType::Human,
+        Some(25),
+        Some("US".to_string()),
+        node_name,  // Use node_name as device identifier for uniqueness
+        None,  // Random seed ensures uniqueness
+    )?;
     
-    #[cfg(not(feature = "lib-storage"))]
-    {
-        // Fallback - create with the same method as create_test_mesh_server but with unique ID
-        Err(anyhow::anyhow!("lib-storage feature required for testing"))
-    }
+    let node_id = identity.node_id;
+    let owner_key = identity.public_key.clone();
+    
+    let storage_config = UnifiedStorageConfig::default();
+    let storage = UnifiedStorageSystem::new(storage_config).await?;
+    
+    let protocols = vec![
+        lib_network::protocols::NetworkProtocol::BluetoothLE,
+        lib_network::protocols::NetworkProtocol::WiFiDirect,
+        lib_network::protocols::NetworkProtocol::LoRaWAN,
+    ];
+    
+    lib_network::mesh::server::ZhtpMeshServer::new(node_id, owner_key, storage, protocols).await
 }
 
 /// Test that nodes use their identity as their network address
@@ -61,10 +52,10 @@ async fn test_node_id_addressing() -> Result<()> {
     let node_id = node_info;
     
     // Verify node ID format (32-byte array)
-    assert_eq!(node_id.len(), 32, "Node ID should be 32 bytes");
+    assert_eq!(node_id.as_bytes().len(), 32, "Node ID should be 32 bytes");
     
     // Convert node ID to hex address format
-    let hex_address = hex::encode(node_id);
+    let hex_address = hex::encode(node_id.as_bytes());
     println!(" Node ID: {}", &hex_address[..16]); // First 16 chars for display
     
     // Verify node ID is used in addressing
@@ -129,8 +120,8 @@ async fn test_mesh_network_formation() -> Result<()> {
     let node1_id = node1.mesh_node.read().await.node_id;
     let node2_id = node2.mesh_node.read().await.node_id;
     
-    println!("   Node 1 ID: {}...", hex::encode(&node1_id[..4]));
-    println!("   Node 2 ID: {}...", hex::encode(&node2_id[..4]));
+    println!("   Node 1 ID: {}...", hex::encode(&node1_id.as_bytes()[..4]));
+    println!("   Node 2 ID: {}...", hex::encode(&node2_id.as_bytes()[..4]));
     
     // Test that nodes have different IDs
     assert_ne!(node1_id, node2_id, "Nodes should have unique IDs");
@@ -212,10 +203,10 @@ async fn test_mesh_peer_authentication() -> Result<()> {
     let signature_valid = keypair.public_key.verify(test_message, &signature)?;
     println!("   Message signature valid: {}", signature_valid);
     
-    // Test routing rewards system (economic authentication)
-    println!("  Testing economic authentication...");
-    let balance = server.get_routing_rewards_balance().await?;
-    println!("   Routing rewards balance: {} tokens", balance);
+    // Test routing stats (network metrics)
+    println!("  Testing routing statistics...");
+    let stats = server.get_routing_stats().await;
+    println!("   Routing stats - messages routed: {}", stats.messages_routed);
     
     println!(" Mesh peer authentication test completed\n");
     Ok(())
@@ -231,7 +222,7 @@ async fn test_mesh_message_routing() -> Result<()> {
     // Test message creation
     println!("  Creating test message...");
     let node_id = server.mesh_node.read().await.node_id;
-    let _test_message = format!("Hello from node {}", hex::encode(&node_id[..4]));
+    let _test_message = format!("Hello from node {}", hex::encode(&node_id.as_bytes()[..4]));
     
     // Test mesh message handling
     println!("  Testing mesh message handling...");
@@ -269,9 +260,9 @@ async fn test_mesh_message_routing() -> Result<()> {
     println!("   Data routed: {} bytes", stats.total_data_routed);
     println!("   UBI distributed: {} tokens", stats.total_ubi_distributed);
     
-    // Test routing rewards (economic incentives for message routing)
-    let routing_balance = server.get_routing_rewards_balance().await?;
-    println!("   Routing rewards balance: {} tokens", routing_balance);
+    // Test routing performance metrics
+    let routing_snapshot = server.get_routing_stats_snapshot().await;
+    println!("   Routing messages routed: {}", routing_snapshot.messages_routed);
     
     println!(" Mesh message routing test completed\n");
     Ok(())

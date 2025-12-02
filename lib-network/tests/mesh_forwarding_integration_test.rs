@@ -8,9 +8,7 @@
 //! - TTL expiration and loop prevention
 
 use lib_network::types::mesh_message::{ZhtpMeshMessage, MeshMessageEnvelope};
-use lib_crypto::{PublicKey, generate_keypair};
-use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use lib_crypto::PublicKey;
 
 #[tokio::test]
 async fn test_message_envelope_serialization() {
@@ -107,13 +105,16 @@ async fn test_envelope_ttl_expiration() {
         message,
     );
     
+    // Create a test node ID for checking
+    let my_id = PublicKey::new(vec![99, 99, 99]);
+    
     // Set TTL to 1
     envelope.ttl = 1;
-    assert!(!envelope.should_drop(), "Should not drop with TTL=1");
+    assert!(!envelope.should_drop(&my_id), "Should not drop with TTL=1");
     
     // Decrement to 0
     envelope.ttl = 0;
-    assert!(envelope.should_drop(), "Should drop with TTL=0");
+    assert!(envelope.should_drop(&my_id), "Should drop with TTL=0");
 }
 
 #[tokio::test]
@@ -226,11 +227,13 @@ async fn test_blockchain_data_chunking() {
     
     let origin = PublicKey::new(vec![1, 2, 3]);
     let destination = PublicKey::new(vec![4, 5, 6]);
+    let sender = PublicKey::new(vec![7, 8, 9]);
     
     let test_data = vec![0u8; 1000]; // 1KB of test data
     let test_hash = [42u8; 32];
     
     let message = ZhtpMeshMessage::BlockchainData {
+        sender: sender.clone(),
         request_id: 555,
         chunk_index: 0,
         total_chunks: 5,
@@ -252,7 +255,7 @@ async fn test_blockchain_data_chunking() {
     
     // Check message type and data
     match deserialized.message {
-        ZhtpMeshMessage::BlockchainData { request_id, chunk_index, total_chunks, data, complete_data_hash } => {
+        ZhtpMeshMessage::BlockchainData { sender: _, request_id, chunk_index, total_chunks, data, complete_data_hash } => {
             assert_eq!(request_id, 555);
             assert_eq!(chunk_index, 0);
             assert_eq!(total_chunks, 5);
@@ -292,8 +295,10 @@ async fn test_envelope_size_calculation() {
     
     // Large message
     let large_data = vec![0u8; 10_000]; // 10KB
+    let sender = PublicKey::new(vec![111, 112, 113]);
     let large_message = ZhtpMeshMessage::BlockchainData {
-        request_id: 888,
+        sender,
+        request_id: 456,
         chunk_index: 0,
         total_chunks: 1,
         data: large_data,
@@ -322,7 +327,13 @@ fn test_message_types_coverage() {
         ZhtpMeshMessage::PeerDiscovery {
             capabilities: vec![],
             location: None,
-            shared_resources: Default::default(),
+            shared_resources: lib_network::types::mesh_capability::SharedResources {
+                relay_bandwidth_kbps: 1000,
+                storage_gb: 10,
+                compute_power: 100,
+                battery_percentage: Some(80),
+                reliability_score: 0.9,
+            },
         },
         ZhtpMeshMessage::HealthReport {
             reporter: peer.clone(),
