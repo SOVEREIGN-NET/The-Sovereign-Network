@@ -4,6 +4,7 @@
 
 pub mod login_handlers;
 pub mod password_reset;
+pub mod backup_recovery;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -17,7 +18,7 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 // Identity management imports
 use lib_identity::{
-    IdentityManager, IdentityType, CitizenshipResult
+    IdentityManager, IdentityType, CitizenshipResult, RecoveryPhraseManager
 };
 
 // Identity and economic model imports
@@ -43,6 +44,7 @@ pub struct IdentityHandler {
     rate_limiter: Arc<crate::api::middleware::RateLimiter>,
     account_lockout: Arc<login_handlers::AccountLockout>,
     csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
+    recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
 }
 
 impl IdentityHandler {
@@ -53,6 +55,7 @@ impl IdentityHandler {
         rate_limiter: Arc<crate::api::middleware::RateLimiter>,
         account_lockout: Arc<login_handlers::AccountLockout>,
         csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
+        recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
     ) -> Self {
         Self {
             identity_manager,
@@ -61,6 +64,7 @@ impl IdentityHandler {
             rate_limiter,
             account_lockout,
             csrf_protection,
+            recovery_phrase_manager,
         }
     }
 }
@@ -82,6 +86,18 @@ impl ZhtpRequestHandler for IdentityHandler {
             }
             (ZhtpMethod::Post, "/api/v1/identity/password/recover") => {
                 self.handle_password_recovery(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/backup/generate") => {
+                self.handle_generate_recovery_phrase(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/backup/verify") => {
+                self.handle_verify_recovery_phrase(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/recover") => {
+                self.handle_recover_identity(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/identity/backup/status") => {
+                self.handle_backup_status(request).await
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/") => {
                 self.handle_get_identity(request).await
@@ -693,6 +709,56 @@ impl IdentityHandler {
             &request.body,
             self.identity_manager.clone(),
             self.session_manager.clone(),
+        )
+        .await
+    }
+
+    /// Handle generate recovery phrase request (Issue #100)
+    /// POST /api/v1/identity/backup/generate
+    async fn handle_generate_recovery_phrase(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_generate_recovery_phrase(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            self.recovery_phrase_manager.clone(),
+        )
+        .await
+    }
+
+    /// Handle verify recovery phrase request (Issue #100)
+    /// POST /api/v1/identity/backup/verify
+    async fn handle_verify_recovery_phrase(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_verify_recovery_phrase(
+            &request.body,
+            self.recovery_phrase_manager.clone(),
+        )
+        .await
+    }
+
+    /// Handle recover identity request (Issue #100)
+    /// POST /api/v1/identity/recover
+    async fn handle_recover_identity(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_recover_identity(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            self.recovery_phrase_manager.clone(),
+        )
+        .await
+    }
+
+    /// Handle backup status request (Issue #100)
+    /// GET /api/v1/identity/backup/status
+    async fn handle_backup_status(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Extract query params from URI
+        let query_params = request.uri
+            .split('?')
+            .nth(1)
+            .unwrap_or("");
+
+        backup_recovery::handle_backup_status(
+            query_params,
+            self.recovery_phrase_manager.clone(),
         )
         .await
     }
