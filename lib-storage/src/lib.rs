@@ -230,6 +230,11 @@ impl UnifiedStorageSystem {
         })
     }
 
+    /// Get the node's stable identity-derived NodeId
+    pub fn get_node_id(&self) -> NodeId {
+        self.config.node_id
+    }
+
     /// Upload content with full economic integration
     pub async fn upload_content(
         &mut self,
@@ -332,7 +337,7 @@ impl UnifiedStorageSystem {
         Ok(self.stats.clone())
     }
 
-    /// Add peer to DHT network with identity-derived NodeId
+    /// Add peer to DHT network
     pub async fn add_peer(&mut self, peer_address: String, node_id: NodeId) -> Result<()> {
         // Parse peer info and add to DHT
         let node_info = DhtNode {
@@ -608,8 +613,9 @@ mod tests {
     }
 
     #[tokio::test]
-    // NOTE: This test requires ZhtpIdentity secure deserialization to be fixed
-    // Track in dedicated issue for proper implementation
+    // TODO: Create a GitHub issue to track re-enabling this test.
+    // It is currently ignored because ZhtpIdentity secure deserialization is restricted,
+    // and a solution needs to be implemented and verified.
     #[ignore = "ZhtpIdentity secure deserialization currently restricted"]
     async fn test_unified_storage_identity_integration() {
         let config = UnifiedStorageConfig::default();

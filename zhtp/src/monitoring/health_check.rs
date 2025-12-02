@@ -23,10 +23,10 @@ struct StorageStats {
 fn create_default_storage_config() -> Result<lib_storage::UnifiedStorageConfig> {
     use lib_storage::{UnifiedStorageConfig, StorageConfig, ErasureConfig};
     use lib_storage::StorageTier;
-    use lib_crypto::Hash;
-    
+    use lib_identity::NodeId;
+
     Ok(UnifiedStorageConfig {
-        node_id: Hash([1u8; 32]), // Simple node ID wrapped in Hash
+        node_id: NodeId::from_bytes([1u8; 32]),
         addresses: vec!["127.0.0.1:8080".to_string()],
         economic_config: Default::default(), // Use default for EconomicManagerConfig
         storage_config: StorageConfig {

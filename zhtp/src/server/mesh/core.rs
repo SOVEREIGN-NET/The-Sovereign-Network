@@ -182,13 +182,13 @@ impl MeshRouter {
         let connections_for_router = connections.clone();
         
         // Initialize DHT storage with Kademlia routing (deferred to avoid runtime nesting)
-        let local_node_id: lib_crypto::Hash = {
+        let local_node_id: lib_identity::NodeId = {
             let hash_bytes = lib_crypto::hash_blake3(server_id.as_bytes());
-            lib_crypto::Hash::from_bytes(&hash_bytes)
+            lib_identity::NodeId::from_bytes(hash_bytes)
         };
         let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
         let local_node = lib_storage::types::dht_types::DhtNode {
-            id: local_node_id.clone(),
+            id: local_node_id,
             addresses: vec![bind_addr.to_string()],
             public_key: PostQuantumSignature::default(),
             last_seen: SystemTime::now()
@@ -200,7 +200,7 @@ impl MeshRouter {
         };
         
         // Create DHT storage synchronously (no network init yet) - 10GB max
-        let dht_storage_instance = DhtStorage::new(local_node_id.clone(), 10_000_000_000);
+        let dht_storage_instance = DhtStorage::new(local_node_id, 10_000_000_000);
         let dht_storage = Arc::new(tokio::sync::Mutex::new(dht_storage_instance));
         
         // Spawn async task to initialize network and start processing
