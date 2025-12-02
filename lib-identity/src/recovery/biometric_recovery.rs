@@ -714,9 +714,8 @@ impl BiometricRecoveryManager {
 
     async fn generate_salt(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
         let mut salt = vec![0u8; 32];
-        rng.fill_bytes(&mut salt);
+        rand::rngs::OsRng.fill_bytes(&mut salt);
         Ok(salt)
     }
 
@@ -732,7 +731,7 @@ impl BiometricRecoveryManager {
     async fn encrypt_template(&self, template_data: &[u8], key: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
         let mut iv = vec![0u8; 16];
         use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut iv);
+        rand::rngs::OsRng.fill_bytes(&mut iv);
         
         let mut encrypted = Vec::new();
         for (i, &byte) in template_data.iter().enumerate() {

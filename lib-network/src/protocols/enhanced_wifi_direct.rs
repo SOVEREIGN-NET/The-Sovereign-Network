@@ -244,7 +244,8 @@ impl MacOSWiFiDirectManager {
     fn generate_wps_pin(&self) -> String {
         use rand::Rng;
         
-        let mut rng = rand::thread_rng();
+        use rand::RngCore;
+        let mut rng = rand::rngs::OsRng;
         let pin: u32 = rng.gen_range(10000000..99999999);
         
         // Calculate checksum digit for WPS PIN
@@ -344,7 +345,8 @@ impl AdvancedWPSSecurity {
     pub fn generate_secure_wps_pin(&mut self, device_id: &str) -> Result<String> {
         use rand::Rng;
         
-        let mut rng = rand::thread_rng();
+        use rand::RngCore;
+        let mut rng = rand::rngs::OsRng;
         
         // Generate cryptographically secure PIN
         let mut pin_bytes = [0u8; 8];
@@ -436,7 +438,8 @@ impl AdvancedWPSSecurity {
     pub fn generate_nfc_handover(&mut self, device_id: &str) -> Result<Vec<u8>> {
         use rand::Rng;
         
-        let mut rng = rand::thread_rng();
+        use rand::RngCore;
+        let mut rng = rand::rngs::OsRng;
         
         // Generate NFC handover record (simplified NDEF format)
         let mut handover_record = Vec::new();

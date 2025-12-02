@@ -308,7 +308,7 @@ impl QuantumWallet {
             // For standalone wallets, use random seed
             use rand::RngCore;
             let mut random_seed = [0u8; 32];
-            rand::thread_rng().fill_bytes(&mut random_seed);
+            rand::rngs::OsRng.fill_bytes(&mut random_seed);
             [
                 &random_seed,
                 name.as_bytes(),

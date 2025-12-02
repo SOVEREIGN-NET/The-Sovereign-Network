@@ -76,6 +76,11 @@ pub async fn register_api_handlers(
     // Create CSRF protection (P0-7)
     let csrf_protection = Arc::new(crate::api::middleware::CsrfProtection::new());
 
+    // Create recovery phrase manager for backup/recovery (Issue #100)
+    let recovery_phrase_manager = Arc::new(RwLock::new(
+        lib_identity::RecoveryPhraseManager::new()
+    ));
+
     let identity_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
         IdentityHandler::new(
             identity_manager.clone(),
@@ -84,6 +89,7 @@ pub async fn register_api_handlers(
             rate_limiter,
             account_lockout,
             csrf_protection,
+            recovery_phrase_manager,
         )
     );
     http_router.register_handler("/api/v1/identity".to_string(), identity_handler);

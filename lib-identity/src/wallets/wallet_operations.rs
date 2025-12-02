@@ -16,7 +16,7 @@ impl WalletManager {
         // Generate quantum-resistant public key
         let mut public_key = vec![0u8; 32];
         use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut public_key);
+        rand::rngs::OsRng.fill_bytes(&mut public_key);
         
         // Create the wallet without seed phrase for testing
         let wallet = crate::wallets::QuantumWallet::new(

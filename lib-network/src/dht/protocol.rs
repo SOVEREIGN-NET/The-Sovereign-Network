@@ -794,7 +794,7 @@ impl DhtProtocolHandler {
     fn generate_packet_id() -> [u8; 16] {
         use rand::RngCore;
         let mut id = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut id);
+        rand::rngs::OsRng.fill_bytes(&mut id);
         id
     }
 }
