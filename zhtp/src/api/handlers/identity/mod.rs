@@ -3,6 +3,7 @@
 //! Clean, minimal identity management using lib-identity patterns
 
 pub mod login_handlers;
+pub mod password_reset;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -78,6 +79,9 @@ impl ZhtpRequestHandler for IdentityHandler {
             }
             (ZhtpMethod::Post, "/api/v1/identity/login") => {
                 self.handle_login(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/password/recover") => {
+                self.handle_password_recovery(request).await
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/") => {
                 self.handle_get_identity(request).await
@@ -678,6 +682,17 @@ impl IdentityHandler {
             self.account_lockout.clone(),
             self.csrf_protection.clone(),
             &request,
+        )
+        .await
+    }
+
+    /// Handle password recovery request (P0-8)
+    /// POST /api/v1/identity/password/recover
+    async fn handle_password_recovery(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        password_reset::handle_password_recovery(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
         )
         .await
     }

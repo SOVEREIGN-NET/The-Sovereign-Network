@@ -203,6 +203,29 @@ fn extract_user_agent(request: &lib_protocols::types::ZhtpRequest) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// Check HTTPS enforcement for production (P0-5)
+fn check_https(request: &lib_protocols::types::ZhtpRequest) -> Result<(), ZhtpResponse> {
+    // Only enforce HTTPS in production (non-debug builds)
+    #[cfg(not(debug_assertions))]
+    {
+        // Check X-Forwarded-Proto header (set by reverse proxy)
+        if let Some(proto) = request.headers.get("X-Forwarded-Proto") {
+            if proto != "https" {
+                return Err(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "HTTPS required for authentication in production".to_string(),
+                ));
+            }
+        } else {
+            // No X-Forwarded-Proto header - assume direct connection
+            // In production, this should be configured with reverse proxy
+            tracing::warn!("No X-Forwarded-Proto header found - HTTPS enforcement cannot be verified");
+        }
+    }
+
+    Ok(())
+}
+
 /// Handle signin request (POST /api/v1/identity/signin)
 pub async fn handle_signin(
     request_body: &[u8],
@@ -213,6 +236,11 @@ pub async fn handle_signin(
     csrf_protection: Arc<CsrfProtection>,
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
+    // P0-5: Check HTTPS enforcement in production
+    if let Err(response) = check_https(request) {
+        return Ok(response);
+    }
+
     let client_ip = extract_client_ip(request);
     let user_agent = extract_user_agent(request);
     handle_signin_with_ip(request_body, identity_manager, session_manager, rate_limiter, account_lockout, csrf_protection, &client_ip, &user_agent).await
