@@ -117,6 +117,7 @@ pub async fn register_api_handlers(
         crate::api::handlers::zkp::ZkpHandler::new(
             identity_manager.clone(),
             _session_manager.clone(),
+            rate_limiter.clone(),
         )
     );
     http_router.register_handler("/api/v1/zkp".to_string(), zkp_handler);
