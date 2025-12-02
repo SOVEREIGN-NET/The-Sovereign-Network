@@ -37,7 +37,7 @@ impl ContractTestFramework {
 
     /// Add a test user
     pub fn add_user(&mut self, name: &str) -> Result<PublicKey> {
-        let keypair = KeyPair::generate();
+        let keypair = KeyPair::generate()?;
         let public_key = keypair.public_key.clone();
         self.keypairs.insert(name.to_string(), keypair);
         Ok(public_key)
@@ -85,7 +85,7 @@ impl ContractTestFramework {
         if let Some(keypair) = self.keypairs.get(user) {
             let lib_id = generate_lib_token_id();
             if let Some(token) = self.executor.get_token_contract(&lib_id) {
-                return crate::contracts::tokens::functions::balance_of(token, &keypair.public_key);
+                return token.balance_of(&keypair.public_key);
             }
         }
         0
@@ -95,7 +95,7 @@ impl ContractTestFramework {
     pub fn get_token_balance(&self, user: &str, token_id: &[u8; 32]) -> u64 {
         if let Some(keypair) = self.keypairs.get(user) {
             if let Some(token) = self.executor.get_token_contract(token_id) {
-                return crate::contracts::tokens::functions::balance_of(token, &keypair.public_key);
+                return token.balance_of(&keypair.public_key);
             }
         }
         0

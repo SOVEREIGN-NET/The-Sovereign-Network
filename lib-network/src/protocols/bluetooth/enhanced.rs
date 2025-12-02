@@ -426,7 +426,8 @@ impl MacOSBluetoothManager {
             .output();
             
         if let Ok(result) = output {
-            let output_str = String::from_utf8_lossy(&result.stdout).trim();
+            let output_owned = String::from_utf8_lossy(&result.stdout).into_owned();
+            let output_str = output_owned.trim();
             if !output_str.is_empty() {
                 let hex_parts: Vec<&str> = output_str.split_whitespace().collect();
                 let mut data = Vec::new();

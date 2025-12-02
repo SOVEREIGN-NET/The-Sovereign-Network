@@ -219,6 +219,7 @@ pub enum WiFiDirectDeviceType {
     Tablet,
     Router,
     IoTDevice,
+    P2P,
     Unknown,
 }
 
@@ -657,7 +658,8 @@ impl WiFiDirectMeshProtocol {
                     if parts.len() >= 3 {
                         let ssid = parts[0];
                         let bssid = parts[1];
-                        let rssi: i16 = parts[2].parse().unwrap_or(-70);
+                        let rssi_raw: i16 = parts[2].parse().unwrap_or(-70);
+                        let rssi: i8 = rssi_raw.clamp(-128, 127) as i8;
                         
                         devices.push(WiFiDirectConnection {
                             mac_address: bssid.to_string(),
@@ -669,7 +671,7 @@ impl WiFiDirectMeshProtocol {
                                 .as_secs(),
                             data_rate: 150, // Assume 150 Mbps for P2P
                             device_name: ssid.to_string(),
-                            device_type: WiFiDirectDeviceType::P2PDevice,
+                            device_type: WiFiDirectDeviceType::P2P,
                         });
                         
                         info!("🍎 Found P2P network: {} at {} dBm", ssid, rssi);
@@ -688,23 +690,24 @@ impl WiFiDirectMeshProtocol {
                 for line in networks_str.lines() {
                     let network_name = line.trim();
                     if network_name.starts_with("DIRECT-") || network_name.starts_with("ZHTP-") {
-                        // Derive BSSID from network interface MAC address
-                        let bssid = self.derive_p2p_bssid(network_name).await.unwrap_or_else(|_| {
-                            // Fallback: Use deterministic generation based on network name
+                        // Derive deterministic BSSID from network name (no self available in static context)
+                        let bssid = {
                             use std::collections::hash_map::DefaultHasher;
                             use std::hash::{Hash, Hasher};
-                            
+
                             let mut hasher = DefaultHasher::new();
                             network_name.hash(&mut hasher);
                             let hash = hasher.finish();
-                            
-                            format!("02:{}:{}:{}:{}:{}",
-                                  format!("{:02x}", (hash >> 32) as u8),
-                                  format!("{:02x}", (hash >> 24) as u8),
-                                  format!("{:02x}", (hash >> 16) as u8),
-                                  format!("{:02x}", (hash >> 8) as u8),
-                                  format!("{:02x}", hash as u8))
-                        });
+
+                            format!(
+                                "02:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                                (hash >> 32) as u8,
+                                (hash >> 24) as u8,
+                                (hash >> 16) as u8,
+                                (hash >> 8) as u8,
+                                hash as u8
+                            )
+                        };
                         
                         devices.push(WiFiDirectConnection {
                             mac_address: bssid,
@@ -713,7 +716,7 @@ impl WiFiDirectMeshProtocol {
                             connection_time: 0,
                             data_rate: 150,
                             device_name: network_name.to_string(),
-                            device_type: WiFiDirectDeviceType::P2PDevice,
+                            device_type: WiFiDirectDeviceType::P2P,
                         });
                         
                         info!("🍎 Found known P2P network: {}", network_name);

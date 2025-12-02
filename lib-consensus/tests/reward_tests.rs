@@ -25,7 +25,7 @@ fn test_reward_calculator_initialization() {
 #[test]
 fn test_basic_validation_rewards() -> Result<()> {
     let mut calculator = RewardCalculator::new();
-    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Register validators
     let validators = vec![
@@ -60,7 +60,7 @@ fn test_basic_validation_rewards() -> Result<()> {
 #[test]
 fn test_stake_proportional_rewards() -> Result<()> {
     let mut calculator = RewardCalculator::new();
-    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Register validators with different stakes
     let alice_stake = 3000 * 1_000_000; // High stake
@@ -105,7 +105,7 @@ fn test_stake_proportional_rewards() -> Result<()> {
 #[test]
 fn test_reputation_bonus_rewards() -> Result<()> {
     let mut calculator = RewardCalculator::new();
-    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Register validators with same stake but different reputations
     let alice_id = create_test_identity("alice");
@@ -155,7 +155,7 @@ fn test_reputation_bonus_rewards() -> Result<()> {
 #[test]
 fn test_storage_provision_rewards() -> Result<()> {
     let mut calculator = RewardCalculator::new();
-    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Register validators with different storage capacities
     let alice_id = create_test_identity("alice");
@@ -196,7 +196,7 @@ fn test_storage_provision_rewards() -> Result<()> {
 #[test]
 fn test_commission_rate_impact() -> Result<()> {
     let mut calculator = RewardCalculator::new();
-    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Register validators with different commission rates
     let alice_id = create_test_identity("alice");
@@ -234,7 +234,7 @@ fn test_commission_rate_impact() -> Result<()> {
 #[test]
 fn test_reward_distribution() -> Result<()> {
     let mut calculator = RewardCalculator::new();
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let reward_round = calculator.calculate_round_rewards(&validator_manager, 100)?;
     
@@ -248,7 +248,7 @@ fn test_reward_distribution() -> Result<()> {
 #[test]
 fn test_zero_validators_reward_calculation() -> Result<()> {
     let mut calculator = RewardCalculator::new();
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let reward_round = calculator.calculate_round_rewards(&validator_manager, 100)?;
     
@@ -262,7 +262,7 @@ fn test_zero_validators_reward_calculation() -> Result<()> {
 #[test]
 fn test_reward_round_structure() -> Result<()> {
     let mut calculator = RewardCalculator::new();
-    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Register a validator
     let alice_id = create_test_identity("alice");
@@ -321,7 +321,7 @@ fn test_useful_work_reward_types() -> Result<()> {
 #[test]
 fn test_reward_consistency() -> Result<()> {
     let mut calculator = RewardCalculator::new();
-    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Register validator
     let alice_id = create_test_identity("alice");
