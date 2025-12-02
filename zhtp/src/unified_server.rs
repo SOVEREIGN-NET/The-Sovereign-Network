@@ -379,13 +379,17 @@ impl ZhtpUnifiedServer {
         http_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler.clone());
         zhtp_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler);
         
-        // Identity and wallet management  
+        // Identity and wallet management
         // Note: Using lib_identity::economics::EconomicModel as expected by IdentityHandler
         let identity_economic_model = Arc::new(RwLock::new(
             lib_identity::economics::EconomicModel::new()
         ));
         let identity_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            IdentityHandler::new(identity_manager.clone(), identity_economic_model)
+            IdentityHandler::new(
+                identity_manager.clone(),
+                identity_economic_model,
+                _session_manager.clone()
+            )
         );
         http_router.register_handler("/api/v1/identity".to_string(), identity_handler.clone());
         zhtp_router.register_handler("/api/v1/identity".to_string(), identity_handler);

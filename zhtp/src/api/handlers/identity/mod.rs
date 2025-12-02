@@ -1,6 +1,8 @@
 //! Identity Handler Module
-//! 
+//!
 //! Clean, minimal identity management using lib-identity patterns
+
+mod login_handlers;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -36,16 +38,19 @@ use lib_blockchain::{
 pub struct IdentityHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
     economic_model: Arc<RwLock<IdentityEconomicModel>>,
+    session_manager: Arc<crate::session_manager::SessionManager>,
 }
 
 impl IdentityHandler {
     pub fn new(
         identity_manager: Arc<RwLock<IdentityManager>>,
         economic_model: Arc<RwLock<IdentityEconomicModel>>,
+        session_manager: Arc<crate::session_manager::SessionManager>,
     ) -> Self {
         Self {
             identity_manager,
             economic_model,
+            session_manager,
         }
     }
 }
@@ -58,6 +63,12 @@ impl ZhtpRequestHandler for IdentityHandler {
         let response = match (request.method, request.uri.as_str()) {
             (ZhtpMethod::Post, "/api/v1/identity/create") => {
                 self.handle_create_identity(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/signin") => {
+                self.handle_signin(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/login") => {
+                self.handle_login(request).await
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/") => {
                 self.handle_get_identity(request).await
@@ -630,5 +641,27 @@ impl IdentityHandler {
         });
         
         Ok(ZhtpResponse::json(&response_body, None)?)
+    }
+
+    /// Handle signin request
+    /// POST /api/v1/identity/signin
+    async fn handle_signin(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        login_handlers::handle_signin(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+        )
+        .await
+    }
+
+    /// Handle login request (alias for signin)
+    /// POST /api/v1/identity/login
+    async fn handle_login(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        login_handlers::handle_login(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+        )
+        .await
     }
 }
