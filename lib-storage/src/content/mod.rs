@@ -1015,6 +1015,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // NOTE: This test requires ZhtpIdentity secure deserialization to be fixed
+    // Track in dedicated issue for proper implementation
     #[ignore = "ZhtpIdentity secure deserialization currently restricted"]
     async fn test_identity_storage_round_trip() -> Result<()> {
         let mut manager = ContentManager::default();
@@ -1043,11 +1045,13 @@ mod tests {
         // Test wrong passphrase
         let wrong_passphrase_result = manager.retrieve_identity_credentials(&identity_id, "wrong_passphrase").await;
         assert!(wrong_passphrase_result.is_err(), "Should fail with wrong passphrase");
-        
+
         Ok(())
     }
 
     #[tokio::test]
+    // NOTE: This test requires ZhtpIdentity secure deserialization to be fixed
+    // Track in dedicated issue for proper implementation
     #[ignore = "ZhtpIdentity secure deserialization currently restricted"]
     async fn test_identity_migration() -> Result<()> {
         let mut manager = ContentManager::default();
@@ -1064,7 +1068,7 @@ mod tests {
         let retrieved = manager.retrieve_identity_credentials(&identity_id, passphrase).await.unwrap();
         assert_eq!(retrieved.id, test_identity.id);
         assert_eq!(retrieved.created_at, test_identity.created_at);
-        
+
         Ok(())
     }
 

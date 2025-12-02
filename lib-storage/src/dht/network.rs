@@ -361,7 +361,8 @@ mod tests {
         
         let bind_addr = "127.0.0.1:0".parse().unwrap(); // Use any available port
         let network = DhtNetwork::new(test_node, bind_addr);
-        
+
+        assert!(network.is_ok());
         if let Ok(net) = network {
             assert!(net.local_addr().is_ok());
         }
@@ -379,10 +380,7 @@ mod tests {
         };
         
         let bind_addr = "127.0.0.1:0".parse().unwrap();
-        let network = match DhtNetwork::new(test_node, bind_addr) {
-            Ok(net) => net,
-            Err(_) => return, // Skip test if socket binding is not permitted
-        };
+        let network = DhtNetwork::new(test_node, bind_addr).expect("Failed to create network");
         
         // Test PING message handling
         let ping_message = DhtMessage {
