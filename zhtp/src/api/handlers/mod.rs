@@ -1,8 +1,9 @@
 //! API Handlers Module
-//! 
+//!
 //! Clean, minimal handler modules for ZHTP API
 
 pub mod identity;
+pub mod guardian;
 pub mod blockchain;
 pub mod storage;
 pub mod protocol;
@@ -19,6 +20,7 @@ pub mod validator;
 pub mod crypto;
 
 pub use identity::IdentityHandler;
+pub use guardian::GuardianHandler;
 pub use blockchain::BlockchainHandler;
 pub use storage::StorageHandler;
 pub use protocol::ProtocolHandler;

@@ -642,24 +642,28 @@ mod tests {
         let json = r#"{
             "from_wallet": "abc123",
             "to_wallet": "def456",
-            "price": 1000
+            "price": 1000,
+            "buyer_identity_id": "identity789"
         }"#;
-        
+
         let request: TransferRequest = serde_json::from_str(json).unwrap();
         assert_eq!(request.from_wallet, "abc123");
         assert_eq!(request.to_wallet, "def456");
         assert_eq!(request.price, 1000);
+        assert_eq!(request.buyer_identity_id, "identity789");
     }
 
     #[test]
     fn test_purchase_request_parsing() {
         let json = r#"{
             "buyer_wallet": "buyer123",
-            "offered_price": 500
+            "offered_price": 500,
+            "buyer_identity_id": "identity456"
         }"#;
-        
+
         let request: PurchaseRequest = serde_json::from_str(json).unwrap();
         assert_eq!(request.buyer_wallet, "buyer123");
         assert_eq!(request.offered_price, 500);
+        assert_eq!(request.buyer_identity_id, "identity456");
     }
 }

@@ -839,6 +839,38 @@ impl IdentityManager {
             proof: vec![], // Legacy compatibility
         })
     }
+
+    /// Get guardian configuration for an identity
+    pub fn get_guardian_config(&self, identity_id: &IdentityId) -> Option<crate::guardian::GuardianConfig> {
+        self.private_data
+            .get(identity_id)
+            .and_then(|pd| pd.guardian_config.clone())
+    }
+
+    /// Set guardian configuration for an identity
+    pub fn set_guardian_config(&mut self, identity_id: &IdentityId, config: crate::guardian::GuardianConfig) -> Result<()> {
+        let private_data = self.private_data
+            .get_mut(identity_id)
+            .ok_or_else(|| anyhow::anyhow!("Identity not found"))?;
+
+        private_data.guardian_config = Some(config);
+        Ok(())
+    }
+
+    /// Get identity by DID
+    pub fn get_identity_by_did(&self, did: &str) -> Option<&ZhtpIdentity> {
+        self.identities
+            .values()
+            .find(|identity| identity.did.starts_with(did) || did.starts_with(&identity.did))
+    }
+
+    /// Get identity ID by DID
+    pub fn get_identity_id_by_did(&self, did: &str) -> Option<IdentityId> {
+        self.identities
+            .iter()
+            .find(|(_, identity)| identity.did.starts_with(did) || did.starts_with(&identity.did))
+            .map(|(id, _)| id.clone())
+    }
 }
 
 impl Default for IdentityManager {
