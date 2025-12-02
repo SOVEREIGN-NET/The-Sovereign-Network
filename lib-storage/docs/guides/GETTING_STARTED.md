@@ -318,7 +318,9 @@ async fn setup_network(
     ];
     
     for peer in peers {
-        match storage.add_peer(peer.clone()).await {
+        // In real code, derive NodeId from peer's identity
+        let peer_node_id = lib_storage::NodeId::from_bytes(rand::random::<[u8; 32]>());
+        match storage.add_peer(peer.clone(), peer_node_id).await {
             Ok(_) => println!("Added peer: {}", peer),
             Err(e) => eprintln!("Failed to add peer {}: {}", peer, e),
         }
@@ -422,8 +424,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         passphrase
     ).await?;
     
-    // Add network peers
-    storage.add_peer("127.0.0.1:33446".to_string()).await?;
+    // Add network peers (with their identity-derived NodeIds)
+    let peer_node_id = lib_storage::NodeId::from_bytes(rand::random::<[u8; 32]>());
+    storage.add_peer("127.0.0.1:33446".to_string(), peer_node_id).await?;
     
     // Store some test content
     let test_data = b"Hello, ZHTP Storage System!".to_vec();
@@ -938,7 +941,9 @@ async fn setup_network(
     ];
     
     for peer in peers {
-        match storage.add_peer(peer.clone()).await {
+        // In real code, derive NodeId from peer's identity
+        let peer_node_id = lib_storage::NodeId::from_bytes(rand::random::<[u8; 32]>());
+        match storage.add_peer(peer.clone(), peer_node_id).await {
             Ok(_) => println!("Added peer: {}", peer),
             Err(e) => eprintln!("Failed to add peer {}: {}", peer, e),
         }
@@ -1042,8 +1047,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         passphrase
     ).await?;
     
-    // Add network peers
-    storage.add_peer("127.0.0.1:33446".to_string()).await?;
+    // Add network peers (with their identity-derived NodeIds)
+    let peer_node_id = lib_storage::NodeId::from_bytes(rand::random::<[u8; 32]>());
+    storage.add_peer("127.0.0.1:33446".to_string(), peer_node_id).await?;
     
     // Store some test content
     let test_data = b"Hello, ZHTP Storage System!".to_vec();
