@@ -227,6 +227,8 @@ mod tests {
         let data = b"Hello, World! This is test data. Hello, World!".to_vec();
 
         let optimized = manager.optimize(&data).unwrap();
+        // NOTE: Optimization may not reduce size for very small data due to overhead
+        // This test verifies optimization works, not that it reduces size
         assert!(optimized.final_size > 0);
 
         let reconstructed = manager.reconstruct(&optimized).unwrap();
