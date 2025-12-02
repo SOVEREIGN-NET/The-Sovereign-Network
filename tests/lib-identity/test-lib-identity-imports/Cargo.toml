@@ -1,0 +1,11 @@
+[package]
+name = "test-lib-identity-imports"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lib-identity = { path = "../../../lib-identity" }
+lib-crypto = { path = "../../../lib-crypto" }
+anyhow = "1.0"
+hex = "0.4"
+tokio = { version = "1.0", features = ["full"] }
