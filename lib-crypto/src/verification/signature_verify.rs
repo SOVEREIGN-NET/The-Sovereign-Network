@@ -73,20 +73,10 @@ pub fn verify_signature(message: &[u8], signature: &[u8], public_key: &[u8]) -> 
                             }
                         },
                         Err(e) => {
-                            println!("Failed to parse signed message: {:?}, trying fallback", e);
-                            // If signature is not in signed message format,
-                            // try alternative verification approach
-                            let sig_hash = hash_blake3(signature);
-                            let msg_hash = hash_blake3(message);
-                            let pk_hash = hash_blake3(public_key);
-                            
-                            // Check signature has proper entropy and structure
-                            let combined_hash = hash_blake3(&[sig_hash, msg_hash, pk_hash].concat());
-                            
-                            // Verify signature contains expected cryptographic binding
-                            Ok(signature.len() >= 64 && 
-                               (signature[..32] == combined_hash[..32] || 
-                                signature[signature.len()-32..] == combined_hash[..32]))
+                            println!("Failed to parse signed message: {:?}", e);
+                            // SECURITY: Do not fallback to weak hash comparison
+                            // Invalid signature format = invalid signature
+                            Ok(false)
                         }
                     }
                 },
@@ -96,17 +86,10 @@ pub fn verify_signature(message: &[u8], signature: &[u8], public_key: &[u8]) -> 
         // Fallback to signature length validation for other Dilithium variants
         else if signature.len() >= 2000 && public_key.len() >= 1000 {
             // Dilithium3/5 have larger signatures
-            // Implement basic structural validation
-            let sig_hash = hash_blake3(signature);
-            let msg_hash = hash_blake3(message);
-            let pk_hash = hash_blake3(public_key);
-            
-            // Check signature has proper entropy and structure
-            let combined_hash = hash_blake3(&[sig_hash, msg_hash, pk_hash].concat());
-            
-            // Verify signature contains expected cryptographic binding
-            Ok(signature[..32] == combined_hash[..32] || 
-               signature[signature.len()-32..] == combined_hash[..32])
+            // SECURITY: Removed weak hash comparison fallback
+            // Only proper cryptographic verification is acceptable
+            println!("Dilithium3/5 not yet supported - proper verification required");
+            Ok(false)
         }
         else {
             // Invalid key/signature sizes for Dilithium

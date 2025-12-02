@@ -104,6 +104,7 @@ impl GuardianHandler {
     async fn handle_reject_recovery(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         handle_reject_recovery(
             &request.uri,
+            &request.body,
             self.identity_manager.clone(),
             self.recovery_manager.clone(),
             self.session_manager.clone(),
@@ -301,12 +302,22 @@ async fn handle_add_guardian(
         .await
         .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
 
-    // TODO: Validate identity exists by req.identity_id
-    // For now, just verify session which already validates the identity exists
+    // Convert identity_id string to IdentityId (Hash)
+    let identity_id_bytes = hex::decode(&req.identity_id)
+        .map_err(|e| anyhow::anyhow!("Invalid identity_id format: {}", e))?;
+    if identity_id_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("Invalid identity_id length"));
+    }
+    let mut id_array = [0u8; 32];
+    id_array.copy_from_slice(&identity_id_bytes);
+    let identity_id = lib_crypto::Hash::from_bytes(&id_array);
 
-    // Get or create guardian config
-    // TODO: Store guardian config in identity private data
-    let mut guardian_config = GuardianConfig::default();
+    // Get or create guardian config from identity private data
+    let manager_read = identity_manager.read().await;
+    let mut guardian_config = manager_read
+        .get_guardian_config(&identity_id)
+        .unwrap_or_default();
+    drop(manager_read);
 
     // Add guardian
     let guardian_public_key = PublicKey::new(req.guardian_public_key);
@@ -316,7 +327,10 @@ async fn handle_add_guardian(
 
     let total_guardians = guardian_config.guardians.len();
 
-    // TODO: Persist guardian config to identity storage
+    // Persist guardian config to identity private data
+    let mut manager_write = identity_manager.write().await;
+    manager_write.set_guardian_config(&identity_id, guardian_config)
+        .map_err(|e| anyhow::anyhow!("Failed to persist guardian config: {}", e))?;
 
     let response = AddGuardianResponse {
         status: "success".to_string(),
@@ -340,10 +354,41 @@ async fn handle_remove_guardian(
     let parts: Vec<&str> = uri.split('/').collect();
     let guardian_id = parts.get(5).ok_or_else(|| anyhow::anyhow!("Missing guardian_id"))?;
 
-    // TODO: Parse session_token from query params or headers
-    // TODO: Validate session
-    // TODO: Remove guardian from config
-    // TODO: Persist changes
+    // Security: Extract and validate session token from Authorization header
+    let session_token = request
+        .headers
+        .get("Authorization")
+        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid Authorization header"))?;
+
+    // Security: Validate session and get identity_id
+    let client_ip = extract_client_ip(request);
+    let user_agent = extract_user_agent(request);
+
+    let session_token_obj = session_manager
+        .validate_session(&session_token, &client_ip, &user_agent)
+        .await
+        .map_err(|e| anyhow::anyhow!("Invalid or expired session: {}", e))?;
+
+    let identity_id = session_token_obj.identity_id;
+
+    // Load guardian config
+    let manager_read = identity_manager.read().await;
+    let mut guardian_config = manager_read
+        .get_guardian_config(&identity_id)
+        .ok_or_else(|| anyhow::anyhow!("No guardian config found"))?;
+    drop(manager_read);
+
+    // Remove guardian from config
+    guardian_config
+        .remove_guardian(guardian_id)
+        .map_err(|e| anyhow::anyhow!("Failed to remove guardian: {}", e))?;
+
+    // Persist changes to identity private data
+    let mut manager_write = identity_manager.write().await;
+    manager_write
+        .set_guardian_config(&identity_id, guardian_config)
+        .map_err(|e| anyhow::anyhow!("Failed to persist guardian config: {}", e))?;
 
     Ok(ZhtpResponse::success(
         serde_json::to_vec(&serde_json::json!({"status": "success"}))?,
@@ -451,13 +496,32 @@ async fn handle_approve_recovery(
         .await
         .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
 
-    // TODO: Load guardian config and verify guardian exists
-    let guardian_config = GuardianConfig::default();
+    // Get the recovery request to find the identity being recovered
+    let manager = recovery_manager.read().await;
+    let recovery_request = manager
+        .get_request(&recovery_id)
+        .ok_or_else(|| anyhow::anyhow!("Recovery request not found"))?;
+    let identity_did = recovery_request.identity_did.clone();
+    drop(manager);
+
+    // Get the identity ID from DID
+    let identity_manager_read = identity_manager.read().await;
+    let identity_id = identity_manager_read
+        .get_identity_id_by_did(&identity_did)
+        .ok_or_else(|| anyhow::anyhow!("Identity not found for DID: {}", identity_did))?;
+
+    // Load guardian config and verify guardian exists
+    let guardian_config = identity_manager_read
+        .get_guardian_config(&identity_id)
+        .ok_or_else(|| anyhow::anyhow!("No guardian config found for this identity"))?;
+    drop(identity_manager_read);
+
+    // Verify the approver is actually an authorized guardian with Active status
     let guardian = guardian_config
         .guardians
         .values()
-        .find(|g| g.guardian_did == req.guardian_did)
-        .ok_or_else(|| anyhow::anyhow!("Guardian not found"))?;
+        .find(|g| g.guardian_did == req.guardian_did && g.status == GuardianStatus::Active)
+        .ok_or_else(|| anyhow::anyhow!("Not an authorized guardian or guardian is not active"))?;
 
     // Add approval with signature verification
     let signature = PostQuantumSignature {
@@ -490,6 +554,7 @@ async fn handle_approve_recovery(
 
 async fn handle_reject_recovery(
     uri: &str,
+    body: &[u8],
     identity_manager: Arc<RwLock<IdentityManager>>,
     recovery_manager: Arc<RwLock<SocialRecoveryManager>>,
     session_manager: Arc<SessionManager>,
@@ -498,16 +563,46 @@ async fn handle_reject_recovery(
     // Extract recovery_id from URI
     let recovery_id = extract_recovery_id(uri)?;
 
-    // TODO: Validate guardian session
-    // TODO: Reject recovery
+    // Parse request to get guardian_did
+    let req: ApproveRecoveryRequest = serde_json::from_slice(body).map_err(|e| {
+        anyhow::anyhow!("Invalid request body: {}", e)
+    })?;
 
-    let mut manager = recovery_manager.write().await;
+    // Get the recovery request to find the identity being recovered
+    let manager = recovery_manager.read().await;
     let recovery_request = manager
+        .get_request(&recovery_id)
+        .ok_or_else(|| anyhow::anyhow!("Recovery request not found"))?;
+    let identity_did = recovery_request.identity_did.clone();
+    drop(manager);
+
+    // Get the identity ID from DID
+    let identity_manager_read = identity_manager.read().await;
+    let identity_id = identity_manager_read
+        .get_identity_id_by_did(&identity_did)
+        .ok_or_else(|| anyhow::anyhow!("Identity not found for DID: {}", identity_did))?;
+
+    // Load guardian config and verify guardian exists
+    let guardian_config = identity_manager_read
+        .get_guardian_config(&identity_id)
+        .ok_or_else(|| anyhow::anyhow!("No guardian config found for this identity"))?;
+    drop(identity_manager_read);
+
+    // Verify the rejecter is actually an authorized guardian with Active status
+    let _guardian = guardian_config
+        .guardians
+        .values()
+        .find(|g| g.guardian_did == req.guardian_did && g.status == GuardianStatus::Active)
+        .ok_or_else(|| anyhow::anyhow!("Not an authorized guardian or guardian is not active"))?;
+
+    // Reject the recovery
+    let mut manager = recovery_manager.write().await;
+    let recovery_request_mut = manager
         .get_request_mut(&recovery_id)
         .ok_or_else(|| anyhow::anyhow!("Recovery request not found"))?;
 
-    recovery_request
-        .reject_approval("guardian_did")
+    recovery_request_mut
+        .reject_approval(&req.guardian_did)
         .map_err(|e| anyhow::anyhow!("Failed to reject recovery: {}", e))?;
 
     Ok(ZhtpResponse::success(
@@ -540,15 +635,18 @@ async fn handle_complete_recovery(
     let client_ip = extract_client_ip(request);
     let user_agent = extract_user_agent(request);
 
+    // Get the identity ID from DID
+    let identity_manager_read = identity_manager.read().await;
+    let identity_id = identity_manager_read
+        .get_identity_id_by_did(&recovery_request.identity_did)
+        .ok_or_else(|| anyhow::anyhow!("Identity not found for DID: {}", recovery_request.identity_did))?;
+    drop(identity_manager_read);
+
     // Create session token for recovered identity
-    // TODO: Get proper identity_id hash from identity_did
-    let identity_id = lib_crypto::Hash::from_bytes(&[0u8; 32]);
     let session_token = session_manager
         .create_session(identity_id, &client_ip, &user_agent)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create session: {}", e))?;
-
-    // TODO: Load identity data
 
     Ok(ZhtpResponse::success(
         serde_json::to_vec(&serde_json::json!({
