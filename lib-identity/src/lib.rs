@@ -23,6 +23,7 @@ pub mod wallets;
 pub mod did;
 pub mod reputation;
 pub mod recovery;
+pub mod guardian;
 pub mod privacy;
 pub mod cryptography;
 pub mod auth;
@@ -40,7 +41,8 @@ pub use types::IdentityVerification;
 pub use did::{
     DidDocument, ServiceEndpoint, VerificationMethod
 };
-pub use recovery::{RecoveryPhraseManager, RecoveryPhrase, PhraseGenerationOptions, EntropySource};
+pub use recovery::{RecoveryPhraseManager, RecoveryPhrase, PhraseGenerationOptions, EntropySource, SocialRecoveryManager, RecoveryRequest, RecoveryStatus};
+pub use guardian::{Guardian, GuardianConfig, GuardianStatus};
 pub use wallets::{WalletManager, QuantumWallet, WalletType, WalletId, WalletSummary};
 pub use auth::{PasswordManager, PasswordError, PasswordValidation, SessionToken};
 

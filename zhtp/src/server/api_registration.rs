@@ -86,7 +86,7 @@ pub async fn register_api_handlers(
             identity_manager.clone(),
             identity_economic_model,
             _session_manager.clone(),
-            rate_limiter,
+            rate_limiter.clone(),
             account_lockout,
             csrf_protection,
             recovery_phrase_manager,
@@ -94,7 +94,24 @@ pub async fn register_api_handlers(
     );
     http_router.register_handler("/api/v1/identity".to_string(), identity_handler);
     info!("   ✅ Identity handler registered");
-    
+
+    // Guardian social recovery handler (Issue #101)
+    let recovery_manager = Arc::new(RwLock::new(
+        lib_identity::SocialRecoveryManager::new()
+    ));
+
+    let guardian_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+        crate::api::handlers::guardian::GuardianHandler::new(
+            identity_manager.clone(),
+            _session_manager.clone(),
+            recovery_manager,
+            rate_limiter.clone(),
+        )
+    );
+    http_router.register_handler("/api/v1/identity/guardians".to_string(), guardian_handler.clone());
+    http_router.register_handler("/api/v1/identity/recovery".to_string(), guardian_handler);
+    info!("   ✅ Guardian social recovery handler registered");
+
     // ========================================================================
     // STORAGE AND CONTENT HANDLERS
     // ========================================================================
