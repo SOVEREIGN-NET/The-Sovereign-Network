@@ -41,6 +41,7 @@ pub struct IdentityHandler {
     session_manager: Arc<crate::session_manager::SessionManager>,
     rate_limiter: Arc<crate::api::middleware::RateLimiter>,
     account_lockout: Arc<login_handlers::AccountLockout>,
+    csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
 }
 
 impl IdentityHandler {
@@ -50,6 +51,7 @@ impl IdentityHandler {
         session_manager: Arc<crate::session_manager::SessionManager>,
         rate_limiter: Arc<crate::api::middleware::RateLimiter>,
         account_lockout: Arc<login_handlers::AccountLockout>,
+        csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
     ) -> Self {
         Self {
             identity_manager,
@@ -57,6 +59,7 @@ impl IdentityHandler {
             session_manager,
             rate_limiter,
             account_lockout,
+            csrf_protection,
         }
     }
 }
@@ -658,6 +661,7 @@ impl IdentityHandler {
             self.session_manager.clone(),
             self.rate_limiter.clone(),
             self.account_lockout.clone(),
+            self.csrf_protection.clone(),
             &request,
         )
         .await
@@ -672,6 +676,7 @@ impl IdentityHandler {
             self.session_manager.clone(),
             self.rate_limiter.clone(),
             self.account_lockout.clone(),
+            self.csrf_protection.clone(),
             &request,
         )
         .await

@@ -28,8 +28,8 @@ use lib_identity::{IdentityManager, IdentityId};
 // Session management
 use crate::session_manager::SessionManager;
 
-// Rate limiting via dependency injection
-use crate::api::middleware::RateLimiter;
+// Rate limiting and CSRF protection via dependency injection
+use crate::api::middleware::{RateLimiter, CsrfProtection};
 
 /// Account lockout tracker
 #[derive(Clone)]
@@ -133,6 +133,7 @@ pub struct SigninRequest {
 pub struct SigninResponse {
     pub status: String,
     pub session_token: String,
+    pub csrf_token: String,
     pub identity: IdentityInfo,
 }
 
@@ -195,6 +196,13 @@ fn extract_client_ip(request: &lib_protocols::types::ZhtpRequest) -> String {
     "unknown".to_string()
 }
 
+/// Extract User-Agent from request headers (P0-6)
+fn extract_user_agent(request: &lib_protocols::types::ZhtpRequest) -> String {
+    request.headers
+        .get("User-Agent")
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 /// Handle signin request (POST /api/v1/identity/signin)
 pub async fn handle_signin(
     request_body: &[u8],
@@ -202,10 +210,12 @@ pub async fn handle_signin(
     session_manager: Arc<SessionManager>,
     rate_limiter: Arc<RateLimiter>,
     account_lockout: Arc<AccountLockout>,
+    csrf_protection: Arc<CsrfProtection>,
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
     let client_ip = extract_client_ip(request);
-    handle_signin_with_ip(request_body, identity_manager, session_manager, rate_limiter, account_lockout, &client_ip).await
+    let user_agent = extract_user_agent(request);
+    handle_signin_with_ip(request_body, identity_manager, session_manager, rate_limiter, account_lockout, csrf_protection, &client_ip, &user_agent).await
 }
 
 /// Handle signin request with IP address for rate limiting
@@ -215,7 +225,9 @@ pub async fn handle_signin_with_ip(
     session_manager: Arc<SessionManager>,
     rate_limiter: Arc<RateLimiter>,
     account_lockout: Arc<AccountLockout>,
+    csrf_protection: Arc<CsrfProtection>,
     client_ip: &str,
+    user_agent: &str,
 ) -> ZhtpResult<ZhtpResponse> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -383,9 +395,9 @@ pub async fn handle_signin_with_ip(
     // P0-4: Clear failed attempts on successful authentication
     account_lockout.clear_failures(&identity_id_str).await;
 
-    // Create session (only after successful validation)
+    // Create session (only after successful validation) with IP/UA binding (P0-6)
     let session_token = session_manager
-        .create_session(identity_id.clone())
+        .create_session(identity_id.clone(), client_ip, user_agent)
         .await
         .map_err(|e| {
             tracing::error!("Session creation failed: {}", e);
@@ -403,10 +415,14 @@ pub async fn handle_signin_with_ip(
         failure_reason: None,
     }.log();
 
+    // Generate CSRF token for this session (P0-7)
+    let csrf_token = csrf_protection.generate_token(&session_token);
+
     // Build response
     let response = SigninResponse {
         status: "success".to_string(),
         session_token,
+        csrf_token,
         identity: IdentityInfo {
             identity_id: identity_id.to_string(),
             did,
@@ -433,10 +449,11 @@ pub async fn handle_login(
     session_manager: Arc<SessionManager>,
     rate_limiter: Arc<RateLimiter>,
     account_lockout: Arc<AccountLockout>,
+    csrf_protection: Arc<CsrfProtection>,
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
     // Login is identical to signin
-    handle_signin(request_body, identity_manager, session_manager, rate_limiter, account_lockout, request).await
+    handle_signin(request_body, identity_manager, session_manager, rate_limiter, account_lockout, csrf_protection, request).await
 }
 
 #[cfg(test)]

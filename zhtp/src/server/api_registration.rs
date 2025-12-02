@@ -73,6 +73,9 @@ pub async fn register_api_handlers(
     // Create account lockout tracker for per-identity brute force protection
     let account_lockout = Arc::new(crate::api::handlers::identity::login_handlers::AccountLockout::new());
 
+    // Create CSRF protection (P0-7)
+    let csrf_protection = Arc::new(crate::api::middleware::CsrfProtection::new());
+
     let identity_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
         IdentityHandler::new(
             identity_manager.clone(),
@@ -80,6 +83,7 @@ pub async fn register_api_handlers(
             _session_manager.clone(),
             rate_limiter,
             account_lockout,
+            csrf_protection,
         )
     );
     http_router.register_handler("/api/v1/identity".to_string(), identity_handler);

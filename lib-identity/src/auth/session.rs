@@ -15,6 +15,8 @@ pub struct SessionToken {
     pub created_at: u64,
     pub expires_at: u64,
     pub last_used: u64,
+    pub bound_ip: Option<String>,
+    pub bound_user_agent: Option<String>,
 }
 
 impl SessionToken {
@@ -37,7 +39,12 @@ impl SessionToken {
     }
 
     /// Generate a new session token
-    pub fn new(identity_id: IdentityId, duration_seconds: u64) -> Result<Self> {
+    pub fn new(
+        identity_id: IdentityId,
+        duration_seconds: u64,
+        client_ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<Self> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -65,6 +72,31 @@ impl SessionToken {
             created_at: now,
             expires_at: now + duration_seconds,
             last_used: now,
+            bound_ip: client_ip,
+            bound_user_agent: user_agent,
         })
+    }
+
+    /// Validate session is being used from same IP/User-Agent (P0-6)
+    pub fn validate_binding(&self, current_ip: &str, current_ua: &str) -> bool {
+        if let Some(bound_ip) = &self.bound_ip {
+            if bound_ip != current_ip {
+                tracing::warn!(
+                    "Session IP mismatch: bound={} current={}",
+                    bound_ip,
+                    current_ip
+                );
+                return false;
+            }
+        }
+
+        if let Some(bound_ua) = &self.bound_user_agent {
+            if bound_ua != current_ua {
+                tracing::warn!("Session User-Agent mismatch");
+                return false;
+            }
+        }
+
+        true
     }
 }
