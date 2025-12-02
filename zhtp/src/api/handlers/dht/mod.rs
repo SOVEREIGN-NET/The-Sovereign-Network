@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug};
 use chrono;
+use uuid;
 
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus};
@@ -177,6 +178,14 @@ pub struct ContractInfo {
     pub owner: Option<String>,
 }
 
+/// Standardized error response format (Issue #11)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorResponse {
+    pub error: String,
+    pub code: u16,
+    pub timestamp: u64,
+}
+
 /// DHT API Handler implementation
 pub struct DhtHandler {
     /// DHT client instance (has blockchain-verified identity + Dilithium2 signing)
@@ -224,6 +233,27 @@ impl DhtHandler {
             stats: Arc::new(RwLock::new(DhtHandlerStats::default())),
             storage_system: Arc::new(RwLock::new(Some(storage))),
         }
+    }
+
+    /// Create standardized JSON error response (Issue #11)
+    fn json_error(&self, status: ZhtpStatus, message: impl Into<String>) -> ZhtpResult<ZhtpResponse> {
+        let code = match status {
+            ZhtpStatus::BadRequest => 400,
+            ZhtpStatus::Unauthorized => 401,
+            ZhtpStatus::Forbidden => 403,
+            ZhtpStatus::NotFound => 404,
+            ZhtpStatus::InternalServerError => 500,
+            ZhtpStatus::ServiceUnavailable => 503,
+            _ => 500,
+        };
+
+        let error_response = ErrorResponse {
+            error: message.into(),
+            code,
+            timestamp: chrono::Utc::now().timestamp() as u64,
+        };
+
+        ZhtpResponse::error_json(status, &error_response)
     }
 
     /// Initialize DHT client with identity
@@ -818,8 +848,8 @@ impl DhtHandler {
         info!(" Listing contracts in DHT network...");
 
         let dht_client_guard: tokio::sync::RwLockReadGuard<Option<Arc<RwLock<ZkDHTIntegration>>>> = self.dht_client.read().await;
-        let _client: &Arc<RwLock<ZkDHTIntegration>> = match dht_client_guard.as_ref() {
-            Some(client) => client,
+        match dht_client_guard.as_ref() {
+            Some(_client) => {},
             None => {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::ServiceUnavailable,
@@ -971,23 +1001,14 @@ impl DhtHandler {
         use lib_identity::types::IdentityType;
         use lib_identity::ZhtpIdentity;
 
-        // Create DHT service identity using P1-7 architecture
+        // Create DHT service identity with random seed (security fix)
         ZhtpIdentity::new_unified(
             IdentityType::Device,
             None, // No age for service
             None, // No jurisdiction for service
             "dht-service",
-            Some([42u8; 64]), // Fixed seed for deterministic DHT service identity
-        ).unwrap_or_else(|_| {
-            // Fallback to random seed if fixed seed fails
-            ZhtpIdentity::new_unified(
-                IdentityType::Device,
-                None,
-                None,
-                "dht-service-fallback",
-                None,
-            ).expect("Failed to create DHT service identity")
-        })
+            None, // Random seed for security
+        ).expect("Failed to create DHT service identity")
     }
 
     /// Update handler statistics
@@ -1106,7 +1127,18 @@ impl ZhtpRequestHandler for DhtHandler {
     }
 
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let _success = true;
+        // Structured logging for audit trail (Issue #12)
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let start_time = std::time::Instant::now();
+
+        info!(
+            request_id = %request_id,
+            method = ?request.method,
+            uri = %request.uri,
+            timestamp = request.timestamp,
+            "DHT API request received"
+        );
+
         let response = match request.method {
             ZhtpMethod::Get => match request.uri.as_str() {
                 "/api/v1/dht/status" => {
@@ -1193,14 +1225,6 @@ impl ZhtpRequestHandler for DhtHandler {
                     info!(" DHT query request");
                     self.query_dht(request.body).await
                 }
-                "/api/dht/send" => {
-                    info!(" DHT contract packet send request");
-                    self.send_contract_packet(request.body).await
-                }
-                "/api/v1/dht/contract" => {
-                    info!(" DHT smart contract operation request");
-                    self.send_contract_packet(request.body).await
-                }
                 _ => {
                     warn!("❓ Unknown DHT POST endpoint: {}", request.uri);
                     Ok(ZhtpResponse::not_found("Unknown DHT POST endpoint".to_string()))
@@ -1212,14 +1236,30 @@ impl ZhtpRequestHandler for DhtHandler {
             }
         };
 
-        // Update statistics
+        // Update statistics and structured logging for response (Issue #12)
+        let duration_ms = start_time.elapsed().as_millis();
+
         match &response {
             Ok(resp) => {
                 let success = !matches!(resp.status, ZhtpStatus::InternalServerError | ZhtpStatus::ServiceUnavailable);
                 self.update_stats(success).await;
+
+                info!(
+                    request_id = %request_id,
+                    status = ?resp.status,
+                    duration_ms = duration_ms,
+                    "DHT API request completed"
+                );
             }
-            Err(_) => {
+            Err(e) => {
                 self.update_stats(false).await;
+
+                error!(
+                    request_id = %request_id,
+                    error = %e,
+                    duration_ms = duration_ms,
+                    "DHT API request failed"
+                );
             }
         }
 

@@ -7,12 +7,26 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 // Removed unused tokio::sync::RwLock, anyhow::Result, serde_json::json
 use tracing::{info, warn, error};
+use chrono;
+use uuid;
 
 // ZHTP protocol imports
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 use crate::runtime::RuntimeOrchestrator;
+
+// Constants
+const CONTENT_TYPE_JSON: &str = "application/json";
+const API_VERSION: &str = "1.0";
+
+/// Standardized error response format (Issue #11)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorResponse {
+    pub error: String,
+    pub code: u16,
+    pub timestamp: u64,
+}
 
 // Request/Response structures for network operations
 
@@ -240,13 +254,44 @@ impl NetworkHandler {
     pub fn new(runtime: Arc<RuntimeOrchestrator>) -> Self {
         Self { runtime }
     }
+
+    /// Create standardized JSON error response (Issue #11)
+    fn json_error(&self, status: ZhtpStatus, message: impl Into<String>) -> ZhtpResult<ZhtpResponse> {
+        let code = match status {
+            ZhtpStatus::BadRequest => 400,
+            ZhtpStatus::Unauthorized => 401,
+            ZhtpStatus::Forbidden => 403,
+            ZhtpStatus::NotFound => 404,
+            ZhtpStatus::InternalServerError => 500,
+            ZhtpStatus::ServiceUnavailable => 503,
+            _ => 500,
+        };
+
+        let error_response = ErrorResponse {
+            error: message.into(),
+            code,
+            timestamp: chrono::Utc::now().timestamp() as u64,
+        };
+
+        ZhtpResponse::error_json(status, &error_response)
+    }
 }
 
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for NetworkHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        info!("Network handler: {} {}", request.method, request.uri);
-        
+        // Structured logging for audit trail (Issue #12)
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let start_time = std::time::Instant::now();
+
+        info!(
+            request_id = %request_id,
+            method = ?request.method,
+            uri = %request.uri,
+            timestamp = request.timestamp,
+            "Network API request received"
+        );
+
         let response = match (request.method, request.uri.as_str()) {
             // Gas pricing endpoint (Issue #10)
             (ZhtpMethod::Get, "/api/v1/network/gas") => {
@@ -304,14 +349,31 @@ impl ZhtpRequestHandler for NetworkHandler {
             }
         };
         
+        // Structured logging for response (Issue #12)
+        let duration_ms = start_time.elapsed().as_millis();
+
         match response {
             Ok(mut resp) => {
                 resp.headers.set("X-Handler", "Network".to_string());
                 resp.headers.set("X-Protocol", "ZHTP/1.0".to_string());
+
+                info!(
+                    request_id = %request_id,
+                    status = ?resp.status,
+                    duration_ms = duration_ms,
+                    "Network API request completed successfully"
+                );
+
                 Ok(resp)
             }
             Err(e) => {
-                error!("Network handler error: {}", e);
+                error!(
+                    request_id = %request_id,
+                    error = %e,
+                    duration_ms = duration_ms,
+                    "Network API request failed"
+                );
+
                 Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     format!("Network error: {}", e),
@@ -334,11 +396,19 @@ impl ZhtpRequestHandler for NetworkHandler {
 impl NetworkHandler {
     /// Get gas pricing information
     /// GET /api/v1/network/gas (Issue #10)
-    async fn handle_get_gas_info(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+    async fn handle_get_gas_info(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!("API: Getting gas pricing information");
 
-        // For now, return static gas pricing information
-        // TODO: Integrate with actual gas price calculation from economic model
+        // Security: Rate limit gas price queries (100 requests per 15 minutes per IP)
+        let client_ip = request.headers.get("X-Real-IP")
+            .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| f.split(',').next().map(|s| s.trim().to_string())))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Note: Rate limiter would need to be added to NetworkHandler struct
+        // For now, just log the IP for monitoring
+        info!("Gas price request from IP: {}", client_ip);
+
+        // Static gas pricing - integrate with economic model when available
         let base_fee = 100; // Base fee in smallest unit
         let priority_fee = 50; // Priority fee for faster processing
         let gas_price = base_fee + priority_fee;
@@ -359,7 +429,7 @@ impl NetworkHandler {
 
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
-            "application/json".to_string(),
+            CONTENT_TYPE_JSON.to_string(),
             None,
         ))
     }
@@ -629,11 +699,9 @@ impl NetworkHandler {
             ));
         }
 
-        // Generate peer ID based on address
-        let peer_id = format!("peer_{}", 
-            std::collections::hash_map::DefaultHasher::new()
-                .using(&add_request.peer_address)
-                .finish());
+        // Generate peer ID based on address using cryptographic hash (issue #9)
+        let peer_hash = lib_crypto::hashing::hash_blake3(add_request.peer_address.as_bytes());
+        let peer_id = format!("peer_{}", hex::encode(&peer_hash[..8]));
 
         match self.runtime.connect_to_peer(&add_request.peer_address).await {
             Ok(()) => {
@@ -1240,20 +1308,5 @@ impl NetworkHandler {
                 ))
             }
         }
-    }
-}
-
-// Helper trait for hash generation (using std::hash)
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
-trait HashExtension {
-    fn using<T: Hash>(self, value: &T) -> Self;
-}
-
-impl HashExtension for DefaultHasher {
-    fn using<T: Hash>(mut self, value: &T) -> Self {
-        value.hash(&mut self);
-        self
     }
 }

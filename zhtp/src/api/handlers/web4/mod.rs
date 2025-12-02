@@ -16,6 +16,17 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use lib_network::Web4Manager;
 use tracing::{info, error};
+use serde::{Serialize, Deserialize};
+use chrono;
+use uuid;
+
+/// Standardized error response format (Issue #11)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorResponse {
+    pub error: String,
+    pub code: u16,
+    pub timestamp: u64,
+}
 
 /// Web4 API handler that integrates with existing ZHTP server
 pub struct Web4Handler {
@@ -57,6 +68,27 @@ impl Web4Handler {
     /// Get reference to the Web4Manager for sharing with other handlers
     pub fn get_web4_manager(&self) -> Arc<RwLock<Web4Manager>> {
         Arc::clone(&self.web4_manager)
+    }
+
+    /// Create standardized JSON error response (Issue #11)
+    fn json_error(&self, status: ZhtpStatus, message: impl Into<String>) -> ZhtpResult<ZhtpResponse> {
+        let code = match status {
+            ZhtpStatus::BadRequest => 400,
+            ZhtpStatus::Unauthorized => 401,
+            ZhtpStatus::Forbidden => 403,
+            ZhtpStatus::NotFound => 404,
+            ZhtpStatus::InternalServerError => 500,
+            ZhtpStatus::ServiceUnavailable => 503,
+            _ => 500,
+        };
+
+        let error_response = ErrorResponse {
+            error: message.into(),
+            code,
+            timestamp: chrono::Utc::now().timestamp() as u64,
+        };
+
+        ZhtpResponse::error_json(status, &error_response)
     }
 
     /// Get Web4 system statistics
@@ -114,14 +146,14 @@ impl Web4Handler {
             Ok(lookup) if lookup.found => {
                 if let Some(record) = lookup.record {
                     // Return contract/content information
-                    // Note: Using domain as contract_id placeholder
+                    // Note: Web4 domains don't have direct contract associations yet
                     let response = serde_json::json!({
                         "status": "success",
                         "domain": domain,
-                        "contract_id": format!("contract_{}", record.domain.replace(".", "_")),
                         "owner": record.owner,
                         "path": path,
-                        "content_available": true
+                        "content_available": !record.content_mappings.is_empty(),
+                        "note": "Contract association not yet implemented"
                     });
 
                     let json = serde_json::to_vec(&response)
@@ -169,14 +201,14 @@ impl Web4Handler {
         match manager.registry.lookup_domain(domain).await {
             Ok(lookup) if lookup.found => {
                 if let Some(record) = lookup.record {
-                    // Note: Using domain as contract_id placeholder
+                    // Note: Web4 domains don't have direct contract associations yet
                     let response = serde_json::json!({
                         "status": "success",
                         "domain": domain,
-                        "contract_id": format!("contract_{}", record.domain.replace(".", "_")),
                         "owner": record.owner,
                         "registered_at": record.registered_at,
-                        "expires_at": record.expires_at
+                        "expires_at": record.expires_at,
+                        "note": "Contract association not yet implemented"
                     });
 
                     let json = serde_json::to_vec(&response)
@@ -216,10 +248,20 @@ impl Web4Handler {
 impl ZhtpRequestHandler for Web4Handler {
     /// Handle ZHTP requests for Web4 endpoints
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Structured logging for audit trail (Issue #12)
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let start_time = std::time::Instant::now();
+
+        info!(
+            request_id = %request_id,
+            method = ?request.method,
+            uri = %request.uri,
+            timestamp = request.timestamp,
+            "Web4 API request received"
+        );
+
         let path = &request.uri;
-        info!("Handling Web4 request: {} {}", request.method as u8, path);
-        
-        match path.as_str() {
+        let response = match path.as_str() {
             // Issue #9: Web4 resource loading and domain resolution
             "/api/v1/web4/load" if request.method == lib_protocols::ZhtpMethod::Post => {
                 self.load_web4_resource(request).await
@@ -265,7 +307,31 @@ impl ZhtpRequestHandler for Web4Handler {
                 ZhtpStatus::NotFound,
                 format!("Web4 endpoint not found: {}", path),
             )),
+        };
+
+        // Structured logging for response (Issue #12)
+        let duration_ms = start_time.elapsed().as_millis();
+
+        match &response {
+            Ok(resp) => {
+                info!(
+                    request_id = %request_id,
+                    status = ?resp.status,
+                    duration_ms = duration_ms,
+                    "Web4 API request completed"
+                );
+            }
+            Err(e) => {
+                error!(
+                    request_id = %request_id,
+                    error = %e,
+                    duration_ms = duration_ms,
+                    "Web4 API request failed"
+                );
+            }
         }
+
+        response
     }
 
     /// Check if this handler can process the request
