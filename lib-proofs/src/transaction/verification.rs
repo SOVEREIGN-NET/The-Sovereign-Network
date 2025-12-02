@@ -114,7 +114,8 @@ mod tests {
         let receiver_blinding = [2u8; 32];
         let nullifier = [3u8; 32];
         
-        let proof = ZkTransactionProver::prove_transaction(
+        let prover = ZkTransactionProver::new().unwrap();
+        let proof = prover.prove_transaction(
             sender_balance,
             receiver_balance,
             amount,
