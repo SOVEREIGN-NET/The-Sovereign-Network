@@ -148,15 +148,79 @@ impl HttpRouter {
         if let Some(handler) = self.routes.get(path) {
             return Some(handler);
         }
-        
+
+        // Apply path aliases for backward compatibility (Issue #7)
+        let aliased_path = self.apply_path_aliases(path);
+        if let Some(handler) = self.routes.get(&aliased_path) {
+            return Some(handler);
+        }
+
         // Try prefix matching for API routes
         for (route_path, handler) in &self.routes {
             if path.starts_with(route_path) {
                 return Some(handler);
             }
         }
-        
+
+        // Try prefix matching with aliased path
+        for (route_path, handler) in &self.routes {
+            if aliased_path.starts_with(route_path) {
+                return Some(handler);
+            }
+        }
+
         None
+    }
+
+    /// Apply path aliases for backward compatibility with old API client paths
+    fn apply_path_aliases(&self, path: &str) -> String {
+        // Legacy paths -> /api/v1 paths
+        match path {
+            // Mesh/Network aliases
+            "/mesh/peers" => "/api/v1/blockchain/network/peers".to_string(),
+            p if p.starts_with("/mesh/") => format!("/api/v1{}", p),
+
+            // Node status aliases
+            "/node/status" => "/api/v1/protocol/info".to_string(),
+            p if p.starts_with("/node/") => format!("/api/v1/protocol{}", &p[5..]),
+
+            // Blockchain aliases
+            "/blockchain/info" => "/api/v1/blockchain/status".to_string(),
+            p if p.starts_with("/blockchain/") => format!("/api/v1{}", p),
+
+            // DAO aliases
+            "/dao/proposals" => "/api/v1/dao/proposals/list".to_string(),
+            "/dao/vote" => "/api/v1/dao/vote/cast".to_string(),
+            "/dao/treasury" => "/api/v1/dao/treasury/balance".to_string(),
+            p if p.starts_with("/dao/") => format!("/api/v1{}", p),
+
+            // Wallet aliases
+            p if p.starts_with("/wallet/") => format!("/api/v1{}", p),
+
+            // Contract aliases (Issue #8) - map /api/v1/contract to /api/v1/blockchain/contracts
+            "/api/v1/contract/deploy" => "/api/v1/blockchain/contracts/deploy".to_string(),
+            "/api/v1/contract/execute" => "/api/v1/blockchain/contracts/execute".to_string(),
+            p if p.starts_with("/api/v1/contract/query/") => {
+                let contract_id = &p["/api/v1/contract/query/".len()..];
+                format!("/api/v1/blockchain/contracts/{}/state", contract_id)
+            }
+            p if p.starts_with("/api/v1/contract/") && p.ends_with("/metadata") => {
+                let contract_id = &p["/api/v1/contract/".len()..p.len() - "/metadata".len()];
+                format!("/api/v1/blockchain/contracts/{}", contract_id)
+            }
+            p if p.starts_with("/api/v1/contract/") && p.ends_with("/upgrade") => {
+                let contract_id = &p["/api/v1/contract/".len()..p.len() - "/upgrade".len()];
+                format!("/api/v1/blockchain/contracts/{}/upgrade", contract_id)
+            }
+            p if p.starts_with("/api/v1/contract/") => {
+                let contract_id = &p["/api/v1/contract/".len()..];
+                format!("/api/v1/blockchain/contracts/{}", contract_id)
+            }
+            p if p.starts_with("/contract/") => format!("/api/v1/blockchain{}", p),
+
+            // Already has /api/v1 prefix or no alias needed
+            _ => path.to_string(),
+        }
     }
     
     async fn process_middleware(&self, mut request: ZhtpRequest) -> Result<(ZhtpRequest, Option<ZhtpResponse>)> {

@@ -17,6 +17,15 @@ use crate::runtime::RuntimeOrchestrator;
 // Request/Response structures for network operations
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct GasInfoResponse {
+    pub status: String,
+    pub gas_price: u64,
+    pub estimated_cost: u64,
+    pub base_fee: u64,
+    pub priority_fee: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct NetworkPeersResponse {
     pub status: String,
     pub peer_count: usize,
@@ -239,6 +248,10 @@ impl ZhtpRequestHandler for NetworkHandler {
         info!("Network handler: {} {}", request.method, request.uri);
         
         let response = match (request.method, request.uri.as_str()) {
+            // Gas pricing endpoint (Issue #10)
+            (ZhtpMethod::Get, "/api/v1/network/gas") => {
+                self.handle_get_gas_info(request).await
+            }
             (ZhtpMethod::Get, "/api/v1/blockchain/network/peers") => {
                 self.handle_get_network_peers(request).await
             }
@@ -308,8 +321,9 @@ impl ZhtpRequestHandler for NetworkHandler {
     }
     
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
-        request.uri.starts_with("/api/v1/blockchain/network/") || 
-        request.uri.starts_with("/api/v1/blockchain/sync/")
+        request.uri.starts_with("/api/v1/blockchain/network/") ||
+        request.uri.starts_with("/api/v1/blockchain/sync/") ||
+        request.uri.starts_with("/api/v1/network/")
     }
     
     fn priority(&self) -> u32 {
@@ -318,6 +332,38 @@ impl ZhtpRequestHandler for NetworkHandler {
 }
 
 impl NetworkHandler {
+    /// Get gas pricing information
+    /// GET /api/v1/network/gas (Issue #10)
+    async fn handle_get_gas_info(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting gas pricing information");
+
+        // For now, return static gas pricing information
+        // TODO: Integrate with actual gas price calculation from economic model
+        let base_fee = 100; // Base fee in smallest unit
+        let priority_fee = 50; // Priority fee for faster processing
+        let gas_price = base_fee + priority_fee;
+        let estimated_cost = gas_price * 21000; // Estimate for standard transaction
+
+        let response = GasInfoResponse {
+            status: "success".to_string(),
+            gas_price,
+            estimated_cost,
+            base_fee,
+            priority_fee,
+        };
+
+        info!("API: Gas info - price: {}, estimated cost: {}", gas_price, estimated_cost);
+
+        let json_response = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
     /// Get list of connected peers
     /// GET /api/v1/blockchain/network/peers
     async fn handle_get_network_peers(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {

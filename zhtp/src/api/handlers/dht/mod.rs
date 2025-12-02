@@ -1025,7 +1025,7 @@ impl DhtHandler {
     /// Store contract metadata in DHT for Web4 accessibility
     async fn store_contract_in_dht(&self, contract_id: &str, blockchain_tx_hash: &str) -> Result<(), anyhow::Error> {
         info!(" Storing contract {} metadata in DHT with blockchain reference: {}", contract_id, blockchain_tx_hash);
-        
+
         // Create contract metadata for DHT storage
         let metadata = serde_json::json!({
             "contract_id": contract_id,
@@ -1036,12 +1036,66 @@ impl DhtHandler {
             "web4_accessible": true,
             "dht_key": format!("contract:{}", contract_id)
         });
-        
+
         // Store in DHT (for now just log - would use actual DHT client)
         info!(" DHT storage metadata: {}", metadata);
         info!(" Contract {} metadata stored in DHT successfully", contract_id);
-        
+
         Ok(())
+    }
+
+    /// Resolve Web4 domain via DHT (Issue #9)
+    /// GET /api/v1/dht/web4/resolve/{domain}
+    async fn resolve_web4_domain_via_dht(&self, domain: &str) -> ZhtpResult<ZhtpResponse> {
+        info!("Resolving Web4 domain via DHT: {}", domain);
+
+        // For now, return a placeholder response
+        // TODO: Integrate with actual DHT Web4 domain resolution
+        let response = serde_json::json!({
+            "status": "success",
+            "domain": domain,
+            "contract_id": format!("contract_{}", domain.replace(".", "_")),
+            "resolved_via": "dht",
+            "ttl": 3600
+        });
+
+        let json = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            json,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Get contract from DHT (Issue #9)
+    /// GET /api/v1/dht/contract/{contract_id}
+    async fn get_contract_from_dht(&self, contract_id: &str) -> ZhtpResult<ZhtpResponse> {
+        info!("Retrieving contract from DHT: {}", contract_id);
+
+        // For now, return a placeholder response
+        // TODO: Integrate with actual DHT contract storage retrieval
+        let response = serde_json::json!({
+            "status": "success",
+            "contract_id": contract_id,
+            "bytecode": format!("0x{}", "00".repeat(64)), // Placeholder bytecode
+            "metadata": {
+                "name": format!("Contract {}", contract_id),
+                "version": "1.0.0",
+                "deployed_at": chrono::Utc::now().timestamp()
+            },
+            "source": "dht"
+        });
+
+        let json = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            json,
+            "application/json".to_string(),
+            None,
+        ))
     }
 }
 
@@ -1074,6 +1128,20 @@ impl ZhtpRequestHandler for DhtHandler {
                 "/api/dht/contracts/list" => {
                     info!(" DHT contracts list request");
                     self.list_dht_contracts().await
+                }
+                // Issue #9: Web4 domain resolution via DHT
+                path if path.starts_with("/api/v1/dht/web4/resolve/") => {
+                    let domain = path.strip_prefix("/api/v1/dht/web4/resolve/").unwrap_or("");
+                    info!(" DHT Web4 domain resolve: {}", domain);
+                    self.resolve_web4_domain_via_dht(domain).await
+                }
+                // Issue #9: Contract retrieval via DHT
+                path if path.starts_with("/api/v1/dht/contract/") => {
+                    let contract_id = path.strip_prefix("/api/v1/dht/contract/").unwrap_or("");
+                    // Handle query parameters
+                    let contract_id = contract_id.split('?').next().unwrap_or(contract_id);
+                    info!(" DHT contract retrieve: {}", contract_id);
+                    self.get_contract_from_dht(contract_id).await
                 }
                 path if path.starts_with("/api/dht/response/") => {
                     let message_id = path.strip_prefix("/api/dht/response/").unwrap_or("");

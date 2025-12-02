@@ -62,12 +62,12 @@ impl Web4Handler {
     /// Get Web4 system statistics
     async fn get_web4_statistics(&self) -> ZhtpResult<ZhtpResponse> {
         let manager = self.web4_manager.read().await;
-        
+
         match manager.registry.get_statistics().await {
             Ok(stats) => {
                 let stats_json = serde_json::to_vec(&stats)
                     .map_err(|e| anyhow::anyhow!("Failed to serialize statistics: {}", e))?;
-                
+
                 Ok(ZhtpResponse::success_with_content_type(
                     stats_json,
                     "application/json".to_string(),
@@ -83,6 +83,132 @@ impl Web4Handler {
             }
         }
     }
+
+    /// Load Web4 resource content (Issue #9)
+    /// POST /api/v1/web4/load
+    async fn load_web4_resource(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct LoadRequest {
+            url: String,
+        }
+
+        let load_req: LoadRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        info!("Loading Web4 resource: {}", load_req.url);
+
+        // Parse URL to extract domain and path
+        // Expected format: web4://domain.zhtp/path or just domain.zhtp/path
+        let (domain, path) = if let Some(stripped) = load_req.url.strip_prefix("web4://") {
+            let parts: Vec<&str> = stripped.splitn(2, '/').collect();
+            (parts[0].to_string(), parts.get(1).map(|s| s.to_string()))
+        } else {
+            let parts: Vec<&str> = load_req.url.splitn(2, '/').collect();
+            (parts[0].to_string(), parts.get(1).map(|s| s.to_string()))
+        };
+
+        let manager = self.web4_manager.read().await;
+
+        // Resolve domain to get contract ID
+        match manager.registry.lookup_domain(&domain).await {
+            Ok(lookup) if lookup.found => {
+                if let Some(record) = lookup.record {
+                    // Return contract/content information
+                    // Note: Using domain as contract_id placeholder
+                    let response = serde_json::json!({
+                        "status": "success",
+                        "domain": domain,
+                        "contract_id": format!("contract_{}", record.domain.replace(".", "_")),
+                        "owner": record.owner,
+                        "path": path,
+                        "content_available": true
+                    });
+
+                    let json = serde_json::to_vec(&response)
+                        .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+                    Ok(ZhtpResponse::success_with_content_type(
+                        json,
+                        "application/json".to_string(),
+                        None,
+                    ))
+                } else {
+                    Ok(ZhtpResponse::error(
+                        ZhtpStatus::NotFound,
+                        format!("Domain record incomplete: {}", domain),
+                    ))
+                }
+            }
+            Ok(_) => {
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Domain not found: {}", domain),
+                ))
+            }
+            Err(e) => {
+                error!("Failed to resolve domain {}: {}", domain, e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to resolve domain: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Resolve Web4 domain to DApp (Issue #9)
+    /// GET /api/v1/web4/resolve/{domain}
+    async fn resolve_web4_domain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let domain = request.uri
+            .strip_prefix("/api/v1/web4/resolve/")
+            .ok_or_else(|| anyhow::anyhow!("Invalid resolve URL"))?;
+
+        info!("Resolving Web4 domain: {}", domain);
+
+        let manager = self.web4_manager.read().await;
+
+        match manager.registry.lookup_domain(domain).await {
+            Ok(lookup) if lookup.found => {
+                if let Some(record) = lookup.record {
+                    // Note: Using domain as contract_id placeholder
+                    let response = serde_json::json!({
+                        "status": "success",
+                        "domain": domain,
+                        "contract_id": format!("contract_{}", record.domain.replace(".", "_")),
+                        "owner": record.owner,
+                        "registered_at": record.registered_at,
+                        "expires_at": record.expires_at
+                    });
+
+                    let json = serde_json::to_vec(&response)
+                        .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+                    Ok(ZhtpResponse::success_with_content_type(
+                        json,
+                        "application/json".to_string(),
+                        None,
+                    ))
+                } else {
+                    Ok(ZhtpResponse::error(
+                        ZhtpStatus::NotFound,
+                        format!("Domain record incomplete: {}", domain),
+                    ))
+                }
+            }
+            Ok(_) => {
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Domain not found: {}", domain),
+                ))
+            }
+            Err(e) => {
+                error!("Failed to resolve domain {}: {}", domain, e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to resolve domain: {}", e),
+                ))
+            }
+        }
+    }
 }
 
 /// Implement ZHTP request handler trait to integrate with existing server
@@ -94,6 +220,14 @@ impl ZhtpRequestHandler for Web4Handler {
         info!("Handling Web4 request: {} {}", request.method as u8, path);
         
         match path.as_str() {
+            // Issue #9: Web4 resource loading and domain resolution
+            "/api/v1/web4/load" if request.method == lib_protocols::ZhtpMethod::Post => {
+                self.load_web4_resource(request).await
+            }
+            path if path.starts_with("/api/v1/web4/resolve/") => {
+                self.resolve_web4_domain(request).await
+            }
+
             // Domain management endpoints
             path if path.starts_with("/api/v1/web4/domains/register") => {
                 self.register_domain_simple(request.body).await
@@ -107,7 +241,7 @@ impl ZhtpRequestHandler for Web4Handler {
             path if path.starts_with("/api/v1/web4/domains/") && path.ends_with("/release") => {
                 self.release_domain(request).await
             }
-            
+
             // Content publishing endpoints
             path if path == "/api/v1/web4/content/publish" => {
                 self.publish_content(request.body).await
@@ -121,12 +255,12 @@ impl ZhtpRequestHandler for Web4Handler {
             path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Delete => {
                 self.delete_content(request).await
             }
-            
+
             // Statistics endpoint
             "/api/v1/web4/statistics" => {
                 self.get_web4_statistics().await
             }
-            
+
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 format!("Web4 endpoint not found: {}", path),
