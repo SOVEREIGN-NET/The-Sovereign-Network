@@ -54,6 +54,41 @@ impl RateLimiter {
         }
     }
 
+    /// Check rate limit with custom limits (for critical operations like recovery)
+    pub async fn check_rate_limit_aggressive(&self, ip: &str, max_attempts: usize, window_seconds: u64) -> Result<(), ZhtpResponse> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut state = self.state.write().await;
+        let entry = state.entry(ip.to_string()).or_insert_with(|| RateLimitEntry {
+            attempts: Vec::new(),
+        });
+
+        // Remove old attempts outside the window
+        entry.attempts.retain(|&timestamp| now - timestamp < window_seconds);
+
+        // Check if limit exceeded
+        if entry.attempts.len() >= max_attempts {
+            tracing::warn!(
+                "Aggressive rate limit exceeded for IP {} (attempt #{}/{})",
+                ip,
+                entry.attempts.len() + 1,
+                max_attempts
+            );
+
+            return Err(ZhtpResponse::error(
+                ZhtpStatus::TooManyRequests,
+                format!("Too many attempts. Please try again later."),
+            ));
+        }
+
+        // Record this attempt
+        entry.attempts.push(now);
+        Ok(())
+    }
+
     /// Check if an IP is allowed to proceed
     pub async fn check_rate_limit(&self, ip: &str) -> Result<(), ZhtpResponse> {
         let now = std::time::SystemTime::now()

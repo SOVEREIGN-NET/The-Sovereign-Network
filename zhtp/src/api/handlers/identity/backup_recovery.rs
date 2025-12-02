@@ -33,8 +33,12 @@ pub struct GenerateRecoveryPhraseRequest {
 #[derive(Debug, Serialize)]
 pub struct GenerateRecoveryPhraseResponse {
     pub status: String,
-    pub recovery_phrase: String,
     pub phrase_hash: String,
+    /// SECURITY: Phrase is returned ONCE for client-side display only
+    /// Client MUST display securely and NEVER store in logs/cache
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_phrase: Option<String>,
+    pub instructions: String,
 }
 
 /// Request for verifying recovery phrase
@@ -86,14 +90,25 @@ pub async fn handle_generate_recovery_phrase(
     identity_manager: Arc<RwLock<IdentityManager>>,
     session_manager: Arc<SessionManager>,
     recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
+    request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
     // Parse request
     let req: GenerateRecoveryPhraseRequest = serde_json::from_slice(request_body)
         .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-    // Validate session token
+    // Extract client IP and User-Agent for session binding validation
+    let client_ip = request.headers.get("X-Real-IP")
+        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
+            f.split(',').next().map(|s| s.trim().to_string())
+        }))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let user_agent = request.headers.get("User-Agent")
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Validate session token with IP and User-Agent binding
     let session = session_manager
-        .validate_session(&req.session_token, "unknown", "unknown")
+        .validate_session(&req.session_token, &client_ip, &user_agent)
         .await
         .map_err(|e| anyhow::anyhow!("Invalid session: {}", e))?;
 
@@ -141,15 +156,24 @@ pub async fn handle_generate_recovery_phrase(
         .map_err(|e| anyhow::anyhow!("Failed to store recovery phrase: {}", e))?;
 
     tracing::info!(
-        "Recovery phrase generated for identity {}",
-        &req.identity_id[..16]
+        "Recovery phrase generated for identity {} - phrase_hash: {}",
+        &req.identity_id[..16],
+        &phrase_hash[..16]
     );
 
-    // Build response
+    // SECURITY NOTE: Recovery phrase is returned ONCE and must be displayed client-side immediately
+    // Client MUST:
+    // 1. Show phrase in UI with "Write this down" warning
+    // 2. NEVER log, cache, or store in browser localStorage
+    // 3. Clear from memory after user confirms they wrote it down
+    // 4. Use HTTPS only to prevent network sniffing
+
+    // Build response - WARNING: phrase sent over HTTPS ONCE
     let response = GenerateRecoveryPhraseResponse {
         status: "success".to_string(),
-        recovery_phrase: phrase.to_string(),
         phrase_hash,
+        recovery_phrase: Some(phrase.to_string()), // Shown ONCE - client must display securely
+        instructions: "CRITICAL: Write down these words in order. You will need them to recover your identity. This phrase will NEVER be shown again. Keep it safe and private.".to_string(),
     };
 
     let json_response = serde_json::to_vec(&response)?;
@@ -223,7 +247,26 @@ pub async fn handle_recover_identity(
     identity_manager: Arc<RwLock<IdentityManager>>,
     session_manager: Arc<SessionManager>,
     recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
+    rate_limiter: Arc<crate::api::middleware::RateLimiter>,
+    request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
+    // Extract client IP for rate limiting
+    let client_ip = request.headers.get("X-Real-IP")
+        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
+            f.split(',').next().map(|s| s.trim().to_string())
+        }))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // CRITICAL: Rate limit recovery attempts (3 per hour per IP)
+    // This prevents brute force attacks on recovery phrases
+    if let Err(_) = rate_limiter.check_rate_limit_aggressive(&client_ip, 3, 3600).await {
+        tracing::warn!("Recovery rate limit exceeded for IP: {}", &client_ip);
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::TooManyRequests,
+            "Too many recovery attempts. Please try again later.".to_string(),
+        ));
+    }
+
     // Parse request
     let req: RecoverIdentityRequest = serde_json::from_slice(request_body)
         .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
