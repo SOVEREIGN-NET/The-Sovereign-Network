@@ -33,10 +33,15 @@ impl SessionManager {
     }
 
     /// Create a new session for an authenticated identity
-    pub async fn create_session(&self, identity_id: IdentityId) -> Result<String> {
+    pub async fn create_session(
+        &self,
+        identity_id: IdentityId,
+        client_ip: &str,
+        user_agent: &str,
+    ) -> Result<String> {
         // Clean up expired sessions first
         self.cleanup_expired_sessions().await;
-        
+
         // Check session limits
         let sessions_by_identity = self.sessions_by_identity.read().await;
         if let Some(existing_sessions) = sessions_by_identity.get(&identity_id) {
@@ -50,16 +55,21 @@ impl SessionManager {
         } else {
             drop(sessions_by_identity);
         }
-        
-        // Create new session token
-        let session_token = SessionToken::new(identity_id.clone(), self.default_session_duration)?;
+
+        // Create new session token with IP/UA binding (P0-6)
+        let session_token = SessionToken::new(
+            identity_id.clone(),
+            self.default_session_duration,
+            Some(client_ip.to_string()),
+            Some(user_agent.to_string()),
+        )?;
         let token_string = session_token.token.clone();
-        
+
         // Store session
         let mut sessions = self.sessions.write().await;
         sessions.insert(token_string.clone(), session_token);
         drop(sessions);
-        
+
         // Update sessions by identity
         let mut sessions_by_identity = self.sessions_by_identity.write().await;
         sessions_by_identity
@@ -67,22 +77,33 @@ impl SessionManager {
             .or_insert_with(Vec::new)
             .push(token_string.clone());
         drop(sessions_by_identity);
-        
+
         tracing::info!(
-            "🎫 New session created for identity {}: {}",
+            "🎫 New session created for identity {}: {} (IP: {})",
             hex::encode(&identity_id.0[..8]),
-            &token_string[..16]
+            &token_string[..16],
+            client_ip
         );
-        
+
         Ok(token_string)
     }
 
-    /// Validate and get session token
-    pub async fn validate_session(&self, token: &str) -> Result<SessionToken> {
+    /// Validate and get session token with IP/UA binding check (P0-6)
+    pub async fn validate_session(
+        &self,
+        token: &str,
+        current_ip: &str,
+        current_ua: &str,
+    ) -> Result<SessionToken> {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(token) {
             if session.is_valid() {
+                // P0-6: Validate IP/UA binding
+                if !session.validate_binding(current_ip, current_ua) {
+                    return Err(anyhow!("Session binding validation failed"));
+                }
+
                 session.touch(); // Update last used timestamp
                 Ok(session.clone())
             } else {
@@ -90,7 +111,7 @@ impl SessionManager {
                 let identity_id = session.identity_id.clone();
                 sessions.remove(token);
                 drop(sessions);
-                
+
                 // Remove from sessions by identity
                 let mut sessions_by_identity = self.sessions_by_identity.write().await;
                 if let Some(identity_sessions) = sessions_by_identity.get_mut(&identity_id) {
@@ -99,7 +120,7 @@ impl SessionManager {
                         sessions_by_identity.remove(&identity_id);
                     }
                 }
-                
+
                 Err(anyhow!("Session expired"))
             }
         } else {

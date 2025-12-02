@@ -702,8 +702,8 @@ async fn signin_identity_direct(
     match validation_result {
         Ok(validation) => {
             if validation.valid {
-                // Password validation successful, create session
-                let session_token = session_manager.create_session(identity_id.clone()).await?;
+                // Password validation successful, create session (P0-6: mesh uses "mesh" as IP/UA)
+                let session_token = session_manager.create_session(identity_id.clone(), "mesh", "udp-mesh-client").await?;
                 
                 // Get identity information
                 let manager = identity_manager.read().await;

@@ -379,13 +379,32 @@ impl ZhtpUnifiedServer {
         http_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler.clone());
         zhtp_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler);
         
-        // Identity and wallet management  
+        // Identity and wallet management
         // Note: Using lib_identity::economics::EconomicModel as expected by IdentityHandler
         let identity_economic_model = Arc::new(RwLock::new(
             lib_identity::economics::EconomicModel::new()
         ));
+
+        // Create rate limiter for authentication endpoints
+        let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
+        // Start cleanup task to prevent memory leak
+        rate_limiter.start_cleanup_task();
+
+        // Create account lockout tracker for per-identity brute force protection
+        let account_lockout = Arc::new(crate::api::handlers::identity::login_handlers::AccountLockout::new());
+
+        // Create CSRF protection (P0-7)
+        let csrf_protection = Arc::new(crate::api::middleware::CsrfProtection::new());
+
         let identity_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            IdentityHandler::new(identity_manager.clone(), identity_economic_model)
+            IdentityHandler::new(
+                identity_manager.clone(),
+                identity_economic_model,
+                _session_manager.clone(),
+                rate_limiter,
+                account_lockout,
+                csrf_protection,
+            )
         );
         http_router.register_handler("/api/v1/identity".to_string(), identity_handler.clone());
         zhtp_router.register_handler("/api/v1/identity".to_string(), identity_handler);
