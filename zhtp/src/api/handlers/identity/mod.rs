@@ -39,6 +39,7 @@ pub struct IdentityHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
     economic_model: Arc<RwLock<IdentityEconomicModel>>,
     session_manager: Arc<crate::session_manager::SessionManager>,
+    rate_limiter: Arc<crate::api::middleware::RateLimiter>,
 }
 
 impl IdentityHandler {
@@ -46,11 +47,13 @@ impl IdentityHandler {
         identity_manager: Arc<RwLock<IdentityManager>>,
         economic_model: Arc<RwLock<IdentityEconomicModel>>,
         session_manager: Arc<crate::session_manager::SessionManager>,
+        rate_limiter: Arc<crate::api::middleware::RateLimiter>,
     ) -> Self {
         Self {
             identity_manager,
             economic_model,
             session_manager,
+            rate_limiter,
         }
     }
 }
@@ -650,6 +653,7 @@ impl IdentityHandler {
             &request.body,
             self.identity_manager.clone(),
             self.session_manager.clone(),
+            self.rate_limiter.clone(),
         )
         .await
     }
@@ -661,6 +665,7 @@ impl IdentityHandler {
             &request.body,
             self.identity_manager.clone(),
             self.session_manager.clone(),
+            self.rate_limiter.clone(),
         )
         .await
     }

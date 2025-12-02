@@ -1,6 +1,8 @@
 //! Middleware Module
-//! 
+//!
 //! Clean, minimal middleware for ZHTP requests
+
+pub mod rate_limiter;
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -8,6 +10,9 @@ use tracing::{info, warn};
 
 // ZHTP protocol imports
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+
+// Re-export the new rate limiter
+pub use rate_limiter::{RateLimiter, RateLimitConfig, RateLimiterStats};
 
 /// Simple request logging middleware
 pub struct LoggingMiddleware;

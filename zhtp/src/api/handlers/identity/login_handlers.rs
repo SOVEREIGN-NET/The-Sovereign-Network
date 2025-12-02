@@ -5,14 +5,13 @@
 //! - POST /api/v1/identity/login - Alias for signin
 //!
 //! Security features:
-//! - Rate limiting (10 attempts per 15 minutes per IP)
+//! - Rate limiting (10 attempts per 15 minutes per IP) via dependency injection
 //! - Constant-time operations to prevent timing attacks
 //! - Password zeroization after use
 //! - Audit logging for security events
 //! - No sensitive data in logs
 
 use std::sync::Arc;
-use std::collections::HashMap;
 use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -28,69 +27,8 @@ use lib_identity::{IdentityManager, IdentityId};
 // Session management
 use crate::session_manager::SessionManager;
 
-/// Rate limiter for authentication attempts
-pub struct AuthRateLimiter {
-    attempts: Arc<RwLock<HashMap<String, Vec<u64>>>>,
-    max_attempts: usize,
-    window_seconds: u64,
-}
-
-impl AuthRateLimiter {
-    pub fn new() -> Self {
-        Self {
-            attempts: Arc::new(RwLock::new(HashMap::new())),
-            max_attempts: 10,
-            window_seconds: 900, // 15 minutes
-        }
-    }
-
-    /// Check if IP is rate limited
-    pub async fn check_rate_limit(&self, ip: &str) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let mut attempts = self.attempts.write().await;
-        let ip_attempts = attempts.entry(ip.to_string()).or_insert_with(Vec::new);
-
-        // Remove old attempts outside the window
-        ip_attempts.retain(|&timestamp| now - timestamp < self.window_seconds);
-
-        // Check if limit exceeded
-        if ip_attempts.len() >= self.max_attempts {
-            tracing::warn!(
-                "Rate limit exceeded for IP (attempt #{}/{})",
-                ip_attempts.len() + 1,
-                self.max_attempts
-            );
-            return false;
-        }
-
-        // Record this attempt
-        ip_attempts.push(now);
-        true
-    }
-
-    /// Clean up old entries periodically
-    pub async fn cleanup(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let mut attempts = self.attempts.write().await;
-        attempts.retain(|_, timestamps| {
-            timestamps.retain(|&ts| now - ts < self.window_seconds);
-            !timestamps.is_empty()
-        });
-    }
-}
-
-/// Global rate limiter instance
-lazy_static::lazy_static! {
-    static ref RATE_LIMITER: AuthRateLimiter = AuthRateLimiter::new();
-}
+// Rate limiting via dependency injection
+use crate::api::middleware::RateLimiter;
 
 /// Request structure for signin/login
 #[derive(Debug, Deserialize)]
@@ -159,8 +97,9 @@ pub async fn handle_signin(
     request_body: &[u8],
     identity_manager: Arc<RwLock<IdentityManager>>,
     session_manager: Arc<SessionManager>,
+    rate_limiter: Arc<RateLimiter>,
 ) -> ZhtpResult<ZhtpResponse> {
-    handle_signin_with_ip(request_body, identity_manager, session_manager, "unknown").await
+    handle_signin_with_ip(request_body, identity_manager, session_manager, rate_limiter, "unknown").await
 }
 
 /// Handle signin request with IP address for rate limiting
@@ -168,6 +107,7 @@ pub async fn handle_signin_with_ip(
     request_body: &[u8],
     identity_manager: Arc<RwLock<IdentityManager>>,
     session_manager: Arc<SessionManager>,
+    rate_limiter: Arc<RateLimiter>,
     client_ip: &str,
 ) -> ZhtpResult<ZhtpResponse> {
     let now = std::time::SystemTime::now()
@@ -175,8 +115,8 @@ pub async fn handle_signin_with_ip(
         .unwrap_or_default()
         .as_secs();
 
-    // P0-1: Rate limiting check
-    if !RATE_LIMITER.check_rate_limit(client_ip).await {
+    // P0-1: Rate limiting check (dependency injected)
+    if let Err(response) = rate_limiter.check_rate_limit(client_ip).await {
         AuthAuditLog {
             timestamp: now,
             ip_address: client_ip.to_string(),
@@ -185,10 +125,7 @@ pub async fn handle_signin_with_ip(
             failure_reason: Some("rate_limit_exceeded".to_string()),
         }.log();
 
-        return Ok(ZhtpResponse::error(
-            ZhtpStatus::TooManyRequests,
-            "Too many authentication attempts. Please try again later.".to_string(),
-        ));
+        return Ok(response);
     }
 
     // Parse request
@@ -364,20 +301,10 @@ pub async fn handle_login(
     request_body: &[u8],
     identity_manager: Arc<RwLock<IdentityManager>>,
     session_manager: Arc<SessionManager>,
+    rate_limiter: Arc<RateLimiter>,
 ) -> ZhtpResult<ZhtpResponse> {
     // Login is identical to signin
-    handle_signin(request_body, identity_manager, session_manager).await
-}
-
-/// Start cleanup task for rate limiter
-pub fn start_rate_limiter_cleanup() {
-    tokio::spawn(async {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300)); // 5 minutes
-        loop {
-            interval.tick().await;
-            RATE_LIMITER.cleanup().await;
-        }
-    });
+    handle_signin(request_body, identity_manager, session_manager, rate_limiter).await
 }
 
 #[cfg(test)]
@@ -406,18 +333,5 @@ mod tests {
         let json = r#"{"identifier": "did:zhtp:abc123", "password": "test"}"#;
         let req: SigninRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.did, Some("did:zhtp:abc123".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_rate_limiter() {
-        let limiter = AuthRateLimiter::new();
-
-        // First 10 attempts should succeed
-        for _ in 0..10 {
-            assert!(limiter.check_rate_limit("test_ip").await);
-        }
-
-        // 11th attempt should fail
-        assert!(!limiter.check_rate_limit("test_ip").await);
     }
 }

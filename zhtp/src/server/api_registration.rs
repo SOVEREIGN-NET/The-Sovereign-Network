@@ -64,11 +64,18 @@ pub async fn register_api_handlers(
     let identity_economic_model = Arc::new(RwLock::new(
         lib_identity::economics::EconomicModel::new()
     ));
+
+    // Create rate limiter for authentication endpoints
+    let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
+    // Start cleanup task to prevent memory leak
+    rate_limiter.start_cleanup_task();
+
     let identity_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
         IdentityHandler::new(
             identity_manager.clone(),
             identity_economic_model,
-            _session_manager.clone()
+            _session_manager.clone(),
+            rate_limiter
         )
     );
     http_router.register_handler("/api/v1/identity".to_string(), identity_handler);
