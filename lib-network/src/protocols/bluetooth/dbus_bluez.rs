@@ -7,6 +7,7 @@
 
 use anyhow::{Result, anyhow};
 use dbus::blocking::Connection;
+use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
 use dbus::arg::{RefArg, Variant};
 use std::collections::HashMap;
 use std::time::Duration;

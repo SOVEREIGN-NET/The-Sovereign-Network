@@ -46,6 +46,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug};
 use serde::{Serialize, Deserialize};
+use futures::executor::block_on;
 
 use sha2::{Sha256, Digest};
 use lib_proofs::plonky2::{ZkProofSystem, Plonky2Proof};
@@ -836,7 +837,9 @@ impl BluetoothMeshProtocol {
                 let scan_result = Self::scan_for_mesh_peers(&core_bt).await;
                 
                 #[cfg(not(target_os = "macos"))]
-                let scan_result = Self::scan_for_mesh_peers().await;
+                let scan_result = tokio::task::spawn_blocking(|| {
+                    block_on(Self::scan_for_mesh_peers())
+                }).await.unwrap_or_else(|e| Err(anyhow!("Scan task failed: {}", e)));
                 
                 if let Ok(peers) = scan_result {
                     info!(" DEBUG: Background scan found {} peers", peers.len());
