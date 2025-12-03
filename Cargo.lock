@@ -4142,6 +4142,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-lib-identity-imports"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "lib-crypto",
+ "lib-identity",
+ "tokio",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"

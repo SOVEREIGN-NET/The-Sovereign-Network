@@ -14,6 +14,7 @@ members = [
     "lib-protocols",
     "lib-storage",
     "zhtp",
+    "tests/lib-identity/test-lib-identity-imports",
 ]
 
 [workspace.package]
