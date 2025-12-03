@@ -401,14 +401,47 @@ async fn handle_list_guardians(
     session_manager: Arc<SessionManager>,
     request: &ZhtpRequest,
 ) -> Result<ZhtpResponse> {
-    // TODO: Parse identity_id and session_token from query params
-    // TODO: Validate session
-    // TODO: Load guardian config
-    // TODO: Return guardian list
+    // Security: Extract session token from Authorization header
+    let session_token = request
+        .headers
+        .get("Authorization")
+        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid Authorization header"))?;
+
+    // Security: Validate session and get identity_id
+    let client_ip = extract_client_ip(request);
+    let user_agent = extract_user_agent(request);
+
+    let session_token_obj = session_manager
+        .validate_session(&session_token, &client_ip, &user_agent)
+        .await
+        .map_err(|e| anyhow::anyhow!("Invalid or expired session: {}", e))?;
+
+    let identity_id = session_token_obj.identity_id;
+
+    // Load guardian config from identity storage
+    let manager_read = identity_manager.read().await;
+    let guardian_config = manager_read
+        .get_guardian_config(&identity_id)
+        .unwrap_or_default();
+    drop(manager_read);
+
+    // Convert guardians to response format
+    let guardians: Vec<GuardianInfo> = guardian_config
+        .guardians
+        .values()
+        .map(|g| GuardianInfo {
+            guardian_id: g.guardian_id.clone(),
+            guardian_did: g.guardian_did.clone(),
+            name: g.name.clone(),
+            added_at: g.added_at.timestamp(),
+            status: format!("{:?}", g.status),
+        })
+        .collect();
 
     let response = ListGuardiansResponse {
-        guardians: vec![],
-        threshold: 2,
+        guardians,
+        threshold: guardian_config.threshold,
     };
 
     Ok(ZhtpResponse::success(
@@ -437,9 +470,22 @@ async fn handle_initiate_recovery(
         return Ok(response);
     }
 
-    // Get identity's guardian config
-    // TODO: Load guardian config from identity storage
-    let guardian_config = GuardianConfig::default();
+    // Get identity ID from DID
+    let identity_manager_read = identity_manager.read().await;
+    let identity_id = identity_manager_read
+        .get_identity_id_by_did(&req.identity_did)
+        .ok_or_else(|| anyhow::anyhow!("Identity not found for DID: {}", req.identity_did))?;
+
+    // Load guardian config from identity storage
+    let guardian_config = identity_manager_read
+        .get_guardian_config(&identity_id)
+        .ok_or_else(|| anyhow::anyhow!("No guardians configured for this identity. Please add guardians first."))?;
+    drop(identity_manager_read);
+
+    // Verify that guardians are configured
+    if guardian_config.guardians.is_empty() {
+        return Err(anyhow::anyhow!("No guardians configured for this identity"));
+    }
 
     // Initiate recovery
     let mut manager = recovery_manager.write().await;
@@ -691,12 +737,65 @@ async fn handle_pending_recoveries(
     session_manager: Arc<SessionManager>,
     request: &ZhtpRequest,
 ) -> Result<ZhtpResponse> {
-    // TODO: Parse guardian_did from query params
-    // TODO: Validate guardian session
-    // TODO: Get pending recoveries for this guardian
+    // Security: Extract session token from Authorization header
+    let session_token = request
+        .headers
+        .get("Authorization")
+        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid Authorization header"))?;
+
+    // Security: Validate guardian's session
+    let client_ip = extract_client_ip(request);
+    let user_agent = extract_user_agent(request);
+
+    let session_token_obj = session_manager
+        .validate_session(&session_token, &client_ip, &user_agent)
+        .await
+        .map_err(|e| anyhow::anyhow!("Invalid or expired session: {}", e))?;
+
+    let guardian_identity_id = session_token_obj.identity_id;
+
+    // Get the guardian's DID
+    let identity_manager_read = identity_manager.read().await;
+    let guardian_did = identity_manager_read
+        .get_did_by_identity_id(&guardian_identity_id)
+        .ok_or_else(|| anyhow::anyhow!("Guardian identity not found"))?;
+    drop(identity_manager_read);
+
+    // Get all pending recovery requests from recovery manager
+    let manager = recovery_manager.read().await;
+    let all_requests = manager.get_all_pending_requests();
+
+    // Filter requests where this guardian is authorized
+    let mut pending_requests = Vec::new();
+
+    for recovery_request in all_requests {
+        // Get the identity being recovered
+        let identity_manager_read = identity_manager.read().await;
+        if let Some(identity_id) = identity_manager_read.get_identity_id_by_did(&recovery_request.identity_did) {
+            // Check if this guardian is authorized for this identity
+            if let Some(guardian_config) = identity_manager_read.get_guardian_config(&identity_id) {
+                // Check if guardian_did is in the authorized guardians list with Active status
+                let is_authorized = guardian_config
+                    .guardians
+                    .values()
+                    .any(|g| g.guardian_did == guardian_did && g.status == GuardianStatus::Active);
+
+                if is_authorized {
+                    pending_requests.push(PendingRecoveryInfo {
+                        recovery_id: recovery_request.recovery_id.clone(),
+                        identity_did: recovery_request.identity_did.clone(),
+                        initiated_at: recovery_request.initiated_at.timestamp(),
+                        expires_at: recovery_request.expires_at.timestamp(),
+                    });
+                }
+            }
+        }
+        drop(identity_manager_read);
+    }
 
     let response = PendingRecoveriesResponse {
-        pending_requests: vec![],
+        pending_requests,
     };
 
     Ok(ZhtpResponse::success(
