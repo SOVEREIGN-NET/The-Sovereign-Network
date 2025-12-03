@@ -4,12 +4,10 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use tracing::{info, warn};
-use lib_crypto::PublicKey;
+use tracing::info;
 
 use crate::relays::LongRangeRelay;
 use crate::types::relay_type::LongRangeRelayType;
-use crate::types::geographic::GeographicLocation;
 
 /// Global coverage analyzer for mesh network
 pub struct GlobalCoverageAnalyzer {

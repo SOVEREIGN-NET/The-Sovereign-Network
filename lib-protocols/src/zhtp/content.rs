@@ -4,14 +4,13 @@
 //! replication, versioning, and Web4-specific content handling including
 //! DAO-governed content and economic incentive distribution.
 
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ServerContent, ContentMetadata, AccessPolicy};
+use crate::types::{ZhtpRequest, ServerContent, ContentMetadata, AccessPolicy};
 use crate::zhtp::ZhtpResult;
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
-use anyhow::{Context, Result as AnyhowResult};
 use uuid::Uuid;
 use lib_storage::types::ContentHash;
 

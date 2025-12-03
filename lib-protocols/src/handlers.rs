@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
-use anyhow::{Result, Context as AnyhowContext};
+use anyhow::Result;
 use uuid::Uuid;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -343,7 +343,7 @@ impl ZhtpHandlers {
     }
     
     /// Handle POST requests
-    pub async fn handle_post(&self, mut request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+    pub async fn handle_post(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         tracing::debug!("Handling POST request: {}", request.uri);
         
         // Validate request size
@@ -1472,7 +1472,7 @@ impl ZhtpHandlers {
         }
 
         // Use TransactionVerifier for detailed verification
-        if let Ok(mut verifier) = TransactionVerifier::new() {
+        if let Ok(verifier) = TransactionVerifier::new() {
             // Create a simple transaction proof from the request data
             let public_inputs = self.generate_zk_public_inputs(request);
             

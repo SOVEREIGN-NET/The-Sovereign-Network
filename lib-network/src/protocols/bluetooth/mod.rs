@@ -45,8 +45,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug};
-use serde::{Serialize, Deserialize};
-use futures::executor::block_on;
 
 use sha2::{Sha256, Digest};
 use lib_proofs::plonky2::{ZkProofSystem, Plonky2Proof};
@@ -57,11 +55,10 @@ use crate::protocols::zhtp_auth::{ZhtpAuthManager, ZhtpAuthChallenge, ZhtpAuthRe
 
 // Import common Bluetooth utilities from submodules
 use self::common::{
-    parse_mac_address, get_system_bluetooth_mac, format_mac_address, 
-    mac_to_dbus_path, zhtp_uuids,
+    parse_mac_address, get_system_bluetooth_mac,
 };
-use self::device::{BleDevice, BleConnection, CharacteristicInfo, MeshPeer};
-use self::gatt::{GattMessage, GattOperation, supports_operation, fragment_data, validate_write_size};
+use self::device::{BleDevice, CharacteristicInfo, MeshPeer};
+use self::gatt::GattMessage;
 
 // Import platform-specific managers
 #[cfg(target_os = "macos")]

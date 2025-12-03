@@ -24,16 +24,16 @@ use lib_storage::{
     StorageRequirements
 };
 use lib_storage::types::{
-    NodeId, ContentHash, StorageTier, EncryptionLevel, AccessPattern,
+    ContentHash, StorageTier, EncryptionLevel, AccessPattern,
     QualityRequirements, BudgetConstraints, DhtStats, EconomicStats, StorageStats,
     PaymentSchedule
 };
-use lib_identity::{ZhtpIdentity, IdentityType, AccessLevel, IdentityId};
+use lib_identity::{ZhtpIdentity, IdentityId};
 
 // Import blockchain components
 use crate::{
-    blockchain::{Blockchain, EconomicsTransaction},
-    block::{Block, BlockHeader},
+    blockchain::Blockchain,
+    block::Block,
     transaction::{Transaction, IdentityTransactionData, TransactionOutput},
     types::Hash,
     mempool::Mempool,

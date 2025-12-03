@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, Duration};
-use lib_crypto::{PublicKey, PostQuantumSignature, verify_signature};
+use lib_crypto::{PostQuantumSignature, verify_signature};
 use crate::guardian::{Guardian, GuardianConfig};
 
 /// Recovery request status

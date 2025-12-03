@@ -1,4 +1,4 @@
-use super::core::{WhisperMessage, MessageContract, MessageThread, GroupThread};
+use super::core::{WhisperMessage, MessageContract, MessageThread};
 use crate::integration::crypto_integration::PublicKey;
 use crate::types::MessageType;
 use std::collections::HashMap;

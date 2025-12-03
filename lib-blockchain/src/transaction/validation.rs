@@ -5,7 +5,7 @@
 use crate::transaction::core::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData};
 use crate::types::{Hash, transaction_type::TransactionType};
 use crate::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
-use crate::integration::zk_integration::{verify_transaction_proof, is_valid_proof_structure};
+use crate::integration::zk_integration::is_valid_proof_structure;
 
 /// Transaction validation error types
 #[derive(Debug, Clone)]

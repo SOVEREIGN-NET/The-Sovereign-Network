@@ -5,13 +5,13 @@
 //! session storage, and Web4-specific session features including DAO governance
 //! and identity verification.
 
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, AccessPolicy};
+use crate::types::ZhtpRequest;
 use crate::zhtp::ZhtpResult;
 
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
-use anyhow::{Context, Result as AnyhowResult};
+use anyhow::Result as AnyhowResult;
 use uuid::Uuid;
 
 /// Session authentication methods

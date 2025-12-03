@@ -5,7 +5,6 @@ use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use crate::integration::crypto_integration::PublicKey;
 use crate::transaction::IdentityTransactionData;
-use crate::types::Hash;
 use lib_identity::{IdentityType, AccessLevel};
 
 /// DID (Decentralized Identifier) structure

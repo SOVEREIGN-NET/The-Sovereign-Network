@@ -5,7 +5,6 @@
 use crate::types::{Hash, Difficulty};
 use crate::transaction::Transaction;
 use crate::block::Block;
-use crate::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
 
 /// Time utilities
 pub mod time {

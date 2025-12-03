@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
@@ -413,7 +413,7 @@ impl WiFiDirectMeshProtocol {
     /// Verify a connecting peer is a legitimate ZHTP node
     /// Returns true if authenticated, false otherwise
     pub async fn authenticate_peer(&self, device_id: &str, peer_data: &[u8]) -> Result<bool> {
-        use crate::protocols::zhtp_auth::{ZhtpAuthChallenge, ZhtpAuthResponse};
+        use crate::protocols::zhtp_auth::ZhtpAuthResponse;
         
         let auth_guard = self.auth_manager.read().await;
         let auth_manager = match auth_guard.as_ref() {
@@ -730,7 +730,7 @@ impl WiFiDirectMeshProtocol {
     
     /// Scan for WiFi Direct devices
     async fn scan_for_wifi_direct_devices() -> Result<Vec<WiFiDirectConnection>> {
-        let mut devices = Vec::new();
+        let devices = Vec::new();
         
         #[cfg(target_os = "linux")]
         {
@@ -3473,7 +3473,7 @@ impl WiFiDirectMeshProtocol {
 
 /// Get local IP address for mDNS service registration
 async fn get_local_ip_for_mdns() -> Result<String> {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::IpAddr;
     
     // Try to get first non-loopback local IP
     match local_ip_address::local_ip() {

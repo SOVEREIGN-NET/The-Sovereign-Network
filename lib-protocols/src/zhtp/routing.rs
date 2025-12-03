@@ -10,8 +10,6 @@ use crate::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use std::collections::HashMap;
 use std::sync::Arc;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use anyhow::{Context, Result as AnyhowResult};
 
 /// Route pattern matching types
 #[derive(Debug, Clone)]

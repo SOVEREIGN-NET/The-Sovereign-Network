@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use lib_crypto::hash_blake3;
 use crate::protocols::NetworkProtocol;
-use crate::mesh::server::{ZhtpMeshServer, NetworkConfig};
+use crate::mesh::server::ZhtpMeshServer;
 
 /// Create a test mesh server for development with implementations
 pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {

@@ -1,10 +1,9 @@
-use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use lib_blockchain::{BlockHeader, Hash};
+use lib_blockchain::BlockHeader;
 use lib_network::blockchain_sync::BlockchainProvider as NetworkBlockchainProvider;
 use lib_proofs::ChainRecursiveProof;
-use tracing::{debug, warn, error};
+use tracing::{debug, warn};
 
 use super::blockchain_provider::{get_global_blockchain, is_global_blockchain_available};
 

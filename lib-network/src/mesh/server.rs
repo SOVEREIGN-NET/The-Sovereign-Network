@@ -1219,7 +1219,7 @@ impl ZhtpMeshServer {
         
         // Set protocol handlers in router
         {
-            let mut router_guard = message_router.write().await;
+            let router_guard = message_router.write().await;
             
             // TODO: Wire up protocol handlers when available
             // Currently the BluetoothMeshProtocol doesn't match the expected BluetoothClassicProtocol type

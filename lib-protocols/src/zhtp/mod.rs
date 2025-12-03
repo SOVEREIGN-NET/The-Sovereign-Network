@@ -20,7 +20,7 @@ pub use routing::{Router, Route, RouteHandler};
 pub use content::{ZhtpContentManager, ContentConfig, StorageBackend, CompressionType, EncryptionType};
 pub use session::{ZhtpSessionManager, SessionConfig, SessionInfo, AuthMethod, SecurityLevel};
 
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use crate::types::{ZhtpRequest, ZhtpResponse};
 
 /// ZHTP protocol version
 pub const ZHTP_VERSION: &str = "1.0";
