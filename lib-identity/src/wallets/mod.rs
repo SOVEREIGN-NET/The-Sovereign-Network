@@ -12,6 +12,14 @@ pub mod dao_hierarchy_demo;
 
 // Re-exports for compatibility with original identity.rs
 pub use manager_integration::WalletManager;
-pub use wallet_types::{WalletType, WalletId, QuantumWallet, WalletSummary};
+pub use wallet_types::{
+    WalletType, WalletId, QuantumWallet, WalletSummary,
+    // DAO wallet types
+    DaoWalletProperties, DaoGovernanceSettings, DaoHierarchyInfo,
+    TransparencyLevel, PublicTransactionEntry,
+    // Content ownership types
+    ContentOwnershipRecord, ContentOwnershipStatistics,
+    ContentTransfer, ContentTransferType, ContentMetadataSnapshot,
+};
 pub use wallet_operations::*;
 pub use wallet_password::{WalletPasswordManager, WalletPasswordError, WalletPasswordValidation};

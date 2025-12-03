@@ -6,18 +6,41 @@ use anyhow::Result;
 
 // Core type imports - these should all work from root
 use lib_identity::{
-    NodeId,
-    KeyPair,
-    ZhtpIdentity,
-    WalletManager,
-    IdentityId,
-    IdentityType,
     AccessLevel,
+    ContentMetadataSnapshot,
+    ContentOwnershipRecord,
+    ContentOwnershipStatistics,
+    ContentTransfer,
+    ContentTransferType,
+    DaoGovernanceSettings,
+    DaoHierarchyInfo,
+    DaoWalletProperties,
+    Guardian,
+    GuardianConfig,
+    GuardianStatus,
+    IdentityId,
     IdentityManager,
-    WalletType,
-    WalletId,
-    RecoveryPhrase,
+    IdentityType,
+    IdentityVerification,
+    KeyPair,
+    NodeId,
     PasswordManager,
+    PasswordStrength,
+    PublicTransactionEntry,
+    RecoveryPhrase,
+    RecoveryRequest,
+    RecoveryStatus,
+    SocialRecoveryManager,
+    TransparencyLevel,
+    VerificationLevel,
+    VerificationResult,
+    WalletId,
+    WalletManager,
+    WalletPasswordError,
+    WalletPasswordManager,
+    WalletPasswordValidation,
+    WalletType,
+    ZhtpIdentity,
 };
 
 // Module imports - verify modules are accessible
@@ -125,6 +148,33 @@ async fn main() -> Result<()> {
     println!("\n9. Testing ZhtpIdentity type...");
     let _zhtp_identity_type: Option<ZhtpIdentity> = None;
     println!("   ✓ ZhtpIdentity type imported and accessible");
+
+    // Test 10: Verify DAO/content/guardian exports are accessible
+    println!("\n10. Testing DAO, content ownership, guardian, and verification exports...");
+    let _dao_props: Option<DaoWalletProperties> = None;
+    let _dao_governance: Option<DaoGovernanceSettings> = None;
+    let _dao_hierarchy: Option<DaoHierarchyInfo> = None;
+    let _transparency: TransparencyLevel = TransparencyLevel::Full;
+    let _public_tx: Option<PublicTransactionEntry> = None;
+    let _content_record: Option<ContentOwnershipRecord> = None;
+    let _content_stats: Option<ContentOwnershipStatistics> = None;
+    let _content_transfer_record: Option<ContentTransfer> = None;
+    let _content_transfer_type: ContentTransferType = ContentTransferType::Sale;
+    let _content_snapshot: Option<ContentMetadataSnapshot> = None;
+    let _wallet_pwd_mgr: WalletPasswordManager = WalletPasswordManager::new();
+    let _wallet_pwd_error: Option<WalletPasswordError> = None;
+    let _wallet_pwd_validation: Option<WalletPasswordValidation> = None;
+    let _password_strength: Option<PasswordStrength> = None;
+    let _verification: Option<IdentityVerification> = None;
+    let _verification_level: VerificationLevel = VerificationLevel::Basic;
+    let _verification_result: Option<VerificationResult> = None;
+    let _guardian: Option<Guardian> = None;
+    let _guardian_config: Option<GuardianConfig> = None;
+    let _guardian_status: GuardianStatus = GuardianStatus::Active;
+    let _social_recovery_mgr: Option<SocialRecoveryManager> = None;
+    let _recovery_request: Option<RecoveryRequest> = None;
+    let _recovery_status: RecoveryStatus = RecoveryStatus::Pending;
+    println!("   ✓ Additional exports are accessible and type-checked");
     
     println!("\n✅ ALL TESTS PASSED - Real functionality verified!");
     println!("\n📦 VERIFIED EXPORTS:");
@@ -150,8 +200,6 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    
     #[test]
     fn test_node_id_import() {
         // Direct import from root
@@ -234,5 +282,94 @@ mod tests {
         let _keypair: Option<KeyPair> = None;
         let _identity: Option<ZhtpIdentity> = None;
         let _wallet_manager: Option<WalletManager> = None;
+    }
+
+    #[test]
+    fn test_dao_and_content_exports_accessible() {
+        use lib_identity::{
+            ContentMetadataSnapshot,
+            ContentOwnershipRecord,
+            ContentOwnershipStatistics,
+            ContentTransfer,
+            ContentTransferType,
+            DaoGovernanceSettings,
+            DaoHierarchyInfo,
+            DaoWalletProperties,
+            PublicTransactionEntry,
+            TransparencyLevel,
+            WalletPasswordError,
+            WalletPasswordManager,
+            WalletPasswordValidation,
+        };
+
+        let _dao_props: Option<DaoWalletProperties> = None;
+        let _dao_governance: Option<DaoGovernanceSettings> = None;
+        let _dao_hierarchy: Option<DaoHierarchyInfo> = None;
+        let _transparency = TransparencyLevel::Full;
+        let _public_tx: Option<PublicTransactionEntry> = None;
+        let _content_record: Option<ContentOwnershipRecord> = None;
+        let _content_stats: Option<ContentOwnershipStatistics> = None;
+        let _content_transfer_record: Option<ContentTransfer> = None;
+        let _content_transfer_type = ContentTransferType::Sale;
+        let _content_snapshot: Option<ContentMetadataSnapshot> = None;
+        let _wallet_pwd_mgr = WalletPasswordManager::new();
+        let _wallet_pwd_error: Option<WalletPasswordError> = None;
+        let _wallet_pwd_validation: Option<WalletPasswordValidation> = None;
+
+        // Silence unused warnings
+        let _ = (
+            _dao_props,
+            _dao_governance,
+            _dao_hierarchy,
+            _transparency,
+            _public_tx,
+            _content_record,
+            _content_stats,
+            _content_transfer_record,
+            _content_transfer_type,
+            _content_snapshot,
+            _wallet_pwd_mgr,
+            _wallet_pwd_error,
+            _wallet_pwd_validation,
+        );
+    }
+
+    #[test]
+    fn test_guardian_and_recovery_exports_accessible() {
+        use lib_identity::{
+            Guardian,
+            GuardianConfig,
+            GuardianStatus,
+            RecoveryRequest,
+            RecoveryStatus,
+            SocialRecoveryManager,
+        };
+
+        let _guardian: Option<Guardian> = None;
+        let _guardian_config: Option<GuardianConfig> = None;
+        let _guardian_status = GuardianStatus::Active;
+        let _social_recovery_mgr: Option<SocialRecoveryManager> = None;
+        let _recovery_request: Option<RecoveryRequest> = None;
+        let _recovery_status = RecoveryStatus::Pending;
+
+        let _ = (
+            _guardian,
+            _guardian_config,
+            _guardian_status,
+            _social_recovery_mgr,
+            _recovery_request,
+            _recovery_status,
+        );
+    }
+
+    #[test]
+    fn test_verification_exports_accessible() {
+        use lib_identity::{IdentityVerification, VerificationLevel, VerificationResult};
+
+        let _verification: Option<IdentityVerification> = None;
+        let _level = VerificationLevel::Basic;
+        let _result: Option<VerificationResult> = None;
+
+        let _ = (_verification, _level, _result);
     }
 }
