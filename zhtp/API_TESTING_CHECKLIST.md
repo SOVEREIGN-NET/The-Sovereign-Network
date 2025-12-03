@@ -105,8 +105,9 @@ This document outlines the comprehensive testing strategy for the ZHTP blockchai
   - [ ] Invalid address format rejection
   - [ ] Zero balance addresses
   - [ ] Non-existent addresses
-  - [ ] Include pending balance
+  - [ ] Pending balance is always 0 (privacy-preserving)
   - [ ] Include transaction count
+  - [ ] Include privacy note explaining pending_balance=0
 
 #### Validator APIs
 - [ ] **GET /api/v1/blockchain/validators**

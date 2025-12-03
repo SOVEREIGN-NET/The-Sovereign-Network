@@ -218,6 +218,7 @@ struct BalanceResponse {
     balance: u64,
     pending_balance: u64,
     transaction_count: u64,
+    note: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -659,15 +660,9 @@ impl BlockchainHandler {
             // Get transaction count for this address
             let transactions = blockchain.get_transactions_for_address(address_str);
 
-            // Calculate pending balance from mempool transactions
-            let pending_transactions = blockchain.get_pending_transactions();
-            let pending_balance = if address_bytes.len() == 32 {
-                let mut fixed_array = [0u8; 32];
-                fixed_array.copy_from_slice(address_bytes);
-                calculate_pending_balance_for_address(&fixed_array, &pending_transactions)
-            } else {
-                0
-            };
+            // Pending balance is set to 0 due to privacy-preserving commitments
+            // We cannot estimate pending balances when amounts are hidden via Pedersen commitments
+            let pending_balance = 0u64;
 
             BalanceResponse {
                 status: "balance_found".to_string(),
@@ -675,6 +670,7 @@ impl BlockchainHandler {
                 balance,
                 pending_balance,
                 transaction_count: transactions.len() as u64,
+                note: Some("Pending balance unavailable due to privacy-preserving commitments".to_string()),
             }
         } else {
             BalanceResponse {
@@ -683,6 +679,7 @@ impl BlockchainHandler {
                 balance: 0,
                 pending_balance: 0,
                 transaction_count: 0,
+                note: None,
             }
         };
 
@@ -1139,60 +1136,15 @@ impl BlockchainHandler {
     }
 }
 
-/// Calculate pending balance for an address from pending transactions
-fn calculate_pending_balance_for_address(
-    address: &[u8; 32],
-    pending_transactions: &[lib_blockchain::Transaction],
-) -> u64 {
-    let mut pending_balance = 0u64;
-
-    for transaction in pending_transactions {
-        // Add incoming amounts from transaction outputs
-        for output in &transaction.outputs {
-            // In a privacy-focused system with Pedersen commitments, amounts are hidden
-            // For this implementation, we'll estimate pending amounts based on transaction structure
-            if output.recipient.as_bytes() == address {
-                // Since amounts are hidden via commitments, we can estimate based on transaction fee
-                // Higher fee transactions typically indicate higher value transfers
-                let estimated_amount = if transaction.fee > 10000 {
-                    transaction.fee * 50 // High fee suggests high value (estimate 50x fee)
-                } else if transaction.fee > 1000 {
-                    transaction.fee * 20 // Medium fee (estimate 20x fee)
-                } else {
-                    transaction.fee * 10 // Low fee (estimate 10x fee)
-                };
-                pending_balance = pending_balance.saturating_add(estimated_amount);
-            }
-        }
-
-        // Subtract outgoing amounts from transaction inputs by checking UTXO ownership
-        // Note: For privacy with commitments, we estimate based on UTXO structure
-        for input in &transaction.inputs {
-            // The input references a previous output that is being spent
-            let _previous_output_hash = &input.previous_output;
-
-            // In a implementation, we would need to:
-            // 1. Look up the UTXO in the blockchain's utxo_set
-            // 2. Check if the UTXO belongs to our address (requires proving key ownership)
-            // 3. Subtract the estimated amount if it belongs to us
-
-            // Since we can't directly access blockchain.utxo_set here (we're in pending calculation),
-            // and amounts are hidden in commitments, we'll estimate based on transaction fee
-            // This is a reasonable approximation for pending balance calculation
-
-            // If the nullifier in the input matches patterns we've seen for this address,
-            // we can estimate this as a potential outgoing transaction
-            // For now, we'll use a conservative estimate based on transaction structure
-            if transaction.inputs.len() <= 2 && transaction.fee > 100 {
-                // Small transaction, likely spending existing UTXO - conservative estimate
-                let estimated_spent = transaction.fee * 5;
-                pending_balance = pending_balance.saturating_sub(estimated_spent);
-            }
-        }
-    }
-
-    pending_balance
-}
+// REMOVED: calculate_pending_balance_for_address function
+// This function used arbitrary multipliers to estimate pending balances, which:
+// 1. Had no cryptographic foundation
+// 2. Defeated privacy-preserving commitments by revealing estimates
+// 3. Provided misleading information to users
+// 4. Created a potential social engineering vector
+//
+// Pending balances are now properly set to 0 with a clear note about
+// privacy-preserving commitments, rather than using fake estimates.
 
 // ============================================================================
 // SMART CONTRACT HANDLERS
