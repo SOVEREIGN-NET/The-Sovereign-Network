@@ -4150,11 +4150,13 @@ pub struct BluetoothMeshStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::KeyPair;
     
     #[tokio::test]
     async fn test_bluetooth_mesh_creation() {
         let node_id = [1u8; 32];
-        let protocol = BluetoothMeshProtocol::new(node_id).unwrap();
+        let keypair = KeyPair::generate().unwrap();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key.clone()).unwrap();
         
         assert_eq!(protocol.node_id, node_id);
         assert!(!protocol.discovery_active);
@@ -4163,10 +4165,10 @@ mod tests {
     #[tokio::test]
     async fn test_bluetooth_discovery() {
         let node_id = [1u8; 32];
-        let mut protocol = BluetoothMeshProtocol::new(node_id).unwrap();
+        let keypair = KeyPair::generate().unwrap();
+        let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
         
         let result = protocol.start_discovery().await;
         assert!(result.is_ok());
     }
 }
-

@@ -360,6 +360,8 @@ mod tests {
             created_at: 0,
             registration_fee: 0,
             dao_fee: 0,
+            controlled_nodes: Vec::new(),
+            owned_wallets: Vec::new(),
         };
         
         assert!(validate_identity_data(&identity_data)?);
@@ -380,6 +382,8 @@ mod tests {
             created_at: 0,
             registration_fee: 0,
             dao_fee: 0,
+            controlled_nodes: Vec::new(),
+            owned_wallets: Vec::new(),
         };
         
         let registration_id = process_identity_registration(&identity_data)?;

@@ -15,7 +15,7 @@ fn create_test_identity(name: &str) -> IdentityId {
 
 #[test]
 fn test_validator_manager_initialization() {
-    let manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let stats = manager.get_validator_stats();
     assert_eq!(stats.total_validators, 0);
@@ -27,7 +27,7 @@ fn test_validator_manager_initialization() {
 
 #[test]
 fn test_validator_registration_success() -> Result<()> {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let identity = create_test_identity("alice");
     let stake = 2000 * 1_000_000;
@@ -61,7 +61,7 @@ fn test_validator_registration_success() -> Result<()> {
 
 #[test]
 fn test_validator_registration_insufficient_stake() {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let identity = create_test_identity("bob");
     let insufficient_stake = 500 * 1_000_000; // Below minimum
@@ -83,7 +83,7 @@ fn test_validator_registration_insufficient_stake() {
 
 #[test]
 fn test_validator_registration_insufficient_storage() {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let identity = create_test_identity("charlie");
     let stake = 2000 * 1_000_000;
@@ -105,7 +105,7 @@ fn test_validator_registration_insufficient_storage() {
 
 #[test]
 fn test_duplicate_validator_registration() -> Result<()> {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let identity = create_test_identity("alice");
     let stake = 2000 * 1_000_000;
@@ -139,7 +139,7 @@ fn test_duplicate_validator_registration() -> Result<()> {
 
 #[test]
 fn test_maximum_validator_limit() -> Result<()> {
-    let mut manager = ValidatorManager::new(2, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(2, 1000 * 1_000_000);
     
     // Register up to the limit
     for i in 1..=2 {
@@ -172,7 +172,7 @@ fn test_maximum_validator_limit() -> Result<()> {
 
 #[test]
 fn test_validator_removal() -> Result<()> {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let identity = create_test_identity("alice");
     let stake = 2000 * 1_000_000;
@@ -201,7 +201,7 @@ fn test_validator_removal() -> Result<()> {
 
 #[test]
 fn test_remove_nonexistent_validator() {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let identity = create_test_identity("nonexistent");
     let result = manager.remove_validator(&identity);
@@ -212,7 +212,7 @@ fn test_remove_nonexistent_validator() {
 
 #[test]
 fn test_proposer_selection() -> Result<()> {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Register multiple validators
     let validators = vec!["alice", "bob", "charlie"];
@@ -245,7 +245,7 @@ fn test_proposer_selection() -> Result<()> {
 
 #[test]
 fn test_proposer_selection_no_validators() {
-    let manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let proposer = manager.select_proposer(1, 0);
     assert!(proposer.is_none());
@@ -253,7 +253,7 @@ fn test_proposer_selection_no_validators() {
 
 #[test]
 fn test_slashing_double_sign() -> Result<()> {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let identity = create_test_identity("alice");
     let initial_stake = 2000 * 1_000_000;
@@ -283,7 +283,7 @@ fn test_slashing_double_sign() -> Result<()> {
 
 #[test]
 fn test_slashing_liveness() -> Result<()> {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let identity = create_test_identity("bob");
     let initial_stake = 3000 * 1_000_000;
@@ -308,7 +308,7 @@ fn test_slashing_liveness() -> Result<()> {
 
 #[test]
 fn test_slash_nonexistent_validator() {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let identity = create_test_identity("nonexistent");
     let result = manager.slash_validator(&identity, SlashType::DoubleSign, 5);
@@ -319,7 +319,7 @@ fn test_slash_nonexistent_validator() {
 
 #[test]
 fn test_byzantine_threshold_calculation() -> Result<()> {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Register validators with equal stakes
     let validators = vec!["alice", "bob", "charlie"];
@@ -350,7 +350,7 @@ fn test_byzantine_threshold_calculation() -> Result<()> {
 
 #[test]
 fn test_sufficient_validators_check() -> Result<()> {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Initially no validators
     assert!(!manager.has_sufficient_validators());
@@ -378,7 +378,7 @@ fn test_sufficient_validators_check() -> Result<()> {
 
 #[test]
 fn test_validator_activity_update() -> Result<()> {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let identity = create_test_identity("alice");
     manager.register_validator(
@@ -402,7 +402,7 @@ fn test_validator_activity_update() -> Result<()> {
 
 #[test]
 fn test_validator_stats_calculation() -> Result<()> {
-    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     let validators = vec![
         ("alice", 1000 * 1_000_000, 100 * 1024 * 1024 * 1024),

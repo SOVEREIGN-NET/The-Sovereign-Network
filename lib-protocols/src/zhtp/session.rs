@@ -890,7 +890,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_creation() {
         let config = SessionConfig::default();
-        let mut manager = SessionManager::new(config);
+        let mut manager = ZhtpSessionManager::new(config);
         
         let create_request = SessionCreateRequest {
             user_id: "test_user".to_string(),
@@ -921,7 +921,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_validation() {
         let config = SessionConfig::default();
-        let mut manager = SessionManager::new(config);
+        let mut manager = ZhtpSessionManager::new(config);
         
         // Create session first
         let create_request = SessionCreateRequest {

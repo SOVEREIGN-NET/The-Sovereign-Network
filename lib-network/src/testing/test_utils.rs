@@ -173,7 +173,7 @@ mod tests {
         use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
         
         let config = UnifiedStorageConfig::default();
-        let storage = UnifiedStorageSystem::new(config).await.unwrap();
+        let mut storage = UnifiedStorageSystem::new(config).await.unwrap();
         
         // Basic functionality test with storage
         let stats = storage.get_statistics().await.unwrap();

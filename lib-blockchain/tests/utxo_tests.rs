@@ -75,6 +75,8 @@ fn test_utxo_creation_and_tracking() -> Result<()> {
         created_at: 12345,
         registration_fee: 5000,  // Increase fee to be safe
         dao_fee: 1000,          // Increase DAO fee too
+        controlled_nodes: Vec::new(),
+        owned_wallets: Vec::new(),
     };
 
     let transaction = Transaction::new_identity_registration(
@@ -263,6 +265,8 @@ fn test_utxo_spending() -> Result<()> {
         created_at: 12345,
         registration_fee: 5000,
         dao_fee: 1000,
+        controlled_nodes: Vec::new(),
+        owned_wallets: Vec::new(),
     };
 
     let creation_tx = Transaction::new_identity_registration(
@@ -349,6 +353,8 @@ fn test_utxo_set_consistency() -> Result<()> {
             created_at: 12345 + i as u64,
             registration_fee: 5000,
             dao_fee: 1000,
+            controlled_nodes: Vec::new(),
+            owned_wallets: Vec::new(),
         };
         
         let transaction = Transaction::new_identity_registration(
@@ -463,6 +469,8 @@ fn test_mixed_transaction_block() -> Result<()> {
         created_at: 12345,
         registration_fee: 5000,
         dao_fee: 1000,
+        controlled_nodes: Vec::new(),
+        owned_wallets: Vec::new(),
     };
 
     let creation_tx = Transaction::new_identity_registration(
