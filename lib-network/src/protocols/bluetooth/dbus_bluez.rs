@@ -56,7 +56,7 @@ impl BlueZDBusClient {
     }
     
     /// Start device discovery
-    pub fn start_discovery(&self) -> Result<()> {
+    pub fn start_discovery(&self) -> Result<(), anyhow::Error> {
         info!(" Starting BlueZ device discovery via D-Bus");
         
         let proxy = self.connection.with_proxy(
@@ -73,7 +73,7 @@ impl BlueZDBusClient {
     }
     
     /// Stop device discovery
-    pub fn stop_discovery(&self) -> Result<()> {
+    pub fn stop_discovery(&self) -> Result<(), anyhow::Error> {
         debug!("🛑 Stopping BlueZ device discovery");
         
         let proxy = self.connection.with_proxy(
@@ -143,7 +143,7 @@ impl BlueZDBusClient {
     }
     
     /// Connect to a device by address
-    pub fn connect_device(&self, device_address: &str) -> Result<()> {
+    pub fn connect_device(&self, device_address: &str) -> Result<(), anyhow::Error> {
         info!(" Connecting to device {} via D-Bus", device_address);
         
         let device_path = self.get_device_path(device_address)?;
@@ -162,7 +162,7 @@ impl BlueZDBusClient {
     }
     
     /// Disconnect from a device
-    pub fn disconnect_device(&self, device_address: &str) -> Result<()> {
+    pub fn disconnect_device(&self, device_address: &str) -> Result<(), anyhow::Error> {
         info!("🔌 Disconnecting from device {} via D-Bus", device_address);
         
         let device_path = self.get_device_path(device_address)?;
@@ -202,7 +202,7 @@ impl BlueZDBusClient {
     }
     
     /// Write GATT characteristic value
-    pub fn write_gatt_characteristic(&self, device_address: &str, char_uuid: &str, data: &[u8]) -> Result<()> {
+    pub fn write_gatt_characteristic(&self, device_address: &str, char_uuid: &str, data: &[u8]) -> Result<(), anyhow::Error> {
         debug!("✍️ Writing {} bytes to GATT characteristic {} via D-Bus", data.len(), char_uuid);
         
         let char_path = self.get_characteristic_path(device_address, char_uuid)?;
@@ -223,7 +223,7 @@ impl BlueZDBusClient {
     }
     
     /// Enable notifications on a characteristic
-    pub fn enable_notifications(&self, device_address: &str, char_uuid: &str) -> Result<()> {
+    pub fn enable_notifications(&self, device_address: &str, char_uuid: &str) -> Result<(), anyhow::Error> {
         info!(" Enabling notifications for characteristic {} via D-Bus", char_uuid);
         
         let char_path = self.get_characteristic_path(device_address, char_uuid)?;
@@ -242,7 +242,7 @@ impl BlueZDBusClient {
     }
     
     /// Disable notifications on a characteristic
-    pub fn disable_notifications(&self, device_address: &str, char_uuid: &str) -> Result<()> {
+    pub fn disable_notifications(&self, device_address: &str, char_uuid: &str) -> Result<(), anyhow::Error> {
         debug!("🔕 Disabling notifications for characteristic {}", char_uuid);
         
         let char_path = self.get_characteristic_path(device_address, char_uuid)?;
@@ -313,7 +313,7 @@ impl BlueZDBusClient {
     }
     
     /// Power on the adapter
-    pub fn power_on(&self) -> Result<()> {
+    pub fn power_on(&self) -> Result<(), anyhow::Error> {
         info!("⚡ Powering on Bluetooth adapter via D-Bus");
         
         let proxy = self.connection.with_proxy(
