@@ -730,7 +730,7 @@ impl WiFiDirectMeshProtocol {
     
     /// Scan for WiFi Direct devices
     async fn scan_for_wifi_direct_devices() -> Result<Vec<WiFiDirectConnection>> {
-        let devices = Vec::new();
+        let mut devices = Vec::new();
         
         #[cfg(target_os = "linux")]
         {
