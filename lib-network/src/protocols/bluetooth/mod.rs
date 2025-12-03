@@ -295,7 +295,7 @@ impl BluetoothMeshProtocol {
     pub fn respond_to_auth_challenge(
         &self,
         challenge: &ZhtpAuthChallenge,
-        capabilities: NodeCapabilities,
+        _capabilities: NodeCapabilities,
     ) -> Result<ZhtpAuthResponse> {
         info!(" Responding to ZHTP authentication challenge");
         
@@ -837,9 +837,7 @@ impl BluetoothMeshProtocol {
                 let scan_result = Self::scan_for_mesh_peers(&core_bt).await;
                 
                 #[cfg(not(target_os = "macos"))]
-                let scan_result = tokio::task::spawn_blocking(|| {
-                    block_on(Self::scan_for_mesh_peers())
-                }).await.unwrap_or_else(|e| Err(anyhow!("Scan task failed: {}", e)));
+                let scan_result = Self::scan_for_mesh_peers().await;
                 
                 if let Ok(peers) = scan_result {
                     info!(" DEBUG: Background scan found {} peers", peers.len());
