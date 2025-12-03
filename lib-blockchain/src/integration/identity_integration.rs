@@ -320,7 +320,7 @@ impl Default for IdentityAttributes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::KeyPair;
+    use lib_crypto::{KeyPair, Hash};
 
     #[test]
     fn test_did_parsing() -> Result<()> {
@@ -355,7 +355,7 @@ mod tests {
             public_key: keypair.public_key.key_id.to_vec(),
             ownership_proof: Vec::new(),
             identity_type: identity_type_to_string(&IdentityType::Human),
-            did_document_hash: Hash::default(),
+            did_document_hash: Hash::from_bytes(&[0u8; 32]),
             created_at: 0,
             registration_fee: 0,
             dao_fee: 0,
@@ -377,7 +377,7 @@ mod tests {
             public_key: keypair.public_key.key_id.to_vec(),
             ownership_proof: Vec::new(),
             identity_type: identity_type_to_string(&IdentityType::Human),
-            did_document_hash: Hash::default(),
+            did_document_hash: Hash::from_bytes(&[0u8; 32]),
             created_at: 0,
             registration_fee: 0,
             dao_fee: 0,

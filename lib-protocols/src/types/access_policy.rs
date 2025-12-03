@@ -549,6 +549,7 @@ impl RateLimit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::Hash;
 
     #[test]
     fn test_public_policy() {

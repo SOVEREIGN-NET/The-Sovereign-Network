@@ -211,6 +211,7 @@ pub fn create_test_response(body: &str) -> ZhtpResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ZhtpStatus;
 
     #[test]
     fn test_server_capabilities() {

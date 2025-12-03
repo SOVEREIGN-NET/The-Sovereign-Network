@@ -3,6 +3,7 @@
 use anyhow::Result;
 use lib_crypto::Hash;
 use crate::wallets::{WalletManager, WalletId};
+use crate::WalletType;
 
 impl WalletManager {
     /// Create a basic wallet for testing purposes (bypasses seed phrase requirement)
