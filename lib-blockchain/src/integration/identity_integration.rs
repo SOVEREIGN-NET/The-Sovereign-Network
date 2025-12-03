@@ -5,7 +5,6 @@ use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use crate::integration::crypto_integration::PublicKey;
 use crate::transaction::IdentityTransactionData;
-use crate::types::Hash;
 use lib_identity::{IdentityType, AccessLevel};
 
 /// DID (Decentralized Identifier) structure
@@ -322,6 +321,7 @@ impl Default for IdentityAttributes {
 mod tests {
     use super::*;
     use lib_crypto::KeyPair;
+    use crate::types::Hash;
 
     #[test]
     fn test_did_parsing() -> Result<()> {
@@ -356,10 +356,12 @@ mod tests {
             public_key: keypair.public_key.key_id.to_vec(),
             ownership_proof: Vec::new(),
             identity_type: identity_type_to_string(&IdentityType::Human),
-            did_document_hash: Hash::default(),
+            did_document_hash: Hash::new([0u8; 32]),
             created_at: 0,
             registration_fee: 0,
             dao_fee: 0,
+            controlled_nodes: Vec::new(),
+            owned_wallets: Vec::new(),
         };
         
         assert!(validate_identity_data(&identity_data)?);
@@ -376,10 +378,12 @@ mod tests {
             public_key: keypair.public_key.key_id.to_vec(),
             ownership_proof: Vec::new(),
             identity_type: identity_type_to_string(&IdentityType::Human),
-            did_document_hash: Hash::default(),
+            did_document_hash: Hash::new([0u8; 32]),
             created_at: 0,
             registration_fee: 0,
             dao_fee: 0,
+            controlled_nodes: Vec::new(),
+            owned_wallets: Vec::new(),
         };
         
         let registration_id = process_identity_registration(&identity_data)?;

@@ -11,28 +11,21 @@
 //! - API handler registration (server::api_registration)
 
 use std::sync::Arc;
-use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 // REMOVED: TCP/UDP no longer used - QUIC-only architecture
 // use tokio::net::{TcpListener, UdpSocket, TcpStream};
 use anyhow::{Result, Context};
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
-use serde::{Deserialize, Serialize};
 
 // Import from libraries (no circular dependencies!)
 use lib_protocols::zhtp::ZhtpRequestHandler;
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
 use lib_network::protocols::quic_mesh::QuicMeshProtocol;
-use lib_network::protocols::zhtp_encryption::ZhtpEncryptionSession;
-use lib_network::protocols::zhtp_auth::ZhtpAuthManager;
 
 // Import new QUIC handler for native ZHTP-over-QUIC
 use crate::server::QuicHandler;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
-use lib_network::MeshConnection;
 use lib_blockchain::Blockchain;
 use lib_storage::UnifiedStorageSystem;
 use lib_identity::IdentityManager;
@@ -44,7 +37,6 @@ use crate::api::handlers::{
     DhtHandler, 
     ProtocolHandler,
     BlockchainHandler,
-    CryptoHandler,
     IdentityHandler,
     StorageHandler,
     WalletHandler,
@@ -379,13 +371,38 @@ impl ZhtpUnifiedServer {
         http_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler.clone());
         zhtp_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler);
         
-        // Identity and wallet management  
+        // Identity and wallet management
         // Note: Using lib_identity::economics::EconomicModel as expected by IdentityHandler
         let identity_economic_model = Arc::new(RwLock::new(
             lib_identity::economics::EconomicModel::new()
         ));
+
+        // Create rate limiter for authentication endpoints
+        let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
+        // Start cleanup task to prevent memory leak
+        rate_limiter.start_cleanup_task();
+
+        // Create account lockout tracker for per-identity brute force protection
+        let account_lockout = Arc::new(crate::api::handlers::identity::login_handlers::AccountLockout::new());
+
+        // Create CSRF protection (P0-7)
+        let csrf_protection = Arc::new(crate::api::middleware::CsrfProtection::new());
+
+        // Create recovery phrase manager for backup/recovery (Issue #100)
+        let recovery_phrase_manager = Arc::new(RwLock::new(
+            lib_identity::RecoveryPhraseManager::new()
+        ));
+
         let identity_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            IdentityHandler::new(identity_manager.clone(), identity_economic_model)
+            IdentityHandler::new(
+                identity_manager.clone(),
+                identity_economic_model,
+                _session_manager.clone(),
+                rate_limiter,
+                account_lockout,
+                csrf_protection,
+                recovery_phrase_manager,
+            )
         );
         http_router.register_handler("/api/v1/identity".to_string(), identity_handler.clone());
         zhtp_router.register_handler("/api/v1/identity".to_string(), identity_handler);

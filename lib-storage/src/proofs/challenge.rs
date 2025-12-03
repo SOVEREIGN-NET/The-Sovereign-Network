@@ -293,10 +293,15 @@ impl Default for ChallengeGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::hash_blake3;
+
+    fn content_hash(label: &str) -> ContentHash {
+        ContentHash::from_bytes(&hash_blake3(label.as_bytes()))
+    }
 
     #[test]
     fn test_storage_challenge_creation() {
-        let content_hash = ContentHash::from("test_content".to_string());
+        let content_hash = content_hash("test_content");
         let challenge = StorageChallenge::new_storage_challenge(
             content_hash,
             5,
@@ -313,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_retrieval_challenge_creation() {
-        let content_hash = ContentHash::from("test_content".to_string());
+        let content_hash = content_hash("test_content");
         let challenge = StorageChallenge::new_retrieval_challenge(
             content_hash,
             10,
@@ -330,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_audit_challenge_creation() {
-        let content_hash = ContentHash::from("test_content".to_string());
+        let content_hash = content_hash("test_content");
         let challenge = StorageChallenge::new_audit_challenge(
             content_hash,
             3,
@@ -346,7 +351,7 @@ mod tests {
     #[test]
     fn test_challenge_generator() {
         let generator = ChallengeGenerator::new(300, 5);
-        let content_hash = ContentHash::from("test_content".to_string());
+        let content_hash = content_hash("test_content");
 
         let storage_challenge = generator.generate_storage_challenge(
             content_hash.clone(),
@@ -366,7 +371,7 @@ mod tests {
     #[test]
     fn test_batch_challenge_generation() {
         let generator = ChallengeGenerator::default();
-        let content_hash = ContentHash::from("test_content".to_string());
+        let content_hash = content_hash("test_content");
 
         let challenges = generator.generate_batch_challenges(
             content_hash,
@@ -382,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_challenge_validation() {
-        let content_hash = ContentHash::from("test".to_string());
+        let content_hash = content_hash("test");
         
         // Valid storage challenge
         let valid_challenge = StorageChallenge::new_storage_challenge(

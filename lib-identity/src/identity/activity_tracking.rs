@@ -197,9 +197,8 @@ impl ActivityTracker {
     /// Generate a unique session ID
     fn generate_session_id(&self) -> String {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
         let mut bytes = [0u8; 8];
-        rng.fill_bytes(&mut bytes);
+        rand::rngs::OsRng.fill_bytes(&mut bytes);
         hex::encode(bytes)
     }
 }

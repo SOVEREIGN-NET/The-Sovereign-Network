@@ -1,6 +1,10 @@
 //! Identity Handler Module
-//! 
+//!
 //! Clean, minimal identity management using lib-identity patterns
+
+pub mod login_handlers;
+pub mod password_reset;
+pub mod backup_recovery;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -14,7 +18,7 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 // Identity management imports
 use lib_identity::{
-    IdentityManager, IdentityType, CitizenshipResult
+    IdentityManager, IdentityType, CitizenshipResult, RecoveryPhraseManager
 };
 
 // Identity and economic model imports
@@ -36,16 +40,31 @@ use lib_blockchain::{
 pub struct IdentityHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
     economic_model: Arc<RwLock<IdentityEconomicModel>>,
+    session_manager: Arc<crate::session_manager::SessionManager>,
+    rate_limiter: Arc<crate::api::middleware::RateLimiter>,
+    account_lockout: Arc<login_handlers::AccountLockout>,
+    csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
+    recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
 }
 
 impl IdentityHandler {
     pub fn new(
         identity_manager: Arc<RwLock<IdentityManager>>,
         economic_model: Arc<RwLock<IdentityEconomicModel>>,
+        session_manager: Arc<crate::session_manager::SessionManager>,
+        rate_limiter: Arc<crate::api::middleware::RateLimiter>,
+        account_lockout: Arc<login_handlers::AccountLockout>,
+        csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
+        recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
     ) -> Self {
         Self {
             identity_manager,
             economic_model,
+            session_manager,
+            rate_limiter,
+            account_lockout,
+            csrf_protection,
+            recovery_phrase_manager,
         }
     }
 }
@@ -58,6 +77,27 @@ impl ZhtpRequestHandler for IdentityHandler {
         let response = match (request.method, request.uri.as_str()) {
             (ZhtpMethod::Post, "/api/v1/identity/create") => {
                 self.handle_create_identity(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/signin") => {
+                self.handle_signin(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/login") => {
+                self.handle_login(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/password/recover") => {
+                self.handle_password_recovery(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/backup/generate") => {
+                self.handle_generate_recovery_phrase(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/backup/verify") => {
+                self.handle_verify_recovery_phrase(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/recover") => {
+                self.handle_recover_identity(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/identity/backup/status") => {
+                self.handle_backup_status(request).await
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/") => {
                 self.handle_get_identity(request).await
@@ -630,5 +670,99 @@ impl IdentityHandler {
         });
         
         Ok(ZhtpResponse::json(&response_body, None)?)
+    }
+
+    /// Handle signin request
+    /// POST /api/v1/identity/signin
+    async fn handle_signin(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        login_handlers::handle_signin(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            self.rate_limiter.clone(),
+            self.account_lockout.clone(),
+            self.csrf_protection.clone(),
+            &request,
+        )
+        .await
+    }
+
+    /// Handle login request (alias for signin)
+    /// POST /api/v1/identity/login
+    async fn handle_login(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        login_handlers::handle_login(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            self.rate_limiter.clone(),
+            self.account_lockout.clone(),
+            self.csrf_protection.clone(),
+            &request,
+        )
+        .await
+    }
+
+    /// Handle password recovery request (P0-8)
+    /// POST /api/v1/identity/password/recover
+    async fn handle_password_recovery(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        password_reset::handle_password_recovery(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+        )
+        .await
+    }
+
+    /// Handle generate recovery phrase request (Issue #100)
+    /// POST /api/v1/identity/backup/generate
+    async fn handle_generate_recovery_phrase(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_generate_recovery_phrase(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            self.recovery_phrase_manager.clone(),
+            &request,
+        )
+        .await
+    }
+
+    /// Handle verify recovery phrase request (Issue #100)
+    /// POST /api/v1/identity/backup/verify
+    async fn handle_verify_recovery_phrase(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_verify_recovery_phrase(
+            &request.body,
+            self.recovery_phrase_manager.clone(),
+        )
+        .await
+    }
+
+    /// Handle recover identity request (Issue #100)
+    /// POST /api/v1/identity/recover
+    async fn handle_recover_identity(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_recover_identity(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            self.recovery_phrase_manager.clone(),
+            self.rate_limiter.clone(),
+            &request,
+        )
+        .await
+    }
+
+    /// Handle backup status request (Issue #100)
+    /// GET /api/v1/identity/backup/status
+    async fn handle_backup_status(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Extract query params from URI
+        let query_params = request.uri
+            .split('?')
+            .nth(1)
+            .unwrap_or("");
+
+        backup_recovery::handle_backup_status(
+            query_params,
+            self.recovery_phrase_manager.clone(),
+        )
+        .await
     }
 }

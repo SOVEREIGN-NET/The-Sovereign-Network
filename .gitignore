@@ -1,10 +1,12 @@
-PROJECT_BOARD.md
+.claude
+/agents
 docs/ZHTPPM/
 internal-docs/
 
 .DS_Store
 
 target/
+.cargo-temp/
 Cargo.lock
 
 # Backup files
@@ -31,3 +33,7 @@ SECURITY_REPORT.md
 SECURITY_AUDIT.md
 SECURITY_AUDIT_*.md
 ISSUES_RESOLVED.md
+.claude/PROJECT_CONTEXT.md
+docs/architectural_suggestions_for_unified_identity.md
+
+.cargo-home/

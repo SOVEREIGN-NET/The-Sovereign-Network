@@ -5,7 +5,6 @@
 use crate::types::{Hash, Difficulty};
 use crate::transaction::Transaction;
 use crate::block::Block;
-use crate::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
 
 /// Time utilities
 pub mod time {
@@ -79,7 +78,7 @@ pub mod hash {
     /// Generate random hash (for testing)
     pub fn random_hash() -> Hash {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::OsRng;
         let mut bytes = [0u8; 32];
         rng.fill_bytes(&mut bytes);
         Hash::from_slice(&bytes)
@@ -204,7 +203,8 @@ pub mod encoding {
 #[cfg(test)]
 pub mod testing {
     use super::*;
-    use crate::transaction::{TransactionInput, TransactionOutput, IdentityTransactionData};
+    use crate::transaction::IdentityTransactionData;
+    use lib_crypto::{Signature, PublicKey, SignatureAlgorithm};
     
     /// Create a dummy transaction for testing
     pub fn create_dummy_transaction() -> Transaction {
@@ -225,6 +225,9 @@ pub mod testing {
             identity_data: None,
             wallet_data: None,
             validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
         }
     }
     

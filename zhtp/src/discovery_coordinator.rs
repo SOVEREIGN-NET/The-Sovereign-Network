@@ -808,7 +808,7 @@ mod tests {
         let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
         
         let peer1 = DiscoveredPeer {
-            public_key: pubkey.clone(),
+            public_key: Some(pubkey.clone()),
             addresses: vec!["192.168.1.1:9333".to_string()],
             discovered_via: DiscoveryProtocol::UdpMulticast,
             first_seen: SystemTime::now(),
@@ -816,9 +816,9 @@ mod tests {
             node_id: None,
             capabilities: None,
         };
-        
+
         let peer2 = DiscoveredPeer {
-            public_key: pubkey.clone(),
+            public_key: Some(pubkey.clone()),
             addresses: vec!["192.168.1.1:9334".to_string()],
             discovered_via: DiscoveryProtocol::MDns,
             first_seen: SystemTime::now(),

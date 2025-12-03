@@ -7,9 +7,8 @@ use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use lib_crypto::hashing::{hash_blake3, hash_blake3_multiple};
 use crate::circuits::TransactionCircuit;
-use crate::state::{StateCommitment, NetworkStateInfo};
-use crate::plonky2::{CircuitBuilder, CircuitConfig, CircuitConstraint, ZkCircuit, Plonky2Proof};
-use std::collections::HashMap;
+use crate::state::StateCommitment;
+use crate::plonky2::{CircuitBuilder, CircuitConfig, CircuitConstraint, Plonky2Proof};
 
 /// State transition witness containing all data needed to prove a state transition
 #[derive(Debug, Clone, Serialize, Deserialize)]

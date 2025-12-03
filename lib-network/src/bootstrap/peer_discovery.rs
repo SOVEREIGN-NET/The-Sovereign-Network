@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use lib_crypto::PublicKey;
+use lib_identity::NodeId;
 use std::collections::HashMap;
 
 /// Discover peers through bootstrap process
@@ -70,6 +71,7 @@ async fn connect_to_bootstrap_peer(address: &str, local_public_key: &lib_crypto:
     
     Ok(PeerInfo {
         id: peer_id,
+        node_id: None, // TODO: Exchange NodeId during handshake
         protocols: vec![crate::protocols::NetworkProtocol::TCP],
         addresses,
         last_seen: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
@@ -84,6 +86,7 @@ async fn connect_to_bootstrap_peer(address: &str, local_public_key: &lib_crypto:
 /// Peer information structure
 pub struct PeerInfo {
     pub id: PublicKey,
+    pub node_id: Option<NodeId>, // Identity-derived deterministic NodeId
     pub protocols: Vec<crate::protocols::NetworkProtocol>,
     pub addresses: HashMap<crate::protocols::NetworkProtocol, String>,
     pub last_seen: u64,

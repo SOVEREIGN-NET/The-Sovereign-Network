@@ -5,14 +5,14 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use anyhow::{Result, Context};
+use anyhow::Result;
 use tracing::{info, warn, debug};
 
 use quinn::{RecvStream, SendStream};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 
-use super::serialization::{deserialize_request, serialize_response, deserialize_response};
+use super::serialization::{deserialize_request, serialize_response};
 use super::super::http::middleware::Middleware;
 
 /// Native ZHTP router for QUIC streams
@@ -199,14 +199,15 @@ mod tests {
     #[async_trait::async_trait]
     impl ZhtpRequestHandler for MockHandler {
         async fn handle_request(&self, _request: ZhtpRequest) -> Result<ZhtpResponse> {
-            Ok(ZhtpResponse {
-                status: ZhtpStatus::Ok,
-                headers: ZhtpHeaders::new(),
-                body: b"test response".to_vec(),
-                timestamp: 0,
-                dao_fee: 0,
-                zk_proof: None,
-            })
+            Ok(ZhtpResponse::success(b"test response".to_vec(), None))
+        }
+
+        fn can_handle(&self, request: &ZhtpRequest) -> bool {
+            request.uri.starts_with("/test")
+        }
+
+        fn priority(&self) -> u32 {
+            100
         }
     }
     

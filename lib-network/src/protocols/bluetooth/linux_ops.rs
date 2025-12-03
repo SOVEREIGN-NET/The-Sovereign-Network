@@ -158,7 +158,7 @@ impl LinuxBluetoothOps {
                     let peer = MeshPeer {
                         peer_id: device.address.clone(),
                         address: device.address.clone(),
-                        rssi: device.rssi,
+                        rssi: device.rssi as i16,
                         last_seen: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()

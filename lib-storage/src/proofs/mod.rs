@@ -173,7 +173,7 @@ pub fn generate_storage_proof(
         .map(|block| hash_blake3(block))
         .collect();
 
-    let mut merkle_tree = ZkMerkleTree::with_leaves(
+    let merkle_tree = ZkMerkleTree::with_leaves(
         calculate_tree_height(block_hashes.len()),
         block_hashes,
     )?;
@@ -285,10 +285,15 @@ fn generate_random_indices(max: usize, count: usize, seed: u64) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::hash_blake3;
+
+    fn content_hash(label: &str) -> ContentHash {
+        ContentHash::from_bytes(&hash_blake3(label.as_bytes()))
+    }
 
     #[test]
     fn test_storage_proof_creation() {
-        let content_hash = ContentHash::from("test_content".to_string());
+        let content_hash = content_hash("test_content");
         let blocks = vec![
             b"block0".to_vec(),
             b"block1".to_vec(),
@@ -311,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_retrieval_proof_creation() {
-        let content_hash = ContentHash::from("test_content".to_string());
+        let content_hash = content_hash("test_content");
         let blocks = vec![
             b"block0".to_vec(),
             b"block1".to_vec(),
@@ -362,7 +367,7 @@ mod tests {
 
     #[test]
     fn test_proof_expiration() {
-        let content_hash = ContentHash::from("test".to_string());
+        let content_hash = content_hash("test");
         let proof = StorageProof::new(
             content_hash,
             [0u8; 32],

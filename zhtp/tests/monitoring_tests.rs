@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use zhtp::monitoring::{
     MonitoringSystem, MetricsCollector, HealthMonitor, AlertManager,
-    SystemMetrics, HealthStatus, Alert, AlertLevel, NodeHealth,
+    SystemMetrics, Alert, AlertLevel, NodeHealth,
 };
 use zhtp::monitoring::alerting::AlertThresholds;
 

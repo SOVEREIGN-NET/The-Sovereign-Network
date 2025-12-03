@@ -224,7 +224,7 @@ mod tests {
     
     #[test]
     fn test_detect_http_method() {
-        let http_methods = vec![
+        let http_methods: Vec<&[u8]> = vec![
             b"GET /test HTTP/1.1",
             b"POST /api HTTP/1.1",
             b"PUT /data HTTP/1.1",
@@ -232,7 +232,7 @@ mod tests {
             b"HEAD /info HTTP/1.1",
             b"OPTIONS * HTTP/1.1",
         ];
-        
+
         for method in http_methods {
             let first_bytes = &method[0..4];
             let magic_str = String::from_utf8_lossy(first_bytes);

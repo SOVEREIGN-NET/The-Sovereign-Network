@@ -1,10 +1,8 @@
-use std::io;
 use crate::journal::journal::Journal;
 use crate::messages::inter::rr_types::RRTypes;
 use crate::records::inter::record_base::RecordBase;
 use crate::utils::index_map::IndexMap;
 use crate::zone::inter::zone_types::ZoneTypes;
-use crate::zone::zone_reader::ZoneReader;
 
 #[derive(Debug, Clone)]
 pub struct Zone {

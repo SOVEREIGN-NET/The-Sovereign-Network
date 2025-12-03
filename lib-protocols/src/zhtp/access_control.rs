@@ -4,14 +4,13 @@
 //! time-based access, reputation scoring, DAO membership verification,
 //! and multi-dimensional access policies.
 
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, AccessPolicy as TypesAccessPolicy};
+use crate::types::ZhtpRequest;
 use crate::zhtp::config::{ServerConfig, AccessPolicy as ConfigAccessPolicy, AuthMethod};
 use crate::zhtp::ZhtpResult;
 
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
-use anyhow::{Context, Result as AnyhowResult};
 
 /// Access control result
 #[derive(Debug, Clone)]

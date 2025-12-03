@@ -236,7 +236,8 @@ mod tests {
         let test_data = vec![0u8; 500]; // 500 bytes should create 3 chunks
         
         // Create test sender
-        let (sender_pubkey, _, _) = lib_crypto::generate_keypair();
+        let sender_keypair = lib_crypto::KeyPair::generate().unwrap();
+        let sender_pubkey = sender_keypair.public_key.clone();
         
         // Chunk the data
         let chunks = BlockchainSyncManager::chunk_blockchain_data(sender_pubkey, request_id, test_data.clone()).unwrap();

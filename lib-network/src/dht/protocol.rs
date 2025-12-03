@@ -5,9 +5,8 @@
 
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
-use lib_crypto::{Hash, PostQuantumSignature, PublicKey, generate_keypair, SignatureAlgorithm};
+use lib_crypto::{Hash, PostQuantumSignature, PublicKey, SignatureAlgorithm};
 use lib_crypto::post_quantum::dilithium::{dilithium2_sign, dilithium2_verify, dilithium2_keypair};
-use lib_crypto::hashing::hash_blake3;
 use lib_identity::ZhtpIdentity;
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -794,7 +793,7 @@ impl DhtProtocolHandler {
     fn generate_packet_id() -> [u8; 16] {
         use rand::RngCore;
         let mut id = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut id);
+        rand::rngs::OsRng.fill_bytes(&mut id);
         id
     }
 }

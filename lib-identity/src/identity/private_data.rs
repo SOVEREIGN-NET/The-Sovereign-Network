@@ -1,6 +1,7 @@
 //! Private identity data from the original identity.rs
 
 use lib_crypto::Hash;
+use crate::guardian::GuardianConfig;
 
 /// Private identity data (never transmitted) - based on original identity.rs
 #[derive(Debug, Clone)]
@@ -15,6 +16,8 @@ pub struct PrivateIdentityData {
     pub biometric_hashes: Vec<Hash>,
     /// Quantum keypair for post-quantum signatures
     pub quantum_keypair: QuantumKeypair,
+    /// Guardian configuration for social recovery
+    pub guardian_config: Option<GuardianConfig>,
 }
 
 /// Quantum-resistant keypair
@@ -38,6 +41,7 @@ impl PrivateIdentityData {
                 private_key,
                 public_key,
             },
+            guardian_config: None,
         }
     }
     

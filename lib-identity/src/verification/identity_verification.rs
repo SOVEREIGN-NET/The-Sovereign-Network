@@ -419,7 +419,7 @@ impl IdentityVerifier {
     /// Generate cryptographic challenge for verification
     async fn generate_verification_challenge(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::OsRng;
         let mut challenge = vec![0u8; 32];
         rng.fill_bytes(&mut challenge);
         Ok(challenge)

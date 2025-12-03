@@ -154,7 +154,7 @@ pub fn deserialize_response(data: &[u8]) -> Result<ZhtpResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_protocols::types::{ZhtpMethod, ZhtpStatus, ZhtpHeaders};
+    use lib_protocols::types::{ZhtpMethod, ZhtpHeaders};
 
     #[test]
     fn test_request_serialization_roundtrip() {
@@ -187,29 +187,22 @@ mod tests {
 
     #[test]
     fn test_response_serialization_roundtrip() {
-        let response = ZhtpResponse {
-            status: ZhtpStatus::Ok,
-            headers: ZhtpHeaders::new(),
-            body: b"response data".to_vec(),
-            timestamp: 1234567890,
-            dao_fee: 100,
-            zk_proof: None,
-        };
+        let response = ZhtpResponse::success(b"response data".to_vec(), None);
 
         let serialized = serialize_response(&response).unwrap();
-        
+
         // Check magic bytes
         assert_eq!(&serialized[0..4], ZHTP_MAGIC);
-        
+
         // Check version
         assert_eq!(serialized[4], ZHTP_VERSION);
-        
+
         // Deserialize
         let deserialized = deserialize_response(&serialized).unwrap();
-        
+
         assert_eq!(deserialized.status, response.status);
         assert_eq!(deserialized.body, response.body);
-        assert_eq!(deserialized.dao_fee, response.dao_fee);
+        assert_eq!(deserialized.timestamp, response.timestamp);
     }
 
     #[test]

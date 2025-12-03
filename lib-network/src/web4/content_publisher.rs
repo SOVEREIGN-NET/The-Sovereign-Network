@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
-use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::ZhtpIdentity;
 use lib_storage::UnifiedStorageSystem;
 
@@ -162,7 +161,7 @@ impl ContentPublisher {
         info!(" Updating content at {}{}", request.domain, request.path);
 
         // Reuse publish logic but add versioning info
-        let mut response = self.publish_content(request).await?;
+        let response = self.publish_content(request).await?;
         
         if response.success {
             // Update metadata to indicate this is an update

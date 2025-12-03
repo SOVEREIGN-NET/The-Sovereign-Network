@@ -136,7 +136,7 @@ impl StorageIntegration {
     pub async fn new(config: StorageConfig) -> Result<Self> {
         // Create unified storage system configuration
         let storage_config = UnifiedStorageConfig {
-            node_id: lib_crypto::Hash::from_bytes(&rand::random::<[u8; 32]>()),
+            node_id: lib_identity::NodeId::from_bytes(rand::random::<[u8; 32]>()),
             addresses: vec!["127.0.0.1:8080".to_string()], // Default addresses
             economic_config: lib_storage::types::economic_types::EconomicManagerConfig {
                 default_duration_days: 30,
@@ -571,8 +571,8 @@ impl StorageIntegration {
     }
 
     /// Add peer to storage network
-    pub async fn add_storage_peer(&mut self, peer_address: String) -> Result<()> {
-        self.storage_system.add_peer(peer_address).await
+    pub async fn add_storage_peer(&mut self, peer_address: String, node_id: lib_identity::NodeId) -> Result<()> {
+        self.storage_system.add_peer(peer_address, node_id).await
             .map_err(|e| ProtocolError::StorageError(format!("Failed to add peer: {}", e)))
     }
 
@@ -781,35 +781,22 @@ mod tests {
 
     // Helper functions for tests
     fn create_test_identity() -> lib_identity::ZhtpIdentity {
-        use lib_identity::{ZhtpIdentity, IdentityType, AccessLevel};
-        use std::collections::HashMap;
-        
-        let identity_id = lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(b"test_user"));
-        
-        ZhtpIdentity {
-            id: identity_id.clone(),
-            identity_type: IdentityType::Human,
-            public_key: vec![0u8; 32],
-            ownership_proof: lib_proofs::ZeroKnowledgeProof::new(
-                "test_ownership".to_string(),
-                vec![0u8; 32],
-                vec![0u8; 32],
-                vec![],
-                None,
-            ),
-            credentials: HashMap::new(),
-            reputation: 100,
-            age: Some(25),
-            access_level: AccessLevel::FullCitizen,
-            metadata: HashMap::new(),
-            private_data_id: None,
-            wallet_manager: lib_identity::wallets::IdentityWallets::new(identity_id),
-            did_document_hash: None,
-            attestations: vec![],
-            created_at: current_timestamp(),
-            last_active: current_timestamp(),
-            recovery_keys: vec![],
-        }
+        use lib_crypto::KeyPair;
+        use lib_identity::{IdentityType, ZhtpIdentity};
+
+        let keypair = KeyPair::generate().unwrap();
+
+        ZhtpIdentity::new(
+            IdentityType::Human,
+            keypair.public_key,
+            keypair.private_key,
+            "test_device".to_string(),
+            Some(25),
+            Some("Testland".to_string()),
+            true,
+            lib_proofs::ZeroKnowledgeProof::default(),
+        )
+        .unwrap()
     }
 
     fn create_test_zhtp_request() -> crate::types::ZhtpRequest {

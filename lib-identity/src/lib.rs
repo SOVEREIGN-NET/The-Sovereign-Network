@@ -23,6 +23,7 @@ pub mod wallets;
 pub mod did;
 pub mod reputation;
 pub mod recovery;
+pub mod guardian;
 pub mod privacy;
 pub mod cryptography;
 pub mod auth;
@@ -106,6 +107,16 @@ pub use recovery::{
     RecoveryPhrase,           // ✓ 20-word recovery phrases
     PhraseGenerationOptions,  // ✓ Phrase generation options
     EntropySource,            // ✓ Entropy sources for phrases
+    SocialRecoveryManager,    // ✓ Social recovery orchestration
+    RecoveryRequest,          // ✓ Recovery request tracking
+    RecoveryStatus,           // ✓ Recovery status states
+};
+
+// Guardian module - Guardian-based social recovery
+pub use guardian::{
+    Guardian,           // ✓ Guardian entity
+    GuardianConfig,     // ✓ Guardian configuration
+    GuardianStatus,     // ✓ Guardian state
 };
 
 // Wallets module - Wallet management (verified export)

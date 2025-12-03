@@ -51,9 +51,8 @@ impl RecoveryPhrase {
     /// Create RecoveryPhrase from word list
     pub fn from_words(words: Vec<String>) -> Result<Self> {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
         let mut entropy = vec![0u8; 32]; // 256 bits
-        rng.fill_bytes(&mut entropy);
+        rand::rngs::OsRng.fill_bytes(&mut entropy);
         
         Ok(Self {
             word_count: words.len(),
@@ -446,18 +445,16 @@ impl RecoveryPhraseManager {
             match source {
                 EntropySource::SystemRandom => {
                     use rand::RngCore;
-                    let mut rng = rand::thread_rng();
                     let mut entropy = vec![0u8; entropy_bytes];
-                    rng.fill_bytes(&mut entropy);
+                    rand::rngs::OsRng.fill_bytes(&mut entropy);
                     Ok(entropy)
                 },
                 EntropySource::HardwareRandom => {
                     // In implementation, would use hardware RNG
-                    // For now, fall back to system random
+                    // For now, fall back to OsRng (CSPRNG)
                     use rand::RngCore;
-                    let mut rng = rand::thread_rng();
                     let mut entropy = vec![0u8; entropy_bytes];
-                    rng.fill_bytes(&mut entropy);
+                    rand::rngs::OsRng.fill_bytes(&mut entropy);
                     Ok(entropy)
                 },
                 EntropySource::UserProvided(user_entropy) => {
@@ -841,9 +838,8 @@ impl RecoveryPhraseManager {
     /// Additional helper methods for encryption, validation, etc.
     async fn generate_salt(&self) -> Result<Vec<u8>> {
         use rand::RngCore;
-        let mut rng = rand::thread_rng();
         let mut salt = vec![0u8; 32];
-        rng.fill_bytes(&mut salt);
+        rand::rngs::OsRng.fill_bytes(&mut salt);
         Ok(salt)
     }
 
@@ -864,7 +860,7 @@ impl RecoveryPhraseManager {
         // Simple encryption (in implementation, use proper AES encryption)
         let mut iv = vec![0u8; 16];
         use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut iv);
+        rand::rngs::OsRng.fill_bytes(&mut iv);
         
         let mut encrypted = Vec::new();
         let phrase_bytes = phrase.as_bytes();
@@ -955,7 +951,7 @@ impl RecoveryPhraseManager {
     /// Restore identity from 20-word recovery phrase
     pub async fn restore_from_phrase(&self, phrase_words: &[String]) -> Result<(crate::types::IdentityId, Vec<u8>, Vec<u8>, [u8; 32])> {
         use lib_crypto::{hash_blake3, derive_keys};
-        use crate::types::IdentityId;
+        
         
         // Validate phrase format
         if phrase_words.len() != 20 {

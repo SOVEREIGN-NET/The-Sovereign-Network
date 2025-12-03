@@ -10,9 +10,9 @@ use lib_identity::identity::IdentityManager;
 use lib_identity::types::IdentityId;
 use lib_crypto::Hash;
 use lib_crypto::hashing::hash_blake3;
-use lib_blockchain::{Transaction, TransactionOutput, TransactionType};
+use lib_blockchain::{TransactionOutput, TransactionType};
 use serde::{Deserialize, Serialize};
-use tracing::{info, error, warn};
+use tracing::{info, error};
 use anyhow::anyhow;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -437,7 +437,7 @@ impl MarketplaceHandler {
         // ========================================================================
         // STEP 3: Build transaction inputs from selected UTXOs
         // ========================================================================
-        use lib_blockchain::TransactionInput;
+        
         
         let mut inputs = Vec::new();
         for (utxo_hash, output_index, _amount) in &selected_utxos {
@@ -642,24 +642,28 @@ mod tests {
         let json = r#"{
             "from_wallet": "abc123",
             "to_wallet": "def456",
-            "price": 1000
+            "price": 1000,
+            "buyer_identity_id": "identity789"
         }"#;
-        
+
         let request: TransferRequest = serde_json::from_str(json).unwrap();
         assert_eq!(request.from_wallet, "abc123");
         assert_eq!(request.to_wallet, "def456");
         assert_eq!(request.price, 1000);
+        assert_eq!(request.buyer_identity_id, "identity789");
     }
 
     #[test]
     fn test_purchase_request_parsing() {
         let json = r#"{
             "buyer_wallet": "buyer123",
-            "offered_price": 500
+            "offered_price": 500,
+            "buyer_identity_id": "identity456"
         }"#;
-        
+
         let request: PurchaseRequest = serde_json::from_str(json).unwrap();
         assert_eq!(request.buyer_wallet, "buyer123");
         assert_eq!(request.offered_price, 500);
+        assert_eq!(request.buyer_identity_id, "identity456");
     }
 }

@@ -5,6 +5,7 @@
 
 use lib_economy::*;
 use lib_economy::testing::*;
+use lib_economy::incentives::{cost_savings::CostSavings, infrastructure_rewards::InfrastructureRewards};
 
 #[cfg(test)]
 mod tests {
@@ -97,8 +98,6 @@ mod tests {
 
     #[test]
     fn test_isp_bypass_economics() {
-        let mut incentives = IspBypassIncentives::new();
-        
         // Create  work
         let bypass_work = IspBypassWork {
             bandwidth_shared_gb: 10,
@@ -109,20 +108,20 @@ mod tests {
             cost_savings_provided: 250, // $250 saved
         };
         
-        // Calculate rewards
-        let reward = incentives.calculate_rewards(&bypass_work);
+        // Calculate rewards using the current infrastructure reward model
+        let rewards = InfrastructureRewards::calculate_isp_bypass(&bypass_work).unwrap();
         let expected_base = (10 * ISP_BYPASS_CONNECTIVITY_RATE) + 
                            (500 * ISP_BYPASS_MESH_RATE) + 
                            (24 * ISP_BYPASS_UPTIME_BONUS);
         let expected_with_quality = ((expected_base as f64) * 1.5) as u64; // High quality multiplier
         
-        assert_eq!(reward, expected_with_quality);
+        assert_eq!(rewards.total_infrastructure_rewards, expected_with_quality);
         
-        // Update statistics
-        incentives.update_stats(&bypass_work).unwrap();
-        assert_eq!(incentives.total_bandwidth_shared, 10);
-        assert_eq!(incentives.total_isp_cost_savings, 250);
-        assert_eq!(incentives.connectivity_providers, 1);
+        // Update cost savings statistics
+        let mut cost_savings = CostSavings::new();
+        cost_savings.update_from_work(&bypass_work).unwrap();
+        assert_eq!(cost_savings.users_benefiting, bypass_work.users_served);
+        assert!(cost_savings.total_usd_savings >= bypass_work.cost_savings_provided);
     }
 
     #[test]

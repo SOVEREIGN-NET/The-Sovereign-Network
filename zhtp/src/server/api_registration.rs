@@ -59,17 +59,70 @@ pub async fn register_api_handlers(
     http_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler);
     info!("   ✅ Blockchain handler registered");
     
-    // Identity and wallet management  
+    // Identity and wallet management
     // Note: Using lib_identity::economics::EconomicModel as expected by IdentityHandler
     let identity_economic_model = Arc::new(RwLock::new(
         lib_identity::economics::EconomicModel::new()
     ));
+
+    // Create rate limiter for authentication endpoints
+    let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
+    // Start cleanup task to prevent memory leak
+    rate_limiter.start_cleanup_task();
+
+    // Create account lockout tracker for per-identity brute force protection
+    let account_lockout = Arc::new(crate::api::handlers::identity::login_handlers::AccountLockout::new());
+
+    // Create CSRF protection (P0-7)
+    let csrf_protection = Arc::new(crate::api::middleware::CsrfProtection::new());
+
+    // Create recovery phrase manager for backup/recovery (Issue #100)
+    let recovery_phrase_manager = Arc::new(RwLock::new(
+        lib_identity::RecoveryPhraseManager::new()
+    ));
+
     let identity_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-        IdentityHandler::new(identity_manager.clone(), identity_economic_model)
+        IdentityHandler::new(
+            identity_manager.clone(),
+            identity_economic_model,
+            _session_manager.clone(),
+            rate_limiter.clone(),
+            account_lockout,
+            csrf_protection,
+            recovery_phrase_manager,
+        )
     );
     http_router.register_handler("/api/v1/identity".to_string(), identity_handler);
     info!("   ✅ Identity handler registered");
-    
+
+    // Guardian social recovery handler (Issue #101)
+    let recovery_manager = Arc::new(RwLock::new(
+        lib_identity::SocialRecoveryManager::new()
+    ));
+
+    let guardian_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+        crate::api::handlers::guardian::GuardianHandler::new(
+            identity_manager.clone(),
+            _session_manager.clone(),
+            recovery_manager,
+            rate_limiter.clone(),
+        )
+    );
+    http_router.register_handler("/api/v1/identity/guardians".to_string(), guardian_handler.clone());
+    http_router.register_handler("/api/v1/identity/recovery".to_string(), guardian_handler);
+    info!("   ✅ Guardian social recovery handler registered");
+
+    // Zero-knowledge proof handler (Issue #102)
+    let zkp_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+        crate::api::handlers::zkp::ZkpHandler::new(
+            identity_manager.clone(),
+            _session_manager.clone(),
+            rate_limiter.clone(),
+        )
+    );
+    http_router.register_handler("/api/v1/zkp".to_string(), zkp_handler);
+    info!("   ✅ Zero-knowledge proof handler registered");
+
     // ========================================================================
     // STORAGE AND CONTENT HANDLERS
     // ========================================================================
