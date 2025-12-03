@@ -52,80 +52,74 @@ impl BlueZGattParser {
                 Ok(Event::Start(ref e)) => {
                     match e.name().as_ref() {
                         b"node" => {
-                            if let Ok(name) = e.try_get_attribute(b"name") {
-                                if let Ok(node_name) = name {
-                                    path_stack.push(String::from_utf8_lossy(&node_name.value).to_string());
-                                    in_node = true;
-                                }
+                            if let Ok(Some(node_name)) = e.try_get_attribute(b"name") {
+                                path_stack.push(String::from_utf8_lossy(&node_name.value).to_string());
+                                in_node = true;
                             }
                         }
                         b"interface" => {
-                            if let Ok(name) = e.try_get_attribute(b"name") {
-                                if let Ok(interface_name) = name {
-                                    let interface_str = String::from_utf8_lossy(&interface_name.value);
-                                    
-                                    // Check if this is a GATT service interface
-                                    if interface_str.contains("org.bluez.GattService1") {
-                                        current_service = Some(GattServiceInfo {
-                                            path: path_stack.join("/"),
-                                            uuid: String::new(),
-                                            primary: true,
-                                            characteristics: HashMap::new(),
-                                        });
-                                    }
-                                    
-                                    // Check if this is a GATT characteristic interface
-                                    if interface_str.contains("org.bluez.GattCharacteristic1") {
-                                        current_characteristic = Some(GattCharacteristicInfo {
-                                            path: path_stack.join("/"),
-                                            uuid: String::new(),
-                                            service: String::new(),
-                                            flags: Vec::new(),
-                                            value: Vec::new(),
-                                        });
-                                    }
+                            if let Ok(Some(interface_name)) = e.try_get_attribute(b"name") {
+                                let interface_str = String::from_utf8_lossy(&interface_name.value);
+                                
+                                // Check if this is a GATT service interface
+                                if interface_str.contains("org.bluez.GattService1") {
+                                    current_service = Some(GattServiceInfo {
+                                        path: path_stack.join("/"),
+                                        uuid: String::new(),
+                                        primary: true,
+                                        characteristics: HashMap::new(),
+                                    });
+                                }
+                                
+                                // Check if this is a GATT characteristic interface
+                                if interface_str.contains("org.bluez.GattCharacteristic1") {
+                                    current_characteristic = Some(GattCharacteristicInfo {
+                                    path: path_stack.join("/"),
+                                        uuid: String::new(),
+                                        service: String::new(),
+                                        flags: Vec::new(),
+                                        value: Vec::new(),
+                                    });
                                 }
                             }
                         }
                         b"property" => {
-                            if let Ok(name) = e.try_get_attribute(b"name") {
-                                if let Ok(prop_name) = name {
-                                    let prop_str = String::from_utf8_lossy(&prop_name.value);
-                                    
-                                    // Handle service properties
-                                    if let Some(ref mut service) = current_service {
-                                        match prop_str.as_ref() {
-                                            "UUID" => {
-                                                if let Ok(access) = e.try_get_attribute(b"access") {
-                                                    // Extract UUID value (would need to parse the variant)
-                                                    service.uuid = "service-uuid".to_string(); // Placeholder
-                                                }
+                            if let Ok(Some(prop_name)) = e.try_get_attribute(b"name") {
+                                let prop_str = String::from_utf8_lossy(&prop_name.value);
+                                
+                                // Handle service properties
+                                if let Some(ref mut service) = current_service {
+                                    match prop_str.as_ref() {
+                                        "UUID" => {
+                                            if e.try_get_attribute(b"access").is_ok() {
+                                                // Extract UUID value (would need to parse the variant)
+                                                service.uuid = "service-uuid".to_string(); // Placeholder
                                             }
-                                            "Primary" => {
-                                                service.primary = true;
-                                            }
-                                            _ => {}
                                         }
+                                        "Primary" => {
+                                            service.primary = true;
+                                        }
+                                        _ => {}
                                     }
-                                    
-                                    // Handle characteristic properties
-                                    if let Some(ref mut characteristic) = current_characteristic {
-                                        match prop_str.as_ref() {
-                                            "UUID" => {
-                                                characteristic.uuid = "char-uuid".to_string(); // Placeholder
-                                            }
-                                            "Service" => {
-                                                characteristic.service = "service-path".to_string(); // Placeholder
-                                            }
-                                            "Flags" => {
-                                                characteristic.flags = vec!["read".to_string(), "write".to_string()];
-                                            }
-                                            "Value" => {
-                                                // Parse byte array value
-                                                characteristic.value = vec![0x00]; // Placeholder
-                                            }
-                                            _ => {}
+                                }
+                                
+                                // Handle characteristic properties
+                                if let Some(ref mut characteristic) = current_characteristic {
+                                    match prop_str.as_ref() {
+                                        "UUID" => {
+                                            characteristic.uuid = "char-uuid".to_string(); // Placeholder
                                         }
+                                        "Service" => {
+                                            characteristic.service = "service-path".to_string(); // Placeholder
+                                        }
+                                        "Flags" => {
+                                            characteristic.flags = vec!["read".to_string(), "write".to_string()];
+                                        }
+                                        "Value" => {
+                                            // Parse byte array value
+                                            characteristic.value = vec![0x00]; // Placeholder
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -178,22 +172,18 @@ impl BlueZGattParser {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     if e.name().as_ref() == b"array" {
-                        if let Ok(type_attr) = e.try_get_attribute(b"type") {
-                            if let Ok(type_val) = type_attr {
-                                if String::from_utf8_lossy(&type_val.value) == "y" { // byte array
-                                    in_array = true;
-                                }
+                        if let Ok(Some(type_val)) = e.try_get_attribute(b"type") {
+                            if String::from_utf8_lossy(&type_val.value) == "y" { // byte array
+                                in_array = true;
                             }
                         }
                     }
                 }
                 Ok(Event::Empty(ref e)) => {
                     if in_array && e.name().as_ref() == b"byte" {
-                        if let Ok(value_attr) = e.try_get_attribute(b"value") {
-                            if let Ok(value) = value_attr {
-                                if let Ok(byte_val) = String::from_utf8_lossy(&value.value).parse::<u8>() {
-                                    value_data.push(byte_val);
-                                }
+                        if let Ok(Some(value)) = e.try_get_attribute(b"value") {
+                            if let Ok(byte_val) = String::from_utf8_lossy(&value.value).parse::<u8>() {
+                                value_data.push(byte_val);
                             }
                         }
                     }

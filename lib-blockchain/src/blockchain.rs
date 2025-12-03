@@ -16,7 +16,6 @@ use crate::integration::zk_integration::ZkTransactionProof;
 use crate::integration::economic_integration::{EconomicTransactionProcessor, TreasuryStats};
 use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, ConsensusStatus};
 use crate::integration::storage_integration::{BlockchainStorageManager, BlockchainStorageConfig, StorageOperationResult};
-use lib_consensus::{WelfareService, WelfareAuditEntry, ServicePerformanceMetrics, OutcomeReport};
 use lib_storage::dht::storage::DhtStorage;
 
 /// Messages for real-time blockchain synchronization
@@ -30,10 +29,7 @@ pub enum BlockchainBroadcastMessage {
 
 // Import lib-proofs for recursive proof aggregation
 // Import lib-proofs for recursive proof aggregation
-use lib_proofs::{
-    RecursiveProofAggregator, InstantStateVerifier,
-    verifiers::transaction_verifier::{BatchedPrivateTransaction, BatchMetadata}
-};
+use lib_proofs::verifiers::transaction_verifier::{BatchedPrivateTransaction, BatchMetadata};
 
 /// Blockchain state with identity registry and UTXO management
 #[derive(Debug, Clone, Serialize, Deserialize)]

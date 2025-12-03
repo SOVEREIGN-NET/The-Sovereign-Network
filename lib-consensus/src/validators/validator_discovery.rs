@@ -8,7 +8,7 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
+use tracing::{info, debug};
 
 use lib_crypto::{Hash, PublicKey};
 

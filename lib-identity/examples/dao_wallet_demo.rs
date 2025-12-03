@@ -104,7 +104,8 @@ async fn main() -> Result<()> {
         25000, // 25K ZHTP
         None, // No counterparty specified
         "Initial community funding from grants".to_string(),
-        creator_did_1.clone(),
+        Some(creator_did_1.clone()),
+        None,
     )?;
     
     // Add funds to forprofit DAO
@@ -114,7 +115,8 @@ async fn main() -> Result<()> {
         100000, // 100K ZHTP
         None,
         "Initial investment capital".to_string(),
-        creator_did_2.clone(),
+        Some(creator_did_2.clone()),
+        None,
     )?;
     
     // Try to spend from nonprofit DAO (should work)
@@ -124,7 +126,8 @@ async fn main() -> Result<()> {
         5000, // 5K ZHTP
         None,
         "Community education program funding".to_string(),
-        creator_did_1.clone(),
+        Some(creator_did_1.clone()),
+        None,
     )?;
     
     // Try to spend large amount from forprofit DAO (should fail due to governance rules)

@@ -9,7 +9,6 @@
 //!
 //! NOTE: TCP/UDP mesh protocols removed - using QUIC only
 
-use tracing::debug;
 
 /// Protocol detection for incoming connections
 #[derive(Debug, Clone, PartialEq, Eq)]

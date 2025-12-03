@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use lib_identity::IdentityId;
-use lib_crypto::Hash;
 
 /// Access control policy for ZHTP resources
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -550,6 +549,7 @@ impl RateLimit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::Hash;
 
     #[test]
     fn test_public_policy() {

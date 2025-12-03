@@ -4,10 +4,6 @@
 //! transaction validation, identity management, and consensus.
 
 use lib_blockchain::*;
-use lib_blockchain::blockchain::*;
-use lib_blockchain::transaction::*;
-use lib_blockchain::block::*;
-use lib_blockchain::types::*;
 use lib_blockchain::integration::*;
 use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
 use anyhow::Result;

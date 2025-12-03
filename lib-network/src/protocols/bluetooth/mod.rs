@@ -45,7 +45,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug};
-use serde::{Serialize, Deserialize};
 
 use sha2::{Sha256, Digest};
 use lib_proofs::plonky2::{ZkProofSystem, Plonky2Proof};
@@ -56,11 +55,10 @@ use crate::protocols::zhtp_auth::{ZhtpAuthManager, ZhtpAuthChallenge, ZhtpAuthRe
 
 // Import common Bluetooth utilities from submodules
 use self::common::{
-    parse_mac_address, get_system_bluetooth_mac, format_mac_address, 
-    mac_to_dbus_path, zhtp_uuids,
+    parse_mac_address, get_system_bluetooth_mac,
 };
-use self::device::{BleDevice, BleConnection, CharacteristicInfo, MeshPeer};
-use self::gatt::{GattMessage, GattOperation, supports_operation, fragment_data, validate_write_size};
+use self::device::{BleDevice, CharacteristicInfo, MeshPeer};
+use self::gatt::GattMessage;
 
 // Import platform-specific managers
 #[cfg(target_os = "macos")]
@@ -294,7 +292,7 @@ impl BluetoothMeshProtocol {
     pub fn respond_to_auth_challenge(
         &self,
         challenge: &ZhtpAuthChallenge,
-        capabilities: NodeCapabilities,
+        _capabilities: NodeCapabilities,
     ) -> Result<ZhtpAuthResponse> {
         info!(" Responding to ZHTP authentication challenge");
         
@@ -1186,14 +1184,22 @@ impl BluetoothMeshProtocol {
     #[cfg(target_os = "linux")]
     async fn linux_scan_mesh_peers() -> Result<Vec<MeshPeer>> {
         use crate::protocols::bluetooth::linux_ops::LinuxBluetoothOps;
-        
+        use tokio::runtime::Handle;
+
         info!("Linux: Scanning for ZHTP mesh peers...");
-        
-        let bt_ops = LinuxBluetoothOps::new();
-        let peers = bt_ops.scan_mesh_peers().await?;
-        
-        info!("Found {} ZHTP mesh peers on Linux", peers.len());
-        Ok(peers)
+
+        // Use spawn_blocking for D-Bus operations since Connection contains RefCell (not Sync)
+        tokio::task::spawn_blocking(move || {
+            Handle::current().block_on(async {
+                let bt_ops = LinuxBluetoothOps::new();
+                let peers = bt_ops.scan_mesh_peers().await?;
+
+                info!("Found {} ZHTP mesh peers on Linux", peers.len());
+                Ok(peers)
+            })
+        })
+        .await
+        .map_err(|e| anyhow!("Linux scan task failed: {}", e))?
     }
 
     #[cfg(target_os = "windows")]
@@ -1404,23 +1410,33 @@ impl BluetoothMeshProtocol {
     #[cfg(target_os = "linux")]
     async fn linux_connect_mesh_peer(peer: &MeshPeer) -> Result<BluetoothConnection> {
         use crate::protocols::bluetooth::linux_ops::LinuxBluetoothOps;
-        
+        use tokio::runtime::Handle;
+
         info!("Linux: Connecting to mesh peer {}", peer.address);
-        
-        let bt_ops = LinuxBluetoothOps::new();
-        bt_ops.connect_device(&peer.address).await?;
-        
-        Ok(BluetoothConnection {
-            peer_id: peer.peer_id.clone(),
-            connected_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            mtu: 247,
-            address: peer.address.clone(),
-            last_seen: peer.last_seen,
-            rssi: peer.rssi,
+
+        let peer_clone = peer.clone();
+
+        // Use spawn_blocking for D-Bus operations since Connection contains RefCell (not Sync)
+        tokio::task::spawn_blocking(move || {
+            Handle::current().block_on(async {
+                let bt_ops = LinuxBluetoothOps::new();
+                bt_ops.connect_device(&peer_clone.address).await?;
+
+                Ok(BluetoothConnection {
+                    peer_id: peer_clone.peer_id.clone(),
+                    connected_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    mtu: 247,
+                    address: peer_clone.address.clone(),
+                    last_seen: peer_clone.last_seen,
+                    rssi: peer_clone.rssi,
+                })
+            })
         })
+        .await
+        .map_err(|e| anyhow!("Linux connect task failed: {}", e))?
     }
 
     #[cfg(target_os = "windows")]
@@ -3550,19 +3566,31 @@ Value=00
     #[cfg(target_os = "linux")]
     async fn linux_write_handshake(peer_address: &str, char_uuid: &str, data: &[u8]) -> Result<()> {
         use crate::protocols::bluetooth::linux_ops::LinuxBluetoothOps;
-        
+        use tokio::runtime::Handle;
+
         info!("🐧 Linux: Writing handshake to {} via BlueZ", peer_address);
-        
-        let bt_ops = LinuxBluetoothOps::new();
-        
-        // Connect to device
-        bt_ops.connect_device(peer_address).await?;
-        
-        // Write handshake data
-        bt_ops.write_gatt_characteristic(peer_address, char_uuid, data).await?;
-        
-        info!(" Linux: Handshake written successfully");
-        Ok(())
+
+        let peer_address = peer_address.to_string();
+        let char_uuid = char_uuid.to_string();
+        let data = data.to_vec();
+
+        // Use spawn_blocking for D-Bus operations since Connection contains RefCell (not Sync)
+        tokio::task::spawn_blocking(move || {
+            Handle::current().block_on(async {
+                let bt_ops = LinuxBluetoothOps::new();
+
+                // Connect to device
+                bt_ops.connect_device(&peer_address).await?;
+
+                // Write handshake data
+                bt_ops.write_gatt_characteristic(&peer_address, &char_uuid, &data).await?;
+
+                info!(" Linux: Handshake written successfully");
+                Ok(())
+            })
+        })
+        .await
+        .map_err(|e| anyhow!("Linux handshake task failed: {}", e))?
     }
     
     // ========================================================================
@@ -4150,11 +4178,13 @@ pub struct BluetoothMeshStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::KeyPair;
     
     #[tokio::test]
     async fn test_bluetooth_mesh_creation() {
         let node_id = [1u8; 32];
-        let protocol = BluetoothMeshProtocol::new(node_id).unwrap();
+        let keypair = KeyPair::generate().unwrap();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key.clone()).unwrap();
         
         assert_eq!(protocol.node_id, node_id);
         assert!(!protocol.discovery_active);
@@ -4163,10 +4193,10 @@ mod tests {
     #[tokio::test]
     async fn test_bluetooth_discovery() {
         let node_id = [1u8; 32];
-        let mut protocol = BluetoothMeshProtocol::new(node_id).unwrap();
+        let keypair = KeyPair::generate().unwrap();
+        let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
         
         let result = protocol.start_discovery().await;
         assert!(result.is_ok());
     }
 }
-

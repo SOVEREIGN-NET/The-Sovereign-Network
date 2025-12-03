@@ -3,7 +3,7 @@
 use anyhow::{Result, anyhow};
 use crate::cli::{NodeArgs, NodeAction, ZhtpCli};
 use crate::config::environment::Environment;
-use crate::runtime::{RuntimeOrchestrator, ExistingNetworkInfo};
+use crate::runtime::RuntimeOrchestrator;
 use crate::runtime::did_startup::WalletStartupManager;
 use std::path::PathBuf;
 

@@ -4,14 +4,12 @@
 //! authorization, compression, CORS, logging, economic validation, rate limiting,
 //! security headers, and Web4-specific middleware components.
 
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpHeaders};
+use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use crate::zhtp::{ZhtpMiddleware, ZhtpResult};
 use crate::zhtp::config::ServerConfig;
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH, Instant};
-use serde::{Deserialize, Serialize};
-use anyhow::{Context, Result as AnyhowResult};
 
 /// Middleware execution order
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1019,7 +1017,7 @@ pub fn create_default_middleware_stack(config: &ServerConfig) -> Vec<Box<dyn Zht
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ZhtpMethod, ZhtpHeaders};
+    use crate::types::ZhtpMethod;
 
     #[tokio::test]
     async fn test_cors_middleware() {

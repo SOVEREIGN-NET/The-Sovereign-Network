@@ -28,10 +28,10 @@ use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
 
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
+use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_identity::IdentityManager;
-use lib_proofs::{ZkRangeProof, ZkProof};
+use lib_proofs::ZkRangeProof;
 
 use crate::session_manager::SessionManager;
 use crate::api::middleware::RateLimiter;

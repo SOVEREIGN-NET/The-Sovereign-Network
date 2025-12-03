@@ -951,7 +951,7 @@ impl RecoveryPhraseManager {
     /// Restore identity from 20-word recovery phrase
     pub async fn restore_from_phrase(&self, phrase_words: &[String]) -> Result<(crate::types::IdentityId, Vec<u8>, Vec<u8>, [u8; 32])> {
         use lib_crypto::{hash_blake3, derive_keys};
-        use crate::types::IdentityId;
+        
         
         // Validate phrase format
         if phrase_words.len() != 20 {

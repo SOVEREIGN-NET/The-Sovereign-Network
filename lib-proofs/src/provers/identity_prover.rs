@@ -7,7 +7,7 @@ use crate::identity::{ZkIdentityProof, IdentityCommitment, IdentityAttributes};
 use crate::plonky2::ZkProofSystem;
 use anyhow::{Result, anyhow};
 use lib_crypto::hashing::hash_blake3;
-use tracing::{info, warn, error};
+use tracing::{info, error};
 
 /// Identity prover for generating identity proofs with ZK circuits
 pub struct IdentityProver {

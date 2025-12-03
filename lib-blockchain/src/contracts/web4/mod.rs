@@ -23,10 +23,6 @@ pub use types::{
     ExecutableRef, WasmDeployment, WasmPermission, WasmMetadata
 };
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use crate::types::{Hash, ContractResult, ContractCall};
-use crate::integration::crypto_integration::PublicKey;
 
 /// Re-export core Web4 contract functionality
 pub use core::Web4Contract as WebsiteContract;

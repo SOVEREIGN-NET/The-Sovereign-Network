@@ -3,7 +3,6 @@
 //! Handles blockchain synchronization, block/transaction broadcasting
 
 use std::sync::Arc;
-use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Result, Context};
 use tracing::{info, warn, error, debug};

@@ -3,9 +3,7 @@
 //! Implements consensus rules for deciding which blockchain chain to adopt
 //! when multiple chains are available (e.g., during mesh network synchronization)
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use anyhow::Result;
 use tracing::info;
 
 /// Result of comparing two blockchain chains

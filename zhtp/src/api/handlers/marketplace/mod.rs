@@ -10,9 +10,9 @@ use lib_identity::identity::IdentityManager;
 use lib_identity::types::IdentityId;
 use lib_crypto::Hash;
 use lib_crypto::hashing::hash_blake3;
-use lib_blockchain::{Transaction, TransactionOutput, TransactionType};
+use lib_blockchain::{TransactionOutput, TransactionType};
 use serde::{Deserialize, Serialize};
-use tracing::{info, error, warn};
+use tracing::{info, error};
 use anyhow::anyhow;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -437,7 +437,7 @@ impl MarketplaceHandler {
         // ========================================================================
         // STEP 3: Build transaction inputs from selected UTXOs
         // ========================================================================
-        use lib_blockchain::TransactionInput;
+        
         
         let mut inputs = Vec::new();
         for (utxo_hash, output_index, _amount) in &selected_utxos {

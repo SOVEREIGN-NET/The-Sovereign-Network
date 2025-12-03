@@ -4,12 +4,10 @@
 //! Provides protocol-level identity management, authentication, and zero-knowledge
 //! identity proofs for Web4 applications.
 
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpHeaders};
+use crate::types::ZhtpRequest;
 use crate::{ProtocolError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-use uuid::Uuid;
 
 // Use actual lib-identity types
 use lib_identity::{
@@ -17,7 +15,7 @@ use lib_identity::{
     ZkCredential, CredentialType, IdentityAttestation, AttestationType,
     IdentityId, CitizenshipResult
 };
-use lib_proofs::{ZeroKnowledgeProof, ZkProof};
+use lib_proofs::ZkProof;
 
 // Enhanced identity types for protocol integration
 #[derive(Debug, Clone, Serialize, Deserialize)]

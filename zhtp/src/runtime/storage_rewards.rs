@@ -25,7 +25,7 @@ use tokio::time::{Duration, interval};
 use tracing::{info, warn, error, debug};
 
 use lib_blockchain::Blockchain;
-use super::components::{NetworkComponent, BlockchainComponent, StorageRewardStats};
+use super::components::{NetworkComponent, BlockchainComponent};
 
 /// Storage reward processor configuration
 #[derive(Debug, Clone)]

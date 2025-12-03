@@ -5,14 +5,14 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use anyhow::{Result, Context};
+use anyhow::Result;
 use tracing::{info, warn, debug};
 
 use quinn::{RecvStream, SendStream};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 
-use super::serialization::{deserialize_request, serialize_response, deserialize_response};
+use super::serialization::{deserialize_request, serialize_response};
 use super::super::http::middleware::Middleware;
 
 /// Native ZHTP router for QUIC streams

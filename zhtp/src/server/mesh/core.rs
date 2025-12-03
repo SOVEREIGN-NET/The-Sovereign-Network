@@ -75,7 +75,7 @@ use crate::session_manager::SessionManager;
 use super::super::monitoring::{
     PeerRateLimit, BroadcastMetrics, PeerReputation,
     SyncPerformanceMetrics, SyncAlert, AlertThresholds,
-    MetricsHistory, MetricsSnapshot
+    MetricsHistory
 };
 
 /// UDP mesh protocol routing and handling

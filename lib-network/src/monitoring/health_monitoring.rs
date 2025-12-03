@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use lib_crypto::PublicKey;
 
 use crate::mesh::{MeshConnection, MeshProtocolStats};
@@ -281,7 +281,7 @@ impl HealthMonitor {
                 // Analyze network coverage
                 let relays = long_range_relays.read().await;
                 let connections = mesh_connections.read().await;
-                let mut network_stats = stats.write().await;
+                let network_stats = stats.write().await;
                 
                 // Calculate coverage metrics
                 let has_satellite = relays.values()

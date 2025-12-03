@@ -397,26 +397,40 @@ pub async fn find_best_relay_peer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::post_quantum::dilithium::dilithium2_keypair;
+    use lib_crypto::KeyPair;
+    use lib_identity::IdentityType;
     
     async fn create_test_registry() -> ZhtpPeerRegistry {
-        let identity = ZhtpIdentity::generate().unwrap();
+        let keypair = KeyPair::generate().unwrap();
+        let identity = ZhtpIdentity::new(
+            IdentityType::Human,
+            keypair.public_key.clone(),
+            keypair.private_key.clone(),
+            "peer-registry".to_string(),
+            Some(30),
+            Some("Testland".to_string()),
+            true,
+            lib_proofs::ZeroKnowledgeProof::default(),
+        )
+        .unwrap();
         ZhtpPeerRegistry::new(identity)
     }
     
     fn create_test_peer_info() -> ZhtpPeerInfo {
-        let (dilithium_pubkey, dilithium_privkey) = dilithium2_keypair().unwrap();
+        let keypair = KeyPair::generate().unwrap();
+        let dilithium_pubkey = keypair.public_key.dilithium_pk.clone();
+        let dilithium_privkey = keypair.private_key.dilithium_sk.clone();
         
         let capabilities = NodeCapabilities {
             has_dht: true,
             can_relay: true,
             max_bandwidth: 1_000_000,
             protocols: vec!["zhtp".to_string(), "web4".to_string()],
-            reputation: 0.8,
+            reputation: 80,
             quantum_secure: true,
         };
         
-        let blockchain_pubkey = PublicKey::Ed25519([0u8; 32]);
+        let blockchain_pubkey = keypair.public_key.clone();
         
         let mut peer_info = ZhtpPeerInfo {
             blockchain_pubkey: blockchain_pubkey.clone(),

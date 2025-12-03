@@ -16,7 +16,7 @@ use lib_identity::types::IdentityId;
 // Storage imports - using UnifiedStorageSystem and types
 use lib_storage::{UnifiedStorageSystem, StorageRequirements, QualityRequirements, BudgetConstraints};
 use lib_storage::types::economic_types::PaymentSchedule;
-use lib_identity::{ZhtpIdentity, ZeroKnowledgeProof};
+use lib_identity::ZhtpIdentity;
 use lib_identity::types::identity_types::IdentityType;
 
 /// Clean storage handler implementation

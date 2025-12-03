@@ -20,13 +20,8 @@ use lib_identity::ZhtpIdentity;
 
 // Mesh router imports for peer querying
 use crate::unified_server::MeshRouter;
-use lib_network::MeshConnection;
-use lib_network::dht::relay::ZhtpRelayProtocol;
 
 // Blockchain imports for direct integration
-use lib_blockchain::{Transaction, TransactionInput, TransactionOutput, Hash as BlockchainHash, TransactionType};
-use lib_blockchain::integration::{crypto_integration::{Signature, PublicKey, SignatureAlgorithm}, zk_integration::ZkTransactionProof};
-use crate::runtime::blockchain_provider::{get_global_blockchain, add_transaction};
 
 /// DHT API request types
 #[derive(Debug, Clone, Serialize, Deserialize)]

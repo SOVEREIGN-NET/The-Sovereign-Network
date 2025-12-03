@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
 use lib_blockchain::Blockchain;
 use super::components::NetworkComponent;

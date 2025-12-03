@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::types::Hash;
 
 /// Web4 website metadata
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

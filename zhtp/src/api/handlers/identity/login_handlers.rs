@@ -23,7 +23,7 @@ use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
 
 // Identity management imports
-use lib_identity::{IdentityManager, IdentityId};
+use lib_identity::IdentityManager;
 
 // Session management
 use crate::session_manager::SessionManager;

@@ -175,7 +175,7 @@ pub fn get_node_status() -> Result<String, String> {
 }
 
 /// Discover peers on local network
-pub fn discover_peers(timeout_secs: u64) -> Result<String, String> {
+pub fn discover_peers(_timeout_secs: u64) -> Result<String, String> {
     let instance = NODE_INSTANCE.lock().map_err(|e| format!("Lock error: {}", e))?;
     let node_arc = instance.as_ref().ok_or("Node not initialized")?;
     
@@ -228,7 +228,7 @@ pub fn connect_to_peer(peer_address: &str, peer_id: &str) -> Result<String, Stri
 }
 
 /// Send a message to a peer
-pub fn send_message(peer_id: &str, message: &str) -> Result<String, String> {
+pub fn send_message(peer_id: &str, _message: &str) -> Result<String, String> {
     let instance = NODE_INSTANCE.lock().map_err(|e| format!("Lock error: {}", e))?;
     let node_arc = instance.as_ref().ok_or("Node not initialized")?;
     

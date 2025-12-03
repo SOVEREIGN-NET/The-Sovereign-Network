@@ -169,7 +169,7 @@ impl DHTPerformanceMonitor {
             0.0
         };
         
-        let network_health = (success_rate * 0.7) + 
+        let _network_health = (success_rate * 0.7) +
                            ((avg_peers.min(10.0) / 10.0) * 0.3);
 
         // Calculate cache performance

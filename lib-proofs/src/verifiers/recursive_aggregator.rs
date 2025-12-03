@@ -13,12 +13,12 @@ use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{info, warn, error};
-use crate::circuits::{TransactionCircuit, StateTransitionCircuit, StateTransitionWitness, BlockMetadata, StateUpdateWitness};
+use tracing::warn;
+use crate::circuits::{TransactionCircuit, StateTransitionCircuit, StateTransitionWitness, BlockMetadata};
 use crate::transaction::ZkTransactionProof;
-use crate::types::{VerificationResult, ZkProof};
-use crate::plonky2::{CircuitConfig, Plonky2Proof};
-use crate::verifiers::transaction_verifier::{BatchedPrivateTransaction, MerkleProof};
+use crate::types::ZkProof;
+use crate::plonky2::CircuitConfig;
+use crate::verifiers::transaction_verifier::BatchedPrivateTransaction;
 use crate::state::StateCommitment;
 use lib_crypto::hashing::hash_blake3;
 

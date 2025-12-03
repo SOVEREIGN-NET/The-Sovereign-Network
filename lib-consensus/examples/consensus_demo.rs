@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
         byzantine_threshold: 1.0 / 3.0,
         slash_double_sign: 5,
         slash_liveness: 1,
+        development_mode: true,
     };
 
     let mut consensus_engine = ConsensusEngine::new(config)?;

@@ -5,9 +5,6 @@
 
 use lib_blockchain::*;
 use lib_blockchain::integration::*;
-use lib_blockchain::blockchain::*;
-use lib_blockchain::transaction::*;
-use lib_blockchain::types::*;
 use anyhow::Result;
 
 #[test]

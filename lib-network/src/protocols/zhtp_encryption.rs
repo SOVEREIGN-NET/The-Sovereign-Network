@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
 use lib_crypto::post_quantum::kyber::{kyber512_keypair, kyber512_encapsulate, kyber512_decapsulate};
 use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data};
-use tracing::{info, debug, warn};
+use tracing::{info, debug};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// ZHTP encryption session for a mesh connection
@@ -262,7 +262,7 @@ impl ZhtpEncryptionManager {
     
     /// Create new session for peer
     pub async fn create_session(&self, peer_address: String) -> Result<ZhtpKeyExchangeInit> {
-        let mut session = ZhtpEncryptionSession::new()?;
+        let session = ZhtpEncryptionSession::new()?;
         let session_id = format!("{}:{}", peer_address, session.session_start);
         let init = session.create_key_exchange_init(session_id)?;
         

@@ -1218,6 +1218,7 @@ mod tests {
                 stability_score: 0.5,
                 zhtp_authenticated: false,
                 quantum_secure: true,
+                bootstrap_mode: false,
                 peer_dilithium_pubkey: None,
                 kyber_shared_secret: None,
                 trust_score: 0.0,

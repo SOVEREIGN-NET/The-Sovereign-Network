@@ -114,7 +114,8 @@ mod tests {
         let receiver_blinding = [2u8; 32];
         let nullifier = [3u8; 32];
         
-        let proof = ZkTransactionProver::prove_transaction(
+        let prover = ZkTransactionProver::new().unwrap();
+        let proof = prover.prove_transaction(
             sender_balance,
             receiver_balance,
             amount,
@@ -186,8 +187,9 @@ mod tests {
 
     #[test]
     fn test_batch_verification() {
-        let proof1 = ZkTransactionProver::prove_simple_transaction(100, [1u8; 32]).unwrap();
-        let proof2 = ZkTransactionProver::prove_simple_transaction(200, [2u8; 32]).unwrap();
+        let prover = ZkTransactionProver::new().unwrap();
+        let proof1 = prover.prove_simple_transaction(100, [1u8; 32]).unwrap();
+        let proof2 = prover.prove_simple_transaction(200, [2u8; 32]).unwrap();
         
         let proofs = vec![proof1, proof2];
         let results = batch_verify_transactions(&proofs).unwrap();

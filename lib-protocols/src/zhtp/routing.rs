@@ -10,8 +10,6 @@ use crate::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use std::collections::HashMap;
 use std::sync::Arc;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use anyhow::{Context, Result as AnyhowResult};
 
 /// Route pattern matching types
 #[derive(Debug, Clone)]
@@ -1087,7 +1085,7 @@ pub fn create_economic_route(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ZhtpHeaders;
+    
 
     #[test]
     fn test_route_pattern_matching() {

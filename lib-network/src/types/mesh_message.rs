@@ -3,7 +3,6 @@
 //! Defines message envelopes and payload types for mesh network communication
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use anyhow::{Result, anyhow};
 use lib_crypto::PublicKey;
 use std::time::{SystemTime, UNIX_EPOCH};

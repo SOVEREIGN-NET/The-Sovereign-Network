@@ -4,6 +4,7 @@
 
 use lib_economy::*;
 use lib_economy::testing::*;
+use lib_economy::incentives::infrastructure_rewards::InfrastructureRewards;
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
@@ -79,8 +80,6 @@ mod benchmarks {
 
     #[test]
     fn benchmark_isp_bypass_rewards() {
-        let incentives = IspBypassIncentives::new();
-        
         let start = Instant::now();
         for i in 0..ITERATIONS {
             let work = IspBypassWork {
@@ -91,7 +90,7 @@ mod benchmarks {
                 users_served: (i % 20) as u64,
                 cost_savings_provided: (i % 500) as u64,
             };
-            let _ = incentives.calculate_rewards(&work);
+            let _ = InfrastructureRewards::calculate_isp_bypass(&work).unwrap();
         }
         let duration = start.elapsed();
         

@@ -5,7 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Duration;
 
 /// ZHTP Server Configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

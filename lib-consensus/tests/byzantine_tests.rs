@@ -19,7 +19,7 @@ fn test_byzantine_fault_detector_initialization() {
     let mut detector = ByzantineFaultDetector::new();
     
     // Initially should have no faults detected
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     let faults = detector.detect_faults(&validator_manager).unwrap();
     assert_eq!(faults.len(), 0);
 }
@@ -44,7 +44,7 @@ fn test_double_sign_detection() -> Result<()> {
     );
     
     // Detect faults
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     let faults = detector.detect_faults(&validator_manager)?;
     
     assert_eq!(faults.len(), 1);
@@ -68,7 +68,7 @@ fn test_liveness_violation_detection() -> Result<()> {
     detector.record_liveness_violation(validator.clone(), height, missed_rounds);
     
     // Detect faults
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     let faults = detector.detect_faults(&validator_manager)?;
     
     assert_eq!(faults.len(), 1);
@@ -91,7 +91,7 @@ fn test_liveness_violation_severity_escalation() -> Result<()> {
         detector.record_liveness_violation(validator.clone(), 100 + i, 5);
     }
     
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     let faults = detector.detect_faults(&validator_manager)?;
     
     assert_eq!(faults.len(), 1);
@@ -120,7 +120,7 @@ fn test_invalid_proposal_detection() -> Result<()> {
         );
     }
     
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     let faults = detector.detect_faults(&validator_manager)?;
     
     assert_eq!(faults.len(), 1);
@@ -153,7 +153,7 @@ fn test_multiple_fault_types() -> Result<()> {
         );
     }
     
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     let faults = detector.detect_faults(&validator_manager)?;
     
     assert_eq!(faults.len(), 3);
@@ -170,7 +170,7 @@ fn test_multiple_fault_types() -> Result<()> {
 #[test]
 fn test_fault_processing_and_slashing() -> Result<()> {
     let mut detector = ByzantineFaultDetector::new();
-    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let mut validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     
     // Register a validator
     let validator_id = create_test_identity("malicious_validator");
@@ -213,7 +213,7 @@ fn test_fault_record_cleanup() {
     detector.cleanup_old_records(0);
     
     // After cleanup, no faults should be detected
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     let faults = detector.detect_faults(&validator_manager).unwrap();
     assert_eq!(faults.len(), 0);
 }
@@ -228,7 +228,7 @@ fn test_no_false_positives() -> Result<()> {
     detector.record_liveness_violation(validator.clone(), 100, 1); // Only 1 missed round
     detector.record_invalid_proposal(validator.clone(), 200, [1u8; 32], "test".to_string()); // Only 1 invalid proposal
     
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     let faults = detector.detect_faults(&validator_manager)?;
     
     // Should not detect faults for minor violations
@@ -256,7 +256,7 @@ fn test_fault_severity_levels() -> Result<()> {
     // Minor fault: few liveness violations
     detector.record_liveness_violation(validator3.clone(), 300, 5);
     
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     let faults = detector.detect_faults(&validator_manager)?;
     
     assert_eq!(faults.len(), 3);
@@ -284,7 +284,7 @@ fn test_timestamp_accuracy() {
     
     let after_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     
-    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000, 100 * 1024 * 1024 * 1024);
+    let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
     let faults = detector.detect_faults(&validator_manager).unwrap();
     
     assert_eq!(faults.len(), 1);

@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use lib_proofs::{ZkProofSystem, ZkProof, plonky2::Plonky2Proof};
 use lib_crypto::hash_blake3;
 use serde::{Serialize, Deserialize};
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
 /// Identity proof parameters for mesh network participation
 #[derive(Debug, Clone, Serialize, Deserialize)]

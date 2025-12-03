@@ -22,16 +22,14 @@ use tokio::sync::RwLock;
 use tracing::{info, warn, debug, error};
 use serde::{Serialize, Deserialize};
 
-use quinn::{Endpoint, Connection, ServerConfig, ClientConfig, RecvStream, SendStream};
+use quinn::{Endpoint, Connection, ServerConfig, ClientConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 // Import your PQC from lib-crypto
 use lib_crypto::{
-    PublicKey, PrivateKey,
+    PublicKey,
     symmetric::chacha20::{encrypt_data, decrypt_data},
-    random::generate_nonce,
 };
-use lib_crypto::types::Encapsulation;
 
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::messaging::message_handler::MeshMessageHandler;

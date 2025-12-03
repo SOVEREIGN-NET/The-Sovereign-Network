@@ -70,7 +70,7 @@ impl<V> QpTrie<V> {
         Self::insert_at(&mut self.root, &key, 0, key_len, val)
     }
 
-    fn insert_at<X>(node: &mut Node<X>, key: &[u8], mut off: usize, key_len: usize, mut val: X) -> Option<X> {
+    fn insert_at<X>(node: &mut Node<X>, key: &[u8], mut off: usize, key_len: usize, val: X) -> Option<X> {
         let lcp = common_prefix_len(&node.prefix, node.prefix_len, key, off, key_len);
         if lcp < node.prefix_len {
             let branch_nib_old = get_nibble(&node.prefix, lcp);

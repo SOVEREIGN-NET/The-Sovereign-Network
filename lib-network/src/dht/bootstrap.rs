@@ -8,11 +8,10 @@
 use anyhow::Result;
 use std::time::{Duration, SystemTime};
 use tokio::net::UdpSocket;
-use tracing::{info, warn, debug};
-use rand::{Rng, RngCore};
+use tracing::{info, debug};
+use rand::RngCore;
 
 // Import DHT protocol types
-use crate::dht::protocol::{DhtPacketHeader, DhtOperation, DHT_PROTOCOL_VERSION, MAX_DHT_PACKET_SIZE};
 
 // Re-export existing bootstrap functionality
 pub use crate::bootstrap::{discover_bootstrap_peers, PeerInfo};

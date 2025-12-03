@@ -320,7 +320,7 @@ pub struct TimeLock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::tokens::core::TokenContract;
+    
 
     fn create_test_public_key(id: u8) -> PublicKey {
         PublicKey::new(vec![id; 32])

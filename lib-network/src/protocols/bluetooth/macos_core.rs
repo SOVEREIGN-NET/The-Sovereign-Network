@@ -10,15 +10,13 @@ use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
-use std::ffi::{CStr, c_void};
+use std::ffi::c_void;
 #[cfg(target_os = "macos")]
 use tokio::sync::{RwLock, Mutex};
 
 // Objective-C FFI imports (objc2)
 #[cfg(target_os = "macos")]
-use objc2::{msg_send, sel, runtime::{AnyObject, AnyClass, Object}};
-#[cfg(target_os = "macos")]
-use objc2::rc::Retained;
+use objc2::{msg_send, runtime::{AnyObject, AnyClass, Object}};
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSString;
 

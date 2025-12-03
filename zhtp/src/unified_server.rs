@@ -11,28 +11,21 @@
 //! - API handler registration (server::api_registration)
 
 use std::sync::Arc;
-use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 // REMOVED: TCP/UDP no longer used - QUIC-only architecture
 // use tokio::net::{TcpListener, UdpSocket, TcpStream};
 use anyhow::{Result, Context};
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
-use serde::{Deserialize, Serialize};
 
 // Import from libraries (no circular dependencies!)
 use lib_protocols::zhtp::ZhtpRequestHandler;
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
 use lib_network::protocols::quic_mesh::QuicMeshProtocol;
-use lib_network::protocols::zhtp_encryption::ZhtpEncryptionSession;
-use lib_network::protocols::zhtp_auth::ZhtpAuthManager;
 
 // Import new QUIC handler for native ZHTP-over-QUIC
 use crate::server::QuicHandler;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
-use lib_network::MeshConnection;
 use lib_blockchain::Blockchain;
 use lib_storage::UnifiedStorageSystem;
 use lib_identity::IdentityManager;
@@ -44,7 +37,6 @@ use crate::api::handlers::{
     DhtHandler, 
     ProtocolHandler,
     BlockchainHandler,
-    CryptoHandler,
     IdentityHandler,
     StorageHandler,
     WalletHandler,

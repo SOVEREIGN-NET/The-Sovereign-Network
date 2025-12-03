@@ -9,14 +9,14 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug, error};
+use tracing::{info, warn, debug};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_identity::IdentityId;
 
 use crate::types::{
-    ConsensusProposal, ConsensusVote, VoteType, ConsensusStep, ConsensusProof
+    ConsensusProposal, ConsensusVote, VoteType, ConsensusStep
 };
 use crate::validators::ValidatorDiscoveryProtocol;
 

@@ -154,7 +154,7 @@ pub fn deserialize_response(data: &[u8]) -> Result<ZhtpResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_protocols::types::{ZhtpMethod, ZhtpStatus, ZhtpHeaders};
+    use lib_protocols::types::{ZhtpMethod, ZhtpHeaders};
 
     #[test]
     fn test_request_serialization_roundtrip() {

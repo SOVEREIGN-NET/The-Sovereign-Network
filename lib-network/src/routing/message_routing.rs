@@ -3,10 +3,10 @@
 //! Advanced peer-to-peer message delivery with intelligent routing
 
 use anyhow::{anyhow, Result};
-use std::collections::{HashMap, VecDeque, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, debug};
 use lib_crypto::PublicKey;
 use serde::{Serialize, Deserialize};
 

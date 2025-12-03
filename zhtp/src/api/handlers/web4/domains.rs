@@ -245,7 +245,7 @@ impl Web4Handler {
             registration_fee_tokens, simple_request.domain.len());
 
         // Check wallet balance before payment
-        let mut identity_mgr = self.identity_manager.write().await;
+        let identity_mgr = self.identity_manager.write().await;
         
         // Get primary wallet for the identity
         let (wallet_dilithium_pubkey, wallet_utxo_hash, wallet_id_hex) = if let Some(check_identity) = identity_mgr.get_identity(&owner_identity_id) {

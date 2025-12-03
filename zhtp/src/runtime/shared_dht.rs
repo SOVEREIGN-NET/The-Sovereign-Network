@@ -104,8 +104,8 @@ pub async fn shutdown_global_dht() -> Result<()> {
 mod tests {
     use super::*;
     use lib_identity::ZhtpIdentity;
-    use lib_proofs::ZeroKnowledgeProof;
-    use lib_crypto::generate_keypair;
+    
+    
 
     #[tokio::test]
     async fn test_dht_singleton_pattern() {

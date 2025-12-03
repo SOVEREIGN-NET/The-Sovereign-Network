@@ -22,10 +22,8 @@ use crate::types::mesh_message::{MeshMessageEnvelope, ZhtpMeshMessage};
 
 // Import common Bluetooth utilities to avoid duplication
 use super::common::{
-    parse_mac_address, get_system_bluetooth_mac, format_mac_address,
-    mac_to_dbus_path, zhtp_uuids,
+    parse_mac_address, get_system_bluetooth_mac,
 };
-use super::device::ClassicBluetoothDevice;
 
 // Windows-specific imports removed - using local imports in methods
 
@@ -433,7 +431,7 @@ impl RfcommStream {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        use std::os::unix::io::AsRawFd;
+        
         
         if let Some(fd) = socket.socket_fd {
             // Use BSD socket read with non-blocking mode

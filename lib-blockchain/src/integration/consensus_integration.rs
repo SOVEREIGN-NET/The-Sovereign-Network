@@ -11,18 +11,17 @@ use tokio::sync::{RwLock, mpsc};
 use tracing::{info, warn, error, debug};
 
 use lib_consensus::{
-    ConsensusEngine, ConsensusConfig, ConsensusEvent, ConsensusError,
-    ValidatorManager, Validator, ValidatorStatus,
-    DaoEngine, DaoProposal, DaoProposalType, DaoVoteChoice,
+    ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorStatus,
+    DaoEngine, DaoProposalType, DaoVoteChoice,
     RewardCalculator, RewardRound,
     ConsensusProposal, ConsensusVote, VoteType, ConsensusStep,
-    ConsensusType, UsefulWorkType, ConsensusProof
+    ConsensusType, ConsensusProof
 };
-use lib_crypto::{Hash, PostQuantumSignature, hash_blake3, KeyPair};
+use lib_crypto::{Hash, hash_blake3, KeyPair};
 use lib_identity::IdentityId;
 
 use crate::{
-    Blockchain, Block, BlockHeader, Transaction, TransactionType, TransactionInput, TransactionOutput,
+    Blockchain, Block, BlockHeader, Transaction, TransactionType, TransactionOutput,
     types::{Hash as BlockchainHash, Difficulty},
     mempool::Mempool,
     utils::time::current_timestamp,

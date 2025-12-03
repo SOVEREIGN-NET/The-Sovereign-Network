@@ -18,7 +18,7 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 // Crypto imports
-use lib_crypto::{KeyPair, Signature};
+use lib_crypto::KeyPair;
 
 // Identity imports
 use lib_identity::IdentityManager;

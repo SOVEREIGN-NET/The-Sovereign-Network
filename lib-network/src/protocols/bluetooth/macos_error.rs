@@ -4,7 +4,7 @@
 #[cfg(target_os = "macos")]
 use objc2::runtime::AnyObject;
 #[cfg(target_os = "macos")]
-use objc2::{msg_send, sel};
+use objc2::msg_send;
 #[cfg(target_os = "macos")]
 use anyhow::{anyhow, Result};
 #[cfg(target_os = "macos")]

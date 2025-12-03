@@ -10,11 +10,10 @@
 //! - Supports .zhtp domains and Web4 addressing
 //! - Enables  through mesh routing
 
-use crate::types::{ZhtpHeaders, ZhtpStatus};
 use crate::{ProtocolError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 /// ZDNS record types for Web4 domains
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

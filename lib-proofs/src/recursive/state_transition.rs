@@ -5,12 +5,10 @@
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
-use lib_crypto::hashing::{hash_blake3, hash_blake3_multiple};
 use crate::circuits::StateTransitionProof;
-use crate::state::{StateCommitment, AggregatedStateProof};
-use crate::plonky2::{CircuitBuilder, CircuitConfig, CircuitConstraint, ZkCircuit, Plonky2Proof, 
-    RecursiveProof, RecursiveConfig, generate_batch_recursive_proof, verify_batch_recursive_proof};
-use std::collections::HashMap;
+use crate::state::StateCommitment;
+use crate::plonky2::{CircuitBuilder, CircuitConfig, CircuitConstraint, Plonky2Proof, 
+    RecursiveProof};
 
 // Custom serialization for [u8; 64] arrays
 mod signatures_serde {
