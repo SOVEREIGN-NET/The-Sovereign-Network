@@ -3,11 +3,13 @@
 //! Complete DAO governance system using lib-consensus DaoEngine
 
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::RwLock;
 use anyhow::Result;
-use serde::Deserialize;
-// Removed unused Serialize
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use uuid::Uuid;
+use chrono;
 
 // ZHTP protocol imports
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
@@ -62,10 +64,58 @@ struct ProposalListQuery {
     offset: Option<usize>,
 }
 
+/// Delegate registration request
+#[derive(Debug, Deserialize)]
+struct RegisterDelegateRequest {
+    user_did: String,
+    delegate_info: DelegateInfo,
+}
+
+#[derive(Debug, Deserialize)]
+struct DelegateInfo {
+    name: String,
+    bio: String,
+}
+
+/// Delegate revocation request
+#[derive(Debug, Deserialize)]
+struct RevokeDelegateRequest {
+    user_did: String,
+}
+
+/// Spending proposal request (Issue #118)
+#[derive(Debug, Deserialize)]
+struct SpendingProposalRequest {
+    title: String,
+    amount: u64,
+    recipient: String,
+    description: String,
+}
+
+/// Delegate data structure
+#[derive(Debug, Clone, Serialize)]
+struct Delegate {
+    delegate_id: String,
+    user_did: String,
+    name: String,
+    bio: String,
+    voting_power: u64,
+    delegators: Vec<String>,
+    registered_at: u64,
+    status: DelegateStatus,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+enum DelegateStatus {
+    Active,
+    Revoked,
+}
+
 /// Complete DAO handler using DaoEngine
 pub struct DaoHandler {
     dao_engine: Arc<RwLock<DaoEngine>>,
     identity_manager: Arc<RwLock<IdentityManager>>,
+    delegates: Arc<RwLock<HashMap<String, Delegate>>>,
 }
 
 impl DaoHandler {
@@ -73,6 +123,7 @@ impl DaoHandler {
         Self {
             dao_engine: Arc::new(RwLock::new(DaoEngine::new())),
             identity_manager,
+            delegates: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -515,6 +566,149 @@ impl DaoHandler {
         }
     }
 
+    /// Handle GET /api/v1/dao/data - DAO general data/statistics
+    async fn handle_dao_data(&self) -> Result<ZhtpResponse> {
+        let dao_engine = self.dao_engine.read().await;
+        let proposals = dao_engine.get_dao_proposals();
+        let treasury = dao_engine.get_dao_treasury();
+        let delegates = self.delegates.read().await;
+
+        let total_members = delegates.len();
+        let total_proposals = proposals.len();
+        let treasury_balance = treasury.total_balance;
+        let active_proposals = proposals.iter().filter(|p| p.status == DaoProposalStatus::Active).count();
+
+        let response = json!({
+            "total_members": total_members,
+            "total_proposals": total_proposals,
+            "treasury_balance": treasury_balance,
+            "active_proposals": active_proposals
+        });
+
+        create_json_response(response)
+    }
+
+    /// Handle GET /api/v1/dao/delegates - List DAO delegates
+    async fn handle_list_delegates(&self) -> Result<ZhtpResponse> {
+        let delegates = self.delegates.read().await;
+
+        let delegate_list: Vec<serde_json::Value> = delegates
+            .values()
+            .filter(|d| d.status == DelegateStatus::Active)
+            .map(|d| json!({
+                "delegate_id": d.delegate_id,
+                "name": d.name,
+                "voting_power": d.voting_power,
+                "delegators": d.delegators.len()
+            }))
+            .collect();
+
+        let response = json!({
+            "delegates": delegate_list
+        });
+
+        create_json_response(response)
+    }
+
+    /// Handle POST /api/v1/dao/delegates/register - Register as delegate
+    async fn handle_register_delegate(&self, request_data: RegisterDelegateRequest) -> Result<ZhtpResponse> {
+        let mut delegates = self.delegates.write().await;
+
+        // Check if already registered
+        if delegates.values().any(|d| d.user_did == request_data.user_did && d.status == DelegateStatus::Active) {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "User is already registered as an active delegate".to_string(),
+            ));
+        }
+
+        // Generate delegate ID
+        let delegate_id = format!("delegate_{}", uuid::Uuid::new_v4());
+
+        let delegate = Delegate {
+            delegate_id: delegate_id.clone(),
+            user_did: request_data.user_did,
+            name: request_data.delegate_info.name,
+            bio: request_data.delegate_info.bio,
+            voting_power: 0,
+            delegators: Vec::new(),
+            registered_at: chrono::Utc::now().timestamp() as u64,
+            status: DelegateStatus::Active,
+        };
+
+        delegates.insert(delegate_id.clone(), delegate);
+
+        let response = json!({
+            "delegate_id": delegate_id,
+            "status": "registered"
+        });
+
+        create_json_response(response)
+    }
+
+    /// Handle POST /api/v1/dao/delegates/revoke - Revoke delegate status
+    async fn handle_revoke_delegate(&self, request_data: RevokeDelegateRequest) -> Result<ZhtpResponse> {
+        let mut delegates = self.delegates.write().await;
+
+        // Find delegate by user_did
+        let delegate_id = delegates
+            .iter()
+            .find(|(_, d)| d.user_did == request_data.user_did && d.status == DelegateStatus::Active)
+            .map(|(id, _)| id.clone());
+
+        if let Some(delegate_id) = delegate_id {
+            if let Some(delegate) = delegates.get_mut(&delegate_id) {
+                delegate.status = DelegateStatus::Revoked;
+
+                let response = json!({
+                    "status": "revoked",
+                    "delegate_id": delegate_id
+                });
+
+                return create_json_response(response);
+            }
+        }
+
+        Ok(create_error_response(
+            ZhtpStatus::NotFound,
+            "Active delegate not found for this user".to_string(),
+        ))
+    }
+
+    /// Handle POST /api/v1/dao/proposals/spending - Create spending proposal (Issue #118)
+    /// Convenience wrapper around create_proposal for TreasuryAllocation type
+    async fn handle_spending_proposal(&self, request_data: SpendingProposalRequest) -> Result<ZhtpResponse> {
+        // Get first identity as proposer (simplified for now)
+        let identity_manager = self.identity_manager.read().await;
+        let identities = identity_manager.list_identities();
+
+        if identities.is_empty() {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "No identity found to create proposal".to_string(),
+            ));
+        }
+
+        let proposer_id = hex::encode(identities[0].as_bytes());
+        drop(identity_manager);
+
+        // Create treasury allocation proposal
+        let create_request = CreateProposalRequest {
+            proposer_identity_id: proposer_id,
+            title: request_data.title.clone(),
+            description: format!(
+                "{}\n\nAmount: {}\nRecipient: {}",
+                request_data.description,
+                request_data.amount,
+                request_data.recipient
+            ),
+            proposal_type: "treasury_allocation".to_string(),
+            voting_period_days: 7,
+        };
+
+        self.handle_create_proposal(create_request).await
+    }
+
     /// Handle DAO statistics endpoint
     async fn handle_dao_stats(&self) -> Result<ZhtpResponse> {
         let dao_engine = self.dao_engine.read().await;
@@ -614,6 +808,29 @@ impl ZhtpRequestHandler for DaoHandler {
             },
             (ZhtpMethod::Get, ["api", "v1", "dao", "votes", proposal_id]) => {
                 self.handle_get_proposal_votes(proposal_id).await.map_err(anyhow::Error::from)
+            },
+
+            // Delegate endpoints (Issue #118)
+            (ZhtpMethod::Get, ["api", "v1", "dao", "data"]) => {
+                self.handle_dao_data().await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Get, ["api", "v1", "dao", "delegates"]) => {
+                self.handle_list_delegates().await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "delegates", "register"]) => {
+                let request_data: RegisterDelegateRequest = serde_json::from_slice(&request.body)
+                    .map_err(anyhow::Error::from)?;
+                self.handle_register_delegate(request_data).await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "delegates", "revoke"]) => {
+                let request_data: RevokeDelegateRequest = serde_json::from_slice(&request.body)
+                    .map_err(anyhow::Error::from)?;
+                self.handle_revoke_delegate(request_data).await.map_err(anyhow::Error::from)
+            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", "spending"]) => {
+                let request_data: SpendingProposalRequest = serde_json::from_slice(&request.body)
+                    .map_err(anyhow::Error::from)?;
+                self.handle_spending_proposal(request_data).await.map_err(anyhow::Error::from)
             },
 
             // Administrative endpoints
