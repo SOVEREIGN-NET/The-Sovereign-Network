@@ -36,6 +36,12 @@ pub struct ZhtpPeerInfo {
     /// Dilithium2 post-quantum signature public key
     pub dilithium_pubkey: Vec<u8>,
     
+    /// Decentralized identifier (did:zhtp:...)
+    pub did: String,
+    
+    /// Device name for NodeId derivation
+    pub device_name: String,
+    
     /// Node capabilities (DHT hosting, relay, etc.)
     pub capabilities: NodeCapabilities,
     
@@ -156,8 +162,19 @@ impl ZhtpPeerRegistry {
             return Err(anyhow!("Peer registration expired"));
         }
         
-        // Generate node ID from blockchain public key
-        let node_id = self.generate_node_id(&peer_info.blockchain_pubkey);
+        // Generate node ID from DID + device (identity-based derivation)
+        let node_id = self.generate_node_id(&peer_info.did, &peer_info.device_name)?;
+        
+        // Validate NodeId derivation for security
+        let derived_node_id = lib_identity::NodeId::from_did_device(&peer_info.did, &peer_info.device_name)?;
+        let node_id_bytes = *node_id.as_bytes();
+        if node_id_bytes != *derived_node_id.as_bytes() {
+            return Err(anyhow!(
+                "NodeId validation failed: derived {} but got {}",
+                hex::encode(derived_node_id.as_bytes()),
+                hex::encode(node_id_bytes)
+            ));
+        }
         
         // Update last_seen timestamp
         let mut updated_peer = peer_info.clone();
@@ -168,15 +185,16 @@ impl ZhtpPeerRegistry {
         
         // Store peer info
         let mut peers = self.peers.write().await;
-        peers.insert(node_id, updated_peer.clone());
+        let node_id_bytes = *node_id.as_bytes();
+        peers.insert(node_id_bytes, updated_peer.clone());
         
         // Update reputation score
         let mut scores = self.reputation_scores.write().await;
-        scores.insert(node_id, updated_peer.reputation);
+        scores.insert(node_id_bytes, updated_peer.reputation);
         
         info!(
             "Registered peer {} with reputation {:.2}",
-            hex::encode(&node_id[..8]),
+            hex::encode(&node_id_bytes[..8]),
             updated_peer.reputation
         );
         
@@ -350,11 +368,18 @@ impl ZhtpPeerRegistry {
         peers.keys().copied().collect()
     }
     
-    /// Generate node ID from blockchain public key
-    fn generate_node_id(&self, pubkey: &PublicKey) -> [u8; 32] {
-        // Hash the public key to create a 32-byte node ID
-        let pubkey_bytes = bincode::serialize(pubkey).unwrap_or_default();
-        hash_blake3(&pubkey_bytes)
+    /// Generate node ID from DID + device name (identity-based derivation)
+    /// 
+    /// This ensures NodeIds are deterministic and verifiable based on identity.
+    /// 
+    /// # Arguments
+    /// * `did` - Decentralized identifier (did:zhtp:...)
+    /// * `device_name` - Device identifier
+    /// 
+    /// # Returns
+    /// Identity-derived NodeId
+    fn generate_node_id(&self, did: &str, device_name: &str) -> Result<lib_identity::NodeId> {
+        lib_identity::NodeId::from_did_device(did, device_name)
     }
 }
 
@@ -398,29 +423,42 @@ pub async fn find_best_relay_peer(
 mod tests {
     use super::*;
     use lib_crypto::post_quantum::dilithium::dilithium2_keypair;
+    use lib_identity::IdentityType;
     
     async fn create_test_registry() -> ZhtpPeerRegistry {
-        let identity = ZhtpIdentity::generate().unwrap();
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "test-device",
+            None,
+        ).unwrap();
         ZhtpPeerRegistry::new(identity)
     }
     
     fn create_test_peer_info() -> ZhtpPeerInfo {
-        let (dilithium_pubkey, dilithium_privkey) = dilithium2_keypair().unwrap();
+        let (dilithium_pubkey, dilithium_privkey) = dilithium2_keypair();
         
         let capabilities = NodeCapabilities {
             has_dht: true,
             can_relay: true,
             max_bandwidth: 1_000_000,
             protocols: vec!["zhtp".to_string(), "web4".to_string()],
-            reputation: 0.8,
+            reputation: 80,
             quantum_secure: true,
         };
         
-        let blockchain_pubkey = PublicKey::Ed25519([0u8; 32]);
+        let blockchain_pubkey = PublicKey::new(vec![0u8; 32]);
+        
+        // Create test identity for deterministic NodeId
+        let test_did = "did:zhtp:test123abc";
+        let test_device = "test-device";
         
         let mut peer_info = ZhtpPeerInfo {
             blockchain_pubkey: blockchain_pubkey.clone(),
-            dilithium_pubkey: dilithium_pubkey.clone(),
+            dilithium_pubkey: dilithium_pubkey.to_vec(),
+            did: test_did.to_string(),
+            device_name: test_device.to_string(),
             capabilities,
             addresses: vec!["127.0.0.1:8080".to_string()],
             reputation: 0.8,

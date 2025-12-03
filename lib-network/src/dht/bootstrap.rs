@@ -79,16 +79,16 @@ pub struct DHTBootstrap {
     enhancements: DHTBootstrapEnhancements,
     discovered_peers: Vec<String>,
     last_discovery: SystemTime,
-    local_public_key: lib_crypto::PublicKey,
+    local_identity: lib_identity::ZhtpIdentity,
 }
 
 impl DHTBootstrap {
-    pub fn new(enhancements: DHTBootstrapEnhancements, local_public_key: lib_crypto::PublicKey) -> Self {
+    pub fn new(enhancements: DHTBootstrapEnhancements, local_identity: lib_identity::ZhtpIdentity) -> Self {
         Self {
             enhancements,
             discovered_peers: Vec::new(),
             last_discovery: SystemTime::UNIX_EPOCH,
-            local_public_key,
+            local_identity,
         }
     }
 
@@ -99,7 +99,7 @@ impl DHTBootstrap {
         let mut discovered = Vec::new();
         
         // 1. Use existing bootstrap system first
-        let existing_peers = discover_bootstrap_peers(bootstrap_nodes, &self.local_public_key).await?;
+        let existing_peers = discover_bootstrap_peers(bootstrap_nodes, &self.local_identity).await?;
         discovered.extend(existing_peers.into_iter().map(|peer| {
             // Convert PeerInfo back to string format for compatibility
             peer.addresses.values().next().cloned().unwrap_or_default()

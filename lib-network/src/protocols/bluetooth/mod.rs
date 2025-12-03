@@ -929,6 +929,7 @@ impl BluetoothMeshProtocol {
                 max_throughput: 250_000, // 250 KB/s for BLE
                 prefers_high_throughput: false,
             },
+            // TODO: Add DID and device_name fields in next commit (MeshHandshake update)
         };
         
         // Serialize handshake
@@ -980,6 +981,7 @@ impl BluetoothMeshProtocol {
                 max_throughput: 250_000, // 250 KB/s for BLE
                 prefers_high_throughput: false,
             },
+            // TODO: Add DID and device_name fields in next commit (MeshHandshake update)
         };
         
         // Serialize handshake
@@ -4154,7 +4156,8 @@ mod tests {
     #[tokio::test]
     async fn test_bluetooth_mesh_creation() {
         let node_id = [1u8; 32];
-        let protocol = BluetoothMeshProtocol::new(node_id).unwrap();
+        let public_key = lib_crypto::PublicKey::new(vec![0u8; 32]);
+        let protocol = BluetoothMeshProtocol::new(node_id, public_key).unwrap();
         
         assert_eq!(protocol.node_id, node_id);
         assert!(!protocol.discovery_active);
@@ -4163,7 +4166,8 @@ mod tests {
     #[tokio::test]
     async fn test_bluetooth_discovery() {
         let node_id = [1u8; 32];
-        let mut protocol = BluetoothMeshProtocol::new(node_id).unwrap();
+        let public_key = lib_crypto::PublicKey::new(vec![0u8; 32]);
+        let mut protocol = BluetoothMeshProtocol::new(node_id, public_key).unwrap();
         
         let result = protocol.start_discovery().await;
         assert!(result.is_ok());
