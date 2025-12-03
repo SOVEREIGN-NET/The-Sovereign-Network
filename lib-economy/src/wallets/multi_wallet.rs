@@ -828,7 +828,7 @@ pub async fn create_comprehensive_multi_wallet_manager(identity: Identity) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_identity::types::{IdentityType, AccessLevel};
+    use lib_identity::types::{IdentityType, AccessLevel, NodeId};
     use lib_identity::wallets::WalletManager;
     use lib_proofs::ZeroKnowledgeProof;
     use lib_crypto::{Hash, KeyPair, PublicKey};
@@ -846,7 +846,7 @@ mod tests {
             did,
             public_key,
             private_key,
-            node_id: Hash::from_bytes("node_id".as_bytes()),
+            node_id: NodeId::from_bytes([0u8; 32]),
             device_node_ids: HashMap::new(),
             primary_device: "primary-device".to_string(),
             ownership_proof: ZeroKnowledgeProof::default(),

@@ -4,7 +4,7 @@
 //! Includes zero-knowledge proof validation, economic model validation, content integrity,
 //! and protocol compliance checks.
 
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpHeaders, ZhtpStatus, AccessPolicy};
+use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpHeaders, AccessPolicy};
 use crate::{ProtocolError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -321,7 +321,7 @@ impl ZhtpValidator {
     pub async fn validate_response(&self, response: &ZhtpResponse) -> Result<ValidationResult> {
         let start_time = std::time::Instant::now();
         let mut errors = Vec::new();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
 
         // Check response size
         if !response.body.is_empty() {

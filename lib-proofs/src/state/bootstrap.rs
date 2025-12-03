@@ -9,7 +9,6 @@ use crate::types::{VerificationResult, ZkProof};
 use crate::plonky2::Plonky2Proof;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::time::Instant;
 
 /// Configuration for bootstrap proof generation

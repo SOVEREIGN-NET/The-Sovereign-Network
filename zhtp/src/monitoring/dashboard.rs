@@ -14,7 +14,6 @@ use super::metrics::{MetricsSummary, MetricsCollector};
 use super::health_check::{HealthStatus, HealthMonitor};
 use super::alerting::{Alert, AlertStats, AlertManager};
 use crate::runtime::RuntimeOrchestrator;
-use lib_blockchain;
 
 /// Web dashboard server for ZHTP monitoring
 pub struct DashboardServer {

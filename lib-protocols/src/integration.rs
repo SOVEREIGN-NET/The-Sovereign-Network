@@ -5,16 +5,10 @@
 //! external packages, and third-party systems.
 
 use crate::{ProtocolError, Result};
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpHeaders};
-use crate::zhtp::{ZhtpResult, ZhtpRequestHandler};
-use lib_identity::{IdentityManager, identity::ZhtpIdentity, types::{IdentityId, AccessLevel}};
-use lib_economy::EconomicModel;
-use lib_storage::{UnifiedStorageSystem, types::ContentHash};
+use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use lib_storage::types::ContentHash;
 // use lib_blockchain::get_shared_blockchain; // Removed - use zhtp::runtime::blockchain_provider instead
-use lib_blockchain::Blockchain;
 
-use lib_crypto::{Hash, PublicKey};
-use anyhow::anyhow;
 use serde::{Serialize, Deserialize};
 
 use crate::crypto::ZhtpCrypto;
@@ -468,10 +462,10 @@ impl ZhtpIntegration {
     /// Process blockchain integration
     async fn process_blockchain_integration(&mut self, request: &ZhtpRequest) -> Result<()> {
         // integration with lib-blockchain package
-        use lib_blockchain::{Blockchain, transaction::Transaction, block::Block};
+        use lib_blockchain::Blockchain;
         
         // Initialize blockchain if not already done
-        let mut blockchain = Blockchain::new()
+        let blockchain = Blockchain::new()
             .map_err(|e| ProtocolError::InternalError(format!("Failed to initialize blockchain: {}", e)))?;
         
         // Calculate economic assessment for transaction amount
@@ -515,7 +509,7 @@ impl ZhtpIntegration {
         };
         
         // Create transaction with economic values using TransactionBuilder
-        use lib_blockchain::transaction::{TransactionInput, TransactionOutput, creation::TransactionBuilder};
+        use lib_blockchain::transaction::creation::TransactionBuilder;
         use lib_blockchain::types::TransactionType;
         
         // Create dummy keypair for signing
@@ -534,7 +528,7 @@ impl ZhtpIntegration {
             .map_err(|e| ProtocolError::InternalError(format!("Failed to create transaction: {}", e)))?;
         
         // Add DAO fee output for UBI distribution
-        let mut transaction_with_dao = transaction;
+        let transaction_with_dao = transaction;
         
         // Validate the transaction thoroughly
         use lib_blockchain::transaction::validation::TransactionValidator;

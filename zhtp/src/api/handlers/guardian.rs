@@ -11,8 +11,8 @@ use anyhow::Result;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_identity::{
-    IdentityManager, GuardianConfig, Guardian, GuardianStatus,
-    SocialRecoveryManager, RecoveryRequest, RecoveryStatus,
+    IdentityManager, GuardianConfig, GuardianStatus,
+    SocialRecoveryManager,
 };
 use lib_crypto::{PublicKey, PostQuantumSignature, SignatureAlgorithm};
 

@@ -4,14 +4,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, debug};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::services::{GenesisFundingService, TransactionBuilder, GenesisValidator};
 use crate::runtime::dht_indexing::index_block_in_dht;
 use crate::config::aggregation::BootstrapValidator;
-use lib_blockchain::{Blockchain, Transaction, TransactionOutput};
-use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
+use lib_blockchain::{Blockchain, Transaction};
 use lib_consensus::ValidatorManager;
 use lib_identity::IdentityId;
 

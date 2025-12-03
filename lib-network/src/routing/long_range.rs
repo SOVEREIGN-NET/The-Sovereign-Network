@@ -3,10 +3,10 @@
 //! Intercontinental mesh routing for global coverage
 
 use anyhow::{anyhow, Result};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::info;
 use lib_crypto::PublicKey;
 use serde::{Serialize, Deserialize};
 

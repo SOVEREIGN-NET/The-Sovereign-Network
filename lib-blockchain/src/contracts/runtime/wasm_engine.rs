@@ -5,7 +5,6 @@
 use super::{ContractRuntime, RuntimeResult, RuntimeContext, RuntimeConfig, RuntimeStats, MemoryStats};
 use anyhow::{Result, anyhow};
 use std::time::{Duration, Instant};
-use crate::contracts::{GAS_BASE};
 
 // Note: This would require wasmtime dependency
 // [dependencies]
@@ -76,7 +75,7 @@ impl ContractRuntime for WasmEngine {
 #[cfg(feature = "wasmtime")]
 use wasmtime::*;
 #[cfg(feature = "wasmtime")]
-use super::host_functions::{HostFunctions, HostFunctionStats};
+use super::host_functions::HostFunctions;
 
 #[cfg(feature = "wasmtime")]
 pub struct WasmEngine {
@@ -98,6 +97,7 @@ impl WasmEngine {
         engine_config.wasm_threads(false);
         engine_config.wasm_reference_types(false);
         engine_config.wasm_simd(false);
+        engine_config.wasm_relaxed_simd(false); // Must disable relaxed_simd when simd is disabled
         engine_config.wasm_bulk_memory(true);  // Allow for efficiency
         
         // Set memory limits

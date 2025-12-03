@@ -5,7 +5,6 @@
 use anyhow::Result;
 use pqcrypto_dilithium::dilithium2;
 use pqcrypto_traits::sign::{PublicKey as SignPublicKey, SignedMessage};
-use crate::hashing::hash_blake3;
 
 // Constants for CRYSTALS key sizes
 const DILITHIUM2_PUBLICKEY_BYTES: usize = 1312;

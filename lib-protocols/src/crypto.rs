@@ -8,15 +8,12 @@ use lib_crypto::{
     hash_blake3, verify_signature,
     // Note: generate_keypair might not be available, using KeyPair::generate instead
 };
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpHeaders};
 use crate::{ProtocolError, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 // Use proper ZK types from lib-proofs module
 use lib_proofs::{
-    ZkProof, ZkTransactionProof, TransactionVerifier,
-    types::VerificationResult, initialize_zk_system
+    ZkProof, ZkTransactionProof, TransactionVerifier, initialize_zk_system
 };
 
 /// ZHTP cryptographic context
@@ -154,7 +151,7 @@ impl ZhtpCrypto {
         }
 
         // For transaction proofs, try to use transaction verifier
-        if let Ok(mut verifier) = TransactionVerifier::new() {
+        if let Ok(verifier) = TransactionVerifier::new() {
             // Try to interpret as transaction proof
             if let Ok(tx_proof) = serde_json::from_slice::<ZkTransactionProof>(proof_data) {
                 match ZkTransactionProof::verify_transaction(&tx_proof) {

@@ -15,7 +15,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
-use anyhow::{Context, Result as AnyhowResult};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

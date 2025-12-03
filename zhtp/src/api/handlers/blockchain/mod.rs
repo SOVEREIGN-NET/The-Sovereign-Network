@@ -3,7 +3,6 @@
 //! Clean, minimal blockchain operations using lib-blockchain patterns
 
 use anyhow::{Result, Context};
-use lib_crypto::{generate_keypair, sign_message};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1241,7 +1240,7 @@ impl BlockchainHandler {
             .get_blockchain()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
-        let mut blockchain = blockchain_arc.write().await;
+        let blockchain = blockchain_arc.write().await;
 
         // Create a transaction for the contract deployment
         let tx_data = format!(

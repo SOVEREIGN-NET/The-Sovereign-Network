@@ -6,7 +6,6 @@ use anyhow::{Result, anyhow};
 use tracing::{info, debug, warn};
 use serde::{Serialize, Deserialize};
 use lib_blockchain::block::BlockHeader;
-use lib_proofs::ChainRecursiveProof;
 use std::collections::HashMap;
 
 /// GATT operation types

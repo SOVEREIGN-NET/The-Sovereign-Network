@@ -2,7 +2,6 @@
 
 use anyhow::{Result, anyhow};
 use lib_crypto::PublicKey;
-use lib_proofs::{ZkProof, types::ZkProofType};
 use lib_proofs::plonky2::ZkProofSystem;
 use lib_identity::{IdentityManager};
 use tracing::{info, warn, error};

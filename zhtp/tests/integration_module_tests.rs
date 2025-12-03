@@ -5,9 +5,7 @@
 use anyhow::Result;
 use std::time::Duration;
 
-use zhtp::integration::{
-    IntegrationManager, IntegrationHealth
-};
+use zhtp::integration::IntegrationManager;
 use zhtp::runtime::ComponentId;
 
 #[tokio::test]

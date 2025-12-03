@@ -173,7 +173,7 @@ pub fn generate_storage_proof(
         .map(|block| hash_blake3(block))
         .collect();
 
-    let mut merkle_tree = ZkMerkleTree::with_leaves(
+    let merkle_tree = ZkMerkleTree::with_leaves(
         calculate_tree_height(block_hashes.len()),
         block_hashes,
     )?;

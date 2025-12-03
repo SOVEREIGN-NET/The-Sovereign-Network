@@ -5,6 +5,7 @@
 
 use lib_economy::*;
 use lib_economy::testing::*;
+use lib_economy::incentives::{cost_savings::CostSavings, infrastructure_rewards::InfrastructureRewards};
 
 #[cfg(test)]
 mod edge_case_tests {
@@ -143,24 +144,15 @@ mod edge_case_tests {
 
     #[test]
     fn test_isp_bypass_edge_cases() {
-        let mut incentives = IspBypassIncentives::new();
-        
         // Test with zero work
-        let zero_work = IspBypassWork {
-            bandwidth_shared_gb: 0,
-            packets_routed_mb: 0,
-            uptime_hours: 0,
-            connection_quality: 0.0,
-            users_served: 0,
-            cost_savings_provided: 0,
-        };
+        let zero_work = IspBypassWork::new();
+        let zero_rewards = InfrastructureRewards::calculate_isp_bypass(&zero_work).unwrap();
+        assert_eq!(zero_rewards.total_infrastructure_rewards, 0);
+        assert_eq!(zero_work.total_isp_bypass_value(), 0);
         
-        let reward = incentives.calculate_rewards(&zero_work);
-        assert_eq!(reward, 0);
-        
-        incentives.update_stats(&zero_work).unwrap();
-        assert_eq!(incentives.connectivity_providers, 0);
-        assert_eq!(incentives.mesh_participants, 0);
+        let mut cost_savings = CostSavings::new();
+        cost_savings.update_from_work(&zero_work).unwrap();
+        assert_eq!(cost_savings.users_benefiting, 0);
         
         // Test with maximum work
         let max_work = IspBypassWork {
@@ -172,8 +164,8 @@ mod edge_case_tests {
             cost_savings_provided: u64::MAX / 1000,
         };
         
-        let max_reward = incentives.calculate_rewards(&max_work);
-        assert!(max_reward > 0); // Should handle large numbers
+        let max_reward = InfrastructureRewards::calculate_isp_bypass(&max_work).unwrap();
+        assert!(max_reward.total_infrastructure_rewards > 0); // Should handle large numbers
     }
 
     #[test]
