@@ -7,12 +7,10 @@ use std::collections::{HashMap, HashSet, BinaryHeap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::cmp::Ordering;
-use tracing::{info, warn, debug};
+use tracing::{info, debug};
 use lib_crypto::PublicKey;
-use serde::{Serialize, Deserialize};
 
 use crate::mesh::connection::MeshConnection;
-use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::protocols::NetworkProtocol;
 use crate::routing::message_routing::RouteHop;
 

@@ -9,12 +9,9 @@ use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use lib_identity::{ZhtpIdentity, IdentityId};
-use lib_identity::wallets::{WalletId, WalletManager};
+use lib_identity::wallets::WalletId;
 use lib_identity::types::IdentityType;
-use lib_network::ZkDHTIntegration;
 use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
-use lib_proofs::ZeroKnowledgeProof;
-use lib_crypto::{hash_blake3, KeyPair};
 // Core wallet functionality with mesh network integration
 
 /// Node wallet startup options

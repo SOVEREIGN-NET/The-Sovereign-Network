@@ -781,35 +781,22 @@ mod tests {
 
     // Helper functions for tests
     fn create_test_identity() -> lib_identity::ZhtpIdentity {
-        use lib_identity::{ZhtpIdentity, IdentityType, AccessLevel};
-        use std::collections::HashMap;
-        
-        let identity_id = lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(b"test_user"));
-        
-        ZhtpIdentity {
-            id: identity_id.clone(),
-            identity_type: IdentityType::Human,
-            public_key: vec![0u8; 32],
-            ownership_proof: lib_proofs::ZeroKnowledgeProof::new(
-                "test_ownership".to_string(),
-                vec![0u8; 32],
-                vec![0u8; 32],
-                vec![],
-                None,
-            ),
-            credentials: HashMap::new(),
-            reputation: 100,
-            age: Some(25),
-            access_level: AccessLevel::FullCitizen,
-            metadata: HashMap::new(),
-            private_data_id: None,
-            wallet_manager: lib_identity::wallets::IdentityWallets::new(identity_id),
-            did_document_hash: None,
-            attestations: vec![],
-            created_at: current_timestamp(),
-            last_active: current_timestamp(),
-            recovery_keys: vec![],
-        }
+        use lib_crypto::KeyPair;
+        use lib_identity::{IdentityType, ZhtpIdentity};
+
+        let keypair = KeyPair::generate().unwrap();
+
+        ZhtpIdentity::new(
+            IdentityType::Human,
+            keypair.public_key,
+            keypair.private_key,
+            "test_device".to_string(),
+            Some(25),
+            Some("Testland".to_string()),
+            true,
+            lib_proofs::ZeroKnowledgeProof::default(),
+        )
+        .unwrap()
     }
 
     fn create_test_zhtp_request() -> crate::types::ZhtpRequest {

@@ -31,28 +31,153 @@ pub mod economics;
 pub mod integration;
 pub mod verification;
 
-// Re-exports for external use
-pub use types::*;
-pub use identity::{ZhtpIdentity, PrivateIdentityData, IdentityManager};
-pub use credentials::{ZkCredential, IdentityAttestation, CredentialType, AttestationType};
-pub use citizenship::{CitizenshipResult, DaoRegistration, UbiRegistration, Web4Access, WelcomeBonus};
-pub use types::{AccessLevel, IdentityProofParams};
-pub use types::IdentityVerification;
-pub use did::{
-    DidDocument, ServiceEndpoint, VerificationMethod
-};
-pub use recovery::{RecoveryPhraseManager, RecoveryPhrase, PhraseGenerationOptions, EntropySource, SocialRecoveryManager, RecoveryRequest, RecoveryStatus};
-pub use guardian::{Guardian, GuardianConfig, GuardianStatus};
-pub use wallets::{WalletManager, QuantumWallet, WalletType, WalletId, WalletSummary};
-pub use auth::{PasswordManager, PasswordError, PasswordValidation, SessionToken};
+// ============================================================================
+// PUBLIC API EXPORTS
+// ============================================================================
+//
+// This section defines the public API surface for lib-identity.
+// All types, functions, and modules that external crates can access.
 
-// External dependencies re-exports
+// ----------------------------------------------------------------------------
+// Core Modules (accessible as lib_identity::module_name::Type)
+// ----------------------------------------------------------------------------
+
+// Note: No 'compat' module exists in this codebase. 
+// The system uses direct types without compatibility adapters.
+
+// ----------------------------------------------------------------------------
+// Type Re-exports (accessible as lib_identity::Type)
+// ----------------------------------------------------------------------------
+
+// Types module - Core identity and node types
+pub use types::{
+    // Identity types
+    IdentityId,          // ✓ Hash-based identity identifier
+    IdentityType,        // ✓ Human, Agent, Contract, Organization, Device
+    AccessLevel,         // ✓ FullCitizen, Visitor, Organization, Device, Restricted
+    PrivateIdentityData, // ✓ Private data (never transmitted)
+    
+    // Credential types
+    CredentialType,      // ✓ Credential type enumeration
+    AttestationType,     // ✓ Attestation types
+    
+    // Proof parameters
+    IdentityProofParams, // ✓ Zero-knowledge proof parameters
+    
+    // Verification types
+    IdentityVerification, // ✓ Verification results
+    VerificationLevel,    // ✓ Verification level (None, Basic, Standard, Full)
+    VerificationResult,   // ✓ Detailed verification result
+    
+    // Node ID for DHT routing (32-byte deterministic identifier)
+    NodeId,              // ✓ Derived from DID + device name
+};
+
+// Identity module - Core identity structures
+pub use identity::{
+    ZhtpIdentity,        // ✓ Main identity struct (updated with multi-device support)
+    IdentityManager,     // ✓ Identity management and citizen onboarding
+};
+
+// Credentials module - Zero-knowledge credentials
+pub use credentials::{
+    ZkCredential,        // ✓ Zero-knowledge credential
+    IdentityAttestation, // ✓ Identity attestations
+};
+
+// Citizenship module - Citizen onboarding and services
+pub use citizenship::{
+    CitizenshipResult,   // ✓ Onboarding results
+    DaoRegistration,     // ✓ DAO governance registration
+    UbiRegistration,     // ✓ UBI payout registration
+    Web4Access,          // ✓ Web4 service access
+    WelcomeBonus,        // ✓ Welcome bonus for new citizens
+};
+
+// DID module - Decentralized identifiers
+pub use did::{
+    DidDocument,         // ✓ DID document structure
+    ServiceEndpoint,     // ✓ Service endpoints
+    VerificationMethod,  // ✓ Verification methods
+};
+
+// Recovery module - Identity recovery mechanisms
+pub use recovery::{
+    RecoveryPhraseManager,    // ✓ Recovery phrase management
+    RecoveryPhrase,           // ✓ 20-word recovery phrases
+    PhraseGenerationOptions,  // ✓ Phrase generation options
+    EntropySource,            // ✓ Entropy sources for phrases
+    SocialRecoveryManager,    // ✓ Social recovery orchestration
+    RecoveryRequest,          // ✓ Recovery request tracking
+    RecoveryStatus,           // ✓ Recovery status states
+};
+
+// Guardian module - Guardian-based social recovery
+pub use guardian::{
+    Guardian,           // ✓ Guardian entity
+    GuardianConfig,     // ✓ Guardian configuration
+    GuardianStatus,     // ✓ Guardian state
+};
+
+// Wallets module - Wallet management (verified export)
+pub use wallets::{
+    WalletManager,       // ✓ Multi-wallet manager (verified exported)
+    QuantumWallet,       // ✓ Quantum-resistant wallet
+    WalletType,          // ✓ Standard, Savings, Staking, etc.
+    WalletId,            // ✓ Wallet identifier (Hash type alias)
+    WalletSummary,       // ✓ Wallet summary information
+    
+    // DAO wallet types
+    DaoWalletProperties,      // ✓ DAO wallet properties and transparency
+    DaoGovernanceSettings,    // ✓ DAO governance configuration
+    DaoHierarchyInfo,         // ✓ DAO parent/child relationships
+    TransparencyLevel,        // ✓ DAO transparency levels
+    PublicTransactionEntry,   // ✓ DAO public transaction log entries
+    
+    // Content ownership types
+    ContentOwnershipRecord,    // ✓ Content ownership tracking
+    ContentOwnershipStatistics,// ✓ Wallet content statistics
+    ContentTransfer,           // ✓ Content transfer records
+    ContentTransferType,       // ✓ Sale, Gift, Auction, etc.
+    ContentMetadataSnapshot,   // ✓ Content metadata for ownership
+    
+    // Wallet password management
+    WalletPasswordManager,     // ✓ Per-wallet password protection
+    WalletPasswordError,       // ✓ Password error types
+    WalletPasswordValidation,  // ✓ Password validation results
+};
+
+// Auth module - Authentication and password management
+pub use auth::{
+    PasswordManager,     // ✓ Password hashing and validation
+    PasswordError,       // ✓ Password error types
+    PasswordValidation,  // ✓ Password validation results
+    PasswordStrength,    // ✓ Password strength levels (Weak, Medium, Strong)
+    SessionToken,        // ✓ Session tokens
+};
+
+// ----------------------------------------------------------------------------
+// External Dependencies Re-exports
+// ----------------------------------------------------------------------------
+
+// Cryptography library (contains KeyPair with Dilithium keys)
 pub use lib_crypto as crypto;
-pub use lib_proofs::{ZeroKnowledgeProof, ZkProof};
+
+// KeyPair re-export for convenience
+// Note: This is the keypair type used throughout ZHTP. It contains:
+//   - public_key.dilithium_pk: CRYSTALS-Dilithium post-quantum signature keys
+//   - public_key.kyber_pk: CRYSTALS-Kyber post-quantum encryption keys
+// There is NO separate "DilithiumKeyPair" type - KeyPair contains Dilithium internally.
+pub use lib_crypto::KeyPair;  // ✓ Quantum-resistant keypair (includes Dilithium)
+
+// Zero-knowledge proofs library
+pub use lib_proofs::{
+    ZeroKnowledgeProof,  // ✓ ZK proof structure
+    ZkProof,             // ✓ ZK proof trait
+};
 
 // Utility functions
 use anyhow::Result;
-use rand;
 
 /// Initialize the identity system with proper configuration
 pub async fn initialize_identity_system() -> Result<IdentityManager> {

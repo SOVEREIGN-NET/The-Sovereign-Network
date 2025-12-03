@@ -5,9 +5,8 @@
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
-use lib_crypto::hashing::hash_blake3;
-use crate::plonky2::{CircuitBuilder, CircuitConfig, ZkCircuit, Plonky2Proof, RecursiveProof,
-    RecursiveConfig, RecursiveProofBuilder, generate_batch_recursive_proof};
+use crate::plonky2::{CircuitConfig, Plonky2Proof, RecursiveProof,
+    RecursiveConfig, RecursiveProofBuilder};
 use crate::state::AggregatedStateProof;
 use std::collections::HashMap;
 
@@ -386,7 +385,7 @@ impl AggregatedCircuitBuilder {
 
     /// Execute the aggregation plan
     fn execute_aggregation_plan(&self, plan: AggregationPlan) -> Result<RecursiveProof> {
-        use crate::plonky2::{RecursiveConfig, RecursiveProofBuilder};
+        use crate::plonky2::RecursiveConfig;
 
         // Sort batches by priority
         let mut sorted_batches = plan.batches;

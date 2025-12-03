@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use lib_blockchain::{
-    Blockchain, Mempool, BlockchainConsensusCoordinator,
+    Blockchain, Mempool,
     initialize_consensus_integration,
     create_dao_proposal_transaction, create_dao_vote_transaction,
 };

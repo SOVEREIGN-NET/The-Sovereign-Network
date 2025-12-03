@@ -1,9 +1,7 @@
 //! Vector clock implementation for distributed causality tracking
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::cmp::Ordering;
 
 /// Node identifier
 pub type NodeId = String;

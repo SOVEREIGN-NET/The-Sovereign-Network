@@ -112,6 +112,17 @@ pub async fn register_api_handlers(
     http_router.register_handler("/api/v1/identity/recovery".to_string(), guardian_handler);
     info!("   ✅ Guardian social recovery handler registered");
 
+    // Zero-knowledge proof handler (Issue #102)
+    let zkp_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+        crate::api::handlers::zkp::ZkpHandler::new(
+            identity_manager.clone(),
+            _session_manager.clone(),
+            rate_limiter.clone(),
+        )
+    );
+    http_router.register_handler("/api/v1/zkp".to_string(), zkp_handler);
+    info!("   ✅ Zero-knowledge proof handler registered");
+
     // ========================================================================
     // STORAGE AND CONTENT HANDLERS
     // ========================================================================

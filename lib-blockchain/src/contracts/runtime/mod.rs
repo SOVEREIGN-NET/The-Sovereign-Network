@@ -6,8 +6,7 @@
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use crate::integration::crypto_integration::{PublicKey, Signature};
+use crate::integration::crypto_integration::PublicKey;
 
 #[cfg(feature = "wasm-runtime")]
 pub mod wasm_engine;

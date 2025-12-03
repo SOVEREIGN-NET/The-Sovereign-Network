@@ -1,7 +1,6 @@
 //! Conflict-free Replicated Data Types (CRDTs)
 
 use crate::consistency::vector_clock::{NodeId, VectorClock};
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

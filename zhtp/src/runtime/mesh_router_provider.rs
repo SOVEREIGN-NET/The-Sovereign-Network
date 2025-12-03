@@ -1,7 +1,7 @@
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 use anyhow::Result;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::unified_server::{MeshRouter, BroadcastMetrics};
 

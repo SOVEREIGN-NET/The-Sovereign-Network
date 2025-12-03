@@ -6,7 +6,6 @@
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpResult, ZhtpRequestHandler};
 use lib_storage::WalletContentManager;
-use lib_identity::wallets::WalletId;
 use lib_crypto::Hash;
 use serde::{Deserialize, Serialize};
 use tracing::{info, error};
@@ -365,7 +364,7 @@ impl ZhtpRequestHandler for WalletContentHandler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     #[test]
     fn test_path_parsing() {

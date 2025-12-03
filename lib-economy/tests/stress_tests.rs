@@ -5,6 +5,7 @@
 
 use lib_economy::*;
 use lib_economy::testing::*;
+use lib_economy::incentives::infrastructure_rewards::InfrastructureRewards;
 use std::thread;
 use std::sync::{Arc, Mutex};
 
@@ -136,11 +137,10 @@ mod stress_tests {
 
     #[test]
     fn test_isp_bypass_massive_mesh() {
-        let mut incentives = IspBypassIncentives::new();
-        
         // Simulate 100,000 mesh participants
         let participant_count = 100_000;
         let mut total_rewards = 0u64;
+        let mut total_bandwidth_shared = 0u64;
         
         for i in 0..participant_count {
             let work = IspBypassWork {
@@ -152,15 +152,13 @@ mod stress_tests {
                 cost_savings_provided: ((i % 50000) + 1000) as u64,
             };
             
-            let reward = incentives.calculate_rewards(&work);
-            total_rewards += reward;
-            
-            incentives.update_stats(&work).unwrap();
+            let reward = InfrastructureRewards::calculate_isp_bypass(&work).unwrap();
+            total_rewards += reward.total_infrastructure_rewards;
+            total_bandwidth_shared += work.bandwidth_shared_gb;
         }
         
-        assert_eq!(incentives.mesh_participants, participant_count);
         assert!(total_rewards > participant_count); // Should be meaningful rewards
-        assert!(incentives.total_bandwidth_shared > 0);
+        assert!(total_bandwidth_shared > 0);
         
         println!(" mesh: {} participants, {} total rewards", 
                 participant_count, total_rewards);

@@ -4,15 +4,11 @@
 #[cfg(target_os = "macos")]
 use objc2::declare::ClassBuilder;
 #[cfg(target_os = "macos")]
-use objc2::runtime::{AnyClass, AnyObject, Sel, ProtocolObject, Bool, AnyProtocol};
+use objc2::runtime::{AnyClass, AnyObject, Sel, AnyProtocol};
 #[cfg(target_os = "macos")]
-use objc2::{msg_send, sel, class, ClassType};
-#[cfg(target_os = "macos")]
-use objc2::rc::Retained;
+use objc2::{msg_send, sel};
 #[cfg(target_os = "macos")]
 use std::sync::Once;
-#[cfg(target_os = "macos")]
-use std::ffi::CStr;
 #[cfg(target_os = "macos")]
 use tracing::{info, warn, error, debug};
 
