@@ -97,6 +97,7 @@ impl WasmEngine {
         engine_config.wasm_threads(false);
         engine_config.wasm_reference_types(false);
         engine_config.wasm_simd(false);
+        engine_config.wasm_relaxed_simd(false); // Must disable relaxed_simd when simd is disabled
         engine_config.wasm_bulk_memory(true);  // Allow for efficiency
         
         // Set memory limits

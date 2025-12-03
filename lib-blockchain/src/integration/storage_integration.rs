@@ -1539,9 +1539,10 @@ mod tests {
         let mut manager = BlockchainStorageManager::new(config).await?;
         
         let stats = manager.get_storage_statistics().await?;
-        
+
         // Basic validation that stats structure is correct
-        assert_eq!(stats.dht_stats.total_nodes, 1);
+        // DHT is not initialized in this test, so total_nodes should be 0
+        assert_eq!(stats.dht_stats.total_nodes, 0);
         assert_eq!(stats.storage_stats.total_content_count, 0);
         
         Ok(())
