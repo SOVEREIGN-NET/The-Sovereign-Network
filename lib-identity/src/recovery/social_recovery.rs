@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, Duration};
-use lib_crypto::{PostQuantumSignature, verify_signature, PublicKey};
+use lib_crypto::{PostQuantumSignature, verify_signature};
 use crate::guardian::{Guardian, GuardianConfig};
 
 /// Recovery request status
@@ -333,7 +333,7 @@ impl SocialRecoveryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::KeyPair;
+    use lib_crypto::{KeyPair, PublicKey};
 
     #[test]
     fn test_recovery_request_creation() {

@@ -203,7 +203,7 @@ pub mod encoding {
 #[cfg(test)]
 pub mod testing {
     use super::*;
-    use crate::transaction::{TransactionInput, TransactionOutput, IdentityTransactionData};
+    use crate::transaction::IdentityTransactionData;
     use lib_crypto::{Signature, PublicKey, SignatureAlgorithm};
     
     /// Create a dummy transaction for testing

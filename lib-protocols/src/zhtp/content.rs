@@ -821,7 +821,7 @@ impl Default for ContentConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ZhtpHeaders, ZhtpMethod, AccessPolicy};
+    use crate::types::{ZhtpHeaders, ZhtpMethod};
 
     #[tokio::test]
     async fn test_content_storage() {

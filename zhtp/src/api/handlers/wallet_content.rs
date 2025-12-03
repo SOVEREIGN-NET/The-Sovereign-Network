@@ -364,7 +364,7 @@ impl ZhtpRequestHandler for WalletContentHandler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     #[test]
     fn test_path_parsing() {

@@ -1017,7 +1017,7 @@ pub fn create_default_middleware_stack(config: &ServerConfig) -> Vec<Box<dyn Zht
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ZhtpMethod, ZhtpHeaders};
+    use crate::types::ZhtpMethod;
 
     #[tokio::test]
     async fn test_cors_middleware() {

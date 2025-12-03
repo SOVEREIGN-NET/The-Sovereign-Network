@@ -3,12 +3,8 @@
 //! Tests the UTXO management, nullifier tracking, and double-spend prevention.
 
 use lib_blockchain::*;
-use lib_blockchain::blockchain::*;
-use lib_blockchain::transaction::*;
 use lib_blockchain::transaction::core::IdentityTransactionData;
-use lib_blockchain::block::*;
-use lib_blockchain::types::*;
-use lib_blockchain::integration::crypto_integration::{PublicKey, KeyPair, Signature, SignatureAlgorithm};
+use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use anyhow::Result;
 use std::collections::HashSet;
 

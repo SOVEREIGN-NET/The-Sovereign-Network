@@ -506,7 +506,7 @@ pub type UnifiedStorageManager = UnifiedStorageSystem;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    
     use lib_identity::IdentityId;
     use crate::types::{PenaltyType, STORAGE_PRICE_PER_GB_DAY, MIN_REPLICATION, MAX_REPLICATION};
     
