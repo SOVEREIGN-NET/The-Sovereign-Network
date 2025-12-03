@@ -147,7 +147,7 @@ pub async fn register_api_handlers(
     
     // DAO operations
     let dao_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-        DaoHandler::new(identity_manager.clone())
+        DaoHandler::new(identity_manager.clone(), _session_manager.clone())
     );
     http_router.register_handler("/api/v1/dao".to_string(), dao_handler);
     info!("   ✅ DAO handler registered");
