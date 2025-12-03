@@ -4,8 +4,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 #[cfg(feature = "wasmtime")]
-use wasmtime::{Caller, Extern, Linker};
-use crate::integration::crypto_integration::PublicKey;
+use wasmtime::{Caller, Extern};
 
 const MAX_LOG_SIZE: i32 = 1024;
 const MAX_STORAGE_KEY_SIZE: usize = 64;

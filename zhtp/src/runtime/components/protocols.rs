@@ -9,7 +9,6 @@ use tokio::time::{Duration, Instant};
 use tracing::{info, warn, debug};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
-use crate::runtime::services::BootstrapService;
 use crate::runtime::components::identity::create_default_storage_config;
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
 

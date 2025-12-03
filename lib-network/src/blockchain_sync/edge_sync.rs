@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow};
 use lib_blockchain::edge_node_state::{EdgeNodeState, SyncStrategy};
 use lib_blockchain::{BlockHeader, TransactionOutput, Hash};
 use lib_crypto::PublicKey;
-use crate::types::mesh_message::{ZhtpMeshMessage, BlockchainRequestType};
+use crate::types::mesh_message::ZhtpMeshMessage;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug};

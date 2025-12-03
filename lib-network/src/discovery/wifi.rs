@@ -1,6 +1,6 @@
 use anyhow::Result;
-use std::time::Duration;
 use rand;
+use std::time::Duration;
 use crate::types::wifi_security::WiFiSecurity;
 use crate::discovery::hardware::HardwareCapabilities;
 

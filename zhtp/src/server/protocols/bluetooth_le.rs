@@ -236,7 +236,7 @@ impl BluetoothRouter {
                                         warn!("No blockchain provider available to handle HeadersRequest");
                                     }
                                 }
-                                ZhtpMeshMessage::BlockchainRequest { requester, request_id, .. } => {
+                                ZhtpMeshMessage::BlockchainRequest {  request_id, .. } => {
                                     info!("📥 GATT BlockchainRequest from peer (ID: {})", request_id);
                                     // TODO: Handle full blockchain request
                                     warn!("Full blockchain requests via GATT not yet implemented");

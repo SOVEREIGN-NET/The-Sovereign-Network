@@ -12,12 +12,9 @@ use crate::zhtp::{ZhtpResult, ZhtpRequestHandler};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use async_trait::async_trait;
-use lib_blockchain::{/* get_shared_blockchain - removed, use zhtp::runtime::blockchain_provider instead */};
 
 use lib_crypto::verify_signature;
-use anyhow::{Context, Result as AnyhowResult};
-use uuid::Uuid;
-use base64::{Engine as _, engine::general_purpose};
+use anyhow::Result as AnyhowResult;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Deserialize)]

@@ -6,14 +6,11 @@ use chrono;
 
 use lib_protocols::{
     zhtp::{ZhtpResult, ZhtpRequestHandler},
-    types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus},
+    types::{ZhtpRequest, ZhtpResponse, ZhtpMethod},
 };
-use crate::{ZhtpError, runtime::blockchain_provider::get_global_blockchain};
-use lib_blockchain::{
-    Blockchain,
-    transaction::core::{ValidatorTransactionData, ValidatorOperation},
-};
-use lib_crypto::{Hash, hash_blake3};
+use crate::runtime::blockchain_provider::get_global_blockchain;
+use lib_blockchain::Blockchain;
+use lib_crypto::Hash;
 
 /// Request payload for validator registration
 #[derive(Debug, Clone, Deserialize)]

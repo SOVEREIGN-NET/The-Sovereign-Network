@@ -422,7 +422,7 @@ pub mod utils {
     pub fn generate_test_string(length: usize) -> String {
         use rand::Rng;
         const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        use rand::RngCore;
+        
         let mut rng = rand::rngs::OsRng;
         
         (0..length)

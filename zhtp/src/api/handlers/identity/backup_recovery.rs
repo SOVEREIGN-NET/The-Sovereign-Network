@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 

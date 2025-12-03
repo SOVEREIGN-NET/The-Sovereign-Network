@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use lib_crypto::hash_blake3;
 use crate::protocols::NetworkProtocol;
-use crate::mesh::server::{ZhtpMeshServer, NetworkConfig};
+use crate::mesh::server::ZhtpMeshServer;
 
 /// Create a test mesh server for development with implementations
 pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {
@@ -173,7 +173,7 @@ mod tests {
         use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
         
         let config = UnifiedStorageConfig::default();
-        let storage = UnifiedStorageSystem::new(config).await.unwrap();
+        let mut storage = UnifiedStorageSystem::new(config).await.unwrap();
         
         // Basic functionality test with storage
         let stats = storage.get_statistics().await.unwrap();

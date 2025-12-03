@@ -3,11 +3,10 @@
 //! Provides functionality to combine multiple mesh state proofs into
 //! aggregated proofs using recursive ZKP techniques.
 
-use crate::state::{AggregatedStateProof, StateCommitment, NetworkStateInfo, NetworkId};
+use crate::state::{AggregatedStateProof, StateCommitment, NetworkStateInfo};
 use crate::plonky2::{Plonky2Proof, RecursiveProofBuilder, RecursiveConfig};
 use anyhow::{Result, anyhow};
 use lib_crypto::hashing::hash_blake3_multiple;
-use std::collections::HashMap;
 
 /// Rules for how to aggregate child mesh proofs
 #[derive(Debug, Clone)]

@@ -5,13 +5,12 @@
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::Arc;
 use anyhow::Result;
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use crate::dao::{
     DaoProposal, DaoProposalType, DaoProposalStatus, DaoVote, DaoVoteChoice, 
-    DaoTreasury, DaoVoteTally, TreasuryTransaction, TreasuryTransactionType,
+    DaoTreasury, DaoVoteTally,
     PrivacyLevel,
 };
 
