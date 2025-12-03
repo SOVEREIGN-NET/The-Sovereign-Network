@@ -1187,14 +1187,22 @@ impl BluetoothMeshProtocol {
     #[cfg(target_os = "linux")]
     async fn linux_scan_mesh_peers() -> Result<Vec<MeshPeer>> {
         use crate::protocols::bluetooth::linux_ops::LinuxBluetoothOps;
-        
+        use tokio::runtime::Handle;
+
         info!("Linux: Scanning for ZHTP mesh peers...");
-        
-        let bt_ops = LinuxBluetoothOps::new();
-        let peers = bt_ops.scan_mesh_peers().await?;
-        
-        info!("Found {} ZHTP mesh peers on Linux", peers.len());
-        Ok(peers)
+
+        // Use spawn_blocking for D-Bus operations since Connection contains RefCell (not Sync)
+        tokio::task::spawn_blocking(move || {
+            Handle::current().block_on(async {
+                let bt_ops = LinuxBluetoothOps::new();
+                let peers = bt_ops.scan_mesh_peers().await?;
+
+                info!("Found {} ZHTP mesh peers on Linux", peers.len());
+                Ok(peers)
+            })
+        })
+        .await
+        .map_err(|e| anyhow!("Linux scan task failed: {}", e))?
     }
 
     #[cfg(target_os = "windows")]
@@ -1405,23 +1413,33 @@ impl BluetoothMeshProtocol {
     #[cfg(target_os = "linux")]
     async fn linux_connect_mesh_peer(peer: &MeshPeer) -> Result<BluetoothConnection> {
         use crate::protocols::bluetooth::linux_ops::LinuxBluetoothOps;
-        
+        use tokio::runtime::Handle;
+
         info!("Linux: Connecting to mesh peer {}", peer.address);
-        
-        let bt_ops = LinuxBluetoothOps::new();
-        bt_ops.connect_device(&peer.address).await?;
-        
-        Ok(BluetoothConnection {
-            peer_id: peer.peer_id.clone(),
-            connected_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            mtu: 247,
-            address: peer.address.clone(),
-            last_seen: peer.last_seen,
-            rssi: peer.rssi,
+
+        let peer_clone = peer.clone();
+
+        // Use spawn_blocking for D-Bus operations since Connection contains RefCell (not Sync)
+        tokio::task::spawn_blocking(move || {
+            Handle::current().block_on(async {
+                let bt_ops = LinuxBluetoothOps::new();
+                bt_ops.connect_device(&peer_clone.address).await?;
+
+                Ok(BluetoothConnection {
+                    peer_id: peer_clone.peer_id.clone(),
+                    connected_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    mtu: 247,
+                    address: peer_clone.address.clone(),
+                    last_seen: peer_clone.last_seen,
+                    rssi: peer_clone.rssi,
+                })
+            })
         })
+        .await
+        .map_err(|e| anyhow!("Linux connect task failed: {}", e))?
     }
 
     #[cfg(target_os = "windows")]
@@ -3551,19 +3569,31 @@ Value=00
     #[cfg(target_os = "linux")]
     async fn linux_write_handshake(peer_address: &str, char_uuid: &str, data: &[u8]) -> Result<()> {
         use crate::protocols::bluetooth::linux_ops::LinuxBluetoothOps;
-        
+        use tokio::runtime::Handle;
+
         info!("🐧 Linux: Writing handshake to {} via BlueZ", peer_address);
-        
-        let bt_ops = LinuxBluetoothOps::new();
-        
-        // Connect to device
-        bt_ops.connect_device(peer_address).await?;
-        
-        // Write handshake data
-        bt_ops.write_gatt_characteristic(peer_address, char_uuid, data).await?;
-        
-        info!(" Linux: Handshake written successfully");
-        Ok(())
+
+        let peer_address = peer_address.to_string();
+        let char_uuid = char_uuid.to_string();
+        let data = data.to_vec();
+
+        // Use spawn_blocking for D-Bus operations since Connection contains RefCell (not Sync)
+        tokio::task::spawn_blocking(move || {
+            Handle::current().block_on(async {
+                let bt_ops = LinuxBluetoothOps::new();
+
+                // Connect to device
+                bt_ops.connect_device(&peer_address).await?;
+
+                // Write handshake data
+                bt_ops.write_gatt_characteristic(&peer_address, &char_uuid, &data).await?;
+
+                info!(" Linux: Handshake written successfully");
+                Ok(())
+            })
+        })
+        .await
+        .map_err(|e| anyhow!("Linux handshake task failed: {}", e))?
     }
     
     // ========================================================================
