@@ -73,5 +73,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: Clean target directory to free disk space
+        run: |
+          df -h
+          cargo clean
+          rm -rf target/debug/deps
+          rm -rf target/debug/build
+          df -h
+
       - name: Test
         run: cargo test --workspace --all-features --locked
