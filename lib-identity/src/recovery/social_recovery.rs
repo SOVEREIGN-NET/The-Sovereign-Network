@@ -318,6 +318,14 @@ impl SocialRecoveryManager {
             .collect()
     }
 
+    /// Get all pending recovery requests (for guardian endpoint filtering)
+    pub fn get_all_pending_requests(&self) -> Vec<&RecoveryRequest> {
+        self.requests
+            .values()
+            .filter(|r| r.status == RecoveryStatus::Pending && !r.is_expired())
+            .collect()
+    }
+
     /// Clean up expired requests
     pub fn cleanup_expired(&mut self) {
         self.requests.retain(|_, request| {

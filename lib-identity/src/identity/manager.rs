@@ -871,6 +871,13 @@ impl IdentityManager {
             .find(|(_, identity)| identity.did.starts_with(did) || did.starts_with(&identity.did))
             .map(|(id, _)| id.clone())
     }
+
+    /// Get DID by identity ID
+    pub fn get_did_by_identity_id(&self, identity_id: &IdentityId) -> Option<String> {
+        self.identities
+            .get(identity_id)
+            .map(|identity| identity.did.clone())
+    }
 }
 
 impl Default for IdentityManager {
