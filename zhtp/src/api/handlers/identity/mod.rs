@@ -99,6 +99,15 @@ impl ZhtpRequestHandler for IdentityHandler {
             (ZhtpMethod::Get, "/api/v1/identity/backup/status") => {
                 self.handle_backup_status(request).await
             }
+            (ZhtpMethod::Post, "/api/v1/identity/backup/export") => {
+                self.handle_export_backup(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/backup/import") => {
+                self.handle_import_backup(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/seed/verify") => {
+                self.handle_verify_seed_phrase(request).await
+            }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/") => {
                 self.handle_get_identity(request).await
             }
@@ -762,6 +771,43 @@ impl IdentityHandler {
         backup_recovery::handle_backup_status(
             query_params,
             self.recovery_phrase_manager.clone(),
+        )
+        .await
+    }
+
+    /// Handle backup export request (Issue #115)
+    /// POST /api/v1/identity/backup/export
+    async fn handle_export_backup(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_export_backup(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            &request,
+        )
+        .await
+    }
+
+    /// Handle backup import request (Issue #115)
+    /// POST /api/v1/identity/backup/import
+    async fn handle_import_backup(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_import_backup(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            self.rate_limiter.clone(),
+            &request,
+        )
+        .await
+    }
+
+    /// Handle seed phrase verification request (Issue #115)
+    /// POST /api/v1/identity/seed/verify
+    async fn handle_verify_seed_phrase(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        backup_recovery::handle_verify_seed_phrase(
+            &request.body,
+            self.identity_manager.clone(),
+            self.session_manager.clone(),
+            &request,
         )
         .await
     }
