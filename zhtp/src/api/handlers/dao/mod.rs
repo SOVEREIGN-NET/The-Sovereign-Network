@@ -884,7 +884,7 @@ impl DaoHandler {
 
         // Create treasury allocation proposal
         let create_request = CreateProposalRequest {
-            proposer_identity_id: proposer_id,
+            proposer_identity_id: proposer_id.to_string(),
             title: request_data.title.clone(),
             description: format!(
                 "{}\n\nAmount: {}\nRecipient: {}",

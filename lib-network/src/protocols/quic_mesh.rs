@@ -555,7 +555,63 @@ impl PqcQuicConnection {
         
         Ok(())
     }
-    
+
+    /// Set the shared secret after handshake (INTERNAL USE ONLY - zhtp/lib-network only)
+    ///
+    /// WARNING: This bypasses the normal handshake flow. Only use if you're implementing
+    /// a custom handshake handler (e.g., QuicHandler's unified protocol detection).
+    /// This method is PUBLIC for cross-crate usage but has PANIC GUARDS to prevent misuse.
+    ///
+    /// # Panics
+    /// Panics if shared secret is already set (detects bypass/override attempts)
+    pub fn set_shared_secret_internal(&mut self, secret: [u8; 32]) {
+        if self.kyber_shared_secret.is_some() {
+            panic!("SECURITY VIOLATION: Attempted to override existing shared secret");
+        }
+        self.kyber_shared_secret = Some(secret);
+        debug!("🔐 Shared secret set via internal method");
+    }
+
+    /// Set peer info after handshake (INTERNAL USE ONLY - zhtp/lib-network only)
+    ///
+    /// WARNING: This bypasses the normal handshake flow. Only use if you're implementing
+    /// a custom handshake handler (e.g., QuicHandler's unified protocol detection).
+    /// This method is PUBLIC for cross-crate usage but has PANIC GUARDS to prevent misuse.
+    ///
+    /// # Panics
+    /// Panics if peer info is already set (detects bypass/override attempts)
+    pub fn set_peer_info_internal(&mut self, node_id: [u8; 32], dilithium_key: Vec<u8>) {
+        if self.peer_node_id.is_some() || self.peer_dilithium_key.is_some() {
+            panic!("SECURITY VIOLATION: Attempted to override existing peer info");
+        }
+        self.peer_node_id = Some(node_id);
+        self.peer_dilithium_key = Some(dilithium_key);
+        debug!("🔐 Peer info set via internal method");
+    }
+
+    /// Check if connection has valid shared secret (for mesh message decryption)
+    /// Does NOT expose the secret itself - only validates it exists
+    pub fn has_shared_secret(&self) -> bool {
+        self.kyber_shared_secret.is_some()
+    }
+
+    /// Get shared secret reference for decryption (zhtp/lib-network only)
+    /// Returns reference to prevent cloning/exposing the secret
+    /// Use this instead of the removed get_shared_secret() which exposed the secret
+    pub fn get_shared_secret_ref(&self) -> Option<&[u8; 32]> {
+        self.kyber_shared_secret.as_ref()
+    }
+
+    /// Get the underlying QUIC connection
+    pub fn get_connection(&self) -> &Connection {
+        &self.quic_conn
+    }
+
+    /// Get peer node ID
+    pub fn get_peer_node_id(&self) -> Option<[u8; 32]> {
+        self.peer_node_id
+    }
+
     /// Send encrypted message (PQC layer + QUIC layer)
     pub async fn send_encrypted_message(&mut self, message: &[u8]) -> Result<()> {
         let shared_secret = self.kyber_shared_secret

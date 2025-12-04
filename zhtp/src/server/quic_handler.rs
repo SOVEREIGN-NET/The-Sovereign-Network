@@ -14,21 +14,42 @@
 //! QuicHandler.accept_loop()  ← SINGLE entry point
 //!      │
 //!      ▼
-//! Protocol Detection (first bytes)
+//! PQC Handshake at Connection Level
 //!      │
-//!      ├─── bincode enum tag (0x00) + large payload
-//!      │         → PQC handshake → MeshMessageHandler
+//!      ▼
+//! Protocol Detection (first bytes) on each stream
 //!      │
 //!      ├─── ZHTP magic (b"ZHTP")
 //!      │         → ZhtpRouter (native ZHTP API)
 //!      │
-//!      └─── HTTP method (GET/POST/PUT/DELETE/HEAD/OPTIONS)
-//!               → HttpCompatibilityLayer (HTTP-over-QUIC)
+//!      ├─── HTTP method (GET/POST/PUT/DELETE/HEAD/OPTIONS/PATCH/CONNECT/TRACE)
+//!      │         → HttpCompatibilityLayer (HTTP-over-QUIC)
+//!      │
+//!      └─── Mesh Message (encrypted bincode)
+//!               → MeshMessageHandler (blockchain sync)
 //! ```
+//!
+//! # Protocol Flow
+//!
+//! 1. QuicHandler accepts connection from endpoint
+//! 2. First connection is authenticated via PQC handshake (if peer-to-peer)
+//! 3. Subsequent streams are protocol-routed based on first bytes (non-consuming detection):
+//!    - b"ZHTP" → Native ZHTP (binary protocol)
+//!    - b"GET ", etc → HTTP compatibility layer
+//!    - Encrypted mesh messages → MeshMessageHandler
+//!
+//! # Thread Safety
+//!
+//! - `QuicHandler::clone()` creates a new handle to shared state
+//! - `zhtp_router` uses RwLock - multiple concurrent readers allowed
+//! - `http_compat` is Arc-wrapped and immutable after creation
+//! - `pqc_connections` uses RwLock for concurrent peer connection tracking
 
 use std::sync::Arc;
 use std::net::SocketAddr;
-use anyhow::{Result, Context};
+use std::time::{Duration, Instant};
+use std::collections::HashMap;
+use anyhow::{Result, Context, anyhow};
 use tracing::{info, warn, debug, error};
 use quinn::{Connection, Incoming, RecvStream, SendStream};
 use tokio::sync::RwLock;
@@ -41,7 +62,42 @@ use lib_crypto::PublicKey;
 use super::zhtp::{ZhtpRouter, HttpCompatibilityLayer};
 use super::zhtp::serialization::ZHTP_MAGIC;
 
-/// Protocol detection result
+/// Connection idle timeout for client connections (60 seconds)
+const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Connection idle timeout for authenticated peer connections (5 minutes)
+const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Maximum protocol detection buffer size
+const PROTOCOL_DETECT_SIZE: usize = 1024;
+
+/// Protocol detection timeout (P1-1)
+const PROTOCOL_DETECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Maximum number of concurrent PQC peer connections
+const MAX_PQC_CONNECTIONS: usize = 10_000;
+
+/// Maximum age for PQC connections before requiring re-authentication
+const MAX_CONNECTION_AGE: Duration = Duration::from_secs(3600); // 1 hour
+
+/// Maximum handshake size (16KB)
+const MAX_HANDSHAKE_SIZE: u64 = 16 * 1024;
+
+/// Maximum mesh message size (1MB)
+const MAX_MESSAGE_SIZE: u64 = 1024 * 1024;
+
+/// Per-IP rate limit for PQC handshakes
+const MAX_HANDSHAKES_PER_IP: usize = 10;
+const HANDSHAKE_RATE_WINDOW: Duration = Duration::from_secs(60);
+
+/// Tracked PQC connection with metadata
+struct TrackedConnection {
+    connection: PqcQuicConnection,
+    created_at: Instant,
+    last_activity: Instant,
+}
+
+/// Protocol detection result (includes buffered data for forwarding)
 #[derive(Debug)]
 enum ProtocolType {
     /// PQC handshake initiation (mesh peer connecting)
@@ -50,8 +106,62 @@ enum ProtocolType {
     NativeZhtp(Vec<u8>),
     /// Legacy HTTP (needs compatibility conversion)
     LegacyHttp(Vec<u8>),
+    /// Encrypted mesh message (post-handshake)
+    MeshMessage(Vec<u8>),
     /// Unknown/unsupported protocol
     Unknown(Vec<u8>),
+}
+
+/// Buffered stream that prepends already-read data before reading from underlying stream
+pub struct BufferedStream {
+    prepended_data: Vec<u8>,
+    offset: usize,
+    stream: RecvStream,
+}
+
+impl BufferedStream {
+    /// Create a new buffered stream with prepended data
+    fn new(prepended_data: Vec<u8>, stream: RecvStream) -> Self {
+        Self {
+            prepended_data,
+            offset: 0,
+            stream,
+        }
+    }
+
+    /// Read data, first draining prepended buffer, then from underlying stream
+    async fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
+        if self.offset < self.prepended_data.len() {
+            // Still have prepended data to drain
+            let remaining = self.prepended_data.len() - self.offset;
+            let to_copy = remaining.min(buf.len());
+            buf[..to_copy].copy_from_slice(&self.prepended_data[self.offset..self.offset + to_copy]);
+            self.offset += to_copy;
+            Ok(Some(to_copy))
+        } else {
+            // Prepended data exhausted, read from underlying stream
+            self.stream.read(buf).await.map_err(|e| anyhow!("Stream read error: {}", e))
+        }
+    }
+
+    /// Read entire stream to end (up to size limit)
+    pub async fn read_to_end(&mut self, size_limit: usize) -> Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+
+        // First, drain prepended data
+        if self.offset < self.prepended_data.len() {
+            buffer.extend_from_slice(&self.prepended_data[self.offset..]);
+            self.offset = self.prepended_data.len();
+        }
+
+        // Then read from stream
+        let remaining = self.stream.read_to_end(size_limit)
+            .await
+            .map_err(|e| anyhow!("Failed to read stream: {}", e))?;
+
+        buffer.extend_from_slice(&remaining);
+        Ok(buffer)
+    }
 }
 
 /// QUIC connection handler - unified entry point for all protocols
@@ -68,8 +178,11 @@ pub struct QuicHandler {
     /// Mesh message handler for blockchain sync and peer messages
     mesh_handler: Option<Arc<RwLock<MeshMessageHandler>>>,
 
-    /// Active PQC connections (peer_node_id -> PqcQuicConnection)
-    pqc_connections: Arc<RwLock<std::collections::HashMap<Vec<u8>, PqcQuicConnection>>>,
+    /// Active PQC connections with metadata (peer_node_id -> TrackedConnection)
+    pqc_connections: Arc<RwLock<HashMap<Vec<u8>, TrackedConnection>>>,
+
+    /// Handshake rate limiting (IP -> (count, window_start))
+    handshake_rate_limits: Arc<RwLock<HashMap<SocketAddr, (usize, Instant)>>>,
 }
 
 impl QuicHandler {
@@ -87,7 +200,88 @@ impl QuicHandler {
             http_compat,
             quic_protocol,
             mesh_handler: None,
-            pqc_connections: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            pqc_connections: Arc::new(RwLock::new(HashMap::new())),
+            handshake_rate_limits: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Check and update handshake rate limit for an IP address
+    async fn check_handshake_rate_limit(&self, peer_addr: &SocketAddr) -> Result<()> {
+        let mut limits = self.handshake_rate_limits.write().await;
+        let now = Instant::now();
+
+        // Clean up expired entries
+        limits.retain(|_, (_, window_start)| {
+            now.duration_since(*window_start) < HANDSHAKE_RATE_WINDOW
+        });
+
+        let entry = limits.entry(*peer_addr).or_insert((0, now));
+
+        // Reset counter if window expired
+        if now.duration_since(entry.1) >= HANDSHAKE_RATE_WINDOW {
+            *entry = (0, now);
+        }
+
+        // Check limit
+        if entry.0 >= MAX_HANDSHAKES_PER_IP {
+            warn!("🚫 Rate limit exceeded for handshakes from {}", peer_addr);
+            return Err(anyhow!("Too many handshake attempts, please try again later"));
+        }
+
+        // Increment counter
+        entry.0 += 1;
+        Ok(())
+    }
+
+    /// Add PQC connection with bounds checking and LRU eviction
+    async fn add_pqc_connection(&self, node_id: Vec<u8>, conn: PqcQuicConnection) -> Result<()> {
+        let mut connections = self.pqc_connections.write().await;
+        let now = Instant::now();
+
+        // Check if we're at capacity
+        if connections.len() >= MAX_PQC_CONNECTIONS {
+            // Find oldest connection to evict (LRU)
+            if let Some(oldest_key) = connections
+                .iter()
+                .min_by_key(|(_, tracked)| tracked.last_activity)
+                .map(|(k, _)| k.clone())
+            {
+                connections.remove(&oldest_key);
+                warn!("♻️ Evicted oldest PQC connection (LRU) due to capacity limit");
+            }
+        }
+
+        // Add new connection
+        connections.insert(node_id, TrackedConnection {
+            connection: conn,
+            created_at: now,
+            last_activity: now,
+        });
+
+        debug!("📊 PQC connections: {}/{}", connections.len(), MAX_PQC_CONNECTIONS);
+        Ok(())
+    }
+
+    /// Update last activity time for a connection
+    async fn update_connection_activity(&self, node_id: &[u8]) {
+        if let Some(tracked) = self.pqc_connections.write().await.get_mut(node_id) {
+            tracked.last_activity = Instant::now();
+        }
+    }
+
+    /// Clean up expired connections
+    async fn cleanup_expired_connections(&self) {
+        let mut connections = self.pqc_connections.write().await;
+        let now = Instant::now();
+        let initial_count = connections.len();
+
+        connections.retain(|_, tracked| {
+            now.duration_since(tracked.created_at) < MAX_CONNECTION_AGE
+        });
+
+        let removed = initial_count - connections.len();
+        if removed > 0 {
+            info!("🧹 Cleaned up {} expired PQC connections", removed);
         }
     }
 
@@ -98,23 +292,23 @@ impl QuicHandler {
     }
 
     /// Get reference to PQC connections for external access
-    pub fn get_pqc_connections(&self) -> Arc<RwLock<std::collections::HashMap<Vec<u8>, PqcQuicConnection>>> {
+    /// Returns wrapped connections with metadata (use carefully - prefer internal methods)
+    pub fn get_pqc_connections(&self) -> Arc<RwLock<HashMap<Vec<u8>, TrackedConnection>>> {
         self.pqc_connections.clone()
     }
-    
+
     /// Accept and handle incoming QUIC connections from endpoint
-    /// This should be called from a loop that accepts from endpoint.accept().await
     pub async fn handle_connection_incoming(&self, incoming: Incoming) -> Result<()> {
         let handler = self.clone();
-        
-        // Accept the incoming connection (consumes Incoming, returns Connecting)
+
+        // Accept the incoming connection
         let connecting = incoming.accept()?;
-        
+
         tokio::spawn(async move {
             match connecting.await {
                 Ok(connection) => {
                     info!("✅ QUIC connection established from {}", connection.remote_address());
-                    
+
                     if let Err(e) = handler.handle_connection(connection).await {
                         error!("❌ QUIC connection error: {}", e);
                     }
@@ -124,22 +318,15 @@ impl QuicHandler {
                 }
             }
         });
-        
+
         Ok(())
     }
-    
-    /// DEPRECATED: Old function signature - use handle_connection_incoming instead
-    /// This function signature doesn't work with quinn's Incoming type
-    #[deprecated(note = "Use handle_connection_incoming with quinn::Connecting instead")]
-    pub async fn handle_incoming(&self, _incoming: Incoming) -> Result<()> {
-        warn!("⚠️ handle_incoming called with wrong signature - use handle_connection_incoming");
-        Ok(())
-    }
-    
+
     /// Convenience: Accept connections in a loop from QUIC endpoint
+    /// THIS IS THE SINGLE ENTRY POINT - replaces QuicMeshProtocol::start_receiving()
     pub async fn accept_loop(&self, endpoint: Arc<quinn::Endpoint>) -> Result<()> {
-        info!("🌐 QUIC handler started - listening for connections");
-        
+        info!("🌐 QUIC unified handler started - single entry point for all protocols");
+
         loop {
             match endpoint.accept().await {
                 Some(incoming) => {
@@ -151,22 +338,24 @@ impl QuicHandler {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
 
-    
     /// Handle a single QUIC connection (multiple streams)
+    /// First stream determines if this is peer-to-peer (PQC handshake) or client (HTTP/ZHTP)
     async fn handle_connection(&self, connection: Connection) -> Result<()> {
         let peer_addr = connection.remote_address();
         debug!("📡 Handling QUIC connection from {}", peer_addr);
 
-        // First stream determines connection type
-        let first_stream_result = connection.accept_bi().await;
+        // Check if first stream is PQC handshake (peer-to-peer) or client request
+        let first_stream_result = tokio::time::timeout(
+            Duration::from_secs(30),
+            connection.accept_bi()
+        ).await;
 
         match first_stream_result {
-            Ok((send, recv)) => {
+            Ok(Ok((send, recv))) => {
                 // Detect protocol on first stream
                 let handler = self.clone();
                 let conn_clone = connection.clone();
@@ -175,16 +364,20 @@ impl QuicHandler {
                 let result = handler.handle_first_stream(recv, send, conn_clone, peer_addr).await;
 
                 if let Err(e) = result {
-                    warn!("⚠️ First stream handling error: {}", e);
+                    warn!("⚠️ First stream handling error from {}: {}", peer_addr, e);
                 }
             }
-            Err(quinn::ConnectionError::ApplicationClosed(_)) => {
-                debug!("🔒 Connection closed before first stream");
+            Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
+                debug!("🔒 Connection closed before first stream from {}", peer_addr);
                 return Ok(());
             }
-            Err(e) => {
-                warn!("⚠️ Failed to accept first stream: {}", e);
+            Ok(Err(e)) => {
+                warn!("⚠️ Failed to accept first stream from {}: {}", peer_addr, e);
                 return Err(e.into());
+            }
+            Err(_) => {
+                warn!("⏱️ Timeout waiting for first stream from {}", peer_addr);
+                return Ok(());
             }
         }
 
@@ -201,56 +394,81 @@ impl QuicHandler {
     ) -> Result<()> {
         debug!("📨 Processing first QUIC stream from {}", peer_addr);
 
-        // Read enough data to detect protocol
-        let protocol = self.detect_protocol(&mut recv).await?;
+        // Read data for protocol detection (non-consuming via buffering)
+        let protocol = self.detect_protocol_buffered(&mut recv).await?;
 
         match protocol {
             ProtocolType::PqcHandshake(initial_data) => {
                 debug!("🔐 PQC handshake detected from {}", peer_addr);
-                self.handle_pqc_connection(initial_data, recv, send, connection, peer_addr).await?;
+                self.handle_pqc_handshake_stream(initial_data, recv, send, connection, peer_addr).await?;
             }
             ProtocolType::NativeZhtp(initial_data) => {
                 debug!("✅ Native ZHTP protocol detected from {}", peer_addr);
                 self.handle_zhtp_stream_with_prefix(initial_data, recv, send).await?;
-                // Continue accepting more streams on this connection (spawns background task)
-                self.accept_additional_streams(connection);
+                // Continue accepting more streams on this connection
+                self.accept_additional_streams(connection, None);
             }
             ProtocolType::LegacyHttp(initial_data) => {
                 debug!("🔄 Legacy HTTP detected from {} (compatibility mode)", peer_addr);
                 self.handle_http_stream_with_prefix(initial_data, recv, send).await?;
-                // Continue accepting more streams on this connection (spawns background task)
-                self.accept_additional_streams(connection);
+                // Continue accepting more streams on this connection
+                self.accept_additional_streams(connection, None);
+            }
+            ProtocolType::MeshMessage(initial_data) => {
+                warn!("📨 Mesh message on first stream from {} - should be after handshake", peer_addr);
+                // Treat as unknown since handshake should come first
+                self.send_error_response(send, "Expected PQC handshake first").await?;
             }
             ProtocolType::Unknown(initial_data) => {
-                warn!("❓ Unknown protocol from {}: {:?}", peer_addr, &initial_data[..initial_data.len().min(16)]);
-                return Err(anyhow::anyhow!("Unknown protocol"));
+                warn!("❓ Unknown protocol from {}: {:02x?}", peer_addr,
+                      &initial_data[..initial_data.len().min(16)]);
+                self.send_error_response(send, "Unknown protocol").await?;
             }
         }
 
         Ok(())
     }
 
-    /// Accept additional streams after first stream is processed (for HTTP/ZHTP)
-    fn accept_additional_streams(&self, connection: Connection) {
+    /// Accept additional streams after first stream is processed
+    /// For peer connections, peer_node_id is Some (for mesh message routing)
+    /// For client connections, peer_node_id is None (HTTP/ZHTP only)
+    fn accept_additional_streams(&self, connection: Connection, peer_node_id: Option<[u8; 32]>) {
         let handler = self.clone();
 
         tokio::spawn(async move {
+            // Use longer timeout for authenticated peer connections (P1-1: Stream limits)
+            let idle_timeout = if peer_node_id.is_some() {
+                PEER_IDLE_TIMEOUT
+            } else {
+                CLIENT_IDLE_TIMEOUT
+            };
+
             loop {
-                match connection.accept_bi().await {
-                    Ok((send, recv)) => {
+                let stream_result = tokio::time::timeout(
+                    idle_timeout,
+                    connection.accept_bi()
+                ).await;
+
+                match stream_result {
+                    Ok(Ok((send, recv))) => {
                         let h = handler.clone();
+                        let peer_id = peer_node_id;
                         tokio::spawn(async move {
-                            if let Err(e) = h.handle_subsequent_stream(recv, send).await {
-                                warn!("⚠️ Stream handling error: {}", e);
+                            if let Err(e) = h.handle_subsequent_stream(recv, send, peer_id).await {
+                                debug!("⚠️ Stream handling error: {}", e);
                             }
                         });
                     }
-                    Err(quinn::ConnectionError::ApplicationClosed(_)) => {
+                    Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
                         debug!("🔒 Connection closed gracefully");
                         break;
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         debug!("Stream accept ended: {}", e);
+                        break;
+                    }
+                    Err(_) => {
+                        debug!("⏱️ Connection idle timeout");
                         break;
                     }
                 }
@@ -259,8 +477,13 @@ impl QuicHandler {
     }
 
     /// Handle subsequent streams (after first stream established connection type)
-    async fn handle_subsequent_stream(&self, mut recv: RecvStream, send: SendStream) -> Result<()> {
-        let protocol = self.detect_protocol(&mut recv).await?;
+    async fn handle_subsequent_stream(
+        &self,
+        mut recv: RecvStream,
+        send: SendStream,
+        peer_node_id: Option<[u8; 32]>,
+    ) -> Result<()> {
+        let protocol = self.detect_protocol_buffered(&mut recv).await?;
 
         match protocol {
             ProtocolType::NativeZhtp(initial_data) => {
@@ -269,19 +492,27 @@ impl QuicHandler {
             ProtocolType::LegacyHttp(initial_data) => {
                 self.handle_http_stream_with_prefix(initial_data, recv, send).await
             }
+            ProtocolType::MeshMessage(initial_data) => {
+                if let Some(peer_id) = peer_node_id {
+                    self.handle_mesh_message_stream(initial_data, recv, peer_id).await
+                } else {
+                    warn!("Mesh message received on non-peer connection");
+                    Err(anyhow!("Mesh messages only valid on peer connections"))
+                }
+            }
             ProtocolType::PqcHandshake(_) => {
                 warn!("PQC handshake on non-first stream - ignoring");
-                Err(anyhow::anyhow!("PQC handshake only valid on first stream"))
+                Err(anyhow!("PQC handshake only valid on first stream"))
             }
             ProtocolType::Unknown(data) => {
-                warn!("Unknown protocol on stream: {:?}", &data[..data.len().min(16)]);
-                Err(anyhow::anyhow!("Unknown protocol"))
+                warn!("Unknown protocol on stream: {:02x?}", &data[..data.len().min(16)]);
+                Err(anyhow!("Unknown protocol"))
             }
         }
     }
 
-    /// Handle PQC handshake and establish mesh connection
-    async fn handle_pqc_connection(
+    /// Handle PQC handshake stream and establish authenticated peer connection
+    async fn handle_pqc_handshake_stream(
         &self,
         initial_data: Vec<u8>,
         _recv: RecvStream,
@@ -290,6 +521,15 @@ impl QuicHandler {
         peer_addr: SocketAddr,
     ) -> Result<()> {
         info!("🔐 Processing PQC handshake from {}", peer_addr);
+
+        // Check rate limit for this IP (P1-2: Rate limiting on PQC handshakes)
+        self.check_handshake_rate_limit(&peer_addr).await?;
+
+        // Validate handshake size (P1-4: Bincode size limits)
+        if initial_data.len() > MAX_HANDSHAKE_SIZE as usize {
+            warn!("🚫 Handshake too large from {}: {} bytes", peer_addr, initial_data.len());
+            return Err(anyhow!("Handshake message exceeds maximum size"));
+        }
 
         // Parse the client's handshake message
         let client_msg: PqcHandshakeMessage = bincode::deserialize(&initial_data)
@@ -300,9 +540,15 @@ impl QuicHandler {
                 (node_id, kyber_pubkey, dilithium_pubkey)
             }
             _ => {
-                return Err(anyhow::anyhow!("Expected KyberPublicKey message"));
+                return Err(anyhow!("Expected KyberPublicKey message"));
             }
         };
+
+        // Validate peer_node_id format (P1-5: Validate peer_node_id format)
+        if peer_node_id.iter().all(|&b| b == 0) {
+            warn!("🚫 Invalid peer_node_id from {}: all zeros", peer_addr);
+            return Err(anyhow!("Invalid peer node ID"));
+        }
 
         // Encapsulate shared secret using client's Kyber public key
         let (ciphertext, shared_secret) = lib_crypto::post_quantum::kyber512_encapsulate(&kyber_pubkey)
@@ -327,87 +573,78 @@ impl QuicHandler {
 
         // Create PQC connection wrapper
         let mut pqc_conn = PqcQuicConnection::new(connection.clone(), peer_addr, false);
-        pqc_conn.set_shared_secret(shared_secret);
-        pqc_conn.set_peer_info(peer_node_id, dilithium_pubkey);
+        pqc_conn.set_shared_secret_internal(shared_secret);
+        pqc_conn.set_peer_info_internal(peer_node_id, dilithium_pubkey);
 
-        // Store connection
-        self.pqc_connections.write().await.insert(peer_node_id.to_vec(), pqc_conn);
+        // Store connection with bounds checking and LRU eviction (P0-3)
+        self.add_pqc_connection(peer_node_id.to_vec(), pqc_conn).await?;
 
-        // Start receiving encrypted mesh messages on this connection
-        self.start_mesh_message_receiver(connection, peer_node_id, shared_secret).await;
+        // Continue accepting streams with peer authentication context
+        self.accept_additional_streams(connection, Some(peer_node_id));
 
         Ok(())
     }
 
-    /// Start receiving encrypted mesh messages from a PQC-authenticated peer
-    async fn start_mesh_message_receiver(
+    /// Handle encrypted mesh message stream from authenticated peer
+    async fn handle_mesh_message_stream(
         &self,
-        connection: Connection,
+        initial_data: Vec<u8>,
+        mut recv: RecvStream,
         peer_node_id: [u8; 32],
-        shared_secret: [u8; 32],
-    ) {
-        let mesh_handler = self.mesh_handler.clone();
-        let pqc_connections = self.pqc_connections.clone();
-        let peer_id_vec = peer_node_id.to_vec();
+    ) -> Result<()> {
+        debug!("📨 Receiving mesh message from peer {}", hex::encode(&peer_node_id[..8]));
 
-        tokio::spawn(async move {
-            info!("📡 Starting mesh message receiver for peer {}", hex::encode(&peer_node_id[..8]));
+        // Read full message with size limit (P1-4: Bincode size limits)
+        let mut message_data = initial_data;
+        let remaining = recv.read_to_end(MAX_MESSAGE_SIZE as usize).await?;
+        message_data.extend_from_slice(&remaining);
 
-            loop {
-                // Accept unidirectional stream for incoming messages
-                match connection.accept_uni().await {
-                    Ok(mut recv) => {
-                        // Read encrypted message
-                        match recv.read_to_end(1024 * 1024).await {
-                            Ok(encrypted) => {
-                                // Decrypt with shared secret
-                                match lib_crypto::symmetric::chacha20::decrypt_data(&encrypted, &shared_secret) {
-                                    Ok(decrypted) => {
-                                        // Deserialize mesh message
-                                        match bincode::deserialize::<ZhtpMeshMessage>(&decrypted) {
-                                            Ok(message) => {
-                                                debug!("📨 Received mesh message from peer");
-                                                if let Some(ref handler) = mesh_handler {
-                                                    let peer_pk = PublicKey::new(peer_id_vec.clone());
-                                                    if let Err(e) = handler.read().await
-                                                        .handle_mesh_message(message, peer_pk).await {
-                                                        error!("Error handling mesh message: {}", e);
-                                                    }
-                                                } else {
-                                                    warn!("No mesh handler configured");
-                                                }
-                                            }
-                                            Err(e) => {
-                                                error!("Failed to deserialize mesh message: {}", e);
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to decrypt mesh message: {}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                debug!("Stream read error: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                    Err(quinn::ConnectionError::ApplicationClosed(_)) => {
-                        debug!("🔒 Mesh connection closed");
-                        break;
-                    }
-                    Err(e) => {
-                        debug!("Mesh connection error: {}", e);
-                        break;
-                    }
-                }
+        if message_data.len() > MAX_MESSAGE_SIZE as usize {
+            warn!("🚫 Mesh message too large from peer {}: {} bytes",
+                  hex::encode(&peer_node_id[..8]), message_data.len());
+            return Err(anyhow!("Message exceeds maximum size"));
+        }
+
+        // Get connection and validate authentication (P1-3: Authentication checks before decryption)
+        let (shared_secret, connection_age) = {
+            let connections = self.pqc_connections.read().await;
+            let tracked = connections.get(&peer_node_id.to_vec())
+                .ok_or_else(|| anyhow!("No PQC connection for peer - not authenticated"))?;
+
+            // Check connection age
+            let age = Instant::now().duration_since(tracked.created_at);
+            if age > MAX_CONNECTION_AGE {
+                warn!("🚫 Connection from peer {} too old: {:?}", hex::encode(&peer_node_id[..8]), age);
+                return Err(anyhow!("Connection expired - please re-authenticate"));
             }
 
-            // Remove connection on close
-            pqc_connections.write().await.remove(&peer_id_vec);
-            info!("📡 Mesh message receiver stopped for peer {}", hex::encode(&peer_node_id[..8]));
-        });
+            // Verify shared secret exists
+            let secret = tracked.connection.get_shared_secret_ref()
+                .ok_or_else(|| anyhow!("No shared secret for peer - handshake incomplete"))?;
+
+            (*secret, age)
+        };
+
+        // Update activity timestamp
+        self.update_connection_activity(&peer_node_id).await;
+
+        // Decrypt with shared secret (only after authentication checks pass)
+        let decrypted = lib_crypto::symmetric::chacha20::decrypt_data(&message_data, &shared_secret)
+            .context("Failed to decrypt mesh message - possible tampering")?;
+
+        // Deserialize mesh message with size validation
+        let message: ZhtpMeshMessage = bincode::deserialize(&decrypted)
+            .context("Failed to deserialize mesh message")?;
+
+        // Handle via mesh handler
+        if let Some(ref handler) = self.mesh_handler {
+            let peer_pk = PublicKey::new(peer_node_id.to_vec());
+            handler.read().await.handle_mesh_message(message, peer_pk).await?;
+        } else {
+            warn!("No mesh handler configured");
+        }
+
+        Ok(())
     }
 
     /// Handle ZHTP stream with already-read prefix data
@@ -418,7 +655,8 @@ impl QuicHandler {
         send: SendStream,
     ) -> Result<()> {
         let router = self.zhtp_router.read().await;
-        router.handle_zhtp_stream_with_prefix(prefix, recv, send).await
+        let mut buffered = BufferedStream::new(prefix, recv);
+        router.handle_zhtp_stream_buffered(&mut buffered, send).await
     }
 
     /// Handle HTTP stream with already-read prefix data
@@ -428,17 +666,36 @@ impl QuicHandler {
         recv: RecvStream,
         send: SendStream,
     ) -> Result<()> {
-        self.http_compat.handle_http_over_quic_with_prefix(prefix, recv, send).await
+        let mut buffered = BufferedStream::new(prefix, recv);
+        self.http_compat.handle_http_over_quic_buffered(&mut buffered, send).await
     }
 
-    /// Detect protocol type by inspecting stream data
-    /// Returns the protocol type along with all data read (for forwarding)
-    async fn detect_protocol(&self, recv: &mut RecvStream) -> Result<ProtocolType> {
-        // Read up to 1KB to determine protocol
-        // PQC handshake is large (~1KB+), HTTP/ZHTP headers are smaller
-        let mut buffer = vec![0u8; 1024];
+    /// Send error response to client
+    async fn send_error_response(&self, mut send: SendStream, message: &str) -> Result<()> {
+        let error_msg = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                               message.len(), message);
+        send.write_all(error_msg.as_bytes()).await.ok();
+        send.finish().ok();
+        Ok(())
+    }
 
-        match recv.read(&mut buffer).await {
+    /// Detect protocol type by inspecting stream data WITHOUT consuming bytes
+    /// Returns the protocol type along with all data read (for forwarding via BufferedStream)
+    async fn detect_protocol_buffered(&self, recv: &mut RecvStream) -> Result<ProtocolType> {
+        // Read up to 1KB to determine protocol with timeout (P1-1)
+        let mut buffer = vec![0u8; PROTOCOL_DETECT_SIZE];
+
+        let read_result = tokio::time::timeout(
+            PROTOCOL_DETECT_TIMEOUT,
+            recv.read(&mut buffer)
+        ).await;
+
+        match read_result {
+            Err(_) => {
+                warn!("⏱️ Protocol detection timeout");
+                return Err(anyhow!("Protocol detection timeout"));
+            }
+            Ok(recv_result) => match recv_result {
             Ok(Some(n)) => {
                 buffer.truncate(n);
 
@@ -446,32 +703,46 @@ impl QuicHandler {
                     return Ok(ProtocolType::Unknown(buffer));
                 }
 
-                // Check for ZHTP magic first (most specific)
+                // 1. Check for ZHTP magic first (highest priority - our native protocol)
                 if &buffer[0..4] == ZHTP_MAGIC {
                     debug!("✅ ZHTP magic bytes detected");
                     return Ok(ProtocolType::NativeZhtp(buffer));
                 }
 
-                // Check for HTTP methods
-                let magic_str = String::from_utf8_lossy(&buffer[0..4]);
+                // 2. Check for HTTP methods (comprehensive list)
+                let magic_str = String::from_utf8_lossy(&buffer[0..buffer.len().min(8)]);
                 if magic_str.starts_with("GET ") ||
-                   magic_str.starts_with("POST") ||
+                   magic_str.starts_with("POST ") ||
                    magic_str.starts_with("PUT ") ||
-                   magic_str.starts_with("DELE") ||
-                   magic_str.starts_with("HEAD") ||
-                   magic_str.starts_with("OPTI") {
-                    debug!("🔄 HTTP method detected: {}", &magic_str[0..4]);
+                   magic_str.starts_with("DELETE ") ||
+                   magic_str.starts_with("HEAD ") ||
+                   magic_str.starts_with("OPTIONS ") ||
+                   magic_str.starts_with("PATCH ") ||
+                   magic_str.starts_with("CONNECT ") ||
+                   magic_str.starts_with("TRACE ") {
+                    debug!("🔄 HTTP method detected");
                     return Ok(ProtocolType::LegacyHttp(buffer));
                 }
 
-                // Check for PQC handshake (bincode enum variant 0 + large data)
-                // KyberPublicKey variant has: enum_tag(4 bytes) + kyber_pk(~800B) + dilithium_pk(~1KB) + node_id(32B)
-                if buffer[0] == 0x00 && buffer.len() > 100 {
-                    // Likely PQC handshake - try to parse
-                    if bincode::deserialize::<PqcHandshakeMessage>(&buffer).is_ok() {
-                        debug!("🔐 PQC handshake message detected");
-                        return Ok(ProtocolType::PqcHandshake(buffer));
+                // 3. Check for PQC handshake (bincode enum variant 0 + large Kyber keys)
+                // KyberPublicKey has: enum_tag + kyber_pk(~800B) + dilithium_pk(~1KB) + node_id(32B)
+                if buffer.len() >= 100 {
+                    // Try to parse as PQC handshake
+                    if let Ok(msg) = bincode::deserialize::<PqcHandshakeMessage>(&buffer) {
+                        if matches!(msg, PqcHandshakeMessage::KyberPublicKey { .. }) {
+                            debug!("🔐 PQC handshake message detected");
+                            return Ok(ProtocolType::PqcHandshake(buffer));
+                        }
                     }
+                }
+
+                // 4. Check for encrypted mesh message (typically starts with encryption header)
+                // After handshake, mesh messages are ChaCha20 encrypted
+                // No reliable way to detect without trying to decrypt, so treat as mesh if all else fails
+                // and buffer is reasonably sized
+                if buffer.len() > 50 {
+                    debug!("📨 Possible mesh message detected");
+                    return Ok(ProtocolType::MeshMessage(buffer));
                 }
 
                 // Unknown protocol
@@ -483,7 +754,8 @@ impl QuicHandler {
             }
             Err(e) => {
                 warn!("⚠️ Failed to read from stream: {}", e);
-                Err(e.into())
+                Err(anyhow!("Stream read error: {}", e))
+            }
             }
         }
     }
@@ -497,44 +769,84 @@ impl Clone for QuicHandler {
             quic_protocol: self.quic_protocol.clone(),
             mesh_handler: self.mesh_handler.clone(),
             pqc_connections: self.pqc_connections.clone(),
+            handshake_rate_limits: self.handshake_rate_limits.clone(),
         }
     }
+}
+
+// Extension trait for BufferedStream compatibility
+pub trait BufferedStreamExt {
+    async fn handle_zhtp_stream_buffered(
+        &self,
+        buffered: &mut BufferedStream,
+        send: SendStream,
+    ) -> Result<()>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_detect_zhtp_magic() {
         let zhtp_data = b"ZHTP\x01\x00\x00\x00\x10test data";
         assert_eq!(&zhtp_data[0..4], ZHTP_MAGIC);
     }
-    
+
     #[test]
-    fn test_detect_http_method() {
-        let http_methods: Vec<&[u8]> = vec![
-            b"GET /test HTTP/1.1",
-            b"POST /api HTTP/1.1",
-            b"PUT /data HTTP/1.1",
-            b"DELETE /item HTTP/1.1",
-            b"HEAD /info HTTP/1.1",
-            b"OPTIONS * HTTP/1.1",
+    fn test_detect_http_methods() {
+        let http_methods: Vec<(&str, &[u8])> = vec![
+            ("GET", b"GET /test HTTP/1.1"),
+            ("POST", b"POST /api HTTP/1.1"),
+            ("PUT", b"PUT /data HTTP/1.1"),
+            ("DELETE", b"DELETE /item HTTP/1.1"),
+            ("HEAD", b"HEAD /info HTTP/1.1"),
+            ("OPTIONS", b"OPTIONS * HTTP/1.1"),
+            ("PATCH", b"PATCH /resource HTTP/1.1"),
+            ("CONNECT", b"CONNECT example.com:443 HTTP/1.1"),
+            ("TRACE", b"TRACE / HTTP/1.1"),
         ];
 
-        for method in http_methods {
-            let first_bytes = &method[0..4];
-            let magic_str = String::from_utf8_lossy(first_bytes);
-            
-            assert!(
+        for (method_name, method_bytes) in http_methods {
+            let magic_str = String::from_utf8_lossy(&method_bytes[0..method_bytes.len().min(8)]);
+
+            let detected =
                 magic_str.starts_with("GET ") ||
-                magic_str.starts_with("POST") ||
+                magic_str.starts_with("POST ") ||
                 magic_str.starts_with("PUT ") ||
-                magic_str.starts_with("DELE") ||
-                magic_str.starts_with("HEAD") ||
-                magic_str.starts_with("OPTI"),
-                "Failed to detect HTTP method: {}", magic_str
-            );
+                magic_str.starts_with("DELETE ") ||
+                magic_str.starts_with("HEAD ") ||
+                magic_str.starts_with("OPTIONS ") ||
+                magic_str.starts_with("PATCH ") ||
+                magic_str.starts_with("CONNECT ") ||
+                magic_str.starts_with("TRACE ");
+
+            assert!(detected, "Failed to detect HTTP method: {}", method_name);
         }
+    }
+
+    #[tokio::test]
+    async fn test_buffered_stream() {
+        use tokio::io::AsyncWriteExt;
+
+        // Create a mock stream
+        let (mut send, recv) = tokio::io::duplex(64);
+
+        // Write test data
+        send.write_all(b"world").await.unwrap();
+        drop(send);
+
+        // Create buffered stream with prefix
+        let prefix = b"hello ".to_vec();
+        let mut buffered = BufferedStream::new(prefix, RecvStream::from(recv));
+
+        // Read should return prefix first
+        let mut buf = vec![0u8; 20];
+        let n = buffered.read(&mut buf).await.unwrap().unwrap();
+        assert_eq!(&buf[..n], b"hello ");
+
+        // Next read should return stream data
+        let n = buffered.read(&mut buf).await.unwrap().unwrap();
+        assert_eq!(&buf[..n], b"world");
     }
 }
