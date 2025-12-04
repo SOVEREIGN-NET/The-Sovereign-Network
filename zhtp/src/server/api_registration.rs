@@ -211,7 +211,8 @@ pub async fn register_api_handlers(
     let protocol_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
         ProtocolHandler::new()
     );
-    http_router.register_handler("/api/v1/protocol".to_string(), protocol_handler);
+    http_router.register_handler("/api/v1/protocol".to_string(), protocol_handler.clone());
+    zhtp_router.register_handler("/api/v1/protocol".to_string(), protocol_handler);
     info!("   ✅ Protocol handler registered");
     
     info!("✅ All API handlers registered successfully (11 handlers)");
