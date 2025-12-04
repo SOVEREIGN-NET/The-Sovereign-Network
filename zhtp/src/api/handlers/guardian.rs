@@ -344,6 +344,7 @@ async fn handle_add_guardian(
 
     // Add guardian
     let guardian_public_key = PublicKey::new(req.guardian_public_key);
+    let guardian_did_for_log = req.guardian_did.clone();
     let guardian_id = guardian_config
         .add_guardian(req.guardian_did, guardian_public_key, req.guardian_name)
         .map_err(|e| anyhow::anyhow!("Failed to add guardian: {}", e))?;
@@ -358,7 +359,7 @@ async fn handle_add_guardian(
     // Security: Log guardian addition
     info!(
         identity_id = %hex::encode(identity_id.as_bytes()),
-        guardian_did = %req.guardian_did,
+        guardian_did = %guardian_did_for_log,
         guardian_id = %guardian_id,
         client_ip = %client_ip,
         "Guardian added successfully"
@@ -533,6 +534,7 @@ async fn handle_initiate_recovery(
 
     // Initiate recovery
     let mut manager = recovery_manager.write().await;
+    let client_ip_for_log = client_ip.clone();
     let recovery_id = manager
         .initiate_recovery(
             req.identity_did.clone(),
@@ -551,7 +553,7 @@ async fn handle_initiate_recovery(
         identity_did = %req.identity_did,
         recovery_id = %recovery_id,
         guardians_required = recovery_request.threshold,
-        client_ip = %client_ip,
+        client_ip = %client_ip_for_log,
         requester_device = %recovery_request.requester_device,
         "Recovery initiated"
     );
@@ -803,17 +805,21 @@ async fn handle_complete_recovery(
     drop(identity_manager_read);
 
     // Complete recovery (acquire write lock after validation)
-    let mut manager = recovery_manager.write().await;
-    let recovery_request = manager
-        .get_request_mut(&recovery_id)
-        .ok_or_else(|| anyhow::anyhow!("Recovery request not found"))?;
+    let recovered_identity_did = {
+        let mut manager = recovery_manager.write().await;
+        let recovery_request = manager
+            .get_request_mut(&recovery_id)
+            .ok_or_else(|| anyhow::anyhow!("Recovery request not found"))?;
 
-    recovery_request
-        .complete()
-        .map_err(|e| anyhow::anyhow!("Failed to complete recovery: {}", e))?;
-    drop(manager);
+        recovery_request
+            .complete()
+            .map_err(|e| anyhow::anyhow!("Failed to complete recovery: {}", e))?;
+
+        recovery_request.identity_did.clone()
+    };
 
     // Create session token for recovered identity
+    let identity_id_hex = hex::encode(identity_id.as_bytes());
     let session_token = session_manager
         .create_session(identity_id, &client_ip, &user_agent)
         .await
@@ -823,7 +829,7 @@ async fn handle_complete_recovery(
     info!(
         recovery_id = %recovery_id,
         identity_did = %identity_did,
-        identity_id = %hex::encode(identity_id.as_bytes()),
+        identity_id = %identity_id_hex,
         client_ip = %client_ip,
         "Recovery completed successfully"
     );
@@ -832,7 +838,7 @@ async fn handle_complete_recovery(
         serde_json::to_vec(&serde_json::json!({
             "status": "success",
             "session_token": session_token,
-            "identity_did": recovery_request.identity_did,
+            "identity_did": recovered_identity_did,
         }))?,
         None,
     ))
@@ -897,9 +903,13 @@ async fn handle_pending_recoveries(
     drop(identity_manager_read);
 
     // Get all pending recovery requests from recovery manager
-    let manager = recovery_manager.read().await;
-    let all_requests = manager.get_all_pending_requests();
-    drop(manager);
+    let all_requests: Vec<_> = {
+        let manager = recovery_manager.read().await;
+        manager.get_all_pending_requests()
+            .into_iter()
+            .map(|r| r.clone())
+            .collect()
+    };
 
     // Acquire identity manager lock once for all lookups
     let identity_manager_read = identity_manager.read().await;
