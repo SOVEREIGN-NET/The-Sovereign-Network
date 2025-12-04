@@ -342,12 +342,12 @@ impl ZhtpUnifiedServer {
         // Inject message handler into QUIC protocol
         quic_mesh.set_message_handler(Arc::new(RwLock::new(message_handler)));
         info!("✅ MeshMessageHandler injected into QUIC protocol for blockchain sync");
-        
-        // Start receiving QUIC connections in background
-        quic_mesh.start_receiving().await
-            .context("Failed to start QUIC receiver")?;
-        
-        info!(" QUIC mesh protocol ready on UDP port {}", quic_port);
+
+        // IMPORTANT: Don't call start_receiving() here!
+        // QuicHandler.accept_loop() is now the SOLE entry point for all QUIC connections
+        // This avoids two competing accept loops racing for connections
+
+        info!(" QUIC mesh protocol ready on UDP port {} (unified handler will accept connections)", quic_port);
         Ok(quic_mesh)
     }
     

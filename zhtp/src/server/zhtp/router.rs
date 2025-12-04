@@ -121,7 +121,84 @@ impl ZhtpRouter {
         info!("✅ ZHTP response sent successfully");
         Ok(())
     }
-    
+
+    /// Handle ZHTP stream with BufferedStream (for protocol detection compatibility)
+    pub async fn handle_zhtp_stream_buffered(
+        &self,
+        buffered: &mut crate::server::quic_handler::BufferedStream,
+        mut send: SendStream,
+    ) -> Result<()> {
+        debug!("📨 Processing native ZHTP request over QUIC (buffered stream)");
+
+        // Read request data from buffered stream
+        let request_data = buffered.read_to_end(super::serialization::MAX_MESSAGE_SIZE)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read ZHTP request from buffered stream: {}", e))?;
+
+        if request_data.is_empty() {
+            warn!("⚠️ Empty ZHTP request received");
+            return Ok(());
+        }
+
+        debug!("📦 Received {} bytes of ZHTP request data", request_data.len());
+
+        // Deserialize ZHTP request
+        let request = match deserialize_request(&request_data) {
+            Ok(req) => req,
+            Err(e) => {
+                warn!("❌ Failed to deserialize ZHTP request: {}", e);
+                let error_response = ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid ZHTP request: {}", e),
+                );
+                let response_data = serialize_response(&error_response)?;
+                send.write_all(&response_data).await
+                    .map_err(|e| anyhow::anyhow!("Write error: {}", e))?;
+                send.finish()
+                    .map_err(|e| anyhow::anyhow!("Finish error: {}", e))?;
+                return Ok(());
+            }
+        };
+
+        info!("✅ ZHTP {} {}", request.method, request.uri);
+
+        // Process middleware
+        let (processed_request, middleware_response) = self.process_middleware(request).await?;
+
+        // If middleware returned a response, use it
+        let response = if let Some(middleware_resp) = middleware_response {
+            middleware_resp
+        } else {
+            // Route to handler
+            match self.route_request(processed_request).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    warn!("❌ Handler error: {}", e);
+                    ZhtpResponse::error(
+                        ZhtpStatus::InternalServerError,
+                        format!("Handler error: {}", e),
+                    )
+                }
+            }
+        };
+
+        debug!("📤 Sending ZHTP response: {:?}", response.status);
+
+        // Serialize response
+        let response_data = serialize_response(&response)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize ZHTP response: {}", e))?;
+
+        // Send response over QUIC stream
+        send.write_all(&response_data).await
+            .map_err(|e| anyhow::anyhow!("Failed to write ZHTP response to QUIC stream: {}", e))?;
+
+        send.finish()
+            .map_err(|e| anyhow::anyhow!("Failed to finish QUIC stream: {}", e))?;
+
+        info!("✅ ZHTP response sent successfully (buffered)");
+        Ok(())
+    }
+
     /// Route a ZHTP request to the appropriate handler
     pub async fn route_request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let path = &request.uri;

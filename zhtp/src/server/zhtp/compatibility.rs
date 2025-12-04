@@ -85,7 +85,69 @@ impl HttpCompatibilityLayer {
         debug!("✅ HTTP compatibility response sent");
         Ok(())
     }
-    
+
+    /// Handle HTTP request over QUIC with BufferedStream (for protocol detection compatibility)
+    pub async fn handle_http_over_quic_buffered(
+        &self,
+        buffered: &mut crate::server::quic_handler::BufferedStream,
+        mut send: SendStream,
+    ) -> Result<()> {
+        debug!("🔄 Processing legacy HTTP request (compatibility mode, buffered)");
+
+        // Read HTTP request from buffered stream
+        let buffer = buffered.read_to_end(10 * 1024 * 1024).await
+            .map_err(|e| anyhow::anyhow!("Failed to read HTTP request from buffered stream: {}", e))?;
+
+        if buffer.is_empty() {
+            return Ok(());
+        }
+
+        // Parse HTTP request
+        let http_data = String::from_utf8_lossy(&buffer);
+        let request = match self.parse_http_request(&http_data) {
+            Ok(req) => req,
+            Err(e) => {
+                warn!("❌ Failed to parse HTTP request: {}", e);
+                let error_response = self.create_http_error_response(400, "Bad Request");
+                send.write_all(&error_response).await
+                    .map_err(|e| anyhow::anyhow!("Write error: {}", e))?;
+                send.finish()
+                    .map_err(|e| anyhow::anyhow!("Finish error: {}", e))?;
+                return Ok(());
+            }
+        };
+
+        info!("🔄 HTTP {} {} → ZHTP",
+            match request.method {
+                ZhtpMethod::Get => "GET",
+                ZhtpMethod::Post => "POST",
+                ZhtpMethod::Put => "PUT",
+                ZhtpMethod::Delete => "DELETE",
+                _ => "UNKNOWN",
+            },
+            request.uri
+        );
+
+        // Route through ZHTP router
+        let router = self.router.read().await;
+        let response = router.route_request(request).await
+            .unwrap_or_else(|e| {
+                warn!("Handler error: {}", e);
+                ZhtpResponse::error(ZhtpStatus::InternalServerError, e.to_string())
+            });
+
+        // Convert ZHTP response back to HTTP
+        let http_response = self.zhtp_to_http_response(&response);
+
+        send.write_all(&http_response).await
+            .map_err(|e| anyhow::anyhow!("Write error: {}", e))?;
+        send.finish()
+            .map_err(|e| anyhow::anyhow!("Finish error: {}", e))?;
+
+        debug!("✅ HTTP compatibility response sent (buffered)");
+        Ok(())
+    }
+
     /// Parse HTTP/1.1 request into ZHTP request
     fn parse_http_request(&self, http_data: &str) -> Result<ZhtpRequest> {
         let lines: Vec<&str> = http_data.lines().collect();
