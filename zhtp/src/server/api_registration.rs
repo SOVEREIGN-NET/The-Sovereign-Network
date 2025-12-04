@@ -35,10 +35,12 @@ use crate::api::handlers::{
 };
 use crate::session_manager::SessionManager;
 use crate::server::http::router::HttpRouter;
+use crate::server::zhtp::router::ZhtpRouter;
 
-/// Register all API handlers with the HTTP router
+/// Register all API handlers with the HTTP and ZHTP routers
 pub async fn register_api_handlers(
     http_router: &mut HttpRouter,
+    zhtp_router: &mut ZhtpRouter,
     blockchain: Arc<RwLock<Blockchain>>,
     storage: Arc<RwLock<UnifiedStorageSystem>>,
     identity_manager: Arc<RwLock<IdentityManager>>,
