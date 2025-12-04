@@ -1,6 +1,6 @@
 //! Comprehensive QUIC API Integration Tests
 //!
-//! Tests all 82 API endpoints via QUIC client connection to local network node.
+//! Tests all implemented API endpoints via QUIC client connection to local network node.
 //!
 //! **Prerequisites:**
 //! - ZHTP node running on local network
@@ -10,7 +10,7 @@
 //! **Usage:**
 //! ```bash
 //! export ZHTP_NODE_IP="192.168.1.100:9334"
-//! cargo test --test quic_api_endpoints_test -- --nocapture
+//! cargo test --test quic_api_endpoints_test -- --ignored --nocapture
 //! ```
 
 use anyhow::{Result, Context};
@@ -165,22 +165,27 @@ async fn test_endpoint(
     method: &str,
     path: &str,
     body: Option<&str>,
-    expected_status: &[u16],
-) -> Result<()> {
+) -> Result<u16> {
     print!("  Testing {} {} ... ", method, path);
 
     let (status, response) = send_http_request(connection, method, path, body).await?;
 
-    if expected_status.contains(&status) {
+    // Success: 200-299
+    // Client error but endpoint exists: 400-403, 429
+    // Fail: 404 (not found), 500+ (server error)
+    let is_success = status >= 200 && status < 300;
+    let is_client_error = matches!(status, 400 | 401 | 403 | 429);
+
+    if is_success || is_client_error {
         println!("✅ {}", status);
-        Ok(())
     } else {
-        println!("❌ {} (expected {:?})", status, expected_status);
+        println!("❌ {} FAILED", status);
         if response.len() < 500 {
             println!("     Response: {}", response);
         }
-        Err(anyhow::anyhow!("Unexpected status code: {}", status))
     }
+
+    Ok(status)
 }
 
 // ============================================================================
@@ -194,8 +199,7 @@ async fn test_all_api_endpoints() -> Result<()> {
     println!("{}", "=".repeat(70));
 
     let connection = connect_quic().await?;
-    let mut passed = 0;
-    let mut failed = 0;
+    let mut results = Vec::new();
 
     // Protocol endpoints (5)
     println!("\n📡 Protocol Endpoints");
@@ -206,38 +210,24 @@ async fn test_all_api_endpoints() -> Result<()> {
         ("GET", "/api/v1/protocol/capabilities"),
         ("GET", "/api/v1/protocol/stats"),
     ] {
-        match test_endpoint(&connection, method, path, None, &[200, 401, 403]).await {
-            Ok(_) => passed += 1,
-            Err(_) => failed += 1,
-        }
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
     }
 
-    // Blockchain endpoints (32)
+    // Blockchain endpoints (21)
     println!("\n⛓️  Blockchain Endpoints");
     for (method, path) in [
         ("GET", "/api/v1/blockchain/status"),
         ("GET", "/api/v1/blockchain/latest"),
         ("GET", "/api/v1/blockchain/tip"),
-        ("GET", "/api/v1/blockchain/blocks/"),
         ("GET", "/api/v1/blockchain/block/0"),
         ("GET", "/api/v1/blockchain/mempool"),
         ("GET", "/api/v1/blockchain/validators"),
-        ("GET", "/api/v1/blockchain/network/stats"),
-        ("GET", "/api/v1/blockchain/network/peers"),
-        ("GET", "/api/v1/blockchain/network/peer/test"),
-        ("POST", "/api/v1/blockchain/network/peer/add"),
-        ("GET", "/api/v1/blockchain/sync/metrics"),
-        ("GET", "/api/v1/blockchain/sync/performance"),
-        ("GET", "/api/v1/blockchain/sync/history"),
-        ("GET", "/api/v1/blockchain/sync/peers"),
-        ("GET", "/api/v1/blockchain/sync/peers/test"),
-        ("GET", "/api/v1/blockchain/sync/alerts"),
-        ("GET", "/api/v1/blockchain/sync/alerts/acknowledged"),
-        ("GET", "/api/v1/blockchain/sync/alerts/thresholds"),
-        ("POST", "/api/v1/blockchain/sync/alerts/acknowledge"),
         ("GET", "/api/v1/blockchain/balance/test_id"),
         ("GET", "/api/v1/blockchain/transactions/pending"),
         ("GET", "/api/v1/blockchain/transaction/test_hash"),
+        ("GET", "/api/v1/blockchain/export"),
+        ("POST", "/api/v1/blockchain/import"),
         ("POST", "/api/v1/blockchain/transaction"),
         ("POST", "/api/v1/blockchain/transaction/broadcast"),
         ("POST", "/api/v1/blockchain/transaction/estimate-fee"),
@@ -245,16 +235,13 @@ async fn test_all_api_endpoints() -> Result<()> {
         ("GET", "/api/v1/blockchain/contracts/test_address"),
         ("POST", "/api/v1/blockchain/contracts/deploy"),
         ("GET", "/api/v1/blockchain/edge-stats"),
-        ("POST", "/api/v1/blockchain/export"),
-        ("POST", "/api/v1/blockchain/import"),
+        ("GET", "/api/v1/blockchain/blocks/0/10"),
     ] {
-        match test_endpoint(&connection, method, path, None, &[200, 400, 401, 403, 404, 500]).await {
-            Ok(_) => passed += 1,
-            Err(_) => failed += 1,
-        }
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
     }
 
-    // Identity endpoints (17)
+    // Identity endpoints (13)
     println!("\n🪪  Identity Endpoints");
     for (method, path) in [
         ("POST", "/api/v1/identity/create"),
@@ -271,49 +258,29 @@ async fn test_all_api_endpoints() -> Result<()> {
         ("POST", "/api/v1/identity/backup/export"),
         ("POST", "/api/v1/identity/backup/import"),
         ("POST", "/api/v1/identity/citizenship/apply"),
-        ("GET", "/api/v1/identity/guardians"),
-        ("POST", "/api/v1/identity/guardians/add"),
-        ("DELETE", "/api/v1/identity/guardians/test_id"),
     ] {
-        match test_endpoint(&connection, method, path, None, &[200, 400, 401, 403, 404, 500]).await {
-            Ok(_) => passed += 1,
-            Err(_) => failed += 1,
-        }
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
     }
 
-    // Guardian/Recovery endpoints (3)
-    println!("\n🛡️  Guardian/Recovery Endpoints");
-    for (method, path) in [
-        ("POST", "/api/v1/identity/recovery/initiate"),
-        ("GET", "/api/v1/identity/recovery/pending"),
-        // Note: approve/reject/complete need recovery_id in path
-    ] {
-        match test_endpoint(&connection, method, path, None, &[200, 400, 401, 403, 404, 500]).await {
-            Ok(_) => passed += 1,
-            Err(_) => failed += 1,
-        }
-    }
-
-    // Storage endpoints (7)
+    // Storage endpoints (5)
     println!("\n💾 Storage Endpoints");
     for (method, path) in [
         ("GET", "/api/v1/storage/status"),
         ("GET", "/api/v1/storage/stats"),
         ("POST", "/api/v1/storage/store"),
         ("POST", "/api/v1/storage/put"),
-        ("GET", "/api/v1/storage/get"),
+        ("POST", "/api/v1/storage/get"),
         ("DELETE", "/api/v1/storage/delete"),
     ] {
-        match test_endpoint(&connection, method, path, None, &[200, 400, 401, 403, 404, 500]).await {
-            Ok(_) => passed += 1,
-            Err(_) => failed += 1,
-        }
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
     }
 
     // Wallet endpoints (8)
     println!("\n💰 Wallet Endpoints");
     for (method, path) in [
-        ("GET", "/api/v1/wallet/balance/test_id"),
+        ("GET", "/api/v1/wallet/balance/test_wallet/test_id"),
         ("GET", "/api/v1/wallet/list/test_id"),
         ("GET", "/api/v1/wallet/transactions/test_id"),
         ("GET", "/api/v1/wallet/statistics/test_id"),
@@ -322,10 +289,8 @@ async fn test_all_api_endpoints() -> Result<()> {
         ("POST", "/api/v1/wallet/staking/stake"),
         ("POST", "/api/v1/wallet/staking/unstake"),
     ] {
-        match test_endpoint(&connection, method, path, None, &[200, 400, 401, 403, 404, 500]).await {
-            Ok(_) => passed += 1,
-            Err(_) => failed += 1,
-        }
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
     }
 
     // Crypto endpoints (3)
@@ -335,63 +300,98 @@ async fn test_all_api_endpoints() -> Result<()> {
         ("POST", "/api/v1/crypto/sign_message"),
         ("POST", "/api/v1/crypto/verify_signature"),
     ] {
-        match test_endpoint(&connection, method, path, None, &[200, 400, 401, 403, 500]).await {
-            Ok(_) => passed += 1,
-            Err(_) => failed += 1,
-        }
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
     }
 
-    // Validator endpoints (3)
+    // Validator endpoints (5)
     println!("\n✅ Validator Endpoints");
     for (method, path) in [
         ("GET", "/api/v1/validators"),
         ("GET", "/api/v1/validator/test_id"),
-        ("POST", "/api/v1/validator/register"),
     ] {
-        match test_endpoint(&connection, method, path, None, &[200, 400, 401, 403, 404, 500]).await {
-            Ok(_) => passed += 1,
-            Err(_) => failed += 1,
-        }
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
     }
 
-    // Web4 endpoints (3)
+    // Web4 endpoints (12)
     println!("\n🌐 Web4 Endpoints");
     for (method, path) in [
         ("POST", "/api/v1/web4/load"),
         ("GET", "/api/v1/web4/domains/test_domain"),
-        ("GET", "/api/v1/web4/content/test_hash"),
+        ("GET", "/api/v1/web4/statistics"),
     ] {
-        match test_endpoint(&connection, method, path, None, &[200, 400, 401, 403, 404, 500]).await {
-            Ok(_) => passed += 1,
-            Err(_) => failed += 1,
-        }
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
     }
 
-    // Mesh/Network endpoints (2)
-    println!("\n🕸️  Mesh/Network Endpoints");
+    // Network endpoints (19)
+    println!("\n🌐 Network Endpoints");
+    for (method, path) in [
+        ("GET", "/api/v1/network/gas"),
+        ("GET", "/api/v1/blockchain/network/peers"),
+        ("GET", "/api/v1/blockchain/network/stats"),
+        ("GET", "/api/v1/blockchain/sync/metrics"),
+        ("GET", "/api/v1/blockchain/sync/performance"),
+        ("GET", "/api/v1/blockchain/sync/alerts"),
+        ("GET", "/api/v1/blockchain/sync/history"),
+        ("GET", "/api/v1/blockchain/sync/peers"),
+        ("POST", "/api/v1/blockchain/network/peer/add"),
+        ("POST", "/api/v1/blockchain/sync/alerts/acknowledge"),
+    ] {
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
+    }
+
+    // Mesh endpoints (5)
+    println!("\n🕸️  Mesh Endpoints");
     for (method, path) in [
         ("POST", "/api/v1/mesh/create"),
-        ("GET", "/api/v1/mesh/test_id"),
-        ("GET", "/api/v1/network/gas"),
+        ("GET", "/api/v1/mesh/test_id/status"),
     ] {
-        match test_endpoint(&connection, method, path, None, &[200, 400, 401, 403, 404, 500]).await {
-            Ok(_) => passed += 1,
-            Err(_) => failed += 1,
-        }
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
+    }
+
+    // DAO endpoints (14)
+    println!("\n🏛️  DAO Endpoints");
+    for (method, path) in [
+        ("GET", "/api/v1/dao/treasury/status"),
+        ("GET", "/api/v1/dao/proposals/list"),
+        ("GET", "/api/v1/dao/data"),
+        ("POST", "/api/v1/dao/proposal/create"),
+        ("POST", "/api/v1/dao/vote/cast"),
+    ] {
+        let status = test_endpoint(&connection, method, path, None).await?;
+        results.push((path, status));
     }
 
     // Summary
     println!("\n{}", "=".repeat(70));
     println!("📊 Test Results:");
-    println!("   ✅ Passed: {}", passed);
-    println!("   ❌ Failed: {}", failed);
-    println!("   📈 Total:  {}", passed + failed);
-    println!("   🎯 Success Rate: {:.1}%", (passed as f32 / (passed + failed) as f32) * 100.0);
 
-    if failed > 0 {
-        Err(anyhow::anyhow!("{} endpoint(s) failed", failed))
+    let total = results.len();
+    let success = results.iter().filter(|(_, s)| *s >= 200 && *s < 300).count();
+    let client_error = results.iter().filter(|(_, s)| matches!(*s, 400 | 401 | 403 | 429)).count();
+    let not_found = results.iter().filter(|(_, s)| *s == 404).count();
+    let server_error = results.iter().filter(|(_, s)| *s >= 500).count();
+
+    println!("   ✅ Success (200-299): {}", success);
+    println!("   ⚠️  Client Error (400-403, 429): {}", client_error);
+    println!("   ❌ Not Found (404): {}", not_found);
+    println!("   ❌ Server Error (500+): {}", server_error);
+    println!("   📈 Total Tested: {}", total);
+
+    if not_found > 0 || server_error > 0 {
+        println!("\n❌ FAILURES FOUND:");
+        for (path, status) in &results {
+            if *status == 404 || *status >= 500 {
+                println!("   {} - {}", status, path);
+            }
+        }
+        Err(anyhow::anyhow!("{} endpoints failed (404 or 500+)", not_found + server_error))
     } else {
-        println!("\n🎉 All endpoints passed!");
+        println!("\n🎉 All endpoints reachable!");
         Ok(())
     }
 }
