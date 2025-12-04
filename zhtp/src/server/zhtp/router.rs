@@ -52,17 +52,47 @@ impl ZhtpRouter {
         mut send: SendStream,
     ) -> Result<()> {
         debug!("📨 Processing native ZHTP request over QUIC");
-        
+
         // Read request data from QUIC stream
         let request_data = recv.read_to_end(super::serialization::MAX_MESSAGE_SIZE)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to read ZHTP request from QUIC stream: {}", e))?;
-        
+
+        self.handle_zhtp_request_data(request_data, send).await
+    }
+
+    /// Handle ZHTP request with already-read prefix data
+    pub async fn handle_zhtp_stream_with_prefix(
+        &self,
+        prefix: Vec<u8>,
+        mut recv: RecvStream,
+        send: SendStream,
+    ) -> Result<()> {
+        debug!("📨 Processing native ZHTP request with {} byte prefix", prefix.len());
+
+        // Read remaining data
+        let remaining = recv.read_to_end(super::serialization::MAX_MESSAGE_SIZE)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read remaining ZHTP data: {}", e))?;
+
+        // Combine prefix with remaining data
+        let mut request_data = prefix;
+        request_data.extend(remaining);
+
+        self.handle_zhtp_request_data(request_data, send).await
+    }
+
+    /// Internal: process ZHTP request data and send response
+    async fn handle_zhtp_request_data(
+        &self,
+        request_data: Vec<u8>,
+        mut send: SendStream,
+    ) -> Result<()> {
         if request_data.is_empty() {
             warn!("⚠️ Empty ZHTP request received");
             return Ok(());
         }
-        
+
         debug!("📦 Received {} bytes of ZHTP request data", request_data.len());
         
         // Deserialize ZHTP request

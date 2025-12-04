@@ -28,18 +28,47 @@ impl HttpCompatibilityLayer {
     pub async fn handle_http_over_quic(
         &self,
         mut recv: RecvStream,
-        mut send: SendStream,
+        send: SendStream,
     ) -> Result<()> {
         debug!("🔄 Processing legacy HTTP request (compatibility mode)");
-        
+
         // Read HTTP request
         let buffer = recv.read_to_end(10 * 1024 * 1024).await
             .map_err(|e| anyhow::anyhow!("Failed to read HTTP request: {}", e))?;
-        
+
+        self.handle_http_request_data(buffer, send).await
+    }
+
+    /// Handle HTTP request with already-read prefix data
+    pub async fn handle_http_over_quic_with_prefix(
+        &self,
+        prefix: Vec<u8>,
+        mut recv: RecvStream,
+        send: SendStream,
+    ) -> Result<()> {
+        debug!("🔄 Processing legacy HTTP request with {} byte prefix", prefix.len());
+
+        // Read remaining data
+        let remaining = recv.read_to_end(10 * 1024 * 1024).await
+            .map_err(|e| anyhow::anyhow!("Failed to read remaining HTTP data: {}", e))?;
+
+        // Combine prefix with remaining data
+        let mut buffer = prefix;
+        buffer.extend(remaining);
+
+        self.handle_http_request_data(buffer, send).await
+    }
+
+    /// Internal: process HTTP request data and send response
+    async fn handle_http_request_data(
+        &self,
+        buffer: Vec<u8>,
+        mut send: SendStream,
+    ) -> Result<()> {
         if buffer.is_empty() {
             return Ok(());
         }
-        
+
         // Parse HTTP request
         let http_data = String::from_utf8_lossy(&buffer);
         let request = match self.parse_http_request(&http_data) {

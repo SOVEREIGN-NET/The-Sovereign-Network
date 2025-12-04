@@ -426,7 +426,28 @@ impl PqcQuicConnection {
             bootstrap_mode,
         }
     }
-    
+
+    /// Set the shared secret after handshake (used by QuicHandler)
+    pub fn set_shared_secret(&mut self, secret: [u8; 32]) {
+        self.kyber_shared_secret = Some(secret);
+    }
+
+    /// Set peer info after handshake (used by QuicHandler)
+    pub fn set_peer_info(&mut self, node_id: [u8; 32], dilithium_key: Vec<u8>) {
+        self.peer_node_id = Some(node_id);
+        self.peer_dilithium_key = Some(dilithium_key);
+    }
+
+    /// Get the underlying QUIC connection
+    pub fn get_connection(&self) -> &Connection {
+        &self.quic_conn
+    }
+
+    /// Get peer node ID
+    pub fn get_peer_node_id(&self) -> Option<[u8; 32]> {
+        self.peer_node_id
+    }
+
     /// Perform PQC key exchange as client
     async fn perform_pqc_handshake_as_client(&mut self) -> Result<()> {
         debug!(" Starting PQC handshake (client)...");

@@ -278,11 +278,19 @@ impl ZhtpUnifiedServer {
         
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
         let zhtp_router_arc = Arc::new(zhtp_router);
-        let quic_handler = Arc::new(QuicHandler::new(
+        let mut quic_handler = QuicHandler::new(
             Arc::new(RwLock::new((*zhtp_router_arc).clone())),  // Native ZhtpRouter wrapped in RwLock
             quic_arc.clone(),                    // QuicMeshProtocol for transport
-        ));
-        info!(" QUIC handler initialized for native ZHTP-over-QUIC");
+        );
+
+        // Inject MeshMessageHandler into QuicHandler for PQC mesh connections
+        if let Some(ref handler) = quic_arc.message_handler {
+            quic_handler.set_mesh_handler(handler.clone());
+            info!("✅ MeshMessageHandler injected into QuicHandler for blockchain sync");
+        }
+
+        let quic_handler = Arc::new(quic_handler);
+        info!(" QUIC handler initialized for native ZHTP-over-QUIC + HTTP compatibility + PQC mesh");
         
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
         mesh_router.set_zhtp_router(zhtp_router_arc.clone()).await;
@@ -338,15 +346,16 @@ impl ZhtpUnifiedServer {
             long_range_relays,
             revenue_pools,
         );
-        
-        // Inject message handler into QUIC protocol
+
+        // Note: MeshMessageHandler will be injected into QuicHandler (not QuicMeshProtocol)
+        // The QuicHandler is the unified entry point for all QUIC connections
         quic_mesh.set_message_handler(Arc::new(RwLock::new(message_handler)));
-        info!("✅ MeshMessageHandler injected into QUIC protocol for blockchain sync");
-        
-        // Start receiving QUIC connections in background
-        quic_mesh.start_receiving().await
-            .context("Failed to start QUIC receiver")?;
-        
+        info!("✅ MeshMessageHandler created for QuicHandler");
+
+        // IMPORTANT: Don't call start_receiving() here!
+        // QuicHandler.accept_loop() is now the SOLE entry point for all QUIC connections
+        // This avoids two competing accept loops racing for connections
+
         info!(" QUIC mesh protocol ready on UDP port {}", quic_port);
         Ok(quic_mesh)
     }
