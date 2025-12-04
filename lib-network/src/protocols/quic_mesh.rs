@@ -602,16 +602,6 @@ impl PqcQuicConnection {
         self.kyber_shared_secret.as_ref()
     }
 
-    /// Get the underlying QUIC connection
-    pub fn get_connection(&self) -> &Connection {
-        &self.quic_conn
-    }
-
-    /// Get peer node ID
-    pub fn get_peer_node_id(&self) -> Option<[u8; 32]> {
-        self.peer_node_id
-    }
-
     /// Send encrypted message (PQC layer + QUIC layer)
     pub async fn send_encrypted_message(&mut self, message: &[u8]) -> Result<()> {
         let shared_secret = self.kyber_shared_secret
