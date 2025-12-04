@@ -880,7 +880,7 @@ impl DaoHandler {
         )?;
 
         // Use authenticated identity as proposer (not first identity!)
-        let proposer_id = authenticated_identity_id;
+        let proposer_id = hex::encode(authenticated_identity_id.as_bytes());
 
         // Create treasury allocation proposal
         let create_request = CreateProposalRequest {
