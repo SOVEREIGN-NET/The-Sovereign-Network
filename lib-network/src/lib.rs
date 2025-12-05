@@ -21,6 +21,9 @@ pub use crate::discovery::*;
 pub use crate::relays::*;
 pub use crate::blockchain_sync::{BlockchainSyncManager, EdgeNodeSyncManager};
 
+// Unified Peer Identity System (replaces separate NodeId, PeerId, PublicKey systems)
+pub use crate::identity::{UnifiedPeerId, PeerIdMapper};
+
 
 // Native binary DHT protocol with lib-storage backend
 // DHT client layer is deprecated; kept temporarily for compatibility
@@ -39,6 +42,7 @@ pub mod relays;
 pub mod routing;
 pub mod protocols;
 pub mod bootstrap;
+pub mod identity; // Unified peer identity system
 pub mod monitoring;
 pub mod zk_integration;
 pub mod testing;

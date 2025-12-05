@@ -1,0 +1,476 @@
+//! Unified Peer Identity System
+//!
+//! This module consolidates three separate identity systems (NodeId, PeerId, PublicKey)
+//! into a single unified representation for peer identification across the network.
+//!
+//! # Problem Statement
+//!
+//! Previously, the codebase used three different identity types:
+//! - `NodeId` - Blake3 hash derived from DID + device name (lib-identity)
+//! - `PeerId` - Legacy peer identifier (various protocols)
+//! - `PublicKey` - Cryptographic public key (lib-crypto)
+//!
+//! This created confusion, redundant mappings, and data inconsistencies.
+//!
+//! # Solution
+//!
+//! `UnifiedPeerId` serves as the single source of truth for peer identity:
+//! - Contains all three ID types internally
+//! - Ensures consistency across the entire network stack
+//! - Created exclusively from ZhtpIdentity (no legacy type conversions)
+//!
+//! # Usage
+//!
+//! ```rust
+//! use lib_network::identity::{UnifiedPeerId, PeerIdMapper};
+//! use lib_identity::{ZhtpIdentity, NodeId};
+//! use lib_crypto::PublicKey;
+//!
+//! // Create from ZhtpIdentity
+//! let identity = ZhtpIdentity::new_unified(...)?;
+//! let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
+//!
+//! // Use mapper for bidirectional lookups
+//! let mapper = PeerIdMapper::new();
+//! mapper.register(peer_id.clone()).await;
+//! let found = mapper.lookup_by_node_id(&node_id).await;
+//! ```
+
+use anyhow::{Result, anyhow};
+use lib_crypto::PublicKey;
+use lib_identity::{ZhtpIdentity, NodeId};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use std::fmt;
+
+// ============================================================================
+// Core Unified Peer Identity
+// ============================================================================
+
+/// Unified peer identity consolidating all identity types
+///
+/// This struct is the single source of truth for peer identification,
+/// containing all three legacy ID types (NodeId, PeerId, PublicKey) in one place.
+///
+/// # Design Principles
+///
+/// - **Canonical Storage**: All three IDs stored together, no separate mappings needed
+/// - **Single Source**: Created only from ZhtpIdentity, no partial conversions from legacy types
+/// - **Consistency**: Guarantees that NodeId, PublicKey, and DID always stay in sync
+/// - **Uniqueness**: Hash and Eq based on NodeId (the most stable identifier)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedPeerId {
+    /// Decentralized Identifier (DID) - Sovereign Identity
+    /// Format: "did:zhtp:<hash>"
+    pub did: String,
+    
+    /// Cryptographic public key for signature verification
+    /// This is the peer's public key from their identity
+    pub public_key: PublicKey,
+    
+    /// Canonical node identifier from lib-identity
+    /// Derived as: Blake3(DID || device_name)
+    pub node_id: NodeId,
+    
+    /// Device identifier (e.g., "laptop", "phone", "server-01")
+    /// Used to distinguish multiple devices under same DID
+    pub device_id: String,
+    
+    /// Optional display name for this peer
+    pub display_name: Option<String>,
+    
+    /// Timestamp of identity creation (Unix timestamp)
+    pub created_at: u64,
+}
+
+impl UnifiedPeerId {
+    /// Create UnifiedPeerId from ZhtpIdentity (primary constructor)
+    ///
+    /// This is the preferred way to create a UnifiedPeerId as it ensures
+    /// all fields are properly populated from the authoritative identity source.
+    pub fn from_zhtp_identity(identity: &ZhtpIdentity) -> Self {
+        Self {
+            did: identity.did.clone(),
+            public_key: identity.public_key.clone(),
+            node_id: identity.node_id.clone(),
+            device_id: identity.primary_device.clone(),
+            display_name: identity.metadata.get("display_name").cloned(),
+            created_at: identity.created_at,
+        }
+    }
+    
+    /// Verify that node_id matches Blake3(DID || device_id) per lib-identity rules
+    pub fn verify_node_id(&self) -> Result<()> {
+        let expected = NodeId::from_did_device(&self.did, &self.device_id)?;
+        if self.node_id.as_bytes() != expected.as_bytes() {
+            return Err(anyhow!(
+                "NodeId mismatch: expected {} but got {}",
+                expected.to_hex(),
+                self.node_id.to_hex()
+            ));
+        }
+        Ok(())
+    }
+    
+    /// Get a compact string representation for logging
+    pub fn to_compact_string(&self) -> String {
+        format!("{}@{}", self.device_id, &self.did[..std::cmp::min(20, self.did.len())])
+    }
+    
+    /// Get the NodeId (canonical identifier)
+    pub fn node_id(&self) -> &NodeId {
+        &self.node_id
+    }
+    
+    /// Get the PublicKey
+    pub fn public_key(&self) -> &PublicKey {
+        &self.public_key
+    }
+    
+    /// Get the DID
+    pub fn did(&self) -> &str {
+        &self.did
+    }
+    
+    /// Get the device ID
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+}
+
+// ============================================================================
+// Equality and Hashing (based on NodeId)
+// ============================================================================
+
+impl PartialEq for UnifiedPeerId {
+    fn eq(&self, other: &Self) -> bool {
+        self.node_id == other.node_id
+    }
+}
+
+impl Eq for UnifiedPeerId {}
+
+impl std::hash::Hash for UnifiedPeerId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.node_id.as_bytes().hash(state);
+    }
+}
+
+impl fmt::Display for UnifiedPeerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "UnifiedPeerId({})", self.to_compact_string())
+    }
+}
+
+// ============================================================================
+// Bidirectional Peer ID Mapper
+// ============================================================================
+
+/// Service for bidirectional mapping between legacy ID types and UnifiedPeerId
+///
+/// This mapper maintains indexes for fast lookups by any legacy ID type:
+/// - NodeId → UnifiedPeerId
+/// - PublicKey → UnifiedPeerId
+/// - DID → UnifiedPeerId (can return multiple peers for multi-device identities)
+///
+/// # Thread Safety
+///
+/// All operations are async and use RwLock for concurrent access.
+///
+/// # Usage
+///
+/// ```rust
+/// let mapper = PeerIdMapper::new();
+///
+/// // Register a peer
+/// mapper.register(peer_id).await;
+///
+/// // Lookup by different ID types
+/// let by_node = mapper.lookup_by_node_id(&node_id).await;
+/// let by_pubkey = mapper.lookup_by_public_key(&public_key).await;
+/// let by_did = mapper.lookup_by_did("did:zhtp:abc123").await;
+/// ```
+#[derive(Debug, Clone)]
+pub struct PeerIdMapper {
+    /// Main storage: NodeId → UnifiedPeerId
+    by_node_id: Arc<RwLock<HashMap<NodeId, UnifiedPeerId>>>,
+    
+    /// Index: PublicKey → NodeId (for fast lookup)
+    by_public_key: Arc<RwLock<HashMap<PublicKey, NodeId>>>,
+    
+    /// Index: DID → Vec<NodeId> (one DID can have multiple devices)
+    by_did: Arc<RwLock<HashMap<String, Vec<NodeId>>>>,
+}
+
+impl PeerIdMapper {
+    /// Create a new empty peer ID mapper
+    pub fn new() -> Self {
+        Self {
+            by_node_id: Arc::new(RwLock::new(HashMap::new())),
+            by_public_key: Arc::new(RwLock::new(HashMap::new())),
+            by_did: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+    
+    /// Register a peer in the mapper (creates all indexes)
+    pub async fn register(&self, peer: UnifiedPeerId) {
+        let node_id = peer.node_id.clone();
+        let public_key = peer.public_key.clone();
+        let did = peer.did.clone();
+        
+        // Store in main map
+        self.by_node_id.write().await.insert(node_id.clone(), peer);
+        
+        // Create PublicKey → NodeId index
+        self.by_public_key.write().await.insert(public_key, node_id.clone());
+        
+        // Create DID → Vec<NodeId> index (supports multi-device)
+        let mut did_map = self.by_did.write().await;
+        did_map.entry(did).or_insert_with(Vec::new).push(node_id);
+    }
+    
+    /// Remove a peer from the mapper (cleans up all indexes)
+    pub async fn unregister(&self, node_id: &NodeId) -> Option<UnifiedPeerId> {
+        // Remove from main map
+        let peer = self.by_node_id.write().await.remove(node_id)?;
+        
+        // Remove PublicKey → NodeId index
+        self.by_public_key.write().await.remove(&peer.public_key);
+        
+        // Remove from DID → Vec<NodeId> index
+        let mut did_map = self.by_did.write().await;
+        if let Some(nodes) = did_map.get_mut(&peer.did) {
+            nodes.retain(|n| n != node_id);
+            if nodes.is_empty() {
+                did_map.remove(&peer.did);
+            }
+        }
+        
+        Some(peer)
+    }
+    
+    /// Lookup peer by NodeId (canonical identifier)
+    pub async fn lookup_by_node_id(&self, node_id: &NodeId) -> Option<UnifiedPeerId> {
+        self.by_node_id.read().await.get(node_id).cloned()
+    }
+    
+    /// Lookup peer by PublicKey
+    pub async fn lookup_by_public_key(&self, public_key: &PublicKey) -> Option<UnifiedPeerId> {
+        let node_id = self.by_public_key.read().await.get(public_key).cloned()?;
+        self.lookup_by_node_id(&node_id).await
+    }
+    
+    /// Lookup all peers by DID (returns all devices for this identity)
+    pub async fn lookup_by_did(&self, did: &str) -> Vec<UnifiedPeerId> {
+        let node_ids = self.by_did.read().await.get(did).cloned();
+        
+        match node_ids {
+            Some(ids) => {
+                let map = self.by_node_id.read().await;
+                ids.iter()
+                    .filter_map(|id| map.get(id).cloned())
+                    .collect()
+            }
+            None => Vec::new(),
+        }
+    }
+    
+    /// Get all registered peers
+    pub async fn all_peers(&self) -> Vec<UnifiedPeerId> {
+        self.by_node_id.read().await.values().cloned().collect()
+    }
+    
+    /// Get total peer count
+    pub async fn peer_count(&self) -> usize {
+        self.by_node_id.read().await.len()
+    }
+    
+    /// Clear all mappings
+    pub async fn clear(&self) {
+        self.by_node_id.write().await.clear();
+        self.by_public_key.write().await.clear();
+        self.by_did.write().await.clear();
+    }
+    
+    /// Check if a peer is registered by NodeId
+    pub async fn contains_node_id(&self, node_id: &NodeId) -> bool {
+        self.by_node_id.read().await.contains_key(node_id)
+    }
+    
+    /// Check if a peer is registered by PublicKey
+    pub async fn contains_public_key(&self, public_key: &PublicKey) -> bool {
+        self.by_public_key.read().await.contains_key(public_key)
+    }
+    
+    /// Check if any peers are registered for a DID
+    pub async fn contains_did(&self, did: &str) -> bool {
+        self.by_did.read().await.contains_key(did)
+    }
+}
+
+impl Default for PeerIdMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lib_identity::IdentityType;
+    
+    fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIdentity> {
+        ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            device,
+            seed,
+        )
+    }
+    
+    #[tokio::test]
+    async fn test_unified_peer_id_from_zhtp_identity() -> Result<()> {
+        let identity = create_test_identity("laptop", None)?;
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
+        
+        assert_eq!(peer_id.did, identity.did);
+        assert_eq!(peer_id.public_key.as_bytes(), identity.public_key.as_bytes());
+        assert_eq!(peer_id.node_id, identity.node_id);
+        assert_eq!(peer_id.device_id, identity.primary_device);
+        
+        // Verify NodeId is correct
+        peer_id.verify_node_id()?;
+        
+        println!("✅ UnifiedPeerId from ZhtpIdentity test passed");
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_peer_id_equality() -> Result<()> {
+        let seed = [0x42u8; 64];
+        let identity1 = create_test_identity("laptop", Some(seed))?;
+        let identity2 = create_test_identity("laptop", Some(seed))?;
+        
+        let peer1 = UnifiedPeerId::from_zhtp_identity(&identity1);
+        let peer2 = UnifiedPeerId::from_zhtp_identity(&identity2);
+        
+        // Same seed + device = same NodeId = equal peers
+        assert_eq!(peer1, peer2);
+        
+        println!("✅ Peer ID equality test passed");
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_peer_id_mapper_register_and_lookup() -> Result<()> {
+        let mapper = PeerIdMapper::new();
+        
+        let identity = create_test_identity("server", None)?;
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
+        
+        // Register
+        mapper.register(peer_id.clone()).await;
+        
+        // Lookup by NodeId
+        let found = mapper.lookup_by_node_id(&identity.node_id).await;
+        assert!(found.is_some());
+        assert_eq!(found.unwrap(), peer_id);
+        
+        // Lookup by PublicKey
+        let found = mapper.lookup_by_public_key(&identity.public_key).await;
+        assert!(found.is_some());
+        assert_eq!(found.unwrap(), peer_id);
+        
+        // Lookup by DID
+        let found = mapper.lookup_by_did(&identity.did).await;
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0], peer_id);
+        
+        println!("✅ Peer ID mapper register and lookup test passed");
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_peer_id_mapper_multi_device() -> Result<()> {
+        let mapper = PeerIdMapper::new();
+        let seed = [0x42u8; 64];
+        
+        // Same identity, different devices
+        let laptop = create_test_identity("laptop", Some(seed))?;
+        let phone = create_test_identity("phone", Some(seed))?;
+        
+        let peer_laptop = UnifiedPeerId::from_zhtp_identity(&laptop);
+        let peer_phone = UnifiedPeerId::from_zhtp_identity(&phone);
+        
+        // Register both
+        mapper.register(peer_laptop.clone()).await;
+        mapper.register(peer_phone.clone()).await;
+        
+        // Lookup by DID should return both devices
+        let found = mapper.lookup_by_did(&laptop.did).await;
+        assert_eq!(found.len(), 2);
+        
+        // Verify both are present
+        assert!(found.contains(&peer_laptop));
+        assert!(found.contains(&peer_phone));
+        
+        println!("✅ Peer ID mapper multi-device test passed");
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_peer_id_mapper_unregister() -> Result<()> {
+        let mapper = PeerIdMapper::new();
+        
+        let identity = create_test_identity("workstation", None)?;
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
+        
+        // Register
+        mapper.register(peer_id.clone()).await;
+        assert_eq!(mapper.peer_count().await, 1);
+        
+        // Unregister
+        let removed = mapper.unregister(&identity.node_id).await;
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap(), peer_id);
+        assert_eq!(mapper.peer_count().await, 0);
+        
+        // Verify all indexes are cleaned up
+        assert!(!mapper.contains_node_id(&identity.node_id).await);
+        assert!(!mapper.contains_public_key(&identity.public_key).await);
+        assert!(!mapper.contains_did(&identity.did).await);
+        
+        println!("✅ Peer ID mapper unregister test passed");
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_peer_id_mapper_clear() -> Result<()> {
+        let mapper = PeerIdMapper::new();
+        
+        // Register multiple peers
+        for i in 0..5 {
+            let device = format!("device-{}", i);
+            let identity = create_test_identity(&device, None)?;
+            let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
+            mapper.register(peer_id).await;
+        }
+        
+        assert_eq!(mapper.peer_count().await, 5);
+        
+        // Clear all
+        mapper.clear().await;
+        assert_eq!(mapper.peer_count().await, 0);
+        
+        println!("✅ Peer ID mapper clear test passed");
+        Ok(())
+    }
+    
+}
