@@ -232,7 +232,8 @@ impl DaoHandler {
 
     /// Parse hex string to Hash
     fn string_to_hash(hash_str: &str) -> Result<Hash> {
-        let bytes = hex::decode(hash_str)?;
+        let bytes = hex::decode(hash_str)
+            .map_err(|e| anyhow::anyhow!("Invalid hex string: {}", e))?;
         Ok(Hash::from_bytes(&bytes))
     }
 

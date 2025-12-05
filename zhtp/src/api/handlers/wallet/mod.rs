@@ -212,7 +212,7 @@ impl WalletHandler {
     async fn handle_list_wallets(&self, identity_id: &str) -> Result<ZhtpResponse> {
         // Parse identity ID from hex string
         let identity_hash = hex::decode(identity_id)
-            .map_err(|_| anyhow::anyhow!("Invalid identity ID format"))?;
+            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
         
         if identity_hash.len() != 32 {
             return Ok(create_error_response(
@@ -310,7 +310,7 @@ impl WalletHandler {
 
         // Parse identity ID
         let identity_hash = hex::decode(identity_id)
-            .map_err(|_| anyhow::anyhow!("Invalid identity ID format"))?;
+            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
         
         if identity_hash.len() != 32 {
             return Ok(ZhtpResponse::error(
@@ -392,7 +392,7 @@ impl WalletHandler {
     async fn handle_get_statistics(&self, identity_id: &str) -> Result<ZhtpResponse> {
         // Parse identity ID
         let identity_hash = hex::decode(identity_id)
-            .map_err(|_| anyhow::anyhow!("Invalid identity ID format"))?;
+            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
         
         if identity_hash.len() != 32 {
             return Ok(ZhtpResponse::error(
@@ -472,18 +472,18 @@ impl WalletHandler {
 
         // Parse identity ID
         let identity_hash = hex::decode(&req_data.identity_id)
-            .map_err(|_| anyhow::anyhow!("Invalid identity ID format"))?;
-        
+            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
+
         if identity_hash.len() != 32 {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
                 "Identity ID must be 32 bytes".to_string(),
             ));
         }
-        
+
         let mut identity_id_bytes = [0u8; 32];
         identity_id_bytes.copy_from_slice(&identity_hash);
-        
+
         // Get the identity
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
             Some(identity) => identity,
@@ -555,10 +555,10 @@ impl WalletHandler {
     /// Handle staking tokens
     async fn handle_stake_tokens(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let req_data: StakingRequest = serde_json::from_slice(&request.body)?;
-        
+
         // Parse identity ID
         let identity_hash = hex::decode(&req_data.identity_id)
-            .map_err(|_| anyhow::anyhow!("Invalid identity ID format"))?;
+            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
         
         if identity_hash.len() != 32 {
             return Ok(ZhtpResponse::error(
@@ -647,10 +647,10 @@ impl WalletHandler {
     /// Handle unstaking tokens
     async fn handle_unstake_tokens(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let req_data: StakingRequest = serde_json::from_slice(&request.body)?;
-        
+
         // Parse identity ID
         let identity_hash = hex::decode(&req_data.identity_id)
-            .map_err(|_| anyhow::anyhow!("Invalid identity ID format"))?;
+            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
         
         if identity_hash.len() != 32 {
             return Ok(ZhtpResponse::error(
@@ -773,7 +773,7 @@ impl WalletHandler {
     async fn handle_get_transactions(&self, identity_id: &str) -> Result<ZhtpResponse> {
         // Parse identity ID
         let identity_hash = hex::decode(identity_id)
-            .map_err(|_| anyhow::anyhow!("Invalid identity ID format"))?;
+            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
         
         if identity_hash.len() != 32 {
             return Ok(create_error_response(
@@ -895,7 +895,7 @@ impl WalletHandler {
 
         // Parse identity ID
         let identity_hash = hex::decode(&send_req.from_identity)
-            .map_err(|_| anyhow::anyhow!("Invalid identity ID format"))?;
+            .map_err(|e| anyhow::anyhow!("Invalid hex for from_identity: {}", e))?;
         
         if identity_hash.len() != 32 {
             return Ok(create_error_response(
@@ -909,7 +909,7 @@ impl WalletHandler {
 
         // Parse recipient address (validate format)
         let _to_address_bytes = hex::decode(&send_req.to_address)
-            .map_err(|_| anyhow::anyhow!("Invalid recipient address format"))?;
+            .map_err(|e| anyhow::anyhow!("Invalid hex for to_address: {}", e))?;
 
         // Get identity and primary wallet
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {

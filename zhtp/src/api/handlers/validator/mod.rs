@@ -176,21 +176,19 @@ impl ValidatorHandler {
     /// Get specific validator by ID
     pub async fn get_validator(&self, validator_id: String) -> ZhtpResult<ZhtpResponse> {
         info!("Getting validator: {}", validator_id);
-        
+
         let blockchain = self.blockchain.clone();
         let blockchain_guard = blockchain.read().await;
-        
+
         // Parse validator ID
-        let identity_hash = if let Ok(bytes) = hex::decode(&validator_id) {
-            if bytes.len() == 32 {
+        let identity_hash = match hex::decode(&validator_id) {
+            Ok(bytes) if bytes.len() == 32 => {
                 let mut hash_bytes = [0u8; 32];
                 hash_bytes.copy_from_slice(&bytes);
                 Hash(hash_bytes)
-            } else {
-                return Err(anyhow::anyhow!("Invalid validator ID format"));
             }
-        } else {
-            return Err(anyhow::anyhow!("Invalid validator ID format"));
+            Ok(_) => return Err(anyhow::anyhow!("Invalid hex for validator_id: must be 32 bytes")),
+            Err(e) => return Err(anyhow::anyhow!("Invalid hex for validator_id: {}", e)),
         };
 
         // Get validator from blockchain
@@ -224,21 +222,19 @@ impl ValidatorHandler {
     /// Update validator information
     pub async fn update_validator(&self, validator_id: String, request: UpdateValidatorRequest) -> ZhtpResult<ZhtpResponse> {
         info!("Updating validator: {}", validator_id);
-        
+
         let blockchain = self.blockchain.clone();
         let mut blockchain_guard = blockchain.write().await;
-        
+
         // Parse validator ID
-        let identity_hash = if let Ok(bytes) = hex::decode(&validator_id) {
-            if bytes.len() == 32 {
+        let identity_hash = match hex::decode(&validator_id) {
+            Ok(bytes) if bytes.len() == 32 => {
                 let mut hash_bytes = [0u8; 32];
                 hash_bytes.copy_from_slice(&bytes);
                 Hash(hash_bytes)
-            } else {
-                return Err(anyhow::anyhow!("Invalid validator ID format"));
             }
-        } else {
-            return Err(anyhow::anyhow!("Invalid validator ID format"));
+            Ok(_) => return Err(anyhow::anyhow!("Invalid hex for validator_id: must be 32 bytes")),
+            Err(e) => return Err(anyhow::anyhow!("Invalid hex for validator_id: {}", e)),
         };
 
         // Check if validator exists and get current info
@@ -293,21 +289,19 @@ impl ValidatorHandler {
     /// Unregister a validator
     pub async fn unregister_validator(&self, validator_id: String) -> ZhtpResult<ZhtpResponse> {
         info!("Unregistering validator: {}", validator_id);
-        
+
         let blockchain = self.blockchain.clone();
         let mut blockchain_guard = blockchain.write().await;
-        
+
         // Parse validator ID
-        let identity_hash = if let Ok(bytes) = hex::decode(&validator_id) {
-            if bytes.len() == 32 {
+        let identity_hash = match hex::decode(&validator_id) {
+            Ok(bytes) if bytes.len() == 32 => {
                 let mut hash_bytes = [0u8; 32];
                 hash_bytes.copy_from_slice(&bytes);
                 Hash(hash_bytes)
-            } else {
-                return Err(anyhow::anyhow!("Invalid validator ID format"));
             }
-        } else {
-            return Err(anyhow::anyhow!("Invalid validator ID format"));
+            Ok(_) => return Err(anyhow::anyhow!("Invalid hex for validator_id: must be 32 bytes")),
+            Err(e) => return Err(anyhow::anyhow!("Invalid hex for validator_id: {}", e)),
         };
 
         // Check if validator exists

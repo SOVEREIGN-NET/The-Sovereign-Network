@@ -641,7 +641,7 @@ impl IdentityHandler {
         
         // Parse identity ID from hex
         let identity_id_bytes = hex::decode(&sign_req.identity_id)
-            .map_err(|e| anyhow::anyhow!("Invalid identity ID hex: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
         let identity_hash = lib_crypto::Hash::from_bytes(&identity_id_bytes);
         
         // Get identity and sign message
