@@ -395,14 +395,40 @@ impl ZhtpUnifiedServer {
                 identity_manager.clone(),
                 identity_economic_model,
                 _session_manager.clone(),
-                rate_limiter,
+                rate_limiter.clone(),
                 account_lockout,
                 csrf_protection,
                 recovery_phrase_manager,
             )
         );
         zhtp_router.register_handler("/api/v1/identity".to_string(), identity_handler);
-        
+
+        // Guardian social recovery handler (Issue #116)
+        let recovery_manager = Arc::new(RwLock::new(
+            lib_identity::SocialRecoveryManager::new()
+        ));
+
+        let guardian_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::guardian::GuardianHandler::new(
+                identity_manager.clone(),
+                _session_manager.clone(),
+                recovery_manager,
+                rate_limiter.clone(),
+            )
+        );
+        zhtp_router.register_handler("/api/v1/identity/guardians".to_string(), guardian_handler.clone());
+        zhtp_router.register_handler("/api/v1/identity/recovery".to_string(), guardian_handler);
+
+        // Zero-knowledge proof handler (Issue #117)
+        let zkp_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::zkp::ZkpHandler::new(
+                identity_manager.clone(),
+                _session_manager.clone(),
+                rate_limiter.clone(),
+            )
+        );
+        zhtp_router.register_handler("/api/v1/zkp".to_string(), zkp_handler);
+
         // Wallet content ownership manager (shared across handlers)
         let wallet_content_manager = Arc::new(RwLock::new(lib_storage::WalletContentManager::new()));
         
