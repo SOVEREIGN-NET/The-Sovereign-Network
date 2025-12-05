@@ -22,6 +22,10 @@ impl VectorClock {
     /// Increment the clock for a specific node
     pub fn increment(&mut self, node_id: &NodeId) {
         let counter = self.clocks.entry(node_id.clone()).or_insert(0);
+        if *counter == u64::MAX {
+            // Prevent overflow; hold at max to preserve monotonicity
+            return;
+        }
         *counter += 1;
     }
 
@@ -211,5 +215,17 @@ mod tests {
         assert_eq!(clock1.compare(&clock2), ClockOrdering::Before);
         assert_eq!(clock2.compare(&clock1), ClockOrdering::After);
         assert_eq!(clock1.compare(&clock1), ClockOrdering::Equal);
+    }
+
+    #[test]
+    fn test_increment_stops_at_u64_max() {
+        let mut clock = VectorClock::new();
+        let n1 = node(1);
+
+        // Manually set to max and ensure increment is a no-op (no overflow)
+        clock.clocks.insert(n1, u64::MAX);
+        clock.increment(&n1);
+
+        assert_eq!(clock.get(&n1), u64::MAX);
     }
 }

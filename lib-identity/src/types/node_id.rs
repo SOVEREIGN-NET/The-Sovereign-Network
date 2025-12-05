@@ -38,7 +38,7 @@ use lib_crypto::Hash;
 /// ).expect("Valid inputs");
 /// assert_eq!(node_id, node_id2);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeId([u8; 32]);
 
 impl NodeId {

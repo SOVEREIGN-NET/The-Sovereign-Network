@@ -127,14 +127,62 @@ impl QuorumManager {
         self.nodes.iter().cloned().collect()
     }
 
-    /// Add a node to the quorum
-    pub fn add_node(&mut self, node_id: NodeId) {
+    /// Add a node to the quorum (validates quorum invariants)
+    pub fn add_node(&mut self, node_id: NodeId) -> Result<()> {
+        if self.nodes.contains(&node_id) {
+            return Err(anyhow!("Node already present"));
+        }
         self.nodes.insert(node_id);
+        let n = self.nodes.len();
+        if self.config.r > n || self.config.w > n {
+            self.nodes.remove(&node_id);
+            return Err(anyhow!(
+                "Adding node would violate quorum invariants: r={}, w={}, n={}",
+                self.config.r, self.config.w, n
+            ));
+        }
+        self.config.n = n;
+        Ok(())
     }
 
-    /// Remove a node from the quorum
-    pub fn remove_node(&mut self, node_id: &NodeId) -> bool {
-        self.nodes.remove(node_id)
+    /// Remove a node from the quorum (validates quorum invariants)
+    pub fn remove_node(&mut self, node_id: &NodeId) -> Result<bool> {
+        if !self.nodes.contains(node_id) {
+            return Ok(false);
+        }
+        let n_after = self.nodes.len().saturating_sub(1);
+        if self.config.r > n_after || self.config.w > n_after {
+            return Err(anyhow!(
+                "Removing node would violate quorum invariants: r={}, w={}, remaining={}",
+                self.config.r, self.config.w, n_after
+            ));
+        }
+        let removed = self.nodes.remove(node_id);
+        self.config.n = n_after;
+        Ok(removed)
+    }
+
+    /// Reconfigure quorum parameters while keeping membership constant
+    pub fn reconfigure(&mut self, new_config: QuorumConfig) -> Result<()> {
+        let current_n = self.nodes.len();
+        if new_config.n != current_n {
+            return Err(anyhow!(
+                "Config node count mismatch: config.n={}, members={}",
+                new_config.n, current_n
+            ));
+        }
+        if new_config.r > current_n || new_config.w > current_n {
+            return Err(anyhow!(
+                "Quorum sizes exceed member count: r={}, w={}, n={}",
+                new_config.r, new_config.w, current_n
+            ));
+        }
+        if !new_config.is_strongly_consistent() {
+            return Err(anyhow!("Invalid quorum: r + w must be > n"));
+        }
+
+        self.config = new_config;
+        Ok(())
     }
 
     /// Check if node is in quorum
@@ -244,5 +292,53 @@ mod tests {
             node(4),
         ];
         assert!(manager.check_write_quorum(&responding).is_met());
+    }
+
+    #[test]
+    fn test_add_node_updates_config_and_prevents_duplicates() {
+        let config = QuorumConfig::new(3, 2, 2).unwrap();
+        let nodes = vec![node(1), node(2), node(3)];
+        let mut manager = QuorumManager::new(config, nodes).unwrap();
+
+        // Add new node updates config.n
+        manager.add_node(node(4)).unwrap();
+        assert_eq!(manager.node_count(), 4);
+        assert_eq!(manager.config().n, 4);
+
+        // Duplicate add is rejected
+        let err = manager.add_node(node(4)).unwrap_err();
+        assert!(err.to_string().contains("already"));
+    }
+
+    #[test]
+    fn test_remove_node_validates_quorum_invariants() {
+        let config = QuorumConfig::new(3, 2, 2).unwrap();
+        let nodes = vec![node(1), node(2), node(3)];
+        let mut manager = QuorumManager::new(config, nodes).unwrap();
+
+        // First removal is allowed
+        assert!(manager.remove_node(&node(3)).unwrap());
+        assert_eq!(manager.node_count(), 2);
+        assert_eq!(manager.config().n, 2);
+
+        // Next removal would violate r/w vs remaining nodes
+        let result = manager.remove_node(&node(2));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reconfigure_validates_node_count_and_invariants() {
+        let config = QuorumConfig::new(3, 2, 2).unwrap();
+        let nodes = vec![node(1), node(2), node(3)];
+        let mut manager = QuorumManager::new(config, nodes).unwrap();
+
+        // Valid reconfigure with same node count
+        let new_config = QuorumConfig::new(3, 2, 2).unwrap();
+        manager.reconfigure(new_config).unwrap();
+
+        // Invalid: n does not match membership
+        let invalid_config = QuorumConfig::new(4, 3, 3).unwrap();
+        let err = manager.reconfigure(invalid_config).unwrap_err();
+        assert!(err.to_string().contains("mismatch"));
     }
 }

@@ -47,11 +47,13 @@ impl<T: Clone> LWWRegister<T> {
         if other.timestamp.happens_after(&self.timestamp) {
             self.value = other.value.clone();
             self.timestamp = other.timestamp.clone();
+            self.node_id = other.node_id;
         } else if other.timestamp.concurrent(&self.timestamp) {
             // Break ties with node_id (lexicographic bytes)
-            if other.node_id.as_bytes() > self.node_id.as_bytes() {
+            if other.node_id > self.node_id {
                 self.value = other.value.clone();
                 self.timestamp = other.timestamp.clone();
+                self.node_id = other.node_id;
             }
         }
     }
@@ -180,8 +182,21 @@ impl<T: Clone + Eq + std::hash::Hash> ORSet<T> {
         tags.push((node_id, timestamp));
     }
 
-    /// Remove an element (removes all tags)
-    pub fn remove(&mut self, element: &T) -> Option<Vec<(NodeId, u64)>> {
+    /// Remove observed tags for an element. Only the provided tags are removed.
+    /// Returns true if the element is fully removed (no tags remain).
+    pub fn remove(&mut self, element: &T, observed_tags: &[(NodeId, u64)]) -> bool {
+        if let Some(tags) = self.elements.get_mut(element) {
+            tags.retain(|tag| !observed_tags.contains(tag));
+            if tags.is_empty() {
+                self.elements.remove(element);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Remove all tags for an element (admin/testing helper)
+    pub fn remove_all(&mut self, element: &T) -> Option<Vec<(NodeId, u64)>> {
         self.elements.remove(element)
     }
 
@@ -234,6 +249,19 @@ mod tests {
         reg1.merge(&reg2);
         // reg2 has higher timestamp, should win
         assert_eq!(*reg1.get(), 25);
+        assert_eq!(reg1.node_id, node(2));
+    }
+
+    #[test]
+    fn test_lww_register_updates_node_id_on_concurrent_merge() {
+        let n1 = node(1);
+        let n2 = node(2);
+        let mut reg_a = LWWRegister::new("a", n1);
+        let mut reg_b = LWWRegister::new("b", n2);
+
+        reg_a.merge(&reg_b);
+        assert_eq!(reg_a.get(), &"b");
+        assert_eq!(reg_a.node_id, n2);
     }
 
     #[test]
@@ -275,5 +303,28 @@ mod tests {
         assert!(set1.contains(&"a"));
         assert!(set1.contains(&"b"));
         assert!(set1.contains(&"c"));
+    }
+
+    #[test]
+    fn test_orset_removes_only_observed_tags() {
+        let mut set_a = ORSet::new();
+        let mut set_b = ORSet::new();
+
+        // Node A adds
+        set_a.add("x", node(1), 1);
+        set_b.merge(&set_a);
+
+        // B observes tags
+        let observed = set_b.elements.get(&"x").cloned().unwrap_or_default();
+
+        // A concurrently adds new tag
+        set_a.add("x", node(1), 2);
+
+        // B removes only observed tags
+        set_b.remove(&"x", &observed);
+
+        // Merge back; element should remain due to concurrent add
+        set_a.merge(&set_b);
+        assert!(set_a.contains(&"x"));
     }
 }
