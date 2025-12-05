@@ -1,9 +1,10 @@
 //! HTTP Server Module
-//! 
-//! Provides HTTP request routing and middleware
+//!
+//! Provides HTTP middleware (CORS, rate limiting, auth)
+//!
+//! NOTE: HttpRouter removed - QUIC is the only entry point.
+//! HTTP requests over QUIC are handled by HttpCompatibilityLayer → ZhtpRouter
 
 pub mod middleware;
-pub mod router;
 
 pub use middleware::{Middleware, CorsMiddleware, RateLimitMiddleware, AuthMiddleware};
-pub use router::HttpRouter;

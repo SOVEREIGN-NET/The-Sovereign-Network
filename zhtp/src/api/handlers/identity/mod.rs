@@ -641,13 +641,20 @@ impl IdentityHandler {
         
         // Parse identity ID from hex
         let identity_id_bytes = hex::decode(&sign_req.identity_id)
-            .map_err(|e| anyhow::anyhow!("Invalid identity ID hex: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
         let identity_hash = lib_crypto::Hash::from_bytes(&identity_id_bytes);
         
         // Get identity and sign message
         let manager = self.identity_manager.read().await;
-        let identity = manager.get_identity(&identity_hash)
-            .ok_or_else(|| anyhow::anyhow!("Identity not found: {}", sign_req.identity_id))?;
+        let identity = match manager.get_identity(&identity_hash) {
+            Some(id) => id,
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Identity not found: {}", sign_req.identity_id),
+                ));
+            }
+        };
 
         // Get private key from identity (P1-7: private keys stored in identity)
         let private_key = identity.private_key.as_ref()

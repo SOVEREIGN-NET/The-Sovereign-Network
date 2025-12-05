@@ -38,9 +38,9 @@
 pub mod protocol_detection;
 // ❌ DELETED: tcp_handler.rs (220 lines) - replaced by quic_handler
 // ❌ DELETED: udp_handler.rs (270 lines) - replaced by quic_handler
-pub mod api_registration;
+// ❌ DELETED: api_registration.rs - duplicate dead code (unified_server has the implementation)
 
-// NEW: QUIC-native handler (replaces TCP/UDP)
+// NEW: QUIC-native handler (replaces TCP/UDP) - ONLY ENTRY POINT
 pub mod quic_handler;
 pub mod zhtp;  // Native ZHTP protocol over QUIC
 
@@ -55,9 +55,8 @@ pub use protocol_detection::IncomingProtocol;
 // ❌ DELETED: TcpHandler - Use QuicHandler instead
 // ❌ DELETED: UdpHandler - Use QuicHandler instead
 pub use quic_handler::QuicHandler;  // QUIC-native handler
-pub use api_registration::register_api_handlers;
 
-pub use http::router::HttpRouter;
+// ❌ DELETED: HttpRouter - QUIC is the only entry point, HttpCompatibilityLayer converts HTTP → ZHTP
 pub use http::middleware::{Middleware, CorsMiddleware, RateLimitMiddleware, AuthMiddleware};
 
 pub use monitoring::reputation::{PeerReputation, PeerRateLimit, PeerPerformanceStats};

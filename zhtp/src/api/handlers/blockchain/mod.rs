@@ -1503,16 +1503,35 @@ impl BlockchainHandler {
 
     /// Import blockchain from another node
     async fn handle_import_chain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Validate that body is not empty
+        if request.body.is_empty() {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Import requires blockchain data from /api/v1/blockchain/export endpoint".to_string(),
+            ));
+        }
+
         let blockchain_arc = self
             .get_blockchain()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get blockchain: {}", e))?;
         let mut blockchain = blockchain_arc.write().await;
 
-        blockchain
-            .evaluate_and_merge_chain(request.body)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to import blockchain: {}", e))?;
+        // Try to import - if deserialization fails, return 400 not 500
+        match blockchain.evaluate_and_merge_chain(request.body).await {
+            Ok(_) => {},
+            Err(e) => {
+                let err_msg = e.to_string();
+                // Deserialization errors are client errors (400), not server errors (500)
+                if err_msg.contains("deserialize") || err_msg.contains("io error") {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::BadRequest,
+                        format!("Invalid blockchain data format: {}", err_msg),
+                    ));
+                }
+                return Err(anyhow::anyhow!("Failed to import blockchain: {}", e));
+            }
+        }
 
         #[derive(Serialize)]
         struct ImportResponse {

@@ -515,7 +515,7 @@ fn verify_revealed_claims(proof: &ZkCredentialProof, schema: &CredentialSchema) 
     Ok(true)
 }
 
-fn verify_credential_validity_proof(proof: &ZkCredentialProof, schema: &CredentialSchema) -> Result<bool> {
+fn verify_credential_validity_proof(proof: &ZkCredentialProof, _schema: &CredentialSchema) -> Result<bool> {
     // Use ZK circuits for validity proof verification
     if proof.validity_proof.len() < 32 {
         return Ok(false);

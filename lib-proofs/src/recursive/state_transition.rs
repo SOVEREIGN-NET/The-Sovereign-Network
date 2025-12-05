@@ -328,7 +328,7 @@ impl StateTransitionRecursiveCircuit {
         chain: &StateTransitionChain,
     ) -> Result<()> {
         // Verify state continuity: each transition's end state equals next transition's start state
-        for i in 1..chain.transitions.len() {
+        for _i in 1..chain.transitions.len() {
             let prev_end_wire = builder.add_private_input(None);
             let curr_start_wire = builder.add_private_input(None);
             
@@ -357,7 +357,7 @@ impl StateTransitionRecursiveCircuit {
         
         // Calculate total fees across all transitions
         let mut total_fees_wire = builder.add_public_input(None); // Start with 0
-        for transition in &chain.transitions {
+        for _transition in &chain.transitions {
             let transition_fees_wire = builder.add_private_input(None);
             total_fees_wire = builder.add_addition(total_fees_wire, transition_fees_wire);
         }
@@ -373,7 +373,7 @@ impl StateTransitionRecursiveCircuit {
     fn add_temporal_consistency_constraints(
         &self,
         builder: &mut CircuitBuilder,
-        chain: &StateTransitionChain,
+        _chain: &StateTransitionChain,
     ) -> Result<()> {
         builder.add_constraint(CircuitConstraint {
             constraint_type: "timestamp_progression".to_string(),
@@ -388,7 +388,7 @@ impl StateTransitionRecursiveCircuit {
     fn add_checkpoint_validation_constraints(
         &self,
         builder: &mut CircuitBuilder,
-        chain: &StateTransitionChain,
+        _chain: &StateTransitionChain,
     ) -> Result<()> {
         builder.add_constraint(CircuitConstraint {
             constraint_type: "checkpoint_validity".to_string(),
@@ -472,6 +472,7 @@ impl StateTransitionRecursiveCircuit {
         base_usage + transition_usage + checkpoint_usage
     }
 
+    #[allow(dead_code)]
     fn calculate_expected_supply_change(&self, chain: &StateTransitionChain) -> i64 {
         // Calculate expected supply change from rewards and burns
         let rewards = self.calculate_total_rewards(chain) as i64;

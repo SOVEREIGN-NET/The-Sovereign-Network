@@ -102,6 +102,7 @@ pub struct StateTransitionMetadata {
 #[derive(Debug)]
 pub struct StateTransitionCircuit {
     config: CircuitConfig,
+    #[allow(dead_code)]
     transaction_circuit: TransactionCircuit,
 }
 
@@ -217,7 +218,7 @@ impl StateTransitionCircuit {
     fn add_state_consistency_constraints(
         &self,
         builder: &mut CircuitBuilder,
-        witness: &StateTransitionWitness,
+        _witness: &StateTransitionWitness,
     ) -> Result<()> {
         // Add constraints ensuring proper state root transitions
         builder.add_constraint(CircuitConstraint {
@@ -375,6 +376,7 @@ impl StateTransitionCircuit {
     }
 
     /// Helper functions for circuit constraints
+    #[allow(dead_code)]
     fn compute_new_state_root(&self, prev_state: &StateCommitment, updates: &[StateUpdateWitness]) -> [u8; 32] {
         // Simplified state root computation - in practice this would be more complex
         let mut data = Vec::new();
@@ -406,7 +408,7 @@ impl StateTransitionCircuit {
 
         // Add each transaction hash as a wire
         let mut hash_wires: Vec<usize> = tx_hashes.iter()
-            .map(|hash| {
+            .map(|_hash| {
                 let wire = builder.add_private_input(None);
                 // In a implementation, we'd constrain this wire to equal the hash
                 wire
@@ -432,8 +434,8 @@ impl StateTransitionCircuit {
 
     /// Calculate total fees as a circuit wire
     fn calculate_total_fees_wire(&self, builder: &mut CircuitBuilder, transaction_hashes: &[[u8; 32]]) -> usize {
-        let num_transactions = transaction_hashes.len() as u64;
-        let fee_per_tx = 1000u64; // Fixed fee per transaction
+        let _num_transactions = transaction_hashes.len() as u64;
+        let _fee_per_tx = 1000u64; // Fixed fee per transaction
         
         // Create a constant wire for the fee per transaction
         let fee_per_tx_wire = builder.add_public_input(None);
@@ -455,9 +457,9 @@ impl StateTransitionCircuit {
     ) -> usize {
         // Start with the leaf hash (account_id + value)
         let mut current_hash = builder.add_hash(vec![leaf_wire, value_wire]);
-        
+
         // Process each level of the Merkle path
-        for path_element in merkle_path {
+        for _path_element in merkle_path {
             let sibling_wire = builder.add_private_input(None);
             // In a implementation, we'd need to handle left/right positioning
             current_hash = builder.add_hash(vec![current_hash, sibling_wire]);
@@ -466,11 +468,13 @@ impl StateTransitionCircuit {
         current_hash
     }
 
+    #[allow(dead_code)]
     fn calculate_total_fees(&self, _tx_hashes: &[[u8; 32]]) -> u64 {
         // Placeholder - would calculate actual fees from transaction data
         0
     }
 
+    #[allow(dead_code)]
     fn verify_merkle_path(&self, _account_id: &[u8; 32], _balance: &u64, _path: &[[u8; 32]], _root: &[u8; 32]) -> bool {
         // Placeholder - would verify actual Merkle path
         true
