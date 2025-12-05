@@ -162,8 +162,15 @@ impl CryptoHandler {
 
         // Get identity and sign the message
         let identity_mgr = self.identity_manager.read().await;
-        let identity = identity_mgr.get_identity(&identity_id)
-            .ok_or_else(|| anyhow!("Identity not found"))?;
+        let identity = match identity_mgr.get_identity(&identity_id) {
+            Some(id) => id,
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    "Identity not found".to_string(),
+                ));
+            }
+        };
 
         // Get private key from identity (P1-7: private keys stored in identity)
         let private_key = identity.private_key.as_ref()

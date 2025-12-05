@@ -6,7 +6,7 @@ use chrono;
 
 use lib_protocols::{
     zhtp::{ZhtpResult, ZhtpRequestHandler},
-    types::{ZhtpRequest, ZhtpResponse, ZhtpMethod},
+    types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus},
 };
 use crate::runtime::blockchain_provider::get_global_blockchain;
 use lib_blockchain::Blockchain;
@@ -214,7 +214,10 @@ impl ValidatorHandler {
             }
             None => {
                 warn!("Validator not found: {}", hex::encode(&identity_hash.0));
-                Err(anyhow::anyhow!("Validator not found"))
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    "Validator not found".to_string(),
+                ))
             }
         }
     }

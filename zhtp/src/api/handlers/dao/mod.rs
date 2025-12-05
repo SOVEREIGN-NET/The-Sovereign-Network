@@ -641,11 +641,16 @@ impl DaoHandler {
     /// Handle GET /api/v1/dao/data - DAO general data/statistics
     async fn handle_dao_data(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         // Security: Extract and validate session token
-        let session_token = request
-            .headers
-            .get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid Authorization header"))?;
+        let session_token = match request.headers.get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+            Some(token) => token,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Missing or invalid Authorization header".to_string(),
+                ));
+            }
+        };
 
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
@@ -701,11 +706,16 @@ impl DaoHandler {
     /// Handle POST /api/v1/dao/delegates/register - Register as delegate
     async fn handle_register_delegate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         // Security: Extract and validate session token
-        let session_token = request
-            .headers
-            .get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid Authorization header"))?;
+        let session_token = match request.headers.get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+            Some(token) => token,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Missing or invalid Authorization header".to_string(),
+                ));
+            }
+        };
 
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
@@ -781,11 +791,16 @@ impl DaoHandler {
     /// Handle POST /api/v1/dao/delegates/revoke - Revoke delegate status
     async fn handle_revoke_delegate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         // Security: Extract and validate session token
-        let session_token = request
-            .headers
-            .get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid Authorization header"))?;
+        let session_token = match request.headers.get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+            Some(token) => token,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Missing or invalid Authorization header".to_string(),
+                ));
+            }
+        };
 
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
@@ -851,11 +866,16 @@ impl DaoHandler {
     /// Convenience wrapper around create_proposal for TreasuryAllocation type
     async fn handle_spending_proposal(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         // Security: Extract and validate session token
-        let session_token = request
-            .headers
-            .get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid Authorization header"))?;
+        let session_token = match request.headers.get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+            Some(token) => token,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Missing or invalid Authorization header".to_string(),
+                ));
+            }
+        };
 
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);

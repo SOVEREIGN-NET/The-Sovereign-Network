@@ -646,8 +646,15 @@ impl IdentityHandler {
         
         // Get identity and sign message
         let manager = self.identity_manager.read().await;
-        let identity = manager.get_identity(&identity_hash)
-            .ok_or_else(|| anyhow::anyhow!("Identity not found: {}", sign_req.identity_id))?;
+        let identity = match manager.get_identity(&identity_hash) {
+            Some(id) => id,
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Identity not found: {}", sign_req.identity_id),
+                ));
+            }
+        };
 
         // Get private key from identity (P1-7: private keys stored in identity)
         let private_key = identity.private_key.as_ref()
