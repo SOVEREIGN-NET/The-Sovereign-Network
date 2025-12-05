@@ -167,7 +167,7 @@ fn get_mock_body(path: &str) -> Option<String> {
         "/api/v1/blockchain/transaction/broadcast" => Some(r#"{"transaction_data":"0000"}"#.to_string()),
         "/api/v1/blockchain/contracts/deploy" => Some(r#"{"name":"TestContract","contract_type":"token","code":"test code","initial_state":{}}"#.to_string()),
         // Import expects binary data, empty body will fail - skip in test
-        // "/api/v1/blockchain/import" => Some(r#"{}"#.to_string()),
+        "/api/v1/blockchain/import" => Some(r#"{}"#.to_string()), // Will fail - expects binary blockchain data from /export
 
         // Identity endpoints (using valid 64-char hex IDs)
         "/api/v1/identity/create" => Some(r#"{"display_name":"Test User","password":"test_password_123"}"#.to_string()),
@@ -183,8 +183,8 @@ fn get_mock_body(path: &str) -> Option<String> {
         "/api/v1/identity/backup/import" => Some(r#"{"backup_data":"test_backup","password":"test_password"}"#.to_string()),
         "/api/v1/identity/citizenship/apply" => Some(r#"{"identity_id":"test_id"}"#.to_string()),
 
-        // Storage endpoints
-        "/api/v1/storage/store" => Some(r#"{"data":"test_data_content","metadata":{"key":"test_key"}}"#.to_string()),
+        // Storage endpoints (data must be base64 encoded)
+        "/api/v1/storage/store" => Some(r#"{"data":"dGVzdCBkYXRhIGNvbnRlbnQ="}"#.to_string()), // "test data content" in base64
         "/api/v1/storage/put" => Some(r#"{"key":"test_key","value":"test_value"}"#.to_string()),
         "/api/v1/storage/get" => Some(r#"{"key":"test_key"}"#.to_string()),
         "/api/v1/storage/delete" => Some(r#"{"key":"test_key"}"#.to_string()),
