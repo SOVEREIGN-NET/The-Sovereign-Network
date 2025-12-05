@@ -3,7 +3,9 @@
 use crate::types::NodeId;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::time::{SystemTime, UNIX_EPOCH};
+use lib_crypto::types::{PublicKey, Signature};
 
 /// Quorum configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +64,14 @@ impl QuorumConfig {
 pub struct QuorumManager {
     config: QuorumConfig,
     nodes: HashSet<NodeId>,
+}
+
+/// Signed quorum response binding a node to a payload
+#[derive(Clone, Debug)]
+pub struct SignedQuorumResponse {
+    pub node_id: NodeId,
+    pub payload: Vec<u8>,
+    pub signature: Signature,
 }
 
 impl QuorumManager {
@@ -185,6 +195,96 @@ impl QuorumManager {
         Ok(())
     }
 
+    /// Check read quorum with signature verification
+    pub fn check_signed_read_quorum(
+        &self,
+        responses: &[SignedQuorumResponse],
+        allowed_skew_secs: u64,
+        public_keys: &HashMap<NodeId, PublicKey>,
+    ) -> QuorumResult {
+        let valid = self.count_verified(responses, allowed_skew_secs, public_keys);
+        if valid >= self.config.r {
+            QuorumResult::Met {
+                required: self.config.r,
+                actual: valid,
+            }
+        } else {
+            QuorumResult::NotMet {
+                required: self.config.r,
+                actual: valid,
+            }
+        }
+    }
+
+    /// Check write quorum with signature verification
+    pub fn check_signed_write_quorum(
+        &self,
+        responses: &[SignedQuorumResponse],
+        allowed_skew_secs: u64,
+        public_keys: &HashMap<NodeId, PublicKey>,
+    ) -> QuorumResult {
+        let valid = self.count_verified(responses, allowed_skew_secs, public_keys);
+        if valid >= self.config.w {
+            QuorumResult::Met {
+                required: self.config.w,
+                actual: valid,
+            }
+        } else {
+            QuorumResult::NotMet {
+                required: self.config.w,
+                actual: valid,
+            }
+        }
+    }
+
+    fn count_verified(
+        &self,
+        responses: &[SignedQuorumResponse],
+        allowed_skew_secs: u64,
+        public_keys: &HashMap<NodeId, PublicKey>,
+    ) -> usize {
+        responses
+            .iter()
+            .filter(|resp| self.verify_response(resp, allowed_skew_secs, public_keys))
+            .count()
+    }
+
+    fn verify_response(
+        &self,
+        resp: &SignedQuorumResponse,
+        allowed_skew_secs: u64,
+        public_keys: &HashMap<NodeId, PublicKey>,
+    ) -> bool {
+        // Node must be in quorum
+        if !self.nodes.contains(&resp.node_id) {
+            return false;
+        }
+
+        // Timestamp drift check (reject signatures too far in the future)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if resp.signature.timestamp > now.saturating_add(allowed_skew_secs) {
+            return false;
+        }
+
+        // Public key must match registry for this node
+        let expected_pk = match public_keys.get(&resp.node_id) {
+            Some(pk) => pk,
+            None => return false,
+        };
+        if expected_pk.key_id != resp.signature.public_key.key_id {
+            return false;
+        }
+
+        // Verify signature on payload
+        match expected_pk.verify(&resp.payload, &resp.signature) {
+            Ok(valid) => valid,
+            Err(_) => false,
+        }
+    }
+
     /// Check if node is in quorum
     pub fn contains_node(&self, node_id: &NodeId) -> bool {
         self.nodes.contains(node_id)
@@ -231,6 +331,8 @@ impl QuorumResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use lib_crypto::keypair::KeyPair;
     use lib_identity::NodeId as IdentityNodeId;
 
     fn node(id: u8) -> IdentityNodeId {
@@ -292,6 +394,73 @@ mod tests {
             node(4),
         ];
         assert!(manager.check_write_quorum(&responding).is_met());
+    }
+
+    fn signed_response(keypair: &KeyPair, payload: &[u8]) -> SignedQuorumResponse {
+        let signature = keypair.sign(payload).expect("signing should succeed");
+        let node_id = IdentityNodeId::from_bytes(keypair.public_key.key_id);
+        SignedQuorumResponse {
+            node_id,
+            payload: payload.to_vec(),
+            signature,
+        }
+    }
+
+    #[test]
+    fn test_signed_quorum_checks_signatures_and_membership() {
+        let kp1 = KeyPair::generate().unwrap();
+        let kp2 = KeyPair::generate().unwrap();
+        let kp3 = KeyPair::generate().unwrap();
+
+        let node1 = IdentityNodeId::from_bytes(kp1.public_key.key_id);
+        let node2 = IdentityNodeId::from_bytes(kp2.public_key.key_id);
+        let node3 = IdentityNodeId::from_bytes(kp3.public_key.key_id);
+
+        let mut pk_map = HashMap::new();
+        pk_map.insert(node1, kp1.public_key.clone());
+        pk_map.insert(node2, kp2.public_key.clone());
+        pk_map.insert(node3, kp3.public_key.clone());
+
+        let config = QuorumConfig::new(3, 2, 2).unwrap();
+        let mut manager = QuorumManager::new(config, vec![node1, node2, node3]).unwrap();
+
+        let payload = b"replication-ack";
+        let responses = vec![
+            signed_response(&kp1, payload),
+            signed_response(&kp2, payload),
+        ];
+
+        let result = manager.check_signed_read_quorum(&responses, 300, &pk_map);
+        assert!(result.is_met());
+
+        // Tamper: wrong payload should fail verification
+        let mut bad = responses[0].clone();
+        bad.payload = b"tampered".to_vec();
+        let result = manager.check_signed_read_quorum(&[bad], 300, &pk_map);
+        assert!(!result.is_met());
+
+        // Remove a node and ensure membership validation applies
+        manager.remove_node(&node2).unwrap();
+        let result = manager.check_signed_write_quorum(&responses, 300, &pk_map);
+        assert!(!result.is_met());
+    }
+
+    #[test]
+    fn test_signed_quorum_rejects_future_timestamp() {
+        let kp1 = KeyPair::generate().unwrap();
+        let node1 = IdentityNodeId::from_bytes(kp1.public_key.key_id);
+        let mut pk_map = HashMap::new();
+        pk_map.insert(node1, kp1.public_key.clone());
+
+        let config = QuorumConfig::new(1, 1, 1).unwrap();
+        let manager = QuorumManager::new(config, vec![node1]).unwrap();
+
+        let payload = b"time-check";
+        let mut resp = signed_response(&kp1, payload);
+        resp.signature.timestamp = resp.signature.timestamp.saturating_add(10_000);
+
+        let result = manager.check_signed_read_quorum(&[resp], 300, &pk_map);
+        assert!(!result.is_met());
     }
 
     #[test]

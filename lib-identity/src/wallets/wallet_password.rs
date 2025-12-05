@@ -345,7 +345,7 @@ mod tests {
         let mut wpm = WalletPasswordManager::new();
         let wallet_id = Hash::from_bytes(&[1u8; 32]);
         let wallet_seed = [42u8; 32];
-        let password = "wallet123";
+        let password = "WalletX123";
         
         // Set password
         assert!(wpm.set_wallet_password(&wallet_id, password, &wallet_seed).is_ok());
@@ -366,17 +366,17 @@ mod tests {
         let wallet_seed = [84u8; 32];
         
         // Set initial password
-        wpm.set_wallet_password(&wallet_id, "old_pass", &wallet_seed).unwrap();
+        wpm.set_wallet_password(&wallet_id, "Old_pass1", &wallet_seed).unwrap();
         
         // Change password
-        assert!(wpm.change_wallet_password(&wallet_id, "old_pass", "new_pass", &wallet_seed).is_ok());
+        assert!(wpm.change_wallet_password(&wallet_id, "Old_pass1", "New_pass2", &wallet_seed).is_ok());
         
         // Old password should not work
-        let validation = wpm.validate_password(&wallet_id, "old_pass", &wallet_seed).unwrap();
+        let validation = wpm.validate_password(&wallet_id, "Old_pass1", &wallet_seed).unwrap();
         assert!(!validation.valid);
         
         // New password should work
-        let validation = wpm.validate_password(&wallet_id, "new_pass", &wallet_seed).unwrap();
+        let validation = wpm.validate_password(&wallet_id, "New_pass2", &wallet_seed).unwrap();
         assert!(validation.valid);
     }
 
@@ -385,7 +385,7 @@ mod tests {
         let mut wpm = WalletPasswordManager::new();
         let wallet_id = Hash::from_bytes(&[3u8; 32]);
         let wallet_seed = [126u8; 32];
-        let password = "remove_me";
+        let password = "Remove_me1";
         
         // Set password
         wpm.set_wallet_password(&wallet_id, password, &wallet_seed).unwrap();
@@ -405,7 +405,7 @@ mod tests {
         // Should reject weak passwords
         assert!(matches!(
             wpm.set_wallet_password(&wallet_id, "short", &wallet_seed),
-            Err(WalletPasswordError::WeakPassword)
+            Err(WalletPasswordError::TooShort)
         ));
     }
 }
