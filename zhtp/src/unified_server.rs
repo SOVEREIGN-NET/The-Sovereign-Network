@@ -492,6 +492,28 @@ impl ZhtpUnifiedServer {
         http_router.register_handler("/api/v1/protocol".to_string(), protocol_handler.clone());
         zhtp_router.register_handler("/api/v1/protocol".to_string(), protocol_handler);
 
+        // Create RuntimeOrchestrator for handlers that need runtime access
+        let runtime_config = crate::config::NodeConfig::default();
+        let runtime = Arc::new(crate::runtime::RuntimeOrchestrator::new(runtime_config).await?);
+
+        // Network management (gas pricing, peers, sync metrics)
+        let network_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::NetworkHandler::new(runtime.clone())
+        );
+        http_router.register_handler("/api/v1/network".to_string(), network_handler.clone());
+        http_router.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
+        http_router.register_handler("/api/v1/blockchain/sync".to_string(), network_handler.clone());
+        zhtp_router.register_handler("/api/v1/network".to_string(), network_handler.clone());
+        zhtp_router.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
+        zhtp_router.register_handler("/api/v1/blockchain/sync".to_string(), network_handler);
+
+        // Mesh blockchain operations
+        let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::MeshHandler::new(runtime.clone())
+        );
+        http_router.register_handler("/api/v1/mesh".to_string(), mesh_handler.clone());
+        zhtp_router.register_handler("/api/v1/mesh".to_string(), mesh_handler);
+
         info!("All API handlers registered successfully");
         Ok(())
     }
