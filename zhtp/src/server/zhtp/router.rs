@@ -232,21 +232,28 @@ impl ZhtpRouter {
     /// Route a ZHTP request to the appropriate handler
     pub async fn route_request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let path = &request.uri;
-        
+
         // Try exact match first
         if let Some(handler) = self.routes.get(path) {
             debug!("🎯 Exact route match: {}", path);
             return handler.handle_request(request).await;
         }
-        
-        // Try prefix matching for API routes
-        for (route_path, handler) in &self.routes {
-            if path.starts_with(route_path) {
-                debug!("🎯 Prefix route match: {} → {}", path, route_path);
-                return handler.handle_request(request).await;
-            }
+
+        // Try prefix matching for API routes - LONGEST PREFIX FIRST
+        // This ensures /api/v1/blockchain/sync matches before /api/v1/blockchain
+        let mut matching_routes: Vec<(&String, &Arc<dyn ZhtpRequestHandler>)> = self.routes
+            .iter()
+            .filter(|(route_path, _)| path.starts_with(route_path.as_str()))
+            .collect();
+
+        // Sort by route path length descending (longest first)
+        matching_routes.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+        if let Some((route_path, handler)) = matching_routes.first() {
+            debug!("🎯 Prefix route match: {} → {}", path, route_path);
+            return handler.handle_request(request).await;
         }
-        
+
         // No handler found
         warn!("❓ No handler found for path: {}", path);
         Ok(ZhtpResponse::error(
