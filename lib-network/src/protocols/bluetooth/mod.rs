@@ -927,6 +927,7 @@ impl BluetoothMeshProtocol {
                 max_throughput: 250_000, // 250 KB/s for BLE
                 prefers_high_throughput: false,
             },
+            // TODO: Add DID and device_name fields in next commit (MeshHandshake update)
         };
         
         // Serialize handshake
@@ -978,6 +979,7 @@ impl BluetoothMeshProtocol {
                 max_throughput: 250_000, // 250 KB/s for BLE
                 prefers_high_throughput: false,
             },
+            // TODO: Add DID and device_name fields in next commit (MeshHandshake update)
         };
         
         // Serialize handshake
