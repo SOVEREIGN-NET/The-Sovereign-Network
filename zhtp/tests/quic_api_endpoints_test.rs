@@ -190,7 +190,7 @@ fn get_mock_body(path: &str) -> Option<String> {
         "/api/v1/storage/delete" => Some(r#"{"key":"test_key"}"#.to_string()),
 
         // Wallet endpoints (using valid 64-char hex IDs)
-        "/api/v1/wallet/send" => Some(r#"{"from_identity":"0000000000000000000000000000000000000000000000000000000000000000","to":"test_recipient","amount":100,"wallet_id":"primary"}"#.to_string()),
+        "/api/v1/wallet/send" => Some(r#"{"from_identity":"0000000000000000000000000000000000000000000000000000000000000000","to_address":"0000000000000000000000000000000000000000000000000000000000000001","amount":100,"wallet_id":"primary"}"#.to_string()),
         "/api/v1/wallet/transfer/cross-wallet" => Some(r#"{"from_wallet":"primary","to_wallet":"savings","amount":100,"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
         "/api/v1/wallet/staking/stake" => Some(r#"{"wallet_id":"test_wallet","amount":1000,"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
         "/api/v1/wallet/staking/unstake" => Some(r#"{"wallet_id":"test_wallet","amount":500,"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
@@ -207,8 +207,8 @@ fn get_mock_body(path: &str) -> Option<String> {
         "/api/v1/mesh/create" => Some(r#"{"mesh_id":"test_mesh","initial_validators":[]}"#.to_string()),
 
         // DAO endpoints
-        "/api/v1/dao/proposal/create" => Some(r#"{"title":"Test Proposal","description":"Test description","proposer_identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
-        "/api/v1/dao/vote/cast" => Some(r#"{"proposal_id":"test_proposal","vote":true,"voter_identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
+        "/api/v1/dao/proposal/create" => Some(r#"{"title":"Test Proposal","description":"Test description","proposer_identity_id":"0000000000000000000000000000000000000000000000000000000000000000","proposal_type":"ubi_distribution","voting_period_days":7}"#.to_string()),
+        "/api/v1/dao/vote/cast" => Some(r#"{"proposal_id":"test_proposal","vote_choice":"yes","voter_identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
 
         // Network endpoints
         "/api/v1/blockchain/network/peer/add" => Some(r#"{"peer_address":"192.168.1.100:9334"}"#.to_string()),
@@ -291,7 +291,7 @@ async fn test_all_api_endpoints() -> Result<()> {
         ("GET", "/api/v1/blockchain/block/0"),
         ("GET", "/api/v1/blockchain/mempool"),
         ("GET", "/api/v1/blockchain/validators"),
-        ("GET", "/api/v1/blockchain/balance/test_id"),
+        ("GET", "/api/v1/blockchain/balance/0000000000000000000000000000000000000000000000000000000000000000"),
         ("GET", "/api/v1/blockchain/transactions/pending"),
         ("GET", "/api/v1/blockchain/transaction/test_hash"),
         ("GET", "/api/v1/blockchain/export"),
@@ -316,7 +316,7 @@ async fn test_all_api_endpoints() -> Result<()> {
         ("POST", "/api/v1/identity/login"),
         ("POST", "/api/v1/identity/signin"),
         ("POST", "/api/v1/identity/sign"),
-        ("GET", "/api/v1/identity/test_id"),
+        ("GET", "/api/v1/identity/0000000000000000000000000000000000000000000000000000000000000000"),
         ("POST", "/api/v1/identity/recover"),
         ("POST", "/api/v1/identity/password/recover"),
         ("POST", "/api/v1/identity/seed/verify"),
@@ -348,10 +348,10 @@ async fn test_all_api_endpoints() -> Result<()> {
     // Wallet endpoints (8)
     println!("\n💰 Wallet Endpoints");
     for (method, path) in [
-        ("GET", "/api/v1/wallet/balance/test_wallet/test_id"),
-        ("GET", "/api/v1/wallet/list/test_id"),
-        ("GET", "/api/v1/wallet/transactions/test_id"),
-        ("GET", "/api/v1/wallet/statistics/test_id"),
+        ("GET", "/api/v1/wallet/balance/test_wallet/0000000000000000000000000000000000000000000000000000000000000000"),
+        ("GET", "/api/v1/wallet/list/0000000000000000000000000000000000000000000000000000000000000000"),
+        ("GET", "/api/v1/wallet/transactions/0000000000000000000000000000000000000000000000000000000000000000"),
+        ("GET", "/api/v1/wallet/statistics/0000000000000000000000000000000000000000000000000000000000000000"),
         ("POST", "/api/v1/wallet/send"),
         ("POST", "/api/v1/wallet/transfer/cross-wallet"),
         ("POST", "/api/v1/wallet/staking/stake"),
@@ -376,7 +376,7 @@ async fn test_all_api_endpoints() -> Result<()> {
     println!("\n✅ Validator Endpoints");
     for (method, path) in [
         ("GET", "/api/v1/validators"),
-        ("GET", "/api/v1/validator/test_id"),
+        ("GET", "/api/v1/validator/0000000000000000000000000000000000000000000000000000000000000000"),
     ] {
         let status = test_endpoint(&connection, method, path, None).await?;
         results.push((path, status));
@@ -415,7 +415,7 @@ async fn test_all_api_endpoints() -> Result<()> {
     println!("\n🕸️  Mesh Endpoints");
     for (method, path) in [
         ("POST", "/api/v1/mesh/create"),
-        ("GET", "/api/v1/mesh/test_id/status"),
+        ("GET", "/api/v1/mesh/0000000000000000000000000000000000000000000000000000000000000000/status"),
     ] {
         let status = test_endpoint(&connection, method, path, None).await?;
         results.push((path, status));

@@ -527,7 +527,15 @@ impl ZhtpUnifiedServer {
     /// Start the unified server on port 9333
     pub async fn start(&mut self) -> Result<()> {
         info!("Starting ZHTP Unified Server on port {}", self.port);
-        
+
+        // Initialize global mesh router provider for API handlers
+        let mesh_router_arc = Arc::new(self.mesh_router.clone());
+        if let Err(e) = crate::runtime::set_global_mesh_router(mesh_router_arc).await {
+            warn!("Failed to initialize global mesh router provider: {}", e);
+        } else {
+            info!(" Global mesh router provider initialized");
+        }
+
         // STEP 1: Apply network isolation to block internet access
         info!(" Applying network isolation for ISP-free mesh operation...");
         if let Err(e) = crate::config::network_isolation::initialize_network_isolation().await {
