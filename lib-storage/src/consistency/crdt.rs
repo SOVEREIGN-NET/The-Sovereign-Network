@@ -1,6 +1,7 @@
 //! Conflict-free Replicated Data Types (CRDTs)
 
-use crate::consistency::vector_clock::{NodeId, VectorClock};
+use crate::consistency::vector_clock::VectorClock;
+use crate::types::NodeId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -47,8 +48,8 @@ impl<T: Clone> LWWRegister<T> {
             self.value = other.value.clone();
             self.timestamp = other.timestamp.clone();
         } else if other.timestamp.concurrent(&self.timestamp) {
-            // Break ties with node_id
-            if other.node_id > self.node_id {
+            // Break ties with node_id (lexicographic bytes)
+            if other.node_id.as_bytes() > self.node_id.as_bytes() {
                 self.value = other.value.clone();
                 self.timestamp = other.timestamp.clone();
             }
@@ -216,11 +217,16 @@ impl<T: Clone + Eq + std::hash::Hash> Default for ORSet<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_identity::NodeId as IdentityNodeId;
+
+    fn node(id: u8) -> IdentityNodeId {
+        IdentityNodeId::from_bytes([id; 32])
+    }
 
     #[test]
     fn test_lww_register() {
-        let mut reg1 = LWWRegister::new(10, "node1".to_string());
-        let mut reg2 = LWWRegister::new(20, "node2".to_string());
+        let mut reg1 = LWWRegister::new(10, node(1));
+        let mut reg2 = LWWRegister::new(20, node(2));
 
         reg1.set(15);
         reg2.set(25);
@@ -233,12 +239,12 @@ mod tests {
     #[test]
     fn test_gcounter() {
         let mut counter1 = GCounter::new();
-        counter1.increment(&"node1".to_string(), 5);
-        counter1.increment(&"node2".to_string(), 3);
+        counter1.increment(&node(1), 5);
+        counter1.increment(&node(2), 3);
 
         let mut counter2 = GCounter::new();
-        counter2.increment(&"node1".to_string(), 2);
-        counter2.increment(&"node3".to_string(), 4);
+        counter2.increment(&node(1), 2);
+        counter2.increment(&node(3), 4);
 
         counter1.merge(&counter2);
 
@@ -248,8 +254,8 @@ mod tests {
     #[test]
     fn test_pncounter() {
         let mut counter = PNCounter::new();
-        counter.increment(&"node1".to_string(), 10);
-        counter.decrement(&"node1".to_string(), 3);
+        counter.increment(&node(1), 10);
+        counter.decrement(&node(1), 3);
 
         assert_eq!(counter.value(), 7);
     }
@@ -257,12 +263,12 @@ mod tests {
     #[test]
     fn test_orset() {
         let mut set1 = ORSet::new();
-        set1.add("a", "node1".to_string(), 1);
-        set1.add("b", "node1".to_string(), 2);
+        set1.add("a", node(1), 1);
+        set1.add("b", node(1), 2);
 
         let mut set2 = ORSet::new();
-        set2.add("b", "node2".to_string(), 3);
-        set2.add("c", "node2".to_string(), 4);
+        set2.add("b", node(2), 3);
+        set2.add("c", node(2), 4);
 
         set1.merge(&set2);
 

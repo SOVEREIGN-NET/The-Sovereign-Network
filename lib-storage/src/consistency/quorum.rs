@@ -1,6 +1,6 @@
 //! Quorum-based consistency
 
-use crate::consistency::vector_clock::NodeId;
+use crate::types::NodeId;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -183,6 +183,11 @@ impl QuorumResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_identity::NodeId as IdentityNodeId;
+
+    fn node(id: u8) -> IdentityNodeId {
+        IdentityNodeId::from_bytes([id; 32])
+    }
 
     #[test]
     fn test_quorum_config() {
@@ -205,18 +210,18 @@ mod tests {
     fn test_read_quorum() {
         let config = QuorumConfig::new(5, 3, 3).unwrap();
         let nodes = vec![
-            "node1".to_string(),
-            "node2".to_string(),
-            "node3".to_string(),
-            "node4".to_string(),
-            "node5".to_string(),
+            node(1),
+            node(2),
+            node(3),
+            node(4),
+            node(5),
         ];
         let manager = QuorumManager::new(config, nodes).unwrap();
 
-        let responding = vec!["node1".to_string(), "node2".to_string(), "node3".to_string()];
+        let responding = vec![node(1), node(2), node(3)];
         assert!(manager.check_read_quorum(&responding).is_met());
 
-        let responding = vec!["node1".to_string(), "node2".to_string()];
+        let responding = vec![node(1), node(2)];
         assert!(!manager.check_read_quorum(&responding).is_met());
     }
 
@@ -224,19 +229,19 @@ mod tests {
     fn test_write_quorum() {
         let config = QuorumConfig::new(5, 3, 3).unwrap();
         let nodes = vec![
-            "node1".to_string(),
-            "node2".to_string(),
-            "node3".to_string(),
-            "node4".to_string(),
-            "node5".to_string(),
+            node(1),
+            node(2),
+            node(3),
+            node(4),
+            node(5),
         ];
         let manager = QuorumManager::new(config, nodes).unwrap();
 
         let responding = vec![
-            "node1".to_string(),
-            "node2".to_string(),
-            "node3".to_string(),
-            "node4".to_string(),
+            node(1),
+            node(2),
+            node(3),
+            node(4),
         ];
         assert!(manager.check_write_quorum(&responding).is_met());
     }
