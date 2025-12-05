@@ -2,11 +2,24 @@
 
 
 use std::collections::HashMap;
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm,
+    Nonce,
+};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tokio::time::Instant;
 use anyhow::{Result, anyhow};
 use rand;
+
+const ENCRYPTION_VERSION_XOR: u8 = 1;
+const ENCRYPTION_VERSION_AES_GCM: u8 = 2;
+const AES_GCM_NONCE_SIZE: usize = 12;
+
+fn default_encryption_version() -> u8 {
+    ENCRYPTION_VERSION_XOR
+}
 
 /// Recovery phrase manager for mnemonic-based identity recovery
 #[derive(Debug, Clone)]
@@ -27,6 +40,8 @@ pub struct EncryptedRecoveryPhrase {
     pub identity_id: String,
     pub encrypted_phrase: Vec<u8>,
     pub phrase_hash: String,
+    #[serde(default = "default_encryption_version")]
+    pub encryption_version: u8,
     pub encryption_method: String,
     pub salt: Vec<u8>,
     pub iv: Vec<u8>,
@@ -254,7 +269,7 @@ impl RecoveryPhraseManager {
         
         // Encrypt phrase
         let phrase_text = phrase.words.join(" ");
-        let (encrypted_phrase, iv) = self.encrypt_phrase(&phrase_text, &encryption_key).await?;
+        let (encrypted_phrase, iv, encryption_version) = self.encrypt_phrase(&phrase_text, &encryption_key).await?;
         
         // Calculate phrase hash for verification
         let phrase_hash = self.calculate_phrase_hash(&phrase_text);
@@ -273,6 +288,7 @@ impl RecoveryPhraseManager {
             identity_id: identity_id.to_string(),
             encrypted_phrase,
             phrase_hash,
+            encryption_version,
             encryption_method: self.security_settings.encryption_algorithm.clone(),
             salt,
             iv,
@@ -339,14 +355,40 @@ impl RecoveryPhraseManager {
         }
 
         // Decrypt and verify phrase
-        let encrypted_phrase = self.phrases.get(&phrase_id).unwrap();
-        let encryption_key = self.derive_encryption_key(&identity_id, additional_auth, &encrypted_phrase.salt).await?;
-        let decrypted_phrase = self.decrypt_phrase(&encrypted_phrase.encrypted_phrase, &encryption_key, &encrypted_phrase.iv).await?;
+        let encryption_key = {
+            let encrypted_phrase = self.phrases.get(&phrase_id).unwrap();
+            self.derive_encryption_key(&identity_id, additional_auth, &encrypted_phrase.salt).await?
+        };
+        let (decrypted_phrase, used_legacy_scheme) = {
+            let encrypted_phrase = self.phrases.get(&phrase_id).unwrap();
+            self.decrypt_phrase_record(encrypted_phrase, &encryption_key).await?
+        };
         
         // Verify phrase matches
         if decrypted_phrase != phrase_text {
             self.record_failed_attempt(&phrase_id);
             return Err(anyhow!("Recovery phrase verification failed"));
+        }
+
+        // Transparently migrate legacy records to AES-GCM on successful verification
+        if used_legacy_scheme {
+            let (reencrypted, nonce, version) = self.encrypt_phrase(&phrase_text, &encryption_key).await?;
+            if let Some(record) = self.phrases.get_mut(&phrase_id) {
+                record.encrypted_phrase = reencrypted;
+                record.iv = nonce;
+                record.encryption_version = version;
+                record.encryption_method = "AES-256-GCM".to_string();
+                record.last_used = Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs(),
+                );
+                tracing::info!(
+                    "Upgraded recovery phrase {} to AES-256-GCM (v{})",
+                    phrase_id,
+                    version
+                );
+            }
         }
 
         // Update usage tracking
@@ -856,34 +898,66 @@ impl RecoveryPhraseManager {
         Ok(key_hash.to_vec())
     }
 
-    async fn encrypt_phrase(&self, phrase: &str, key: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-        // Simple encryption (in implementation, use proper AES encryption)
-        let mut iv = vec![0u8; 16];
+    async fn encrypt_phrase(&self, phrase: &str, key: &[u8]) -> Result<(Vec<u8>, Vec<u8>, u8)> {
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| anyhow!("Invalid key length: {}", e))?;
+
+        let mut nonce_bytes = [0u8; AES_GCM_NONCE_SIZE];
         use rand::RngCore;
-        rand::rngs::OsRng.fill_bytes(&mut iv);
-        
-        let mut encrypted = Vec::new();
-        let phrase_bytes = phrase.as_bytes();
-        
-        for (i, &byte) in phrase_bytes.iter().enumerate() {
-            let key_byte = key[i % key.len()];
-            let iv_byte = iv[i % iv.len()];
-            encrypted.push(byte ^ key_byte ^ iv_byte);
-        }
-        
-        Ok((encrypted, iv))
+        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(nonce, phrase.as_bytes())
+            .map_err(|e| anyhow!("Encryption failed: {}", e))?;
+
+        Ok((ciphertext, nonce_bytes.to_vec(), ENCRYPTION_VERSION_AES_GCM))
     }
 
-    async fn decrypt_phrase(&self, encrypted: &[u8], key: &[u8], iv: &[u8]) -> Result<String> {
+    async fn decrypt_phrase_aes_gcm(&self, encrypted: &[u8], key: &[u8], nonce: &[u8]) -> Result<String> {
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| anyhow!("Invalid key length: {}", e))?;
+        let nonce = Nonce::from_slice(nonce);
+
+        let plaintext = cipher
+            .decrypt(nonce, encrypted.as_ref())
+            .map_err(|e| anyhow!("Decryption failed: {}", e))?;
+
+        Ok(String::from_utf8(plaintext)?)
+    }
+
+    fn decrypt_phrase_legacy_xor(&self, encrypted: &[u8], key: &[u8], iv: &[u8]) -> Result<String> {
         let mut decrypted = Vec::new();
-        
+
         for (i, &byte) in encrypted.iter().enumerate() {
             let key_byte = key[i % key.len()];
             let iv_byte = iv[i % iv.len()];
             decrypted.push(byte ^ key_byte ^ iv_byte);
         }
-        
+
         Ok(String::from_utf8(decrypted)?)
+    }
+
+    async fn decrypt_phrase_record(&self, record: &EncryptedRecoveryPhrase, key: &[u8]) -> Result<(String, bool)> {
+        let method_is_aes = record.encryption_method.to_lowercase().contains("aes");
+        let use_aes = record.encryption_version >= ENCRYPTION_VERSION_AES_GCM
+            || (method_is_aes && record.iv.len() == AES_GCM_NONCE_SIZE)
+            || record.iv.len() == AES_GCM_NONCE_SIZE;
+
+        if use_aes {
+            let plaintext = self.decrypt_phrase_aes_gcm(&record.encrypted_phrase, key, &record.iv).await?;
+            return Ok((plaintext, self.needs_migration(record)));
+        }
+
+        // Legacy XOR (v1)
+        let plaintext = self.decrypt_phrase_legacy_xor(&record.encrypted_phrase, key, &record.iv)?;
+        Ok((plaintext, true))
+    }
+
+    fn needs_migration(&self, record: &EncryptedRecoveryPhrase) -> bool {
+        record.encryption_version < ENCRYPTION_VERSION_AES_GCM
+            || record.encryption_method.to_lowercase().contains("xor")
+            || record.iv.len() != AES_GCM_NONCE_SIZE
     }
 
     fn calculate_phrase_hash(&self, phrase: &str) -> String {
@@ -1033,5 +1107,143 @@ impl Default for PhraseSecuritySettings {
 impl Default for RecoveryPhraseManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::RngCore;
+    use tokio::time::Instant;
+
+    async fn generate_valid_phrase(
+        manager: &mut RecoveryPhraseManager,
+        identity_id: &str,
+    ) -> Result<RecoveryPhrase> {
+        let options = PhraseGenerationOptions {
+            word_count: 12,
+            language: "english".to_string(),
+            entropy_source: EntropySource::SystemRandom,
+            include_checksum: true,
+            custom_wordlist: None,
+        };
+        manager.generate_recovery_phrase(identity_id, options).await
+    }
+
+    #[tokio::test]
+    async fn encrypts_and_decrypts_with_aes_gcm() -> Result<()> {
+        let mut manager = RecoveryPhraseManager::new();
+        let phrase = generate_valid_phrase(&mut manager, "identity-123").await?;
+
+        let phrase_id = manager
+            .store_recovery_phrase("identity-123", &phrase, Some("auth"))
+            .await?;
+
+        let record = manager.phrases.get(&phrase_id).unwrap();
+        assert_eq!(record.encryption_method, "AES-256-GCM");
+        assert_eq!(record.encryption_version, ENCRYPTION_VERSION_AES_GCM);
+        assert_eq!(record.iv.len(), AES_GCM_NONCE_SIZE);
+
+        let recovered = manager
+            .recover_identity_with_phrase(&phrase.words, Some("auth"))
+            .await?;
+        assert_eq!(recovered, "identity-123");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fails_on_invalid_tag() {
+        let mut manager = RecoveryPhraseManager::new();
+        let phrase = generate_valid_phrase(&mut manager, "identity-123")
+            .await
+            .expect("phrase");
+
+        let phrase_id = manager
+            .store_recovery_phrase("identity-123", &phrase, Some("auth"))
+            .await
+            .expect("store");
+
+        // Corrupt the ciphertext to invalidate the tag
+        if let Some(record) = manager.phrases.get_mut(&phrase_id) {
+            if let Some(byte) = record.encrypted_phrase.first_mut() {
+                *byte ^= 0xFF;
+            }
+        }
+
+        let result = manager
+            .recover_identity_with_phrase(&phrase.words, Some("auth"))
+            .await;
+        assert!(result.is_err(), "decryption should fail on tampering");
+    }
+
+    #[tokio::test]
+    async fn migrates_legacy_xor_records() -> Result<()> {
+        let mut manager = RecoveryPhraseManager::new();
+        let phrase = generate_valid_phrase(&mut manager, "legacy-id").await?;
+        let phrase_text = phrase.words.join(" ");
+
+        // Prepare legacy XOR-encrypted record
+        let salt = manager.generate_salt().await?;
+        let key = manager
+            .derive_encryption_key("legacy-id", Some("auth"), &salt)
+            .await?;
+
+        let mut legacy_iv = vec![0u8; 16];
+        rand::rngs::OsRng.fill_bytes(&mut legacy_iv);
+        let mut legacy_encrypted = Vec::new();
+        for (i, &byte) in phrase_text.as_bytes().iter().enumerate() {
+            let key_byte = key[i % key.len()];
+            let iv_byte = legacy_iv[i % legacy_iv.len()];
+            legacy_encrypted.push(byte ^ key_byte ^ iv_byte);
+        }
+
+        let phrase_id = "phrase_legacy".to_string();
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        manager.phrases.insert(
+            phrase_id.clone(),
+            EncryptedRecoveryPhrase {
+                identity_id: "legacy-id".to_string(),
+                encrypted_phrase: legacy_encrypted,
+                phrase_hash: manager.calculate_phrase_hash(&phrase_text),
+                encryption_version: ENCRYPTION_VERSION_XOR,
+                encryption_method: "XOR".to_string(),
+                salt,
+                iv: legacy_iv,
+                created_at,
+                last_used: None,
+                usage_count: 0,
+                max_usage: None,
+                expires_at: None,
+            },
+        );
+
+        manager.phrase_usage.insert(
+            phrase_id.clone(),
+            PhraseUsageInfo {
+                identity_id: "legacy-id".to_string(),
+                total_uses: 0,
+                last_used: None,
+                successful_recoveries: 0,
+                failed_attempts: 0,
+                created_at: Instant::now(),
+                last_validation: Some(Instant::now()),
+            },
+        );
+
+        let recovered = manager
+            .recover_identity_with_phrase(&phrase.words, Some("auth"))
+            .await?;
+        assert_eq!(recovered, "legacy-id");
+
+        // Record should have been upgraded to AES-GCM
+        let upgraded = manager.phrases.get(&phrase_id).unwrap();
+        assert_eq!(upgraded.encryption_method, "AES-256-GCM");
+        assert_eq!(upgraded.encryption_version, ENCRYPTION_VERSION_AES_GCM);
+        assert_eq!(upgraded.iv.len(), AES_GCM_NONCE_SIZE);
+
+        Ok(())
     }
 }
