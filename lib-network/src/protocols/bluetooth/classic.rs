@@ -1416,7 +1416,7 @@ impl BluetoothClassicProtocol {
                                     .map(|s| s.0 == 1) // Connected = 1
                                     .unwrap_or(false);
                                 
-                                devices.push(ClassicBluetoothDevice {
+                                devices.push(BluetoothDevice {
                                     address: address.clone(),
                                     name: name.clone(),
                                     device_class,
