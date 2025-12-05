@@ -51,10 +51,9 @@ pub use crate::server::{
     // Protocol detection
     IncomingProtocol,
     // ❌ DELETED: TcpHandler, UdpHandler - Replaced by QuicHandler
-    // API registration
-    register_api_handlers,
-    // HTTP layer
-    HttpRouter,
+    // ❌ DELETED: register_api_handlers - Was duplicate dead code
+    // ❌ DELETED: HttpRouter - QUIC is the only entry point
+    // HTTP middleware (still needed for middleware processing)
     Middleware,
     CorsMiddleware,
     RateLimitMiddleware,
@@ -83,12 +82,12 @@ pub use crate::server::{
 /// QUIC-ONLY ARCHITECTURE: TCP/UDP removed, QUIC is the primary transport
 #[derive(Clone)]
 pub struct ZhtpUnifiedServer {
-    // QUIC-native protocol (required, primary transport)
+    // QUIC-native protocol (required, primary transport - ONLY ENTRY POINT)
     quic_mesh: Arc<QuicMeshProtocol>,
     quic_handler: Arc<QuicHandler>,
-    
+
     // Protocol routers
-    http_router: HttpRouter,
+    // ❌ DELETED: http_router - QUIC is the only entry point, HttpCompatibilityLayer → ZhtpRouter
     mesh_router: MeshRouter,
     wifi_router: WiFiRouter,
     bluetooth_router: BluetoothRouter,
@@ -210,8 +209,8 @@ impl ZhtpUnifiedServer {
         info!(" Discovery coordinator initialized - all protocols will report to single coordinator");
         
         // Initialize protocol routers
-        let mut http_router = HttpRouter::new();
-        let mut zhtp_router = crate::server::zhtp::ZhtpRouter::new();  // Native ZHTP router for QUIC
+        // ❌ DELETED: http_router - QUIC is the only entry point
+        let mut zhtp_router = crate::server::zhtp::ZhtpRouter::new();  // Native ZHTP router for QUIC - ONLY ROUTER NEEDED
         let mut mesh_router = MeshRouter::new(server_id, session_manager.clone());
         let wifi_router = WiFiRouter::new_with_peer_notification(peer_discovery_tx);
         let bluetooth_router = BluetoothRouter::new();
@@ -264,9 +263,8 @@ impl ZhtpUnifiedServer {
         );
         mesh_router.set_dht_handler(dht_handler.clone()).await;
         
-        // Register comprehensive API handlers on both HTTP and native ZHTP routers
+        // Register comprehensive API handlers on ZHTP router (QUIC is the only entry point)
         Self::register_api_handlers(
-            &mut http_router,
             &mut zhtp_router,
             blockchain.clone(),
             storage.clone(),
@@ -291,7 +289,7 @@ impl ZhtpUnifiedServer {
         Ok(Self {
             quic_mesh: quic_arc,
             quic_handler,
-            http_router,
+            // ❌ DELETED: http_router - QUIC is the only entry point
             mesh_router,
             wifi_router,
             bluetooth_router,
@@ -351,9 +349,9 @@ impl ZhtpUnifiedServer {
         Ok(quic_mesh)
     }
     
-    /// Register all comprehensive API handlers on both HTTP and ZHTP routers
+    /// Register all comprehensive API handlers on ZHTP router
+    /// QUIC is the ONLY entry point - HTTP requests go through HttpCompatibilityLayer → ZhtpRouter
     async fn register_api_handlers(
-        http_router: &mut HttpRouter,
         zhtp_router: &mut crate::server::zhtp::ZhtpRouter,
         blockchain: Arc<RwLock<Blockchain>>,
         storage: Arc<RwLock<UnifiedStorageSystem>>,
@@ -362,13 +360,12 @@ impl ZhtpUnifiedServer {
         _session_manager: Arc<SessionManager>,
         dht_handler: Arc<dyn ZhtpRequestHandler>,
     ) -> Result<()> {
-        info!("Registering comprehensive API handlers on HTTP and ZHTP routers...");
+        info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
         
         // Blockchain operations
         let blockchain_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             BlockchainHandler::new(blockchain.clone())
         );
-        http_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler.clone());
         zhtp_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler);
         
         // Identity and wallet management
@@ -404,7 +401,6 @@ impl ZhtpUnifiedServer {
                 recovery_phrase_manager,
             )
         );
-        http_router.register_handler("/api/v1/identity".to_string(), identity_handler.clone());
         zhtp_router.register_handler("/api/v1/identity".to_string(), identity_handler);
         
         // Wallet content ownership manager (shared across handlers)
@@ -415,32 +411,27 @@ impl ZhtpUnifiedServer {
             StorageHandler::new(storage.clone())
                 .with_wallet_manager(Arc::clone(&wallet_content_manager))
         );
-        http_router.register_handler("/api/v1/storage".to_string(), storage_handler.clone());
         zhtp_router.register_handler("/api/v1/storage".to_string(), storage_handler);
-        
+
         // Wallet operations
         let wallet_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             WalletHandler::new(identity_manager.clone())
         );
-        http_router.register_handler("/api/v1/wallet".to_string(), wallet_handler.clone());
         zhtp_router.register_handler("/api/v1/wallet".to_string(), wallet_handler);
-        
+
         // DAO operations
         let dao_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             DaoHandler::new(identity_manager.clone(), _session_manager.clone())
         );
-        http_router.register_handler("/api/v1/dao".to_string(), dao_handler.clone());
         zhtp_router.register_handler("/api/v1/dao".to_string(), dao_handler);
-        
+
         // Crypto utilities (sign message, verify signature, generate keypair)
         let crypto_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::CryptoHandler::new(identity_manager.clone())
         );
-        http_router.register_handler("/api/v1/crypto".to_string(), crypto_handler.clone());
         zhtp_router.register_handler("/api/v1/crypto".to_string(), crypto_handler);
-        
-        // Register DHT handler on both HTTP and native ZHTP (already registered on mesh_router for pure UDP)
-        http_router.register_handler("/api/v1/dht".to_string(), dht_handler.clone());
+
+        // Register DHT handler on ZHTP (already registered on mesh_router for pure UDP)
         zhtp_router.register_handler("/api/v1/dht".to_string(), dht_handler);
         
         // Web4 domain and content (handle async creation first)
@@ -450,11 +441,9 @@ impl ZhtpUnifiedServer {
         let wallet_content_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::WalletContentHandler::new(Arc::clone(&wallet_content_manager))
         );
-        http_router.register_handler("/api/wallet".to_string(), Arc::clone(&wallet_content_handler));
-        http_router.register_handler("/api/content".to_string(), Arc::clone(&wallet_content_handler));
         zhtp_router.register_handler("/api/wallet".to_string(), Arc::clone(&wallet_content_handler));
         zhtp_router.register_handler("/api/content".to_string(), wallet_content_handler);
-        
+
         // Marketplace handler for buying/selling content (shares managers with wallet content)
         let marketplace_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::MarketplaceHandler::new(
@@ -463,33 +452,28 @@ impl ZhtpUnifiedServer {
                 Arc::clone(&identity_manager)
             )
         );
-        http_router.register_handler("/api/marketplace".to_string(), marketplace_handler.clone());
         zhtp_router.register_handler("/api/marketplace".to_string(), marketplace_handler);
-        
+
         // DNS resolution for .zhtp domains (connect to Web4Manager)
         let mut dns_handler = DnsHandler::new();
         dns_handler.set_web4_manager(web4_manager);
         let dns_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(dns_handler);
-        http_router.register_handler("/api/v1/dns".to_string(), dns_handler.clone());
         zhtp_router.register_handler("/api/v1/dns".to_string(), dns_handler);
-        
+
         // Register Web4 handler
         let web4_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(web4_handler);
-        http_router.register_handler("/api/v1/web4".to_string(), web4_handler.clone());
         zhtp_router.register_handler("/api/v1/web4".to_string(), web4_handler);
-        
+
         // Validator management
         let validator_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::ValidatorHandler::new(blockchain.clone())
         );
-        http_router.register_handler("/api/v1/validator".to_string(), validator_handler.clone());
         zhtp_router.register_handler("/api/v1/validator".to_string(), validator_handler);
-        
+
         // Protocol management
         let protocol_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             ProtocolHandler::new()
         );
-        http_router.register_handler("/api/v1/protocol".to_string(), protocol_handler.clone());
         zhtp_router.register_handler("/api/v1/protocol".to_string(), protocol_handler);
 
         // Create RuntimeOrchestrator for handlers that need runtime access
@@ -500,9 +484,6 @@ impl ZhtpUnifiedServer {
         let network_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::NetworkHandler::new(runtime.clone())
         );
-        http_router.register_handler("/api/v1/network".to_string(), network_handler.clone());
-        http_router.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
-        http_router.register_handler("/api/v1/blockchain/sync".to_string(), network_handler.clone());
         zhtp_router.register_handler("/api/v1/network".to_string(), network_handler.clone());
         zhtp_router.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
         zhtp_router.register_handler("/api/v1/blockchain/sync".to_string(), network_handler);
@@ -511,10 +492,9 @@ impl ZhtpUnifiedServer {
         let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::MeshHandler::new(runtime.clone())
         );
-        http_router.register_handler("/api/v1/mesh".to_string(), mesh_handler.clone());
         zhtp_router.register_handler("/api/v1/mesh".to_string(), mesh_handler);
 
-        info!("All API handlers registered successfully");
+        info!("✅ All API handlers registered successfully on ZHTP router");
         Ok(())
     }
     
