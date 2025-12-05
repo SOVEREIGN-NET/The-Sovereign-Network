@@ -32,6 +32,9 @@ use crate::api::handlers::{
     Web4Handler,
     DnsHandler,
     ProtocolHandler,
+    NetworkHandler,
+    MeshHandler,
+    CryptoHandler,
 };
 use crate::session_manager::SessionManager;
 use crate::server::http::router::HttpRouter;
@@ -216,7 +219,36 @@ pub async fn register_api_handlers(
     http_router.register_handler("/api/v1/protocol".to_string(), protocol_handler.clone());
     zhtp_router.register_handler("/api/v1/protocol".to_string(), protocol_handler);
     info!("   ✅ Protocol handler registered");
-    
-    info!("✅ All API handlers registered successfully (11 handlers)");
+
+    // Create RuntimeOrchestrator for handlers that need runtime access
+    // Use default config - this is okay because NetworkHandler/MeshHandler only need
+    // the orchestrator for managing runtime state, not for initial configuration
+    let runtime_config = crate::config::NodeConfig::default();
+    let runtime = Arc::new(crate::runtime::RuntimeOrchestrator::new(runtime_config).await?);
+
+    // Network management (gas pricing, peers, sync metrics)
+    let network_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+        NetworkHandler::new(runtime.clone())
+    );
+    http_router.register_handler("/api/v1/network".to_string(), network_handler.clone());
+    http_router.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
+    http_router.register_handler("/api/v1/blockchain/sync".to_string(), network_handler);
+    info!("   ✅ Network handler registered");
+
+    // Mesh blockchain operations
+    let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+        MeshHandler::new(runtime.clone())
+    );
+    http_router.register_handler("/api/v1/mesh".to_string(), mesh_handler);
+    info!("   ✅ Mesh handler registered");
+
+    // Crypto operations (signing, verification, keypair generation)
+    let crypto_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+        CryptoHandler::new(identity_manager.clone())
+    );
+    http_router.register_handler("/api/v1/crypto".to_string(), crypto_handler);
+    info!("   ✅ Crypto handler registered");
+
+    info!("✅ All API handlers registered successfully (14 handlers)");
     Ok(())
 }

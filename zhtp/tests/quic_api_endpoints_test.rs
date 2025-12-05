@@ -22,7 +22,6 @@ use quinn::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use quinn::rustls::DigitallySignedStruct;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
 
 /// Get node address from environment or use default
 fn get_node_address() -> String {
@@ -159,6 +158,65 @@ async fn send_http_request(
     Ok((status_code, response_str))
 }
 
+/// Get mock request body for POST endpoints
+fn get_mock_body(path: &str) -> Option<String> {
+    match path {
+        // Blockchain endpoints
+        "/api/v1/blockchain/transaction" => Some(r#"{"from":"test_from","to":"test_to","amount":100,"fee":10,"signature":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
+        "/api/v1/blockchain/transaction/estimate-fee" => Some(r#"{"transaction_size":250,"amount":1000,"priority":"normal"}"#.to_string()),
+        "/api/v1/blockchain/transaction/broadcast" => Some(r#"{"transaction_data":"0000"}"#.to_string()),
+        "/api/v1/blockchain/contracts/deploy" => Some(r#"{"name":"TestContract","contract_type":"token","code":"test code","initial_state":{}}"#.to_string()),
+        "/api/v1/blockchain/import" => Some(r#"{}"#.to_string()),
+
+        // Identity endpoints
+        "/api/v1/identity/create" => Some(r#"{"display_name":"Test User","password":"test_password_123"}"#.to_string()),
+        "/api/v1/identity/login" => Some(r#"{"identity_id":"test_id","password":"test_password"}"#.to_string()),
+        "/api/v1/identity/signin" => Some(r#"{"identity_id":"test_id","password":"test_password"}"#.to_string()),
+        "/api/v1/identity/sign" => Some(r#"{"identity_id":"test_id","message":"test_message"}"#.to_string()),
+        "/api/v1/identity/recover" => Some(r#"{"recovery_phrase":"word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20"}"#.to_string()),
+        "/api/v1/identity/password/recover" => Some(r#"{"identity_id":"test_id","email":"test@example.com"}"#.to_string()),
+        "/api/v1/identity/seed/verify" => Some(r#"{"identity_id":"test_id","seed_phrase":"test seed phrase"}"#.to_string()),
+        "/api/v1/identity/backup/generate" => Some(r#"{"identity_id":"test_id","session_token":"test_token"}"#.to_string()),
+        "/api/v1/identity/backup/verify" => Some(r#"{"identity_id":"test_id","recovery_phrase":"word1 word2 word3"}"#.to_string()),
+        "/api/v1/identity/backup/export" => Some(r#"{"identity_id":"test_id","password":"test_password"}"#.to_string()),
+        "/api/v1/identity/backup/import" => Some(r#"{"backup_data":"test_backup","password":"test_password"}"#.to_string()),
+        "/api/v1/identity/citizenship/apply" => Some(r#"{"identity_id":"test_id"}"#.to_string()),
+
+        // Storage endpoints
+        "/api/v1/storage/store" => Some(r#"{"key":"test_key","value":"test_value"}"#.to_string()),
+        "/api/v1/storage/put" => Some(r#"{"key":"test_key","data":"test_data"}"#.to_string()),
+        "/api/v1/storage/get" => Some(r#"{"key":"test_key"}"#.to_string()),
+        "/api/v1/storage/delete" => Some(r#"{"key":"test_key"}"#.to_string()),
+
+        // Wallet endpoints
+        "/api/v1/wallet/send" => Some(r#"{"from_wallet":"primary","to":"test_recipient","amount":100,"identity_id":"test_id"}"#.to_string()),
+        "/api/v1/wallet/transfer/cross-wallet" => Some(r#"{"from_wallet":"primary","to_wallet":"savings","amount":100,"identity_id":"test_id"}"#.to_string()),
+        "/api/v1/wallet/staking/stake" => Some(r#"{"wallet_id":"test_wallet","amount":1000,"identity_id":"test_id"}"#.to_string()),
+        "/api/v1/wallet/staking/unstake" => Some(r#"{"wallet_id":"test_wallet","amount":500,"identity_id":"test_id"}"#.to_string()),
+
+        // Crypto endpoints
+        "/api/v1/crypto/generate_keypair" => Some(r#"{}"#.to_string()),
+        "/api/v1/crypto/sign_message" => Some(r#"{"message":"test_message","private_key":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
+        "/api/v1/crypto/verify_signature" => Some(r#"{"message":"test_message","signature":"test_sig","public_key":"test_pubkey"}"#.to_string()),
+
+        // Web4 endpoints
+        "/api/v1/web4/load" => Some(r#"{"domain":"test.zhtp"}"#.to_string()),
+
+        // Mesh endpoints
+        "/api/v1/mesh/create" => Some(r#"{"mesh_id":"test_mesh","initial_validators":[]}"#.to_string()),
+
+        // DAO endpoints
+        "/api/v1/dao/proposal/create" => Some(r#"{"title":"Test Proposal","description":"Test description","identity_id":"test_id"}"#.to_string()),
+        "/api/v1/dao/vote/cast" => Some(r#"{"proposal_id":"test_proposal","vote":true,"identity_id":"test_id"}"#.to_string()),
+
+        // Network endpoints
+        "/api/v1/blockchain/network/peer/add" => Some(r#"{"peer_address":"192.168.1.100:9334"}"#.to_string()),
+        "/api/v1/blockchain/sync/alerts/acknowledge" => Some(r#"{"alert_id":"test_alert"}"#.to_string()),
+
+        _ => None,
+    }
+}
+
 /// Test endpoint and return result
 async fn test_endpoint(
     connection: &Connection,
@@ -168,7 +226,16 @@ async fn test_endpoint(
 ) -> Result<u16> {
     print!("  Testing {} {} ... ", method, path);
 
-    let (status, response) = send_http_request(connection, method, path, body).await?;
+    // Use provided body or get mock body for POST endpoints
+    let mock_body = if body.is_none() && (method == "POST" || method == "PUT" || method == "DELETE") {
+        get_mock_body(path)
+    } else {
+        None
+    };
+
+    let request_body = body.or_else(|| mock_body.as_deref());
+
+    let (status, response) = send_http_request(connection, method, path, request_body).await?;
 
     // Success: 200-299
     // Client error but endpoint exists: 400-403, 429
