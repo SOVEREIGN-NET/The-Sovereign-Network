@@ -169,46 +169,46 @@ fn get_mock_body(path: &str) -> Option<String> {
         // Import expects binary data, empty body will fail - skip in test
         // "/api/v1/blockchain/import" => Some(r#"{}"#.to_string()),
 
-        // Identity endpoints
+        // Identity endpoints (using valid 64-char hex IDs)
         "/api/v1/identity/create" => Some(r#"{"display_name":"Test User","password":"test_password_123"}"#.to_string()),
-        "/api/v1/identity/login" => Some(r#"{"identity_id":"test_id","password":"test_password"}"#.to_string()),
-        "/api/v1/identity/signin" => Some(r#"{"identity_id":"test_id","password":"test_password"}"#.to_string()),
-        "/api/v1/identity/sign" => Some(r#"{"identity_id":"test_id","message":"test_message"}"#.to_string()),
+        "/api/v1/identity/login" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","password":"test_password"}"#.to_string()),
+        "/api/v1/identity/signin" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","password":"test_password"}"#.to_string()),
+        "/api/v1/identity/sign" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","message":"test_message"}"#.to_string()),
         "/api/v1/identity/recover" => Some(r#"{"recovery_phrase":"word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20"}"#.to_string()),
-        "/api/v1/identity/password/recover" => Some(r#"{"identity_id":"test_id","email":"test@example.com"}"#.to_string()),
-        "/api/v1/identity/seed/verify" => Some(r#"{"identity_id":"test_id","seed_phrase":"test seed phrase"}"#.to_string()),
-        "/api/v1/identity/backup/generate" => Some(r#"{"identity_id":"test_id","session_token":"test_token"}"#.to_string()),
-        "/api/v1/identity/backup/verify" => Some(r#"{"identity_id":"test_id","recovery_phrase":"word1 word2 word3"}"#.to_string()),
-        "/api/v1/identity/backup/export" => Some(r#"{"identity_id":"test_id","password":"test_password"}"#.to_string()),
+        "/api/v1/identity/password/recover" => Some(r#"{"recovery_phrase":"word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20","new_password":"new_password_123"}"#.to_string()),
+        "/api/v1/identity/seed/verify" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","seed_phrase":"test seed phrase"}"#.to_string()),
+        "/api/v1/identity/backup/generate" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","session_token":"test_token"}"#.to_string()),
+        "/api/v1/identity/backup/verify" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","recovery_phrase":"word1 word2 word3"}"#.to_string()),
+        "/api/v1/identity/backup/export" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","passphrase":"test_passphrase"}"#.to_string()),
         "/api/v1/identity/backup/import" => Some(r#"{"backup_data":"test_backup","password":"test_password"}"#.to_string()),
         "/api/v1/identity/citizenship/apply" => Some(r#"{"identity_id":"test_id"}"#.to_string()),
 
         // Storage endpoints
-        "/api/v1/storage/store" => Some(r#"{"key":"test_key","value":"test_value"}"#.to_string()),
-        "/api/v1/storage/put" => Some(r#"{"key":"test_key","data":"test_data"}"#.to_string()),
+        "/api/v1/storage/store" => Some(r#"{"data":"test_data_content","metadata":{"key":"test_key"}}"#.to_string()),
+        "/api/v1/storage/put" => Some(r#"{"key":"test_key","value":"test_value"}"#.to_string()),
         "/api/v1/storage/get" => Some(r#"{"key":"test_key"}"#.to_string()),
         "/api/v1/storage/delete" => Some(r#"{"key":"test_key"}"#.to_string()),
 
-        // Wallet endpoints
-        "/api/v1/wallet/send" => Some(r#"{"from_wallet":"primary","to":"test_recipient","amount":100,"identity_id":"test_id"}"#.to_string()),
-        "/api/v1/wallet/transfer/cross-wallet" => Some(r#"{"from_wallet":"primary","to_wallet":"savings","amount":100,"identity_id":"test_id"}"#.to_string()),
-        "/api/v1/wallet/staking/stake" => Some(r#"{"wallet_id":"test_wallet","amount":1000,"identity_id":"test_id"}"#.to_string()),
-        "/api/v1/wallet/staking/unstake" => Some(r#"{"wallet_id":"test_wallet","amount":500,"identity_id":"test_id"}"#.to_string()),
+        // Wallet endpoints (using valid 64-char hex IDs)
+        "/api/v1/wallet/send" => Some(r#"{"from_identity":"0000000000000000000000000000000000000000000000000000000000000000","to":"test_recipient","amount":100,"wallet_id":"primary"}"#.to_string()),
+        "/api/v1/wallet/transfer/cross-wallet" => Some(r#"{"from_wallet":"primary","to_wallet":"savings","amount":100,"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
+        "/api/v1/wallet/staking/stake" => Some(r#"{"wallet_id":"test_wallet","amount":1000,"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
+        "/api/v1/wallet/staking/unstake" => Some(r#"{"wallet_id":"test_wallet","amount":500,"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
 
         // Crypto endpoints
         "/api/v1/crypto/generate_keypair" => Some(r#"{}"#.to_string()),
-        "/api/v1/crypto/sign_message" => Some(r#"{"message":"test_message","private_key":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
-        "/api/v1/crypto/verify_signature" => Some(r#"{"message":"test_message","signature":"test_sig","public_key":"test_pubkey"}"#.to_string()),
+        "/api/v1/crypto/sign_message" => Some(r#"{"message":"test_message","identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
+        "/api/v1/crypto/verify_signature" => Some(r#"{"message":"test_message","signature":"0000000000000000000000000000000000000000000000000000000000000000","public_key":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
 
         // Web4 endpoints
-        "/api/v1/web4/load" => Some(r#"{"domain":"test.zhtp"}"#.to_string()),
+        "/api/v1/web4/load" => Some(r#"{"url":"test.zhtp"}"#.to_string()),
 
         // Mesh endpoints
         "/api/v1/mesh/create" => Some(r#"{"mesh_id":"test_mesh","initial_validators":[]}"#.to_string()),
 
         // DAO endpoints
-        "/api/v1/dao/proposal/create" => Some(r#"{"title":"Test Proposal","description":"Test description","identity_id":"test_id"}"#.to_string()),
-        "/api/v1/dao/vote/cast" => Some(r#"{"proposal_id":"test_proposal","vote":true,"identity_id":"test_id"}"#.to_string()),
+        "/api/v1/dao/proposal/create" => Some(r#"{"title":"Test Proposal","description":"Test description","proposer_identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
+        "/api/v1/dao/vote/cast" => Some(r#"{"proposal_id":"test_proposal","vote":true,"voter_identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
 
         // Network endpoints
         "/api/v1/blockchain/network/peer/add" => Some(r#"{"peer_address":"192.168.1.100:9334"}"#.to_string()),
