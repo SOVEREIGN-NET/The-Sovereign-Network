@@ -498,12 +498,24 @@ impl Web4Contract {
     /// Validate domain name format
     fn is_valid_domain(domain: &str) -> bool {
         // Basic domain validation for .zhtp domains
-        domain.ends_with(".zhtp") 
-            && domain.len() > 5 
-            && domain.len() < 100
-            && domain.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-')
-            && !domain.starts_with('-')
-            && !domain.ends_with('-')
+        if !domain.ends_with(".zhtp") || domain.len() <= 5 || domain.len() >= 100 {
+            return false;
+        }
+        
+        // Get the subdomain part (before .zhtp)
+        let subdomain = &domain[..domain.len() - 5];
+        
+        // Check that all characters are valid
+        if !domain.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-') {
+            return false;
+        }
+        
+        // Subdomain cannot start or end with a hyphen
+        if subdomain.starts_with('-') || subdomain.ends_with('-') {
+            return false;
+        }
+        
+        true
     }
     
     /// Validate content hash format (/DHT hash)
@@ -947,10 +959,10 @@ mod tests {
             deployment_data,
         );
 
-        // Add route
+        // Add route (content hash must be 46 chars for Qm prefix)
         let route = ContentRoute {
             path: "/contact".to_string(),
-            content_hash: "QmContactHash1234567890123456789012345678901".to_string(),
+            content_hash: "QmContactHash123456789012345678901234567890123".to_string(), // 46 chars exactly
             content_type: "text/html".to_string(),
             size: 512,
             metadata: HashMap::new(),
