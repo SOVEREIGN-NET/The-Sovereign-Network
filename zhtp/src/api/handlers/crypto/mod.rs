@@ -133,7 +133,7 @@ impl CryptoHandler {
 
         // Parse identity ID
         let identity_hash = hex::decode(&sign_req.identity_id)
-            .map_err(|_| anyhow!("Invalid identity ID format"))?;
+            .map_err(|e| anyhow!("Invalid hex for identity_id: {}", e))?;
         
         if identity_hash.len() != 32 {
             return Ok(create_error_response(
@@ -155,15 +155,22 @@ impl CryptoHandler {
             }
             "hex" => {
                 hex::decode(&sign_req.message)
-                    .map_err(|e| anyhow!("Invalid hex: {}", e))?
+                    .map_err(|e| anyhow!("Invalid hex for message: {}", e))?
             }
             "utf8" | _ => sign_req.message.as_bytes().to_vec(),
         };
 
         // Get identity and sign the message
         let identity_mgr = self.identity_manager.read().await;
-        let identity = identity_mgr.get_identity(&identity_id)
-            .ok_or_else(|| anyhow!("Identity not found"))?;
+        let identity = match identity_mgr.get_identity(&identity_id) {
+            Some(id) => id,
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    "Identity not found".to_string(),
+                ));
+            }
+        };
 
         // Get private key from identity (P1-7: private keys stored in identity)
         let private_key = identity.private_key.as_ref()
@@ -209,9 +216,9 @@ impl CryptoHandler {
 
         // Decode signature and public key
         let signature_bytes = hex::decode(&verify_req.signature)
-            .map_err(|e| anyhow!("Invalid signature hex: {}", e))?;
+            .map_err(|e| anyhow!("Invalid hex for signature: {}", e))?;
         let public_key_bytes = hex::decode(&verify_req.public_key)
-            .map_err(|e| anyhow!("Invalid public key hex: {}", e))?;
+            .map_err(|e| anyhow!("Invalid hex for public_key: {}", e))?;
 
         // Decode message
         let encoding = verify_req.encoding.as_deref().unwrap_or("utf8");
@@ -222,7 +229,7 @@ impl CryptoHandler {
             }
             "hex" => {
                 hex::decode(&verify_req.message)
-                    .map_err(|e| anyhow!("Invalid hex: {}", e))?
+                    .map_err(|e| anyhow!("Invalid hex for message: {}", e))?
             }
             "utf8" | _ => verify_req.message.as_bytes().to_vec(),
         };
