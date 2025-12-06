@@ -10,6 +10,7 @@ use std::sync::atomic::{compiler_fence, Ordering};
 use crate::types::Signature;
 use crate::hashing::hash_blake3;
 use crate::verification::verify_signature;
+use crate::traits::ZeroizingKey;
 
 /// Pure post-quantum public key with CRYSTALS implementations only
 ///
@@ -81,6 +82,19 @@ impl Drop for PublicKey {
     }
 }
 
+/// SECURITY ENFORCEMENT: PublicKey implements ZeroizingKey
+///
+/// # Rationale for Public Key Zeroization
+///
+/// While public keys are not secret, they are wiped on drop for defense-in-depth:
+/// - **Post-Quantum Keys are Large**: Dilithium (1312B) + Kyber (1184B) = 2.5KB per key
+/// - **Metadata Protection**: Public keys may reveal network topology or identity patterns
+/// - **Memory Analysis Resistance**: Prevents key fingerprinting in memory dumps
+/// - **Compliance**: Meets audit-grade cryptographic hygiene standards
+///
+/// This explicit opt-in confirms the security policy has been considered.
+impl ZeroizingKey for PublicKey {}
+
 impl PublicKey {
     /// Create a new public key from raw bytes (assumes Dilithium)
     pub fn new(dilithium_pk: Vec<u8>) -> Self {
@@ -131,6 +145,18 @@ pub struct PrivateKey {
     /// Master seed for key derivation
     pub master_seed: Vec<u8>,
 }
+
+/// SECURITY ENFORCEMENT: PrivateKey implements ZeroizingKey
+///
+/// # Contract
+///
+/// By implementing this trait, PrivateKey declares:
+/// 1. It contains sensitive cryptographic material
+/// 2. It MUST be zeroized on drop (enforced by `ZeroizeOnDrop`)
+/// 3. It follows audit-grade memory safety practices
+///
+/// This is **NON-OPTIONAL** for all private/secret key types.
+impl ZeroizingKey for PrivateKey {}
 
 impl PrivateKey {
     /// Get the size of this private key in bytes (pure PQC only)
@@ -183,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_constant_time_equality_single_byte_difference() {
-        let mut dilithium1 = vec![0xAAu8; 1952];
+        let dilithium1 = vec![0xAAu8; 1952];
         let mut dilithium2 = vec![0xAAu8; 1952];
 
         // Change single byte in the middle
@@ -206,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_constant_time_equality_last_byte_difference() {
-        let mut key_id1 = [0xAAu8; 32];
+        let key_id1 = [0xAAu8; 32];
         let mut key_id2 = [0xAAu8; 32];
 
         // Change only the last byte
@@ -287,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_private_key_zeroization() {
-        let mut private_key = PrivateKey {
+        let private_key = PrivateKey {
             dilithium_sk: vec![0xAAu8; 100],
             kyber_sk: vec![0xBBu8; 100],
             master_seed: vec![0xCCu8; 64],
