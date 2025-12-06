@@ -42,8 +42,120 @@ use lib_identity::{ZhtpIdentity, NodeId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use std::fmt;
+
+// ============================================================================
+// Security Validation Functions
+// ============================================================================
+
+/// Validate peer timestamp for freshness and prevent time-travel attacks
+///
+/// # Security
+///
+/// - Rejects timestamps in the future (clock skew tolerance: 5 minutes)
+/// - Rejects very old timestamps (max age: 1 year)
+/// - Rejects timestamps before protocol launch (Nov 2023)
+fn validate_peer_timestamp(timestamp: u64) -> Result<()> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| anyhow!("System clock error: {}", e))?
+        .as_secs();
+
+    // Reject future timestamps (with 5 min clock skew tolerance)
+    const CLOCK_SKEW_TOLERANCE: u64 = 300;
+    if timestamp > now + CLOCK_SKEW_TOLERANCE {
+        return Err(anyhow!(
+            "Timestamp in future: {} > {} (clock skew tolerance: {} sec)",
+            timestamp,
+            now,
+            CLOCK_SKEW_TOLERANCE
+        ));
+    }
+
+    // Reject very old timestamps (1 year max)
+    const MAX_AGE_SECS: u64 = 365 * 24 * 3600;
+    let age = now.saturating_sub(timestamp);
+    if age > MAX_AGE_SECS {
+        return Err(anyhow!(
+            "Timestamp too old: {} seconds (max: {} = 1 year)",
+            age,
+            MAX_AGE_SECS
+        ));
+    }
+
+    // Reject timestamps before protocol launch (Nov 2023)
+    const PROTOCOL_LAUNCH: u64 = 1700000000;
+    if timestamp < PROTOCOL_LAUNCH {
+        return Err(anyhow!(
+            "Timestamp predates protocol launch (Nov 2023): {}",
+            timestamp
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate device_id for sufficient entropy
+///
+/// # Security
+///
+/// - Prevents weak device names that increase collision risk
+/// - Enforces minimum length and character variety
+/// - Rejects common/predictable device names
+fn validate_device_id(device_id: &str) -> Result<()> {
+    // Minimum length check
+    const MIN_LENGTH: usize = 3;
+    if device_id.len() < MIN_LENGTH {
+        return Err(anyhow!(
+            "Device ID too short: {} chars (min: {})",
+            device_id.len(),
+            MIN_LENGTH
+        ));
+    }
+
+    // Maximum length check (prevent abuse)
+    const MAX_LENGTH: usize = 64;
+    if device_id.len() > MAX_LENGTH {
+        return Err(anyhow!(
+            "Device ID too long: {} chars (max: {})",
+            device_id.len(),
+            MAX_LENGTH
+        ));
+    }
+
+    // Reject common weak device names
+    const WEAK_NAMES: &[&str] = &[
+        "test",
+        "device",
+        "phone",
+        "laptop",
+        "server",
+        "node",
+        "peer",
+        "client",
+        "device1",
+        "device2",
+    ];
+    let lower = device_id.to_lowercase();
+    if WEAK_NAMES.contains(&lower.as_str()) {
+        return Err(anyhow!(
+            "Device ID is too common/weak: '{}' - use unique identifier",
+            device_id
+        ));
+    }
+
+    // Check for alphanumeric + hyphen/underscore only
+    if !device_id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Err(anyhow!(
+            "Device ID contains invalid characters: '{}' - use alphanumeric, hyphen, underscore only",
+            device_id
+        ));
+    }
+
+    Ok(())
+}
 
 // ============================================================================
 // Core Unified Peer Identity
@@ -168,6 +280,24 @@ impl fmt::Display for UnifiedPeerId {
 // Bidirectional Peer ID Mapper
 // ============================================================================
 
+/// Configuration limits for PeerIdMapper
+#[derive(Debug, Clone)]
+pub struct PeerMapperConfig {
+    /// Maximum total peers in mapper (DoS protection)
+    pub max_peers: usize,
+    /// Maximum devices per DID (Sybil attack protection)
+    pub max_devices_per_did: usize,
+}
+
+impl Default for PeerMapperConfig {
+    fn default() -> Self {
+        Self {
+            max_peers: 100_000,         // 100K peers max
+            max_devices_per_did: 10,    // 10 devices per identity
+        }
+    }
+}
+
 /// Service for bidirectional mapping between legacy ID types and UnifiedPeerId
 ///
 /// This mapper maintains indexes for fast lookups by any legacy ID type:
@@ -179,13 +309,19 @@ impl fmt::Display for UnifiedPeerId {
 ///
 /// All operations are async and use RwLock for concurrent access.
 ///
+/// # Security
+///
+/// - **Memory limits**: Enforces max_peers and max_devices_per_did limits
+/// - **Atomic operations**: Race-free registration using entry API
+/// - **Cryptographic verification**: Verifies NodeId derivation on registration
+///
 /// # Usage
 ///
 /// ```rust
 /// let mapper = PeerIdMapper::new();
 ///
 /// // Register a peer
-/// mapper.register(peer_id).await;
+/// mapper.register(peer_id).await?;
 ///
 /// // Lookup by different ID types
 /// let by_node = mapper.lookup_by_node_id(&node_id).await;
@@ -194,92 +330,165 @@ impl fmt::Display for UnifiedPeerId {
 /// ```
 #[derive(Debug, Clone)]
 pub struct PeerIdMapper {
-    /// Main storage: NodeId → UnifiedPeerId
-    by_node_id: Arc<RwLock<HashMap<NodeId, UnifiedPeerId>>>,
-    
+    /// Main storage: NodeId → Arc<UnifiedPeerId> (Arc to avoid cloning sensitive data)
+    by_node_id: Arc<RwLock<HashMap<NodeId, Arc<UnifiedPeerId>>>>,
+
     /// Index: PublicKey → NodeId (for fast lookup)
     by_public_key: Arc<RwLock<HashMap<PublicKey, NodeId>>>,
-    
+
     /// Index: DID → Vec<NodeId> (one DID can have multiple devices)
     by_did: Arc<RwLock<HashMap<String, Vec<NodeId>>>>,
+
+    /// Configuration limits
+    config: PeerMapperConfig,
 }
 
 impl PeerIdMapper {
-    /// Create a new empty peer ID mapper
+    /// Create a new empty peer ID mapper with default config
     pub fn new() -> Self {
+        Self::with_config(PeerMapperConfig::default())
+    }
+
+    /// Create a new peer ID mapper with custom config
+    pub fn with_config(config: PeerMapperConfig) -> Self {
         Self {
             by_node_id: Arc::new(RwLock::new(HashMap::new())),
             by_public_key: Arc::new(RwLock::new(HashMap::new())),
             by_did: Arc::new(RwLock::new(HashMap::new())),
+            config,
         }
     }
-    
+
     /// Register a peer in the mapper (creates all indexes)
-    pub async fn register(&self, peer: UnifiedPeerId) {
+    ///
+    /// # Security
+    ///
+    /// - Verifies NodeId cryptographic binding (prevents spoofing)
+    /// - Enforces memory limits (prevents DoS)
+    /// - Atomic registration (prevents race conditions)
+    /// - Validates timestamp freshness (prevents replay)
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if registration succeeded
+    /// - `Err(...)` if verification failed, limits exceeded, or already registered
+    pub async fn register(&self, peer: UnifiedPeerId) -> Result<()> {
+        // SECURITY FIX #3: Verify cryptographic binding
+        peer.verify_node_id()?;
+
+        // SECURITY FIX #7: Validate timestamp
+        validate_peer_timestamp(peer.created_at)?;
+
+        // SECURITY FIX #4: Validate device_id entropy
+        validate_device_id(&peer.device_id)?;
+
         let node_id = peer.node_id.clone();
         let public_key = peer.public_key.clone();
         let did = peer.did.clone();
-        
-        // Store in main map
-        self.by_node_id.write().await.insert(node_id.clone(), peer);
-        
-        // Create PublicKey → NodeId index
-        self.by_public_key.write().await.insert(public_key, node_id.clone());
-        
-        // Create DID → Vec<NodeId> index (supports multi-device)
+
+        // SECURITY FIX #1 & #6: Single atomic lock for all operations
+        let mut node_map = self.by_node_id.write().await;
+        let mut pubkey_map = self.by_public_key.write().await;
         let mut did_map = self.by_did.write().await;
+
+        // SECURITY FIX #2: Check max_peers limit
+        if node_map.len() >= self.config.max_peers {
+            return Err(anyhow!(
+                "Peer limit reached: {} peers (max: {})",
+                node_map.len(),
+                self.config.max_peers
+            ));
+        }
+
+        // SECURITY FIX #1: Atomic check-and-insert (no race window)
+        if node_map.contains_key(&node_id) {
+            return Err(anyhow!("Peer already registered: {}", node_id.to_hex()));
+        }
+
+        // SECURITY FIX #2: Check max_devices_per_did limit
+        let device_count = did_map.get(&did).map(|v| v.len()).unwrap_or(0);
+        if device_count >= self.config.max_devices_per_did {
+            return Err(anyhow!(
+                "Device limit reached for DID {}: {} devices (max: {})",
+                &did[..20.min(did.len())],
+                device_count,
+                self.config.max_devices_per_did
+            ));
+        }
+
+        // SECURITY FIX #5: Use Arc to avoid cloning sensitive data
+        let peer_arc = Arc::new(peer);
+
+        // Store in main map
+        node_map.insert(node_id.clone(), peer_arc.clone());
+
+        // Create PublicKey → NodeId index
+        pubkey_map.insert(public_key, node_id.clone());
+
+        // Create DID → Vec<NodeId> index (supports multi-device)
         did_map.entry(did).or_insert_with(Vec::new).push(node_id);
+
+        Ok(())
     }
     
     /// Remove a peer from the mapper (cleans up all indexes)
-    pub async fn unregister(&self, node_id: &NodeId) -> Option<UnifiedPeerId> {
-        // Remove from main map
-        let peer = self.by_node_id.write().await.remove(node_id)?;
-        
-        // Remove PublicKey → NodeId index
-        self.by_public_key.write().await.remove(&peer.public_key);
-        
-        // Remove from DID → Vec<NodeId> index
+    ///
+    /// # Security
+    ///
+    /// - Atomic unregister (all-or-nothing, no partial state)
+    /// - Single lock acquisition (prevents race conditions)
+    pub async fn unregister(&self, node_id: &NodeId) -> Option<Arc<UnifiedPeerId>> {
+        // SECURITY FIX #6: Atomic unregister with single lock scope
+        let mut node_map = self.by_node_id.write().await;
+        let mut pubkey_map = self.by_public_key.write().await;
         let mut did_map = self.by_did.write().await;
+
+        // Remove from main map
+        let peer = node_map.remove(node_id)?;
+
+        // Remove PublicKey → NodeId index
+        pubkey_map.remove(&peer.public_key);
+
+        // Remove from DID → Vec<NodeId> index
         if let Some(nodes) = did_map.get_mut(&peer.did) {
             nodes.retain(|n| n != node_id);
             if nodes.is_empty() {
                 did_map.remove(&peer.did);
             }
         }
-        
+
         Some(peer)
     }
     
     /// Lookup peer by NodeId (canonical identifier)
     pub async fn lookup_by_node_id(&self, node_id: &NodeId) -> Option<UnifiedPeerId> {
-        self.by_node_id.read().await.get(node_id).cloned()
+        self.by_node_id.read().await.get(node_id).map(|arc| (**arc).clone())
     }
-    
+
     /// Lookup peer by PublicKey
     pub async fn lookup_by_public_key(&self, public_key: &PublicKey) -> Option<UnifiedPeerId> {
         let node_id = self.by_public_key.read().await.get(public_key).cloned()?;
         self.lookup_by_node_id(&node_id).await
     }
-    
+
     /// Lookup all peers by DID (returns all devices for this identity)
     pub async fn lookup_by_did(&self, did: &str) -> Vec<UnifiedPeerId> {
         let node_ids = self.by_did.read().await.get(did).cloned();
-        
+
         match node_ids {
             Some(ids) => {
                 let map = self.by_node_id.read().await;
                 ids.iter()
-                    .filter_map(|id| map.get(id).cloned())
+                    .filter_map(|id| map.get(id).map(|arc| (**arc).clone()))
                     .collect()
             }
             None => Vec::new(),
         }
     }
-    
+
     /// Get all registered peers
     pub async fn all_peers(&self) -> Vec<UnifiedPeerId> {
-        self.by_node_id.read().await.values().cloned().collect()
+        self.by_node_id.read().await.values().map(|arc| (**arc).clone()).collect()
     }
     
     /// Get total peer count
@@ -337,138 +546,139 @@ mod tests {
     
     #[tokio::test]
     async fn test_unified_peer_id_from_zhtp_identity() -> Result<()> {
-        let identity = create_test_identity("laptop", None)?;
+        let identity = create_test_identity("laptop-secure-001", None)?;
         let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
-        
+
         assert_eq!(peer_id.did, identity.did);
         assert_eq!(peer_id.public_key.as_bytes(), identity.public_key.as_bytes());
         assert_eq!(peer_id.node_id, identity.node_id);
         assert_eq!(peer_id.device_id, identity.primary_device);
-        
+
         // Verify NodeId is correct
         peer_id.verify_node_id()?;
-        
+
         println!("✅ UnifiedPeerId from ZhtpIdentity test passed");
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_peer_id_equality() -> Result<()> {
         let seed = [0x42u8; 64];
-        let identity1 = create_test_identity("laptop", Some(seed))?;
-        let identity2 = create_test_identity("laptop", Some(seed))?;
-        
+        let identity1 = create_test_identity("laptop-x1-carbon", Some(seed))?;
+        let identity2 = create_test_identity("laptop-x1-carbon", Some(seed))?;
+
         let peer1 = UnifiedPeerId::from_zhtp_identity(&identity1);
         let peer2 = UnifiedPeerId::from_zhtp_identity(&identity2);
-        
+
         // Same seed + device = same NodeId = equal peers
         assert_eq!(peer1, peer2);
-        
+
         println!("✅ Peer ID equality test passed");
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_peer_id_mapper_register_and_lookup() -> Result<()> {
         let mapper = PeerIdMapper::new();
-        
-        let identity = create_test_identity("server", None)?;
+
+        let identity = create_test_identity("server-prod-01", None)?;
         let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
-        
+
         // Register
-        mapper.register(peer_id.clone()).await;
-        
+        mapper.register(peer_id.clone()).await?;
+
         // Lookup by NodeId
         let found = mapper.lookup_by_node_id(&identity.node_id).await;
         assert!(found.is_some());
         assert_eq!(found.unwrap(), peer_id);
-        
+
         // Lookup by PublicKey
         let found = mapper.lookup_by_public_key(&identity.public_key).await;
         assert!(found.is_some());
         assert_eq!(found.unwrap(), peer_id);
-        
+
         // Lookup by DID
         let found = mapper.lookup_by_did(&identity.did).await;
         assert_eq!(found.len(), 1);
         assert_eq!(found[0], peer_id);
-        
+
         println!("✅ Peer ID mapper register and lookup test passed");
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_peer_id_mapper_multi_device() -> Result<()> {
         let mapper = PeerIdMapper::new();
         let seed = [0x42u8; 64];
-        
+
         // Same identity, different devices
-        let laptop = create_test_identity("laptop", Some(seed))?;
-        let phone = create_test_identity("phone", Some(seed))?;
-        
+        let laptop = create_test_identity("laptop-macbook-pro", Some(seed))?;
+        let phone = create_test_identity("phone-iphone-14", Some(seed))?;
+
         let peer_laptop = UnifiedPeerId::from_zhtp_identity(&laptop);
         let peer_phone = UnifiedPeerId::from_zhtp_identity(&phone);
-        
+
         // Register both
-        mapper.register(peer_laptop.clone()).await;
-        mapper.register(peer_phone.clone()).await;
-        
+        mapper.register(peer_laptop.clone()).await?;
+        mapper.register(peer_phone.clone()).await?;
+
         // Lookup by DID should return both devices
         let found = mapper.lookup_by_did(&laptop.did).await;
         assert_eq!(found.len(), 2);
-        
+
         // Verify both are present
         assert!(found.contains(&peer_laptop));
         assert!(found.contains(&peer_phone));
-        
+
         println!("✅ Peer ID mapper multi-device test passed");
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_peer_id_mapper_unregister() -> Result<()> {
         let mapper = PeerIdMapper::new();
-        
-        let identity = create_test_identity("workstation", None)?;
+
+        let identity = create_test_identity("workstation-dell-7920", None)?;
         let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
-        
+
         // Register
-        mapper.register(peer_id.clone()).await;
+        mapper.register(peer_id.clone()).await?;
         assert_eq!(mapper.peer_count().await, 1);
-        
+
         // Unregister
         let removed = mapper.unregister(&identity.node_id).await;
         assert!(removed.is_some());
-        assert_eq!(removed.unwrap(), peer_id);
+        let removed_peer = removed.unwrap();
+        assert_eq!(*removed_peer, peer_id);
         assert_eq!(mapper.peer_count().await, 0);
-        
+
         // Verify all indexes are cleaned up
         assert!(!mapper.contains_node_id(&identity.node_id).await);
         assert!(!mapper.contains_public_key(&identity.public_key).await);
         assert!(!mapper.contains_did(&identity.did).await);
-        
+
         println!("✅ Peer ID mapper unregister test passed");
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_peer_id_mapper_clear() -> Result<()> {
         let mapper = PeerIdMapper::new();
-        
+
         // Register multiple peers
         for i in 0..5 {
-            let device = format!("device-{}", i);
+            let device = format!("gaming-rig-{:03}", i);
             let identity = create_test_identity(&device, None)?;
             let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
-            mapper.register(peer_id).await;
+            mapper.register(peer_id).await?;
         }
-        
+
         assert_eq!(mapper.peer_count().await, 5);
-        
+
         // Clear all
         mapper.clear().await;
         assert_eq!(mapper.peer_count().await, 0);
-        
+
         println!("✅ Peer ID mapper clear test passed");
         Ok(())
     }

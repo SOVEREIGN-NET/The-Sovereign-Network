@@ -2,4 +2,4 @@
 
 pub mod unified_peer;
 
-pub use unified_peer::{UnifiedPeerId, PeerIdMapper};
+pub use unified_peer::{UnifiedPeerId, PeerIdMapper, PeerMapperConfig};
