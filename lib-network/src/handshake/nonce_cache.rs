@@ -40,6 +40,10 @@ impl NonceCache {
     /// Default maximum cache size: 1 million entries (~64 MB memory)
     pub const DEFAULT_MAX_SIZE: usize = 1_000_000;
 
+    /// Large cache size for blockchain sync periods: 5 million entries (~320 MB memory)
+    /// Use this during initial block download or fast sync to avoid cache thrashing
+    pub const SYNC_MAX_SIZE: usize = 5_000_000;
+
     /// Create new nonce cache with TTL and max size
     ///
     /// # Arguments
@@ -63,6 +67,12 @@ impl NonceCache {
     /// Create new nonce cache with default max size (1 million entries)
     pub fn with_default_size(ttl_secs: u64) -> Self {
         Self::new(ttl_secs, Self::DEFAULT_MAX_SIZE)
+    }
+
+    /// Create new nonce cache optimized for blockchain sync
+    /// Uses larger capacity (5M entries) to handle burst traffic during sync
+    pub fn with_sync_size(ttl_secs: u64) -> Self {
+        Self::new(ttl_secs, Self::SYNC_MAX_SIZE)
     }
 
     /// Check if nonce was already used, and store it if not (atomic operation)

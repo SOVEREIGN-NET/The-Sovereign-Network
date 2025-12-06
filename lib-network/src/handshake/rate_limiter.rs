@@ -51,6 +51,24 @@ impl RateLimitConfig {
             burst_capacity: 20,
         }
     }
+
+    /// Create config for blockchain validators (relaxed limits)
+    /// Use for known validator nodes that need high throughput
+    pub fn validator() -> Self {
+        Self {
+            handshakes_per_second: 200,
+            burst_capacity: 500,
+        }
+    }
+
+    /// Create config for sync mode (elevated limits)
+    /// Use during blockchain sync when nodes need to handshake with many peers quickly
+    pub fn sync_mode() -> Self {
+        Self {
+            handshakes_per_second: 100,
+            burst_capacity: 200,
+        }
+    }
 }
 
 /// Rate limiter for handshake operations

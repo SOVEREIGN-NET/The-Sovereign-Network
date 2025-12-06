@@ -137,7 +137,10 @@ pub fn derive_session_key_hkdf(
 /// Build context info for HKDF domain separation
 fn build_context_info(context: &SessionContext) -> Vec<u8> {
     let mut info = Vec::new();
-    info.extend_from_slice(b"session-key");  // Purpose
+    // CRITICAL: Domain separation to prevent key reuse across protocols
+    // Network session keys MUST NEVER be used for blockchain transaction signing
+    info.extend_from_slice(b"ZHTP-NETWORK-SESSION-ONLY-v1");  // Domain tag
+    info.push(0x00); // Separator
     info.extend_from_slice(&context.protocol_version.to_le_bytes());
     info.extend_from_slice(context.client_did.as_bytes());
     info.extend_from_slice(context.server_did.as_bytes());
