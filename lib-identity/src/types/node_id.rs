@@ -288,7 +288,7 @@ impl NodeId {
         let xor_bytes = self.xor_distance(other);
         for (i, byte) in xor_bytes.iter().enumerate() {
             if *byte != 0 {
-                return (i as u32 * 8) + (7 - byte.leading_zeros());
+                return (i as u32 * 8) + byte.leading_zeros();
             }
         }
         0
