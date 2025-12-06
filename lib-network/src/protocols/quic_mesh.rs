@@ -108,14 +108,15 @@ impl QuicMeshProtocol {
         // Create QUIC endpoint
         let endpoint = Endpoint::server(server_config, bind_addr)
             .context("Failed to create QUIC endpoint")?;
-        
-        info!(" QUIC endpoint listening on {}", endpoint.local_addr()?);
-        
+
+        let actual_addr = endpoint.local_addr()?;
+        info!(" QUIC endpoint listening on {}", actual_addr);
+
         Ok(Self {
             endpoint,
             connections: Arc::new(RwLock::new(std::collections::HashMap::new())),
             node_id,
-            local_addr: bind_addr,
+            local_addr: actual_addr,
             message_handler: None,
         })
     }
