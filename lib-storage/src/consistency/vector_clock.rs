@@ -2,9 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-/// Node identifier
-pub type NodeId = String;
+use crate::types::NodeId;
 
 /// Vector clock for tracking causality in distributed systems
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +22,10 @@ impl VectorClock {
     /// Increment the clock for a specific node
     pub fn increment(&mut self, node_id: &NodeId) {
         let counter = self.clocks.entry(node_id.clone()).or_insert(0);
+        if *counter == u64::MAX {
+            // Prevent overflow; hold at max to preserve monotonicity
+            return;
+        }
         *counter += 1;
     }
 
@@ -133,43 +135,55 @@ pub enum ClockOrdering {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_identity::NodeId as IdentityNodeId;
+
+    fn node(id: u8) -> IdentityNodeId {
+        IdentityNodeId::from_bytes([id; 32])
+    }
 
     #[test]
     fn test_vector_clock_increment() {
         let mut clock = VectorClock::new();
-        clock.increment(&"node1".to_string());
-        clock.increment(&"node1".to_string());
-        clock.increment(&"node2".to_string());
+        let n1 = node(1);
+        let n2 = node(2);
+        let n3 = node(3);
 
-        assert_eq!(clock.get(&"node1".to_string()), 2);
-        assert_eq!(clock.get(&"node2".to_string()), 1);
-        assert_eq!(clock.get(&"node3".to_string()), 0);
+        clock.increment(&n1);
+        clock.increment(&n1);
+        clock.increment(&n2);
+
+        assert_eq!(clock.get(&n1), 2);
+        assert_eq!(clock.get(&n2), 1);
+        assert_eq!(clock.get(&n3), 0);
     }
 
     #[test]
     fn test_vector_clock_merge() {
         let mut clock1 = VectorClock::new();
-        clock1.increment(&"node1".to_string());
-        clock1.increment(&"node1".to_string());
+        let n1 = node(1);
+        let n2 = node(2);
+        clock1.increment(&n1);
+        clock1.increment(&n1);
 
         let mut clock2 = VectorClock::new();
-        clock2.increment(&"node1".to_string());
-        clock2.increment(&"node2".to_string());
+        clock2.increment(&n1);
+        clock2.increment(&n2);
 
         clock1.merge(&clock2);
 
-        assert_eq!(clock1.get(&"node1".to_string()), 2);
-        assert_eq!(clock1.get(&"node2".to_string()), 1);
+        assert_eq!(clock1.get(&n1), 2);
+        assert_eq!(clock1.get(&n2), 1);
     }
 
     #[test]
     fn test_happens_before() {
         let mut clock1 = VectorClock::new();
-        clock1.increment(&"node1".to_string());
+        let n1 = node(1);
+        clock1.increment(&n1);
 
         let mut clock2 = VectorClock::new();
-        clock2.increment(&"node1".to_string());
-        clock2.increment(&"node1".to_string());
+        clock2.increment(&n1);
+        clock2.increment(&n1);
 
         assert!(clock1.happens_before(&clock2));
         assert!(!clock2.happens_before(&clock1));
@@ -178,10 +192,12 @@ mod tests {
     #[test]
     fn test_concurrent() {
         let mut clock1 = VectorClock::new();
-        clock1.increment(&"node1".to_string());
+        let n1 = node(1);
+        let n2 = node(2);
+        clock1.increment(&n1);
 
         let mut clock2 = VectorClock::new();
-        clock2.increment(&"node2".to_string());
+        clock2.increment(&n2);
 
         assert!(clock1.concurrent(&clock2));
         assert!(clock2.concurrent(&clock1));
@@ -190,13 +206,26 @@ mod tests {
     #[test]
     fn test_compare() {
         let mut clock1 = VectorClock::new();
-        clock1.increment(&"node1".to_string());
+        let n1 = node(1);
+        clock1.increment(&n1);
 
         let mut clock2 = clock1.clone();
-        clock2.increment(&"node1".to_string());
+        clock2.increment(&n1);
 
         assert_eq!(clock1.compare(&clock2), ClockOrdering::Before);
         assert_eq!(clock2.compare(&clock1), ClockOrdering::After);
         assert_eq!(clock1.compare(&clock1), ClockOrdering::Equal);
+    }
+
+    #[test]
+    fn test_increment_stops_at_u64_max() {
+        let mut clock = VectorClock::new();
+        let n1 = node(1);
+
+        // Manually set to max and ensure increment is a no-op (no overflow)
+        clock.clocks.insert(n1, u64::MAX);
+        clock.increment(&n1);
+
+        assert_eq!(clock.get(&n1), u64::MAX);
     }
 }

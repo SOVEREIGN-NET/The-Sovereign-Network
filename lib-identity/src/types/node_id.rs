@@ -38,7 +38,7 @@ use lib_crypto::Hash;
 /// ).expect("Valid inputs");
 /// assert_eq!(node_id, node_id2);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeId([u8; 32]);
 
 impl NodeId {
@@ -287,13 +287,13 @@ impl NodeId {
     /// ```
     /// use lib_identity::types::NodeId;
     ///
-    /// let node1 = NodeId::from_bytes([0b10000000; 32]);
-    /// let node2 = NodeId::from_bytes([0b00000000; 32]);
-    ///
-    /// // The most significant differing bit is at index 0
-    /// assert_eq!(node1.kademlia_distance(&node2), 0);
-    /// ```
-    pub fn kademlia_distance(&self, other: &Self) -> u32 {
+/// let node1 = NodeId::from_bytes([0b10000000; 32]);
+/// let node2 = NodeId::from_bytes([0b00000000; 32]);
+///
+/// // The most significant differing bit is at bit position 7 (first byte, highest bit)
+/// assert_eq!(node1.kademlia_distance(&node2), 7);
+/// ```
+pub fn kademlia_distance(&self, other: &Self) -> u32 {
         let xor_bytes = self.xor_distance(other);
         for (i, byte) in xor_bytes.iter().enumerate() {
             if *byte != 0 {
