@@ -2148,6 +2148,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "sha3",
+ "subtle",
  "zeroize",
 ]
 

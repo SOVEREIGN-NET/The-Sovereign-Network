@@ -1,8 +1,9 @@
 //! Key type definitions - preserving ZHTP key structures
-//! 
+//!
 //! implementations from crypto.rs, lines 78-150
 
 use serde::{Serialize, Deserialize};
+use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 use anyhow::Result;
 use crate::types::Signature;
@@ -10,7 +11,7 @@ use crate::hashing::hash_blake3;
 use crate::verification::verify_signature;
 
 /// Pure post-quantum public key with CRYSTALS implementations only
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct PublicKey {
     /// CRYSTALS-Dilithium public key for post-quantum signatures
     pub dilithium_pk: Vec<u8>,
@@ -19,6 +20,21 @@ pub struct PublicKey {
     /// Key identifier for fast lookups
     pub key_id: [u8; 32],
 }
+
+// Constant-time equality to prevent timing attacks on cryptographic keys
+impl PartialEq for PublicKey {
+    fn eq(&self, other: &Self) -> bool {
+        // Use constant-time comparison for all cryptographic material
+        let dilithium_eq = self.dilithium_pk.ct_eq(&other.dilithium_pk);
+        let kyber_eq = self.kyber_pk.ct_eq(&other.kyber_pk);
+        let key_id_eq = self.key_id.ct_eq(&other.key_id);
+
+        // Combine all comparisons with constant-time AND
+        (dilithium_eq & kyber_eq & key_id_eq).into()
+    }
+}
+
+impl Eq for PublicKey {}
 
 impl PublicKey {
     /// Create a new public key from raw bytes (assumes Dilithium)

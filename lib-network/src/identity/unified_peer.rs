@@ -28,7 +28,7 @@
 //!
 //! // Create from ZhtpIdentity
 //! let identity = ZhtpIdentity::new_unified(...)?;
-//! let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
+//! let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
 //!
 //! // Use mapper for bidirectional lookups
 //! let mapper = PeerIdMapper::new();
@@ -57,7 +57,7 @@ use std::fmt;
 /// - Rejects timestamps in the future (clock skew tolerance: 5 minutes)
 /// - Rejects very old timestamps (max age: 1 year)
 /// - Rejects timestamps before protocol launch (Nov 2023)
-fn validate_peer_timestamp(timestamp: u64) -> Result<()> {
+pub(crate) fn validate_peer_timestamp(timestamp: u64) -> Result<()> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| anyhow!("System clock error: {}", e))?
@@ -104,7 +104,7 @@ fn validate_peer_timestamp(timestamp: u64) -> Result<()> {
 /// - Prevents weak device names that increase collision risk
 /// - Enforces minimum length and character variety
 /// - Rejects common/predictable device names
-fn validate_device_id(device_id: &str) -> Result<()> {
+pub(crate) fn validate_device_id(device_id: &str) -> Result<()> {
     // Minimum length check
     const MIN_LENGTH: usize = 3;
     if device_id.len() < MIN_LENGTH {
@@ -202,15 +202,50 @@ impl UnifiedPeerId {
     ///
     /// This is the preferred way to create a UnifiedPeerId as it ensures
     /// all fields are properly populated from the authoritative identity source.
-    pub fn from_zhtp_identity(identity: &ZhtpIdentity) -> Self {
-        Self {
+    ///
+    /// # Security
+    ///
+    /// Validates all inputs to enforce trust boundary:
+    /// - DID format (must start with "did:zhtp:")
+    /// - Device ID entropy and format
+    /// - Timestamp freshness
+    /// - Cryptographic binding (NodeId matches DID + device)
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Self)` if all validations pass
+    /// - `Err(...)` if any validation fails
+    pub fn from_zhtp_identity(identity: &ZhtpIdentity) -> Result<Self> {
+        // SECURITY FIX #3 (Finding #3): Validate at trust boundary
+
+        // Validate DID format
+        if !identity.did.starts_with("did:zhtp:") {
+            return Err(anyhow!(
+                "Invalid DID format: must start with 'did:zhtp:', got '{}'",
+                &identity.did[..20.min(identity.did.len())]
+            ));
+        }
+
+        // Validate device_id
+        validate_device_id(&identity.primary_device)?;
+
+        // Validate timestamp
+        validate_peer_timestamp(identity.created_at)?;
+
+        // Create instance
+        let peer = Self {
             did: identity.did.clone(),
             public_key: identity.public_key.clone(),
             node_id: identity.node_id.clone(),
             device_id: identity.primary_device.clone(),
             display_name: identity.metadata.get("display_name").cloned(),
             created_at: identity.created_at,
-        }
+        };
+
+        // Validate cryptographic binding
+        peer.verify_node_id()?;
+
+        Ok(peer)
     }
     
     /// Verify that node_id matches Blake3(DID || device_id) per lib-identity rules
@@ -547,7 +582,7 @@ mod tests {
     #[tokio::test]
     async fn test_unified_peer_id_from_zhtp_identity() -> Result<()> {
         let identity = create_test_identity("laptop-secure-001", None)?;
-        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
 
         assert_eq!(peer_id.did, identity.did);
         assert_eq!(peer_id.public_key.as_bytes(), identity.public_key.as_bytes());
@@ -567,8 +602,8 @@ mod tests {
         let identity1 = create_test_identity("laptop-x1-carbon", Some(seed))?;
         let identity2 = create_test_identity("laptop-x1-carbon", Some(seed))?;
 
-        let peer1 = UnifiedPeerId::from_zhtp_identity(&identity1);
-        let peer2 = UnifiedPeerId::from_zhtp_identity(&identity2);
+        let peer1 = UnifiedPeerId::from_zhtp_identity(&identity1)?;
+        let peer2 = UnifiedPeerId::from_zhtp_identity(&identity2)?;
 
         // Same seed + device = same NodeId = equal peers
         assert_eq!(peer1, peer2);
@@ -582,7 +617,7 @@ mod tests {
         let mapper = PeerIdMapper::new();
 
         let identity = create_test_identity("server-prod-01", None)?;
-        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
 
         // Register
         mapper.register(peer_id.clone()).await?;
@@ -615,8 +650,8 @@ mod tests {
         let laptop = create_test_identity("laptop-macbook-pro", Some(seed))?;
         let phone = create_test_identity("phone-iphone-14", Some(seed))?;
 
-        let peer_laptop = UnifiedPeerId::from_zhtp_identity(&laptop);
-        let peer_phone = UnifiedPeerId::from_zhtp_identity(&phone);
+        let peer_laptop = UnifiedPeerId::from_zhtp_identity(&laptop)?;
+        let peer_phone = UnifiedPeerId::from_zhtp_identity(&phone)?;
 
         // Register both
         mapper.register(peer_laptop.clone()).await?;
@@ -639,7 +674,7 @@ mod tests {
         let mapper = PeerIdMapper::new();
 
         let identity = create_test_identity("workstation-dell-7920", None)?;
-        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
 
         // Register
         mapper.register(peer_id.clone()).await?;
@@ -669,7 +704,7 @@ mod tests {
         for i in 0..5 {
             let device = format!("gaming-rig-{:03}", i);
             let identity = create_test_identity(&device, None)?;
-            let peer_id = UnifiedPeerId::from_zhtp_identity(&identity);
+            let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
             mapper.register(peer_id).await?;
         }
 
@@ -682,5 +717,327 @@ mod tests {
         println!("✅ Peer ID mapper clear test passed");
         Ok(())
     }
-    
+
+    // ============================================================================
+    // SECURITY TESTS - Attack Scenario Coverage
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_concurrent_registration_same_node_id() -> Result<()> {
+        let mapper = PeerIdMapper::new();
+        let seed = [0x99u8; 64];
+
+        // Create identity
+        let identity = create_test_identity("secure-device-123", Some(seed))?;
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+
+        // Spawn 100 concurrent registration attempts with same NodeId
+        let mut handles = vec![];
+        for _ in 0..100 {
+            let mapper = mapper.clone();
+            let peer = peer_id.clone();
+            handles.push(tokio::spawn(async move {
+                mapper.register(peer).await
+            }));
+        }
+
+        // Wait for all and collect results
+        let mut results = vec![];
+        for handle in handles {
+            results.push(handle.await.unwrap());
+        }
+
+        // Verify exactly 1 succeeded, 99 failed
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        let failures = results.iter().filter(|r| r.is_err()).count();
+
+        assert_eq!(successes, 1, "Exactly one registration should succeed");
+        assert_eq!(failures, 99, "99 registrations should fail (already registered)");
+
+        // Verify only 1 peer in mapper
+        assert_eq!(mapper.peer_count().await, 1);
+
+        println!("✅ Concurrent registration race condition test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_max_peers_limit_enforcement() -> Result<()> {
+        let config = PeerMapperConfig {
+            max_peers: 10,
+            max_devices_per_did: 10,
+        };
+        let mapper = PeerIdMapper::with_config(config);
+
+        // Register 10 peers successfully
+        for i in 0..10 {
+            let device = format!("test-device-{:03}", i);
+            let identity = create_test_identity(&device, None)?;
+            let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+            mapper.register(peer_id).await?;
+        }
+
+        assert_eq!(mapper.peer_count().await, 10);
+
+        // Try to register 11th peer - should fail
+        let identity = create_test_identity("device-overflow-11", None)?;
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+        let result = mapper.register(peer_id).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Peer limit reached"));
+
+        // Verify still 10 peers
+        assert_eq!(mapper.peer_count().await, 10);
+
+        println!("✅ Max peers limit enforcement test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_max_devices_per_did_enforcement() -> Result<()> {
+        let config = PeerMapperConfig {
+            max_peers: 100,
+            max_devices_per_did: 3,
+        };
+        let mapper = PeerIdMapper::with_config(config);
+        let seed = [0x42u8; 64];
+
+        // Register 3 devices for same DID
+        for i in 0..3 {
+            let device = format!("allowed-device-{}", i);
+            let identity = create_test_identity(&device, Some(seed))?;
+            let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+            mapper.register(peer_id).await?;
+        }
+
+        assert_eq!(mapper.peer_count().await, 3);
+
+        // Try to register 4th device - should fail
+        let identity = create_test_identity("blocked-device-4", Some(seed))?;
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+        let result = mapper.register(peer_id).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Device limit reached"));
+
+        // Verify still 3 devices
+        assert_eq!(mapper.peer_count().await, 3);
+
+        println!("✅ Max devices per DID enforcement test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_future_timestamp_rejected() -> Result<()> {
+        let mapper = PeerIdMapper::new();
+
+        // Create identity with future timestamp (1 hour from now)
+        let mut identity = create_test_identity("future-device", None)?;
+        let future_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)?
+            .as_secs() + 3600; // +1 hour
+
+        // Manually construct UnifiedPeerId with future timestamp
+        let mut peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+        peer_id.created_at = future_timestamp;
+
+        // Try to register - should fail
+        let result = mapper.register(peer_id).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Timestamp in future"));
+
+        println!("✅ Future timestamp rejection test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_old_timestamp_rejected() -> Result<()> {
+        let mapper = PeerIdMapper::new();
+
+        // Create identity with old timestamp (2 years ago)
+        let mut identity = create_test_identity("old-device", None)?;
+        let old_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)?
+            .as_secs() - (2 * 365 * 24 * 3600); // -2 years
+
+        // Manually construct UnifiedPeerId with old timestamp
+        let mut peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+        peer_id.created_at = old_timestamp;
+
+        // Try to register - should fail
+        let result = mapper.register(peer_id).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Timestamp too old"));
+
+        println!("✅ Old timestamp rejection test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_protocol_epoch_validation() -> Result<()> {
+        // Test pre-protocol timestamp directly
+        let pre_protocol_timestamp = 1600000000; // Sep 2020
+
+        // Validate timestamp should fail
+        let result = validate_peer_timestamp(pre_protocol_timestamp);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        println!("Error message: {}", err_msg);
+        assert!(err_msg.contains("predates protocol launch") || err_msg.contains("Timestamp too old"));
+
+        println!("✅ Protocol epoch validation test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_spoofed_node_id_rejected() -> Result<()> {
+        let mapper = PeerIdMapper::new();
+
+        // Create valid identity
+        let identity = create_test_identity("victim-device", None)?;
+        let mut peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+
+        // Spoof NodeId (replace with random bytes)
+        let fake_node_id = NodeId::from_bytes([0xFFu8; 32]);
+        peer_id.node_id = fake_node_id;
+
+        // Try to register - should fail cryptographic verification
+        let result = mapper.register(peer_id).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("NodeId mismatch"));
+
+        println!("✅ Spoofed NodeId rejection test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_weak_device_id_rejected() -> Result<()> {
+        let weak_names = vec!["test", "device", "phone", "laptop", "server"];
+
+        for weak_name in weak_names {
+            // Create valid identity first
+            let identity = create_test_identity("valid-device-name-12345", None)?;
+            let mut peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+
+            // Manually set invalid device_id to bypass identity creation
+            peer_id.device_id = weak_name.to_string();
+
+            // Re-validate should fail when we try to use it
+            let result = validate_device_id(&peer_id.device_id);
+            assert!(result.is_err(), "Weak name '{}' should be rejected", weak_name);
+            assert!(result.unwrap_err().to_string().contains("too common/weak"));
+        }
+
+        println!("✅ Weak device ID rejection test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_short_device_id_rejected() -> Result<()> {
+        // Create valid identity first
+        let identity = create_test_identity("valid-device-name-12345", None)?;
+        let mut peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+
+        // Manually set too-short device_id
+        peer_id.device_id = "ab".to_string(); // 2 chars
+
+        // Re-validate should fail
+        let result = validate_device_id(&peer_id.device_id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too short"));
+
+        println!("✅ Short device ID rejection test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_long_device_id_rejected() -> Result<()> {
+        // Create valid identity first
+        let identity = create_test_identity("valid-device-name-12345", None)?;
+        let mut peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+
+        // Manually set too-long device_id
+        let long_device = "a".repeat(65); // 65 chars (max is 64)
+        peer_id.device_id = long_device.clone();
+
+        // Re-validate should fail
+        let result = validate_device_id(&peer_id.device_id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too long"));
+
+        println!("✅ Long device ID rejection test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_unregister_idempotent() -> Result<()> {
+        let mapper = PeerIdMapper::new();
+
+        // Register a peer
+        let identity = create_test_identity("concurrent-unregister-test", None)?;
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+        let node_id = identity.node_id.clone();
+
+        mapper.register(peer_id.clone()).await?;
+        assert_eq!(mapper.peer_count().await, 1);
+
+        // Spawn 10 concurrent unregister attempts
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let mapper = mapper.clone();
+            let node_id = node_id.clone();
+            handles.push(tokio::spawn(async move {
+                mapper.unregister(&node_id).await
+            }));
+        }
+
+        // Wait for all and collect results
+        let mut results = vec![];
+        for handle in handles {
+            results.push(handle.await.unwrap());
+        }
+
+        // Verify exactly 1 returned Some, 9 returned None
+        let successes = results.iter().filter(|r| r.is_some()).count();
+        let failures = results.iter().filter(|r| r.is_none()).count();
+
+        assert_eq!(successes, 1, "Exactly one unregister should succeed");
+        assert_eq!(failures, 9, "9 unregisters should return None");
+
+        // Verify peer removed
+        assert_eq!(mapper.peer_count().await, 0);
+
+        // Verify all indexes cleaned up
+        assert!(!mapper.contains_node_id(&node_id).await);
+
+        println!("✅ Concurrent unregister idempotency test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_device_id_special_chars_rejected() -> Result<()> {
+        let invalid_devices = vec![
+            "device@123",  // @ not allowed
+            "device#123",  // # not allowed
+            "device$123",  // $ not allowed
+            "device 123",  // space not allowed
+            "device.123",  // . not allowed
+        ];
+
+        for invalid_device in invalid_devices {
+            // Test validation function directly
+            let result = validate_device_id(invalid_device);
+            assert!(result.is_err(), "Device ID '{}' should be rejected", invalid_device);
+            assert!(result.unwrap_err().to_string().contains("invalid characters"));
+        }
+
+        println!("✅ Device ID special character rejection test passed");
+        Ok(())
+    }
+
 }
