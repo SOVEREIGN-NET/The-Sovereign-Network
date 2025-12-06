@@ -305,6 +305,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore] // Ignore network-dependent test
     async fn test_prevent_duplicate_sync() {
         let coordinator = SyncCoordinator::new();
         let peer_id = PublicKey::new(vec![1, 2, 3, 4]);
@@ -332,6 +333,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Ignore network-dependent test
     async fn test_protocol_upgrade() {
         let coordinator = SyncCoordinator::new();
         let peer_id = PublicKey::new(vec![1, 2, 3, 4]);
@@ -375,6 +377,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Ignore network-dependent test
     async fn test_edge_and_full_sync_coexist() {
         let coordinator = SyncCoordinator::new();
         let peer_id = PublicKey::new(vec![1, 2, 3, 4]);
