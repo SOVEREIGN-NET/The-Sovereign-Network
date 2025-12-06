@@ -3525,10 +3525,11 @@ mod tests {
     }
     
     #[tokio::test]
+    #[ignore] // Ignore hardware-dependent test
     async fn test_wifi_direct_discovery() {
         let node_id = [1u8; 32];
         let mut protocol = WiFiDirectMeshProtocol::new(node_id).unwrap();
-        
+
         let result = protocol.start_discovery().await;
         assert!(result.is_ok());
     }
