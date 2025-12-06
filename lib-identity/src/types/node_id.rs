@@ -108,8 +108,17 @@ impl NodeId {
         // 2. Normalize and validate device name
         let normalized_device = Self::normalize_and_validate_device(device)?;
 
-        // 3. Derive NodeId using Blake3
-        let preimage = format!("ZHTP_NODE_V2:{}:{}", did, normalized_device);
+        // 3. Derive NodeId using Blake3 with network context
+        // SECURITY: Include network identifier to prevent cross-network attacks
+        // TODO: Get network_id from config/environment (mainnet/testnet/devnet)
+        // For now, hardcode to "mainnet" - update before testnet deployment
+        let network_id = "mainnet"; // TODO: Make configurable
+        let protocol_version = 1u32;
+
+        let preimage = format!(
+            "ZHTP_NODE_V2:network={}:version={}:{}:{}",
+            network_id, protocol_version, did, normalized_device
+        );
         let hash = lib_crypto::hash_blake3(preimage.as_bytes());
 
         // 4. Use full 32-byte Blake3 output (per ARCHITECTURE_CONSOLIDATION.md)
@@ -453,13 +462,14 @@ mod tests {
         let node = NodeId::from_did_device(did, device).unwrap();
 
         // THEN: Produces expected hex output (locks derivation algorithm)
-        // This is Blake3("ZHTP_NODE_V2:did:zhtp:0123456789abcdef:test-device") - FULL 32 bytes
+        // This is Blake3("ZHTP_NODE_V2:network=mainnet:version=1:did:zhtp:0123456789abcdef:test-device") - FULL 32 bytes
         // Pre-computed golden vector to prevent algorithm drift
-        let expected_hex = "b5e3496b8b72b2fa70614d54b32dcb94e9e0fc4574f7ab7530a8af6a795bcafc";
-        let expected_bytes: [u8; 32] = [181, 227, 73, 107, 139, 114, 178, 250,
-                                         112, 97, 77, 84, 179, 45, 203, 148,
-                                         233, 224, 252, 69, 116, 247, 171, 117,
-                                         48, 168, 175, 106, 121, 91, 202, 252];
+        // UPDATED: Changed after adding network context for blockchain security
+        let expected_hex = "5cb7a97aa0503fed385fa74f3ea61988309cb81678f3772c11bc7b3677d72888";
+        let expected_bytes: [u8; 32] = [92, 183, 169, 122, 160, 80, 63, 237,
+                                         56, 95, 167, 79, 62, 166, 25, 136,
+                                         48, 156, 184, 22, 120, 243, 119, 44,
+                                         17, 188, 123, 54, 119, 215, 40, 136];
 
         // Verify exact match (regression protection)
         assert_eq!(node.to_hex(), expected_hex,

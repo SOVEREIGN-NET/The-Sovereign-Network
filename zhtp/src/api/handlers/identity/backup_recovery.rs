@@ -110,10 +110,15 @@ pub async fn handle_generate_recovery_phrase(
         .unwrap_or_else(|| "unknown".to_string());
 
     // Validate session token with IP and User-Agent binding
-    let session = session_manager
-        .validate_session(&req.session_token, &client_ip, &user_agent)
-        .await
-        .map_err(|e| anyhow::anyhow!("Invalid session: {}", e))?;
+    let session = match session_manager.validate_session(&req.session_token, &client_ip, &user_agent).await {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Unauthorized,
+                format!("Invalid session: {}", e),
+            ));
+        }
+    };
 
     // Verify session belongs to this identity
     let identity_id_bytes = hex::decode(&req.identity_id)
@@ -301,9 +306,15 @@ pub async fn handle_recover_identity(
 
     // Verify identity exists in IdentityManager
     let manager = identity_manager.read().await;
-    let identity = manager
-        .get_identity(&identity_id)
-        .ok_or_else(|| anyhow::anyhow!("Identity not found in storage"))?;
+    let identity = match manager.get_identity(&identity_id) {
+        Some(id) => id,
+        None => {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                "Identity not found in storage".to_string(),
+            ));
+        }
+    };
     let did = identity.did.clone();
     drop(manager);
 
@@ -342,10 +353,15 @@ pub async fn handle_backup_status(
     _recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
 ) -> ZhtpResult<ZhtpResponse> {
     // Parse identity_id from query params
-    let _identity_id = query_params
-        .split('=')
-        .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("Missing identity_id parameter"))?;
+    let _identity_id = match query_params.split('=').nth(1) {
+        Some(id) => id,
+        None => {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Missing identity_id parameter".to_string(),
+            ));
+        }
+    };
 
     // TODO: Check if recovery phrase exists for this identity
     // For now, return placeholder response
@@ -403,14 +419,26 @@ pub async fn handle_export_backup(
         .unwrap_or_else(|| "unknown".to_string());
 
     // Validate session via Authorization header
-    let session_token = request.headers.get("Authorization")
-        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
-        .ok_or_else(|| anyhow::anyhow!("Missing or invalid Authorization header"))?;
+    let session_token = match request.headers.get("Authorization")
+        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        Some(token) => token,
+        None => {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Unauthorized,
+                "Missing or invalid Authorization header".to_string(),
+            ));
+        }
+    };
 
-    let session = session_manager
-        .validate_session(&session_token, &client_ip, &user_agent)
-        .await
-        .map_err(|e| anyhow::anyhow!("Invalid session: {}", e))?;
+    let session = match session_manager.validate_session(&session_token, &client_ip, &user_agent).await {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Unauthorized,
+                format!("Invalid session: {}", e),
+            ));
+        }
+    };
 
     // Verify session belongs to this identity
     let identity_id_bytes = hex::decode(&req.identity_id)
@@ -605,14 +633,26 @@ pub async fn handle_verify_seed_phrase(
         .unwrap_or_else(|| "unknown".to_string());
 
     // Validate session via Authorization header
-    let session_token = request.headers.get("Authorization")
-        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
-        .ok_or_else(|| anyhow::anyhow!("Missing or invalid Authorization header"))?;
+    let session_token = match request.headers.get("Authorization")
+        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        Some(token) => token,
+        None => {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Unauthorized,
+                "Missing or invalid Authorization header".to_string(),
+            ));
+        }
+    };
 
-    let session = session_manager
-        .validate_session(&session_token, &client_ip, &user_agent)
-        .await
-        .map_err(|e| anyhow::anyhow!("Invalid session: {}", e))?;
+    let session = match session_manager.validate_session(&session_token, &client_ip, &user_agent).await {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Unauthorized,
+                format!("Invalid session: {}", e),
+            ));
+        }
+    };
 
     // Verify session belongs to this identity
     let identity_id_bytes = hex::decode(&req.identity_id)

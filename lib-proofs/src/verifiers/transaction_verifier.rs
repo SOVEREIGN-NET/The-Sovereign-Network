@@ -597,6 +597,7 @@ impl TransactionVerifier {
     }
 
     /// Mark nullifier as used in local cache and blockchain state
+    #[allow(dead_code)]
     fn mark_nullifier_used(&mut self, nullifier: &[u8; 32]) -> Result<()> {
         // Add to local cache
         self.used_nullifiers.insert(*nullifier);
