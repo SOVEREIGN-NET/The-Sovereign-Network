@@ -6,6 +6,11 @@ Comprehensive account recovery and backup systems providing secure identity rest
 
 The recovery module ensures users can securely recover their digital identities and cryptographic assets through multiple recovery mechanisms including social recovery, hardware backup, biometric recovery, and cryptographic secret sharing.
 
+## Encryption & Storage
+
+- Recovery phrases are encrypted at rest with AES-256-GCM (12-byte nonces, authenticated tags).
+- Legacy XOR-encrypted records (v1) are automatically re-encrypted with AES-GCM on first successful access; no plaintext is persisted during migration.
+
 ## Core Components
 
 ### RecoveryManager

@@ -6,6 +6,8 @@
 mod tests {
     use super::super::*;
     use std::time::Duration;
+    use super::super::MAX_DECRYPT_ATTEMPTS;
+    use hex;
 
     #[tokio::test]
     async fn test_recovery_phrase_generation() {
@@ -102,6 +104,157 @@ mod tests {
         ).await.expect("Failed to recover identity");
         
         assert_eq!(recovered_identity, "test_user");
+    }
+
+    #[tokio::test]
+    async fn test_encryption_kat_and_tamper_detection() {
+        let mut manager = RecoveryPhraseManager::new();
+        let salt = vec![0u8; 32];
+        let key = manager
+            .derive_encryption_key("id_kat", Some("auth"), &salt)
+            .await
+            .expect("kdf");
+        let derived_hex = hex::encode(&key);
+        // Deterministic KAT for Argon2id params (64 MiB, t=3, p=1)
+        assert_eq!(
+            derived_hex,
+            "d6d7d8735c5b38c0c60c5239b2f7cc5afddfa62bddb7cd1a74d9f3c9e86358c2"
+        );
+
+        // Store phrase
+        let phrase = RecoveryPhrase {
+            words: (0..12).map(|i| format!("word{:02}", i)).collect(),
+            entropy: vec![1u8; 32],
+            checksum: "chk".into(),
+            language: "english".into(),
+            word_count: 12,
+        };
+        let phrase_id = manager
+            .store_recovery_phrase("tamper_user", &phrase, Some("auth"))
+            .await
+            .expect("store");
+
+        // Tamper with ciphertext
+        if let Some(record) = manager.phrases.get_mut(&phrase_id) {
+            record.encrypted_phrase[0] ^= 0xFF;
+        }
+        let result = manager
+            .recover_identity_with_phrase(&phrase.words, Some("auth"))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_tag_tamper_rejected() {
+        let mut manager = RecoveryPhraseManager::new();
+        let phrase = RecoveryPhrase {
+            words: (0..12).map(|i| format!("word{:02}", i)).collect(),
+            entropy: vec![2u8; 32],
+            checksum: "chk".into(),
+            language: "english".into(),
+            word_count: 12,
+        };
+        let phrase_id = manager
+            .store_recovery_phrase("tag_user", &phrase, Some("auth"))
+            .await
+            .expect("store");
+
+        // Tamper with tag
+        if let Some(record) = manager.phrases.get_mut(&phrase_id) {
+            if !record.tag.is_empty() {
+                record.tag[0] ^= 0xAA;
+            }
+        }
+        let result = manager
+            .recover_identity_with_phrase(&phrase.words, Some("auth"))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_nonce_uniqueness_and_collision_detection() {
+        let mut manager = RecoveryPhraseManager::new();
+        let phrase = RecoveryPhrase {
+            words: (0..12).map(|i| format!("word{:02}", i)).collect(),
+            entropy: vec![3u8; 32],
+            checksum: "chk".into(),
+            language: "english".into(),
+            word_count: 12,
+        };
+        let id1 = manager
+            .store_recovery_phrase("nonce_user1", &phrase, Some("auth"))
+            .await
+            .expect("store1");
+        let id2 = manager
+            .store_recovery_phrase("nonce_user2", &phrase, Some("auth"))
+            .await
+            .expect("store2");
+
+        let iv1 = manager.phrases.get(&id1).unwrap().iv.clone();
+        let iv2 = manager.phrases.get(&id2).unwrap().iv.clone();
+        assert_ne!(iv1, iv2);
+
+        // Manual collision detection via register_nonce helper
+        assert!(manager.register_nonce(&iv1).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_legacy_migration_and_rate_limit() {
+        use rand::RngCore;
+        let mut manager = RecoveryPhraseManager::new();
+        let mut legacy = EncryptedRecoveryPhrase {
+            identity_id: "legacy_user".into(),
+            encrypted_phrase: Vec::new(),
+            phrase_hash: String::new(),
+            encryption_version: 1,
+            encryption_method: "xor".into(),
+            salt: vec![0u8; 16],
+            iv: vec![0u8; 16],
+            tag: Vec::new(),
+            created_at: 0,
+            last_used: None,
+            usage_count: 0,
+            max_usage: None,
+            expires_at: None,
+        };
+
+        let phrase = RecoveryPhrase {
+            words: (0..12).map(|i| format!("word{:02}", i)).collect(),
+            entropy: vec![4u8; 32],
+            checksum: "chk".into(),
+            language: "english".into(),
+            word_count: 12,
+        };
+        let phrase_text = phrase.words.join(" ");
+        legacy.phrase_hash = manager.calculate_phrase_hash(&phrase_text);
+        let mut rng = rand::rngs::OsRng;
+        rng.fill_bytes(&mut legacy.iv);
+        legacy.salt = vec![5u8; 16];
+
+        let key = manager
+            .derive_encryption_key(&legacy.identity_id, Some("auth"), &legacy.salt)
+            .await
+            .expect("kdf");
+        // Legacy XOR encrypt
+        let mut enc = Vec::new();
+        for (i, b) in phrase_text.as_bytes().iter().enumerate() {
+            enc.push(b ^ key[i % key.len()] ^ legacy.iv[i % legacy.iv.len()]);
+        }
+        legacy.encrypted_phrase = enc;
+        manager
+            .phrases
+            .insert("phrase_legacy_user".into(), legacy);
+
+        // Flood attempts to hit rate limit
+        for _ in 0..MAX_DECRYPT_ATTEMPTS {
+            let _ = manager
+                .recover_identity_with_phrase(&phrase.words, Some("auth"))
+                .await;
+        }
+        let rate_limited = manager
+            .recover_identity_with_phrase(&phrase.words, Some("auth"))
+            .await;
+        assert!(rate_limited.is_err());
     }
 
     #[tokio::test]
