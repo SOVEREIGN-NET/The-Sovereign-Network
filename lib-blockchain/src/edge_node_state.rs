@@ -676,7 +676,7 @@ mod tests {
     }
 
     fn create_dummy_header(height: u64) -> BlockHeader {
-        BlockHeader {
+        let mut header = BlockHeader {
             version: 1,
             previous_block_hash: Hash::zero(),
             merkle_root: Hash::zero(),
@@ -688,6 +688,9 @@ mod tests {
             transaction_count: 0,
             block_size: 0,
             cumulative_difficulty: crate::types::Difficulty::from_bits((height * 1000) as u32),
-        }
+        };
+        // Calculate and set the correct block hash
+        header.block_hash = header.calculate_hash();
+        header
     }
 }

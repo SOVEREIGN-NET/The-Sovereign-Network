@@ -252,10 +252,9 @@ mod tests {
         assert_eq!(node.blockchain_height, 100);
         assert!(node.is_active());
         
-        // Test updating last seen
-        let old_last_seen = node.last_seen;
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        // Test updating last seen - set to a past time first to avoid timing issues
+        node.last_seen = 0; // Set to epoch
         node.update_last_seen();
-        assert!(node.last_seen > old_last_seen);
+        assert!(node.last_seen > 0);
     }
 }

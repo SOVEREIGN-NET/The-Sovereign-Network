@@ -30,6 +30,7 @@ serde = { version = "1.0", features = ["derive"] }
 rand = "0.8"
 hex = "0.4"
 zeroize = { version = "1.6", features = ["derive"] }
+subtle = "2.5"  # Constant-time cryptographic operations
 
 # NOTE: ZK proof functionality is provided via trait interface
 # Implementation is available in lib-proofs package to avoid circular dependencies

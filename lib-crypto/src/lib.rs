@@ -1,5 +1,5 @@
 //! ZHTP Cryptography Foundation Module
-//! 
+//!
 //! cryptography implementations from crypto.rs preserving functionality
 
 // Core modules
@@ -9,6 +9,7 @@ pub mod kdf;
 pub mod keypair;
 pub mod post_quantum;
 pub mod symmetric;
+pub mod traits;  // Cryptographic security traits
 pub mod types;
 pub mod utils;
 pub mod verification;
@@ -26,6 +27,9 @@ pub use types::{
     signatures::{Signature, SignatureAlgorithm, PostQuantumSignature}
 };
 pub use verification::verify_signature;
+
+// Re-export security traits for zeroization enforcement
+pub use traits::{ZeroizingKey, SecureKey};
 
 // Re-export hashing functionality
 pub use hashing::hash_blake3;

@@ -254,9 +254,10 @@ async fn test_byzantine_threshold_calculation() -> Result<()> {
 
 #[tokio::test]
 async fn test_insufficient_validators_for_consensus() -> Result<()> {
-    let config = create_test_config();
+    let mut config = create_test_config();
+    config.development_mode = false; // Disable development mode to test BFT requirements
     let mut consensus_engine = ConsensusEngine::new(config)?;
-    
+
     // Register only one validator (insufficient for BFT)
     let identity = create_test_identity("alice");
     consensus_engine.register_validator(

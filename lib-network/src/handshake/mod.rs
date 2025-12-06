@@ -204,7 +204,7 @@ impl HandshakeContext {
     #[cfg(test)]
     pub fn new_test() -> Self {
         Self {
-            nonce_cache: NonceCache::new(300, 1000),
+            nonce_cache: NonceCache::new_test(300, 1000),
             timestamp_config: TimestampConfig::default(),
             observer: std::sync::Arc::new(NoOpObserver),
             rate_limiter: None,
@@ -1536,7 +1536,7 @@ mod tests {
     #[test]
     fn test_concurrent_handshakes_with_shared_cache() -> Result<()> {
         // Create shared context
-        let ctx = HandshakeContext::new(NonceCache::new(60, 10000));
+        let ctx = HandshakeContext::new(NonceCache::new_test(60, 10000));
 
         // Launch 50 concurrent handshakes
         let handles: Vec<_> = (0..50)

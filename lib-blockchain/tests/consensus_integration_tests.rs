@@ -67,7 +67,8 @@ async fn test_dao_proposal_creation() {
     assert!(proposal_tx.is_ok(), "DAO proposal transaction should be created successfully");
     
     let tx = proposal_tx.unwrap();
-    assert_eq!(tx.transaction_type, lib_blockchain::TransactionType::IdentityUpdate);
+    // DAO proposals use Transfer type for record keeping (actual DAO logic handled by lib-consensus)
+    assert_eq!(tx.transaction_type, lib_blockchain::TransactionType::Transfer);
     assert!(tx.fee > 0, "DAO proposal should have a fee");
     
     let memo = String::from_utf8_lossy(&tx.memo);
@@ -88,7 +89,8 @@ async fn test_dao_vote_creation() {
     assert!(vote_tx.is_ok(), "DAO vote transaction should be created successfully");
     
     let tx = vote_tx.unwrap();
-    assert_eq!(tx.transaction_type, lib_blockchain::TransactionType::IdentityUpdate);
+    // DAO votes use Transfer type for record keeping (actual DAO logic handled by lib-consensus)
+    assert_eq!(tx.transaction_type, lib_blockchain::TransactionType::Transfer);
     assert!(tx.fee > 0, "DAO vote should have a fee");
     
     let memo = String::from_utf8_lossy(&tx.memo);
