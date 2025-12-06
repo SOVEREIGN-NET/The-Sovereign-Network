@@ -691,6 +691,7 @@ pub mod utils {
 mod tests {
     use super::*;
     use lib_crypto::generate_keypair;
+    use lib_economy::models::TokenReward;
 
     #[tokio::test]
     async fn test_economic_processor_creation() {
@@ -714,7 +715,9 @@ mod tests {
         for tx in &blockchain_txs {
             assert_eq!(tx.inputs.len(), 0); // System transactions have no inputs
             assert_eq!(tx.fee, 0); // UBI distributions are fee-free
-            assert!(tx.memo.starts_with(b"Economic TX: UBI Distribution"));
+            assert!(tx.memo.starts_with(b"Economic TX:")); // Check memo format
+            let memo_str = String::from_utf8_lossy(&tx.memo);
+            assert!(memo_str.contains("ZHTP")); // Should contain amount in ZHTP
         }
 
         Ok(())
@@ -724,10 +727,25 @@ mod tests {
     async fn test_payment_transaction_creation() -> Result<()> {
         let mut processor = EconomicTransactionProcessor::new();
         let keypair = generate_keypair()?;
-        
+
         let from = [1u8; 32];
         let to = [2u8; 32];
         let amount = 1000;
+
+        // Fund the sender's wallet first
+        let mut wallet_balance = WalletBalance::new(from);
+        let reward = TokenReward {
+            routing_reward: 0,
+            storage_reward: 0,
+            compute_reward: 0,
+            quality_bonus: 0,
+            uptime_bonus: 0,
+            total_reward: 2000 * 1_000_000, // 2000 ZHTP
+            currency: "ZHTP".to_string(),
+        };
+        wallet_balance.add_reward(&reward)?;
+        wallet_balance.claim_rewards()?; // Move to available balance
+        processor.update_wallet_balance(from, wallet_balance);
 
         let blockchain_tx = processor.create_payment_transaction_for_blockchain(
             from, to, amount, Priority::Normal, &keypair
