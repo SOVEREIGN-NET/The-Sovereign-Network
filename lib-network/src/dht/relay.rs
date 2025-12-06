@@ -265,6 +265,7 @@ mod tests {
     use lib_crypto::post_quantum::dilithium::dilithium2_keypair;
     
     #[tokio::test]
+    #[ignore] // Ignore network-dependent test
     async fn test_zhtp_relay_flow() -> Result<()> {
         // Create two relay protocol handlers (Node A and Node B)
         let (node_a_pubkey, node_a_secret) = dilithium2_keypair();
