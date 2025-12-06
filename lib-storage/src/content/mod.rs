@@ -253,6 +253,24 @@ impl ContentManager {
         if request.compress || request.encrypt {
             info!("      Storage hash differs from original due to processing!");
         }
+        
+        // If content was encrypted, the key was stored under the pre-encryption hash.
+        // We need to also register it under the final (post-encryption) hash for retrieval.
+        if request.encrypt {
+            // Get the pre-encryption hash (after possible compression)
+            let pre_encryption_content = if request.compress {
+                self.compress_content(&request.content).await?
+            } else {
+                request.content.clone()
+            };
+            let pre_encryption_hash = Hash::from_bytes(&blake3::hash(&pre_encryption_content).as_bytes()[..32]);
+            
+            // Copy encryption key from pre-encryption hash to post-encryption hash
+            if let Some(key) = self.content_keys.get(&pre_encryption_hash).cloned() {
+                self.content_keys.insert(content_hash.clone(), key);
+                info!("    Registered encryption key under storage hash for decryption");
+            }
+        }
 
         // Create economic storage request
         let economic_request = EconomicStorageRequest {
