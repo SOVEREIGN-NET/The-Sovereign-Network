@@ -714,7 +714,8 @@ mod tests {
         for tx in &blockchain_txs {
             assert_eq!(tx.inputs.len(), 0); // System transactions have no inputs
             assert_eq!(tx.fee, 0); // UBI distributions are fee-free
-            assert!(tx.memo.starts_with(b"Economic TX: UBI Distribution"));
+            // Memo format: "Economic TX: Universal Basic Income - X ZHTP (Base: Y, DAO: Z)"
+            assert!(tx.memo.starts_with(b"Economic TX: Universal Basic Income"));
         }
 
         Ok(())
@@ -728,6 +729,11 @@ mod tests {
         let from = [1u8; 32];
         let to = [2u8; 32];
         let amount = 1000;
+        
+        // Set up sender balance first (need amount + fees)
+        let mut sender_balance = WalletBalance::new(from);
+        sender_balance.available_balance = 10000; // Enough for amount + fees
+        processor.update_wallet_balance(from, sender_balance);
 
         let blockchain_tx = processor.create_payment_transaction_for_blockchain(
             from, to, amount, Priority::Normal, &keypair
@@ -754,9 +760,9 @@ mod tests {
         assert!(dao_fee > 0);
         assert_eq!(total_fee, network_fee + dao_fee);
 
-        // Test system transaction (should be fee-free)
-        let (sys_net, sys_dao, sys_total) = processor.calculate_transaction_fees(
-            250, 10000, Priority::Normal
+        // Test system transaction (should be fee-free) using exemptions
+        let (sys_net, sys_dao, sys_total) = processor.calculate_transaction_fees_with_exemptions(
+            250, 10000, Priority::Normal, true // is_system_transaction = true
         );
 
         assert_eq!(sys_net, 0);
