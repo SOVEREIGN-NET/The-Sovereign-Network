@@ -22,7 +22,7 @@ pub use crate::relays::*;
 pub use crate::blockchain_sync::{BlockchainSyncManager, EdgeNodeSyncManager};
 
 // Unified Peer Identity System (replaces separate NodeId, PeerId, PublicKey systems)
-pub use crate::identity::{UnifiedPeerId, PeerIdMapper};
+pub use crate::identity::{UnifiedPeerId, PeerIdMapper, PeerMapperConfig};
 
 // Unified Handshake Protocol exports
 // NOTE: NodeIdentity is a lightweight version containing only public fields from ZhtpIdentity
