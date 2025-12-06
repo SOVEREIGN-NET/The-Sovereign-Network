@@ -50,6 +50,15 @@ governor = "0.6"
 # Security: LRU cache for bounded nonce storage
 lru = "0.12"
 
+# CRITICAL FIX C3: Faster RwLock for atomic state updates
+parking_lot = "0.12"
+
+# CRITICAL FIX C1: BLAKE3 for proof-of-work
+blake3 = "1.5"
+
+# CRITICAL FIX C4: Persistent nonce cache with RocksDB
+rocksdb = "0.21"
+
 # X25519 for ephemeral key exchange (forward secrecy)
 x25519-dalek = "2.0"
 
@@ -84,7 +93,7 @@ mdns-sd = "0.16"                                  # mDNS service discovery (Bonj
 # QUIC protocol (modern transport replacing TCP/UDP split)
 # NOTE: QUIC integration ready but commented out until cmake/NASM dependencies resolved
 quinn = "0.11"                                    # Production-ready QUIC implementation (used by Google, Cloudflare)
-rustls = { version = "0.23", default-features = false, features = ["ring"] } # TLS 1.3 library (used by quinn)  
+rustls = { version = "0.23", default-features = false, features = ["ring"] } # TLS 1.3 library (used by quinn)
 rcgen = "0.14.5"                                    # Certificate generation for QUIC
 #To enable: Install cmake and NASM, then uncomment above lines
 
@@ -114,9 +123,9 @@ objc2 = "0.6"                                     # Modern Objective-C runtime f
 objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSDictionary", "NSData", "NSError"] }
 block2 = "0.6"                                    # Block (closure) support for callbacks
 
-[target.'cfg(target_os = "windows")'.dependencies]  
+[target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.51", features = [        # Windows Runtime APIs (always available on Windows)
-    "Win32_Devices_Bluetooth", 
+    "Win32_Devices_Bluetooth",
     "Win32_Foundation",
     "Foundation",
     "Foundation_Collections",                    # IVectorView and collection interfaces
@@ -135,7 +144,7 @@ windows = { version = "0.51", features = [        # Windows Runtime APIs (always
 # Cryptography (from lib-crypto package)
 lib-crypto = { path = "../lib-crypto" }
 
-# ZK proofs (from lib-proofs package) 
+# ZK proofs (from lib-proofs package)
 lib-proofs = { path = "../lib-proofs" }
 
 # Economics system integration
@@ -163,6 +172,7 @@ log = "0.4"                                        # Logging for iOS
 tokio-test = "0.4"
 tracing-subscriber = "0.3"
 futures = "0.3"
+tempfile = "3.23.0"
 
 [lib]
 name = "lib_network"
