@@ -591,7 +591,8 @@ impl ValidatorProtocol {
     /// Generate unique message ID
     fn generate_message_id(&self) -> Hash {
         let timestamp = self.current_timestamp();
-        let data = format!("msg_{}", timestamp);
+        let random_bytes: [u8; 16] = rand::random();
+        let data = format!("msg_{}_{}", timestamp, hex::encode(random_bytes));
         Hash::from_bytes(&lib_crypto::hash_blake3(data.as_bytes()))
     }
     
