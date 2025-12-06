@@ -17,7 +17,7 @@ use crate::protocols::NetworkProtocol;
 use tracing::{info, debug, warn};
 
 /// Type of sync being performed
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SyncType {
     /// Full blockchain sync (complete blocks, all transactions)
     FullBlockchain,
@@ -25,17 +25,20 @@ pub enum SyncType {
     EdgeNode,
 }
 
+/// Active sync information
+#[derive(Debug, Clone)]
+pub struct ActiveSync {
+    pub sync_id: u64,
+    pub protocol: NetworkProtocol,
+    pub start_time: Instant,
+}
+
 /// Sync state for a specific peer
 #[derive(Debug, Clone)]
 pub struct PeerSyncState {
-    /// Currently active sync request ID (if any)
-    pub active_sync_id: Option<u64>,
-    /// Type of sync being performed
-    pub sync_type: Option<SyncType>,
-    /// Protocol being used for sync
-    pub sync_protocol: Option<NetworkProtocol>,
-    /// When the sync started
-    pub sync_start_time: Option<Instant>,
+    /// Active syncs per type (sync_type -> sync info)
+    /// Allows Edge and Full syncs to coexist
+    pub active_syncs: HashMap<SyncType, ActiveSync>,
     /// Available protocols for this peer
     pub available_protocols: HashSet<NetworkProtocol>,
 }
@@ -71,74 +74,67 @@ impl SyncCoordinator {
         sync_type: SyncType,
     ) -> bool {
         let mut syncs = self.peer_syncs.write().await;
-        
+
         let peer_state = syncs.entry(peer_id.clone()).or_insert_with(|| PeerSyncState {
-            active_sync_id: None,
-            sync_type: None,
-            sync_protocol: None,
-            sync_start_time: None,
+            active_syncs: HashMap::new(),
             available_protocols: HashSet::new(),
         });
 
         // Add this protocol to available list
         peer_state.available_protocols.insert(protocol.clone());
 
-        // Check if already syncing
-        if let Some(active_sync_start) = peer_state.sync_start_time {
+        // Check if already syncing this type
+        if let Some(active_sync) = peer_state.active_syncs.get(&sync_type) {
             // Check if sync has timed out
-            if active_sync_start.elapsed() > self.sync_timeout {
-                warn!(" Sync with peer {} timed out (type: {:?}, protocol: {:?}), allowing new sync", 
-                      hex::encode(&peer_id.key_id[..8]), 
-                      peer_state.sync_type,
-                      peer_state.sync_protocol);
-                
-                // Clear timed-out sync
-                peer_state.active_sync_id = None;
-                peer_state.sync_type = None;
-                peer_state.sync_protocol = None;
-                peer_state.sync_start_time = None;
-            } else {
-                // Check if sync types are compatible
-                if let Some(active_sync_type) = peer_state.sync_type {
-                    if active_sync_type != sync_type {
-                        // Different sync type - allow both (edge and full can coexist)
-                        info!(" Allowing {:?} sync alongside existing {:?} sync with peer {}",
-                              sync_type,
-                              active_sync_type,
-                              hex::encode(&peer_id.key_id[..8]));
-                        return true;
-                    }
-                }
-                
-                info!(" Already syncing {:?} with peer {} via {:?}, skipping duplicate on {:?}",
-                      peer_state.sync_type.unwrap_or(sync_type),
+            if active_sync.start_time.elapsed() > self.sync_timeout {
+                warn!(" Sync with peer {} timed out (type: {:?}, protocol: {:?}), allowing new sync",
                       hex::encode(&peer_id.key_id[..8]),
-                      peer_state.sync_protocol,
+                      sync_type,
+                      active_sync.protocol);
+
+                // Clear timed-out sync
+                peer_state.active_syncs.remove(&sync_type);
+            } else {
+                // Check if this is a protocol upgrade (higher priority protocol)
+                let new_priority = protocol_priority(&protocol);
+                let current_priority = protocol_priority(&active_sync.protocol);
+
+                if new_priority > current_priority {
+                    info!(" Allowing protocol upgrade from {:?} to {:?} for {:?} sync with peer {}",
+                          active_sync.protocol, protocol, sync_type,
+                          hex::encode(&peer_id.key_id[..8]));
+                    return true;
+                }
+
+                info!(" Already syncing {:?} with peer {} via {:?}, skipping duplicate on {:?}",
+                      sync_type,
+                      hex::encode(&peer_id.key_id[..8]),
+                      active_sync.protocol,
                       protocol);
                 return false; // Already syncing same type, don't start another
             }
         }
 
-        // Not currently syncing, should we initiate?
-        self.should_initiate_sync(peer_state, &protocol)
+        // Not currently syncing this type, should we initiate?
+        self.should_initiate_sync_type(peer_state, sync_type, &protocol)
     }
 
-    /// Determine if we should initiate a sync with this protocol
+    /// Determine if we should initiate a sync with this protocol for a specific sync type
     /// Priority: TCP/UDP (internet) > WiFi Direct > Bluetooth Classic > BLE
-    fn should_initiate_sync(&self, peer_state: &PeerSyncState, new_protocol: &NetworkProtocol) -> bool {
-        // If no active sync, we should sync
-        if peer_state.active_sync_id.is_none() {
+    fn should_initiate_sync_type(&self, peer_state: &PeerSyncState, sync_type: SyncType, new_protocol: &NetworkProtocol) -> bool {
+        // If no active sync for this type, we should sync
+        if !peer_state.active_syncs.contains_key(&sync_type) {
             return true;
         }
 
-        // If we have a higher priority protocol, upgrade
-        if let Some(current_protocol) = &peer_state.sync_protocol {
+        // If we have a higher priority protocol for this sync type, upgrade
+        if let Some(active_sync) = peer_state.active_syncs.get(&sync_type) {
             let new_priority = protocol_priority(new_protocol);
-            let current_priority = protocol_priority(current_protocol);
-            
+            let current_priority = protocol_priority(&active_sync.protocol);
+
             if new_priority > current_priority {
-                info!(" Upgrading sync protocol from {:?} to {:?} (higher bandwidth)",
-                      current_protocol, new_protocol);
+                info!(" Upgrading {:?} sync protocol from {:?} to {:?} (higher bandwidth)",
+                      sync_type, active_sync.protocol, new_protocol);
                 return true;
             }
         }
@@ -155,17 +151,18 @@ impl SyncCoordinator {
         protocol: NetworkProtocol,
     ) {
         let mut syncs = self.peer_syncs.write().await;
-        
+
         if let Some(peer_state) = syncs.get_mut(peer_id) {
-            peer_state.active_sync_id = Some(sync_id);
-            peer_state.sync_type = Some(sync_type);
-            peer_state.sync_protocol = Some(protocol.clone());
-            peer_state.sync_start_time = Some(Instant::now());
-            
+            peer_state.active_syncs.insert(sync_type, ActiveSync {
+                sync_id,
+                protocol: protocol.clone(),
+                start_time: Instant::now(),
+            });
+
             info!(" {:?} sync started with peer {} (ID: {}, protocol: {:?})",
                   sync_type,
-                  hex::encode(&peer_id.key_id[..8]), 
-                  sync_id, 
+                  hex::encode(&peer_id.key_id[..8]),
+                  sync_id,
                   protocol);
         }
     }
@@ -173,22 +170,21 @@ impl SyncCoordinator {
     /// Record that a sync has completed
     pub async fn complete_sync(&self, peer_id: &PublicKey, sync_id: u64, sync_type: SyncType) {
         let mut syncs = self.peer_syncs.write().await;
-        
+
         if let Some(peer_state) = syncs.get_mut(peer_id) {
-            // Only clear if this is the active sync
-            if peer_state.active_sync_id == Some(sync_id) && peer_state.sync_type == Some(sync_type) {
-                let duration = peer_state.sync_start_time.map(|t| t.elapsed());
-                
-                info!(" {:?} sync completed with peer {} (ID: {}, duration: {:?})",
-                      sync_type,
-                      hex::encode(&peer_id.key_id[..8]), 
-                      sync_id,
-                      duration);
-                
-                peer_state.active_sync_id = None;
-                peer_state.sync_type = None;
-                peer_state.sync_protocol = None;
-                peer_state.sync_start_time = None;
+            // Only clear if this is the active sync for this type
+            if let Some(active_sync) = peer_state.active_syncs.get(&sync_type) {
+                if active_sync.sync_id == sync_id {
+                    let duration = active_sync.start_time.elapsed();
+
+                    info!(" {:?} sync completed with peer {} (ID: {}, duration: {:?})",
+                          sync_type,
+                          hex::encode(&peer_id.key_id[..8]),
+                          sync_id,
+                          duration);
+
+                    peer_state.active_syncs.remove(&sync_type);
+                }
             }
         }
     }
@@ -196,19 +192,18 @@ impl SyncCoordinator {
     /// Record that a sync has failed
     pub async fn fail_sync(&self, peer_id: &PublicKey, sync_id: u64, sync_type: SyncType) {
         let mut syncs = self.peer_syncs.write().await;
-        
+
         if let Some(peer_state) = syncs.get_mut(peer_id) {
-            // Only clear if this is the active sync
-            if peer_state.active_sync_id == Some(sync_id) && peer_state.sync_type == Some(sync_type) {
-                warn!(" {:?} sync failed with peer {} (ID: {})",
-                      sync_type,
-                      hex::encode(&peer_id.key_id[..8]), 
-                      sync_id);
-                
-                peer_state.active_sync_id = None;
-                peer_state.sync_type = None;
-                peer_state.sync_protocol = None;
-                peer_state.sync_start_time = None;
+            // Only clear if this is the active sync for this type
+            if let Some(active_sync) = peer_state.active_syncs.get(&sync_type) {
+                if active_sync.sync_id == sync_id {
+                    warn!(" {:?} sync failed with peer {} (ID: {})",
+                          sync_type,
+                          hex::encode(&peer_id.key_id[..8]),
+                          sync_id);
+
+                    peer_state.active_syncs.remove(&sync_type);
+                }
             }
         }
     }
@@ -216,25 +211,26 @@ impl SyncCoordinator {
     /// Remove a peer (cleanup when disconnected)
     pub async fn remove_peer(&self, peer_id: &PublicKey, protocol: NetworkProtocol) {
         let mut syncs = self.peer_syncs.write().await;
-        
+
         if let Some(peer_state) = syncs.get_mut(peer_id) {
             // Remove this protocol
             peer_state.available_protocols.remove(&protocol);
-            
-            // If this was the protocol we were syncing on, clear the sync
-            if peer_state.sync_protocol.as_ref() == Some(&protocol) {
-                debug!("🔌 Peer {} disconnected from {:?}, clearing sync state",
-                       hex::encode(&peer_id.key_id[..8]), &protocol);
-                
-                peer_state.active_sync_id = None;
-                peer_state.sync_protocol = None;
-                peer_state.sync_start_time = None;
-            }
-            
+
+            // Clear any syncs using this protocol
+            peer_state.active_syncs.retain(|_, active_sync| {
+                if active_sync.protocol == protocol {
+                    debug!("🔌 Peer {} disconnected from {:?}, clearing sync state",
+                           hex::encode(&peer_id.key_id[..8]), &protocol);
+                    false
+                } else {
+                    true
+                }
+            });
+
             // If no protocols left, remove peer entirely
             if peer_state.available_protocols.is_empty() {
                 syncs.remove(peer_id);
-                debug!("🔌 Peer {} fully disconnected (all protocols)", 
+                debug!("🔌 Peer {} fully disconnected (all protocols)",
                        hex::encode(&peer_id.key_id[..8]));
             }
         }
@@ -244,31 +240,31 @@ impl SyncCoordinator {
     /// Returns the peer's public key and sync type if found
     pub async fn find_peer_by_sync_id(&self, sync_id: u64) -> Option<(PublicKey, SyncType)> {
         let syncs = self.peer_syncs.read().await;
-        
+
         for (peer_id, state) in syncs.iter() {
-            if state.active_sync_id == Some(sync_id) {
-                if let Some(sync_type) = state.sync_type {
-                    return Some((peer_id.clone(), sync_type));
+            for (sync_type, active_sync) in &state.active_syncs {
+                if active_sync.sync_id == sync_id {
+                    return Some((peer_id.clone(), *sync_type));
                 }
             }
         }
-        
+
         None
     }
 
     /// Get sync statistics
     pub async fn get_stats(&self) -> SyncStats {
         let syncs = self.peer_syncs.read().await;
-        
+
         let total_peers = syncs.len();
-        let active_syncs = syncs.values()
-            .filter(|s| s.active_sync_id.is_some())
-            .count();
-        
+        let active_syncs: usize = syncs.values()
+            .map(|s| s.active_syncs.len())
+            .sum();
+
         let mut protocol_counts: HashMap<NetworkProtocol, usize> = HashMap::new();
         for state in syncs.values() {
-            if let Some(protocol) = &state.sync_protocol {
-                *protocol_counts.entry(protocol.clone()).or_insert(0) += 1;
+            for active_sync in state.active_syncs.values() {
+                *protocol_counts.entry(active_sync.protocol.clone()).or_insert(0) += 1;
             }
         }
         
@@ -366,7 +362,9 @@ mod tests {
         {
             let mut syncs = coordinator.peer_syncs.write().await;
             if let Some(state) = syncs.get_mut(&peer_id) {
-                state.sync_start_time = Some(Instant::now() - Duration::from_secs(400));
+                if let Some(active_sync) = state.active_syncs.get_mut(&sync_type) {
+                    active_sync.start_time = Instant::now() - Duration::from_secs(400);
+                }
             }
         }
 
@@ -387,10 +385,13 @@ mod tests {
         assert!(coordinator.register_peer_protocol(&peer_id, NetworkProtocol::BluetoothLE, SyncType::EdgeNode).await);
         coordinator.start_sync(&peer_id, 2, SyncType::EdgeNode, NetworkProtocol::BluetoothLE).await;
 
-        // Another full sync should be blocked
+        // Another full sync should be blocked (WiFiDirect priority 80 < TCP priority 100, no upgrade)
         assert!(!coordinator.register_peer_protocol(&peer_id, NetworkProtocol::WiFiDirect, SyncType::FullBlockchain).await);
 
-        // Another edge sync should be blocked
-        assert!(!coordinator.register_peer_protocol(&peer_id, NetworkProtocol::WiFiDirect, SyncType::EdgeNode).await);
+        // WiFiDirect for Edge should be allowed as protocol upgrade (WiFiDirect priority 80 > BLE priority 30)
+        assert!(coordinator.register_peer_protocol(&peer_id, NetworkProtocol::WiFiDirect, SyncType::EdgeNode).await);
+
+        // But another BLE EdgeNode sync should be blocked (duplicate, not an upgrade)
+        assert!(!coordinator.register_peer_protocol(&peer_id, NetworkProtocol::BluetoothLE, SyncType::EdgeNode).await);
     }
 }
