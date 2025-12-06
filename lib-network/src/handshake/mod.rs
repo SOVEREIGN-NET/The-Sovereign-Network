@@ -292,8 +292,8 @@ impl NodeIdentity {
         if res.is_err() {
             tracing::warn!(
                 "NodeId verification failed for DID={}, device_id={}",
-                self.did.redacted(),
-                self.device_id.redacted()
+                &self.did[..self.did.len().min(16)],
+                &self.device_id[..self.device_id.len().min(16)]
             );
         }
 
