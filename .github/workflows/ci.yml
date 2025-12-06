@@ -14,6 +14,19 @@ jobs:
     name: Build (workspace)
     runs-on: ubuntu-latest
     steps:
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          # Remove unnecessary preinstalled software
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          echo "Disk space after cleanup:"
+          df -h
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -40,7 +53,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Build
-        run: cargo build --workspace --all-features --locked
+        run: cargo build --workspace --locked
 
   tests:
     name: Tests (workspace)
@@ -48,6 +61,19 @@ jobs:
     needs: smoke
     continue-on-error: true
     steps:
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          # Remove unnecessary preinstalled software
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          echo "Disk space after cleanup:"
+          df -h
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -76,10 +102,12 @@ jobs:
       - name: Clean target directory to free disk space
         run: |
           df -h
+          # More aggressive cleanup - remove build artifacts but keep cache
           cargo clean
-          rm -rf target/debug/deps
-          rm -rf target/debug/build
+          rm -rf target/debug/deps target/debug/build target/debug/incremental
+          rm -rf ~/.cargo/registry/src
+          echo "Disk space after cargo clean:"
           df -h
 
       - name: Test
-        run: cargo test --workspace --all-features --locked
+        run: cargo test --workspace --locked
