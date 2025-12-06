@@ -59,6 +59,25 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use rand::RngCore;
 
+// Security modules
+mod security;
+mod nonce_cache;
+mod observability;
+mod rate_limiter;
+
+// Re-export security utilities
+pub use security::{
+    TimestampConfig, SessionContext,
+    validate_timestamp, current_timestamp,
+    derive_session_key_hkdf, ct_eq_bytes, ct_verify_eq,
+};
+pub use nonce_cache::{NonceCache, start_nonce_cleanup_task};
+pub use observability::{
+    HandshakeObserver, HandshakeEvent, HandshakeMetrics, FailureReason,
+    NoOpObserver, LoggingObserver, Timer,
+};
+pub use rate_limiter::{RateLimiter, RateLimitConfig};
+
 /// UHP Protocol Version
 pub const UHP_VERSION: u8 = 1;
 
@@ -70,6 +89,138 @@ pub const MAX_SUPPORTED_VERSION: u8 = 1;
 
 /// Minimum supported protocol version (for backwards compatibility)
 pub const MIN_SUPPORTED_VERSION: u8 = 1;
+
+/// Validate protocol version is within supported range
+///
+/// **VULN-004 FIX:** Prevents protocol downgrade attacks
+///
+/// # Returns
+/// - `Ok(())` if version is valid
+/// - `Err(...)` if version is outside supported range
+fn validate_protocol_version(version: u8) -> Result<()> {
+    if version < MIN_SUPPORTED_VERSION || version > MAX_SUPPORTED_VERSION {
+        return Err(anyhow!(
+            "Unsupported protocol version: {} (supported: {}-{})",
+            version,
+            MIN_SUPPORTED_VERSION,
+            MAX_SUPPORTED_VERSION
+        ));
+    }
+    Ok(())
+}
+
+// ============================================================================
+// Handshake Context - FINDING 2 FIX
+// ============================================================================
+
+/// Handshake context that bundles all verification dependencies
+///
+/// **ARCHITECTURE FIX (FINDING 2):** Eliminates parameter threading anti-pattern
+/// by grouping related configuration into a single context object.
+///
+/// **ARCHITECTURE FIX (FINDING 4):** Includes observability hooks for monitoring.
+///
+/// **ARCHITECTURE FIX (FINDING 8):** Includes optional rate limiting for DoS protection.
+///
+/// Benefits:
+/// - Single parameter instead of 2-3 separate parameters
+/// - Easy to extend with new configuration without changing all signatures
+/// - Clearer ownership and lifecycle management
+/// - Better encapsulation of verification state
+/// - Built-in observability support
+/// - Optional rate limiting for production deployments
+#[derive(Clone)]
+pub struct HandshakeContext {
+    /// Nonce cache for replay attack prevention
+    pub nonce_cache: NonceCache,
+
+    /// Timestamp configuration (tolerance, max age, etc.)
+    pub timestamp_config: TimestampConfig,
+
+    /// Observer for metrics and events (default: NoOpObserver)
+    pub observer: std::sync::Arc<dyn HandshakeObserver>,
+
+    /// Optional rate limiter for DoS protection
+    pub rate_limiter: Option<RateLimiter>,
+}
+
+impl HandshakeContext {
+    /// Create a new handshake context with default configuration (no rate limiting)
+    pub fn new(nonce_cache: NonceCache) -> Self {
+        Self {
+            nonce_cache,
+            timestamp_config: TimestampConfig::default(),
+            observer: std::sync::Arc::new(NoOpObserver),
+            rate_limiter: None,
+        }
+    }
+
+    /// Create with custom timestamp configuration
+    pub fn with_timestamp_config(nonce_cache: NonceCache, timestamp_config: TimestampConfig) -> Self {
+        Self {
+            nonce_cache,
+            timestamp_config,
+            observer: std::sync::Arc::new(NoOpObserver),
+            rate_limiter: None,
+        }
+    }
+
+    /// Create with custom observer
+    pub fn with_observer(nonce_cache: NonceCache, observer: std::sync::Arc<dyn HandshakeObserver>) -> Self {
+        Self {
+            nonce_cache,
+            timestamp_config: TimestampConfig::default(),
+            observer,
+            rate_limiter: None,
+        }
+    }
+
+    /// Create with rate limiting enabled
+    pub fn with_rate_limiting(nonce_cache: NonceCache, rate_limiter: RateLimiter) -> Self {
+        Self {
+            nonce_cache,
+            timestamp_config: TimestampConfig::default(),
+            observer: std::sync::Arc::new(NoOpObserver),
+            rate_limiter: Some(rate_limiter),
+        }
+    }
+
+    /// Create with all custom configuration
+    pub fn with_config(
+        nonce_cache: NonceCache,
+        timestamp_config: TimestampConfig,
+        observer: std::sync::Arc<dyn HandshakeObserver>,
+        rate_limiter: Option<RateLimiter>,
+    ) -> Self {
+        Self {
+            nonce_cache,
+            timestamp_config,
+            observer,
+            rate_limiter,
+        }
+    }
+
+    /// Create a default context for testing (no rate limiting)
+    #[cfg(test)]
+    pub fn new_test() -> Self {
+        Self {
+            nonce_cache: NonceCache::new(300, 1000),
+            timestamp_config: TimestampConfig::default(),
+            observer: std::sync::Arc::new(NoOpObserver),
+            rate_limiter: None,
+        }
+    }
+
+    /// Helper to create metrics snapshot
+    fn metrics_snapshot(&self, duration_micros: u64, protocol_version: u8) -> HandshakeMetrics {
+        HandshakeMetrics {
+            duration_micros,
+            nonce_cache_size: self.nonce_cache.size(),
+            nonce_cache_utilization: self.nonce_cache.utilization(),
+            protocol_version,
+        }
+    }
+}
 
 // ============================================================================
 // Core Identity Structures
@@ -125,16 +276,28 @@ impl NodeIdentity {
     }
     
     /// Verify that node_id matches Blake3(DID || device_id) per lib-identity rules
+    ///
+    /// SECURITY: Uses constant-time comparison to prevent timing side-channels.
+    /// Error messages are intentionally generic to prevent information leakage.
     pub fn verify_node_id(&self) -> Result<()> {
         let expected = NodeId::from_did_device(&self.did, &self.device_id)?;
-        if self.node_id.as_bytes() != expected.as_bytes() {
-            return Err(anyhow!(
-                "NodeId mismatch: expected {} but got {}",
-                expected.to_hex(),
-                self.node_id.to_hex()
-            ));
+
+        let res = ct_verify_eq(
+            self.node_id.as_bytes(),
+            expected.as_bytes(),
+            "Invalid NodeId"
+        );
+
+        #[cfg(feature = "identity-debug")]
+        if res.is_err() {
+            tracing::warn!(
+                "NodeId verification failed for DID={}, device_id={}",
+                self.did.redacted(),
+                self.device_id.redacted()
+            );
         }
-        Ok(())
+
+        res
     }
     
     /// Get a compact string representation for logging
@@ -369,15 +532,23 @@ pub enum HandshakePayload {
 pub struct ClientHello {
     /// Client's node identity (public fields only, safe for network transmission)
     pub identity: NodeIdentity,
-    
+
     /// Client's capabilities
     pub capabilities: HandshakeCapabilities,
-    
+
     /// Random challenge nonce (32 bytes)
     pub challenge_nonce: [u8; 32],
-    
-    /// Client's signature over (identity + capabilities + nonce)
+
+    /// Client's signature over (identity + capabilities + nonce + timestamp + version)
     pub signature: Signature,
+
+    /// Timestamp when message was created (Unix timestamp in seconds)
+    /// Used for replay attack prevention
+    pub timestamp: u64,
+
+    /// Protocol version (UHP_VERSION = 1)
+    /// Used for version negotiation and preventing downgrade attacks
+    pub protocol_version: u8,
 }
 
 impl ClientHello {
@@ -390,47 +561,150 @@ impl ClientHello {
     ) -> Result<Self> {
         let mut challenge_nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut challenge_nonce);
-        
+
+        // Get current timestamp
+        let timestamp = current_timestamp()?;
+
+        // Use current protocol version
+        let protocol_version = UHP_VERSION;
+
         // Extract public-only identity for network transmission
         let identity = NodeIdentity::from_zhtp_identity(zhtp_identity);
-        
+
         // Create keypair from ZhtpIdentity's keys for signing
         let keypair = KeyPair {
             public_key: zhtp_identity.public_key.clone(),
             private_key: zhtp_identity.private_key.clone().ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
-        
-        // Sign the hello message
-        let data = Self::data_to_sign(&identity, &capabilities, &challenge_nonce)?;
+
+        // Sign the hello message (includes timestamp and version for replay protection)
+        let data = Self::data_to_sign(&identity, &capabilities, &challenge_nonce, timestamp, protocol_version)?;
         let signature = keypair.sign(&data)?;
-        
+
         Ok(Self {
             identity,
             capabilities,
             challenge_nonce,
             signature,
+            timestamp,
+            protocol_version,
         })
     }
     
     /// Verify the signature on this ClientHello
-    pub fn verify_signature(&self) -> Result<()> {
-        let data = Self::data_to_sign(&self.identity, &self.capabilities, &self.challenge_nonce)?;
+    ///
+    /// SECURITY: Enforces NodeId verification, timestamp validation, protocol version check,
+    /// and nonce replay detection.
+    ///
+    /// **VULN-001 FIX:** Uses nonce_cache for replay attack prevention.
+    /// **FINDING 2 FIX:** Uses HandshakeContext to eliminate parameter threading.
+    /// **FINDING 4 FIX:** Emits observability events for monitoring.
+    pub fn verify_signature(&self, ctx: &HandshakeContext) -> Result<()> {
+        use observability::{HandshakeEvent, FailureReason, Timer};
+
+        let timer = Timer::start();
+        ctx.observer.on_event(HandshakeEvent::ClientHelloVerificationStarted, None);
+
+        // 0. CRITICAL: Validate protocol version (VULN-004 FIX)
+        if let Err(e) = validate_protocol_version(self.protocol_version) {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_event(HandshakeEvent::InvalidProtocolVersionDetected, Some(metrics.clone()));
+            ctx.observer.on_failure(
+                HandshakeEvent::ClientHelloVerificationFailed,
+                FailureReason::InvalidProtocolVersion,
+                Some(metrics),
+            );
+            return Err(e);
+        }
+
+        // 1. CRITICAL: Verify NodeId derivation (prevent collision attacks)
+        if let Err(e) = self.identity.verify_node_id() {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_event(HandshakeEvent::NodeIdVerificationFailed, Some(metrics.clone()));
+            ctx.observer.on_failure(
+                HandshakeEvent::ClientHelloVerificationFailed,
+                FailureReason::NodeIdVerificationFailed,
+                Some(metrics),
+            );
+            return Err(e);
+        }
+
+        // 2. CRITICAL: Validate timestamp (prevent replay attacks)
+        if let Err(e) = validate_timestamp(self.timestamp, &ctx.timestamp_config) {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_event(HandshakeEvent::InvalidTimestampDetected, Some(metrics.clone()));
+            ctx.observer.on_failure(
+                HandshakeEvent::ClientHelloVerificationFailed,
+                FailureReason::InvalidTimestamp,
+                Some(metrics),
+            );
+            return Err(e);
+        }
+
+        // 3. CRITICAL: Check nonce cache - prevent replay attacks (VULN-001 FIX)
+        if let Err(e) = ctx.nonce_cache.check_and_store(&self.challenge_nonce, self.timestamp) {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_event(HandshakeEvent::ReplayAttackDetected, Some(metrics.clone()));
+            ctx.observer.on_failure(
+                HandshakeEvent::ClientHelloVerificationFailed,
+                FailureReason::ReplayAttack,
+                Some(metrics),
+            );
+            return Err(e);
+        }
+
+        // 4. Verify signature includes all critical fields
+        let data = Self::data_to_sign(
+            &self.identity,
+            &self.capabilities,
+            &self.challenge_nonce,
+            self.timestamp,
+            self.protocol_version,
+        )?;
+
         if self.identity.public_key.verify(&data, &self.signature)? {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_event(HandshakeEvent::ClientHelloVerificationSuccess, Some(metrics));
             Ok(())
         } else {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_failure(
+                HandshakeEvent::ClientHelloVerificationFailed,
+                FailureReason::InvalidSignature,
+                Some(metrics),
+            );
             Err(anyhow!("Signature verification failed"))
         }
     }
-    
+
+    /// Data to sign for ClientHello
+    ///
+    /// SECURITY: Includes timestamp and version to prevent manipulation
     fn data_to_sign(
         identity: &NodeIdentity,
         capabilities: &HandshakeCapabilities,
         nonce: &[u8; 32],
+        timestamp: u64,
+        protocol_version: u8,
     ) -> Result<Vec<u8>> {
         let mut data = Vec::new();
+
+        // Message type for context binding (prevent cross-message replay)
+        data.push(0x01); // MessageType::ClientHello
+
+        // Identity and capabilities
         data.extend_from_slice(identity.node_id.as_bytes());
         data.extend_from_slice(bincode::serialize(capabilities)?.as_slice());
+
+        // Nonce
         data.extend_from_slice(nonce);
+
+        // CRITICAL: Include timestamp (prevents timestamp manipulation)
+        data.extend_from_slice(&timestamp.to_le_bytes());
+
+        // CRITICAL: Include version (prevents version downgrade attacks)
+        data.push(protocol_version);
+
         Ok(data)
     }
 }
@@ -443,18 +717,26 @@ impl ClientHello {
 pub struct ServerHello {
     /// Server's node identity (public fields only, safe for network transmission)
     pub identity: NodeIdentity,
-    
+
     /// Server's capabilities
     pub capabilities: HandshakeCapabilities,
-    
+
     /// Response nonce for client to sign (32 bytes)
     pub response_nonce: [u8; 32],
-    
-    /// Server's signature over (client_challenge + server_identity + capabilities)
+
+    /// Server's signature over (client_challenge + server_identity + capabilities + timestamp + version)
     pub signature: Signature,
-    
+
     /// Negotiated session capabilities
     pub negotiated: NegotiatedCapabilities,
+
+    /// Timestamp when message was created (Unix timestamp in seconds)
+    /// Used for replay attack prevention
+    pub timestamp: u64,
+
+    /// Protocol version (UHP_VERSION = 1)
+    /// Used for version negotiation
+    pub protocol_version: u8,
 }
 
 impl ServerHello {
@@ -468,54 +750,109 @@ impl ServerHello {
     ) -> Result<Self> {
         let mut response_nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut response_nonce);
-        
+
+        // Get current timestamp
+        let timestamp = current_timestamp()?;
+
+        // Use current protocol version
+        let protocol_version = UHP_VERSION;
+
         let negotiated = capabilities.negotiate(&client_hello.capabilities);
-        
+
         // Extract public-only identity for network transmission
         let identity = NodeIdentity::from_zhtp_identity(zhtp_identity);
-        
+
         // Create keypair from ZhtpIdentity's keys for signing
         let keypair = KeyPair {
             public_key: zhtp_identity.public_key.clone(),
             private_key: zhtp_identity.private_key.clone().ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
-        
-        // Sign: client's nonce + our identity + our capabilities
+
+        // Sign: client's nonce + our identity + our capabilities + timestamp + version
         let data = Self::data_to_sign(
             &client_hello.challenge_nonce,
             &identity,
             &capabilities,
+            timestamp,
+            protocol_version,
         )?;
         let signature = keypair.sign(&data)?;
-        
+
         Ok(Self {
             identity,
             capabilities,
             response_nonce,
             signature,
             negotiated,
+            timestamp,
+            protocol_version,
         })
     }
-    
+
     /// Verify the server's signature
-    pub fn verify_signature(&self, client_nonce: &[u8; 32]) -> Result<()> {
-        let data = Self::data_to_sign(client_nonce, &self.identity, &self.capabilities)?;
+    ///
+    /// SECURITY: Enforces NodeId verification, timestamp validation, protocol version check,
+    /// and nonce replay detection.
+    ///
+    /// **VULN-001 FIX:** Uses nonce_cache for replay attack prevention.
+    /// **FINDING 2 FIX:** Uses HandshakeContext to eliminate parameter threading.
+    pub fn verify_signature(&self, client_nonce: &[u8; 32], ctx: &HandshakeContext) -> Result<()> {
+        // 0. CRITICAL: Validate protocol version (VULN-004 FIX)
+        validate_protocol_version(self.protocol_version)?;
+
+        // 1. CRITICAL: Verify NodeId derivation
+        self.identity.verify_node_id()?;
+
+        // 2. CRITICAL: Validate timestamp
+        validate_timestamp(self.timestamp, &ctx.timestamp_config)?;
+
+        // 3. CRITICAL: Check nonce cache - prevent replay attacks (VULN-001 FIX)
+        ctx.nonce_cache.check_and_store(&self.response_nonce, self.timestamp)?;
+
+        // 4. Verify signature includes all critical fields
+        let data = Self::data_to_sign(
+            client_nonce,
+            &self.identity,
+            &self.capabilities,
+            self.timestamp,
+            self.protocol_version,
+        )?;
+
         if self.identity.public_key.verify(&data, &self.signature)? {
             Ok(())
         } else {
             Err(anyhow!("Signature verification failed"))
         }
     }
-    
+
+    /// Data to sign for ServerHello
+    ///
+    /// SECURITY: Includes client nonce, timestamp, and version
     fn data_to_sign(
         client_nonce: &[u8; 32],
         identity: &NodeIdentity,
         capabilities: &HandshakeCapabilities,
+        timestamp: u64,
+        protocol_version: u8,
     ) -> Result<Vec<u8>> {
         let mut data = Vec::new();
+
+        // Message type for context binding
+        data.push(0x02); // MessageType::ServerHello
+
+        // Client's challenge nonce (proves we received ClientHello)
         data.extend_from_slice(client_nonce);
+
+        // Server identity and capabilities
         data.extend_from_slice(identity.node_id.as_bytes());
         data.extend_from_slice(bincode::serialize(capabilities)?.as_slice());
+
+        // CRITICAL: Include timestamp
+        data.extend_from_slice(&timestamp.to_le_bytes());
+
+        // CRITICAL: Include version
+        data.push(protocol_version);
+
         Ok(data)
     }
 }
@@ -523,34 +860,110 @@ impl ServerHello {
 /// ClientFinish: Client confirms handshake completion
 ///
 /// Client signs the server's response nonce to prove receipt and agreement.
-/// After this message, the secure session is established.
+/// **CRITICAL**: Now includes mutual authentication - verifies server's signature
+/// before completing handshake. After this message, the secure session is established.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientFinish {
     /// Client's signature over server's response nonce
     pub signature: Signature,
-    
+
+    /// Timestamp when ClientFinish was created
+    pub timestamp: u64,
+
+    /// Protocol version
+    pub protocol_version: u8,
+
     /// Optional session parameters
     pub session_params: Option<Vec<u8>>,
 }
 
 impl ClientFinish {
-    /// Create a new ClientFinish message
-    pub fn new(server_nonce: &[u8; 32], keypair: &KeyPair) -> Result<Self> {
-        let signature = keypair.sign(server_nonce)?;
-        
+    /// Create a new ClientFinish message with mutual authentication
+    ///
+    /// **CRITICAL SECURITY**: This method now performs mutual authentication by:
+    /// 1. Verifying server's NodeId derivation (prevents collision attacks)
+    /// 2. Validating server's timestamp (prevents replay attacks)
+    /// 3. Checking nonce cache (prevents replay attacks - VULN-001 FIX)
+    /// 4. Verifying server's signature on ServerHello (prevents MitM attacks)
+    ///
+    /// Only after server is verified does the client sign the server nonce.
+    ///
+    /// **FINDING 2 FIX:** Uses HandshakeContext to eliminate parameter threading.
+    pub fn new(
+        server_hello: &ServerHello,
+        client_hello: &ClientHello,
+        keypair: &KeyPair,
+        ctx: &HandshakeContext,
+    ) -> Result<Self> {
+        // === MUTUAL AUTHENTICATION: Verify server before completing handshake ===
+
+        // 1. Verify server's NodeId derivation (collision attack prevention)
+        server_hello.identity.verify_node_id()
+            .map_err(|e| anyhow!("Server NodeId verification failed: {}", e))?;
+
+        // 2. Validate server's timestamp (replay attack prevention)
+        validate_timestamp(server_hello.timestamp, &ctx.timestamp_config)
+            .map_err(|e| anyhow!("Server timestamp validation failed: {}", e))?;
+
+        // 3. Verify server's signature on ServerHello (MitM + replay prevention)
+        server_hello.verify_signature(&client_hello.challenge_nonce, ctx)
+            .map_err(|e| anyhow!("Server signature verification failed: {}", e))?;
+
+        // === Server verified! Now complete handshake ===
+
+        let timestamp = current_timestamp()?;
+        let protocol_version = UHP_VERSION;
+
+        // Sign server's response nonce to complete handshake
+        let data = Self::data_to_sign(
+            &server_hello.response_nonce,
+            timestamp,
+            protocol_version,
+        )?;
+        let signature = keypair.sign(&data)?;
+
         Ok(Self {
             signature,
+            timestamp,
+            protocol_version,
             session_params: None,
         })
     }
-    
+
     /// Verify client's signature on server nonce
     pub fn verify_signature(&self, server_nonce: &[u8; 32], client_pubkey: &PublicKey) -> Result<()> {
-        if client_pubkey.verify(server_nonce, &self.signature)? {
+        // 0. CRITICAL: Validate protocol version (VULN-004 FIX)
+        validate_protocol_version(self.protocol_version)?;
+
+        // 1. Validate timestamp
+        validate_timestamp(self.timestamp, &TimestampConfig::default())?;
+
+        // 2. Verify signature
+        let data = Self::data_to_sign(
+            server_nonce,
+            self.timestamp,
+            self.protocol_version,
+        )?;
+
+        if client_pubkey.verify(&data, &self.signature)? {
             Ok(())
         } else {
             Err(anyhow!("Signature verification failed"))
         }
+    }
+
+    /// Build data to sign for ClientFinish
+    fn data_to_sign(
+        server_nonce: &[u8; 32],
+        timestamp: u64,
+        protocol_version: u8,
+    ) -> Result<Vec<u8>> {
+        let mut data = Vec::new();
+        data.push(0x03); // MessageType::ClientFinish for context binding
+        data.extend_from_slice(server_nonce);
+        data.extend_from_slice(&timestamp.to_le_bytes());
+        data.push(protocol_version);
+        Ok(data)
     }
 }
 
@@ -665,37 +1078,45 @@ pub struct HandshakeResult {
 
 impl HandshakeResult {
     /// Create a new handshake result
+    ///
+    /// **VULN-003 FIX:** Uses ClientHello timestamp for deterministic session key derivation.
+    /// Both client and server MUST use the same timestamp (from ClientHello) to derive
+    /// identical session keys.
+    ///
+    /// # Arguments
+    /// * `client_hello_timestamp` - Timestamp from ClientHello message (MUST be same on both sides)
     pub fn new(
         peer_identity: NodeIdentity,
         capabilities: NegotiatedCapabilities,
         client_nonce: &[u8; 32],
         server_nonce: &[u8; 32],
-    ) -> Self {
-        // Derive session key from both nonces
-        let session_key = Self::derive_session_key(client_nonce, server_nonce);
-        
-        // Generate session ID
+        client_did: &str,
+        server_did: &str,
+        client_hello_timestamp: u64,
+    ) -> Result<Self> {
+        // Build session context for HKDF domain separation
+        // CRITICAL: Use ClientHello timestamp (deterministic, agreed by both parties)
+        let context = SessionContext {
+            protocol_version: UHP_VERSION as u32,
+            client_did: client_did.to_string(),
+            server_did: server_did.to_string(),
+            timestamp: client_hello_timestamp, // VULN-003 FIX: Deterministic timestamp
+        };
+
+        // Derive session key using HKDF (NIST SP 800-108 compliant)
+        let session_key = derive_session_key_hkdf(client_nonce, server_nonce, &context)?;
+
+        // Generate session ID from first 16 bytes of session key
         let mut session_id = [0u8; 16];
         session_id.copy_from_slice(&session_key[..16]);
-        
-        Self {
+
+        Ok(Self {
             peer_identity,
             capabilities,
             session_key,
             session_id,
-            completed_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        }
-    }
-    
-    /// Derive session key from handshake nonces using Blake3 KDF
-    fn derive_session_key(client_nonce: &[u8; 32], server_nonce: &[u8; 32]) -> [u8; 32] {
-        let mut data = Vec::new();
-        data.extend_from_slice(client_nonce);
-        data.extend_from_slice(server_nonce);
-        lib_crypto::hash_blake3(&data)
+            completed_at: current_timestamp()?, // Completion time (for logging only)
+        })
     }
 }
 
@@ -949,14 +1370,17 @@ mod tests {
             "test-device",
             None,
         )?;
-        
+
         let capabilities = HandshakeCapabilities::default();
-        
+
         let client_hello = ClientHello::new(&identity, capabilities)?;
-        
+
+        // Create handshake context for verification
+        let ctx = HandshakeContext::new_test();
+
         // Signature should verify
-        client_hello.verify_signature()?;
-        
+        client_hello.verify_signature(&ctx)?;
+
         Ok(())
     }
     
@@ -964,16 +1388,23 @@ mod tests {
     fn test_session_key_derivation() {
         let client_nonce = [0x42u8; 32];
         let server_nonce = [0x84u8; 32];
-        
-        let key1 = HandshakeResult::derive_session_key(&client_nonce, &server_nonce);
-        let key2 = HandshakeResult::derive_session_key(&client_nonce, &server_nonce);
-        
+
+        let context = SessionContext {
+            protocol_version: UHP_VERSION as u32,
+            client_did: "did:zhtp:test_client".to_string(),
+            server_did: "did:zhtp:test_server".to_string(),
+            timestamp: 1234567890,
+        };
+
+        let key1 = derive_session_key_hkdf(&client_nonce, &server_nonce, &context).unwrap();
+        let key2 = derive_session_key_hkdf(&client_nonce, &server_nonce, &context).unwrap();
+
         // Should be deterministic
         assert_eq!(key1, key2);
-        
+
         // Should change if nonces change
         let different_client = [0x43u8; 32];
-        let key3 = HandshakeResult::derive_session_key(&different_client, &server_nonce);
+        let key3 = derive_session_key_hkdf(&different_client, &server_nonce, &context).unwrap();
         assert_ne!(key1, key3);
     }
     
@@ -991,12 +1422,186 @@ mod tests {
     #[test]
     fn test_full_featured_capabilities() {
         let full = HandshakeCapabilities::full_featured();
-        
+
         assert!(full.protocols.len() >= 5);
         assert!(full.max_throughput >= 100_000_000);
         assert!(full.max_message_size >= 10_000_000);
         assert!(full.pqc_support);
         assert!(full.dht_capable);
         assert!(full.relay_capable);
+    }
+
+    // ============================================================================
+    // Integration Tests - FINDING 6
+    // ============================================================================
+
+    /// Test full handshake flow from ClientHello to ClientFinish
+    ///
+    /// **FINDING 6 FIX:** End-to-end integration test of complete handshake
+    #[test]
+    fn test_full_handshake_flow() -> Result<()> {
+        // Setup: Create client and server identities
+        let client_identity = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "client-device",
+            None,
+        )?;
+
+        let server_identity = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "server-device",
+            None,
+        )?;
+
+        // Create handshake context (shared nonce cache)
+        let ctx = HandshakeContext::new_test();
+
+        // Step 1: Client sends ClientHello
+        let client_capabilities = HandshakeCapabilities::default();
+        let client_hello = ClientHello::new(&client_identity, client_capabilities)?;
+
+        // Server verifies ClientHello
+        client_hello.verify_signature(&ctx)?;
+
+        // Step 2: Server sends ServerHello
+        let server_capabilities = HandshakeCapabilities::default();
+        let server_hello = ServerHello::new(&server_identity, server_capabilities, &client_hello)?;
+
+        // Step 3: Client sends ClientFinish (includes mutual authentication of server)
+        let client_keypair = KeyPair {
+            public_key: client_identity.public_key.clone(),
+            private_key: client_identity.private_key.clone().unwrap(),
+        };
+
+        let client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &ctx)?;
+
+        // Server verifies ClientFinish
+        client_finish.verify_signature(&server_hello.response_nonce, &client_hello.identity.public_key)?;
+
+        // Step 4: Both sides derive session key
+        let client_session = HandshakeResult::new(
+            server_hello.identity.clone(),
+            server_hello.negotiated.clone(),
+            &client_hello.challenge_nonce,
+            &server_hello.response_nonce,
+            &client_identity.did,
+            &server_identity.did,
+            client_hello.timestamp,
+        )?;
+
+        let server_session = HandshakeResult::new(
+            client_hello.identity.clone(),
+            server_hello.negotiated.clone(),
+            &client_hello.challenge_nonce,
+            &server_hello.response_nonce,
+            &client_identity.did,
+            &server_identity.did,
+            client_hello.timestamp,
+        )?;
+
+        // Verify both parties derived the same session key
+        assert_eq!(client_session.session_key, server_session.session_key);
+
+        Ok(())
+    }
+
+    /// Test concurrent handshakes with shared nonce cache
+    ///
+    /// **FINDING 6 FIX:** Tests thread-safety of nonce cache under concurrent load
+    #[test]
+    fn test_concurrent_handshakes_with_shared_cache() -> Result<()> {
+        // Create shared context
+        let ctx = HandshakeContext::new(NonceCache::new(60, 10000));
+
+        // Launch 50 concurrent handshakes
+        let handles: Vec<_> = (0..50)
+            .map(|i| {
+                let ctx = ctx.clone();
+                std::thread::spawn(move || -> Result<()> {
+                    let client_device_name = format!("client-device-{}", i);
+                    let server_device_name = format!("server-device-{}", i);
+
+                    let client_identity = lib_identity::ZhtpIdentity::new_unified(
+                        lib_identity::IdentityType::Human,
+                        Some(25),
+                        Some("US".to_string()),
+                        &client_device_name,
+                        None,
+                    )?;
+
+                    let server_identity = lib_identity::ZhtpIdentity::new_unified(
+                        lib_identity::IdentityType::Human,
+                        Some(30),
+                        Some("US".to_string()),
+                        &server_device_name,
+                        None,
+                    )?;
+
+                    // Full handshake flow
+                    let client_hello = ClientHello::new(&client_identity, HandshakeCapabilities::default())?;
+                    client_hello.verify_signature(&ctx)?;
+
+                    let server_hello = ServerHello::new(&server_identity, HandshakeCapabilities::default(), &client_hello)?;
+
+                    let client_keypair = KeyPair {
+                        public_key: client_identity.public_key.clone(),
+                        private_key: client_identity.private_key.clone().unwrap(),
+                    };
+
+                    let _client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &ctx)?;
+
+                    Ok(())
+                })
+            })
+            .collect();
+
+        // Wait for all handshakes to complete
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect();
+
+        // All should succeed
+        for result in results {
+            assert!(result.is_ok());
+        }
+
+        // Verify cache size (should have 100 nonces: 50 client + 50 server)
+        assert_eq!(ctx.nonce_cache.size(), 100);
+
+        Ok(())
+    }
+
+    /// Test replay attack prevention
+    ///
+    /// **FINDING 6 FIX:** Verifies nonce cache prevents replay attacks
+    #[test]
+    fn test_replay_attack_prevention() -> Result<()> {
+        let ctx = HandshakeContext::new_test();
+
+        let identity = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "test-device",
+            None,
+        )?;
+
+        // Create ClientHello
+        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default())?;
+
+        // First verification should succeed
+        assert!(client_hello.verify_signature(&ctx).is_ok());
+
+        // Second verification with same nonce should fail (replay attack detected)
+        let result = client_hello.verify_signature(&ctx);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Replay detected"));
+
+        Ok(())
     }
 }
