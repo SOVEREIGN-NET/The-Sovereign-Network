@@ -498,12 +498,29 @@ impl Web4Contract {
     /// Validate domain name format
     fn is_valid_domain(domain: &str) -> bool {
         // Basic domain validation for .zhtp domains
-        domain.ends_with(".zhtp") 
-            && domain.len() > 5 
-            && domain.len() < 100
-            && domain.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-')
-            && !domain.starts_with('-')
-            && !domain.ends_with('-')
+        if !domain.ends_with(".zhtp") || domain.len() <= 5 || domain.len() >= 100 {
+            return false;
+        }
+
+        // Extract subdomain part (everything before .zhtp)
+        let subdomain = domain.strip_suffix(".zhtp").unwrap();
+
+        // Subdomain must not start or end with hyphen
+        if subdomain.starts_with('-') || subdomain.ends_with('-') {
+            return false;
+        }
+
+        // Labels (parts separated by dots) cannot start or end with hyphens
+        for label in subdomain.split('.') {
+            if label.is_empty() || label.starts_with('-') || label.ends_with('-') {
+                return false;
+            }
+            if !label.chars().all(|c| c.is_alphanumeric() || c == '-') {
+                return false;
+            }
+        }
+
+        true
     }
     
     /// Validate content hash format (/DHT hash)
@@ -950,7 +967,7 @@ mod tests {
         // Add route
         let route = ContentRoute {
             path: "/contact".to_string(),
-            content_hash: "QmContactHash1234567890123456789012345678901".to_string(),
+            content_hash: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG".to_string(), // Valid 46-char IPFS hash
             content_type: "text/html".to_string(),
             size: 512,
             metadata: HashMap::new(),

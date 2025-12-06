@@ -755,8 +755,8 @@ mod tests {
         assert_eq!(total_fee, network_fee + dao_fee);
 
         // Test system transaction (should be fee-free)
-        let (sys_net, sys_dao, sys_total) = processor.calculate_transaction_fees(
-            250, 10000, Priority::Normal
+        let (sys_net, sys_dao, sys_total) = processor.calculate_transaction_fees_with_exemptions(
+            250, 10000, Priority::Normal, true // is_system_transaction
         );
 
         assert_eq!(sys_net, 0);

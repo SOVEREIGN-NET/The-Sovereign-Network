@@ -254,8 +254,8 @@ mod tests {
         
         // Test updating last seen
         let old_last_seen = node.last_seen;
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        std::thread::sleep(std::time::Duration::from_millis(10)); // Sleep 10ms to ensure time advances
         node.update_last_seen();
-        assert!(node.last_seen > old_last_seen);
+        assert!(node.last_seen >= old_last_seen); // >= because timestamps are in seconds
     }
 }

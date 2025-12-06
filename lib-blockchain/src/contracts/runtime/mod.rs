@@ -331,9 +331,27 @@ mod tests {
     fn test_runtime_factory() {
         let config = RuntimeConfig::default();
         let factory = RuntimeFactory::new(config);
-        
+
         let runtime = factory.create_runtime("test").unwrap();
-        assert!(runtime.validate_code(b"test").is_ok());
+
+        // Empty code should always fail
         assert!(runtime.validate_code(b"").is_err());
+
+        // Non-empty code validation depends on runtime type
+        // For WasmEngine with wasmtime feature, it validates WASM bytecode
+        // For NativeRuntime, it just checks non-empty and size limit
+        #[cfg(not(feature = "wasm-runtime"))]
+        {
+            // NativeRuntime: any non-empty, reasonable-sized code is valid
+            assert!(runtime.validate_code(b"test").is_ok());
+        }
+
+        #[cfg(feature = "wasm-runtime")]
+        {
+            // WasmEngine requires valid WASM bytecode
+            // Minimal valid WASM module (magic number + version)
+            let minimal_wasm = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+            assert!(runtime.validate_code(&minimal_wasm).is_ok());
+        }
     }
 }
