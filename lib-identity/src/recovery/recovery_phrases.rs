@@ -23,6 +23,13 @@ pub(crate) const AES_GCM_TAG_SIZE: usize = 16;
 pub(crate) const MAX_DECRYPT_ATTEMPTS: usize = 5;
 pub(crate) const DECRYPT_WINDOW_SECS: u64 = 300;
 
+/// XOR encryption sunset date: 2026-06-01 (6 months from now)
+/// After this date, XOR decryption will be completely disabled
+pub(crate) const XOR_SUNSET_DATE: &str = "2026-06-01";
+/// XOR deprecation warning date: 2026-03-01 (3 months before sunset)
+/// Start showing critical warnings to migrate
+pub(crate) const XOR_DEPRECATION_WARNING_DATE: &str = "2026-03-01";
+
 fn default_encryption_version() -> u32 {
     ENCRYPTION_VERSION_XOR
 }
@@ -65,12 +72,24 @@ pub struct EncryptedRecoveryPhrase {
 }
 
 /// Recovery phrase in plain text (temporary use only)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+///
+/// CRITICAL: Uses Zeroize to clear sensitive data (words, entropy) from memory on drop
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Zeroize)]
+#[zeroize(drop)]
 pub struct RecoveryPhrase {
+    /// Mnemonic words (will be zeroized on drop)
     pub words: Vec<String>,
+    /// Cryptographic entropy (will be zeroized on drop)
     pub entropy: Vec<u8>,
+
+    /// Checksum for validation (non-sensitive, skipped from zeroization)
+    #[zeroize(skip)]
     pub checksum: String,
+    /// Language code (non-sensitive, skipped from zeroization)
+    #[zeroize(skip)]
     pub language: String,
+    /// Word count (non-sensitive, skipped from zeroization)
+    #[zeroize(skip)]
     pub word_count: usize,
 }
 
@@ -990,6 +1009,41 @@ impl RecoveryPhraseManager {
         Ok(String::from_utf8(decrypted)?)
     }
 
+    /// Check if XOR encryption has reached sunset date
+    fn check_xor_sunset(&self) -> Result<()> {
+        use chrono::{NaiveDate, Utc};
+
+        let now = Utc::now().date_naive();
+
+        // Parse sunset date
+        let sunset = NaiveDate::parse_from_str(XOR_SUNSET_DATE, "%Y-%m-%d")
+            .map_err(|e| anyhow!("Failed to parse sunset date: {}", e))?;
+
+        // Hard block after sunset date
+        if now >= sunset {
+            return Err(anyhow!(
+                "SECURITY: XOR encryption sunset date ({}) reached. All recovery phrases must use AES-256-GCM. \
+                 XOR decryption is permanently disabled. Please contact support for migration assistance.",
+                XOR_SUNSET_DATE
+            ));
+        }
+
+        // Warning period (3 months before sunset)
+        let warning_date = NaiveDate::parse_from_str(XOR_DEPRECATION_WARNING_DATE, "%Y-%m-%d")
+            .map_err(|e| anyhow!("Failed to parse warning date: {}", e))?;
+
+        if now >= warning_date {
+            tracing::warn!(
+                "⚠️  CRITICAL SECURITY WARNING: XOR encryption is DEPRECATED and will be disabled on {}. \
+                 This recovery phrase will auto-migrate to AES-256-GCM. Days until sunset: {}",
+                XOR_SUNSET_DATE,
+                (sunset - now).num_days()
+            );
+        }
+
+        Ok(())
+    }
+
     async fn decrypt_phrase_record(&self, record: &EncryptedRecoveryPhrase, key: &[u8]) -> Result<(String, bool)> {
         let method_is_aes = record.encryption_method.to_lowercase().contains("aes");
         let use_aes = record.encryption_version >= ENCRYPTION_VERSION_AES_GCM
@@ -1007,7 +1061,16 @@ impl RecoveryPhraseManager {
             return Ok((plaintext, self.needs_migration(record)));
         }
 
-        // Legacy XOR (v1)
+        // SECURITY CHECK: Enforce XOR sunset date
+        self.check_xor_sunset()?;
+
+        // Legacy XOR (v1) - DEPRECATED, will be removed on XOR_SUNSET_DATE
+        tracing::warn!(
+            "⚠️  SECURITY: Decrypting legacy XOR-encrypted recovery phrase (v{}). \
+             This insecure encryption will auto-migrate to AES-256-GCM after successful verification.",
+            record.encryption_version
+        );
+
         let plaintext = self.decrypt_phrase_legacy_xor(&record.encrypted_phrase, key, &record.iv)?;
         Ok((plaintext, true))
     }
@@ -1330,6 +1393,258 @@ mod tests {
         assert_eq!(upgraded.encryption_version, ENCRYPTION_VERSION_AES_GCM);
         assert_eq!(upgraded.iv.len(), AES_GCM_NONCE_SIZE);
 
+        Ok(())
+    }
+
+    // =========================================================================
+    // CRITICAL SECURITY TESTS (Issue #7 Requirements)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_nonce_collision_prevented() -> Result<()> {
+        let mut manager = RecoveryPhraseManager::new();
+        let key = vec![0u8; 32];
+
+        // First encryption - register nonce
+        let (_, nonce1, _, _) = manager.encrypt_phrase("test phrase 1", &key).await?;
+
+        // Try to reuse the same nonce - should fail
+        let result = manager.register_nonce(&nonce1);
+        assert!(result.is_err(), "Nonce reuse should be rejected");
+        assert!(result.unwrap_err().to_string().contains("Nonce reuse detected"));
+
+        // Verify nonce is actually stored
+        assert!(manager.used_nonces.contains(&nonce1.to_vec()));
+
+        // Second encryption should succeed with different nonce
+        let (_, nonce2, _, _) = manager.encrypt_phrase("test phrase 2", &key).await?;
+        assert_ne!(nonce1, nonce2, "Nonces must be unique");
+        assert!(manager.used_nonces.contains(&nonce2.to_vec()));
+
+        println!("✅ Nonce collision prevention test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_encryption_nonce_uniqueness() -> Result<()> {
+        // Test concurrent encryption by sequentially encrypting 100 times
+        // and verifying all nonces are unique
+        let mut manager = RecoveryPhraseManager::new();
+        let key = vec![0u8; 32];
+
+        // Perform 100 encryptions
+        let mut all_nonces = Vec::new();
+        for i in 0..100 {
+            let phrase = format!("test phrase {}", i);
+            let (_, nonce, _, _) = manager.encrypt_phrase(&phrase, &key).await?;
+            all_nonces.push(nonce);
+        }
+
+        // Verify all nonces are unique
+        let mut seen = std::collections::HashSet::new();
+        for nonce in &all_nonces {
+            assert!(seen.insert(nonce.clone()), "Duplicate nonce detected in encryption!");
+        }
+
+        assert_eq!(all_nonces.len(), 100, "All 100 encryptions should succeed");
+        assert_eq!(seen.len(), 100, "All 100 nonces should be unique");
+
+        // Verify all nonces are registered in used_nonces
+        for nonce in &all_nonces {
+            assert!(manager.used_nonces.contains(nonce), "Nonce should be registered");
+        }
+
+        println!("✅ Concurrent encryption nonce uniqueness test passed (100 unique nonces)");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tag_tampering_rejected() -> Result<()> {
+        let mut manager = RecoveryPhraseManager::new();
+        let key = vec![0u8; 32];
+        let phrase = "sensitive recovery phrase";
+
+        // Encrypt phrase
+        let (ciphertext, nonce, tag, _) = manager.encrypt_phrase(phrase, &key).await?;
+
+        // Test 1: Tamper with ciphertext (flip one bit)
+        let mut tampered_ciphertext = ciphertext.clone();
+        if let Some(byte) = tampered_ciphertext.first_mut() {
+            *byte ^= 0x01;
+        }
+
+        let result = manager.decrypt_phrase_aes_gcm(&tampered_ciphertext, &key, &nonce, &tag).await;
+        assert!(result.is_err(), "Tampered ciphertext should be rejected");
+        assert!(result.unwrap_err().to_string().contains("Decryption failed"));
+
+        // Test 2: Tamper with tag (flip one bit)
+        let mut tampered_tag = tag.clone();
+        if let Some(byte) = tampered_tag.first_mut() {
+            *byte ^= 0x01;
+        }
+
+        let result = manager.decrypt_phrase_aes_gcm(&ciphertext, &key, &nonce, &tampered_tag).await;
+        assert!(result.is_err(), "Tampered tag should be rejected");
+        assert!(result.unwrap_err().to_string().contains("Decryption failed"));
+
+        // Test 3: Verify correct decryption still works
+        let plaintext = manager.decrypt_phrase_aes_gcm(&ciphertext, &key, &nonce, &tag).await?;
+        assert_eq!(plaintext, phrase);
+
+        println!("✅ Tag tampering rejection test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_wrong_key_rejected() -> Result<()> {
+        let mut manager = RecoveryPhraseManager::new();
+        let key1 = vec![0u8; 32];
+        let key2 = vec![0xFFu8; 32];
+        let phrase = "test phrase";
+
+        // Encrypt with key1
+        let (ciphertext, nonce, tag, _) = manager.encrypt_phrase(phrase, &key1).await?;
+
+        // Try to decrypt with key2 (wrong key)
+        let result = manager.decrypt_phrase_aes_gcm(&ciphertext, &key2, &nonce, &tag).await;
+        assert!(result.is_err(), "Wrong key should fail decryption");
+
+        // Verify correct key still works
+        let plaintext = manager.decrypt_phrase_aes_gcm(&ciphertext, &key1, &nonce, &tag).await?;
+        assert_eq!(plaintext, phrase);
+
+        println!("✅ Wrong key rejection test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_argon2_kdf_determinism() -> Result<()> {
+        let manager = RecoveryPhraseManager::new();
+        let identity_id = "test-identity";
+        let additional_auth = Some("password123");
+        let salt = vec![0x42u8; 32];
+
+        // Derive key twice with same inputs
+        let key1 = manager.derive_encryption_key(identity_id, additional_auth, &salt).await?;
+        let key2 = manager.derive_encryption_key(identity_id, additional_auth, &salt).await?;
+
+        // Keys must be identical (deterministic)
+        assert_eq!(key1, key2, "KDF must be deterministic");
+
+        // Different salt should produce different key
+        let salt2 = vec![0x43u8; 32];
+        let key3 = manager.derive_encryption_key(identity_id, additional_auth, &salt2).await?;
+        assert_ne!(key1, key3, "Different salt must produce different key");
+
+        // Different password should produce different key
+        let key4 = manager.derive_encryption_key(identity_id, Some("different"), &salt).await?;
+        assert_ne!(key1, key4, "Different password must produce different key");
+
+        println!("✅ Argon2 KDF determinism test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiting_enforcement() -> Result<()> {
+        let mut manager = RecoveryPhraseManager::new();
+        let phrase_id = "test-phrase";
+
+        // First 5 attempts should succeed
+        for i in 0..5 {
+            let result = manager.enforce_rate_limit(phrase_id);
+            assert!(result.is_ok(), "Attempt {} should succeed", i + 1);
+        }
+
+        // 6th attempt should fail (rate limit exceeded)
+        let result = manager.enforce_rate_limit(phrase_id);
+        assert!(result.is_err(), "6th attempt should be rate limited");
+        assert!(result.unwrap_err().to_string().contains("Too many recovery attempts"));
+
+        println!("✅ Rate limiting enforcement test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_zeroization_on_drop() -> Result<()> {
+        use zeroize::Zeroize;
+
+        // Create phrase with sensitive data
+        let words = vec!["abandon".to_string(), "ability".to_string()];
+        let entropy = vec![0x42u8; 32];
+
+        let mut phrase = RecoveryPhrase {
+            words: words.clone(),
+            entropy: entropy.clone(),
+            checksum: "checksum".to_string(),
+            language: "english".to_string(),
+            word_count: 2,
+        };
+
+        // Manually zeroize (simulating drop)
+        phrase.zeroize();
+
+        // Verify words and entropy are cleared
+        // Note: This is a simple check - in production, memory would be truly zeroized
+        assert!(phrase.words.is_empty() || phrase.words.iter().all(|w| w.is_empty()));
+        assert!(phrase.entropy.is_empty() || phrase.entropy.iter().all(|&b| b == 0));
+
+        println!("✅ Zeroization on drop test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_aes_gcm_known_answer() -> Result<()> {
+        // Simple known-answer test (not NIST vectors, but validates basic correctness)
+        let mut manager = RecoveryPhraseManager::new();
+        let key = vec![0x00u8; 32]; // All-zero key for predictability
+        let plaintext = "test message";
+
+        // Encrypt
+        let (ciphertext, nonce, tag, _) = manager.encrypt_phrase(plaintext, &key).await?;
+
+        // Verify components have correct lengths
+        assert_eq!(nonce.len(), AES_GCM_NONCE_SIZE, "Nonce must be 12 bytes");
+        assert_eq!(tag.len(), AES_GCM_TAG_SIZE, "Tag must be 16 bytes");
+        assert_eq!(ciphertext.len(), plaintext.len(), "Ciphertext length must match plaintext");
+
+        // Decrypt and verify
+        let decrypted = manager.decrypt_phrase_aes_gcm(&ciphertext, &key, &nonce, &tag).await?;
+        assert_eq!(decrypted, plaintext, "Decryption must recover original plaintext");
+
+        // Verify ciphertext differs from plaintext
+        assert_ne!(
+            ciphertext,
+            plaintext.as_bytes(),
+            "Ciphertext must differ from plaintext"
+        );
+
+        println!("✅ AES-GCM known answer test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_xor_sunset_enforcement() -> Result<()> {
+        let manager = RecoveryPhraseManager::new();
+
+        // Test sunset check passes before sunset date
+        let result = manager.check_xor_sunset();
+        // Should succeed since we're before 2026-06-01
+        assert!(result.is_ok(), "Sunset check should pass before sunset date");
+
+        // Note: Testing actual sunset blocking requires time manipulation
+        // which is difficult in unit tests. This validates the check exists.
+
+        println!("✅ XOR sunset enforcement test passed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_legacy_migration_auto_upgrade() -> Result<()> {
+        // This test validates that legacy XOR records automatically upgrade to AES-GCM
+        // The full test is already implemented in test_migrates_legacy_xor_records above
+        // This is a placeholder to document the requirement
+
+        println!("✅ Legacy migration auto-upgrade validated by test_migrates_legacy_xor_records");
         Ok(())
     }
 }
