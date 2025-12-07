@@ -1,49 +1,49 @@
-<<<<<<< HEAD
+﻿<<<<<<< HEAD
 # ZHTP Unified Storage System - Architecture Overview
 
-## 🏗️ System Architecture
+## ðŸ—ï¸ System Architecture
 
 The ZHTP Unified Storage System implements a sophisticated multi-layer architecture that combines distributed systems, cryptography, economics, and identity management. The system is designed with five distinct phases, each building upon the previous layers.
 
 ##  Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    PHASE E: Integration Layer                   │
-│                     UnifiedStorageSystem                        │
-├─────────────────────────────────────────────────────────────────┤
-│                 PHASE D: Content Management                     │
-│             ContentManager + Access Control                     │
-├─────────────────────────────────────────────────────────────────┤
-│                 PHASE C: Economic Storage                       │
-│  Contracts │ Pricing │ Payments │ Reputation │ Quality │ Market │
-├─────────────────────────────────────────────────────────────────┤
-│                  PHASE B: DHT Foundation                        │
-│   Routing  │ Storage │ Network │ Messaging │ Replication        │
-├─────────────────────────────────────────────────────────────────┤
-│                   PHASE A: Core Types                           │
-│        Data Structures │ Enums │ Configurations                 │
-└─────────────────────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                    PHASE E: Integration Layer                   â”‚
+â”‚                     UnifiedStorageSystem                        â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚                 PHASE D: Content Management                     â”‚
+â”‚             ContentManager + Access Control                     â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚                 PHASE C: Economic Storage                       â”‚
+â”‚  Contracts â”‚ Pricing â”‚ Payments â”‚ Reputation â”‚ Quality â”‚ Market â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚                  PHASE B: DHT Foundation                        â”‚
+â”‚   Routing  â”‚ Storage â”‚ Network â”‚ Messaging â”‚ Replication        â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚                   PHASE A: Core Types                           â”‚
+â”‚        Data Structures â”‚ Enums â”‚ Configurations                 â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ##  Data Flow Architecture
 
 ### Storage Operation Flow
 ```
-User Request → Identity Verification → Economic Quote → Contract Creation
-     ↓
-Content Processing → Encryption → Erasure Coding → DHT Distribution
-     ↓
-Replication → Quality Monitoring → Payment Processing → Reward Distribution
+User Request â†’ Identity Verification â†’ Economic Quote â†’ Contract Creation
+     â†“
+Content Processing â†’ Encryption â†’ Erasure Coding â†’ DHT Distribution
+     â†“
+Replication â†’ Quality Monitoring â†’ Payment Processing â†’ Reward Distribution
 ```
 
 ### Retrieval Operation Flow
 ```
-User Request → Identity Verification → Access Control Check → DHT Query
-     ↓
-Content Retrieval → Integrity Verification → Decryption → Content Delivery
-     ↓
-Usage Tracking → Performance Metrics → Reputation Updates
+User Request â†’ Identity Verification â†’ Access Control Check â†’ DHT Query
+     â†“
+Content Retrieval â†’ Integrity Verification â†’ Decryption â†’ Content Delivery
+     â†“
+Usage Tracking â†’ Performance Metrics â†’ Reputation Updates
 ```
 
 ##  Phase-by-Phase Architecture
@@ -54,7 +54,7 @@ Usage Tracking → Performance Metrics → Reputation Updates
 
 ```rust
 // Type hierarchy
-NodeId = Hash              // Cryptographic node identifiers
+NodeId = lib_identity::NodeId              // Cryptographic node identifiers
 ContentHash = Hash         // Content addressing
 DhtKey = Hash             // DHT storage keys
 
@@ -146,15 +146,15 @@ pub struct EconomicStorageManager {
 
 #### Content Processing Pipeline:
 ```
-Content Input → Metadata Generation → Encryption → Compression
-      ↓
-Erasure Coding → Chunk Distribution → Replication → Index Update
-      ↓
-Access Control → Search Indexing → Quality Monitoring
+Content Input â†’ Metadata Generation â†’ Encryption â†’ Compression
+      â†“
+Erasure Coding â†’ Chunk Distribution â†’ Replication â†’ Index Update
+      â†“
+Access Control â†’ Search Indexing â†’ Quality Monitoring
 ```
 
 **Features**:
-- Multi-level encryption (Standard → QuantumResistant)
+- Multi-level encryption (Standard â†’ QuantumResistant)
 - LZ4 compression for efficiency
 - Reed-Solomon erasure coding (4+2 shards default)
 - Rich metadata with tags and descriptions
@@ -204,11 +204,11 @@ pub struct ZkDhtValue {
 
 ### DHT Network Topology
 ```
-Node A ←→ Node B ←→ Node C
-  ↕         ↕         ↕
-Node D ←→ Node E ←→ Node F
-  ↕         ↕         ↕
-Node G ←→ Node H ←→ Node I
+Node A â†â†’ Node B â†â†’ Node C
+  â†•         â†•         â†•
+Node D â†â†’ Node E â†â†’ Node F
+  â†•         â†•         â†•
+Node G â†â†’ Node H â†â†’ Node I
 ```
 
 **Key Properties**:
@@ -242,21 +242,21 @@ Node G ←→ Node H ←→ Node I
 
 ### Contract Lifecycle
 ```
-Quote → Contract → Active → Monitoring → Completion → Settlement
-                      ↓
-                  Violation → Penalty → Resolution
+Quote â†’ Contract â†’ Active â†’ Monitoring â†’ Completion â†’ Settlement
+                      â†“
+                  Violation â†’ Penalty â†’ Resolution
 ```
 
 ### Node Reputation States
 ```
-New Node (1000 pts) → Performance Tracking → Reputation Updates
-        ↓
+New Node (1000 pts) â†’ Performance Tracking â†’ Reputation Updates
+        â†“
 Good Performance (+100-500 pts) | Poor Performance (-100-500 pts)
-        ↓
+        â†“
 High Reputation Node | Low Reputation Node | Banned Node
 ```
 
-## 🛠️ Extensibility Points
+## ðŸ› ï¸ Extensibility Points
 
 The architecture provides several extension points:
 
@@ -289,49 +289,49 @@ pub struct UnifiedStorageStats {
 =======
 # ZHTP Unified Storage System - Architecture Overview
 
-## 🏗️ System Architecture
+## ðŸ—ï¸ System Architecture
 
 The ZHTP Unified Storage System implements a sophisticated multi-layer architecture that combines distributed systems, cryptography, economics, and identity management. The system is designed with five distinct phases, each building upon the previous layers.
 
 ##  Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    PHASE E: Integration Layer                   │
-│                     UnifiedStorageSystem                        │
-├─────────────────────────────────────────────────────────────────┤
-│                 PHASE D: Content Management                     │
-│             ContentManager + Access Control                     │
-├─────────────────────────────────────────────────────────────────┤
-│                 PHASE C: Economic Storage                       │
-│  Contracts │ Pricing │ Payments │ Reputation │ Quality │ Market │
-├─────────────────────────────────────────────────────────────────┤
-│                  PHASE B: DHT Foundation                        │
-│   Routing  │ Storage │ Network │ Messaging │ Replication        │
-├─────────────────────────────────────────────────────────────────┤
-│                   PHASE A: Core Types                           │
-│        Data Structures │ Enums │ Configurations                 │
-└─────────────────────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                    PHASE E: Integration Layer                   â”‚
+â”‚                     UnifiedStorageSystem                        â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚                 PHASE D: Content Management                     â”‚
+â”‚             ContentManager + Access Control                     â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚                 PHASE C: Economic Storage                       â”‚
+â”‚  Contracts â”‚ Pricing â”‚ Payments â”‚ Reputation â”‚ Quality â”‚ Market â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚                  PHASE B: DHT Foundation                        â”‚
+â”‚   Routing  â”‚ Storage â”‚ Network â”‚ Messaging â”‚ Replication        â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚                   PHASE A: Core Types                           â”‚
+â”‚        Data Structures â”‚ Enums â”‚ Configurations                 â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ##  Data Flow Architecture
 
 ### Storage Operation Flow
 ```
-User Request → Identity Verification → Economic Quote → Contract Creation
-     ↓
-Content Processing → Encryption → Erasure Coding → DHT Distribution
-     ↓
-Replication → Quality Monitoring → Payment Processing → Reward Distribution
+User Request â†’ Identity Verification â†’ Economic Quote â†’ Contract Creation
+     â†“
+Content Processing â†’ Encryption â†’ Erasure Coding â†’ DHT Distribution
+     â†“
+Replication â†’ Quality Monitoring â†’ Payment Processing â†’ Reward Distribution
 ```
 
 ### Retrieval Operation Flow
 ```
-User Request → Identity Verification → Access Control Check → DHT Query
-     ↓
-Content Retrieval → Integrity Verification → Decryption → Content Delivery
-     ↓
-Usage Tracking → Performance Metrics → Reputation Updates
+User Request â†’ Identity Verification â†’ Access Control Check â†’ DHT Query
+     â†“
+Content Retrieval â†’ Integrity Verification â†’ Decryption â†’ Content Delivery
+     â†“
+Usage Tracking â†’ Performance Metrics â†’ Reputation Updates
 ```
 
 ##  Phase-by-Phase Architecture
@@ -342,7 +342,7 @@ Usage Tracking → Performance Metrics → Reputation Updates
 
 ```rust
 // Type hierarchy
-NodeId = Hash              // Cryptographic node identifiers
+NodeId = lib_identity::NodeId              // Cryptographic node identifiers
 ContentHash = Hash         // Content addressing
 DhtKey = Hash             // DHT storage keys
 
@@ -434,15 +434,15 @@ pub struct EconomicStorageManager {
 
 #### Content Processing Pipeline:
 ```
-Content Input → Metadata Generation → Encryption → Compression
-      ↓
-Erasure Coding → Chunk Distribution → Replication → Index Update
-      ↓
-Access Control → Search Indexing → Quality Monitoring
+Content Input â†’ Metadata Generation â†’ Encryption â†’ Compression
+      â†“
+Erasure Coding â†’ Chunk Distribution â†’ Replication â†’ Index Update
+      â†“
+Access Control â†’ Search Indexing â†’ Quality Monitoring
 ```
 
 **Features**:
-- Multi-level encryption (Standard → QuantumResistant)
+- Multi-level encryption (Standard â†’ QuantumResistant)
 - LZ4 compression for efficiency
 - Reed-Solomon erasure coding (4+2 shards default)
 - Rich metadata with tags and descriptions
@@ -492,11 +492,11 @@ pub struct ZkDhtValue {
 
 ### DHT Network Topology
 ```
-Node A ←→ Node B ←→ Node C
-  ↕         ↕         ↕
-Node D ←→ Node E ←→ Node F
-  ↕         ↕         ↕
-Node G ←→ Node H ←→ Node I
+Node A â†â†’ Node B â†â†’ Node C
+  â†•         â†•         â†•
+Node D â†â†’ Node E â†â†’ Node F
+  â†•         â†•         â†•
+Node G â†â†’ Node H â†â†’ Node I
 ```
 
 **Key Properties**:
@@ -530,21 +530,21 @@ Node G ←→ Node H ←→ Node I
 
 ### Contract Lifecycle
 ```
-Quote → Contract → Active → Monitoring → Completion → Settlement
-                      ↓
-                  Violation → Penalty → Resolution
+Quote â†’ Contract â†’ Active â†’ Monitoring â†’ Completion â†’ Settlement
+                      â†“
+                  Violation â†’ Penalty â†’ Resolution
 ```
 
 ### Node Reputation States
 ```
-New Node (1000 pts) → Performance Tracking → Reputation Updates
-        ↓
+New Node (1000 pts) â†’ Performance Tracking â†’ Reputation Updates
+        â†“
 Good Performance (+100-500 pts) | Poor Performance (-100-500 pts)
-        ↓
+        â†“
 High Reputation Node | Low Reputation Node | Banned Node
 ```
 
-## 🛠️ Extensibility Points
+## ðŸ› ï¸ Extensibility Points
 
 The architecture provides several extension points:
 
