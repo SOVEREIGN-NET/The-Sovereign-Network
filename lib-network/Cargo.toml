@@ -110,6 +110,7 @@ lib-protocols = { path = "../lib-protocols" }
 lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }
 lib-blockchain = { path = "../lib-blockchain" }
+lib-consensus = { path = "../lib-consensus" }
 nix = { version = "0.30.1", features = ["socket"] }
 
 # Platform-specific GATT and Bluetooth APIs
