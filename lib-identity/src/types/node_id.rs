@@ -95,6 +95,30 @@ pub fn get_network_genesis() -> Result<&'static [u8; 32]> {
 /// - Per architecture spec: NodeId([u8; 32]) = Blake3("ZHTP_NODE_V2:" + ...)
 /// - 2^256 address space
 /// - Maintains cryptographic strength of Blake3
+///
+/// # Examples
+/// ```
+/// use lib_identity::types::NodeId;
+///
+/// // Valid creation
+/// let node_id = NodeId::from_did_device(
+///     "did:zhtp:abc123",
+///     "laptop"
+/// ).expect("Valid inputs");
+///
+/// // Same inputs produce same NodeId
+/// let node_id2 = NodeId::from_did_device(
+///     "did:zhtp:abc123",
+///     "laptop"
+/// ).expect("Valid inputs");
+/// assert_eq!(node_id, node_id2);
+/// ```
+///
+/// # CRITICAL FIX for PR #208: Added PartialOrd and Ord traits
+///
+/// The Ord trait is required for CRDT tie-breaking in lib-storage.
+/// Ordering is based on lexicographic comparison of the bytes field,
+/// providing deterministic convergence for distributed consensus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId {
     /// Blake3 hash output (32 bytes)
@@ -105,6 +129,23 @@ pub struct NodeId {
 
     /// CRITICAL FIX C2: Network genesis binding (prevents cross-chain replay)
     network_genesis: [u8; 32],
+}
+
+// CRITICAL FIX for PR #208: Manual implementation of PartialOrd and Ord
+// Required for CRDT tie-breaking in lib-storage/consistency
+// Ordering is based solely on bytes field for deterministic consensus
+impl PartialOrd for NodeId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for NodeId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Lexicographic comparison of bytes field
+        // This provides deterministic ordering for CRDT convergence
+        self.bytes.cmp(&other.bytes)
+    }
 }
 
 impl NodeId {
@@ -399,6 +440,24 @@ impl NodeId {
     }
 
     /// Calculate Kademlia distance to another NodeId
+    ///
+    /// This is the standard Kademlia distance metric, defined as the index
+    /// of the most significant bit of the XOR result between two NodeIds.
+    /// A smaller value means a shorter distance.
+    ///
+    /// # Returns
+    /// `u32` - The distance, where 0 is the closest possible.
+    ///
+    /// # Examples
+    /// ```
+    /// use lib_identity::types::NodeId;
+    ///
+    /// let node1 = NodeId::from_bytes([0b10000000; 32]);
+    /// let node2 = NodeId::from_bytes([0b00000000; 32]);
+    ///
+    /// // The most significant differing bit is at bit position 7 (first byte, highest bit)
+    /// assert_eq!(node1.kademlia_distance(&node2), 7);
+    /// ```
     pub fn kademlia_distance(&self, other: &Self) -> u32 {
         let xor_bytes = self.xor_distance(other);
         for (i, byte) in xor_bytes.iter().enumerate() {

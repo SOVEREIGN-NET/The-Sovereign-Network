@@ -167,17 +167,22 @@ impl MergeStrategy<u64> for MaxMergeStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_identity::NodeId as IdentityNodeId;
+
+    fn node(id: u8) -> IdentityNodeId {
+        IdentityNodeId::from_bytes([id; 32])
+    }
 
     #[test]
     fn test_lww_resolution() {
         let resolver = ConflictResolver::new(ConflictStrategy::LastWriteWins);
 
         let mut clock1 = VectorClock::new();
-        clock1.increment(&"node1".to_string());
+        clock1.increment(&node(1));
 
         let mut clock2 = VectorClock::new();
-        clock2.increment(&"node1".to_string());
-        clock2.increment(&"node1".to_string());
+        clock2.increment(&node(1));
+        clock2.increment(&node(1));
 
         let resolution = resolver.resolve(&10, &clock1, &20, &clock2);
         assert!(resolution.is_single());

@@ -367,14 +367,14 @@ mod tests {
         
         // Set initial password
         wpm.set_wallet_password(&wallet_id, "OldPass123!", &wallet_seed).unwrap();
-        
+
         // Change password
         assert!(wpm.change_wallet_password(&wallet_id, "OldPass123!", "NewPass123!", &wallet_seed).is_ok());
-        
+
         // Old password should not work
         let validation = wpm.validate_password(&wallet_id, "OldPass123!", &wallet_seed).unwrap();
         assert!(!validation.valid);
-        
+
         // New password should work
         let validation = wpm.validate_password(&wallet_id, "NewPass123!", &wallet_seed).unwrap();
         assert!(validation.valid);
