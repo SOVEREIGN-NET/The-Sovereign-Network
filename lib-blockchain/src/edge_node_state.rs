@@ -575,17 +575,20 @@ mod tests {
     #[test]
     fn test_header_rolling_window() {
         let mut edge_node = EdgeNodeState::new(3);
-        
+
         // Add 5 headers (should keep only last 3)
-        // First header (genesis) should work
-        let _ = edge_node.add_header(create_dummy_header(0));
-        
-        // Subsequent headers will fail validation without proper chain setup
-        // So we'll test the window logic differently
+        // First header (genesis) needs valid hash
+        let mut genesis = create_dummy_header(0);
+        genesis.block_hash = genesis.calculate_hash();
+        assert!(edge_node.add_header(genesis).is_ok());
+
+        // Add subsequent headers with proper chain setup
         for i in 1..=4 {
             let mut header = create_dummy_header(i);
             if let Some(prev) = edge_node.get_latest_header() {
                 header.previous_block_hash = prev.block_hash;
+                // Ensure timestamp is after previous
+                header.timestamp = prev.timestamp + 10;
                 header.block_hash = header.calculate_hash();
             }
             let _ = edge_node.add_header(header);
@@ -598,18 +601,20 @@ mod tests {
     #[test]
     fn test_needs_bootstrap_proof() {
         let mut edge_node = EdgeNodeState::new(500);
-        
+
         // Empty state needs bootstrap for established networks
         assert!(edge_node.needs_bootstrap_proof(1000));
 
-        // Add header at height 100 (will accept as bootstrap start)
-        let _ = edge_node.add_header(create_dummy_header(100));
-        
-        // 400 blocks behind - no bootstrap needed
+        // Add valid header at height 0 to start the chain
+        let mut header = create_dummy_header(0);
+        header.block_hash = header.calculate_hash();
+        assert!(edge_node.add_header(header).is_ok());
+
+        // 500 blocks behind - on the borderline, should not need bootstrap
         assert!(!edge_node.needs_bootstrap_proof(500));
-        
-        // 600 blocks behind - needs bootstrap
-        assert!(edge_node.needs_bootstrap_proof(700));
+
+        // 501 blocks behind - needs bootstrap
+        assert!(edge_node.needs_bootstrap_proof(501));
     }
 
     #[test]
@@ -639,10 +644,19 @@ mod tests {
     #[test]
     fn test_sync_strategy_close_to_tip() {
         let mut edge_node = EdgeNodeState::new(500);
-        
-        // Simulate being at height 1000
-        edge_node.add_header(create_dummy_header(1000));
-        
+
+        // Build a valid chain up to height 1000
+        for i in 0..=1000 {
+            let mut header = create_dummy_header(i);
+            if let Some(prev) = edge_node.get_latest_header() {
+                header.previous_block_hash = prev.block_hash;
+                header.timestamp = prev.timestamp + 10;
+            }
+            header.block_hash = header.calculate_hash();
+            // Only keep last 500 headers due to rolling window
+            let _ = edge_node.add_header(header);
+        }
+
         // Network at height 1100 (100 blocks behind): Just sync headers
         match edge_node.get_sync_strategy(1100) {
             SyncStrategy::HeadersOnly { start_height, count } => {
@@ -651,7 +665,7 @@ mod tests {
             },
             _ => panic!("Expected HeadersOnly when close to tip"),
         }
-        
+
         // Network at height 1600 (600 blocks behind): Use bootstrap proof
         match edge_node.get_sync_strategy(1600) {
             SyncStrategy::BootstrapProof { proof_up_to_height, headers_from_height, headers_count } => {

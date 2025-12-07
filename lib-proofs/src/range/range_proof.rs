@@ -30,11 +30,14 @@ impl ZkRangeProof {
 
         // Generate commitment to the value
         let commitment = hash_blake3(&[&value.to_le_bytes()[..], &blinding[..]].concat());
-        
-        // Use unified ZK system via Plonky2
-        let public_inputs = vec![value, min_value, max_value];
-        let proof = ZkProof::from_public_inputs(public_inputs)?;
-        
+
+        // Use Plonky2 range proof system (not transaction proof system)
+        let zk_system = crate::plonky2::ZkProofSystem::new()?;
+        let blinding_u64 = u64::from_le_bytes([blinding[0], blinding[1], blinding[2], blinding[3],
+                                                blinding[4], blinding[5], blinding[6], blinding[7]]);
+        let plonky2_proof = zk_system.prove_range(value, blinding_u64, min_value, max_value)?;
+        let proof = ZkProof::from_plonky2(plonky2_proof);
+
         Ok(ZkRangeProof {
             proof,
             commitment,

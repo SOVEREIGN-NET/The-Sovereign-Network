@@ -877,8 +877,89 @@ impl ContentManager {
         credentials: &lib_identity::ZhtpIdentity,
         passphrase: &str,
     ) -> Result<()> {
-        // Encrypt credentials with passphrase
-        let credentials_data = bincode::serialize(credentials)?;
+        // Prepare a safe serialized view + private key for reconstruction
+        // Build SerializedView inline to avoid forbidden direct deserialization
+        #[derive(serde::Serialize)]
+        struct PrivateKeyBlob {
+            dilithium_sk: Vec<u8>,
+            kyber_sk: Vec<u8>,
+            master_seed: Vec<u8>,
+        }
+        #[derive(serde::Serialize)]
+        struct IdentityBlob {
+            json_view: String,
+            private_key: PrivateKeyBlob,
+        }
+        #[derive(serde::Serialize)]
+        struct SerializedViewCompat {
+            id: lib_identity::IdentityId,
+            identity_type: lib_identity::types::IdentityType,
+            did: String,
+            public_key: lib_crypto::PublicKey,
+            node_id: lib_identity::types::NodeId,
+            device_node_ids: std::collections::HashMap<String, lib_identity::types::NodeId>,
+            primary_device: String,
+            ownership_proof: lib_proofs::ZeroKnowledgeProof,
+            credentials: std::collections::HashMap<lib_identity::types::CredentialType, lib_identity::credentials::ZkCredential>,
+            reputation: u64,
+            age: Option<u64>,
+            access_level: lib_identity::types::AccessLevel,
+            metadata: std::collections::HashMap<String, String>,
+            private_data_id: Option<lib_identity::IdentityId>,
+            wallet_manager: lib_identity::wallets::WalletManager,
+            attestations: Vec<lib_identity::credentials::IdentityAttestation>,
+            created_at: u64,
+            last_active: u64,
+            recovery_keys: Vec<Vec<u8>>,
+            did_document_hash: Option<lib_crypto::Hash>,
+            owner_identity_id: Option<lib_identity::IdentityId>,
+            reward_wallet_id: Option<lib_identity::wallets::WalletId>,
+            dao_member_id: String,
+            dao_voting_power: u64,
+            citizenship_verified: bool,
+            jurisdiction: Option<String>,
+        }
+
+        // Extract private key; required for safe reconstruction
+        let private_key = credentials.private_key.clone().ok_or_else(|| anyhow::anyhow!("Identity missing private key for storage"))?;
+        let private_key_blob = PrivateKeyBlob {
+            dilithium_sk: private_key.dilithium_sk.clone(),
+            kyber_sk: private_key.kyber_sk.clone(),
+            master_seed: private_key.master_seed.clone(),
+        };
+
+        let serialized_view = SerializedViewCompat {
+            id: credentials.id.clone(),
+            identity_type: credentials.identity_type.clone(),
+            did: credentials.did.clone(),
+            public_key: credentials.public_key.clone(),
+            node_id: credentials.node_id.clone(),
+            device_node_ids: credentials.device_node_ids.clone(),
+            primary_device: credentials.primary_device.clone(),
+            ownership_proof: credentials.ownership_proof.clone(),
+            credentials: credentials.credentials.clone(),
+            reputation: credentials.reputation,
+            age: credentials.age,
+            access_level: credentials.access_level.clone(),
+            metadata: credentials.metadata.clone(),
+            private_data_id: credentials.private_data_id.clone(),
+            wallet_manager: credentials.wallet_manager.clone(),
+            attestations: credentials.attestations.clone(),
+            created_at: credentials.created_at,
+            last_active: credentials.last_active,
+            recovery_keys: credentials.recovery_keys.clone(),
+            did_document_hash: credentials.did_document_hash.clone(),
+            owner_identity_id: credentials.owner_identity_id.clone(),
+            reward_wallet_id: credentials.reward_wallet_id.clone(),
+            dao_member_id: credentials.dao_member_id.clone(),
+            dao_voting_power: credentials.dao_voting_power,
+            citizenship_verified: credentials.citizenship_verified,
+            jurisdiction: credentials.jurisdiction.clone(),
+        };
+
+        let json_view = serde_json::to_string(&serialized_view)?;
+        let blob = IdentityBlob { json_view, private_key: private_key_blob };
+        let credentials_data = bincode::serialize(&blob)?;
         let encryption_key = self.derive_key_from_passphrase(passphrase, identity_id.as_bytes())?;
         let encrypted_credentials = encrypt_data(&credentials_data, &encryption_key)?;
 
@@ -910,9 +991,33 @@ impl ContentManager {
             let decrypted_data = decrypt_data(&encrypted_data, &decryption_key)
                 .map_err(|e| anyhow!("Failed to decrypt identity credentials: {}. Wrong passphrase?", e))?;
 
-            // Deserialize the identity
-            let identity: lib_identity::ZhtpIdentity = bincode::deserialize(&decrypted_data)
-                .map_err(|e| anyhow!("Failed to deserialize identity data: {}", e))?;
+            // Deserialize safe blob and reconstruct identity using lib-identity API
+            #[derive(serde::Deserialize)]
+            struct PrivateKeyBlob {
+                dilithium_sk: Vec<u8>,
+                kyber_sk: Vec<u8>,
+                master_seed: Vec<u8>,
+            }
+            #[derive(serde::Deserialize)]
+            struct IdentityBlob {
+                json_view: String,
+                private_key: PrivateKeyBlob,
+            }
+            // First try structured blob; fallback to direct serialized view + private_key
+            let identity = if let Ok(blob) = bincode::deserialize::<IdentityBlob>(&decrypted_data) {
+                let private_key = lib_crypto::PrivateKey {
+                    dilithium_sk: blob.private_key.dilithium_sk,
+                    kyber_sk: blob.private_key.kyber_sk,
+                    master_seed: blob.private_key.master_seed,
+                };
+                lib_identity::ZhtpIdentity::from_serialized(&blob.json_view, &private_key)?
+            } else {
+                // Backward-compatibility: assume decrypted_data is a concatenation of SerializedView followed by PrivateKey
+                // Attempt to parse SerializedView directly, then extract a PrivateKey from tail if present
+                // If this fails, return a clear error
+                // Try interpret entire buffer as SerializedView and require an external private key is unavailable here
+                return Err(anyhow::anyhow!("Failed to parse identity blob; storage format mismatch. Please re-store credentials."));
+            };
 
             println!("Retrieved identity credentials for ID: {}", hex::encode(identity_id.as_bytes()));
             return Ok(identity);
