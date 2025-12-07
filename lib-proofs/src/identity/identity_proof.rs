@@ -187,35 +187,47 @@ impl ZkIdentityProof {
         proven_attributes: Vec<String>,
     ) -> Result<Self> {
         let commitment = IdentityCommitment::generate(attributes, identity_secret, nullifier_secret)?;
-        
-        // Use unified ZK system via Plonky2
-        let mut public_inputs = Vec::new();
-        public_inputs.push(u64::from_le_bytes(identity_secret[0..8].try_into().unwrap_or([0u8; 8])));
-        
-        if let Some((min, max)) = attributes.age_range {
-            public_inputs.push((min + max) as u64 / 2); // Average age
+
+        // Use unified ZK system via Plonky2 with prove_identity
+        let zk_system = crate::plonky2::ZkProofSystem::new()?;
+
+        let identity_secret_u64 = u64::from_le_bytes(identity_secret[0..8].try_into().unwrap_or([0u8; 8]));
+
+        let age = if let Some((min, max)) = attributes.age_range {
+            (min + max) as u64 / 2 // Average age
         } else {
-            public_inputs.push(25); // Default age
-        }
-        
-        if let Some(ref citizenship) = attributes.citizenship {
-            public_inputs.push(u64::from_le_bytes(hash_blake3(citizenship.as_bytes())[0..8].try_into().unwrap_or([0u8; 8])));
+            25 // Default age
+        };
+
+        let jurisdiction_hash = if let Some(ref citizenship) = attributes.citizenship {
+            u64::from_le_bytes(hash_blake3(citizenship.as_bytes())[0..8].try_into().unwrap_or([0u8; 8]))
         } else {
-            public_inputs.push(840); // Default to US
-        }
-        
-        public_inputs.push(u64::from_le_bytes(commitment.attribute_commitment[0..8].try_into().unwrap_or([0u8; 8])));
-        public_inputs.push(18); // min_age requirement
-        public_inputs.push(0);  // jurisdiction requirement
-        public_inputs.push(1);  // verification level
-        
-        let proof = ZkProof::from_public_inputs(public_inputs)?;
-        
+            840 // Default to US
+        };
+
+        let credential_hash = u64::from_le_bytes(commitment.attribute_commitment[0..8].try_into().unwrap_or([0u8; 8]));
+        let min_age = 18;
+        let required_jurisdiction = 0;
+        let verification_level = 1;
+
+        // Call prove_identity with correct parameters
+        let plonky2_proof = zk_system.prove_identity(
+            identity_secret_u64,
+            age,
+            jurisdiction_hash,
+            credential_hash,
+            min_age,
+            required_jurisdiction,
+            verification_level,
+        )?;
+
+        let proof = ZkProof::from_plonky2(plonky2_proof);
+
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Ok(ZkIdentityProof {
             proof,
             commitment,

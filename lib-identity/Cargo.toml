@@ -29,6 +29,9 @@ aes-gcm = "0.10"
 argon2 = "0.5"
 subtle = "2.5"
 
+# CRITICAL FIX C2: Cryptographically secure random number generation
+getrandom = "0.2"
+
 [dev-dependencies]
 tokio-test = "0.4"
 

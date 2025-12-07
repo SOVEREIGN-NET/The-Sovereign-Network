@@ -117,6 +117,7 @@ pub struct VerificationStep {
 
 /// Advanced circuit aggregation builder
 pub struct AggregatedCircuitBuilder {
+    #[allow(dead_code)]
     config: CircuitConfig,
     rules: CircuitAggregationRules,
     pending_proofs: Vec<Plonky2Proof>,
@@ -125,8 +126,9 @@ pub struct AggregatedCircuitBuilder {
 
 /// Metadata for individual proofs being aggregated
 #[derive(Debug, Clone)]
-struct ProofMetadata {
+pub(crate) struct ProofMetadata {
     proof_type: String,
+    #[allow(dead_code)]
     complexity_score: u32,
     verification_cost: u64,
     memory_usage: u64,
@@ -137,7 +139,9 @@ struct ProofMetadata {
 /// Geographic location hint for proofs
 #[derive(Debug, Clone)]
 struct GeographicLocation {
+    #[allow(dead_code)]
     latitude: f32,
+    #[allow(dead_code)]
     longitude: f32,
     region_id: String,
 }
@@ -193,7 +197,7 @@ impl AggregatedCircuitBuilder {
         // Generate optimization hints
         let verification_hints = self.generate_verification_hints(&aggregated_proof)?;
 
-        let generation_time = start_time.elapsed().as_millis() as u64;
+        let _generation_time = start_time.elapsed().as_millis() as u64;
         let compression_ratio = self.calculate_compression_ratio(&aggregated_proof);
 
         Ok(AggregatedCircuitResult {
@@ -514,7 +518,9 @@ impl AggregatedCircuitBuilder {
 #[derive(Debug, Clone)]
 struct AggregationPlan {
     batches: Vec<AggregationBatch>,
+    #[allow(dead_code)]
     parallel_execution: bool,
+    #[allow(dead_code)]
     optimization_passes: u32,
 }
 
@@ -522,8 +528,10 @@ struct AggregationPlan {
 #[derive(Debug, Clone)]
 struct AggregationBatch {
     proof_indices: Vec<usize>,
+    #[allow(dead_code)]
     batch_type: BatchType,
     priority: u32,
+    #[allow(dead_code)]
     estimated_cost: u64,
 }
 
