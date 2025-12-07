@@ -405,11 +405,7 @@ mod tests {
         // Should reject weak passwords
         assert!(matches!(
             wpm.set_wallet_password(&wallet_id, "short", &wallet_seed),
-<<<<<<< HEAD
-            Err(WalletPasswordError::TooShort)
-=======
             Err(WalletPasswordError::TooShort | WalletPasswordError::WeakPassword)
->>>>>>> development
         ));
     }
 }
