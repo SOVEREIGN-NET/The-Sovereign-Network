@@ -732,7 +732,7 @@ mod tests {
         let validator_id = Hash::from_bytes(&[3u8; 32]);
         let validator_stake = 2_000_000_000; // 2000 ZHTP
         
-        verifier.add_validator_stake(validator_id.clone(), validator_stake);
+        verifier.add_validator_stake(validator_id.clone(), validator_stake, 1);
         
         let mut peer_ctx = create_test_context();
         peer_ctx.validator_stake = Some(validator_stake);
@@ -748,7 +748,7 @@ mod tests {
         let mut verifier = BlockchainHandshakeVerifier::new(local_ctx);
         
         let validator_id = Hash::from_bytes(&[3u8; 32]);
-        verifier.add_validator_stake(validator_id.clone(), 2_000_000_000);
+        verifier.add_validator_stake(validator_id.clone(), 2_000_000_000, 1);
         
         let mut peer_ctx = create_test_context();
         peer_ctx.validator_stake = Some(3_000_000_000); // Claimed stake doesn't match
@@ -781,7 +781,7 @@ mod tests {
         let node_id = Hash::from_bytes(&[4u8; 32]);
         let node_stake = 500_000_000; // 500 ZHTP (above StakedNode threshold)
         
-        verifier.add_validator_stake(node_id.clone(), node_stake);
+        verifier.add_validator_stake(node_id.clone(), node_stake, 1);
         
         let mut peer_ctx = create_test_context();
         peer_ctx.validator_stake = Some(node_stake);
