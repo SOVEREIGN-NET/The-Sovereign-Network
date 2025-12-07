@@ -13,22 +13,28 @@ pub fn verify_transaction(proof: &ZkTransactionProof) -> Result<bool> {
     // REQUIRE Plonky2 proofs - NO FALLBACKS ALLOWED
     let zk_system = ZkProofSystem::new()
         .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {:?}", e))?;
-    
-    // Verify amount proof - MUST be Plonky2
-    let plonky2_amount_proof = proof.amount_proof.plonky2_proof.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Amount proof must be Plonky2 - no fallbacks allowed"))?;
+
+    // Verify amount proof - MUST be Plonky2 (return false if missing)
+    let plonky2_amount_proof = match proof.amount_proof.plonky2_proof.as_ref() {
+        Some(p) => p,
+        None => return Ok(false), // Invalid proof structure
+    };
     let amount_valid = zk_system.verify_transaction(plonky2_amount_proof)?;
-    
-    // Verify balance proof - MUST be Plonky2
-    let plonky2_balance_proof = proof.balance_proof.plonky2_proof.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Balance proof must be Plonky2 - no fallbacks allowed"))?;
+
+    // Verify balance proof - MUST be Plonky2 (return false if missing)
+    let plonky2_balance_proof = match proof.balance_proof.plonky2_proof.as_ref() {
+        Some(p) => p,
+        None => return Ok(false), // Invalid proof structure
+    };
     let balance_valid = zk_system.verify_range(plonky2_balance_proof)?;
-    
-    // Verify nullifier proof - MUST be Plonky2
-    let plonky2_nullifier_proof = proof.nullifier_proof.plonky2_proof.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Nullifier proof must be Plonky2 - no fallbacks allowed"))?;
+
+    // Verify nullifier proof - MUST be Plonky2 (return false if missing)
+    let plonky2_nullifier_proof = match proof.nullifier_proof.plonky2_proof.as_ref() {
+        Some(p) => p,
+        None => return Ok(false), // Invalid proof structure
+    };
     let nullifier_valid = zk_system.verify_range(plonky2_nullifier_proof)?;
-    
+
     Ok(amount_valid && balance_valid && nullifier_valid)
 }
 
@@ -52,10 +58,12 @@ pub fn verify_transaction_detailed(proof: &ZkTransactionProof) -> VerificationRe
 pub fn verify_amount_proof(proof: &ZkTransactionProof) -> Result<bool> {
     let zk_system = ZkProofSystem::new()
         .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {:?}", e))?;
-    
-    let plonky2_proof = proof.amount_proof.plonky2_proof.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Amount proof must be Plonky2 - no fallbacks allowed"))?;
-    
+
+    let plonky2_proof = match proof.amount_proof.plonky2_proof.as_ref() {
+        Some(p) => p,
+        None => return Ok(false), // Invalid proof structure
+    };
+
     zk_system.verify_transaction(plonky2_proof)
 }
 
@@ -63,10 +71,12 @@ pub fn verify_amount_proof(proof: &ZkTransactionProof) -> Result<bool> {
 pub fn verify_balance_proof(proof: &ZkTransactionProof) -> Result<bool> {
     let zk_system = ZkProofSystem::new()
         .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {:?}", e))?;
-    
-    let plonky2_proof = proof.balance_proof.plonky2_proof.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Balance proof must be Plonky2 - no fallbacks allowed"))?;
-    
+
+    let plonky2_proof = match proof.balance_proof.plonky2_proof.as_ref() {
+        Some(p) => p,
+        None => return Ok(false), // Invalid proof structure
+    };
+
     zk_system.verify_range(plonky2_proof)
 }
 
@@ -74,10 +84,12 @@ pub fn verify_balance_proof(proof: &ZkTransactionProof) -> Result<bool> {
 pub fn verify_nullifier_proof(proof: &ZkTransactionProof) -> Result<bool> {
     let zk_system = ZkProofSystem::new()
         .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {:?}", e))?;
-    
-    let plonky2_proof = proof.nullifier_proof.plonky2_proof.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Nullifier proof must be Plonky2 - no fallbacks allowed"))?;
-    
+
+    let plonky2_proof = match proof.nullifier_proof.plonky2_proof.as_ref() {
+        Some(p) => p,
+        None => return Ok(false), // Invalid proof structure
+    };
+
     zk_system.verify_range(plonky2_proof)
 }
 
