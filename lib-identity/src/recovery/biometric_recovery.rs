@@ -1,10 +1,24 @@
 //! Biometric-based identity recovery system
 
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use aes_gcm::{
+    aead::{AeadInPlace, KeyInit},
+    Aes256Gcm,
+    Nonce,
+};
+use argon2::{Algorithm, Argon2, Params, Version};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tokio::time::{Duration, Instant};
+use anyhow::{Result as AnyhowResult, anyhow};
+use rand;
+use zeroize::Zeroize;
+
+const ENCRYPTION_VERSION_XOR: u32 = 1;
+const ENCRYPTION_VERSION_AES_GCM: u32 = 2;
+const AES_GCM_NONCE_SIZE: usize = 12;
+const AES_GCM_TAG_SIZE: usize = 16;
 
 /// Biometric recovery manager for identity restoration using biometric data
 #[derive(Debug, Clone)]
@@ -17,6 +31,8 @@ pub struct BiometricRecoveryManager {
     auth_attempts: HashMap<String, BiometricAuthAttempts>,
     /// Security settings
     security_settings: BiometricSecuritySettings,
+    /// Track used nonces to prevent reuse
+    used_nonces: HashSet<Vec<u8>>,
 }
 
 /// Encrypted biometric template
@@ -26,14 +42,22 @@ pub struct EncryptedBiometricTemplate {
     pub biometric_type: BiometricType,
     pub encrypted_template: Vec<u8>,
     pub template_hash: String,
+    #[serde(default = "default_encryption_version")]
+    pub encryption_version: u32,
     pub encryption_method: String,
     pub salt: Vec<u8>,
     pub iv: Vec<u8>,
+    #[serde(default)]
+    pub tag: Vec<u8>,
     pub created_at: u64,
     pub last_used: Option<u64>,
     pub usage_count: u32,
     pub quality_score: f64,
     pub expires_at: Option<u64>,
+}
+
+fn default_encryption_version() -> u32 {
+    ENCRYPTION_VERSION_XOR
 }
 
 /// Biometric template in plain form (temporary use only)
@@ -176,6 +200,7 @@ impl BiometricRecoveryManager {
             matching_settings: BiometricMatchingSettings::default(),
             auth_attempts: HashMap::new(),
             security_settings: BiometricSecuritySettings::default(),
+            used_nonces: HashSet::new(),
         }
     }
 
@@ -222,7 +247,7 @@ impl BiometricRecoveryManager {
         // Generate encryption materials
         let salt = self.generate_salt().await?;
         let encryption_key = self.derive_encryption_key(identity_id, &salt).await?;
-        let (encrypted_template, iv) = self.encrypt_template(&template_data, &encryption_key).await?;
+        let (encrypted_template, iv, tag, encryption_version) = self.encrypt_template(&template_data, &encryption_key).await?;
         
         // Calculate template hash
         let template_hash = self.calculate_template_hash(&template_data);
@@ -236,9 +261,11 @@ impl BiometricRecoveryManager {
             biometric_type: template.biometric_type.clone(),
             encrypted_template,
             template_hash,
-            encryption_method: self.security_settings.encryption_algorithm.clone(),
+            encryption_version,
+            encryption_method: "AES-256-GCM".to_string(),
             salt,
             iv,
+            tag,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs(),
@@ -728,30 +755,81 @@ impl BiometricRecoveryManager {
         Ok(key_hash.to_vec())
     }
 
-    async fn encrypt_template(&self, template_data: &[u8], key: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
-        let mut iv = vec![0u8; 16];
+    fn register_nonce(&mut self, nonce: &[u8]) -> AnyhowResult<()> {
+        if !self.used_nonces.insert(nonce.to_vec()) {
+            return Err(anyhow!("Nonce reuse detected"));
+        }
+        Ok(())
+    }
+
+    async fn encrypt_template(&mut self, template_data: &[u8], key: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, u32), Box<dyn std::error::Error>> {
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| anyhow!("Invalid key length: {}", e))?;
+
+        let mut nonce_bytes = [0u8; AES_GCM_NONCE_SIZE];
         use rand::RngCore;
-        rand::rngs::OsRng.fill_bytes(&mut iv);
-        
-        let mut encrypted = Vec::new();
-        for (i, &byte) in template_data.iter().enumerate() {
+        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        self.register_nonce(&nonce_bytes)?;
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let mut buffer = template_data.to_vec();
+        let tag = cipher
+            .encrypt_in_place_detached(nonce, b"", &mut buffer)
+            .map_err(|e| anyhow!("Encryption failed: {}", e))?;
+
+        Ok((buffer, nonce_bytes.to_vec(), tag.to_vec(), ENCRYPTION_VERSION_AES_GCM))
+    }
+
+    fn decrypt_template_legacy_xor(&self, encrypted: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let mut decrypted = Vec::new();
+        for (i, &byte) in encrypted.iter().enumerate() {
             let key_byte = key[i % key.len()];
             let iv_byte = iv[i % iv.len()];
-            encrypted.push(byte ^ key_byte ^ iv_byte);
+            decrypted.push(byte ^ key_byte ^ iv_byte);
         }
-        
-        Ok((encrypted, iv))
+        Ok(decrypted)
+    }
+
+    async fn decrypt_template_aes_gcm(&self, encrypted: &[u8], key: &[u8], nonce: &[u8], tag: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| anyhow!("Invalid key length: {}", e))?;
+        let nonce = Nonce::from_slice(nonce);
+
+        let mut buffer = encrypted.to_vec();
+        let tag = aes_gcm::Tag::from_slice(tag);
+
+        cipher
+            .decrypt_in_place_detached(nonce, b"", &mut buffer, tag)
+            .map_err(|e| anyhow!("Decryption failed: {}", e))?;
+
+        Ok(buffer)
     }
 
     async fn decrypt_template(&self, encrypted_template: &EncryptedBiometricTemplate) -> Result<BiometricTemplate, Box<dyn std::error::Error>> {
         let encryption_key = self.derive_encryption_key(&encrypted_template.identity_id, &encrypted_template.salt).await?;
         
-        let mut decrypted = Vec::new();
-        for (i, &byte) in encrypted_template.encrypted_template.iter().enumerate() {
-            let key_byte = encryption_key[i % encryption_key.len()];
-            let iv_byte = encrypted_template.iv[i % encrypted_template.iv.len()];
-            decrypted.push(byte ^ key_byte ^ iv_byte);
-        }
+        // Determine encryption method: use AES-GCM for new data, XOR for legacy
+        let method_is_aes = encrypted_template.encryption_method.to_lowercase().contains("aes");
+        let use_aes = encrypted_template.encryption_version >= ENCRYPTION_VERSION_AES_GCM
+            || (method_is_aes && encrypted_template.iv.len() == AES_GCM_NONCE_SIZE)
+            || encrypted_template.iv.len() == AES_GCM_NONCE_SIZE;
+
+        let decrypted = if use_aes {
+            // AES-256-GCM decryption
+            if encrypted_template.tag.is_empty() && encrypted_template.encrypted_template.len() >= AES_GCM_TAG_SIZE {
+                // Tag embedded at end for backward compatibility
+                let split_at = encrypted_template.encrypted_template.len() - AES_GCM_TAG_SIZE;
+                let tag = &encrypted_template.encrypted_template[split_at..];
+                let ciphertext = &encrypted_template.encrypted_template[..split_at];
+                self.decrypt_template_aes_gcm(ciphertext, &encryption_key, &encrypted_template.iv, tag).await?
+            } else {
+                // Tag in separate field
+                self.decrypt_template_aes_gcm(&encrypted_template.encrypted_template, &encryption_key, &encrypted_template.iv, &encrypted_template.tag).await?
+            }
+        } else {
+            // Legacy XOR decryption for backward compatibility
+            self.decrypt_template_legacy_xor(&encrypted_template.encrypted_template, &encryption_key, &encrypted_template.iv)?
+        };
         
         Ok(bincode::deserialize(&decrypted)?)
     }

@@ -78,18 +78,27 @@ impl ZkTransactionProof {
         receiver_blinding: [u8; 32],
         nullifier: [u8; 32],
     ) -> anyhow::Result<Self> {
-        // Create public inputs for each proof component
-        let amount_inputs = vec![amount, fee];
-        let balance_inputs = vec![sender_balance, receiver_balance];
-        let nullifier_inputs = vec![
-            u64::from_le_bytes(nullifier[0..8].try_into().unwrap_or([0u8; 8])),
-            u64::from_le_bytes(sender_blinding[0..8].try_into().unwrap_or([0u8; 8])),
-            u64::from_le_bytes(receiver_blinding[0..8].try_into().unwrap_or([0u8; 8])),
-        ];
+        // Use ZK system to generate transaction proofs with correct parameter order
+        let zk_system = crate::plonky2::ZkProofSystem::new()?;
 
-        let amount_proof = ZkProof::from_public_inputs(amount_inputs)?;
-        let balance_proof = ZkProof::from_public_inputs(balance_inputs)?;
-        let nullifier_proof = ZkProof::from_public_inputs(nullifier_inputs)?;
+        // Extract sender_secret and nullifier_seed from the blinding factors
+        let sender_secret = u64::from_le_bytes(sender_blinding[0..8].try_into().unwrap_or([0u8; 8]));
+        let nullifier_seed = u64::from_le_bytes(nullifier[0..8].try_into().unwrap_or([0u8; 8]));
+
+        // Generate the main transaction proof
+        // prove_transaction(sender_balance, amount, fee, sender_secret, nullifier_seed)
+        let plonky2_proof = zk_system.prove_transaction(
+            sender_balance,
+            amount,
+            fee,
+            sender_secret,
+            nullifier_seed,
+        )?;
+
+        // Create ZkProofs from the Plonky2 proof
+        let amount_proof = ZkProof::from_plonky2(plonky2_proof.clone());
+        let balance_proof = ZkProof::from_plonky2(plonky2_proof.clone());
+        let nullifier_proof = ZkProof::from_plonky2(plonky2_proof);
 
         Ok(Self::new(amount_proof, balance_proof, nullifier_proof))
     }

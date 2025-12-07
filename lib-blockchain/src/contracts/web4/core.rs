@@ -501,20 +501,30 @@ impl Web4Contract {
         if !domain.ends_with(".zhtp") || domain.len() <= 5 || domain.len() >= 100 {
             return false;
         }
-        
-        // Get the subdomain part (before .zhtp)
-        let subdomain = &domain[..domain.len() - 5];
-        
+
+        // Extract subdomain part (everything before .zhtp)
+        let subdomain = domain.strip_suffix(".zhtp").unwrap();
+
         // Check that all characters are valid
         if !domain.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-') {
             return false;
         }
-        
-        // Subdomain cannot start or end with a hyphen
+
+        // Subdomain must not start or end with hyphen
         if subdomain.starts_with('-') || subdomain.ends_with('-') {
             return false;
         }
-        
+
+        // Labels (parts separated by dots) cannot start or end with hyphens
+        for label in subdomain.split('.') {
+            if label.is_empty() || label.starts_with('-') || label.ends_with('-') {
+                return false;
+            }
+            if !label.chars().all(|c| c.is_alphanumeric() || c == '-') {
+                return false;
+            }
+        }
+
         true
     }
     
@@ -962,7 +972,7 @@ mod tests {
         // Add route (content hash must be 46 chars for Qm prefix)
         let route = ContentRoute {
             path: "/contact".to_string(),
-            content_hash: "QmContactHash123456789012345678901234567890123".to_string(), // 46 chars exactly
+            content_hash: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG".to_string(), // Valid 46-char IPFS hash
             content_type: "text/html".to_string(),
             size: 512,
             metadata: HashMap::new(),

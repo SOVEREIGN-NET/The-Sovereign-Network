@@ -185,29 +185,32 @@ impl TransactionCircuit {
     /// Generate proof data using PURE ZK circuits only
     fn generate_proof_data(&self, witness: &TransactionWitness) -> Vec<u8> {
         tracing::info!(" Using PURE ZK transaction proof generation - NO FALLBACKS");
-        
-        let circuit = self.circuit.as_ref()
-            .expect("Circuit must be built before proof generation");
 
-        // Create ZK proof inputs from witness
-        let public_inputs = vec![
+        // Use ZK system's prove_transaction directly for proper proof format
+        let zk_system = match crate::plonky2::ZkProofSystem::new() {
+            Ok(system) => system,
+            Err(e) => {
+                tracing::error!("Failed to initialize ZK system: {:?}", e);
+                panic!("ZK system initialization failed: {:?}", e);
+            }
+        };
+
+        // Extract parameters for prove_transaction
+        let sender_secret = u64::from_le_bytes(witness.sender_blinding[0..8].try_into().unwrap_or([0; 8]));
+        let nullifier_seed = u64::from_le_bytes(witness.nullifier[0..8].try_into().unwrap_or([0; 8]));
+
+        // Generate transaction proof with correct format
+        // prove_transaction(sender_balance, amount, fee, sender_secret, nullifier_seed)
+        match zk_system.prove_transaction(
+            witness.sender_balance,
             witness.amount,
             witness.fee,
-            u64::from_le_bytes(witness.nullifier[0..8].try_into().unwrap_or([0; 8])),
-        ];
-        
-        let private_inputs = vec![
-            witness.sender_balance,
-            witness.receiver_balance,
-            u64::from_le_bytes(witness.sender_blinding[0..8].try_into().unwrap_or([0; 8])),
-            u64::from_le_bytes(witness.receiver_blinding[0..8].try_into().unwrap_or([0; 8])),
-        ];
-
-        // Generate ZK proof using Plonky2 circuit
-        match circuit.prove(&public_inputs, &private_inputs) {
-            Ok(zk_proof) => {
-                tracing::info!("Generated PURE ZK transaction proof: {} bytes", zk_proof.proof.len());
-                zk_proof.proof
+            sender_secret,
+            nullifier_seed,
+        ) {
+            Ok(plonky2_proof) => {
+                tracing::info!("Generated PURE ZK transaction proof: {} bytes", plonky2_proof.proof.len());
+                plonky2_proof.proof
             },
             Err(e) => {
                 tracing::error!("ZK proof generation failed: {:?}", e);

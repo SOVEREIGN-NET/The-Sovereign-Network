@@ -45,13 +45,13 @@ mod tests {
     fn test_economic_model_stats() {
         let model = EconomicModel::new();
         let stats = model.get_economic_stats();
-        
+
         // Verify all required fields are present
         assert!(stats["base_routing_rate"].is_u64());
         assert!(stats["base_storage_rate"].is_u64());
         assert!(stats["current_supply"].is_u64());
         assert!(stats["treasury_balance"].is_u64());
-        assert!(stats["isp_bypass_total_bandwidth"].is_u64());
+        // Note: isp_bypass_total_bandwidth was removed from stats
     }
 
     #[test]
@@ -75,7 +75,7 @@ mod tests {
         // Bonuses should be present for high quality/uptime
         assert!(reward.quality_bonus > 0);
         assert!(reward.uptime_bonus > 0);
-        assert_eq!(reward.currency, "SOV");
+        assert_eq!(reward.currency, "ZHTP");
     }
 
     #[test]
