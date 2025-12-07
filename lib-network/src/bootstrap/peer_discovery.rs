@@ -38,72 +38,68 @@ pub async fn discover_bootstrap_peers(
 /// PeerInfo with identity-derived NodeId
 async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity) -> Result<PeerInfo> {
     use tokio::net::TcpStream;
-    use tokio::io::AsyncWriteExt;
     use std::time::{SystemTime, UNIX_EPOCH};
-    
+
     let addr: std::net::SocketAddr = address.parse()?;
     let mut stream = TcpStream::connect(addr).await?;
-    
-    // Send a mesh handshake to bootstrap peer with identity-derived NodeId
-    // Note: Full MeshHandshake update with DID/device fields will be in next commit
-    let handshake = crate::discovery::local_network::MeshHandshake {
-        version: 1,
-        node_id: uuid::Uuid::new_v4(), // TODO: Replace with identity.node_id in next commit
-        public_key: local_identity.public_key.clone(),
-        mesh_port: 9333, // Default mesh port
-        protocols: vec!["zhtp".to_string(), "dht".to_string(), "tcp".to_string()],
-        discovered_via: 4, // 4 = bootstrap peer
-        capabilities: crate::discovery::local_network::HandshakeCapabilities::default(),
+
+    // Create handshake context with replay protection
+    let ctx = crate::handshake::HandshakeContext::default();
+
+    // Set up capabilities for bootstrap handshake
+    let capabilities = crate::handshake::HandshakeCapabilities {
+        supports_pqc: false, // Bootstrap can use classical crypto for speed
+        max_message_size: 1024 * 1024, // 1 MB
+        protocol_version: crate::handshake::UHP_VERSION,
+        extensions: vec![],
     };
-    
-    // Send handshake
-    let handshake_bytes = bincode::serialize(&handshake)?;
-    stream.write_all(&handshake_bytes).await?;
-    
-    // Keep connection alive for authentication
-    // The bootstrap peer will now handle authentication
-    tracing::info!("Sent handshake to bootstrap peer {}, awaiting auth...", address);
-    
-    // Read any response (acknowledgment or auth challenge)
-    let mut response_buf = vec![0u8; 8192];
-    use tokio::io::AsyncReadExt;
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        stream.read(&mut response_buf)
-    ).await {
-        Ok(Ok(n)) if n > 0 => {
-            tracing::info!("Received {} bytes from bootstrap peer {}", n, address);
-        }
-        _ => {
-            tracing::warn!("Bootstrap peer {} did not respond to handshake", address);
-        }
+
+    // Perform UHP authenticated handshake with bootstrap peer
+    tracing::info!("Initiating UHP handshake with bootstrap peer {}", address);
+
+    let result = crate::handshake::handshake_as_initiator(
+        &mut stream,
+        &ctx,
+        local_identity,
+        capabilities,
+    ).await.map_err(|e| anyhow!("UHP handshake failed with {}: {}", address, e))?;
+
+    // Extract authenticated peer information from handshake result
+    let peer_identity = &result.peer_identity;
+    let peer_node_id = peer_identity.node_id.clone();
+    let peer_did = peer_identity.did.clone();
+    let peer_device = peer_identity.device_id.clone();
+    let peer_public_key = peer_identity.public_key.clone();
+
+    // Verify NodeId matches DID + device derivation
+    let expected_node_id = NodeId::from_did_device(&peer_did, &peer_device)?;
+    if peer_node_id.as_bytes() != expected_node_id.as_bytes() {
+        return Err(anyhow!(
+            "Bootstrap peer {} NodeId verification failed: claimed {} but expected {} from DID {} + device {}",
+            address,
+            peer_node_id.to_hex(),
+            expected_node_id.to_hex(),
+            peer_did,
+            peer_device
+        ));
     }
-    
-    // Create peer info for successful connection
-    // Note: In production, we would parse the peer's identity from handshake response
-    // For now, we derive a temporary NodeId for the bootstrap peer
-    let bootstrap_did = format!("did:zhtp:bootstrap-{}", hex::encode(&lib_crypto::hash_blake3(address.as_bytes())));
-    let bootstrap_device = "bootstrap-node";
-    
-    // Derive NodeId from bootstrap peer's synthetic identity
-    let peer_node_id = NodeId::from_did_device(&bootstrap_did, bootstrap_device)
-        .map_err(|e| anyhow!("Failed to derive bootstrap peer NodeId: {}", e))?;
-    
-    let peer_id = PublicKey::new(format!("bootstrap-{}", address).into_bytes());
+
     let mut addresses = HashMap::new();
     addresses.insert(crate::protocols::NetworkProtocol::TCP, address.to_string());
-    
+
     tracing::info!(
-        "✓ Bootstrap peer {} has NodeId: {} (derived from DID + device)",
+        "✅ Authenticated bootstrap peer {} - NodeId: {} (DID: {}, device: {})",
         address,
-        peer_node_id.to_hex()
+        peer_node_id.to_hex(),
+        peer_did,
+        peer_device
     );
-    
+
     Ok(PeerInfo {
-        id: peer_id,
+        id: peer_public_key,
         node_id: Some(peer_node_id),
-        did: bootstrap_did,
-        device_name: bootstrap_device.to_string(),
+        did: peer_did,
+        device_name: peer_device,
         protocols: vec![crate::protocols::NetworkProtocol::TCP],
         addresses,
         last_seen: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
