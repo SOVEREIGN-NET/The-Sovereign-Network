@@ -847,9 +847,10 @@ impl MultiHopRouter {
         // Add edges and adjacency relationships
         for (peer_id, connection) in connections {
             // Create bidirectional edges
+            // **MIGRATION (Ticket #146):** Changed from connection.peer_id to connection.peer
             let edge = NetworkEdge {
                 source: peer_id.clone(),
-                destination: connection.peer_id.clone(),
+                destination: connection.peer.clone(),
                 protocol: connection.protocol.clone(),
                 weight: self.calculate_edge_weight(connection),
                 quality_metrics: EdgeQualityMetrics {
@@ -862,13 +863,13 @@ impl MultiHopRouter {
                 last_updated: connection.connected_at,
             };
             
-            graph.edges.insert((peer_id.clone(), connection.peer_id.clone()), edge.clone());
+            graph.edges.insert((peer_id.clone(), connection.peer.clone()), edge.clone());
             
             // Add to adjacency list
             graph.adjacency_list
                 .entry(peer_id.clone())
                 .or_insert_with(HashSet::new)
-                .insert(connection.peer_id.clone());
+                .insert(connection.peer.clone());
         }
         
         info!(" Updated topology graph: {} nodes, {} edges", 

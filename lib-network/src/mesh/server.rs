@@ -1713,8 +1713,10 @@ impl ZhtpMeshServer {
         let mut connections = self.mesh_connections.write().await;
         if let Some(key_to_remove) = connections.iter()
             .find(|(_, connection)| {
-                // Try to match by peer ID string representation
-                format!("{:?}", connection.peer_id).contains(address)
+                // Try to match by peer DID or public key string representation
+                // **MIGRATION (Ticket #146):** Changed from connection.peer_id to connection.peer
+                format!("{:?}", connection.peer.public_key()).contains(address) ||
+                connection.peer.did().contains(address)
             })
             .map(|(k, _)| k.clone()) {
             connections.remove(&key_to_remove);
