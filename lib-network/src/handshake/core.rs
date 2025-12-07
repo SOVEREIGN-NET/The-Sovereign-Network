@@ -34,6 +34,9 @@ use lib_identity::ZhtpIdentity;
 use lib_crypto::KeyPair;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 
+// SECURITY (P1-2 FIX): Use shared constant for message size limit
+use crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE;
+
 // ============================================================================
 // Error Types
 // ============================================================================
@@ -164,11 +167,12 @@ where
     // Read length prefix (4 bytes, big-endian)
     let len = stream.read_u32().await?;
 
-    // Sanity check: reject unreasonably large messages (>1MB)
-    if len > 1_048_576 {
+    // SECURITY (P1-2 FIX): Use shared constant for consistent size limit across UHP
+    // Reject unreasonably large messages (>1MB)
+    if len as usize > MAX_HANDSHAKE_MESSAGE_SIZE {
         return Err(HandshakeIoError::Protocol(format!(
-            "Message too large: {} bytes",
-            len
+            "Message too large: {} bytes (max: {})",
+            len, MAX_HANDSHAKE_MESSAGE_SIZE
         )));
     }
 
