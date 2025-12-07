@@ -68,8 +68,9 @@ pub use crate::handshake::{
 };
 use lib_crypto::KeyPair;
 
-/// Maximum size for handshake messages (10 MB - generous for future extensibility)
-const MAX_HANDSHAKE_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+// SECURITY (P1-2 FIX): Use shared constant from constants module
+// Ensures consistency across all UHP implementations (1 MB limit)
+use crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE;
 
 /// Handshake timeout duration (30 seconds)
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -360,7 +361,7 @@ pub async fn handshake_as_responder(
 ///
 /// Frame format:
 /// ```text
-/// [4 bytes: message length (little-endian u32)] [N bytes: message payload]
+/// [4 bytes: message length (big-endian u32)] [N bytes: message payload]
 /// ```
 ///
 /// # Arguments
@@ -370,6 +371,9 @@ pub async fn handshake_as_responder(
 /// # Returns
 /// - `Ok(())` - Message sent successfully
 /// - `Err(...)` - Network error or message too large
+///
+/// # Protocol Compatibility
+/// Uses big-endian (network byte order) to match core.rs HandshakeIo implementation
 async fn send_message(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
     // Validate message size
     if data.len() > MAX_HANDSHAKE_MESSAGE_SIZE {
@@ -379,20 +383,21 @@ async fn send_message(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
             MAX_HANDSHAKE_MESSAGE_SIZE
         ));
     }
-    
-    // Send length prefix (4 bytes, little-endian)
+
+    // SECURITY (P1-1 FIX): Use big-endian (network byte order) to match core.rs
+    // This ensures compatibility across different UHP implementations
     let len = data.len() as u32;
-    stream.write_all(&len.to_le_bytes()).await
+    stream.write_u32(len).await
         .map_err(|e| anyhow!("Failed to write message length: {}", e))?;
-    
+
     // Send message payload
     stream.write_all(data).await
         .map_err(|e| anyhow!("Failed to write message payload: {}", e))?;
-    
+
     // Flush to ensure immediate delivery
     stream.flush().await
         .map_err(|e| anyhow!("Failed to flush stream: {}", e))?;
-    
+
     Ok(())
 }
 
@@ -400,7 +405,7 @@ async fn send_message(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
 ///
 /// Frame format:
 /// ```text
-/// [4 bytes: message length (little-endian u32)] [N bytes: message payload]
+/// [4 bytes: message length (big-endian u32)] [N bytes: message payload]
 /// ```
 ///
 /// # Arguments
@@ -409,14 +414,15 @@ async fn send_message(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
 /// # Returns
 /// - `Ok(Vec<u8>)` - Received message bytes
 /// - `Err(...)` - Network error, invalid frame, or message too large
+///
+/// # Protocol Compatibility
+/// Uses big-endian (network byte order) to match core.rs HandshakeIo implementation
 async fn receive_message(stream: &mut TcpStream) -> Result<Vec<u8>> {
-    // Read length prefix (4 bytes, little-endian)
-    let mut len_bytes = [0u8; 4];
-    stream.read_exact(&mut len_bytes).await
-        .map_err(|e| anyhow!("Failed to read message length: {}", e))?;
-    
-    let len = u32::from_le_bytes(len_bytes) as usize;
-    
+    // SECURITY (P1-1 FIX): Use big-endian (network byte order) to match core.rs
+    // This ensures compatibility across different UHP implementations
+    let len = stream.read_u32().await
+        .map_err(|e| anyhow!("Failed to read message length: {}", e))? as usize;
+
     // Validate message size
     if len > MAX_HANDSHAKE_MESSAGE_SIZE {
         return Err(anyhow!(
@@ -425,16 +431,16 @@ async fn receive_message(stream: &mut TcpStream) -> Result<Vec<u8>> {
             MAX_HANDSHAKE_MESSAGE_SIZE
         ));
     }
-    
+
     if len == 0 {
         return Err(anyhow!("Invalid message length: 0 bytes"));
     }
-    
+
     // Read message payload
     let mut data = vec![0u8; len];
     stream.read_exact(&mut data).await
         .map_err(|e| anyhow!("Failed to read message payload: {}", e))?;
-    
+
     Ok(data)
 }
 
