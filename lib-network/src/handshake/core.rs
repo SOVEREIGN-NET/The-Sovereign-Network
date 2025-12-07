@@ -434,8 +434,8 @@ mod tests {
         // Create handshake context
         let ctx = HandshakeContext::new_test();
 
-        // Create in-memory duplex streams
-        let (mut client_stream, mut server_stream) = duplex(8192);
+        // Create in-memory duplex streams (16MB buffer for UHP messages)
+        let (mut client_stream, mut server_stream) = duplex(16 * 1024 * 1024);
 
         // Spawn client and server tasks
         let client_ctx = ctx.clone();
@@ -482,7 +482,7 @@ mod tests {
 
         // First handshake - should succeed
         {
-            let (mut client_stream, mut server_stream) = duplex(8192);
+            let (mut client_stream, mut server_stream) = duplex(16 * 1024 * 1024);
 
             let client_ctx = ctx.clone();
             let client_identity_clone = client_identity.clone();
@@ -516,7 +516,7 @@ mod tests {
         // Note: In practice, replaying would require capturing and resending exact bytes
         // This test verifies the nonce cache prevents duplicate nonces
         {
-            let (mut client_stream, mut server_stream) = duplex(8192);
+            let (mut client_stream, mut server_stream) = duplex(16 * 1024 * 1024);
 
             // Create a ClientHello manually to control the nonce
             let client_hello = ClientHello::new(&client_identity, HandshakeCapabilities::default()).unwrap();
@@ -547,7 +547,7 @@ mod tests {
     /// Test: Stream I/O helpers
     #[tokio::test]
     async fn test_send_recv_message() {
-        let (mut client, mut server) = duplex(8192);
+        let (mut client, mut server) = duplex(16 * 1024 * 1024);
 
         // Create a test message
         let identity = create_test_identity("test-io");
@@ -574,7 +574,7 @@ mod tests {
     /// Test: Message size limit enforcement
     #[tokio::test]
     async fn test_oversized_message_rejection() {
-        let (mut client, mut server) = duplex(8192);
+        let (mut client, mut server) = duplex(16 * 1024 * 1024);
 
         // Send a length that exceeds the limit
         tokio::spawn(async move {
