@@ -308,13 +308,16 @@ GET /api/v1/wallet/balance/{address}
 **Response:**
 ```json
 {
-  "status": "success",
+  "status": "balance_found",
   "address": "zhtp1abc123...",
   "balance": 1500,
-  "pending_balance": 50,
-  "currency": "ZHTP"
+  "pending_balance": 0,
+  "transaction_count": 42,
+  "note": "Pending balance unavailable due to privacy-preserving commitments"
 }
 ```
+
+**Note:** The `pending_balance` field is always 0 because transaction amounts are hidden via Pedersen commitments for privacy. Attempting to estimate pending balances would defeat the privacy guarantees of the system.
 
 #### Transfer Funds
 Transfer funds between wallets.

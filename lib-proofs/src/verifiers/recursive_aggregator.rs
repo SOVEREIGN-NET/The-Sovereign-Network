@@ -84,12 +84,15 @@ pub struct RecursiveProofCache {
 #[derive(Debug)]
 pub struct RecursiveProofAggregator {
     /// Transaction circuit for proving individual transactions
+    #[allow(dead_code)]
     transaction_circuit: TransactionCircuit,
     /// State transition circuit for proving state changes
+    #[allow(dead_code)]
     state_transition_circuit: StateTransitionCircuit,
     /// Verification cache for performance
     proof_cache: RecursiveProofCache,
     /// Circuit configuration
+    #[allow(dead_code)]
     config: CircuitConfig,
     /// Statistics tracking
     aggregation_stats: AggregationStats,
