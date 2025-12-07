@@ -290,6 +290,41 @@ impl BlockchainVerificationResult {
     }
 }
 
+/// Versioned stake entry with timestamp tracking
+///
+/// ENHANCEMENT: Prevents stale data issues during concurrent updates
+#[derive(Debug, Clone)]
+pub struct StakeEntry {
+    /// Stake amount in ZHTP
+    pub amount: u64,
+
+    /// Epoch when this stake was last updated
+    pub epoch: u64,
+
+    /// Timestamp when this stake was last updated (Unix seconds)
+    pub updated_at: u64,
+}
+
+impl StakeEntry {
+    /// Create a new stake entry
+    pub fn new(amount: u64, epoch: u64) -> Self {
+        Self {
+            amount,
+            epoch,
+            updated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        }
+    }
+
+    /// Check if this entry is stale compared to another
+    pub fn is_stale_compared_to(&self, other: &StakeEntry) -> bool {
+        self.epoch < other.epoch ||
+        (self.epoch == other.epoch && self.updated_at < other.updated_at)
+    }
+}
+
 /// Blockchain handshake verifier
 ///
 /// Verifies peer blockchain state and authenticates validators against
@@ -298,15 +333,20 @@ pub struct BlockchainHandshakeVerifier {
     /// Local blockchain context
     local_context: BlockchainHandshakeContext,
 
-    /// Validator stake table (identity_hash -> stake_amount)
+    /// Validator stake table (identity_hash -> versioned stake entry)
     /// SECURITY (P0-1 FIX): Thread-safe with RwLock to prevent race conditions
-    validator_stakes: Arc<RwLock<std::collections::HashMap<Hash, u64>>>,
+    /// ENHANCEMENT: Now uses StakeEntry for timestamp/epoch tracking
+    validator_stakes: Arc<RwLock<std::collections::HashMap<Hash, StakeEntry>>>,
 
     /// Maximum allowed epoch difference (prevents time-travel attacks)
     max_epoch_diff: u64,
 
     /// Maximum allowed height difference for same epoch
     max_height_diff: u64,
+
+    /// Optional rate limiter for DoS protection
+    /// ENHANCEMENT: Prevents verification spam attacks
+    rate_limiter: Option<super::RateLimiter>,
 }
 
 impl BlockchainHandshakeVerifier {
@@ -317,32 +357,71 @@ impl BlockchainHandshakeVerifier {
             validator_stakes: Arc::new(RwLock::new(std::collections::HashMap::new())),
             max_epoch_diff: 5,      // Allow 5 epoch difference
             max_height_diff: 100,   // Allow 100 block difference
+            rate_limiter: None,     // No rate limiting by default
         }
+    }
+
+    /// Add rate limiting to prevent DoS attacks
+    /// ENHANCEMENT: Integrates with UHP rate limiter for verification spam protection
+    pub fn with_rate_limiting(mut self, rate_limiter: super::RateLimiter) -> Self {
+        self.rate_limiter = Some(rate_limiter);
+        self
     }
 
     /// Update validator stakes from on-chain state
     /// SECURITY (P0-1 FIX): Thread-safe update with write lock
-    pub fn update_validator_stakes(&self, stakes: std::collections::HashMap<Hash, u64>) {
+    /// ENHANCEMENT: Uses versioned StakeEntry with epoch tracking
+    pub fn update_validator_stakes(&self, stakes: std::collections::HashMap<Hash, u64>, epoch: u64) {
         let mut stakes_guard = self.validator_stakes.write().unwrap();
-        *stakes_guard = stakes;
+
+        // Convert to StakeEntry and only update if newer
+        for (identity, amount) in stakes {
+            let new_entry = StakeEntry::new(amount, epoch);
+
+            // Only update if newer than existing entry
+            if let Some(existing) = stakes_guard.get(&identity) {
+                if !existing.is_stale_compared_to(&new_entry) {
+                    continue; // Skip stale updates
+                }
+            }
+
+            stakes_guard.insert(identity, new_entry);
+        }
     }
 
     /// Add a single validator stake
     /// SECURITY (P0-1 FIX): Thread-safe insert with write lock
-    pub fn add_validator_stake(&self, identity: Hash, stake: u64) {
+    /// ENHANCEMENT: Uses versioned StakeEntry with epoch tracking
+    pub fn add_validator_stake(&self, identity: Hash, stake: u64, epoch: u64) {
         let mut stakes_guard = self.validator_stakes.write().unwrap();
-        stakes_guard.insert(identity, stake);
+        let new_entry = StakeEntry::new(stake, epoch);
+
+        // Only update if newer than existing entry
+        if let Some(existing) = stakes_guard.get(&identity) {
+            if !existing.is_stale_compared_to(&new_entry) {
+                return; // Skip stale update
+            }
+        }
+
+        stakes_guard.insert(identity, new_entry);
     }
     
     /// Verify peer blockchain context and determine tier
     ///
     /// # Security Checks
     ///
-    /// 1. **Chain ID Verification**: Prevents cross-chain replay attacks
-    /// 2. **Genesis Hash Match**: Ensures same network
-    /// 3. **Block Hash Verification**: Detects chain forks
-    /// 4. **Epoch Alignment**: Prevents time-travel attacks
-    /// 5. **Validator Stake Verification**: Authenticates validators
+    /// 1. **Rate Limiting**: Prevents verification spam DoS (if enabled)
+    /// 2. **Chain ID Verification**: Prevents cross-chain replay attacks
+    /// 3. **Genesis Hash Match**: Ensures same network
+    /// 4. **Block Hash Verification**: Detects chain forks
+    /// 5. **Epoch Alignment**: Prevents time-travel attacks
+    /// 6. **Validator Stake Verification**: Authenticates validators
+    ///
+    /// # Parameters
+    ///
+    /// - `peer_context`: Blockchain context from peer
+    /// - `peer_identity`: Optional peer identity hash for stake verification
+    /// - `peer_ip`: Optional peer IP address for rate limiting
     ///
     /// # Returns
     ///
@@ -351,7 +430,24 @@ impl BlockchainHandshakeVerifier {
         &self,
         peer_context: &BlockchainHandshakeContext,
         peer_identity: Option<&Hash>,
+        peer_ip: Option<std::net::IpAddr>,
     ) -> Result<BlockchainVerificationResult> {
+        // 0. Rate limiting check (if enabled)
+        // ENHANCEMENT: Prevents verification spam DoS attacks
+        if let Some(ref rate_limiter) = self.rate_limiter {
+            if let Some(ip) = peer_ip {
+                if let Err(e) = rate_limiter.check_handshake(ip) {
+                    tracing::warn!(
+                        security_event = "rate_limit_exceeded",
+                        peer_ip = ?ip,
+                        error = ?e,
+                    );
+                    return Ok(BlockchainVerificationResult::failure(
+                        "Rate limit exceeded".to_string()
+                    ));
+                }
+            }
+        }
         // 1. Verify chain_id matches (prevents cross-chain replay)
         if self.local_context.chain_id != peer_context.chain_id {
             return Ok(BlockchainVerificationResult::failure(
@@ -440,12 +536,15 @@ impl BlockchainHandshakeVerifier {
 
         // 7. Determine peer tier based on stake
         // SECURITY (P0-1 FIX): Thread-safe read access to validator stakes
+        // ENHANCEMENT: Now uses StakeEntry with versioning
         let peer_tier = if let Some(stake) = peer_context.validator_stake {
             // Peer claims to be a validator - verify against on-chain stake table
             if let Some(peer_id) = peer_identity {
                 let stakes_guard = self.validator_stakes.read().unwrap();
                 match stakes_guard.get(peer_id) {
-                    Some(&on_chain_stake) => {
+                    Some(stake_entry) => {
+                        let on_chain_stake = stake_entry.amount;
+
                         // Verify claimed stake matches on-chain stake
                         if stake != on_chain_stake {
                             // SECURITY (P1-3 FIX): Sanitize error message
@@ -454,6 +553,8 @@ impl BlockchainHandshakeVerifier {
                                 peer_id = ?peer_id,
                                 claimed = stake,
                                 actual = on_chain_stake,
+                                stake_epoch = stake_entry.epoch,
+                                stake_updated_at = stake_entry.updated_at,
                             );
                             return Ok(BlockchainVerificationResult::failure(
                                 "Validator authentication failed".to_string()
@@ -577,7 +678,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.chain_id = "different_chain".to_string();
         
-        let result = verifier.verify_peer(&peer_ctx, None).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
         assert!(!result.verified);
         assert!(result.details.contains("Chain ID mismatch"));
     }
@@ -590,7 +691,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.genesis_hash = "different_genesis".to_string();
         
-        let result = verifier.verify_peer(&peer_ctx, None).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
         assert!(!result.verified);
         assert!(result.details.contains("Genesis hash mismatch"));
     }
@@ -603,7 +704,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.block_hash = Hash::from_bytes(&[2u8; 32]); // Different hash at same height
         
-        let result = verifier.verify_peer(&peer_ctx, None).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
         assert!(!result.verified);
         assert!(result.fork_detected);
         assert!(result.details.contains("Fork detected"));
@@ -617,7 +718,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.epoch = 200; // More than max_epoch_diff away
         
-        let result = verifier.verify_peer(&peer_ctx, None).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
         assert!(!result.verified);
         assert!(result.epoch_mismatch);
         assert!(result.details.contains("Epoch mismatch"));
@@ -636,7 +737,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.validator_stake = Some(validator_stake);
         
-        let result = verifier.verify_peer(&peer_ctx, Some(&validator_id)).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, Some(&validator_id), None).unwrap();
         assert!(result.verified);
         assert_eq!(result.peer_tier, PeerTier::Validator);
     }
@@ -652,7 +753,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.validator_stake = Some(3_000_000_000); // Claimed stake doesn't match
         
-        let result = verifier.verify_peer(&peer_ctx, Some(&validator_id)).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, Some(&validator_id), None).unwrap();
         assert!(!result.verified);
         assert!(result.details.contains("Stake mismatch"));
     }
@@ -667,7 +768,7 @@ mod tests {
         peer_ctx.validator_stake = Some(2_000_000_000);
         
         // Validator not in stake table
-        let result = verifier.verify_peer(&peer_ctx, Some(&validator_id)).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, Some(&validator_id), None).unwrap();
         assert!(!result.verified);
         assert!(result.details.contains("not found in on-chain stake table"));
     }
@@ -685,7 +786,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.validator_stake = Some(node_stake);
         
-        let result = verifier.verify_peer(&peer_ctx, Some(&node_id)).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, Some(&node_id), None).unwrap();
         assert!(result.verified);
         assert_eq!(result.peer_tier, PeerTier::StakedNode);
     }
@@ -697,7 +798,7 @@ mod tests {
         
         let peer_ctx = create_test_context();
         
-        let result = verifier.verify_peer(&peer_ctx, None).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
         assert!(result.verified);
         assert_eq!(result.peer_tier, PeerTier::Unverified);
         assert!(!result.fork_detected);
