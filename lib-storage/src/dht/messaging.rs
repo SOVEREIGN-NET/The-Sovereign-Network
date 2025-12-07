@@ -269,6 +269,25 @@ fn generate_response_id(original_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_identity::{ZhtpIdentity, IdentityType};
+    use crate::types::dht_types::DhtPeerIdentity;
+
+    fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Device,
+            None,
+            None,
+            device_name,
+            None,
+        ).expect("Failed to create test identity");
+        
+        DhtPeerIdentity {
+            node_id: identity.node_id.clone(),
+            public_key: identity.public_key.clone(),
+            did: identity.did.clone(),
+            device_id: device_name.to_string(),
+        }
+    }
 
     fn dummy_pq_signature() -> lib_crypto::PostQuantumSignature {
         lib_crypto::PostQuantumSignature {
@@ -311,7 +330,7 @@ mod tests {
         };
         
         let test_node = DhtNode {
-            id: NodeId::from_bytes([2u8; 32]),
+            peer: create_test_peer("test-node"),
             addresses: vec!["127.0.0.1:33442".to_string()],
             public_key: dummy_pq_signature(),
             last_seen: 0,

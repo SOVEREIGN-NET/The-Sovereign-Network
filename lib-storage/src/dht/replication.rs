@@ -68,8 +68,8 @@ impl DhtReplication {
         // Attempt to replicate to each target node
         for node in replica_nodes {
             match self.replicate_to_node(&key, &value, &node).await {
-                Ok(_) => successful_replicas.push(node.id.clone()),
-                Err(_) => failed_replicas.push(node.id.clone()),
+                Ok(_) => successful_replicas.push(node.peer.node_id().clone()),
+                Err(_) => failed_replicas.push(node.peer.node_id().clone()),
             }
         }
         
@@ -103,10 +103,10 @@ impl DhtReplication {
 
         // Create DHT store message for replication
         let _message = crate::types::dht_types::DhtMessage {
-            message_id: hex::encode(&blake3::hash(&[key.as_bytes(), value, target_node.id.as_bytes() as &[u8]].concat()).as_bytes()[..8]),
+            message_id: hex::encode(&blake3::hash(&[key.as_bytes(), value, target_node.peer.node_id().as_bytes()].concat()).as_bytes()[..8]),
             message_type: crate::types::dht_types::DhtMessageType::Store,
             sender_id: self.local_id.clone(),
-            target_id: Some(target_node.id.clone()),
+            target_id: Some(target_node.peer.node_id().clone()),
             key: Some(key.to_string()),
             value: Some(value.to_vec()),
             nodes: None, // Not needed for store operation
@@ -124,7 +124,7 @@ impl DhtReplication {
         println!(" Replicating key '{}' ({} bytes) to node {}", 
                 key, 
                 value.len(), 
-                hex::encode(&target_node.id.as_bytes()[..4]));
+                hex::encode(&target_node.peer.node_id().as_bytes()[..4]));
 
         // Log successful replication (metrics would be handled by a separate metrics system)
         println!("Replication message created for key '{}'", key);
@@ -187,8 +187,9 @@ impl DhtReplication {
         }
         
         // Find nodes that don't already have this replica
+        // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for comparison
         let candidate_nodes: Vec<&DhtNode> = available_nodes.iter()
-            .filter(|node| !status.replica_nodes.contains(&node.id) && node.id != self.local_id)
+            .filter(|node| !status.replica_nodes.contains(node.peer.node_id()) && *node.peer.node_id() != self.local_id)
             .take(needed_replicas)
             .collect();
         
@@ -202,7 +203,7 @@ impl DhtReplication {
         let mut new_replicas = Vec::new();
         for node in candidate_nodes {
             if let Ok(_) = self.replicate_to_node(key, &value, node).await {
-                new_replicas.push(node.id.clone());
+                new_replicas.push(node.peer.node_id().clone());
             }
         }
         

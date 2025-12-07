@@ -106,12 +106,14 @@ impl DhtNetwork {
     }
     
     /// Send PING message to check node liveness
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
     pub async fn ping(&self, target: &DhtNode) -> Result<bool> {
         let ping_message = DhtMessage {
             message_id: generate_message_id(),
             message_type: DhtMessageType::Ping,
-            sender_id: self.local_node.id.clone(),
-            target_id: Some(target.id.clone()),
+            sender_id: self.local_node.peer.node_id().clone(),
+            target_id: Some(target.peer.node_id().clone()),
             key: None,
             value: None,
             nodes: None,
@@ -123,11 +125,12 @@ impl DhtNetwork {
         self.send_message(target, ping_message).await?;
         
         // Wait for PONG response
+        // **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for response matching
         let start_time = SystemTime::now();
         while start_time.elapsed()? < self.timeout_duration {
             if let Ok((response, _)) = self.receive_message().await {
                 if matches!(response.message_type, DhtMessageType::Pong) &&
-                   response.sender_id == target.id {
+                   response.sender_id == *target.peer.node_id() {
                     return Ok(true);
                 }
             }
@@ -137,11 +140,13 @@ impl DhtNetwork {
     }
     
     /// Send FIND_NODE query
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
     pub async fn find_node(&self, target: &DhtNode, query_id: NodeId) -> Result<Vec<DhtNode>> {
         let find_node_message = DhtMessage {
             message_id: generate_message_id(),
             message_type: DhtMessageType::FindNode,
-            sender_id: self.local_node.id.clone(),
+            sender_id: self.local_node.peer.node_id().clone(),
             target_id: Some(query_id),
             key: None,
             value: None,
@@ -154,11 +159,12 @@ impl DhtNetwork {
         self.send_message(target, find_node_message).await?;
         
         // Wait for response
+        // **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for response matching
         let start_time = SystemTime::now();
         while start_time.elapsed()? < self.timeout_duration {
             if let Ok((response, _)) = self.receive_message().await {
                 if matches!(response.message_type, DhtMessageType::FindNodeResponse) &&
-                   response.sender_id == target.id {
+                   response.sender_id == *target.peer.node_id() {
                     return Ok(response.nodes.unwrap_or_default());
                 }
             }
@@ -168,12 +174,14 @@ impl DhtNetwork {
     }
     
     /// Send FIND_VALUE query
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
     pub async fn find_value(&self, target: &DhtNode, key: String) -> Result<DhtQueryResponse> {
         let find_value_message = DhtMessage {
             message_id: generate_message_id(),
             message_type: DhtMessageType::FindValue,
-            sender_id: self.local_node.id.clone(),
-            target_id: Some(target.id.clone()),
+            sender_id: self.local_node.peer.node_id().clone(),
+            target_id: Some(target.peer.node_id().clone()),
             key: Some(key.clone()),
             value: None,
             nodes: None,
@@ -185,11 +193,12 @@ impl DhtNetwork {
         self.send_message(target, find_value_message).await?;
         
         // Wait for response
+        // **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for response matching
         let start_time = SystemTime::now();
         while start_time.elapsed()? < self.timeout_duration {
             if let Ok((response, _)) = self.receive_message().await {
                 if matches!(response.message_type, DhtMessageType::FindValueResponse) &&
-                   response.sender_id == target.id {
+                   response.sender_id == *target.peer.node_id() {
                     if let Some(value) = response.value {
                         return Ok(DhtQueryResponse::Value(value));
                     } else if let Some(nodes) = response.nodes {
@@ -203,12 +212,14 @@ impl DhtNetwork {
     }
     
     /// Send STORE message
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
     pub async fn store(&self, target: &DhtNode, key: String, value: Vec<u8>) -> Result<bool> {
         let store_message = DhtMessage {
             message_id: generate_message_id(),
             message_type: DhtMessageType::Store,
-            sender_id: self.local_node.id.clone(),
-            target_id: Some(target.id.clone()),
+            sender_id: self.local_node.peer.node_id().clone(),
+            target_id: Some(target.peer.node_id().clone()),
             key: Some(key),
             value: Some(value),
             nodes: None,
@@ -220,11 +231,12 @@ impl DhtNetwork {
         self.send_message(target, store_message).await?;
         
         // Wait for acknowledgment
+        // **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for response matching
         let start_time = SystemTime::now();
         while start_time.elapsed()? < self.timeout_duration {
             if let Ok((response, _)) = self.receive_message().await {
                 if matches!(response.message_type, DhtMessageType::StoreResponse) &&
-                   response.sender_id == target.id {
+                   response.sender_id == *target.peer.node_id() {
                     return Ok(true);
                 }
             }
@@ -234,13 +246,15 @@ impl DhtNetwork {
     }
     
     /// Handle incoming message and generate appropriate response
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for responses
     pub async fn handle_incoming_message(&self, message: DhtMessage, _sender_addr: SocketAddr) -> Result<Option<DhtMessage>> {
         match message.message_type {
             DhtMessageType::Ping => {
                 Ok(Some(DhtMessage {
                     message_id: generate_message_id(),
                     message_type: DhtMessageType::Pong,
-                    sender_id: self.local_node.id.clone(),
+                    sender_id: self.local_node.peer.node_id().clone(),
                     target_id: Some(message.sender_id),
                     key: None,
                     value: None,
@@ -254,10 +268,11 @@ impl DhtNetwork {
             DhtMessageType::FindNode => {
                 // In a implementation, this would query the routing table
                 // For now, return empty node list
+                // **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
                 Ok(Some(DhtMessage {
                     message_id: generate_message_id(),
                     message_type: DhtMessageType::FindNodeResponse,
-                    sender_id: self.local_node.id.clone(),
+                    sender_id: self.local_node.peer.node_id().clone(),
                     target_id: Some(message.sender_id),
                     key: None,
                     value: None,
@@ -271,10 +286,11 @@ impl DhtNetwork {
             DhtMessageType::FindValue => {
                 // In a implementation, this would check local storage
                 // For now, return empty node list (value not found)
+                // **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
                 Ok(Some(DhtMessage {
                     message_id: generate_message_id(),
                     message_type: DhtMessageType::FindValueResponse,
-                    sender_id: self.local_node.id.clone(),
+                    sender_id: self.local_node.peer.node_id().clone(),
                     target_id: Some(message.sender_id),
                     key: message.key,
                     value: None,
@@ -287,10 +303,11 @@ impl DhtNetwork {
             
             DhtMessageType::Store => {
                 // In a implementation, this would store the key-value pair
+                // **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
                 Ok(Some(DhtMessage {
                     message_id: generate_message_id(),
                     message_type: DhtMessageType::StoreResponse,
-                    sender_id: self.local_node.id.clone(),
+                    sender_id: self.local_node.peer.node_id().clone(),
                     target_id: Some(message.sender_id),
                     key: None,
                     value: None,
@@ -324,6 +341,25 @@ fn generate_message_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_identity::{ZhtpIdentity, IdentityType};
+    use crate::types::dht_types::DhtPeerIdentity;
+
+    fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Device,
+            None,
+            None,
+            device_name,
+            None,
+        ).expect("Failed to create test identity");
+        
+        DhtPeerIdentity {
+            node_id: identity.node_id.clone(),
+            public_key: identity.public_key.clone(),
+            did: identity.did.clone(),
+            device_id: device_name.to_string(),
+        }
+    }
 
     fn dummy_pq_signature() -> lib_crypto::PostQuantumSignature {
         lib_crypto::PostQuantumSignature {
@@ -351,7 +387,7 @@ mod tests {
     #[tokio::test]
     async fn test_network_creation() {
         let test_node = DhtNode {
-            id: NodeId::from_bytes([1u8; 32]),
+            peer: create_test_peer("test-device-1"),
             addresses: vec!["127.0.0.1:33442".to_string()],
             public_key: dummy_pq_signature(),
             last_seen: 0,
@@ -371,7 +407,7 @@ mod tests {
     #[tokio::test]
     async fn test_ping_pong_response() {
         let test_node = DhtNode {
-            id: NodeId::from_bytes([1u8; 32]),
+            peer: create_test_peer("test-device-2"),
             addresses: vec!["127.0.0.1:33443".to_string()],
             public_key: dummy_pq_signature(),
             last_seen: 0,

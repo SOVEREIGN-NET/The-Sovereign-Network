@@ -203,14 +203,92 @@ pub struct StorageCapabilities {
     pub uptime: f64,
 }
 
-/// DHT node information
+/// Unified Peer Identity for DHT operations
+///
+/// **MIGRATION (Ticket #145):** Consolidates NodeId, PublicKey, and DID
+/// into a single structure for complete peer identification.
+///
+/// # Note
+///
+/// This is a storage-local version to avoid circular dependencies with lib-network.
+/// The full `UnifiedPeerId` from lib-network can be converted to this type.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct DhtPeerIdentity {
+    /// Canonical node identifier from lib-identity
+    /// Used for Kademlia distance calculations
+    pub node_id: NodeId,
+    
+    /// Cryptographic public key for signature verification
+    pub public_key: lib_crypto::PublicKey,
+    
+    /// Decentralized Identifier (DID)
+    /// Format: "did:zhtp:<hash>"
+    pub did: String,
+    
+    /// Device identifier (e.g., "laptop", "phone")
+    pub device_id: String,
+}
+
+impl DhtPeerIdentity {
+    /// Create from ZhtpIdentity
+    pub fn from_zhtp_identity(identity: &crate::types::NodeId) -> Result<Self, anyhow::Error> {
+        // In practice, this would extract all components from ZhtpIdentity
+        // For now, we create a minimal version
+        Ok(Self {
+            node_id: identity.clone(),
+            public_key: lib_crypto::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: [0u8; 32],
+            },
+            did: String::from("did:zhtp:placeholder"),
+            device_id: String::from("default"),
+        })
+    }
+    
+    /// Get NodeId reference (for Kademlia routing)
+    pub fn node_id(&self) -> &NodeId {
+        &self.node_id
+    }
+    
+    /// Get PublicKey reference (for signature verification)
+    pub fn public_key(&self) -> &lib_crypto::PublicKey {
+        &self.public_key
+    }
+    
+    /// Get DID reference (for identity validation)
+    pub fn did(&self) -> &str {
+        &self.did
+    }
+    
+    /// Get device ID reference
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+}
+
+/// DHT node information with unified peer identity
+///
+/// **MIGRATION (Ticket #145):** Replaced NodeId-only identity with DhtPeerIdentity
+/// to consolidate peer identification across the network.
+///
+/// # Security Properties
+///
+/// - **NodeId** - Used for Kademlia distance calculations (routing)
+/// - **PublicKey** - Used for signature verification (security)
+/// - **DID** - Used for identity validation (accountability)
+///
+/// # Compatibility
+///
+/// - Kademlia distance calculations still use NodeId (via `peer.node_id()`)
+/// - Signature verification now uses `peer.public_key()` directly
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtNode {
-    /// Node identifier
-    pub id: NodeId,
+    /// Unified peer identity (contains NodeId, PublicKey, DID, device_id)
+    pub peer: DhtPeerIdentity,
     /// Network addresses
     pub addresses: Vec<String>,
-    /// Node public key for secure communication
+    /// Node public key for secure communication (post-quantum signature context)
     pub public_key: PostQuantumSignature,
     /// Last seen timestamp
     pub last_seen: u64,
