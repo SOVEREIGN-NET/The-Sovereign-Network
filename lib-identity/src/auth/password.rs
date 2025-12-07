@@ -497,13 +497,13 @@ mod tests {
         let identity_id = Hash::from_bytes(&[1u8; 32]);
         let seed = [42u8; 32];
         let strong_password = "StrongPass123!";
-        
+
         // Should fail before import
         assert!(pm.set_password(&identity_id, strong_password, &seed).is_err());
-        
+
         // Mark as imported
         pm.mark_identity_imported(&identity_id);
-        
+
         // Should work after import
         assert!(pm.set_password(&identity_id, strong_password, &seed).is_ok());
     }

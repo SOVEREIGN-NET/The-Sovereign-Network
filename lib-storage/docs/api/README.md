@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+﻿<<<<<<< HEAD
 # lib-storage API Reference
 
 Complete API documentation for the ZHTP Unified Storage System.
@@ -393,7 +393,7 @@ println!("  Storage used: {} bytes", stats.storage_stats.total_storage_used);
 
 ```rust
 // Primary identifiers
-pub type NodeId = Hash;
+pub use lib_identity::NodeId;
 pub type ContentHash = Hash;
 pub type DhtKey = Hash;
 
@@ -878,7 +878,7 @@ println!("  Storage used: {} bytes", stats.storage_stats.total_storage_used);
 
 ```rust
 // Primary identifiers
-pub type NodeId = Hash;
+pub use lib_identity::NodeId;
 pub type ContentHash = Hash;
 pub type DhtKey = Hash;
 
