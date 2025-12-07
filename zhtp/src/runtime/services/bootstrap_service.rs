@@ -29,10 +29,9 @@ impl BootstrapService {
             max_mdns_peers: 10,
         };
         
-        // Load the node's persistent identity to get a real public key
+        // Load the node's persistent identity for authenticated bootstrap
         let node_identity = crate::runtime::create_or_load_node_identity(environment).await?;
-        let local_public_key = node_identity.public_key.clone();
-        let mut bootstrap = DHTBootstrap::new(enhancements, local_public_key);
+        let mut bootstrap = DHTBootstrap::new(enhancements, node_identity);
         
         // Use enhance_bootstrap to discover peers
         let peers = bootstrap.enhance_bootstrap(&[]).await
