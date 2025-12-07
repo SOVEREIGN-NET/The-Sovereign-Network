@@ -18,13 +18,42 @@ pub async fn discover_bootstrap_peers(
     local_identity: &ZhtpIdentity,
 ) -> Result<Vec<PeerInfo>> {
     let mut discovered_peers = Vec::new();
-    
+    let mut failed_connections = Vec::new();
+
+    tracing::info!("Attempting to discover {} bootstrap peers", bootstrap_addresses.len());
+
     for address in bootstrap_addresses {
-        if let Ok(peer_info) = connect_to_bootstrap_peer(address, local_identity).await {
-            discovered_peers.push(peer_info);
+        match connect_to_bootstrap_peer(address, local_identity).await {
+            Ok(peer_info) => {
+                tracing::info!(
+                    "✅ Successfully connected to bootstrap peer {} - NodeId: {}",
+                    address,
+                    peer_info.node_id.as_ref().map(|n| n.to_hex()).unwrap_or_else(|| "none".to_string())
+                );
+                discovered_peers.push(peer_info);
+            }
+            Err(e) => {
+                tracing::warn!("❌ Failed to connect to bootstrap peer {}: {}", address, e);
+                failed_connections.push((address.clone(), e.to_string()));
+            }
         }
     }
-    
+
+    if discovered_peers.is_empty() && !bootstrap_addresses.is_empty() {
+        return Err(anyhow!(
+            "Failed to connect to any bootstrap peers ({} attempted, {} failed): {:?}",
+            bootstrap_addresses.len(),
+            failed_connections.len(),
+            failed_connections
+        ));
+    }
+
+    tracing::info!(
+        "Bootstrap discovery complete: {} successful, {} failed",
+        discovered_peers.len(),
+        failed_connections.len()
+    );
+
     Ok(discovered_peers)
 }
 
@@ -40,29 +69,53 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
     use tokio::net::TcpStream;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let addr: std::net::SocketAddr = address.parse()?;
-    let mut stream = TcpStream::connect(addr).await?;
+    let addr: std::net::SocketAddr = address.parse()
+        .map_err(|e| anyhow!("Invalid bootstrap address '{}': {}", address, e))?;
+
+    let mut stream = TcpStream::connect(addr).await
+        .map_err(|e| {
+            tracing::warn!("Failed to connect to bootstrap peer {}: {}", address, e);
+            anyhow!("Connection failed to {}: {}", address, e)
+        })?;
 
     // Create handshake context with replay protection
-    let ctx = crate::handshake::HandshakeContext::default();
+    // Use temporary in-memory nonce cache for bootstrap (ephemeral session)
+    let nonce_cache = crate::handshake::NonceCache::open_default(
+        "/tmp/zhtp_bootstrap_nonce_cache",
+        300 // 5 minute TTL for nonces
+    ).map_err(|e| {
+        tracing::warn!("Failed to open nonce cache, bootstrap may be vulnerable to replay attacks: {}", e);
+        anyhow!("Nonce cache initialization failed: {}", e)
+    })?;
+    let ctx = crate::handshake::HandshakeContext::new(nonce_cache);
 
     // Set up capabilities for bootstrap handshake
+    // SECURITY: PQC enabled for post-quantum security (P1-2 fix)
     let capabilities = crate::handshake::HandshakeCapabilities {
-        supports_pqc: false, // Bootstrap can use classical crypto for speed
+        protocols: vec!["tcp".to_string(), "quic".to_string()],
+        max_throughput: 10_000_000, // 10 MB/s
         max_message_size: 1024 * 1024, // 1 MB
-        protocol_version: crate::handshake::UHP_VERSION,
-        extensions: vec![],
+        encryption_methods: vec!["chacha20-poly1305".to_string()],
+        pqc_support: true, // Enable PQC for quantum resistance
+        dht_capable: true,
+        relay_capable: false,
+        storage_capacity: 0,
+        web4_capable: false,
+        custom_features: vec![],
     };
 
     // Perform UHP authenticated handshake with bootstrap peer
-    tracing::info!("Initiating UHP handshake with bootstrap peer {}", address);
+    tracing::info!("Initiating UHP handshake with bootstrap peer {} (PQC enabled)", address);
 
     let result = crate::handshake::handshake_as_initiator(
         &mut stream,
         &ctx,
         local_identity,
         capabilities,
-    ).await.map_err(|e| anyhow!("UHP handshake failed with {}: {}", address, e))?;
+    ).await.map_err(|e| {
+        tracing::error!("UHP handshake failed with bootstrap peer {}: {}", address, e);
+        anyhow!("UHP handshake failed with {}: {}", address, e)
+    })?;
 
     // Extract authenticated peer information from handshake result
     let peer_identity = &result.peer_identity;
