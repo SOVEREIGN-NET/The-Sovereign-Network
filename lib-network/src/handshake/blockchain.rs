@@ -63,6 +63,8 @@
 use anyhow::{Result, anyhow};
 use lib_crypto::Hash;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, RwLock};
+use subtle::ConstantTimeEq;
 
 // Re-export ChainSummary from lib-consensus for blockchain state verification
 pub use lib_consensus::ChainSummary;
@@ -76,29 +78,36 @@ pub use lib_consensus::ChainSummary;
 pub struct BlockchainHandshakeContext {
     /// Chain identifier (prevents cross-chain replay attacks)
     pub chain_id: String,
-    
+
     /// Current block hash (detects chain forks)
     pub block_hash: Hash,
-    
+
+    /// Parent block hash (P1-2 FIX: enables fork detection across heights)
+    pub parent_hash: Option<Hash>,
+
+    /// Recent block hashes (P1-2 FIX: for common ancestor verification)
+    /// Last N block hashes for detecting divergence
+    pub recent_block_hashes: Vec<Hash>,
+
     /// Current epoch number (consensus round alignment)
     pub epoch: u64,
-    
+
     /// Current block height
     pub height: u64,
-    
+
     /// Validator stake (if peer is a validator)
     pub validator_stake: Option<u64>,
-    
+
     /// Genesis hash (ensures same network)
     pub genesis_hash: String,
-    
+
     /// Validator set hash (ensures compatible validator set)
     pub validator_set_hash: String,
 }
 
 impl BlockchainHandshakeContext {
     /// Create blockchain context from chain summary and latest block
-    /// 
+    ///
     /// # Arguments
     /// * `summary` - Chain summary with validator and network info
     /// * `latest_block_hash` - Hash of the latest block (from blockchain.latest_block())
@@ -109,8 +118,12 @@ impl BlockchainHandshakeContext {
         current_epoch: u64,
     ) -> Self {
         Self {
-            chain_id: summary.genesis_hash[..16].to_string(),
+            // SECURITY (P0-2 FIX): Use full genesis hash for chain ID (no truncation)
+            // Prevents collision attacks and ensures 256-bit security
+            chain_id: summary.genesis_hash.clone(),
             block_hash: latest_block_hash,
+            parent_hash: None, // Set via with_parent_hash()
+            recent_block_hashes: Vec::new(), // Set via with_recent_hashes()
             epoch: current_epoch,
             height: summary.height,
             validator_stake: None, // Will be set via with_validator_stake()
@@ -131,6 +144,8 @@ impl BlockchainHandshakeContext {
         Self {
             chain_id,
             block_hash,
+            parent_hash: None,
+            recent_block_hashes: Vec::new(),
             epoch,
             height,
             validator_stake: None,
@@ -138,10 +153,22 @@ impl BlockchainHandshakeContext {
             validator_set_hash,
         }
     }
-    
+
     /// Create context with validator stake information
     pub fn with_validator_stake(mut self, stake: u64) -> Self {
         self.validator_stake = Some(stake);
+        self
+    }
+
+    /// Add parent hash for fork detection (P1-2 FIX)
+    pub fn with_parent_hash(mut self, parent: Hash) -> Self {
+        self.parent_hash = Some(parent);
+        self
+    }
+
+    /// Add recent block hashes for common ancestor verification (P1-2 FIX)
+    pub fn with_recent_hashes(mut self, hashes: Vec<Hash>) -> Self {
+        self.recent_block_hashes = hashes;
         self
     }
 }
@@ -270,13 +297,14 @@ impl BlockchainVerificationResult {
 pub struct BlockchainHandshakeVerifier {
     /// Local blockchain context
     local_context: BlockchainHandshakeContext,
-    
+
     /// Validator stake table (identity_hash -> stake_amount)
-    validator_stakes: std::collections::HashMap<Hash, u64>,
-    
+    /// SECURITY (P0-1 FIX): Thread-safe with RwLock to prevent race conditions
+    validator_stakes: Arc<RwLock<std::collections::HashMap<Hash, u64>>>,
+
     /// Maximum allowed epoch difference (prevents time-travel attacks)
     max_epoch_diff: u64,
-    
+
     /// Maximum allowed height difference for same epoch
     max_height_diff: u64,
 }
@@ -286,20 +314,24 @@ impl BlockchainHandshakeVerifier {
     pub fn new(local_context: BlockchainHandshakeContext) -> Self {
         Self {
             local_context,
-            validator_stakes: std::collections::HashMap::new(),
+            validator_stakes: Arc::new(RwLock::new(std::collections::HashMap::new())),
             max_epoch_diff: 5,      // Allow 5 epoch difference
             max_height_diff: 100,   // Allow 100 block difference
         }
     }
-    
+
     /// Update validator stakes from on-chain state
-    pub fn update_validator_stakes(&mut self, stakes: std::collections::HashMap<Hash, u64>) {
-        self.validator_stakes = stakes;
+    /// SECURITY (P0-1 FIX): Thread-safe update with write lock
+    pub fn update_validator_stakes(&self, stakes: std::collections::HashMap<Hash, u64>) {
+        let mut stakes_guard = self.validator_stakes.write().unwrap();
+        *stakes_guard = stakes;
     }
-    
+
     /// Add a single validator stake
-    pub fn add_validator_stake(&mut self, identity: Hash, stake: u64) {
-        self.validator_stakes.insert(identity, stake);
+    /// SECURITY (P0-1 FIX): Thread-safe insert with write lock
+    pub fn add_validator_stake(&self, identity: Hash, stake: u64) {
+        let mut stakes_guard = self.validator_stakes.write().unwrap();
+        stakes_guard.insert(identity, stake);
     }
     
     /// Verify peer blockchain context and determine tier
@@ -332,13 +364,11 @@ impl BlockchainHandshakeVerifier {
         }
         
         // 2. Verify genesis hash matches (same network)
-        if self.local_context.genesis_hash != peer_context.genesis_hash {
+        // SECURITY (P1-1 FIX): Constant-time comparison to prevent timing side-channels
+        if self.local_context.genesis_hash.len() != peer_context.genesis_hash.len()
+            || self.local_context.genesis_hash.as_bytes().ct_eq(peer_context.genesis_hash.as_bytes()).unwrap_u8() == 0 {
             return Ok(BlockchainVerificationResult::failure(
-                format!(
-                    "Genesis hash mismatch: local={}, peer={}",
-                    self.local_context.genesis_hash,
-                    peer_context.genesis_hash
-                )
+                "Genesis hash mismatch".to_string()
             ));
         }
         
@@ -357,56 +387,79 @@ impl BlockchainHandshakeVerifier {
         }
         
         // 4. Verify epoch alignment (prevents time-travel attacks)
-        let epoch_diff = if self.local_context.epoch > peer_context.epoch {
-            self.local_context.epoch - peer_context.epoch
-        } else {
-            peer_context.epoch - self.local_context.epoch
-        };
-        
-        if epoch_diff > self.max_epoch_diff {
+        // SECURITY (P0-4 FIX): Asymmetric epoch check
+        // Reject peers from the future (time-travel attack)
+        if peer_context.epoch > self.local_context.epoch + 1 {
             return Ok(BlockchainVerificationResult::epoch_mismatch(
                 format!(
-                    "Epoch mismatch too large: local={}, peer={}, diff={}",
+                    "Peer epoch too far in future: local={}, peer={}",
+                    self.local_context.epoch,
+                    peer_context.epoch
+                )
+            ));
+        }
+
+        // Allow historical peers (sync scenarios) up to max_epoch_diff
+        if self.local_context.epoch > peer_context.epoch + self.max_epoch_diff {
+            return Ok(BlockchainVerificationResult::epoch_mismatch(
+                format!(
+                    "Peer epoch too far in past: local={}, peer={}, diff={}",
                     self.local_context.epoch,
                     peer_context.epoch,
-                    epoch_diff
+                    self.local_context.epoch - peer_context.epoch
                 )
             ));
         }
         
-        // 5. Verify height alignment (warn if too far apart)
+        // 5. Verify height alignment
+        // SECURITY (P2-1 FIX): Reject (not just warn) excessive height difference
         let height_diff = if self.local_context.height > peer_context.height {
             self.local_context.height - peer_context.height
         } else {
             peer_context.height - self.local_context.height
         };
-        
+
         if height_diff > self.max_height_diff {
-            tracing::warn!(
-                "Large height difference detected: local={}, peer={}, diff={}",
-                self.local_context.height,
-                peer_context.height,
-                height_diff
-            );
+            return Ok(BlockchainVerificationResult::failure(
+                format!(
+                    "Height difference exceeds safety threshold: local={}, peer={}, diff={}",
+                    self.local_context.height,
+                    peer_context.height,
+                    height_diff
+                )
+            ));
         }
-        
-        // 6. Determine peer tier based on stake
+
+        // 6. Verify validator set compatibility
+        // SECURITY (P0-3 FIX): Enforce validator set verification
+        if !self.verify_validator_set(peer_context)? {
+            return Ok(BlockchainVerificationResult::failure(
+                "Incompatible validator set".to_string()
+            ));
+        }
+
+        // 7. Determine peer tier based on stake
+        // SECURITY (P0-1 FIX): Thread-safe read access to validator stakes
         let peer_tier = if let Some(stake) = peer_context.validator_stake {
             // Peer claims to be a validator - verify against on-chain stake table
             if let Some(peer_id) = peer_identity {
-                match self.validator_stakes.get(peer_id) {
+                let stakes_guard = self.validator_stakes.read().unwrap();
+                match stakes_guard.get(peer_id) {
                     Some(&on_chain_stake) => {
                         // Verify claimed stake matches on-chain stake
                         if stake != on_chain_stake {
+                            // SECURITY (P1-3 FIX): Sanitize error message
+                            tracing::warn!(
+                                security_event = "stake_mismatch",
+                                peer_id = ?peer_id,
+                                claimed = stake,
+                                actual = on_chain_stake,
+                            );
                             return Ok(BlockchainVerificationResult::failure(
-                                format!(
-                                    "Stake mismatch: claimed={}, on_chain={}",
-                                    stake,
-                                    on_chain_stake
-                                )
+                                "Validator authentication failed".to_string()
                             ));
                         }
-                        
+
                         // Determine tier based on stake amount
                         if stake >= PeerTier::Validator.min_stake() {
                             PeerTier::Validator
@@ -418,11 +471,13 @@ impl BlockchainHandshakeVerifier {
                     }
                     None => {
                         // Peer claims stake but not in on-chain table
+                        // SECURITY (P1-3 FIX): Sanitize error message
+                        tracing::warn!(
+                            security_event = "validator_not_found",
+                            peer_id = ?peer_id,
+                        );
                         return Ok(BlockchainVerificationResult::failure(
-                            format!(
-                                "Validator not found in on-chain stake table: {:?}",
-                                peer_id
-                            )
+                            "Validator authentication failed".to_string()
                         ));
                     }
                 }
@@ -438,10 +493,9 @@ impl BlockchainHandshakeVerifier {
         Ok(BlockchainVerificationResult::success(
             peer_tier,
             format!(
-                "Verified peer: tier={:?}, height_diff={}, epoch_diff={}",
+                "Verified peer: tier={:?}, height_diff={}",
                 peer_tier,
-                height_diff,
-                epoch_diff
+                height_diff
             )
         ))
     }
