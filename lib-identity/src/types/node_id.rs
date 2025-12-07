@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_node_id_has_entropy() {
-        set_network_genesis([0x01u8; 32]);
+        let _ = try_set_network_genesis([0x01u8; 32]);
 
         // Same inputs should produce different NodeIds (due to random nonce)
         let id1 = NodeId::from_identity_components(
@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_weak_device_id_rejected() {
-        set_network_genesis([0x01u8; 32]);
+        let _ = try_set_network_genesis([0x01u8; 32]);
 
         let weak_ids = vec!["00000000", "12345678", "aaaaaaaa", "testtest"];
         for weak_id in weak_ids {
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_short_device_id_rejected() {
-        set_network_genesis([0x01u8; 32]);
+        let _ = try_set_network_genesis([0x01u8; 32]);
 
         let result = NodeId::from_identity_components(
             "did:zhtp:test",
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_low_entropy_device_id_rejected() {
-        set_network_genesis([0x01u8; 32]);
+        let _ = try_set_network_genesis([0x01u8; 32]);
 
         let result = NodeId::from_identity_components(
             "did:zhtp:test",
