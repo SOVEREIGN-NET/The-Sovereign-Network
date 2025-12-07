@@ -505,6 +505,11 @@ impl Web4Contract {
         // Extract subdomain part (everything before .zhtp)
         let subdomain = domain.strip_suffix(".zhtp").unwrap();
 
+        // Check that all characters are valid
+        if !domain.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-') {
+            return false;
+        }
+
         // Subdomain must not start or end with hyphen
         if subdomain.starts_with('-') || subdomain.ends_with('-') {
             return false;
@@ -964,7 +969,7 @@ mod tests {
             deployment_data,
         );
 
-        // Add route
+        // Add route (content hash must be 46 chars for Qm prefix)
         let route = ContentRoute {
             path: "/contact".to_string(),
             content_hash: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG".to_string(), // Valid 46-char IPFS hash

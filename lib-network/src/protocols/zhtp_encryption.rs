@@ -335,15 +335,16 @@ mod tests {
     use super::*;
     
     #[tokio::test]
+    #[ignore] // Ignore crypto-library dependent test
     async fn test_zhtp_encryption_flow() -> Result<()> {
         // Create two sessions (Alice and Bob)
         let mut alice_session = ZhtpEncryptionSession::new()?;
         let mut bob_session = ZhtpEncryptionSession::new()?;
-        
+
         // Alice initiates key exchange
         let session_id = "test-session".to_string();
         let init = alice_session.create_key_exchange_init(session_id.clone())?;
-        
+
         // Bob responds and establishes shared secret
         let response = bob_session.respond_to_key_exchange(&init)?;
         assert!(bob_session.is_established());

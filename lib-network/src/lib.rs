@@ -21,6 +21,20 @@ pub use crate::discovery::*;
 pub use crate::relays::*;
 pub use crate::blockchain_sync::{BlockchainSyncManager, EdgeNodeSyncManager};
 
+// Unified Peer Identity System (replaces separate NodeId, PeerId, PublicKey systems)
+pub use crate::identity::{UnifiedPeerId, PeerIdMapper, PeerMapperConfig};
+
+// Unified Handshake Protocol exports
+// NOTE: NodeIdentity is a lightweight version containing only public fields from ZhtpIdentity
+pub use lib_identity::{ZhtpIdentity, types::NodeId};
+pub use crate::handshake::{
+    NodeIdentity, HandshakeCapabilities, NegotiatedCapabilities,
+    HandshakeMessage, HandshakePayload, ClientHello, ServerHello, ClientFinish,
+    ProvisionalHello, ChallengeResponse, ChallengeProof,
+    HandshakeResult, HandshakeError, HandshakeErrorMessage,
+    UHP_VERSION, UHP_VERSION_STRING, MIN_SUPPORTED_VERSION,
+};
+
 
 // Native binary DHT protocol with lib-storage backend
 // DHT client layer is deprecated; kept temporarily for compatibility
@@ -39,6 +53,8 @@ pub mod relays;
 pub mod routing;
 pub mod protocols;
 pub mod bootstrap;
+pub mod identity; // Unified peer identity system
+pub mod handshake; // Unified Handshake Protocol (UHP)
 pub mod monitoring;
 pub mod zk_integration;
 pub mod testing;

@@ -334,6 +334,14 @@ mod tests {
 
         let runtime = factory.create_runtime("test").unwrap();
 
+        // Minimal valid WASM module (empty module with magic + version)
+        // Magic: \0asm, Version: 1 (little-endian 4 bytes)
+        let valid_wasm = [
+            0x00, 0x61, 0x73, 0x6d, // WASM magic: \0asm
+            0x01, 0x00, 0x00, 0x00, // Version 1
+        ];
+
+        assert!(runtime.validate_code(&valid_wasm).is_ok());
         // Empty code should always fail
         assert!(runtime.validate_code(b"").is_err());
 

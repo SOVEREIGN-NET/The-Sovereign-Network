@@ -251,11 +251,10 @@ mod tests {
         assert_eq!(node.port, 8080);
         assert_eq!(node.blockchain_height, 100);
         assert!(node.is_active());
-        
-        // Test updating last seen
-        let old_last_seen = node.last_seen;
-        std::thread::sleep(std::time::Duration::from_millis(10)); // Sleep 10ms to ensure time advances
+
+        // Test updating last seen - set to a past time first to avoid timing issues
+        node.last_seen = 0; // Set to epoch
         node.update_last_seen();
-        assert!(node.last_seen >= old_last_seen); // >= because timestamps are in seconds
+        assert!(node.last_seen > 0); // Should be updated to current time
     }
 }

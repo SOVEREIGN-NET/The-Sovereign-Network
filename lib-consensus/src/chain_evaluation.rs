@@ -689,15 +689,16 @@ mod tests {
     }
 
     #[test]
-    fn test_different_genesis_mismatch() {
+    fn test_different_genesis_adopts_stronger_chain() {
         let mut local = create_test_chain(5, 1000, 10, 50);
         let mut imported = create_test_chain(7, 2000, 15, 60);
 
         local.genesis_hash = "genesis_a".to_string();
         imported.genesis_hash = "genesis_b".to_string();
 
-        // With genesis mismatch, the system evaluates which network is stronger
-        // and adopts that as the merge base. Imported chain has higher metrics.
+        // With different genesis hashes, the system evaluates which chain is stronger
+        // and adopts the stronger chain as the merge base
+        // Imported has: height 7, 15 identities, 60 tx (stronger than local)
         assert_eq!(
             ChainEvaluator::evaluate_chains(&local, &imported),
             ChainDecision::AdoptImported
