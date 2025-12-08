@@ -761,8 +761,9 @@ mod tests {
     #[tokio::test]
     async fn test_treasury_manager_creation() {
         let manager = TreasuryStatsManager::new().await.unwrap();
-        
-        assert!(manager.total_treasury_balance > 0);
+
+        // Treasury starts at 0, will be updated by integration layer
+        assert_eq!(manager.total_treasury_balance, 0);
         assert!(!manager.fund_data.is_empty());
         assert_eq!(manager.operations_history.len(), 0);
     }

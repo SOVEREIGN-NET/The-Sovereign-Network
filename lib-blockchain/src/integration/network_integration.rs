@@ -251,10 +251,10 @@ mod tests {
         assert_eq!(node.port, 8080);
         assert_eq!(node.blockchain_height, 100);
         assert!(node.is_active());
-        
+
         // Test updating last seen - set to a past time first to avoid timing issues
         node.last_seen = 0; // Set to epoch
         node.update_last_seen();
-        assert!(node.last_seen > 0);
+        assert!(node.last_seen > 0); // Should be updated to current time
     }
 }
