@@ -64,6 +64,10 @@ mod security;
 mod nonce_cache;
 mod observability;
 mod rate_limiter;
+pub mod blockchain;
+
+// Core handshake I/O (Ticket #136)
+pub mod core;
 
 // Re-export security utilities
 pub use security::{
@@ -77,6 +81,18 @@ pub use observability::{
     NoOpObserver, LoggingObserver, Timer,
 };
 pub use rate_limiter::{RateLimiter, RateLimitConfig};
+
+// Re-export blockchain handshake types
+pub use blockchain::{
+    BlockchainHandshakeContext, BlockchainHandshakeVerifier,
+    BlockchainVerificationResult, PeerTier,
+};
+
+// Re-export core handshake functions
+pub use core::{
+    handshake_as_initiator, handshake_as_responder,
+    NonceTracker, HandshakeIoError,
+};
 
 /// UHP Protocol Version
 pub const UHP_VERSION: u8 = 1;

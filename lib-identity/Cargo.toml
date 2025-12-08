@@ -25,6 +25,9 @@ names = { version = "0.14", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
+aes-gcm = "0.10"
+argon2 = "0.5"
+subtle = "2.5"
 
 # CRITICAL FIX C2: Cryptographically secure random number generation
 getrandom = "0.2"
