@@ -10,6 +10,7 @@ use tracing::info;
 use lib_crypto::PublicKey;
 use serde::{Serialize, Deserialize};
 
+use crate::identity::unified_peer::UnifiedPeerId;
 use crate::relays::LongRangeRelay;
 use crate::types::relay_type::LongRangeRelayType;
 use crate::types::geographic::GeographicLocation;
@@ -670,24 +671,30 @@ impl LongRangeRoutingManager {
                 .collect();
             
             if let Some(best_path) = suitable_paths.first() {
-                info!("Selected {} path with quality {:.2}", 
+                info!("Selected {} path with quality {:.2}",
                       format!("{:?}", best_path.path_type), best_path.quality_score);
-                
+
                 // Convert global relay hops to route hops
+                // **MIGRATION (Ticket #146):** RouteHop now uses UnifiedPeerId
                 let route_hops: Vec<RouteHop> = best_path.relay_hops.iter()
-                    .map(|global_hop| RouteHop {
-                        peer_id: PublicKey::new(vec![rand::random(), rand::random(), rand::random()]), // Generated relay peer ID
-                        protocol: match global_hop.relay_type {
-                            LongRangeRelayType::Satellite => NetworkProtocol::Satellite,
-                            LongRangeRelayType::LoRaWAN => NetworkProtocol::LoRaWAN,
-                            LongRangeRelayType::WiFiRelay => NetworkProtocol::TCP,
-                            _ => NetworkProtocol::UDP,
-                        },
-                        relay_id: Some(global_hop.relay_id.clone()),
-                        latency_ms: global_hop.latency_ms,
+                    .map(|global_hop| {
+                        // Generate a temporary PublicKey for relay identification
+                        let relay_pub_key = PublicKey::new(vec![rand::random(), rand::random(), rand::random()]);
+                        let unified_peer = UnifiedPeerId::from_public_key_legacy(relay_pub_key);
+                        RouteHop {
+                            peer_id: unified_peer,
+                            protocol: match global_hop.relay_type {
+                                LongRangeRelayType::Satellite => NetworkProtocol::Satellite,
+                                LongRangeRelayType::LoRaWAN => NetworkProtocol::LoRaWAN,
+                                LongRangeRelayType::WiFiRelay => NetworkProtocol::TCP,
+                                _ => NetworkProtocol::UDP,
+                            },
+                            relay_id: Some(global_hop.relay_id.clone()),
+                            latency_ms: global_hop.latency_ms,
+                        }
                     })
                     .collect();
-                
+
                 return Ok(route_hops);
             }
         }

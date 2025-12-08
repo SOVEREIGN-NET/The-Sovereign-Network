@@ -1,12 +1,16 @@
 use serde::{Deserialize, Serialize};
 use lib_crypto::PublicKey;
 use crate::protocols::NetworkProtocol;
+use crate::identity::unified_peer::UnifiedPeerId;
 
 /// Individual mesh connection between nodes
+///
+/// **MIGRATION (Ticket #146):** Replaced PublicKey-only peer_id with full UnifiedPeerId
+/// to consolidate peer identification across the mesh network.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshConnection {
-    /// Connected peer identity
-    pub peer_id: PublicKey,
+    /// Connected peer unified identity (contains NodeId, PublicKey, DID, device_id)
+    pub peer: UnifiedPeerId,
     /// Connection protocol (Bluetooth, WiFi Direct, LoRaWAN, etc.)
     pub protocol: NetworkProtocol,
     /// Peer's socket address for sending relay queries (IP:port or Bluetooth address)

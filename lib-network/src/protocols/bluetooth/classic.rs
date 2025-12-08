@@ -17,6 +17,7 @@ use tracing::{info, warn, debug};
 use serde::{Serialize, Deserialize};
 
 use lib_crypto::PublicKey;
+use crate::identity::unified_peer::UnifiedPeerId;
 use crate::protocols::zhtp_auth::{ZhtpAuthManager, NodeCapabilities, ZhtpAuthVerification};
 use crate::types::mesh_message::{MeshMessageEnvelope, ZhtpMeshMessage};
 
@@ -2403,13 +2404,15 @@ impl BluetoothClassicProtocol {
         // Find next hop using message router
         if let Some(router) = &self.message_router {
             let router_guard = router.read().await;
-            
-            match router_guard.find_next_hop_for_destination(&envelope.destination).await {
+
+            // Convert destination PublicKey to UnifiedPeerId for routing (Ticket #146)
+            let dest_unified = UnifiedPeerId::from_public_key_legacy(envelope.destination.clone());
+            match router_guard.find_next_hop_for_destination(&dest_unified).await {
                 Ok(next_hop) => {
-                    info!(" Next hop: {:?}", hex::encode(&next_hop.key_id[0..4]));
-                    
-                    // Send to next hop
-                    self.send_mesh_envelope(&next_hop, &envelope).await?;
+                    info!(" Next hop: {:?}", hex::encode(&next_hop.public_key().key_id[0..4]));
+
+                    // Send to next hop (extract PublicKey for envelope)
+                    self.send_mesh_envelope(next_hop.public_key(), &envelope).await?;
                     
                     // Record routing activity for rewards
                     let message_size = envelope.size();

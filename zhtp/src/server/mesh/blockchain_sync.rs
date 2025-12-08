@@ -94,7 +94,7 @@ impl MeshRouter {
                                 match &connection.protocol {
                                     NetworkProtocol::QUIC => {
                                         // Use peer_id (PublicKey) to send via QUIC
-                                        if quic.send_to_peer(&connection.peer_id.key_id, message.clone()).await.is_ok() {
+                                        if quic.send_to_peer(&connection.peer.public_key().key_id, message.clone()).await.is_ok() {
                                             success_count += 1;
                                         }
                                     }
@@ -180,7 +180,7 @@ impl MeshRouter {
                             for (_peer_key, connection) in conns.iter() {
                                 match &connection.protocol {
                                     NetworkProtocol::QUIC => {
-                                        if quic.send_to_peer(&connection.peer_id.key_id, message.clone()).await.is_ok() {
+                                        if quic.send_to_peer(&connection.peer.public_key().key_id, message.clone()).await.is_ok() {
                                             success_count += 1;
                                         }
                                     }
@@ -290,12 +290,15 @@ impl MeshRouter {
     
     /// Send a mesh message to a specific peer
     pub async fn send_to_peer(&self, peer_id: &PublicKey, message: ZhtpMeshMessage) -> Result<()> {
-        info!("📤 Sending message directly to peer {:?}", 
+        info!("📤 Sending message directly to peer {:?}",
               hex::encode(&peer_id.key_id[0..8.min(peer_id.key_id.len())]));
-        
+
+        // Ticket #146: Convert PublicKey to UnifiedPeerId for HashMap lookup
+        let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_id.clone());
+
         // Get peer's connection info
         let connections = self.connections.read().await;
-        let connection = connections.get(peer_id)
+        let connection = connections.get(&unified_peer)
             .ok_or_else(|| anyhow::anyhow!("Peer not found in connections"))?;
         
         let peer_address = connection.peer_address.as_ref()
@@ -312,9 +315,9 @@ impl MeshRouter {
         match &connection.protocol {
             NetworkProtocol::QUIC => {
                 if let Some(quic) = self.quic_protocol.read().await.as_ref() {
-                    quic.send_to_peer(&connection.peer_id.key_id, message).await
+                    quic.send_to_peer(&connection.peer.public_key().key_id, message).await
                         .context("Failed to send QUIC message")?;
-                    info!("✅ Message sent via QUIC to peer {:?}", &connection.peer_id.key_id[..8]);
+                    info!("✅ Message sent via QUIC to peer {:?}", &connection.peer.public_key().key_id[..8]);
                 } else {
                     return Err(anyhow::anyhow!("QUIC protocol not initialized"));
                 }
@@ -339,7 +342,7 @@ impl MeshRouter {
             for (_peer_key, connection) in connections.iter() {
                 match &connection.protocol {
                     NetworkProtocol::QUIC => {
-                        if quic.send_to_peer(&connection.peer_id.key_id, message.clone()).await.is_ok() {
+                        if quic.send_to_peer(&connection.peer.public_key().key_id, message.clone()).await.is_ok() {
                             success_count += 1;
                         }
                     }
@@ -387,10 +390,13 @@ impl MeshRouter {
         let edge_sync = self.edge_sync_manager.read().await;
         let edge_sync_mgr = edge_sync.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Edge sync manager not initialized. Call initialize_edge_sync() first."))?;
-        
+
+        // Ticket #146: Convert PublicKey to UnifiedPeerId for HashMap lookup
+        let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
+
         // Check if peer connection exists
         let connections = self.connections.read().await;
-        let connection = connections.get(peer_pubkey)
+        let connection = connections.get(&unified_peer)
             .ok_or_else(|| anyhow::anyhow!("Peer not connected"))?;
         
         // Register with sync coordinator to prevent duplicate syncs

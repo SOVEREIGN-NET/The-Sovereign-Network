@@ -50,9 +50,10 @@ impl BluetoothRouter {
     }
     
     /// Initialize Bluetooth mesh protocol for phone connectivity
+    // Ticket #146: Updated to use UnifiedPeerId as HashMap key
     pub async fn initialize(
         &self,
-        mesh_connections: Arc<RwLock<HashMap<PublicKey, lib_network::mesh::connection::MeshConnection>>>,
+        mesh_connections: Arc<RwLock<HashMap<lib_network::identity::unified_peer::UnifiedPeerId, lib_network::mesh::connection::MeshConnection>>>,
         peer_discovery_tx: Option<tokio::sync::mpsc::UnboundedSender<PublicKey>>,
         our_public_key: PublicKey,
         blockchain_provider: Option<Arc<dyn lib_network::blockchain_sync::BlockchainProvider>>,
@@ -123,9 +124,10 @@ impl BluetoothRouter {
                             };
                             info!("   📍 GATT address: {}", gatt_address);
                             
-                            // Create mesh connection for GATT peer
+                            // Create mesh connection for GATT peer (Ticket #146: Use UnifiedPeerId)
+                            let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
                             let connection = lib_network::mesh::connection::MeshConnection {
-                                peer_id: peer_pubkey.clone(),
+                                peer: unified_peer,
                                 protocol: lib_network::protocols::NetworkProtocol::BluetoothLE,
                                 peer_address: Some(gatt_address.clone()),
                                 signal_strength: 0.7,
@@ -146,9 +148,10 @@ impl BluetoothRouter {
                                 bootstrap_mode: false,
                             };
                             
-                            // Add to mesh network
-                            let is_new_peer = !mesh_conns.read().await.contains_key(&peer_pubkey);
-                            mesh_conns.write().await.insert(peer_pubkey.clone(), connection);
+                            // Add to mesh network (Ticket #146: Use UnifiedPeerId as key)
+                            let peer_key = connection.peer.clone();
+                            let is_new_peer = !mesh_conns.read().await.contains_key(&peer_key);
+                            mesh_conns.write().await.insert(peer_key, connection);
                             info!("   ✅ Added GATT peer {} to mesh network", handshake.node_id);
                             
                             // FIX: Also register with BluetoothMeshProtocol.current_connections
@@ -363,9 +366,10 @@ impl BluetoothRouter {
                 // Bluetooth connections use BluetoothLE protocol
                 let protocol = lib_network::protocols::NetworkProtocol::BluetoothLE;
                 
-                // Create mesh connection
+                // Create mesh connection (Ticket #146: Use UnifiedPeerId)
+                let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
                 let connection = lib_network::mesh::connection::MeshConnection {
-                    peer_id: peer_pubkey.clone(),
+                    peer: unified_peer,
                     protocol,
                     peer_address: Some(addr.to_string()), // Store Bluetooth peer address for relay queries
                     signal_strength: 0.7, // Bluetooth typically lower than WiFi
@@ -386,11 +390,12 @@ impl BluetoothRouter {
                     bootstrap_mode: false,
                 };
                 
-                // Add to mesh connections
+                // Add to mesh connections (Ticket #146: Use UnifiedPeerId as key)
                 {
                     let mut connections = mesh_router.connections.write().await;
-                    connections.insert(peer_pubkey.clone(), connection);
-                    info!("✅ Bluetooth peer {} added to mesh network ({} total peers)", 
+                    let peer_key = connection.peer.clone();
+                    connections.insert(peer_key, connection);
+                    info!("✅ Bluetooth peer {} added to mesh network ({} total peers)",
                         handshake.node_id, connections.len());
                 }
                 

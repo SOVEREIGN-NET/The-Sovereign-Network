@@ -101,6 +101,10 @@ impl BluetoothClassicRouter {
     
     /// Handle incoming Bluetooth Classic RFCOMM connection
     /// Uses same authentication flow as BLE but over RFCOMM transport
+    ///
+    /// # Security (HIGH-4 Fix)
+    ///
+    /// Rate limiting enforced before processing Bluetooth connections
     pub async fn handle_rfcomm_connection(
         &self,
         mut stream: TcpStream, // TODO: Replace with RfcommStream when implemented
@@ -108,7 +112,13 @@ impl BluetoothClassicRouter {
         mesh_router: &MeshRouter,
     ) -> Result<()> {
         info!("📻 Processing Bluetooth Classic RFCOMM connection from: {}", addr);
-        
+
+        // HIGH-4 FIX: Check rate limit BEFORE processing handshake
+        if let Err(block_duration) = mesh_router.connection_rate_limiter.check_ip(addr.ip()).await {
+            warn!("🚫 Bluetooth connection rejected: IP {} rate limited for {:?}", addr.ip(), block_duration);
+            return Ok(());
+        }
+
         let mut buffer = vec![0; 8192];
         let bytes_read = stream.read(&mut buffer).await
             .context("Failed to read RFCOMM data")?;
@@ -128,9 +138,10 @@ impl BluetoothClassicRouter {
                 // Use BluetoothClassic protocol type
                 let protocol = lib_network::protocols::NetworkProtocol::BluetoothClassic;
                 
-                // Create mesh connection with higher bandwidth
+                // Create mesh connection with higher bandwidth (Ticket #146: Use UnifiedPeerId)
+                let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
                 let connection = lib_network::mesh::connection::MeshConnection {
-                    peer_id: peer_pubkey.clone(),
+                    peer: unified_peer,
                     protocol,
                     peer_address: Some(addr.to_string()),
                     signal_strength: 0.8, // Classic typically better than BLE
@@ -151,11 +162,12 @@ impl BluetoothClassicRouter {
                     bootstrap_mode: false,
                 };
                 
-                // Add to mesh connections
+                // Add to mesh connections (Ticket #146: Use UnifiedPeerId as key)
                 {
                     let mut connections = mesh_router.connections.write().await;
-                    connections.insert(peer_pubkey.clone(), connection);
-                    info!("✅ Bluetooth Classic peer {} added to mesh network ({} total peers)", 
+                    let peer_key = connection.peer.clone();
+                    connections.insert(peer_key, connection);
+                    info!("✅ Bluetooth Classic peer {} added to mesh network ({} total peers)",
                         handshake.node_id, connections.len());
                 }
                 
@@ -250,10 +262,11 @@ impl BluetoothClassicRouter {
                             info!("✅ Connected to {} via Bluetooth Classic RFCOMM!", device.address);
                             connected_count += 1;
                             
-                            // Create mesh connection entry
+                            // Create mesh connection entry (Ticket #146: Use UnifiedPeerId)
                             let peer_pubkey = lib_crypto::PublicKey::new(device.address.as_bytes().to_vec());
+                            let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
                             let connection = lib_network::mesh::connection::MeshConnection {
-                                peer_id: peer_pubkey.clone(),
+                                peer: unified_peer,
                                 protocol: lib_network::protocols::NetworkProtocol::BluetoothClassic,
                                 peer_address: Some(device.address.clone()),
                                 signal_strength: device.rssi.map(|r| (r + 127) as f64 / 127.0).unwrap_or(0.7),
@@ -274,10 +287,11 @@ impl BluetoothClassicRouter {
                                 bootstrap_mode: false,
                             };
                             
-                            // Add to mesh network
+                            // Add to mesh network (Ticket #146: Use UnifiedPeerId as key)
                             let mut connections = mesh_router.connections.write().await;
-                            connections.insert(peer_pubkey, connection);
-                            
+                            let peer_key = connection.peer.clone();
+                            connections.insert(peer_key, connection);
+
                             info!("✅ Added {} to mesh network", device.address);
                             
                             // Store the stream for bidirectional communication

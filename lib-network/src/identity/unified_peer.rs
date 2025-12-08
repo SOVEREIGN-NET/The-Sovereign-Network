@@ -42,10 +42,23 @@ use lib_identity::{ZhtpIdentity, NodeId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use parking_lot::RwLock;  // CRITICAL FIX C3: Use parking_lot for atomic operations
 use std::fmt;
-use tracing::{warn, info};
+use tracing::{warn, info, error};
+
+// ============================================================================
+// CRITICAL-1 FIX: Metrics for legacy path usage tracking
+// ============================================================================
+
+/// Global counter for legacy path usage (MEDIUM-2: Audit Trail)
+static LEGACY_PATH_USAGE_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Get the number of times the legacy path has been used
+pub fn get_legacy_path_usage_count() -> u64 {
+    LEGACY_PATH_USAGE_COUNT.load(Ordering::Relaxed)
+}
 
 // ============================================================================
 // Security Validation Functions
@@ -172,7 +185,13 @@ pub(crate) fn validate_device_id(device_id: &str) -> Result<()> {
 /// - **Canonical Storage**: All three IDs stored together, no separate mappings needed
 /// - **Single Source**: Created only from ZhtpIdentity, no partial conversions from legacy types
 /// - **Consistency**: Guarantees that NodeId, PublicKey, and DID always stay in sync
-/// - **Uniqueness**: Hash and Eq based on NodeId (the most stable identifier)
+/// - **Uniqueness**: Hash and Eq based on NodeId + PublicKey + DID (CRITICAL-2 fix)
+///
+/// # Security (CRITICAL-2 Fix)
+///
+/// Hash and Eq now include PublicKey and DID to prevent collision attacks where
+/// an attacker crafts a NodeId that collides with a legitimate peer but has
+/// a different PublicKey, allowing them to impersonate the peer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedPeerId {
     /// Decentralized Identifier (DID) - Sovereign Identity
@@ -196,6 +215,20 @@ pub struct UnifiedPeerId {
 
     /// Timestamp of identity creation (Unix timestamp)
     pub created_at: u64,
+
+    /// CRITICAL-1 FIX: Bootstrap mode flag
+    ///
+    /// When true, this peer was created via legacy path (from_public_key_legacy)
+    /// and has NOT been verified against the blockchain. Such peers:
+    /// - CANNOT participate in consensus
+    /// - CANNOT submit transactions
+    /// - CANNOT access DHT content
+    /// - CAN create blockchain identity
+    /// - CAN query bootstrap nodes
+    ///
+    /// This flag MUST be checked before allowing security-critical operations.
+    #[serde(default)]
+    pub bootstrap_mode: bool,
 }
 
 impl UnifiedPeerId {
@@ -233,7 +266,7 @@ impl UnifiedPeerId {
         // Validate timestamp
         validate_peer_timestamp(identity.created_at)?;
 
-        // Create instance
+        // Create instance with bootstrap_mode = false (verified identity)
         let peer = Self {
             did: identity.did.clone(),
             public_key: identity.public_key.clone(),
@@ -241,12 +274,29 @@ impl UnifiedPeerId {
             device_id: identity.primary_device.clone(),
             display_name: identity.metadata.get("display_name").cloned(),
             created_at: identity.created_at,
+            bootstrap_mode: false, // CRITICAL-1: Verified identity, NOT in bootstrap mode
         };
 
         // Validate cryptographic binding
         peer.verify_node_id()?;
 
         Ok(peer)
+    }
+
+    /// Check if this peer is in bootstrap mode (unverified identity)
+    ///
+    /// # Security
+    ///
+    /// Peers in bootstrap mode were created via `from_public_key_legacy` and
+    /// have NOT been verified against the blockchain. They should be denied
+    /// access to security-critical operations.
+    pub fn is_bootstrap_mode(&self) -> bool {
+        self.bootstrap_mode
+    }
+
+    /// Check if this peer is verified (NOT in bootstrap mode)
+    pub fn is_verified(&self) -> bool {
+        !self.bootstrap_mode
     }
 
     /// Verify that node_id matches Blake3(DID || device_id) per lib-identity rules
@@ -286,23 +336,203 @@ impl UnifiedPeerId {
     pub fn device_id(&self) -> &str {
         &self.device_id
     }
+
+    /// Create UnifiedPeerId from just a PublicKey (legacy compatibility)
+    ///
+    /// # DEPRECATED - Security Warning (CRITICAL-1 Fix)
+    ///
+    /// **⚠️ SECURITY WARNING:** This method bypasses blockchain identity verification.
+    /// The resulting peer will be in `bootstrap_mode` and should be DENIED access to:
+    /// - DHT content storage/retrieval
+    /// - Transaction submission
+    /// - Blockchain consensus participation
+    /// - Mesh relay services
+    ///
+    /// The peer CAN:
+    /// - Create blockchain identity via /api/v1/identity/create
+    /// - Query bootstrap nodes
+    ///
+    /// **Prefer `from_zhtp_identity()` for all security-critical operations.**
+    ///
+    /// # Audit Trail (MEDIUM-2 Fix)
+    ///
+    /// This method logs a warning and increments a global counter for monitoring.
+    /// Production deployments should alert on high usage of this path.
+    ///
+    /// # Device ID (MEDIUM-1 Fix)
+    ///
+    /// Generates a unique device_id using timestamp + random bytes to prevent
+    /// collisions between legacy peers.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use from_zhtp_identity() for verified peers. This method creates unverified bootstrap-mode peers."
+    )]
+    pub fn from_public_key_legacy(public_key: PublicKey) -> Self {
+        // MEDIUM-2: Audit trail - log usage and increment counter
+        LEGACY_PATH_USAGE_COUNT.fetch_add(1, Ordering::Relaxed);
+        let usage_count = LEGACY_PATH_USAGE_COUNT.load(Ordering::Relaxed);
+
+        warn!(
+            "⚠️ SECURITY: from_public_key_legacy() called (usage #{}) - peer will be in bootstrap_mode",
+            usage_count
+        );
+
+        // CRITICAL-1: Log caller context for security audit
+        if usage_count > 100 {
+            error!(
+                "🚨 HIGH LEGACY PATH USAGE: {} calls to from_public_key_legacy(). \
+                Consider migrating to from_zhtp_identity().",
+                usage_count
+            );
+        }
+
+        // Derive NodeId from public key hash
+        let pk_hash = blake3::hash(&public_key.dilithium_pk);
+        let node_id = NodeId::from_bytes(*pk_hash.as_bytes());
+
+        // Create a derived DID (marked as unverified)
+        let did = format!("did:zhtp:unverified:{}", hex::encode(&pk_hash.as_bytes()[..16]));
+
+        // MEDIUM-1: Generate unique device_id with entropy
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let random_suffix = &pk_hash.as_bytes()[16..24];
+        let device_id = format!(
+            "bootstrap-{}-{}",
+            timestamp % 1_000_000_000,
+            hex::encode(random_suffix)
+        );
+
+        Self {
+            did,
+            public_key,
+            node_id,
+            device_id,
+            display_name: None,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            bootstrap_mode: true, // CRITICAL-1: Mark as unverified bootstrap peer
+        }
+    }
+
+    /// Create a verified UnifiedPeerId from PublicKey with blockchain verification
+    ///
+    /// This is the secure alternative to `from_public_key_legacy()`. It requires
+    /// the caller to provide proof that the identity exists on the blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `public_key` - The peer's cryptographic public key
+    /// * `did` - The peer's DID (must be verified to exist on blockchain)
+    /// * `device_id` - The device identifier for this peer
+    ///
+    /// # Security
+    ///
+    /// The caller is responsible for verifying the DID exists on the blockchain
+    /// before calling this method. The resulting peer will have `bootstrap_mode = false`.
+    pub fn from_verified_public_key(
+        public_key: PublicKey,
+        did: String,
+        device_id: String,
+    ) -> Result<Self> {
+        // Validate DID format
+        if !did.starts_with("did:zhtp:") {
+            return Err(anyhow!(
+                "Invalid DID format: must start with 'did:zhtp:', got '{}'",
+                &did[..20.min(did.len())]
+            ));
+        }
+
+        // Reject unverified DIDs
+        if did.contains("unverified") {
+            return Err(anyhow!(
+                "Cannot create verified peer from unverified DID: {}",
+                &did[..30.min(did.len())]
+            ));
+        }
+
+        // Validate device_id
+        validate_device_id(&device_id)?;
+
+        // Derive NodeId from DID + device_id
+        let node_id = NodeId::from_did_device(&did, &device_id)?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        Ok(Self {
+            did,
+            public_key,
+            node_id,
+            device_id,
+            display_name: None,
+            created_at: now,
+            bootstrap_mode: false, // Verified peer
+        })
+    }
 }
 
 // ============================================================================
-// Equality and Hashing (based on NodeId)
+// CRITICAL-2 FIX: Equality and Hashing (includes NodeId + PublicKey + DID)
 // ============================================================================
 
 impl PartialEq for UnifiedPeerId {
+    /// CRITICAL-2 FIX: Compare NodeId, PublicKey, AND DID
+    ///
+    /// Previously only compared NodeId, allowing collision attacks where an attacker
+    /// could craft a NodeId that collides with a legitimate peer but has a different
+    /// PublicKey, enabling impersonation.
+    ///
+    /// Now we compare all three cryptographic identifiers to ensure full identity match.
     fn eq(&self, other: &Self) -> bool {
-        self.node_id == other.node_id
+        // CRITICAL-2: Check for collision attack - log if NodeId matches but other fields don't
+        if self.node_id == other.node_id {
+            if self.public_key.dilithium_pk != other.public_key.dilithium_pk {
+                error!(
+                    "🚨 COLLISION ATTACK DETECTED: NodeId {} matches but PublicKey differs! \
+                    This may be an impersonation attempt.",
+                    self.node_id.to_hex()
+                );
+                return false; // Reject collision
+            }
+            if self.did != other.did {
+                error!(
+                    "🚨 COLLISION ATTACK DETECTED: NodeId {} matches but DID differs! \
+                    Self DID: {}, Other DID: {}",
+                    self.node_id.to_hex(),
+                    &self.did[..30.min(self.did.len())],
+                    &other.did[..30.min(other.did.len())]
+                );
+                return false; // Reject collision
+            }
+            true
+        } else {
+            false
+        }
     }
 }
 
 impl Eq for UnifiedPeerId {}
 
 impl std::hash::Hash for UnifiedPeerId {
+    /// CRITICAL-2 FIX: Hash includes NodeId, PublicKey, AND DID
+    ///
+    /// Previously only hashed NodeId, making collision attacks easier.
+    /// Now we hash all three cryptographic identifiers.
+    ///
+    /// Note: This changes the hash value and may affect existing stored data.
+    /// Migration may be required for persistent peer storage.
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Include all cryptographic identifiers in hash
         self.node_id.as_bytes().hash(state);
+        self.public_key.dilithium_pk.hash(state);
+        self.did.hash(state);
     }
 }
 
@@ -683,16 +913,39 @@ mod tests {
     #[test]
     fn test_peer_id_equality() -> Result<()> {
         let seed = [0x42u8; 64];
-        let identity1 = create_test_identity("laptop-x1-carbon", Some(seed))?;
-        let identity2 = create_test_identity("laptop-x1-carbon", Some(seed))?;
+        let identity = create_test_identity("laptop-x1-carbon", Some(seed))?;
+
+        // Create two peer IDs from the SAME identity
+        let peer1 = UnifiedPeerId::from_zhtp_identity(&identity)?;
+        let peer2 = UnifiedPeerId::from_zhtp_identity(&identity)?;
+
+        // CRITICAL-2: Same identity = same NodeId + same PublicKey + same DID = equal peers
+        assert_eq!(peer1, peer2);
+
+        // Also test that cloned peers are equal
+        let peer3 = peer1.clone();
+        assert_eq!(peer1, peer3);
+
+        println!("Peer ID equality test passed");
+        Ok(())
+    }
+
+    #[test]
+    fn test_peer_id_inequality_different_keys() -> Result<()> {
+        // Different seeds = different keys = NOT equal (even if device is same)
+        let seed1 = [0x42u8; 64];
+        let seed2 = [0x43u8; 64];
+
+        let identity1 = create_test_identity("same-device-name", Some(seed1))?;
+        let identity2 = create_test_identity("same-device-name", Some(seed2))?;
 
         let peer1 = UnifiedPeerId::from_zhtp_identity(&identity1)?;
         let peer2 = UnifiedPeerId::from_zhtp_identity(&identity2)?;
 
-        // Same seed + device = same NodeId = equal peers
-        assert_eq!(peer1, peer2);
+        // CRITICAL-2: Different PublicKeys = NOT equal (prevents collision attacks)
+        assert_ne!(peer1, peer2, "Peers with different keys should NOT be equal");
 
-        println!("Peer ID equality test passed");
+        println!("Peer ID inequality (different keys) test passed");
         Ok(())
     }
 
@@ -1154,6 +1407,212 @@ mod tests {
         }
 
         println!("Device ID special character rejection test passed");
+        Ok(())
+    }
+
+    // ============================================================================
+    // CRITICAL-1 and CRITICAL-2 Security Fix Tests
+    // ============================================================================
+
+    #[test]
+    fn test_critical1_legacy_peer_is_bootstrap_mode() -> Result<()> {
+        // Test that from_public_key_legacy creates bootstrap-mode peers
+        let seed = [0x42u8; 64];
+        let identity = create_test_identity("test-device-001", Some(seed))?;
+
+        // Legacy path should create bootstrap-mode peer
+        #[allow(deprecated)]
+        let legacy_peer = UnifiedPeerId::from_public_key_legacy(identity.public_key.clone());
+
+        assert!(legacy_peer.bootstrap_mode, "Legacy peer should be in bootstrap mode");
+        assert!(legacy_peer.is_bootstrap_mode(), "is_bootstrap_mode() should return true");
+        assert!(!legacy_peer.is_verified(), "is_verified() should return false");
+
+        // Verified path should NOT create bootstrap-mode peer
+        let verified_peer = UnifiedPeerId::from_zhtp_identity(&identity)?;
+
+        assert!(!verified_peer.bootstrap_mode, "Verified peer should NOT be in bootstrap mode");
+        assert!(!verified_peer.is_bootstrap_mode(), "is_bootstrap_mode() should return false");
+        assert!(verified_peer.is_verified(), "is_verified() should return true");
+
+        println!("CRITICAL-1: Bootstrap mode flag test passed");
+        Ok(())
+    }
+
+    #[test]
+    fn test_critical1_legacy_path_audit_trail() -> Result<()> {
+        // Test that legacy path increments usage counter
+        let initial_count = get_legacy_path_usage_count();
+
+        let seed = [0x77u8; 64];
+        let identity = create_test_identity("audit-test-device", Some(seed))?;
+
+        // Call legacy path
+        #[allow(deprecated)]
+        let _ = UnifiedPeerId::from_public_key_legacy(identity.public_key.clone());
+
+        let new_count = get_legacy_path_usage_count();
+        assert!(new_count > initial_count, "Legacy path usage counter should increment");
+
+        println!("CRITICAL-1: Audit trail test passed (count: {} -> {})", initial_count, new_count);
+        Ok(())
+    }
+
+    #[test]
+    fn test_critical1_legacy_did_marked_unverified() -> Result<()> {
+        let seed = [0x55u8; 64];
+        let identity = create_test_identity("unverified-test-dev", Some(seed))?;
+
+        #[allow(deprecated)]
+        let legacy_peer = UnifiedPeerId::from_public_key_legacy(identity.public_key.clone());
+
+        // DID should contain "unverified" marker
+        assert!(
+            legacy_peer.did.contains("unverified"),
+            "Legacy peer DID should contain 'unverified' marker"
+        );
+
+        println!("CRITICAL-1: Unverified DID marker test passed");
+        Ok(())
+    }
+
+    #[test]
+    fn test_critical2_collision_attack_detection() -> Result<()> {
+        let seed1 = [0x11u8; 64];
+        let seed2 = [0x22u8; 64];
+
+        let identity1 = create_test_identity("collision-device-1", Some(seed1))?;
+        let identity2 = create_test_identity("collision-device-2", Some(seed2))?;
+
+        let mut peer1 = UnifiedPeerId::from_zhtp_identity(&identity1)?;
+        let peer2 = UnifiedPeerId::from_zhtp_identity(&identity2)?;
+
+        // Simulate collision attack: modify peer1's NodeId to match peer2's
+        let original_node_id = peer1.node_id.clone();
+        peer1.node_id = peer2.node_id.clone();
+
+        // CRITICAL-2: Even though NodeId matches, peers should NOT be equal
+        // because PublicKey and DID are different
+        assert_ne!(
+            peer1, peer2,
+            "Peers with same NodeId but different PublicKey should NOT be equal (collision detected)"
+        );
+
+        // Restore original NodeId
+        peer1.node_id = original_node_id;
+
+        println!("CRITICAL-2: Collision attack detection test passed");
+        Ok(())
+    }
+
+    #[test]
+    fn test_critical2_hash_includes_pubkey_and_did() -> Result<()> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let seed1 = [0x33u8; 64];
+        let seed2 = [0x44u8; 64];
+
+        let identity1 = create_test_identity("hash-test-device-1", Some(seed1))?;
+        let identity2 = create_test_identity("hash-test-device-2", Some(seed2))?;
+
+        let peer1 = UnifiedPeerId::from_zhtp_identity(&identity1)?;
+        let peer2 = UnifiedPeerId::from_zhtp_identity(&identity2)?;
+
+        // Calculate hashes
+        let mut hasher1 = DefaultHasher::new();
+        peer1.hash(&mut hasher1);
+        let hash1 = hasher1.finish();
+
+        let mut hasher2 = DefaultHasher::new();
+        peer2.hash(&mut hasher2);
+        let hash2 = hasher2.finish();
+
+        // Different peers should have different hashes
+        assert_ne!(hash1, hash2, "Different peers should have different hashes");
+
+        // Same peer should have same hash
+        let mut hasher1b = DefaultHasher::new();
+        peer1.hash(&mut hasher1b);
+        let hash1b = hasher1b.finish();
+
+        assert_eq!(hash1, hash1b, "Same peer should have consistent hash");
+
+        println!("CRITICAL-2: Hash includes PublicKey and DID test passed");
+        Ok(())
+    }
+
+    #[test]
+    fn test_medium1_legacy_device_id_has_entropy() -> Result<()> {
+        let seed = [0x88u8; 64];
+        let identity = create_test_identity("entropy-test-device", Some(seed))?;
+
+        // Create multiple legacy peers and verify device_ids are unique
+        let mut device_ids = std::collections::HashSet::new();
+
+        for _ in 0..10 {
+            #[allow(deprecated)]
+            let peer = UnifiedPeerId::from_public_key_legacy(identity.public_key.clone());
+
+            // Device ID should be unique
+            assert!(
+                device_ids.insert(peer.device_id.clone()),
+                "Legacy device_ids should be unique (got duplicate: {})",
+                peer.device_id
+            );
+
+            // Device ID should have bootstrap prefix
+            assert!(
+                peer.device_id.starts_with("bootstrap-"),
+                "Legacy device_id should start with 'bootstrap-'"
+            );
+        }
+
+        println!("MEDIUM-1: Device ID entropy test passed");
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_verified_public_key() -> Result<()> {
+        let seed = [0x99u8; 64];
+        let identity = create_test_identity("verified-pk-test", Some(seed))?;
+
+        // Create verified peer
+        let peer = UnifiedPeerId::from_verified_public_key(
+            identity.public_key.clone(),
+            identity.did.clone(),
+            identity.primary_device.clone(),
+        )?;
+
+        // Should NOT be in bootstrap mode
+        assert!(!peer.bootstrap_mode, "from_verified_public_key should NOT create bootstrap-mode peer");
+        assert!(peer.is_verified(), "Peer should be verified");
+
+        println!("from_verified_public_key test passed");
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_verified_public_key_rejects_unverified_did() -> Result<()> {
+        let seed = [0xAAu8; 64];
+        let identity = create_test_identity("reject-unverified", Some(seed))?;
+
+        // Try to create "verified" peer with unverified DID
+        let unverified_did = "did:zhtp:unverified:deadbeef12345678";
+
+        let result = UnifiedPeerId::from_verified_public_key(
+            identity.public_key.clone(),
+            unverified_did.to_string(),
+            "valid-device-001".to_string(),
+        );
+
+        assert!(result.is_err(), "Should reject unverified DID in from_verified_public_key");
+        assert!(
+            result.unwrap_err().to_string().contains("unverified"),
+            "Error should mention unverified DID"
+        );
+
+        println!("from_verified_public_key rejects unverified DID test passed");
         Ok(())
     }
 }

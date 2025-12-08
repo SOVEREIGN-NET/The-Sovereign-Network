@@ -124,9 +124,10 @@ pub async fn handle_tcp_mesh(
                 _ => lib_network::protocols::NetworkProtocol::QUIC,
             };
             
-            // Create mesh connection
+            // Create mesh connection (Ticket #146: Use UnifiedPeerId)
+            let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
             let connection = lib_network::mesh::connection::MeshConnection {
-                peer_id: peer_pubkey.clone(),
+                peer: unified_peer,
                 protocol,
                 peer_address: Some(addr.to_string()),
                 signal_strength: 0.8,
