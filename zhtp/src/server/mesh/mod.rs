@@ -26,3 +26,5 @@ pub mod blockchain_sync;
 pub mod identity_api;
 pub mod authentication_wrapper;
 pub mod routing_integration;
+pub mod rate_limiting;
+pub mod identity_verification;

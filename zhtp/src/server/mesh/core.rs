@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::net::SocketAddr;
 use lib_crypto::PostQuantumSignature;
 use tracing::debug;
+use lib_network::identity::unified_peer::UnifiedPeerId;
 
 /// Rate limiting state for ZHTP getter requests (100 req/30s per identity)
 #[derive(Debug, Clone)]
@@ -70,6 +71,8 @@ use lib_blockchain::BlockchainBroadcastMessage;
 use lib_identity::IdentityManager;
 use lib_storage::dht::DhtStorage;
 use lib_protocols::zhtp::ZhtpRequestHandler;
+use super::rate_limiting::ConnectionRateLimiter;
+use super::identity_verification::IdentityVerificationCache;
 
 use crate::session_manager::SessionManager;
 use super::super::monitoring::{
@@ -80,8 +83,8 @@ use super::super::monitoring::{
 
 /// UDP mesh protocol routing and handling
 pub struct MeshRouter {
-    // Core connection management
-    pub connections: Arc<RwLock<HashMap<PublicKey, MeshConnection>>>,
+    // Core connection management (Ticket #146: Use UnifiedPeerId as key)
+    pub connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
     pub server_id: Uuid,
     pub identity_manager: Option<Arc<RwLock<IdentityManager>>>,
     pub session_manager: Arc<SessionManager>,
@@ -137,6 +140,12 @@ pub struct MeshRouter {
     
     // ZHTP rate limiting (100 req/30s for free getters)
     pub zhtp_rate_limits: Arc<RwLock<HashMap<String, ZhtpRateLimitState>>>,
+
+    // HIGH-4 FIX: Connection rate limiter for DoS protection
+    pub connection_rate_limiter: Arc<ConnectionRateLimiter>,
+
+    // MEDIUM-3 FIX: Identity verification cache for routing
+    pub identity_verification_cache: Arc<IdentityVerificationCache>,
 }
 
 impl MeshRouter {
@@ -188,7 +197,16 @@ impl MeshRouter {
         };
         let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
         let local_node = lib_storage::types::dht_types::DhtNode {
-            id: local_node_id,
+            peer: lib_storage::types::dht_types::DhtPeerIdentity {
+                node_id: local_node_id.clone(),
+                public_key: lib_crypto::PublicKey {
+                    dilithium_pk: vec![],  // Placeholder - will be populated during handshake
+                    kyber_pk: vec![],
+                    key_id: [0u8; 32],
+                },
+                did: format!("did:zhtp:{}", hex::encode(local_node_id.as_bytes())),
+                device_id: "mesh-node".to_string(),
+            },
             addresses: vec![bind_addr.to_string()],
             public_key: PostQuantumSignature::default(),
             last_seen: SystemTime::now()
@@ -268,6 +286,12 @@ impl MeshRouter {
             
             // Initialize rate limiter for ZHTP getters
             zhtp_rate_limits: Arc::new(RwLock::new(HashMap::new())),
+
+            // HIGH-4 FIX: Initialize connection rate limiter for DoS protection
+            connection_rate_limiter: Arc::new(ConnectionRateLimiter::new()),
+
+            // MEDIUM-3 FIX: Initialize identity verification cache
+            identity_verification_cache: Arc::new(IdentityVerificationCache::new()),
         }
     }
 
@@ -400,6 +424,8 @@ impl Clone for MeshRouter {
             network_health_monitor: self.network_health_monitor.clone(),
             mesh_protocol_stats: self.mesh_protocol_stats.clone(),
             zhtp_rate_limits: self.zhtp_rate_limits.clone(),
+            connection_rate_limiter: self.connection_rate_limiter.clone(),
+            identity_verification_cache: self.identity_verification_cache.clone(),
         }
     }
 }

@@ -1,12 +1,14 @@
 //! DHT Node Management
 //! 
 //! Handles DHT node lifecycle, reputation scoring, and capability management.
+//!
+//! **MIGRATION (Ticket #145):** Updated to use DhtPeerIdentity for complete peer identity.
 
-use crate::types::dht_types::{DhtNode, StorageCapabilities, StorageTier};
+use crate::types::dht_types::{DhtNode, StorageCapabilities, StorageTier, DhtPeerIdentity};
 use crate::types::{NodeId, DhtStats};
 use crate::dht::storage::DhtStorage;
 use crate::dht::network::DhtNetwork;
-use lib_crypto::{Hash, PostQuantumSignature};
+use lib_crypto::{Hash, PostQuantumSignature, PublicKey};
 use anyhow::{Result, anyhow};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::net::SocketAddr;
@@ -36,9 +38,16 @@ pub struct DhtNodeManager {
 }
 
 impl DhtNodeManager {
-    /// Create a new DHT node manager
-    pub fn new(local_id: NodeId, addresses: Vec<String>) -> Result<Self> {
-        let local_node = Self::create_local_node(local_id, addresses)?;
+    /// Create a new DHT node manager with unified peer identity
+    ///
+    /// **MIGRATION (Ticket #145):** Now accepts DhtPeerIdentity instead of NodeId
+    ///
+    /// # Arguments
+    ///
+    /// * `local_peer` - DhtPeerIdentity containing NodeId, PublicKey, DID, and device_id
+    /// * `addresses` - Network addresses for this node
+    pub fn new(local_peer: DhtPeerIdentity, addresses: Vec<String>) -> Result<Self> {
+        let local_node = Self::create_local_node(local_peer, addresses)?;
         
         Ok(Self {
             local_node,
@@ -51,13 +60,15 @@ impl DhtNodeManager {
     }
 
     /// Create DHT node manager with networking enabled
+    ///
+    /// **MIGRATION (Ticket #145):** Now accepts DhtPeerIdentity instead of NodeId
     pub async fn new_with_network(
-        local_id: NodeId, 
+        local_peer: DhtPeerIdentity,
         addresses: Vec<String>,
         bind_addr: SocketAddr,
         max_storage_size: u64
     ) -> Result<Self> {
-        let local_node = Self::create_local_node(local_id, addresses)?;
+        let local_node = Self::create_local_node(local_peer, addresses)?;
         let storage = DhtStorage::new_with_network(local_node.clone(), bind_addr, max_storage_size).await?;
         let network = DhtNetwork::new(local_node.clone(), bind_addr)?;
         
@@ -71,15 +82,21 @@ impl DhtNodeManager {
         })
     }
     
-    /// Create local node with default capabilities
-    fn create_local_node(local_id: NodeId, addresses: Vec<String>) -> Result<DhtNode> {
+    /// Create local node with unified peer identity
+    ///
+    /// **MIGRATION (Ticket #145):** Uses DhtPeerIdentity which contains:
+    /// - NodeId (for Kademlia routing)
+    /// - PublicKey (for signature verification)
+    /// - DID (for identity validation)
+    /// - device_id (for multi-device support)
+    fn create_local_node(local_peer: DhtPeerIdentity, addresses: Vec<String>) -> Result<DhtNode> {
         Ok(DhtNode {
-            id: local_id,
+            peer: local_peer,
             addresses,
             public_key: PostQuantumSignature {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
                 signature: vec![],
-                public_key: lib_crypto::PublicKey {
+                public_key: PublicKey {
                     dilithium_pk: vec![],
                     kyber_pk: vec![],
                     key_id: [0u8; 32],
@@ -105,8 +122,10 @@ impl DhtNodeManager {
     }
     
     /// Add a node to the DHT network
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for routing table keys
     pub async fn add_node(&mut self, node: DhtNode) -> Result<()> {
-        let node_id = node.id.clone();
+        let node_id = node.peer.node_id().clone();
         
         // Initialize reputation if new node
         if !self.reputation_scores.contains_key(&node_id) {
@@ -125,9 +144,11 @@ impl DhtNodeManager {
     }
     
     /// Get a node by ID from storage layer or local collection
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for comparison
     pub fn get_node(&self, node_id: &NodeId) -> Option<&DhtNode> {
         if let Some(storage) = &self.storage {
-            storage.get_known_nodes().into_iter().find(|n| n.id == *node_id)
+            storage.get_known_nodes().into_iter().find(|n| n.peer.node_id() == node_id)
         } else {
             // Check local collection when storage is not available
             self.local_nodes.get(node_id)
@@ -178,11 +199,13 @@ impl DhtNodeManager {
     }
     
     /// Get high-reputation nodes
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` to look up reputation
     pub fn high_reputation_nodes(&self, min_reputation: u32) -> Vec<&DhtNode> {
         self.all_nodes()
             .into_iter()
             .filter(|node| {
-                self.reputation_scores.get(&node.id)
+                self.reputation_scores.get(node.peer.node_id())
                     .map(|&rep| rep >= min_reputation)
                     .unwrap_or(false)
             })
@@ -279,31 +302,53 @@ impl DhtNodeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_identity::{ZhtpIdentity, types::IdentityType};
+    use crate::types::dht_types::DhtPeerIdentity;
+    
+    /// Helper to create test identity and DhtPeerIdentity
+    fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Device,
+            None,
+            None,
+            device_name,
+            None, // Random seed
+        ).expect("Failed to create test identity");
+        
+        DhtPeerIdentity {
+            node_id: identity.node_id.clone(),
+            public_key: identity.public_key.clone(),
+            did: identity.did.clone(),
+            device_id: device_name.to_string(),
+        }
+    }
     
     #[test]
     fn test_node_manager_creation() {
-        let node_id = NodeId::from_bytes([1u8; 32]);
+        let local_peer = create_test_peer("test-device-1");
         let addresses = vec!["127.0.0.1:33442".to_string()];
         
-        let manager = DhtNodeManager::new(node_id.clone(), addresses).unwrap();
+        let manager = DhtNodeManager::new(local_peer.clone(), addresses).unwrap();
         
-        assert_eq!(manager.local_node().id, node_id);
+        assert_eq!(manager.local_node().peer.node_id(), local_peer.node_id());
         assert_eq!(manager.all_nodes().len(), 0);
     }
     
     #[tokio::test]
     async fn test_add_and_get_node() {
-        let node_id = NodeId::from_bytes([1u8; 32]);
+        let local_peer = create_test_peer("test-device-1");
+        let test_peer = create_test_peer("test-device-2");
+        
         let addresses = vec!["127.0.0.1:33442".to_string()];
-        let mut manager = DhtNodeManager::new(node_id, addresses).unwrap();
+        let mut manager = DhtNodeManager::new(local_peer, addresses).unwrap();
         
         let test_node = DhtNode {
-            id: NodeId::from_bytes([2u8; 32]),
+            peer: test_peer.clone(),
             addresses: vec!["127.0.0.1:33443".to_string()],
             public_key: PostQuantumSignature {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
                 signature: vec![],
-                public_key: lib_crypto::PublicKey {
+                public_key: PublicKey {
                     dilithium_pk: vec![],
                     kyber_pk: vec![],
                     key_id: [0u8; 32],
@@ -318,26 +363,26 @@ mod tests {
         manager.add_node(test_node.clone()).await.unwrap();
         
         assert_eq!(manager.all_nodes().len(), 1);
-        assert!(manager.get_node(&test_node.id).is_some());
+        assert!(manager.get_node(test_peer.node_id()).is_some());
     }
     
     #[test]
     fn test_reputation_management() {
-        let node_id = NodeId::from_bytes([1u8; 32]);
-        let addresses = vec!["127.0.0.1:33442".to_string()];
-        let mut manager = DhtNodeManager::new(node_id, addresses).unwrap();
+        let local_peer = create_test_peer("test-device-1");
+        let test_peer = create_test_peer("test-device-2");
         
-        let test_node_id = NodeId::from_bytes([2u8; 32]);
+        let addresses = vec!["127.0.0.1:33442".to_string()];
+        let mut manager = DhtNodeManager::new(local_peer, addresses).unwrap();
         
         // Add reputation for new node
-        manager.reputation_scores.insert(test_node_id.clone(), 1000);
+        manager.reputation_scores.insert(test_peer.node_id().clone(), 1000);
         
         // Test reputation increase
-        manager.update_reputation(&test_node_id, 100);
-        assert_eq!(manager.get_reputation(&test_node_id), 1100);
+        manager.update_reputation(test_peer.node_id(), 100);
+        assert_eq!(manager.get_reputation(test_peer.node_id()), 1100);
         
         // Test reputation decrease
-        manager.update_reputation(&test_node_id, -200);
-        assert_eq!(manager.get_reputation(&test_node_id), 900);
+        manager.update_reputation(test_peer.node_id(), -200);
+        assert_eq!(manager.get_reputation(test_peer.node_id()), 900);
     }
 }

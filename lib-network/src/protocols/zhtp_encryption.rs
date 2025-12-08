@@ -167,21 +167,19 @@ impl ZhtpEncryptionSession {
             .ok_or_else(|| anyhow!("Encryption session not established"))?;
         
         debug!(" Encrypting message ({} bytes) with ChaCha20-Poly1305", plaintext.len());
-        
-        // Generate unique nonce for this message
-        let nonce = lib_crypto::generate_nonce();
-        
-        // Encrypt with ChaCha20-Poly1305 using shared secret as key (nonce handled internally)
+
+        // Encrypt with ChaCha20-Poly1305 using shared secret as key
+        // Note: encrypt_data generates and prepends nonce internally
         let ciphertext = encrypt_data(plaintext, &shared_secret)?;
-        
+
         self.messages_encrypted += 1;
-        
+
         debug!(" Message encrypted (ciphertext: {} bytes)", ciphertext.len());
-        
+
         Ok(ZhtpEncryptedMessage {
             session_id,
             ciphertext,
-            nonce: nonce.to_vec(),
+            nonce: vec![], // Nonce is embedded in ciphertext by encrypt_data
             sequence: self.messages_encrypted,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -198,17 +196,11 @@ impl ZhtpEncryptionSession {
         let shared_secret = self.shared_secret
             .ok_or_else(|| anyhow!("Encryption session not established"))?;
         
-        debug!("🔓 Decrypting message ({} bytes) with ChaCha20-Poly1305", 
+        debug!("🔓 Decrypting message ({} bytes) with ChaCha20-Poly1305",
                encrypted_msg.ciphertext.len());
-        
-        // Convert nonce back to fixed-size array
-        let mut nonce = [0u8; 32];
-        if encrypted_msg.nonce.len() != 32 {
-            return Err(anyhow!("Invalid nonce length: expected 32, got {}", encrypted_msg.nonce.len()));
-        }
-        nonce.copy_from_slice(&encrypted_msg.nonce);
-        
-        // Decrypt with ChaCha20-Poly1305 (nonce handled internally)
+
+        // Decrypt with ChaCha20-Poly1305
+        // Note: decrypt_data extracts nonce from beginning of ciphertext
         let plaintext = decrypt_data(&encrypted_msg.ciphertext, &shared_secret)?;
         
         self.messages_decrypted += 1;

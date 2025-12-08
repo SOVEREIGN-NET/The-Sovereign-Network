@@ -63,6 +63,7 @@ pub mod bootstrap;
 pub mod identity; // Unified peer identity system
 pub mod peer_registry; // Unified peer registry (single source of truth)
 pub mod handshake; // Unified Handshake Protocol (UHP)
+pub mod constants; // Protocol constants
 pub mod monitoring;
 pub mod zk_integration;
 pub mod testing;
@@ -70,6 +71,9 @@ pub mod platform;
 pub mod dht; // Native binary DHT protocol with lib-storage backend
 pub mod web4; // Web4 domain registry and content publishing
 pub mod blockchain_sync; // Blockchain synchronization over mesh protocols
+
+// Re-export protocol constants for convenience
+pub use constants::*;
 
 // Mobile FFI bindings for Android (JNI) and iOS (C FFI)
 // Available for all platforms to allow compilation, but only functional on mobile

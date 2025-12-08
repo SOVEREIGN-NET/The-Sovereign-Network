@@ -2,6 +2,7 @@
 /agents
 docs/ZHTPPM/
 internal-docs/
+reports/
 
 .DS_Store
 
@@ -37,3 +38,4 @@ ISSUES_RESOLVED.md
 docs/architectural_suggestions_for_unified_identity.md
 
 .cargo-home/
+reports/
