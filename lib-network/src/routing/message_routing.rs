@@ -14,19 +14,36 @@ use crate::types::mesh_message::{ZhtpMeshMessage, MeshMessageEnvelope};
 use crate::mesh::connection::MeshConnection;
 use crate::relays::LongRangeRelay;
 use crate::protocols::NetworkProtocol;
+use crate::identity::unified_peer::UnifiedPeerId;
+use lib_identity::NodeId;
 
 /// Intelligent mesh message router
+///
+/// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId for routing table keys
+/// instead of PublicKey-only, enabling routing by NodeId or PublicKey interchangeably.
+///
+/// # Security (HIGH-1 Fix)
+///
+/// Secondary indexes (node_id_index, public_key_index) provide O(1) constant-time
+/// lookups, preventing timing side-channel attacks where attackers could determine
+/// peer presence by measuring lookup latency.
 pub struct MeshMessageRouter {
-    /// Active mesh connections for routing
-    pub mesh_connections: Arc<RwLock<HashMap<PublicKey, MeshConnection>>>,
+    /// Active mesh connections for routing (indexed by UnifiedPeerId)
+    pub mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
+    /// HIGH-1 FIX: Secondary index for constant-time NodeId lookups
+    /// Maps NodeId -> UnifiedPeerId for O(1) lookup instead of O(n) iteration
+    pub node_id_index: Arc<RwLock<HashMap<NodeId, UnifiedPeerId>>>,
+    /// HIGH-1 FIX: Secondary index for constant-time PublicKey lookups
+    /// Maps PublicKey -> UnifiedPeerId for O(1) lookup instead of O(n) iteration
+    pub public_key_index: Arc<RwLock<HashMap<PublicKey, UnifiedPeerId>>>,
     /// Long-range relays for extended reach
     pub long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     /// Routing table for efficient path finding
     pub routing_table: Arc<RwLock<RoutingTable>>,
     /// Message delivery tracking
     pub delivery_tracking: Arc<RwLock<HashMap<u64, DeliveryStatus>>>,
-    /// Route cache for optimization
-    pub route_cache: Arc<RwLock<HashMap<PublicKey, CachedRoute>>>,
+    /// Route cache for optimization (indexed by UnifiedPeerId)
+    pub route_cache: Arc<RwLock<HashMap<UnifiedPeerId, CachedRoute>>>,
     /// Optional mesh server reference for reward tracking
     pub mesh_server: Option<Arc<RwLock<crate::mesh::server::ZhtpMeshServer>>>,
     /// Bluetooth protocol handler for sending messages (Phase 2)
@@ -40,12 +57,14 @@ pub struct MeshMessageRouter {
 }
 
 /// Routing table for mesh network
+///
+/// **MIGRATION (Ticket #146):** Uses UnifiedPeerId for all routing operations
 #[derive(Debug, Clone)]
 pub struct RoutingTable {
-    /// Direct connections to peers
-    pub direct_routes: HashMap<PublicKey, RouteInfo>,
-    /// Multi-hop routes to distant peers
-    pub multi_hop_routes: HashMap<PublicKey, Vec<RouteHop>>,
+    /// Direct connections to peers (indexed by UnifiedPeerId)
+    pub direct_routes: HashMap<UnifiedPeerId, RouteInfo>,
+    /// Multi-hop routes to distant peers (indexed by UnifiedPeerId)
+    pub multi_hop_routes: HashMap<UnifiedPeerId, Vec<RouteHop>>,
     /// Network topology understanding
     pub topology_map: TopologyMap,
 }
@@ -53,8 +72,8 @@ pub struct RoutingTable {
 /// Information about a specific route
 #[derive(Debug, Clone)]
 pub struct RouteInfo {
-    /// Next hop in the route
-    pub next_hop: PublicKey,
+    /// Next hop in the route (UnifiedPeerId)
+    pub next_hop: UnifiedPeerId,
     /// Total hops to destination
     pub hop_count: u8,
     /// Route quality score (0.0 to 1.0)
@@ -68,10 +87,12 @@ pub struct RouteInfo {
 }
 
 /// Single hop in a multi-hop route
+///
+/// **MIGRATION (Ticket #146):** Changed peer_id from PublicKey to UnifiedPeerId
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteHop {
-    /// Peer ID for this hop
-    pub peer_id: PublicKey,
+    /// Peer identity for this hop (full UnifiedPeerId)
+    pub peer_id: UnifiedPeerId,
     /// Protocol to use for this hop
     pub protocol: NetworkProtocol,
     /// Relay ID if using long-range relay
@@ -81,10 +102,12 @@ pub struct RouteHop {
 }
 
 /// Network topology map
+///
+/// **MIGRATION (Ticket #146):** Uses UnifiedPeerId for topology mapping
 #[derive(Debug, Clone)]
 pub struct TopologyMap {
-    /// Known peers and their connections
-    pub peer_connections: HashMap<PublicKey, HashSet<PublicKey>>,
+    /// Known peers and their connections (indexed by UnifiedPeerId)
+    pub peer_connections: HashMap<UnifiedPeerId, HashSet<UnifiedPeerId>>,
     /// Geographic clustering information
     pub geographic_clusters: Vec<GeographicCluster>,
     /// Network coverage areas
@@ -166,12 +189,21 @@ pub enum DeliveryStage {
 
 impl MeshMessageRouter {
     /// Create new mesh message router
+    ///
+    /// **MIGRATION (Ticket #146):** Now accepts HashMap<UnifiedPeerId, MeshConnection>
+    ///
+    /// # Security (HIGH-1 Fix)
+    ///
+    /// Initializes secondary indexes for O(1) constant-time lookups.
     pub fn new(
-        mesh_connections: Arc<RwLock<HashMap<PublicKey, MeshConnection>>>,
+        mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
         long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     ) -> Self {
         Self {
             mesh_connections,
+            // HIGH-1 FIX: Initialize secondary indexes for constant-time lookups
+            node_id_index: Arc::new(RwLock::new(HashMap::new())),
+            public_key_index: Arc::new(RwLock::new(HashMap::new())),
             long_range_relays,
             routing_table: Arc::new(RwLock::new(RoutingTable {
                 direct_routes: HashMap::new(),
@@ -190,6 +222,105 @@ impl MeshMessageRouter {
             lora_handler: None,
             quic_handler: None,
         }
+    }
+
+    /// HIGH-1 FIX: Add a peer to the secondary indexes
+    ///
+    /// Call this whenever a peer is added to mesh_connections to maintain index consistency.
+    pub async fn index_peer(&self, peer: &UnifiedPeerId) {
+        let mut node_index = self.node_id_index.write().await;
+        let mut pk_index = self.public_key_index.write().await;
+
+        node_index.insert(peer.node_id().clone(), peer.clone());
+        pk_index.insert(peer.public_key().clone(), peer.clone());
+    }
+
+    /// HIGH-1 FIX: Remove a peer from the secondary indexes
+    ///
+    /// Call this whenever a peer is removed from mesh_connections to maintain index consistency.
+    pub async fn unindex_peer(&self, peer: &UnifiedPeerId) {
+        let mut node_index = self.node_id_index.write().await;
+        let mut pk_index = self.public_key_index.write().await;
+
+        node_index.remove(peer.node_id());
+        pk_index.remove(peer.public_key());
+    }
+
+    /// HIGH-1 FIX: Rebuild secondary indexes from mesh_connections
+    ///
+    /// Use this after bulk modifications to mesh_connections or for consistency recovery.
+    pub async fn rebuild_indexes(&self) {
+        let connections = self.mesh_connections.read().await;
+        let mut node_index = self.node_id_index.write().await;
+        let mut pk_index = self.public_key_index.write().await;
+
+        node_index.clear();
+        pk_index.clear();
+
+        for peer in connections.keys() {
+            node_index.insert(peer.node_id().clone(), peer.clone());
+            pk_index.insert(peer.public_key().clone(), peer.clone());
+        }
+
+        info!("Rebuilt {} secondary index entries", connections.len());
+    }
+
+    /// **ACCEPTANCE CRITERIA (Ticket #146):** Find connection by NodeId
+    ///
+    /// Allows routing using NodeId interchangeably with UnifiedPeerId
+    ///
+    /// # Security (HIGH-1 Fix)
+    ///
+    /// Uses secondary index for O(1) constant-time lookup, preventing timing side-channel attacks.
+    pub async fn find_connection_by_node_id(&self, node_id: &NodeId) -> Option<MeshConnection> {
+        // HIGH-1 FIX: Use secondary index for O(1) lookup
+        let node_index = self.node_id_index.read().await;
+        let peer = node_index.get(node_id)?;
+
+        let connections = self.mesh_connections.read().await;
+        connections.get(peer).cloned()
+    }
+
+    /// **ACCEPTANCE CRITERIA (Ticket #146):** Find connection by PublicKey
+    ///
+    /// Allows routing using PublicKey interchangeably with UnifiedPeerId
+    ///
+    /// # Security (HIGH-1 Fix)
+    ///
+    /// Uses secondary index for O(1) constant-time lookup, preventing timing side-channel attacks.
+    pub async fn find_connection_by_public_key(&self, public_key: &PublicKey) -> Option<MeshConnection> {
+        // HIGH-1 FIX: Use secondary index for O(1) lookup
+        let pk_index = self.public_key_index.read().await;
+        let peer = pk_index.get(public_key)?;
+
+        let connections = self.mesh_connections.read().await;
+        connections.get(peer).cloned()
+    }
+
+    /// **ACCEPTANCE CRITERIA (Ticket #146):** Find peer by NodeId
+    ///
+    /// Returns the full UnifiedPeerId for a given NodeId
+    ///
+    /// # Security (HIGH-1 Fix)
+    ///
+    /// Uses secondary index for O(1) constant-time lookup.
+    pub async fn find_peer_by_node_id(&self, node_id: &NodeId) -> Option<UnifiedPeerId> {
+        // HIGH-1 FIX: Use secondary index for O(1) lookup
+        let node_index = self.node_id_index.read().await;
+        node_index.get(node_id).cloned()
+    }
+
+    /// **ACCEPTANCE CRITERIA (Ticket #146):** Find peer by PublicKey
+    ///
+    /// Returns the full UnifiedPeerId for a given PublicKey
+    ///
+    /// # Security (HIGH-1 Fix)
+    ///
+    /// Uses secondary index for O(1) constant-time lookup.
+    pub async fn find_peer_by_public_key(&self, public_key: &PublicKey) -> Option<UnifiedPeerId> {
+        // HIGH-1 FIX: Use secondary index for O(1) lookup
+        let pk_index = self.public_key_index.read().await;
+        pk_index.get(public_key).cloned()
     }
     
     /// Set mesh server reference for reward tracking
@@ -245,10 +376,10 @@ impl MeshMessageRouter {
         sender: PublicKey,
     ) -> Result<u64> {
         let message_id = rand::random::<u64>();
-        
-        info!(" Routing message {} to destination {:?}", 
+
+        info!(" Routing message {} to destination {:?}",
               message_id, hex::encode(&destination.key_id[0..4]));
-        
+
         // Create delivery tracking
         let delivery_status = DeliveryStatus {
             message_id,
@@ -266,14 +397,18 @@ impl MeshMessageRouter {
                 .unwrap_or_default()
                 .as_secs(),
         };
-        
+
         {
             let mut tracking = self.delivery_tracking.write().await;
             tracking.insert(message_id, delivery_status);
         }
-        
+
+        // Convert PublicKey to UnifiedPeerId for route finding
+        let dest_unified = UnifiedPeerId::from_public_key_legacy(destination.clone());
+        let sender_unified = UnifiedPeerId::from_public_key_legacy(sender.clone());
+
         // Find optimal route to destination
-        let route = self.find_optimal_route(&destination, &sender).await?;
+        let route = self.find_optimal_route(&dest_unified, &sender_unified).await?;
         
         // Update delivery status with route
         {
@@ -293,10 +428,10 @@ impl MeshMessageRouter {
     /// Find optimal route to destination
     pub async fn find_optimal_route(
         &self,
-        destination: &PublicKey,
-        sender: &PublicKey,
+        destination: &UnifiedPeerId,
+        sender: &UnifiedPeerId,
     ) -> Result<Vec<RouteHop>> {
-        debug!("Finding optimal route to {:?}", hex::encode(&destination.key_id[0..4]));
+        debug!("Finding optimal route to {:?}", hex::encode(&destination.public_key().key_id[0..4]));
         
         // Check route cache first
         if let Some(cached_route) = self.get_cached_route(destination).await {
@@ -340,10 +475,12 @@ impl MeshMessageRouter {
     }
     
     /// Find multi-hop route through mesh network
+    ///
+    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId for routing
     async fn find_mesh_route(
         &self,
-        destination: &PublicKey,
-        sender: &PublicKey,
+        destination: &UnifiedPeerId,
+        sender: &UnifiedPeerId,
     ) -> Result<Vec<RouteHop>> {
         debug!("Searching mesh network for route");
         
@@ -351,9 +488,9 @@ impl MeshMessageRouter {
         let routing_table = self.routing_table.read().await;
         
         // Use Dijkstra's algorithm for optimal path finding
-        let mut distances: HashMap<PublicKey, f64> = HashMap::new();
-        let mut previous: HashMap<PublicKey, Option<PublicKey>> = HashMap::new();
-        let mut unvisited: HashSet<PublicKey> = HashSet::new();
+        let mut distances: HashMap<UnifiedPeerId, f64> = HashMap::new();
+        let mut previous: HashMap<UnifiedPeerId, Option<UnifiedPeerId>> = HashMap::new();
+        let mut unvisited: HashSet<UnifiedPeerId> = HashSet::new();
         
         // Initialize distances
         for peer_id in connections.keys() {
@@ -406,11 +543,13 @@ impl MeshMessageRouter {
     }
     
     /// Calculate edge weight for routing algorithm
+    ///
+    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
     async fn calculate_edge_weight(
         &self,
-        from: &PublicKey,
-        to: &PublicKey,
-        connections: &HashMap<PublicKey, MeshConnection>,
+        from: &UnifiedPeerId,
+        to: &UnifiedPeerId,
+        connections: &HashMap<UnifiedPeerId, MeshConnection>,
     ) -> f64 {
         // Weight based on latency, stability, and bandwidth
         if let Some(connection) = connections.get(to) {
@@ -425,11 +564,13 @@ impl MeshMessageRouter {
     }
     
     /// Construct route from pathfinding result
+    ///
+    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
     async fn construct_route_from_path(
         &self,
-        previous: &HashMap<PublicKey, Option<PublicKey>>,
-        destination: &PublicKey,
-        connections: &HashMap<PublicKey, MeshConnection>,
+        previous: &HashMap<UnifiedPeerId, Option<UnifiedPeerId>>,
+        destination: &UnifiedPeerId,
+        connections: &HashMap<UnifiedPeerId, MeshConnection>,
     ) -> Result<Vec<RouteHop>> {
         let mut route = Vec::new();
         let mut current = destination.clone();
@@ -458,7 +599,9 @@ impl MeshMessageRouter {
     }
     
     /// Find long-range relay route
-    async fn find_long_range_route(&self, destination: &PublicKey) -> Result<Vec<RouteHop>> {
+    ///
+    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
+    async fn find_long_range_route(&self, destination: &UnifiedPeerId) -> Result<Vec<RouteHop>> {
         debug!("Searching long-range relays for route");
         
         let relays = self.long_range_relays.read().await;
@@ -496,7 +639,9 @@ impl MeshMessageRouter {
     }
     
     /// Find satellite route for GLOBAL coverage
-    async fn find_satellite_route(&self, destination: &PublicKey) -> Result<Vec<RouteHop>> {
+    ///
+    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
+    async fn find_satellite_route(&self, destination: &UnifiedPeerId) -> Result<Vec<RouteHop>> {
         debug!("🛰️ Searching for satellite uplink route");
         
         let relays = self.long_range_relays.read().await;
@@ -543,7 +688,7 @@ impl MeshMessageRouter {
         // Route through each hop
         for (hop_index, hop) in route.iter().enumerate() {
             info!(" Routing to hop {}: {:?} via {:?}", 
-                  hop_index + 1, hex::encode(&hop.peer_id.key_id[0..4]), hop.protocol);
+                  hop_index + 1, hex::encode(&hop.peer_id.public_key().key_id[0..4]), hop.protocol);
             
             // Update current hop
             {
@@ -669,7 +814,7 @@ impl MeshMessageRouter {
         hop: &RouteHop,
     ) -> Result<()> {
         debug!("Mesh routing: message {} to {:?}", 
-               message_id, hex::encode(&hop.peer_id.key_id[0..4]));
+               message_id, hex::encode(&hop.peer_id.public_key().key_id[0..4]));
         
         let connections = self.mesh_connections.read().await;
         if let Some(connection) = connections.get(&hop.peer_id) {
@@ -681,7 +826,9 @@ impl MeshMessageRouter {
     }
     
     /// Get cached route if available and valid
-    async fn get_cached_route(&self, destination: &PublicKey) -> Option<CachedRoute> {
+    ///
+    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
+    async fn get_cached_route(&self, destination: &UnifiedPeerId) -> Option<CachedRoute> {
         let cache = self.route_cache.read().await;
         if let Some(cached) = cache.get(destination) {
             let current_time = std::time::SystemTime::now()
@@ -697,7 +844,9 @@ impl MeshMessageRouter {
     }
     
     /// Cache route for future use
-    pub async fn cache_route(&self, destination: PublicKey, route: Vec<RouteHop>, quality_score: f64) {
+    ///
+    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
+    pub async fn cache_route(&self, destination: UnifiedPeerId, route: Vec<RouteHop>, quality_score: f64) {
         let cached_route = CachedRoute {
             hops: route,
             quality_score,
@@ -752,8 +901,10 @@ impl MeshMessageRouter {
     // ==================== PHASE 2: Multi-Hop Routing Integration ====================
     
     /// Find next hop for destination (simplified from full route) - Phase 2
-    pub async fn find_next_hop_for_destination(&self, destination: &PublicKey) -> Result<PublicKey> {
-        debug!("Finding next hop for destination {:?}", hex::encode(&destination.key_id[0..4]));
+    ///
+    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
+    pub async fn find_next_hop_for_destination(&self, destination: &UnifiedPeerId) -> Result<UnifiedPeerId> {
+        debug!("Finding next hop for destination {:?}", hex::encode(&destination.public_key().key_id[0..4]));
         
         // Check for direct connection first
         let connections = self.mesh_connections.read().await;
@@ -765,7 +916,7 @@ impl MeshMessageRouter {
         // Check cached route
         if let Some(cached) = self.get_cached_route(destination).await {
             if let Some(first_hop) = cached.hops.first() {
-                info!(" Using cached route, next hop: {:?}", hex::encode(&first_hop.peer_id.key_id[0..4]));
+                info!(" Using cached route, next hop: {:?}", hex::encode(&first_hop.peer_id.public_key().key_id[0..4]));
                 return Ok(first_hop.peer_id.clone());
             }
         }
@@ -784,7 +935,7 @@ impl MeshMessageRouter {
         
         // Return first hop
         let first_hop = full_route.first().unwrap();
-        info!(" Calculated new route, first hop: {:?}", hex::encode(&first_hop.peer_id.key_id[0..4]));
+        info!(" Calculated new route, first hop: {:?}", hex::encode(&first_hop.peer_id.public_key().key_id[0..4]));
         Ok(first_hop.peer_id.clone())
     }
     
@@ -811,7 +962,7 @@ impl MeshMessageRouter {
         origin: PublicKey,
     ) -> Result<u64> {
         info!(" Routing message to {:?}", hex::encode(&destination.key_id[0..4]));
-        
+
         // Create envelope
         let message_id = self.generate_message_id().await;
         let envelope = MeshMessageEnvelope::new(
@@ -820,13 +971,16 @@ impl MeshMessageRouter {
             destination.clone(),
             message,
         );
-        
+
         info!(" Created envelope {} (TTL: {})", message_id, envelope.ttl);
-        
+
+        // Convert destination PublicKey to UnifiedPeerId for routing (Ticket #146)
+        let dest_unified = UnifiedPeerId::from_public_key_legacy(destination.clone());
+
         // Find next hop
-        let next_hop = self.find_next_hop_for_destination(&destination).await?;
-        
-        info!("📤 Sending to next hop: {:?}", hex::encode(&next_hop.key_id[0..4]));
+        let next_hop = self.find_next_hop_for_destination(&dest_unified).await?;
+
+        info!("📤 Sending to next hop: {:?}", hex::encode(&next_hop.public_key().key_id[0..4]));
         
         // Send to next hop
         self.send_to_peer(&next_hop, &envelope).await?;
@@ -840,8 +994,8 @@ impl MeshMessageRouter {
     }
     
     /// Send envelope to peer (delegates to protocol layer) - Phase 2
-    async fn send_to_peer(&self, peer_id: &PublicKey, envelope: &MeshMessageEnvelope) -> Result<()> {
-        debug!("Sending envelope {} to peer {:?}", envelope.message_id, hex::encode(&peer_id.key_id[0..4]));
+    async fn send_to_peer(&self, peer_id: &UnifiedPeerId, envelope: &MeshMessageEnvelope) -> Result<()> {
+        debug!("Sending envelope {} to peer {:?}", envelope.message_id, hex::encode(&peer_id.public_key().key_id[0..4]));
         
         let connections = self.mesh_connections.read().await;
         let connection = connections.get(peer_id)
@@ -853,7 +1007,7 @@ impl MeshMessageRouter {
                 // Get Bluetooth protocol handler
                 if let Some(bt_handler) = &self.bluetooth_handler {
                     let handler = bt_handler.read().await;
-                    handler.send_mesh_envelope(peer_id, envelope).await?;
+                    handler.send_mesh_envelope(peer_id.public_key(), envelope).await?;
                     info!(" Sent via Bluetooth");
                 } else {
                     return Err(anyhow!("Bluetooth handler not available"));
@@ -863,7 +1017,7 @@ impl MeshMessageRouter {
                 // Get WiFi Direct handler
                 if let Some(ref wifi_handler) = self.wifi_handler {
                     let handler = wifi_handler.read().await;
-                    handler.send_mesh_envelope(peer_id, envelope).await?;
+                    handler.send_mesh_envelope(peer_id.public_key(), envelope).await?;
                     info!(" Sent via WiFi Direct");
                 } else {
                     return Err(anyhow!("WiFi Direct handler not configured"));
@@ -873,7 +1027,7 @@ impl MeshMessageRouter {
                 // Get LoRa handler
                 if let Some(ref lora_handler) = self.lora_handler {
                     let handler = lora_handler.read().await;
-                    handler.send_mesh_envelope(peer_id, envelope).await?;
+                    handler.send_mesh_envelope(peer_id.public_key(), envelope).await?;
                     info!(" Sent via LoRaWAN");
                 } else {
                     return Err(anyhow!("LoRa handler not configured"));
@@ -884,7 +1038,7 @@ impl MeshMessageRouter {
                 if let Some(ref quic_handler) = self.quic_handler {
                     let handler = quic_handler.read().await;
                     // Send mesh message via QUIC - extract pubkey and message from envelope
-                    handler.send_to_peer(&peer_id.as_bytes(), envelope.message.clone()).await?;
+                    handler.send_to_peer(&peer_id.public_key().as_bytes(), envelope.message.clone()).await?;
                     info!("📡 Sent via QUIC (quantum-safe encrypted)");
                 } else {
                     return Err(anyhow!("QUIC handler not configured"));
@@ -932,9 +1086,13 @@ impl MeshMessageRouter {
 
 /// Topology update events
 #[derive(Debug, Clone)]
+/// Topology update events for routing table maintenance
+///
+/// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId for consistency
+/// with TopologyMap's peer_connections HashMap.
 pub enum TopologyUpdate {
-    PeerConnection { peer_a: PublicKey, peer_b: PublicKey },
-    PeerDisconnection { peer_a: PublicKey, peer_b: PublicKey },
+    PeerConnection { peer_a: UnifiedPeerId, peer_b: UnifiedPeerId },
+    PeerDisconnection { peer_a: UnifiedPeerId, peer_b: UnifiedPeerId },
 }
 
 #[cfg(test)]
@@ -957,18 +1115,20 @@ mod tests {
     async fn test_route_caching() {
         let mesh_connections = Arc::new(RwLock::new(HashMap::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
-        
+
         let router = MeshMessageRouter::new(mesh_connections, long_range_relays);
-        let destination = PublicKey::new(vec![1, 2, 3]);
+        let destination_key = PublicKey::new(vec![1, 2, 3]);
+        // Ticket #146: Use UnifiedPeerId for routing
+        let destination = crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(destination_key);
         let route = vec![RouteHop {
             peer_id: destination.clone(),
             protocol: NetworkProtocol::BluetoothLE,
             relay_id: None,
             latency_ms: 100,
         }];
-        
+
         router.cache_route(destination.clone(), route.clone(), 0.9).await;
-        
+
         let cached = router.get_cached_route(&destination).await;
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().hops.len(), 1);

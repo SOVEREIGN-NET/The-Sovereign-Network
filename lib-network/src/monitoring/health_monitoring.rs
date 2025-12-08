@@ -8,8 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::{info, warn};
-use lib_crypto::PublicKey;
-
+use crate::identity::unified_peer::UnifiedPeerId;
 use crate::mesh::{MeshConnection, MeshProtocolStats};
 use crate::relays::LongRangeRelay;
 
@@ -18,8 +17,8 @@ use crate::relays::LongRangeRelay;
 pub struct HealthMonitor {
     /// Mesh protocol statistics
     pub stats: Arc<RwLock<MeshProtocolStats>>,
-    /// Active mesh connections
-    pub mesh_connections: Arc<RwLock<HashMap<PublicKey, MeshConnection>>>,
+    /// Active mesh connections (keyed by UnifiedPeerId for full identity)
+    pub mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
     /// Long-range relays
     pub long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     /// Monitoring active flag
@@ -30,7 +29,7 @@ impl HealthMonitor {
     /// Create new health monitor
     pub fn new(
         stats: Arc<RwLock<MeshProtocolStats>>,
-        mesh_connections: Arc<RwLock<HashMap<PublicKey, MeshConnection>>>,
+        mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
         long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     ) -> Self {
         Self {
@@ -167,35 +166,35 @@ impl HealthMonitor {
                 for (peer_id, connection) in connections.iter() {
                     // Check connection stability
                     if connection.stability_score < 0.3 {
-                        warn!(" Unstable connection detected: peer {} (stability: {:.2})", 
-                              hex::encode(&peer_id.key_id[0..4]), connection.stability_score);
+                        warn!(" Unstable connection detected: peer {} (stability: {:.2})",
+                              hex::encode(&peer_id.public_key().key_id[0..4]), connection.stability_score);
                         unhealthy_connections.push(peer_id.clone());
                     }
-                    
+
                     // Check if connection is too old without recent activity
                     let current_time = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs();
-                    
+
                     let connection_age = current_time - connection.connected_at;
                     if connection_age > 3600 && connection.data_transferred == 0 {
-                        warn!(" Stale connection detected: peer {} (age: {} minutes, no data)", 
-                              hex::encode(&peer_id.key_id[0..4]), connection_age / 60);
+                        warn!(" Stale connection detected: peer {} (age: {} minutes, no data)",
+                              hex::encode(&peer_id.public_key().key_id[0..4]), connection_age / 60);
                         unhealthy_connections.push(peer_id.clone());
                     }
-                    
+
                     // Check for high latency
                     if connection.latency_ms > 1000 {
-                        warn!(" High latency connection: peer {} (latency: {} ms)", 
-                              hex::encode(&peer_id.key_id[0..4]), connection.latency_ms);
+                        warn!(" High latency connection: peer {} (latency: {} ms)",
+                              hex::encode(&peer_id.public_key().key_id[0..4]), connection.latency_ms);
                     }
                 }
-                
+
                 // Remove unhealthy connections
                 for peer_id in unhealthy_connections {
-                    info!(" Removing unhealthy connection: {}", 
-                          hex::encode(&peer_id.key_id[0..4]));
+                    info!(" Removing unhealthy connection: {}",
+                          hex::encode(&peer_id.public_key().key_id[0..4]));
                     connections.remove(&peer_id);
                 }
                 

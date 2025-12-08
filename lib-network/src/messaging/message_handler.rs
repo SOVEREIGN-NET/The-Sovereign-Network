@@ -13,14 +13,15 @@ use lib_crypto::PublicKey;
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::protocols::NetworkProtocol;
 use crate::mesh::connection::MeshConnection;
+use crate::identity::unified_peer::UnifiedPeerId;
 
 use crate::relays::LongRangeRelay;
 
 /// Central mesh message handler
 #[derive(Clone)]
 pub struct MeshMessageHandler {
-    /// Active mesh connections
-    pub mesh_connections: Arc<RwLock<HashMap<PublicKey, MeshConnection>>>,
+    /// Active mesh connections (indexed by UnifiedPeerId for Ticket #146)
+    pub mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
     /// Long-range relays
     pub long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     /// Revenue pools
@@ -38,9 +39,11 @@ pub struct MeshMessageHandler {
 }
 
 impl MeshMessageHandler {
-    /// Create new message handler
+    /// Create a new MeshMessageHandler
+    ///
+    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId as connection key
     pub fn new(
-        mesh_connections: Arc<RwLock<HashMap<PublicKey, MeshConnection>>>,
+        mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
         long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
         revenue_pools: Arc<RwLock<HashMap<String, u64>>>,
     ) -> Self {
@@ -206,9 +209,11 @@ impl MeshMessageHandler {
         }
         
         // Establish mesh connection
+        // MIGRATION (Ticket #146): Convert PublicKey to UnifiedPeerId
+        let unified_peer = UnifiedPeerId::from_public_key_legacy(peer.clone());
         let mut connections = self.mesh_connections.write().await;
-        connections.insert(peer.clone(), MeshConnection {
-            peer_id: peer,
+        connections.insert(unified_peer.clone(), MeshConnection {
+            peer: unified_peer,
             protocol: crate::protocols::NetworkProtocol::BluetoothLE, // Default for discovery
             peer_address: None, // Address not available in PeerDiscovery message
             signal_strength: 0.8, // Good signal
@@ -430,23 +435,26 @@ impl MeshMessageHandler {
     
     /// Handle network health report
     pub async fn handle_health_report(
-        &self, 
-        reporter: PublicKey, 
-        network_quality: f64, 
-        available_bandwidth: u64, 
-        connected_peers: u32, 
+        &self,
+        reporter: PublicKey,
+        network_quality: f64,
+        available_bandwidth: u64,
+        connected_peers: u32,
         uptime_hours: u32
     ) -> Result<()> {
-        info!("Health report: quality={:.2}, bandwidth={} MB/s, peers={}, uptime={}h", 
+        info!("Health report: quality={:.2}, bandwidth={} MB/s, peers={}, uptime={}h",
               network_quality, available_bandwidth / 1_000_000, connected_peers, uptime_hours);
-        
-        // Update connection statistics
+
+        // Update connection statistics - find connection by PublicKey
         let mut connections = self.mesh_connections.write().await;
-        if let Some(connection) = connections.get_mut(&reporter) {
-            connection.stability_score = network_quality;
-            connection.bandwidth_capacity = available_bandwidth;
+        for connection in connections.values_mut() {
+            if connection.peer.public_key() == &reporter {
+                connection.stability_score = network_quality;
+                connection.bandwidth_capacity = available_bandwidth;
+                break;
+            }
         }
-        
+
         Ok(())
     }
     
@@ -701,9 +709,13 @@ impl MeshMessageHandler {
     /// Get protocol being used for peer (NEW - Phase 3)
     async fn get_protocol_for_peer(&self, peer_id: &PublicKey) -> Result<NetworkProtocol> {
         let connections = self.mesh_connections.read().await;
-        connections.get(peer_id)
-            .map(|c| c.protocol.clone())
-            .ok_or_else(|| anyhow!("No connection to peer"))
+        // Find connection by PublicKey
+        for connection in connections.values() {
+            if connection.peer.public_key() == peer_id {
+                return Ok(connection.protocol.clone());
+            }
+        }
+        Err(anyhow!("No connection to peer"))
     }
     
     /// Chunk blockchain data for protocol (NEW - Phase 3)
@@ -1201,12 +1213,14 @@ mod tests {
         );
         
         let reporter = PublicKey::new(vec![1, 2, 3]);
-        
+        // Ticket #146: Use UnifiedPeerId for HashMap key
+        let unified_peer = crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(reporter.clone());
+
         // Add a connection first
         {
             let mut connections = mesh_connections.write().await;
-            connections.insert(reporter.clone(), MeshConnection {
-                peer_id: reporter.clone(),
+            connections.insert(unified_peer.clone(), MeshConnection {
+                peer: unified_peer.clone(),
                 protocol: crate::protocols::NetworkProtocol::BluetoothLE,
                 peer_address: None,
                 signal_strength: 0.5,
@@ -1224,7 +1238,7 @@ mod tests {
                 trust_score: 0.0,
             });
         }
-        
+
         // Handle health report
         let result = handler.handle_health_report(
             reporter.clone(),
@@ -1233,12 +1247,12 @@ mod tests {
             5,
             24,
         ).await;
-        
+
         assert!(result.is_ok());
-        
-        // Check that connection was updated
+
+        // Check that connection was updated (find by matching public key)
         let connections = mesh_connections.read().await;
-        let connection = connections.get(&reporter).unwrap();
+        let connection = connections.values().find(|c| c.peer.public_key() == &reporter).unwrap();
         assert_eq!(connection.stability_score, 0.9);
         assert_eq!(connection.bandwidth_capacity, 2000000);
     }
