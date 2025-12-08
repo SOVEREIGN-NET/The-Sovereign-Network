@@ -54,3 +54,44 @@ jobs:
 
       - name: Build
         run: cargo build --workspace --locked
+
+      - name: Build Release Binary
+        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+        run: cargo build --release -p zhtp
+
+      - name: Upload Release Artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhtp-binary
+          path: target/release/zhtp
+          retention-days: 1
+
+  deploy:
+    name: Deploy to Dev Server
+    needs: smoke
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+    steps:
+      - name: Download Release Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zhtp-binary
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy Binary
+        run: |
+          scp -i ~/.ssh/deploy_key ./zhtp ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/zhtp/zhtp.new
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+            cd /opt/zhtp &&
+            if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
+            mv zhtp.new zhtp &&
+            chmod +x zhtp &&
+            echo "Deployed successfully at $(date)"
+          '
