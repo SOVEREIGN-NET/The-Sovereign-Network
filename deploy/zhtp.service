@@ -1,0 +1,16 @@
+[Unit]
+Description=ZHTP Node
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/zhtp/zhtp
+WorkingDirectory=/opt/zhtp
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target
