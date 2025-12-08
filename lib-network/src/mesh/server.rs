@@ -10,6 +10,7 @@ use serde_json;
 use lib_crypto::{PublicKey, Signature};
 use crate::mesh::{MeshConnection, MeshProtocolStats};
 use crate::protocols::NetworkProtocol;
+use crate::identity::unified_peer::UnifiedPeerId;
 
 /// Simple in-memory routing statistics (no blockchain state)
 #[derive(Debug, Clone, Default)]
@@ -225,8 +226,8 @@ pub struct ZhtpMeshServer {
     pub economics: Arc<RwLock<EconomicModel>>,
     /// Distributed storage system
     pub storage: Arc<RwLock<UnifiedStorageSystem>>,
-    /// Active mesh connections
-    pub mesh_connections: Arc<RwLock<HashMap<PublicKey, MeshConnection>>>,
+    /// Active mesh connections (indexed by UnifiedPeerId for Ticket #146 migration)
+    pub mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
     /// Long-range relay nodes (LoRaWAN gateways, satellite uplinks)
     pub long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
 
@@ -905,7 +906,7 @@ impl ZhtpMeshServer {
         
         let economics = Arc::new(RwLock::new(EconomicModel::new()));
         let storage = Arc::new(RwLock::new(storage));
-        let mesh_connections = Arc::new(RwLock::new(HashMap::new()));
+        let mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>> = Arc::new(RwLock::new(HashMap::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
         let stats = Arc::new(RwLock::new(MeshProtocolStats::default()));
@@ -1325,9 +1326,10 @@ impl ZhtpMeshServer {
         }
         
         // Check if it's a connected user (can only disconnect own connections)
+        // MIGRATION (Ticket #146): Compare via UnifiedPeerId.public_key()
         let connections = self.mesh_connections.read().await;
         for (peer_key, _) in connections.iter() {
-            if peer_key == caller_key {
+            if peer_key.public_key() == caller_key {
                 return PermissionLevel::User;
             }
         }

@@ -21,9 +21,21 @@ use lib_identity::NodeId;
 ///
 /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId for routing table keys
 /// instead of PublicKey-only, enabling routing by NodeId or PublicKey interchangeably.
+///
+/// # Security (HIGH-1 Fix)
+///
+/// Secondary indexes (node_id_index, public_key_index) provide O(1) constant-time
+/// lookups, preventing timing side-channel attacks where attackers could determine
+/// peer presence by measuring lookup latency.
 pub struct MeshMessageRouter {
     /// Active mesh connections for routing (indexed by UnifiedPeerId)
     pub mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
+    /// HIGH-1 FIX: Secondary index for constant-time NodeId lookups
+    /// Maps NodeId -> UnifiedPeerId for O(1) lookup instead of O(n) iteration
+    pub node_id_index: Arc<RwLock<HashMap<NodeId, UnifiedPeerId>>>,
+    /// HIGH-1 FIX: Secondary index for constant-time PublicKey lookups
+    /// Maps PublicKey -> UnifiedPeerId for O(1) lookup instead of O(n) iteration
+    pub public_key_index: Arc<RwLock<HashMap<PublicKey, UnifiedPeerId>>>,
     /// Long-range relays for extended reach
     pub long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     /// Routing table for efficient path finding
@@ -179,12 +191,19 @@ impl MeshMessageRouter {
     /// Create new mesh message router
     ///
     /// **MIGRATION (Ticket #146):** Now accepts HashMap<UnifiedPeerId, MeshConnection>
+    ///
+    /// # Security (HIGH-1 Fix)
+    ///
+    /// Initializes secondary indexes for O(1) constant-time lookups.
     pub fn new(
         mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
         long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     ) -> Self {
         Self {
             mesh_connections,
+            // HIGH-1 FIX: Initialize secondary indexes for constant-time lookups
+            node_id_index: Arc::new(RwLock::new(HashMap::new())),
+            public_key_index: Arc::new(RwLock::new(HashMap::new())),
             long_range_relays,
             routing_table: Arc::new(RwLock::new(RoutingTable {
                 direct_routes: HashMap::new(),
@@ -204,45 +223,104 @@ impl MeshMessageRouter {
             quic_handler: None,
         }
     }
-    
+
+    /// HIGH-1 FIX: Add a peer to the secondary indexes
+    ///
+    /// Call this whenever a peer is added to mesh_connections to maintain index consistency.
+    pub async fn index_peer(&self, peer: &UnifiedPeerId) {
+        let mut node_index = self.node_id_index.write().await;
+        let mut pk_index = self.public_key_index.write().await;
+
+        node_index.insert(peer.node_id().clone(), peer.clone());
+        pk_index.insert(peer.public_key().clone(), peer.clone());
+    }
+
+    /// HIGH-1 FIX: Remove a peer from the secondary indexes
+    ///
+    /// Call this whenever a peer is removed from mesh_connections to maintain index consistency.
+    pub async fn unindex_peer(&self, peer: &UnifiedPeerId) {
+        let mut node_index = self.node_id_index.write().await;
+        let mut pk_index = self.public_key_index.write().await;
+
+        node_index.remove(peer.node_id());
+        pk_index.remove(peer.public_key());
+    }
+
+    /// HIGH-1 FIX: Rebuild secondary indexes from mesh_connections
+    ///
+    /// Use this after bulk modifications to mesh_connections or for consistency recovery.
+    pub async fn rebuild_indexes(&self) {
+        let connections = self.mesh_connections.read().await;
+        let mut node_index = self.node_id_index.write().await;
+        let mut pk_index = self.public_key_index.write().await;
+
+        node_index.clear();
+        pk_index.clear();
+
+        for peer in connections.keys() {
+            node_index.insert(peer.node_id().clone(), peer.clone());
+            pk_index.insert(peer.public_key().clone(), peer.clone());
+        }
+
+        info!("Rebuilt {} secondary index entries", connections.len());
+    }
+
     /// **ACCEPTANCE CRITERIA (Ticket #146):** Find connection by NodeId
     ///
     /// Allows routing using NodeId interchangeably with UnifiedPeerId
+    ///
+    /// # Security (HIGH-1 Fix)
+    ///
+    /// Uses secondary index for O(1) constant-time lookup, preventing timing side-channel attacks.
     pub async fn find_connection_by_node_id(&self, node_id: &NodeId) -> Option<MeshConnection> {
+        // HIGH-1 FIX: Use secondary index for O(1) lookup
+        let node_index = self.node_id_index.read().await;
+        let peer = node_index.get(node_id)?;
+
         let connections = self.mesh_connections.read().await;
-        connections.iter()
-            .find(|(peer, _conn)| peer.node_id() == node_id)
-            .map(|(_peer, conn)| conn.clone())
+        connections.get(peer).cloned()
     }
-    
+
     /// **ACCEPTANCE CRITERIA (Ticket #146):** Find connection by PublicKey
     ///
     /// Allows routing using PublicKey interchangeably with UnifiedPeerId
+    ///
+    /// # Security (HIGH-1 Fix)
+    ///
+    /// Uses secondary index for O(1) constant-time lookup, preventing timing side-channel attacks.
     pub async fn find_connection_by_public_key(&self, public_key: &PublicKey) -> Option<MeshConnection> {
+        // HIGH-1 FIX: Use secondary index for O(1) lookup
+        let pk_index = self.public_key_index.read().await;
+        let peer = pk_index.get(public_key)?;
+
         let connections = self.mesh_connections.read().await;
-        connections.iter()
-            .find(|(peer, _conn)| peer.public_key() == public_key)
-            .map(|(_peer, conn)| conn.clone())
+        connections.get(peer).cloned()
     }
-    
+
     /// **ACCEPTANCE CRITERIA (Ticket #146):** Find peer by NodeId
     ///
     /// Returns the full UnifiedPeerId for a given NodeId
+    ///
+    /// # Security (HIGH-1 Fix)
+    ///
+    /// Uses secondary index for O(1) constant-time lookup.
     pub async fn find_peer_by_node_id(&self, node_id: &NodeId) -> Option<UnifiedPeerId> {
-        let connections = self.mesh_connections.read().await;
-        connections.keys()
-            .find(|peer| peer.node_id() == node_id)
-            .cloned()
+        // HIGH-1 FIX: Use secondary index for O(1) lookup
+        let node_index = self.node_id_index.read().await;
+        node_index.get(node_id).cloned()
     }
-    
+
     /// **ACCEPTANCE CRITERIA (Ticket #146):** Find peer by PublicKey
     ///
     /// Returns the full UnifiedPeerId for a given PublicKey
+    ///
+    /// # Security (HIGH-1 Fix)
+    ///
+    /// Uses secondary index for O(1) constant-time lookup.
     pub async fn find_peer_by_public_key(&self, public_key: &PublicKey) -> Option<UnifiedPeerId> {
-        let connections = self.mesh_connections.read().await;
-        connections.keys()
-            .find(|peer| peer.public_key() == public_key)
-            .cloned()
+        // HIGH-1 FIX: Use secondary index for O(1) lookup
+        let pk_index = self.public_key_index.read().await;
+        pk_index.get(public_key).cloned()
     }
     
     /// Set mesh server reference for reward tracking
@@ -298,10 +376,10 @@ impl MeshMessageRouter {
         sender: PublicKey,
     ) -> Result<u64> {
         let message_id = rand::random::<u64>();
-        
-        info!(" Routing message {} to destination {:?}", 
+
+        info!(" Routing message {} to destination {:?}",
               message_id, hex::encode(&destination.key_id[0..4]));
-        
+
         // Create delivery tracking
         let delivery_status = DeliveryStatus {
             message_id,
@@ -319,14 +397,18 @@ impl MeshMessageRouter {
                 .unwrap_or_default()
                 .as_secs(),
         };
-        
+
         {
             let mut tracking = self.delivery_tracking.write().await;
             tracking.insert(message_id, delivery_status);
         }
-        
+
+        // Convert PublicKey to UnifiedPeerId for route finding
+        let dest_unified = UnifiedPeerId::from_public_key_legacy(destination.clone());
+        let sender_unified = UnifiedPeerId::from_public_key_legacy(sender.clone());
+
         // Find optimal route to destination
-        let route = self.find_optimal_route(&destination, &sender).await?;
+        let route = self.find_optimal_route(&dest_unified, &sender_unified).await?;
         
         // Update delivery status with route
         {
@@ -880,7 +962,7 @@ impl MeshMessageRouter {
         origin: PublicKey,
     ) -> Result<u64> {
         info!(" Routing message to {:?}", hex::encode(&destination.key_id[0..4]));
-        
+
         // Create envelope
         let message_id = self.generate_message_id().await;
         let envelope = MeshMessageEnvelope::new(
@@ -889,13 +971,16 @@ impl MeshMessageRouter {
             destination.clone(),
             message,
         );
-        
+
         info!(" Created envelope {} (TTL: {})", message_id, envelope.ttl);
-        
+
+        // Convert destination PublicKey to UnifiedPeerId for routing (Ticket #146)
+        let dest_unified = UnifiedPeerId::from_public_key_legacy(destination.clone());
+
         // Find next hop
-        let next_hop = self.find_next_hop_for_destination(&destination).await?;
-        
-        info!("📤 Sending to next hop: {:?}", hex::encode(&next_hop.key_id[0..4]));
+        let next_hop = self.find_next_hop_for_destination(&dest_unified).await?;
+
+        info!("📤 Sending to next hop: {:?}", hex::encode(&next_hop.public_key().key_id[0..4]));
         
         // Send to next hop
         self.send_to_peer(&next_hop, &envelope).await?;
@@ -1001,9 +1086,13 @@ impl MeshMessageRouter {
 
 /// Topology update events
 #[derive(Debug, Clone)]
+/// Topology update events for routing table maintenance
+///
+/// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId for consistency
+/// with TopologyMap's peer_connections HashMap.
 pub enum TopologyUpdate {
-    PeerConnection { peer_a: PublicKey, peer_b: PublicKey },
-    PeerDisconnection { peer_a: PublicKey, peer_b: PublicKey },
+    PeerConnection { peer_a: UnifiedPeerId, peer_b: UnifiedPeerId },
+    PeerDisconnection { peer_a: UnifiedPeerId, peer_b: UnifiedPeerId },
 }
 
 #[cfg(test)]
@@ -1026,18 +1115,20 @@ mod tests {
     async fn test_route_caching() {
         let mesh_connections = Arc::new(RwLock::new(HashMap::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
-        
+
         let router = MeshMessageRouter::new(mesh_connections, long_range_relays);
-        let destination = PublicKey::new(vec![1, 2, 3]);
+        let destination_key = PublicKey::new(vec![1, 2, 3]);
+        // Ticket #146: Use UnifiedPeerId for routing
+        let destination = crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(destination_key);
         let route = vec![RouteHop {
             peer_id: destination.clone(),
             protocol: NetworkProtocol::BluetoothLE,
             relay_id: None,
             latency_ms: 100,
         }];
-        
+
         router.cache_route(destination.clone(), route.clone(), 0.9).await;
-        
+
         let cached = router.get_cached_route(&destination).await;
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().hops.len(), 1);

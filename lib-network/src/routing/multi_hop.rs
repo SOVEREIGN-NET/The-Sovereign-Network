@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 use tracing::{info, debug};
 use lib_crypto::PublicKey;
 
+use crate::identity::unified_peer::UnifiedPeerId;
 use crate::mesh::connection::MeshConnection;
 use crate::protocols::NetworkProtocol;
 use crate::routing::message_routing::RouteHop;
@@ -704,25 +705,27 @@ impl MultiHopRouter {
     async fn convert_path_to_route_hops(&self, path: &[PublicKey]) -> Result<Vec<RouteHop>> {
         let graph = self.topology_graph.read().await;
         let mut route_hops = Vec::new();
-        
+
         for i in 1..path.len() {
             let from = &path[i - 1];
             let to = &path[i];
-            
+
             if let Some(edge) = graph.edges.get(&(from.clone(), to.clone())) {
+                // Convert PublicKey to UnifiedPeerId for RouteHop (Ticket #146)
+                let unified_peer = UnifiedPeerId::from_public_key_legacy(to.clone());
                 route_hops.push(RouteHop {
-                    peer_id: to.clone(),
+                    peer_id: unified_peer,
                     protocol: edge.protocol.clone(),
                     relay_id: None,
                     latency_ms: edge.quality_metrics.latency_ms,
                 });
             } else {
-                return Err(anyhow!("Missing edge in path: {:?} → {:?}", 
-                                   hex::encode(&from.key_id[0..4]), 
+                return Err(anyhow!("Missing edge in path: {:?} → {:?}",
+                                   hex::encode(&from.key_id[0..4]),
                                    hex::encode(&to.key_id[0..4])));
             }
         }
-        
+
         Ok(route_hops)
     }
     
@@ -847,10 +850,11 @@ impl MultiHopRouter {
         // Add edges and adjacency relationships
         for (peer_id, connection) in connections {
             // Create bidirectional edges
-            // **MIGRATION (Ticket #146):** Changed from connection.peer_id to connection.peer
+            // **MIGRATION (Ticket #146):** Extract PublicKey from UnifiedPeerId for graph edges
+            let dest_pub_key = connection.peer.public_key().clone();
             let edge = NetworkEdge {
                 source: peer_id.clone(),
-                destination: connection.peer.clone(),
+                destination: dest_pub_key.clone(),
                 protocol: connection.protocol.clone(),
                 weight: self.calculate_edge_weight(connection),
                 quality_metrics: EdgeQualityMetrics {
@@ -862,14 +866,14 @@ impl MultiHopRouter {
                 },
                 last_updated: connection.connected_at,
             };
-            
-            graph.edges.insert((peer_id.clone(), connection.peer.clone()), edge.clone());
-            
+
+            graph.edges.insert((peer_id.clone(), dest_pub_key.clone()), edge.clone());
+
             // Add to adjacency list
             graph.adjacency_list
                 .entry(peer_id.clone())
                 .or_insert_with(HashSet::new)
-                .insert(connection.peer.clone());
+                .insert(dest_pub_key);
         }
         
         info!(" Updated topology graph: {} nodes, {} edges", 
