@@ -90,6 +90,10 @@ use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{timeout, Duration};
 
+// SECURITY (CRIT-2 FIX): Use shared constant for message size limit
+// Ensures consistency across all UHP implementations (1 MB limit)
+use crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE;
+
 /// Handshake timeout for WiFi Direct connections (30 seconds)
 ///
 /// WiFi Direct P2P links can have higher latency than regular WiFi, especially during
@@ -100,12 +104,6 @@ use tokio::time::{timeout, Duration};
 /// - Signature verification
 /// - Network congestion
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Maximum message size for WiFi Direct handshake messages (10 MB)
-///
-/// WiFi Direct supports high throughput (up to 250 Mbps), but handshake messages
-/// should be small. This limit prevents DoS attacks via oversized messages.
-const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
 // ============================================================================
 // Client-Side Handshake (WiFi Direct Client → Group Owner)
@@ -385,19 +383,19 @@ async fn send_message<T: serde::Serialize>(stream: &mut TcpStream, message: &T) 
         .context("Failed to serialize handshake message")?;
     
     // Validate size
-    if bytes.len() > MAX_MESSAGE_SIZE {
+    if bytes.len() > MAX_HANDSHAKE_MESSAGE_SIZE {
         return Err(anyhow::anyhow!(
             "Message too large: {} bytes (max: {})",
             bytes.len(),
-            MAX_MESSAGE_SIZE
+            MAX_HANDSHAKE_MESSAGE_SIZE
         ));
     }
     
-    // Send length prefix (u32 little-endian)
-    let len_bytes = (bytes.len() as u32).to_le_bytes();
-    stream.write_all(&len_bytes).await
+    // SECURITY (CRIT-1 FIX): Use big-endian (network byte order) to match TCP bootstrap and core UHP
+    // This ensures WiFi Direct clients can communicate with TCP bootstrap servers
+    stream.write_u32(bytes.len() as u32).await
         .context("Failed to write message length")?;
-    
+
     // Send message payload
     stream.write_all(&bytes).await
         .context("Failed to write message payload")?;
@@ -416,7 +414,7 @@ async fn send_message<T: serde::Serialize>(stream: &mut TcpStream, message: &T) 
 
 /// Receive a handshake message with length-prefix framing
 ///
-/// Wire format: [4-byte length (u32 LE)][serialized message bytes]
+/// Wire format: [4-byte length (u32 big-endian)][serialized message bytes]
 ///
 /// # Arguments
 ///
@@ -430,19 +428,17 @@ async fn send_message<T: serde::Serialize>(stream: &mut TcpStream, message: &T) 
 ///
 /// - `Err(...)` if read fails, message too large, or deserialization fails
 async fn receive_message<T: serde::de::DeserializeOwned>(stream: &mut TcpStream) -> Result<T> {
-    // Read length prefix (4 bytes)
-    let mut len_bytes = [0u8; 4];
-    stream.read_exact(&mut len_bytes).await
-        .context("Failed to read message length - peer disconnected or network error")?;
-    
-    let len = u32::from_le_bytes(len_bytes) as usize;
+    // SECURITY (CRIT-1 FIX): Use big-endian (network byte order) to match TCP bootstrap and core UHP
+    // This ensures WiFi Direct clients can communicate with TCP bootstrap servers
+    let len = stream.read_u32().await
+        .context("Failed to read message length - peer disconnected or network error")? as usize;
     
     // Validate message size
-    if len > MAX_MESSAGE_SIZE {
+    if len > MAX_HANDSHAKE_MESSAGE_SIZE {
         return Err(anyhow::anyhow!(
             "Message too large: {} bytes (max: {}) - potential DoS attack",
             len,
-            MAX_MESSAGE_SIZE
+            MAX_HANDSHAKE_MESSAGE_SIZE
         ));
     }
     

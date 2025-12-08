@@ -12,6 +12,7 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
@@ -53,8 +54,10 @@ impl WiFiRouter {
         };
         
         // Create shared nonce cache for WiFi Direct handshakes
-        // 3600 second (1 hour) expiration, 10000 entry capacity
-        let nonce_cache = NonceCache::new(3600, 10000);
+        // SECURITY (HIGH-2): Increased capacity from 10,000 to 50,000 entries for mesh scale
+        // Supports larger mesh networks without nonce collision risks
+        // 3600 second (1 hour) expiration, 50000 entry capacity
+        let nonce_cache = NonceCache::new(3600, 50000);
         let handshake_context = HandshakeContext::new(nonce_cache);
         
         Self {
@@ -171,7 +174,20 @@ impl WiFiRouter {
     /// - Rejects connections if identity_manager not configured
     pub async fn handle_wifi_direct(&self, mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
         info!("🔐 WiFi Direct connection from {}, performing UHP handshake...", addr);
-        
+
+        // SECURITY (HIGH-3): Validate WiFi Direct subnet (192.168.49.0/24)
+        // Ensures connection comes from WiFi Direct P2P interface, not arbitrary source
+        if let std::net::IpAddr::V4(ip) = addr.ip() {
+            let octets = ip.octets();
+            if octets[0] != 192 || octets[1] != 168 || octets[2] != 49 {
+                warn!("❌ WiFi Direct: Connection rejected - not from WiFi Direct subnet: {}", addr);
+                return Err(anyhow::anyhow!("Connection not from WiFi Direct subnet (192.168.49.0/24)"));
+            }
+        } else {
+            warn!("❌ WiFi Direct: Connection rejected - IPv6 not supported: {}", addr);
+            return Err(anyhow::anyhow!("WiFi Direct only supports IPv4"));
+        }
+
         // Check if identity manager is configured
         let identity_manager = {
             let guard = self.identity_manager.read().await;
@@ -205,29 +221,48 @@ impl WiFiRouter {
         let device_role = if is_owner { "Group Owner" } else { "Client" };
         
         info!("📱 WiFi Direct role: {} for connection from {}", device_role, addr);
-        
+
+        // SECURITY (HIGH-1): Wrap handshake with timeout for defense in depth
+        // Prevents hanging connections and DoS attacks via slow handshakes
         // Perform UHP handshake as responder (we're accepting the connection)
-        match handshake_as_responder(&mut stream, &our_identity, &ctx).await {
-            Ok(result) => {
+        let handshake_result = tokio::time::timeout(
+            Duration::from_secs(30),
+            handshake_as_responder(&mut stream, &our_identity, &ctx)
+        ).await;
+
+        match handshake_result {
+            Ok(Ok(result)) => {
                 info!("✅ WiFi Direct handshake successful with {}", addr);
                 info!("   Peer: {} ({})", result.peer_identity.device_id, result.peer_identity.did);
                 info!("   Session ID: {:02x?}", &result.session_id[..8]);
                 
                 // Store authenticated peer connection
+                // SECURITY (HIGH-4): Session key derivation and encryption
+                // The handshake result includes session_key derived via HKDF from ephemeral secrets
+                // This session_key can be used for AEAD encryption of post-handshake messages
+                // Currently stored but not used for message encryption - consider implementing
+                // TLS 1.3 style record encryption for all subsequent WiFi Direct frames
+                let _session_key = &result.session_key;
+
                 let mut devices = self.connected_devices.write().await;
                 devices.insert(
                     addr.to_string(),
                     format!("{} (authenticated)", result.peer_identity.device_id)
                 );
-                
+
                 info!("✅ WiFi Direct: Verified peer {} added to connected devices", result.peer_identity.device_id);
-                
+
                 Ok(())
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 warn!("❌ WiFi Direct handshake failed with {}: {}", addr, e);
                 warn!("   Rejecting unauthenticated connection");
                 Err(e).context("WiFi Direct UHP handshake failed")
+            }
+            Err(_elapsed) => {
+                warn!("❌ WiFi Direct handshake timeout with {} (exceeded 30s)", addr);
+                warn!("   Rejecting connection due to handshake timeout");
+                Err(anyhow::anyhow!("Handshake timeout")).context("WiFi Direct handshake took too long")
             }
         }
     }
