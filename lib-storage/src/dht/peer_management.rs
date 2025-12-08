@@ -40,19 +40,23 @@ impl DhtPeerManager {
     }
     
     /// Add a new peer
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for peer tracking
     pub async fn add_peer(&mut self, node: DhtNode) -> Result<()> {
         // Check if peer meets reputation requirements
         if node.reputation < self.min_reputation {
             return Err(anyhow!("Peer reputation {} below minimum {}", node.reputation, self.min_reputation));
         }
         
+        let node_id = node.peer.node_id();
+        
         // Don't add ourselves
-        if node.id == self.local_id {
+        if *node_id == self.local_id {
             return Err(anyhow!("Cannot add self as peer"));
         }
         
         // Check if we're at capacity
-        if self.peers.len() >= self.max_peers && !self.peers.contains_key(&node.id) {
+        if self.peers.len() >= self.max_peers && !self.peers.contains_key(node_id) {
             // Remove lowest reputation peer
             self.evict_worst_peer().await?;
         }
@@ -65,7 +69,8 @@ impl DhtPeerManager {
             capabilities: Vec::new(), // Would be negotiated during handshake
         };
         
-        self.peers.insert(node.id.clone(), peer_info);
+        let node_id = node.peer.node_id().clone();
+        self.peers.insert(node_id.clone(), peer_info);
         
         // Initialize peer statistics
         let stats = PeerStats {
@@ -80,7 +85,7 @@ impl DhtPeerManager {
             last_updated: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         };
         
-        self.peer_stats.insert(node.id.clone(), stats);
+        self.peer_stats.insert(node_id, stats);
         
         // Add to routing table for intelligent peer selection
         self.router.add_node(node).await?;
@@ -152,10 +157,12 @@ impl DhtPeerManager {
     }
     
     /// Get best peers for routing (highest reputation and lowest latency)
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for stats lookup
     pub fn get_best_peers(&self, count: usize) -> Vec<&DhtNode> {
         let mut peer_scores: Vec<_> = self.peers.values()
             .map(|info| {
-                let stats = self.peer_stats.get(&info.node.id);
+                let stats = self.peer_stats.get(info.node.peer.node_id());
                 let latency_score = stats.map(|s| 1.0 / (s.avg_response_time + 1.0)).unwrap_or(0.0);
                 let reputation_score = info.node.reputation as f64 / 1000.0; // Normalize to 0-1
                 let combined_score = latency_score + reputation_score;
@@ -209,10 +216,12 @@ impl DhtPeerManager {
     }
     
     /// Find closest peers to a target using Kademlia routing
+    ///
+    /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for peer lookup
     pub fn find_closest_peers(&self, target: &NodeId, count: usize) -> Vec<&DhtNode> {
         self.router.find_closest_nodes(target, count)
             .iter()
-            .filter_map(|node| self.peers.get(&node.id).map(|info| &info.node))
+            .filter_map(|node| self.peers.get(node.peer.node_id()).map(|info| &info.node))
             .collect()
     }
 
@@ -263,6 +272,8 @@ pub struct PeerManagementStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_identity::{ZhtpIdentity, IdentityType};
+    use crate::types::dht_types::DhtPeerIdentity;
 
     fn dummy_pq_signature() -> lib_crypto::PostQuantumSignature {
         lib_crypto::PostQuantumSignature {
@@ -277,9 +288,26 @@ mod tests {
         }
     }
 
-    fn build_node(id: NodeId, reputation: u32) -> DhtNode {
+    fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Device,
+            None,
+            None,
+            device_name,
+            None,
+        ).expect("Failed to create test identity");
+        
+        DhtPeerIdentity {
+            node_id: identity.node_id.clone(),
+            public_key: identity.public_key.clone(),
+            did: identity.did.clone(),
+            device_id: device_name.to_string(),
+        }
+    }
+
+    fn build_node(peer: DhtPeerIdentity, reputation: u32) -> DhtNode {
         DhtNode {
-            id,
+            peer,
             addresses: vec!["127.0.0.1:33442".to_string()],
             public_key: dummy_pq_signature(),
             last_seen: 0,
@@ -303,12 +331,13 @@ mod tests {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut manager = DhtPeerManager::new(local_id, 100, 500);
         
-        let test_node = build_node(NodeId::from_bytes([2u8; 32]), 1000);
+        let test_peer = create_test_peer("test-device");
+        let test_node = build_node(test_peer.clone(), 1000);
         
         manager.add_peer(test_node.clone()).await.unwrap();
         
         assert_eq!(manager.peers.len(), 1);
-        assert!(manager.get_peer(&test_node.id).is_some());
+        assert!(manager.get_peer(test_peer.node_id()).is_some());
     }
     
     #[tokio::test]
@@ -316,7 +345,8 @@ mod tests {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut manager = DhtPeerManager::new(local_id, 100, 500);
         
-        let low_rep_node = build_node(NodeId::from_bytes([2u8; 32]), 100); // Below minimum of 500
+        let low_rep_peer = create_test_peer("low-rep-device");
+        let low_rep_node = build_node(low_rep_peer, 100); // Below minimum of 500
         
         let result = manager.add_peer(low_rep_node).await;
         assert!(result.is_err());
@@ -328,12 +358,13 @@ mod tests {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut manager = DhtPeerManager::new(local_id, 100, 500);
         
-        let test_node = build_node(NodeId::from_bytes([2u8; 32]), 1000);
+        let test_peer = create_test_peer("test-device");
+        let test_node = build_node(test_peer.clone(), 1000);
         
         manager.add_peer(test_node.clone()).await.unwrap();
-        manager.update_peer_stats(&test_node.id, 100, 50, 0.5, true).unwrap();
+        manager.update_peer_stats(test_peer.node_id(), 100, 50, 0.5, true).unwrap();
         
-        let stats = manager.get_peer_stats(&test_node.id).unwrap();
+        let stats = manager.get_peer_stats(test_peer.node_id()).unwrap();
         assert_eq!(stats.bytes_sent, 100);
         assert_eq!(stats.bytes_received, 50);
         assert_eq!(stats.successful_requests, 1);

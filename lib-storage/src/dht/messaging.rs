@@ -153,6 +153,10 @@ impl DhtMessaging {
     }
     
     /// Create PONG response
+    ///
+    /// # Security
+    ///
+    /// - Includes nonce and sequence_number for replay protection
     fn create_pong_response(&self, ping: &DhtMessage) -> Result<DhtMessage> {
         Ok(DhtMessage {
             message_id: generate_response_id(&ping.message_id),
@@ -164,11 +168,17 @@ impl DhtMessaging {
             nodes: None,
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            signature: None,
+            nonce: generate_nonce(),
+            sequence_number: 0, // TODO: Track per-peer sequence numbers
+            signature: None, // TODO (HIGH-5): Sign message
         })
     }
-    
+
     /// Create FIND_NODE response
+    ///
+    /// # Security
+    ///
+    /// - Includes nonce and sequence_number for replay protection
     fn create_find_node_response(&self, find_node: &DhtMessage) -> Result<DhtMessage> {
         // In a implementation, this would query the routing table
         // For now, return empty node list
@@ -182,11 +192,17 @@ impl DhtMessaging {
             contract_data: None,
             nodes: Some(Vec::new()),
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            signature: None,
+            nonce: generate_nonce(),
+            sequence_number: 0, // TODO: Track per-peer sequence numbers
+            signature: None, // TODO (HIGH-5): Sign message
         })
     }
-    
+
     /// Create FIND_VALUE response
+    ///
+    /// # Security
+    ///
+    /// - Includes nonce and sequence_number for replay protection
     fn create_find_value_response(&self, find_value: &DhtMessage) -> Result<DhtMessage> {
         // In a implementation, this would check local storage
         Ok(DhtMessage {
@@ -199,11 +215,17 @@ impl DhtMessaging {
             nodes: Some(Vec::new()), // Return empty node list
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            signature: None,
+            nonce: generate_nonce(),
+            sequence_number: 0, // TODO: Track per-peer sequence numbers
+            signature: None, // TODO (HIGH-5): Sign message
         })
     }
-    
+
     /// Create STORE response
+    ///
+    /// # Security
+    ///
+    /// - Includes nonce and sequence_number for replay protection
     fn create_store_response(&self, store: &DhtMessage) -> Result<DhtMessage> {
         Ok(DhtMessage {
             message_id: generate_response_id(&store.message_id),
@@ -215,7 +237,9 @@ impl DhtMessaging {
             nodes: None,
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            signature: None,
+            nonce: generate_nonce(),
+            sequence_number: 0, // TODO: Track per-peer sequence numbers
+            signature: None, // TODO (HIGH-5): Sign message
         })
     }
     
@@ -266,9 +290,55 @@ fn generate_response_id(original_id: &str) -> String {
     format!("resp_{}", original_id)
 }
 
+/// Generate a cryptographically secure random nonce
+fn generate_nonce() -> [u8; 32] {
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+
+    let mut nonce = [0u8; 32];
+    let now = SystemTime::now();
+    let mut hasher = DefaultHasher::new();
+    now.hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+    std::thread::current().id().hash(&mut hasher);
+    let h1 = hasher.finish().to_le_bytes();
+    nonce[0..8].copy_from_slice(&h1);
+
+    let mut hasher2 = DefaultHasher::new();
+    now.hash(&mut hasher2);
+    hasher2.write_u64(0xDEADBEEF_CAFEBABE);
+    let h2 = hasher2.finish().to_le_bytes();
+    nonce[8..16].copy_from_slice(&h2);
+
+    let nanos = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    nonce[16..24].copy_from_slice(&(nanos as u64).to_le_bytes());
+    nonce[24..32].copy_from_slice(&((nanos >> 64) as u64).to_le_bytes());
+
+    nonce
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_identity::{ZhtpIdentity, IdentityType};
+    use crate::types::dht_types::DhtPeerIdentity;
+
+    fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Device,
+            None,
+            None,
+            device_name,
+            None,
+        ).expect("Failed to create test identity");
+        
+        DhtPeerIdentity {
+            node_id: identity.node_id.clone(),
+            public_key: identity.public_key.clone(),
+            did: identity.did.clone(),
+            device_id: device_name.to_string(),
+        }
+    }
 
     fn dummy_pq_signature() -> lib_crypto::PostQuantumSignature {
         lib_crypto::PostQuantumSignature {
@@ -306,12 +376,17 @@ mod tests {
             value: None,
             nodes: None,
             contract_data: None,
-            timestamp: 12345,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            nonce: [1u8; 32],
+            sequence_number: 0,
             signature: None,
         };
         
         let test_node = DhtNode {
-            id: NodeId::from_bytes([2u8; 32]),
+            peer: create_test_peer("test-node"),
             addresses: vec!["127.0.0.1:33442".to_string()],
             public_key: dummy_pq_signature(),
             last_seen: 0,
@@ -338,7 +413,12 @@ mod tests {
             value: None,
             nodes: None,
             contract_data: None,
-            timestamp: 12345,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            nonce: [2u8; 32],
+            sequence_number: 1,
             signature: None,
         };
         

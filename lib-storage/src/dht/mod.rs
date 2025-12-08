@@ -1,8 +1,26 @@
 //! DHT (Distributed Hash Table) Foundation Layer
-//! 
+//!
 //! This module implements the core DHT functionality that serves as the foundation
 //! for the economic storage layer. It provides Kademlia-based routing, peer discovery,
 //! and basic key-value operations with zero-knowledge privacy.
+//!
+//! # Logging (MED-9)
+//!
+//! **TODO:** Replace `println!` with `tracing` throughout this module.
+//!
+//! This module currently uses `println!` for debug output in multiple files.
+//! For production, migrate all logging to use the `tracing` crate:
+//!
+//! - `tracing::debug!()` for internal state transitions
+//! - `tracing::info!()` for significant operations (node add/remove, store/retrieve)
+//! - `tracing::warn!()` for recoverable errors
+//! - `tracing::error!()` for critical failures
+//!
+//! Files requiring migration:
+//! - `storage.rs` (~40 println! statements)
+//! - `replication.rs` (~5 println! statements)
+//! - `messaging.rs` (~1 println! statements)
+//! - `routing.rs` (~3 println! statements, mostly tests)
 
 pub mod node;
 pub mod routing;
