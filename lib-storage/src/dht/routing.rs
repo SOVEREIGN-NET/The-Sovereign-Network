@@ -9,11 +9,32 @@ use anyhow::{Result, anyhow};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Kademlia routing table for DHT operations
+///
+/// # Thread Safety (HIGH-6)
+///
+/// **TODO:** Currently uses `&mut self` for mutations, requiring external synchronization.
+/// For production multi-threaded usage:
+///
+/// 1. Wrap routing_table in `tokio::sync::RwLock<Vec<KBucket>>`
+/// 2. Change `&mut self` methods to `&self` with internal locking
+/// 3. Use read locks for find_closest_nodes(), get_bucket_nodes()
+/// 4. Use write locks for add_node(), remove_node(), mark_node_failed()
+///
+/// ```rust,ignore
+/// pub struct KademliaRouter {
+///     local_id: NodeId,
+///     routing_table: tokio::sync::RwLock<Vec<KBucket>>,
+///     k: usize,
+/// }
+/// ```
+///
+/// Until then, callers must ensure exclusive access during mutations.
 #[derive(Debug)]
 pub struct KademliaRouter {
     /// Local node ID
     local_id: NodeId,
     /// Routing table with 160 K-buckets (for 256-bit node IDs)
+    /// TODO (HIGH-6): Wrap in RwLock for thread-safe access
     routing_table: Vec<KBucket>,
     /// K-bucket size (standard Kademlia K value)
     k: usize,
@@ -53,10 +74,32 @@ impl KademliaRouter {
     ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for distance calculation
     /// while storing full UnifiedPeerId for signature verification
+    ///
+    /// # Security (CRIT-3)
+    ///
+    /// **TODO:** Currently accepts nodes without verifying NodeId ownership.
+    /// Before production, implement challenge-response verification:
+    ///
+    /// 1. Generate random challenge
+    /// 2. Require node to sign challenge with private key matching their public key
+    /// 3. Verify NodeId derivation matches: SHA3-256(public_key) == NodeId
+    /// 4. Only add node if verification passes
+    ///
+    /// This prevents NodeId collision/spoofing attacks where an attacker claims
+    /// a NodeId they don't own to poison routing tables.
+    ///
+    /// See: lib-identity::ZhtpIdentity::verify_node_id_derivation()
     pub async fn add_node(&mut self, node: DhtNode) -> Result<()> {
         let node_id = node.peer.node_id();
         if *node_id == self.local_id {
             return Err(anyhow!("Cannot add local node to routing table"));
+        }
+
+        // SECURITY (CRIT-3): Validate node has non-empty public key
+        // Full challenge-response verification should be done at the network layer
+        // before calling add_node, but we add a basic sanity check here
+        if node.peer.public_key().dilithium_pk.is_empty() {
+            return Err(anyhow!("Cannot add node with empty public key to routing table"));
         }
         
         let distance = self.calculate_distance(&self.local_id, node_id);

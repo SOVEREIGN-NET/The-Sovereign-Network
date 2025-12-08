@@ -1,5 +1,5 @@
 //! DHT Storage Operations
-//! 
+//!
 //! Implements key-value storage operations with zero-knowledge proofs
 //! and replication for the DHT layer.
 
@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::net::SocketAddr;
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
+use tracing::{debug, warn};
 
 /// DHT storage manager with networking
 #[derive(Debug)]
@@ -57,25 +58,59 @@ impl DhtStorage {
     /// Verify signature from a DHT node (Acceptance Criteria: PublicKey-based verification)
     ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.public_key()` for signature verification
+    ///
+    /// # Security
+    ///
+    /// - Uses CRYSTALS-Dilithium post-quantum signatures
+    /// - Returns `Ok(false)` for invalid signatures (not error)
+    /// - Returns `Err(...)` for cryptographic/format errors
+    ///
+    /// # Performance (MED-8)
+    ///
+    /// **TODO:** Add timeout wrapper to prevent DoS via slow verification.
+    /// Dilithium2 verification is typically <1ms, but malformed inputs could
+    /// cause longer processing. Consider:
+    ///
+    /// ```rust,ignore
+    /// tokio::time::timeout(
+    ///     Duration::from_millis(100),
+    ///     async { lib_crypto::verification::verify_signature(...) }
+    /// ).await
+    /// ```
     fn verify_node_signature(&self, node: &DhtNode, data: &[u8], signature: &[u8]) -> Result<bool> {
-        // In production, this would use the node's PublicKey to verify the signature
-        // For now, we return true as a placeholder for the verification logic
-        // 
-        // Production implementation would be:
-        // ```
-        // use lib_crypto::verify_signature;
-        // verify_signature(
-        //     node.peer.public_key(),
-        //     data,
-        //     signature
-        // )
-        // ```
-        
-        println!("🔐 Verifying signature from node DID: {}", node.peer.did());
-        println!("   Using PublicKey: {:?}", node.peer.public_key());
-        
-        // Placeholder: In production, verify the signature using node.peer.public_key()
-        Ok(true)
+        // Validate inputs
+        if signature.is_empty() {
+            warn!(node_did = %node.peer.did(), "Signature verification failed: empty signature");
+            return Ok(false);
+        }
+
+        let public_key = node.peer.public_key();
+        if public_key.dilithium_pk.is_empty() {
+            warn!(node_did = %node.peer.did(), "Signature verification failed: empty public key");
+            return Ok(false);
+        }
+
+        debug!(
+            node_did = %node.peer.did(),
+            pk_len = public_key.dilithium_pk.len(),
+            sig_len = signature.len(),
+            data_len = data.len(),
+            "Verifying DHT node signature"
+        );
+
+        // Use lib_crypto's verified signature verification
+        match lib_crypto::verification::verify_signature(data, signature, &public_key.dilithium_pk) {
+            Ok(valid) => {
+                if !valid {
+                    warn!(node_did = %node.peer.did(), "Signature verification failed: invalid signature");
+                }
+                Ok(valid)
+            }
+            Err(e) => {
+                warn!(node_did = %node.peer.did(), error = %e, "Signature verification error");
+                Err(anyhow::anyhow!("Signature verification error: {}", e))
+            }
+        }
     }
 
     /// Create DHT storage with networking enabled

@@ -212,6 +212,19 @@ pub struct StorageCapabilities {
 ///
 /// This is a storage-local version to avoid circular dependencies with lib-network.
 /// The full `UnifiedPeerId` from lib-network can be converted to this type.
+///
+/// # Technical Debt (HIGH-4)
+///
+/// **TODO:** This struct duplicates `UnifiedPeerId` from lib-network to avoid
+/// circular dependencies. This creates maintenance burden and potential drift.
+///
+/// **Preferred solution:** Create `lib-types` crate containing shared types:
+/// - Move `UnifiedPeerId`, `NodeId`, `DhtKey` to lib-types
+/// - Have both lib-storage and lib-network depend on lib-types
+/// - Remove this duplicate struct
+///
+/// **Why not done now:** Requires significant refactoring across multiple crates.
+/// Tracked in: https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/145
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct DhtPeerIdentity {
     /// Canonical node identifier from lib-identity
@@ -231,9 +244,29 @@ pub struct DhtPeerIdentity {
 
 impl DhtPeerIdentity {
     /// Create from ZhtpIdentity
+    ///
+    /// # Security (MED-7)
+    ///
+    /// **WARNING:** This method accepts only a NodeId and creates a placeholder identity.
+    /// The resulting DhtPeerIdentity will have an EMPTY public key and placeholder DID,
+    /// which means signature verification will FAIL.
+    ///
+    /// **PREFERRED:** Use `from_zhtp_identity_full()` or construct DhtPeerIdentity directly
+    /// with valid cryptographic material.
+    ///
+    /// This method is retained for backwards compatibility but should be avoided in
+    /// security-critical code paths.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use from_zhtp_identity_full() or construct DhtPeerIdentity with valid public key"
+    )]
     pub fn from_zhtp_identity(identity: &crate::types::NodeId) -> Result<Self, anyhow::Error> {
-        // In practice, this would extract all components from ZhtpIdentity
-        // For now, we create a minimal version
+        // SECURITY: Log warning about insecure usage
+        tracing::warn!(
+            "from_zhtp_identity() creates placeholder identity without valid public key. \
+             Use from_zhtp_identity_full() for security-critical operations."
+        );
+
         Ok(Self {
             node_id: identity.clone(),
             public_key: lib_crypto::PublicKey {
@@ -244,6 +277,24 @@ impl DhtPeerIdentity {
             did: String::from("did:zhtp:placeholder"),
             device_id: String::from("default"),
         })
+    }
+
+    /// Create from full ZhtpIdentity with all cryptographic material
+    ///
+    /// # Arguments
+    ///
+    /// * `identity` - Full ZhtpIdentity with valid cryptographic keys
+    ///
+    /// # Returns
+    ///
+    /// DhtPeerIdentity with valid public key for signature verification
+    pub fn from_zhtp_identity_full(identity: &lib_identity::ZhtpIdentity) -> Self {
+        Self {
+            node_id: identity.node_id.clone(),
+            public_key: identity.public_key.clone(),
+            did: identity.did.clone(),
+            device_id: identity.primary_device.clone(),
+        }
     }
     
     /// Get NodeId reference (for Kademlia routing)
@@ -358,7 +409,14 @@ pub enum DhtMessageType {
     ContractFindResponse,
 }
 
-/// DHT message structure
+/// DHT message structure with replay attack protection
+///
+/// # Security Properties
+///
+/// - **nonce**: Random 32-byte value for replay attack prevention
+/// - **sequence_number**: Monotonically increasing per-sender counter
+/// - **timestamp**: Unix timestamp for freshness validation (reject > 5 min old)
+/// - **signature**: REQUIRED for all messages (not optional in practice)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtMessage {
     /// Unique message identifier
@@ -377,10 +435,88 @@ pub struct DhtMessage {
     pub nodes: Option<Vec<DhtNode>>,
     /// Smart contract data (optional)
     pub contract_data: Option<ContractDhtData>,
-    /// Message timestamp
+    /// Message timestamp (Unix seconds) - reject if > 5 minutes old
     pub timestamp: u64,
-    /// Digital signature (optional)
+    /// SECURITY: Random nonce for replay attack prevention (32 bytes)
+    /// Each message MUST have a unique nonce
+    pub nonce: [u8; 32],
+    /// SECURITY: Monotonically increasing sequence number per sender
+    /// Used to detect out-of-order or replayed messages
+    pub sequence_number: u64,
+    /// Digital signature over message contents (REQUIRED for security)
+    /// Signs: message_id || message_type || sender_id || timestamp || nonce || sequence_number || payload
     pub signature: Option<Vec<u8>>,
+}
+
+/// Maximum message age in seconds (5 minutes)
+pub const MAX_MESSAGE_AGE_SECS: u64 = 300;
+
+impl DhtMessage {
+    /// Validate message freshness and replay protection fields
+    ///
+    /// # Returns
+    /// - `Ok(())` if message passes validation
+    /// - `Err(...)` if message is stale, missing nonce, or invalid
+    pub fn validate_freshness(&self) -> Result<(), anyhow::Error> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Check timestamp freshness
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| anyhow::anyhow!("System time error: {}", e))?
+            .as_secs();
+
+        if self.timestamp > now + 60 {
+            return Err(anyhow::anyhow!("Message timestamp is in the future"));
+        }
+
+        if now.saturating_sub(self.timestamp) > MAX_MESSAGE_AGE_SECS {
+            return Err(anyhow::anyhow!(
+                "Message too old: {} seconds (max {})",
+                now.saturating_sub(self.timestamp),
+                MAX_MESSAGE_AGE_SECS
+            ));
+        }
+
+        // Check nonce is non-zero (zero nonce is invalid)
+        if self.nonce == [0u8; 32] {
+            return Err(anyhow::anyhow!("Message has zero nonce (invalid)"));
+        }
+
+        Ok(())
+    }
+
+    /// Get the data that should be signed for this message
+    pub fn signable_data(&self) -> Vec<u8> {
+        use bincode;
+        // Create a version without signature for signing
+        let signable = SignableMessage {
+            message_id: &self.message_id,
+            message_type: &self.message_type,
+            sender_id: &self.sender_id,
+            target_id: &self.target_id,
+            key: &self.key,
+            value: &self.value,
+            timestamp: self.timestamp,
+            nonce: &self.nonce,
+            sequence_number: self.sequence_number,
+        };
+        bincode::serialize(&signable).unwrap_or_default()
+    }
+}
+
+/// Helper struct for creating signable message data
+#[derive(Serialize)]
+struct SignableMessage<'a> {
+    message_id: &'a str,
+    message_type: &'a DhtMessageType,
+    sender_id: &'a NodeId,
+    target_id: &'a Option<NodeId>,
+    key: &'a Option<String>,
+    value: &'a Option<Vec<u8>>,
+    timestamp: u64,
+    nonce: &'a [u8; 32],
+    sequence_number: u64,
 }
 
 /// DHT query response types

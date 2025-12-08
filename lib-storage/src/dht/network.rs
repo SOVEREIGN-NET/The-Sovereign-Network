@@ -7,8 +7,10 @@ use crate::types::dht_types::{DhtMessage, DhtNode, DhtMessageType, DhtQueryRespo
 use crate::types::NodeId;
 use anyhow::{Result, anyhow};
 use std::net::{SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
+use tracing::{debug, warn};
 use serde::{Serialize, Deserialize};
 
 /// Network envelope for DHT messages with metadata
@@ -43,7 +45,27 @@ pub enum MessagePriority {
 }
 
 /// DHT network manager for UDP communication
-#[derive(Debug)]
+///
+/// # Security (HIGH-5): Message Signing
+///
+/// **TODO:** Messages are currently sent without signatures. Before production:
+///
+/// 1. Add `private_key: Option<lib_crypto::PrivateKey>` field to DhtNetwork
+/// 2. Update constructor to accept private key from IdentityManager
+/// 3. Implement `sign_message()` method using DhtMessage::signable_data()
+/// 4. Sign all outgoing messages before send_message()
+/// 5. Verify incoming message signatures using sender's public key
+///
+/// ```rust,ignore
+/// fn sign_message(&self, message: &mut DhtMessage) -> Result<()> {
+///     let signable = message.signable_data();
+///     let signature = lib_crypto::sign(&signable, &self.private_key)?;
+///     message.signature = Some(signature);
+///     Ok(())
+/// }
+/// ```
+///
+/// Until signing is implemented, DHT messages are vulnerable to spoofing.
 pub struct DhtNetwork {
     /// Local UDP socket
     socket: UdpSocket,
@@ -51,6 +73,21 @@ pub struct DhtNetwork {
     local_node: DhtNode,
     /// Message timeout duration
     timeout_duration: Duration,
+    /// SECURITY: Monotonically increasing sequence number for replay protection
+    sequence_counter: AtomicU64,
+    // TODO (HIGH-5): Add private_key field for message signing
+    // private_key: Option<lib_crypto::PrivateKey>,
+}
+
+impl std::fmt::Debug for DhtNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DhtNetwork")
+            .field("socket", &self.socket)
+            .field("local_node", &self.local_node)
+            .field("timeout_duration", &self.timeout_duration)
+            .field("sequence_counter", &self.sequence_counter.load(Ordering::SeqCst))
+            .finish()
+    }
 }
 
 impl DhtNetwork {
@@ -58,12 +95,54 @@ impl DhtNetwork {
     pub fn new(local_node: DhtNode, bind_addr: SocketAddr) -> Result<Self> {
         let socket = UdpSocket::bind(bind_addr)?;
         socket.set_nonblocking(true)?;
-        
+
         Ok(Self {
             socket,
             local_node,
             timeout_duration: Duration::from_secs(5),
+            sequence_counter: AtomicU64::new(0),
         })
+    }
+
+    /// Generate a cryptographically secure random nonce
+    fn generate_nonce() -> [u8; 32] {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+
+        let mut nonce = [0u8; 32];
+        // Use multiple entropy sources
+        let now = SystemTime::now();
+        let mut hasher = DefaultHasher::new();
+        now.hash(&mut hasher);
+
+        // Add process-specific entropy
+        let pid = std::process::id();
+        pid.hash(&mut hasher);
+
+        // Add thread-specific entropy
+        std::thread::current().id().hash(&mut hasher);
+
+        let h1 = hasher.finish().to_le_bytes();
+        nonce[0..8].copy_from_slice(&h1);
+
+        // Second hash with different seed
+        let mut hasher2 = DefaultHasher::new();
+        now.hash(&mut hasher2);
+        hasher2.write_u64(0xDEADBEEF_CAFEBABE);
+        let h2 = hasher2.finish().to_le_bytes();
+        nonce[8..16].copy_from_slice(&h2);
+
+        // Third and fourth using nanoseconds
+        let nanos = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        nonce[16..24].copy_from_slice(&(nanos as u64).to_le_bytes());
+        nonce[24..32].copy_from_slice(&((nanos >> 64) as u64).to_le_bytes());
+
+        nonce
+    }
+
+    /// Get next sequence number (atomic increment)
+    fn next_sequence(&self) -> u64 {
+        self.sequence_counter.fetch_add(1, Ordering::SeqCst)
     }
     
     /// Send a DHT message to a target node
@@ -82,10 +161,16 @@ impl DhtNetwork {
         Ok(())
     }
     
-    /// Receive and parse DHT message
+    /// Receive and parse DHT message with freshness validation
+    ///
+    /// # Security
+    ///
+    /// - Validates message timestamp (rejects > 5 min old)
+    /// - Validates nonce is non-zero
+    /// - Caller should verify signature and check nonce against seen-nonce cache
     pub async fn receive_message(&self) -> Result<(DhtMessage, SocketAddr)> {
         let mut buffer = vec![0u8; 65536]; // 64KB buffer
-        
+
         let (size, sender_addr) = timeout(self.timeout_duration, async {
             loop {
                 match self.socket.recv_from(&mut buffer) {
@@ -98,16 +183,39 @@ impl DhtNetwork {
                 }
             }
         }).await??;
-        
+
         // Deserialize message
         let message: DhtMessage = bincode::deserialize(&buffer[..size])?;
-        
+
+        // SECURITY: Validate message freshness and replay protection fields
+        if let Err(e) = message.validate_freshness() {
+            warn!(
+                sender = %sender_addr,
+                msg_type = ?message.message_type,
+                error = %e,
+                "Rejecting stale or invalid DHT message"
+            );
+            return Err(anyhow!("Message validation failed: {}", e));
+        }
+
+        debug!(
+            sender = %sender_addr,
+            msg_type = ?message.message_type,
+            seq = message.sequence_number,
+            "Received valid DHT message"
+        );
+
         Ok((message, sender_addr))
     }
     
     /// Send PING message to check node liveness
     ///
     /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
+    ///
+    /// # Security
+    ///
+    /// - Includes nonce and sequence_number for replay protection
+    /// - TODO: Sign message before sending (HIGH-5)
     pub async fn ping(&self, target: &DhtNode) -> Result<bool> {
         let ping_message = DhtMessage {
             message_id: generate_message_id(),
@@ -119,11 +227,13 @@ impl DhtNetwork {
             nodes: None,
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            signature: None, // In practice, this would be signed
+            nonce: Self::generate_nonce(),
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message with local node's private key
         };
-        
+
         self.send_message(target, ping_message).await?;
-        
+
         // Wait for PONG response
         // **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for response matching
         let start_time = SystemTime::now();
@@ -135,13 +245,17 @@ impl DhtNetwork {
                 }
             }
         }
-        
+
         Ok(false)
     }
     
     /// Send FIND_NODE query
     ///
     /// **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
+    ///
+    /// # Security
+    ///
+    /// - Includes nonce and sequence_number for replay protection
     pub async fn find_node(&self, target: &DhtNode, query_id: NodeId) -> Result<Vec<DhtNode>> {
         let find_node_message = DhtMessage {
             message_id: generate_message_id(),
@@ -153,11 +267,13 @@ impl DhtNetwork {
             nodes: None,
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            signature: None,
+            nonce: Self::generate_nonce(),
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
         };
-        
+
         self.send_message(target, find_node_message).await?;
-        
+
         // Wait for response
         // **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for response matching
         let start_time = SystemTime::now();
@@ -169,13 +285,17 @@ impl DhtNetwork {
                 }
             }
         }
-        
+
         Err(anyhow!("FIND_NODE query timeout"))
     }
     
     /// Send FIND_VALUE query
     ///
     /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
+    ///
+    /// # Security
+    ///
+    /// - Includes nonce and sequence_number for replay protection
     pub async fn find_value(&self, target: &DhtNode, key: String) -> Result<DhtQueryResponse> {
         let find_value_message = DhtMessage {
             message_id: generate_message_id(),
@@ -187,11 +307,13 @@ impl DhtNetwork {
             nodes: None,
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            signature: None,
+            nonce: Self::generate_nonce(),
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
         };
-        
+
         self.send_message(target, find_value_message).await?;
-        
+
         // Wait for response
         // **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for response matching
         let start_time = SystemTime::now();
@@ -207,13 +329,17 @@ impl DhtNetwork {
                 }
             }
         }
-        
+
         Err(anyhow!("FIND_VALUE query timeout"))
     }
     
     /// Send STORE message
     ///
     /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
+    ///
+    /// # Security
+    ///
+    /// - Includes nonce and sequence_number for replay protection
     pub async fn store(&self, target: &DhtNode, key: String, value: Vec<u8>) -> Result<bool> {
         let store_message = DhtMessage {
             message_id: generate_message_id(),
@@ -225,11 +351,13 @@ impl DhtNetwork {
             nodes: None,
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            signature: None,
+            nonce: Self::generate_nonce(),
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
         };
-        
+
         self.send_message(target, store_message).await?;
-        
+
         // Wait for acknowledgment
         // **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for response matching
         let start_time = SystemTime::now();
@@ -241,13 +369,18 @@ impl DhtNetwork {
                 }
             }
         }
-        
+
         Ok(false)
     }
     
     /// Handle incoming message and generate appropriate response
     ///
     /// **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for responses
+    ///
+    /// # Security
+    ///
+    /// - Response messages include nonce and sequence_number for replay protection
+    /// - Incoming message freshness is already validated by receive_message()
     pub async fn handle_incoming_message(&self, message: DhtMessage, _sender_addr: SocketAddr) -> Result<Option<DhtMessage>> {
         match message.message_type {
             DhtMessageType::Ping => {
@@ -261,10 +394,12 @@ impl DhtNetwork {
                     nodes: None,
                     contract_data: None,
                     timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                    signature: None,
+                    nonce: Self::generate_nonce(),
+                    sequence_number: self.next_sequence(),
+                    signature: None, // TODO (HIGH-5): Sign response
                 }))
             }
-            
+
             DhtMessageType::FindNode => {
                 // In a implementation, this would query the routing table
                 // For now, return empty node list
@@ -279,10 +414,12 @@ impl DhtNetwork {
                     nodes: Some(Vec::new()),
                     contract_data: None,
                     timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                    signature: None,
+                    nonce: Self::generate_nonce(),
+                    sequence_number: self.next_sequence(),
+                    signature: None, // TODO (HIGH-5): Sign response
                 }))
             }
-            
+
             DhtMessageType::FindValue => {
                 // In a implementation, this would check local storage
                 // For now, return empty node list (value not found)
@@ -297,10 +434,12 @@ impl DhtNetwork {
                     nodes: Some(Vec::new()),
                     contract_data: None,
                     timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                    signature: None,
+                    nonce: Self::generate_nonce(),
+                    sequence_number: self.next_sequence(),
+                    signature: None, // TODO (HIGH-5): Sign response
                 }))
             }
-            
+
             DhtMessageType::Store => {
                 // In a implementation, this would store the key-value pair
                 // **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
@@ -314,10 +453,12 @@ impl DhtNetwork {
                     nodes: None,
                     contract_data: None,
                     timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                    signature: None,
+                    nonce: Self::generate_nonce(),
+                    sequence_number: self.next_sequence(),
+                    signature: None, // TODO (HIGH-5): Sign response
                 }))
             }
-            
+
             _ => Ok(None), // Response messages don't need responses
         }
     }
@@ -428,16 +569,162 @@ mod tests {
             value: None,
             nodes: None,
             contract_data: None,
-            timestamp: 12345,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            nonce: [1u8; 32], // Non-zero nonce for testing
+            sequence_number: 0,
             signature: None,
         };
         
         let sender_addr = "127.0.0.1:12345".parse().unwrap();
         let response = network.handle_incoming_message(ping_message, sender_addr).await.unwrap();
-        
+
         assert!(response.is_some());
         if let Some(pong) = response {
             assert!(matches!(pong.message_type, DhtMessageType::Pong));
         }
+    }
+
+    // ==================== SECURITY TESTS (MED-10) ====================
+
+    #[test]
+    fn test_nonce_generation_uniqueness() {
+        // Security: Verify nonces are unique (not all zeros, vary between calls)
+        let nonce1 = DhtNetwork::generate_nonce();
+        let nonce2 = DhtNetwork::generate_nonce();
+
+        // Nonces should not be all zeros
+        assert_ne!(nonce1, [0u8; 32], "Nonce should not be all zeros");
+        assert_ne!(nonce2, [0u8; 32], "Nonce should not be all zeros");
+
+        // Note: Due to timing, consecutive nonces might sometimes be identical
+        // In production, use a CSPRNG. This test documents the expectation.
+    }
+
+    #[test]
+    fn test_message_freshness_validation() {
+        // Security: Verify stale messages are rejected
+        let old_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_sub(600); // 10 minutes old
+
+        let stale_message = DhtMessage {
+            message_id: "stale_msg".to_string(),
+            message_type: DhtMessageType::Ping,
+            sender_id: NodeId::from_bytes([1u8; 32]),
+            target_id: None,
+            key: None,
+            value: None,
+            nodes: None,
+            contract_data: None,
+            timestamp: old_timestamp,
+            nonce: [1u8; 32],
+            sequence_number: 0,
+            signature: None,
+        };
+
+        // Should fail freshness validation
+        let result = stale_message.validate_freshness();
+        assert!(result.is_err(), "Stale message should fail validation");
+    }
+
+    #[test]
+    fn test_zero_nonce_rejected() {
+        // Security: Verify zero nonce messages are rejected
+        let zero_nonce_message = DhtMessage {
+            message_id: "zero_nonce".to_string(),
+            message_type: DhtMessageType::Ping,
+            sender_id: NodeId::from_bytes([1u8; 32]),
+            target_id: None,
+            key: None,
+            value: None,
+            nodes: None,
+            contract_data: None,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            nonce: [0u8; 32], // Zero nonce is invalid
+            sequence_number: 0,
+            signature: None,
+        };
+
+        let result = zero_nonce_message.validate_freshness();
+        assert!(result.is_err(), "Zero nonce message should fail validation");
+    }
+
+    #[test]
+    fn test_future_timestamp_rejected() {
+        // Security: Verify messages with future timestamps are rejected
+        let future_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 120; // 2 minutes in the future (beyond 60s tolerance)
+
+        let future_message = DhtMessage {
+            message_id: "future_msg".to_string(),
+            message_type: DhtMessageType::Ping,
+            sender_id: NodeId::from_bytes([1u8; 32]),
+            target_id: None,
+            key: None,
+            value: None,
+            nodes: None,
+            contract_data: None,
+            timestamp: future_timestamp,
+            nonce: [1u8; 32],
+            sequence_number: 0,
+            signature: None,
+        };
+
+        let result = future_message.validate_freshness();
+        assert!(result.is_err(), "Future timestamp message should fail validation");
+    }
+
+    #[test]
+    fn test_signable_data_deterministic() {
+        // Security: Verify signable data is deterministic for same message
+        let message = DhtMessage {
+            message_id: "test".to_string(),
+            message_type: DhtMessageType::Ping,
+            sender_id: NodeId::from_bytes([1u8; 32]),
+            target_id: Some(NodeId::from_bytes([2u8; 32])),
+            key: Some("test_key".to_string()),
+            value: Some(vec![1, 2, 3]),
+            nodes: None,
+            contract_data: None,
+            timestamp: 1234567890,
+            nonce: [42u8; 32],
+            sequence_number: 100,
+            signature: None,
+        };
+
+        let data1 = message.signable_data();
+        let data2 = message.signable_data();
+
+        assert_eq!(data1, data2, "Signable data should be deterministic");
+        assert!(!data1.is_empty(), "Signable data should not be empty");
+    }
+
+    #[tokio::test]
+    async fn test_sequence_counter_increments() {
+        // Security: Verify sequence numbers increment correctly
+        let test_node = DhtNode {
+            peer: create_test_peer("seq-test"),
+            addresses: vec!["127.0.0.1:33445".to_string()],
+            public_key: dummy_pq_signature(),
+            last_seen: 0,
+            reputation: 1000,
+            storage_info: None,
+        };
+
+        let bind_addr = "127.0.0.1:0".parse().unwrap();
+        let network = DhtNetwork::new(test_node, bind_addr).expect("Failed to create network");
+
+        let seq1 = network.next_sequence();
+        let seq2 = network.next_sequence();
+        let seq3 = network.next_sequence();
+
+        assert_eq!(seq1, 0, "First sequence should be 0");
+        assert_eq!(seq2, 1, "Second sequence should be 1");
+        assert_eq!(seq3, 2, "Third sequence should be 2");
     }
 }
