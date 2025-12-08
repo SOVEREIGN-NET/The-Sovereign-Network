@@ -188,7 +188,16 @@ impl MeshRouter {
         };
         let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
         let local_node = lib_storage::types::dht_types::DhtNode {
-            id: local_node_id,
+            peer: lib_storage::types::dht_types::DhtPeerIdentity {
+                node_id: local_node_id.clone(),
+                public_key: lib_crypto::PublicKey {
+                    dilithium_pk: vec![],  // Placeholder - will be populated during handshake
+                    kyber_pk: vec![],
+                    key_id: [0u8; 32],
+                },
+                did: format!("did:zhtp:{}", hex::encode(local_node_id.as_bytes())),
+                device_id: "mesh-node".to_string(),
+            },
             addresses: vec![bind_addr.to_string()],
             public_key: PostQuantumSignature::default(),
             last_seen: SystemTime::now()
