@@ -233,7 +233,7 @@ pub async fn handshake_as_initiator(
         Ok(result)
     })
     .await
-    .map_err(|_| anyhow::anyhow!("WiFi Direct handshake timeout (30s)"))?? // Double ? to unwrap both Results
+    .map_err(|_| anyhow::anyhow!("WiFi Direct handshake timeout (30s)"))? // Unwrap timeout Result
 }
 
 // ============================================================================
@@ -358,7 +358,7 @@ pub async fn handshake_as_responder(
         Ok(result)
     })
     .await
-    .map_err(|_| anyhow::anyhow!("WiFi Direct handshake timeout (30s)"))?? // Double ? to unwrap both Results
+    .map_err(|_| anyhow::anyhow!("WiFi Direct handshake timeout (30s)"))? // Unwrap timeout Result
 }
 
 // ============================================================================
