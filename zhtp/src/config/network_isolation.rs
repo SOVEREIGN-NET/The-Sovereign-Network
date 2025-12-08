@@ -190,7 +190,7 @@ fn default_priority() -> u32 {
 impl Default for NetworkIsolationConfig {
     fn default() -> Self {
         Self {
-            enable_isolation: true,
+            enable_isolation: false,
             protocol_filtering_mode: false,
             allowed_protocols: vec![
                 "zhtp".to_string(),
