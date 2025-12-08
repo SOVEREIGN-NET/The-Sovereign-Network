@@ -118,7 +118,7 @@ impl ZkDHTIntegration {
             .iter()
             .map(|n| {
                 let addr = n.addresses.first().cloned().unwrap_or_default();
-                format!("{}@{}", hex::encode(n.id.as_bytes()), addr)
+                format!("{}@{}", hex::encode(n.peer.node_id().as_bytes()), addr)
             })
             .collect())
     }
