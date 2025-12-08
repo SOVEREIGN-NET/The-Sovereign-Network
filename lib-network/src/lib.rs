@@ -29,6 +29,8 @@ pub use crate::peer_registry::{
     PeerRegistry, PeerEntry, SharedPeerRegistry, new_shared_registry,
     PeerEndpoint, ConnectionMetrics, NodeCapabilities, GeographicLocation,
     DhtPeerInfo, DiscoveryMethod, PeerTier, RegistryStats,
+    // New security features
+    RegistryConfig, DEFAULT_MAX_PEERS, DEFAULT_PEER_TTL_SECS,
 };
 
 // Unified Handshake Protocol exports
