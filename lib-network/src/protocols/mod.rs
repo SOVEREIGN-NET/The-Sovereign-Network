@@ -5,6 +5,7 @@ pub mod bluetooth;
 
 // Other protocols
 pub mod wifi_direct;
+pub mod wifi_direct_handshake; // UHP handshake adapter for WiFi Direct
 pub mod lorawan;
 pub mod satellite;
 pub mod zhtp_auth;

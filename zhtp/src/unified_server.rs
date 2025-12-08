@@ -219,6 +219,9 @@ impl ZhtpUnifiedServer {
         // Set identity manager on mesh router for direct UDP access
         mesh_router.set_identity_manager(identity_manager.clone());
         
+        // Set identity manager on WiFi router for UHP handshake authentication
+        wifi_router.set_identity_manager(identity_manager.clone()).await;
+        
         // Create blockchain broadcast channel for real-time sync
         let (broadcast_sender, broadcast_receiver) = tokio::sync::mpsc::unbounded_channel();
         
