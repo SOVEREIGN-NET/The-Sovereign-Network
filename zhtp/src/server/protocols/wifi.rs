@@ -23,6 +23,7 @@ use lib_network::protocols::wifi_direct::WiFiDirectMeshProtocol;
 use lib_network::protocols::wifi_direct_handshake::{handshake_as_initiator, handshake_as_responder};
 use lib_network::handshake::{HandshakeContext, NonceCache};
 use lib_identity::IdentityManager;
+use std::path::PathBuf;
 
 /// WiFi Direct device connections
 /// WiFi Direct handling with UHP authentication
@@ -54,10 +55,16 @@ impl WiFiRouter {
         };
         
         // Create shared nonce cache for WiFi Direct handshakes
-        // SECURITY (HIGH-2): Increased capacity from 10,000 to 50,000 entries for mesh scale
-        // Supports larger mesh networks without nonce collision risks
-        // 3600 second (1 hour) expiration, 50000 entry capacity
-        let nonce_cache = NonceCache::new(3600, 50000);
+        // SECURITY (HIGH-2): Persistent RocksDB cache for cross-restart replay protection
+        // Uses open_default() with 5-minute TTL
+        let db_path = PathBuf::from("./nonce_cache_wifi");
+        let nonce_cache = NonceCache::open_default(&db_path, 300)
+            .unwrap_or_else(|e| {
+                warn!("Failed to initialize persistent nonce cache: {}, using fallback", e);
+                // Fallback: try again with different path
+                NonceCache::open_default(&PathBuf::from("/tmp/nonce_cache_wifi"), 300)
+                    .expect("Failed to create WiFi nonce cache even with fallback path")
+            });
         let handshake_context = HandshakeContext::new(nonce_cache);
         
         Self {
@@ -203,9 +210,10 @@ impl WiFiRouter {
         // Get our ZhtpIdentity for handshake
         let our_identity = {
             let mgr_guard = identity_manager.read().await;
-            mgr_guard.get_primary_identity()
-                .context("Failed to get primary identity for WiFi Direct handshake")?
-                .clone()
+            mgr_guard.list_identities()
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("No identities available for WiFi Direct handshake"))
+                .map(|identity| (*identity).clone())?
         };
         
         // Get handshake context (shared nonce cache)
