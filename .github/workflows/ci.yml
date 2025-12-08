@@ -88,7 +88,11 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+          for i in 1 2 3; do
+            ssh-keyscan -T 10 -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts && break
+            echo "ssh-keyscan attempt $i failed, retrying..."
+            sleep 2
+          done
 
       - name: Deploy Binary and Service
         run: |
