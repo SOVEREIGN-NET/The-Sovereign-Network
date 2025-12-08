@@ -229,11 +229,11 @@ pub async fn handshake_as_initiator(
             peer = %server_hello.identity.to_compact_string(),
             "WiFi Direct handshake completed as client"
         );
-        
+
         Ok(result)
     })
     .await
-    .map_err(|_| anyhow::anyhow!("WiFi Direct handshake timeout (30s)"))?
+    .map_err(|_| anyhow::anyhow!("WiFi Direct handshake timeout (30s)"))?? // Double ? to unwrap both Results
 }
 
 // ============================================================================
@@ -354,11 +354,11 @@ pub async fn handshake_as_responder(
             peer = %client_hello.identity.to_compact_string(),
             "WiFi Direct handshake completed as group owner"
         );
-        
+
         Ok(result)
     })
     .await
-    .map_err(|_| anyhow::anyhow!("WiFi Direct handshake timeout (30s)"))?
+    .map_err(|_| anyhow::anyhow!("WiFi Direct handshake timeout (30s)"))?? // Double ? to unwrap both Results
 }
 
 // ============================================================================
