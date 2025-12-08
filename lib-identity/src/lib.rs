@@ -30,6 +30,7 @@ pub mod auth;
 pub mod economics;
 pub mod integration;
 pub mod verification;
+pub mod staking;
 
 // ============================================================================
 // PUBLIC API EXPORTS
