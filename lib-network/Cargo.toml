@@ -94,6 +94,7 @@ mdns-sd = "0.16"                                  # mDNS service discovery (Bonj
 # NOTE: QUIC integration ready but commented out until cmake/NASM dependencies resolved
 quinn = "0.11"                                    # Production-ready QUIC implementation (used by Google, Cloudflare)
 rustls = { version = "0.23", default-features = false, features = ["ring"] } # TLS 1.3 library (used by quinn)
+rustls-pemfile = "2.1"                              # PEM file parsing for persistent TLS certificates
 rcgen = "0.14.5"                                    # Certificate generation for QUIC
 #To enable: Install cmake and NASM, then uncomment above lines
 
