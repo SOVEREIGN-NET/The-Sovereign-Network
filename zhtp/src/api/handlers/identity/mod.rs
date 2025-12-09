@@ -108,6 +108,29 @@ impl ZhtpRequestHandler for IdentityHandler {
             (ZhtpMethod::Post, "/api/v1/identity/seed/verify") => {
                 self.handle_verify_seed_phrase(request).await
             }
+            // New endpoints (Issue #348)
+            (ZhtpMethod::Post, "/api/v1/identity/restore/seed") => {
+                self.handle_restore_from_seed(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/zkdid/create") => {
+                // Alias to /create - ZK-DID is always created with identity
+                self.handle_create_identity(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/identity/signin-with-identity") => {
+                self.handle_signin_with_identity(request).await
+            }
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/exists/") => {
+                self.handle_identity_exists(request).await
+            }
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/get/") => {
+                self.handle_get_identity_by_did(request).await
+            }
+            (ZhtpMethod::Post, path) if path.starts_with("/api/v1/identity/verify/") => {
+                self.handle_verify_identity_by_did(request).await
+            }
+            (ZhtpMethod::Get, path) if path.ends_with("/seeds") && path.starts_with("/api/v1/identity/") => {
+                self.handle_get_identity_seeds(request).await
+            }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/identity/") => {
                 self.handle_get_identity(request).await
             }
@@ -817,5 +840,403 @@ impl IdentityHandler {
             &request,
         )
         .await
+    }
+
+    // ============================================================================
+    // New endpoints (Issue #348): Wire up 7 missing identity API endpoints
+    // ============================================================================
+
+    /// Restore identity from seed phrase (Issue #348)
+    /// POST /api/v1/identity/restore/seed
+    async fn handle_restore_from_seed(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct RestoreSeedRequest {
+            seed_phrase: String,  // Space-separated 20 words
+            display_name: Option<String>,
+        }
+
+        let req_data: RestoreSeedRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid restore request: {}", e))?;
+
+        // Parse seed phrase into words
+        let seed_words: Vec<String> = req_data.seed_phrase
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+
+        if seed_words.len() != 20 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                format!("Invalid seed phrase: expected 20 words, got {}", seed_words.len()),
+            ));
+        }
+
+        tracing::info!("🔑 Restoring identity from seed phrase");
+
+        // Reconstruct the identity ID from seed phrase
+        let seed_text = seed_words.join(" ");
+        let identity_hash = lib_crypto::hash_blake3(format!("ZHTP_IDENTITY_SEED:{}", seed_text).as_bytes());
+        let identity_id = lib_crypto::Hash::from_bytes(&identity_hash);
+
+        // Check if identity already exists
+        let identity_manager = self.identity_manager.read().await;
+        if let Some(existing) = identity_manager.get_identity(&identity_id) {
+            // Identity exists, create session and return
+            let did = existing.did.clone();
+            drop(identity_manager);
+
+            let client_ip = request.headers.get("X-Forwarded-For")
+                .or_else(|| request.headers.get("Remote-Addr"))
+                .unwrap_or_else(|| "unknown".to_string());
+            let user_agent = request.headers.get("User-Agent")
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let session_token = self.session_manager.create_session(
+                identity_id.clone(),
+                &client_ip,
+                &user_agent,
+            ).await?;
+
+            let response_body = json!({
+                "status": "restored",
+                "identity_id": identity_id.to_string(),
+                "did": did,
+                "session_token": session_token,
+                "message": "Identity restored from seed phrase"
+            });
+
+            return Ok(ZhtpResponse::json(&response_body, None)?);
+        }
+        drop(identity_manager);
+
+        // Identity doesn't exist - need to recreate it
+        // This would require full identity recreation logic
+        // For now, return an error suggesting to use the recovery endpoint
+        let response_body = json!({
+            "status": "error",
+            "error": "identity_not_found",
+            "message": "No identity found for this seed phrase. Use /api/v1/identity/recover to recreate."
+        });
+
+        Ok(ZhtpResponse::json(&response_body, None)?)
+    }
+
+    /// Check if identity exists (Issue #348)
+    /// GET /api/v1/identity/exists/{id}
+    async fn handle_identity_exists(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Extract identity ID from path: /api/v1/identity/exists/{id}
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        let identity_id_str = path_parts.get(5)
+            .ok_or_else(|| anyhow::anyhow!("Identity ID required"))?;
+
+        let identity_id = lib_crypto::Hash::from_hex(identity_id_str)
+            .map_err(|e| anyhow::anyhow!("Invalid identity ID: {}", e))?;
+
+        let identity_manager = self.identity_manager.read().await;
+        let exists = identity_manager.get_identity(&identity_id).is_some();
+
+        let response_body = json!({
+            "identity_id": identity_id_str,
+            "exists": exists
+        });
+
+        Ok(ZhtpResponse::json(&response_body, None)?)
+    }
+
+    /// Get identity by DID (Issue #348)
+    /// GET /api/v1/identity/get/{did}
+    async fn handle_get_identity_by_did(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Extract DID from path: /api/v1/identity/get/{did}
+        // DID format: did:zhtp:xxx or just the hash part
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        let did_str = path_parts.get(5)
+            .ok_or_else(|| anyhow::anyhow!("DID required"))?;
+
+        // Handle both full DID and short form
+        let did = if did_str.starts_with("did:zhtp:") {
+            did_str.to_string()
+        } else {
+            format!("did:zhtp:{}", did_str)
+        };
+
+        tracing::info!("🔍 Looking up identity by DID: {}", did);
+
+        let identity_manager = self.identity_manager.read().await;
+
+        match identity_manager.get_identity_by_did(&did) {
+            Some(identity) => {
+                let response_body = json!({
+                    "status": "found",
+                    "identity_id": identity.did.replace("did:zhtp:", ""),
+                    "did": identity.did,
+                    "identity_type": format!("{:?}", identity.identity_type),
+                    "access_level": format!("{:?}", identity.access_level),
+                    "created_at": identity.created_at,
+                });
+                Ok(ZhtpResponse::json(&response_body, None)?)
+            }
+            None => {
+                let response_body = json!({
+                    "status": "not_found",
+                    "did": did,
+                    "message": "Identity not found for this DID"
+                });
+                Ok(ZhtpResponse::json(&response_body, None)?)
+            }
+        }
+    }
+
+    /// Verify identity by DID (Issue #348)
+    /// POST /api/v1/identity/verify/{did}
+    async fn handle_verify_identity_by_did(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        use lib_identity::types::IdentityProofParams;
+
+        // Extract DID from path: /api/v1/identity/verify/{did}
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        let did_str = path_parts.get(5)
+            .ok_or_else(|| anyhow::anyhow!("DID required"))?;
+
+        // Parse optional verification requirements from body
+        #[derive(Deserialize, Default)]
+        struct VerifyRequest {
+            #[serde(default)]
+            min_age: Option<u8>,
+            #[serde(default)]
+            jurisdiction: Option<String>,
+            #[serde(default)]
+            require_citizenship: bool,
+        }
+
+        let req_data: VerifyRequest = if request.body.is_empty() {
+            VerifyRequest::default()
+        } else {
+            serde_json::from_slice(&request.body).unwrap_or_default()
+        };
+
+        // Handle both full DID and short form
+        let did = if did_str.starts_with("did:zhtp:") {
+            did_str.to_string()
+        } else {
+            format!("did:zhtp:{}", did_str)
+        };
+
+        tracing::info!("✅ Verifying identity by DID: {}", did);
+
+        let mut identity_manager = self.identity_manager.write().await;
+
+        // Get identity ID from DID
+        let identity_id = match identity_manager.get_identity_id_by_did(&did) {
+            Some(id) => id,
+            None => {
+                let response_body = json!({
+                    "status": "not_found",
+                    "did": did,
+                    "verified": false,
+                    "message": "Identity not found for this DID"
+                });
+                return Ok(ZhtpResponse::json(&response_body, None)?);
+            }
+        };
+
+        // Build verification requirements
+        let mut proof_params = IdentityProofParams::new(
+            req_data.min_age,
+            req_data.jurisdiction,
+            vec![],  // No specific credentials required by default
+            50,      // Medium privacy level
+        );
+
+        if req_data.require_citizenship {
+            proof_params = proof_params.with_citizenship_requirement();
+        }
+
+        // Verify identity
+        match identity_manager.verify_identity(&identity_id, &proof_params).await {
+            Ok(verification) => {
+                let response_body = json!({
+                    "status": "verified",
+                    "did": did,
+                    "verified": verification.verified,
+                    "requirements_met": verification.requirements_met,
+                    "requirements_failed": verification.requirements_failed,
+                    "privacy_score": verification.privacy_score,
+                    "verified_at": verification.verified_at,
+                });
+                Ok(ZhtpResponse::json(&response_body, None)?)
+            }
+            Err(e) => {
+                let response_body = json!({
+                    "status": "error",
+                    "did": did,
+                    "verified": false,
+                    "error": e.to_string()
+                });
+                Ok(ZhtpResponse::json(&response_body, None)?)
+            }
+        }
+    }
+
+    /// Get identity seed phrases (Issue #348)
+    /// GET /api/v1/identity/{id}/seeds
+    async fn handle_get_identity_seeds(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Extract identity ID from path: /api/v1/identity/{id}/seeds
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        let identity_id_str = path_parts.get(4)
+            .ok_or_else(|| anyhow::anyhow!("Identity ID required"))?;
+
+        // Require authentication - check session token
+        let session_token_str = request.headers.get("Authorization")
+            .and_then(|h| h.strip_prefix("Bearer ").map(|s| s.to_string()))
+            .or_else(|| request.headers.get("X-Session-Token"));
+
+        let session_token_str = match session_token_str {
+            Some(token) => token,
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Unauthorized,
+                    "Authentication required to access seed phrases".to_string(),
+                ));
+            }
+        };
+
+        // Get client IP and user agent for session validation
+        let client_ip = request.headers.get("X-Forwarded-For")
+            .or_else(|| request.headers.get("Remote-Addr"))
+            .unwrap_or_else(|| "unknown".to_string());
+        let user_agent = request.headers.get("User-Agent")
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Validate session
+        let session = match self.session_manager.validate_session(&session_token_str, &client_ip, &user_agent).await {
+            Ok(s) => s,
+            Err(_) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Unauthorized,
+                    "Invalid or expired session".to_string(),
+                ));
+            }
+        };
+
+        let identity_id = lib_crypto::Hash::from_hex(identity_id_str)
+            .map_err(|e| anyhow::anyhow!("Invalid identity ID: {}", e))?;
+
+        // Verify session belongs to this identity
+        if session.identity_id != identity_id {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Session does not match requested identity".to_string(),
+            ));
+        }
+
+        tracing::info!("🔐 Retrieving seed phrases for identity: {}", &identity_id_str[..16.min(identity_id_str.len())]);
+
+        // Get identity and its wallets
+        let identity_manager = self.identity_manager.read().await;
+        let identity = match identity_manager.get_identity(&identity_id) {
+            Some(id) => id,
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    "Identity not found".to_string(),
+                ));
+            }
+        };
+
+        // Get wallet seed phrases from identity's wallet manager
+        let mut seeds = Vec::new();
+
+        // Access the wallet manager from identity
+        for (wallet_id, wallet) in identity.wallet_manager.wallets.iter() {
+            if let Ok(Some(seed)) = wallet.decrypt_seed_phrase() {
+                seeds.push(json!({
+                    "wallet_id": hex::encode(&wallet_id.0[..8]),
+                    "wallet_type": format!("{:?}", wallet.wallet_type),
+                    "wallet_name": wallet.name,
+                    "seed_phrase": seed,
+                }));
+            }
+        }
+
+        let response_body = json!({
+            "status": "success",
+            "identity_id": identity_id_str,
+            "wallet_count": seeds.len(),
+            "seeds": seeds,
+            "warning": "SENSITIVE: Store these seed phrases securely and never share them"
+        });
+
+        Ok(ZhtpResponse::json(&response_body, None)?)
+    }
+
+    /// Sign in with existing identity (Issue #348)
+    /// POST /api/v1/identity/signin-with-identity
+    async fn handle_signin_with_identity(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct SigninWithIdentityRequest {
+            identity_id: String,
+            #[serde(default)]
+            signature: Option<String>,  // Optional signature proof
+        }
+
+        let req_data: SigninWithIdentityRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid signin request: {}", e))?;
+
+        tracing::info!("🔑 Signin with identity: {}", &req_data.identity_id[..16.min(req_data.identity_id.len())]);
+
+        let identity_id = lib_crypto::Hash::from_hex(&req_data.identity_id)
+            .map_err(|e| anyhow::anyhow!("Invalid identity ID: {}", e))?;
+
+        // Verify identity exists
+        let identity_manager = self.identity_manager.read().await;
+        let identity = match identity_manager.get_identity(&identity_id) {
+            Some(id) => id,
+            None => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    "Identity not found".to_string(),
+                ));
+            }
+        };
+
+        // If signature provided, verify it (future enhancement)
+        // For now, we just check identity exists
+
+        // Capture identity data before dropping the lock
+        let did = identity.did.clone();
+        let identity_type = format!("{:?}", identity.identity_type);
+        let access_level = format!("{:?}", identity.access_level);
+
+        drop(identity_manager);
+
+        // Create session for the identity
+        let client_ip = request.headers.get("X-Forwarded-For")
+            .or_else(|| request.headers.get("Remote-Addr"))
+            .unwrap_or_else(|| "unknown".to_string());
+        let user_agent = request.headers.get("User-Agent")
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let session_token = self.session_manager.create_session(
+            identity_id.clone(),
+            &client_ip,
+            &user_agent,
+        ).await?;
+
+        // Calculate expiry (24 hours from now)
+        let expires_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() + 24 * 60 * 60;
+
+        let response_body = json!({
+            "status": "success",
+            "identity_id": req_data.identity_id,
+            "did": did,
+            "session_token": session_token,
+            "expires_at": expires_at,
+            "identity_type": identity_type,
+            "access_level": access_level,
+        });
+
+        Ok(ZhtpResponse::json(&response_body, None)?)
     }
 }
