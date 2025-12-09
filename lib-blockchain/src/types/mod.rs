@@ -8,6 +8,9 @@ pub mod transaction_type;
 pub mod hash;
 pub mod difficulty;
 
+// DAO and SOV economy types
+pub mod dao;
+
 // Contract types (available when contracts feature is enabled)
 #[cfg(feature = "contracts")]
 pub mod contract_call;
@@ -26,6 +29,9 @@ pub mod message_type;
 pub use transaction_type::*;
 pub use hash::*;
 pub use difficulty::*;
+
+// Re-export DAO and SOV economy types
+pub use dao::{DAOType, TokenClass, DAOMetadata, TreasuryAllocation};
 
 // Re-export contract types when contracts feature is enabled
 #[cfg(feature = "contracts")]
