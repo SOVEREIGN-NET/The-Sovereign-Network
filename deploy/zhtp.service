@@ -4,13 +4,14 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/zhtp/zhtp
+ExecStart=/opt/zhtp/zhtp node start
 WorkingDirectory=/opt/zhtp
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 Environment=RUST_LOG=info
+Environment=ZHTP_AUTO_WALLET=1
 
 [Install]
 WantedBy=multi-user.target
