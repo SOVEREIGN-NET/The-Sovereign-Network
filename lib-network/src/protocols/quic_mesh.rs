@@ -17,6 +17,7 @@
 
 use anyhow::{Result, Context, anyhow};
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug, error};
@@ -34,17 +35,22 @@ use lib_crypto::{
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::messaging::message_handler::MeshMessageHandler;
 
+/// Default path for TLS certificate
+pub const DEFAULT_TLS_CERT_PATH: &str = "./data/tls/server.crt";
+/// Default path for TLS private key
+pub const DEFAULT_TLS_KEY_PATH: &str = "./data/tls/server.key";
+
 /// QUIC mesh protocol with PQC encryption layer
 pub struct QuicMeshProtocol {
     /// QUIC endpoint (handles all connections)
     endpoint: Endpoint,
-    
+
     /// Active connections to peers (peer_pubkey -> connection)
     connections: Arc<RwLock<std::collections::HashMap<Vec<u8>, PqcQuicConnection>>>,
-    
+
     /// This node's identity
     node_id: [u8; 32],
-    
+
     /// Local binding address
     local_addr: SocketAddr,
 
@@ -95,16 +101,52 @@ pub enum PqcHandshakeMessage {
 }
 
 impl QuicMeshProtocol {
-    /// Create a new QUIC mesh protocol instance
+    /// Create a new QUIC mesh protocol instance with default certificate paths
     pub fn new(node_id: [u8; 32], bind_addr: SocketAddr) -> Result<Self> {
+        Self::new_with_cert_paths(
+            node_id,
+            bind_addr,
+            Path::new(DEFAULT_TLS_CERT_PATH),
+            Path::new(DEFAULT_TLS_KEY_PATH),
+        )
+    }
+
+    /// Create a new QUIC mesh protocol instance with custom certificate paths
+    ///
+    /// # Certificate Persistence (Android Cronet Compatibility)
+    ///
+    /// This method uses persistent TLS certificates to enable certificate pinning
+    /// on Android clients using Cronet (which cannot bypass TLS verification).
+    ///
+    /// On first startup:
+    /// - Generates a new self-signed certificate
+    /// - Saves it to the specified paths (PEM format)
+    /// - Returns the certificate for QUIC configuration
+    ///
+    /// On subsequent startups:
+    /// - Loads the existing certificate from disk
+    /// - Uses the same certificate (enabling mobile apps to pin it)
+    ///
+    /// To extract the certificate hash for Android pinning:
+    /// ```bash
+    /// openssl x509 -in ./data/tls/server.crt -pubkey -noout | \
+    ///   openssl pkey -pubin -outform der | \
+    ///   openssl dgst -sha256 -binary | base64
+    /// ```
+    pub fn new_with_cert_paths(
+        node_id: [u8; 32],
+        bind_addr: SocketAddr,
+        cert_path: &Path,
+        key_path: &Path,
+    ) -> Result<Self> {
         info!(" Initializing QUIC mesh protocol on {}", bind_addr);
-        
-        // Generate self-signed certificate for QUIC (TLS 1.3 requirement)
-        let cert = Self::generate_self_signed_cert()?;
-        
+
+        // Load or generate TLS certificate (persistent for Android Cronet compatibility)
+        let cert = Self::load_or_generate_cert(cert_path, key_path)?;
+
         // Configure QUIC server
         let server_config = Self::configure_server(cert.cert, cert.key)?;
-        
+
         // Create QUIC endpoint
         let endpoint = Endpoint::server(server_config, bind_addr)
             .context("Failed to create QUIC endpoint")?;
@@ -355,8 +397,45 @@ impl QuicMeshProtocol {
         self.connections.write().await.clear();
     }
     
-    /// Generate self-signed certificate for QUIC/TLS
-    fn generate_self_signed_cert() -> Result<SelfSignedCert> {
+    /// Load existing TLS certificate from disk, or generate a new one if not found.
+    ///
+    /// This enables persistent certificates for Android Cronet compatibility.
+    /// Mobile apps can pin the certificate hash since it remains constant across restarts.
+    ///
+    /// Node-to-node connections are unaffected - they use SkipServerVerification
+    /// and rely on PQC (Kyber + Dilithium) for security.
+    fn load_or_generate_cert(cert_path: &Path, key_path: &Path) -> Result<SelfSignedCert> {
+        // Try to load existing certificate from disk
+        if cert_path.exists() && key_path.exists() {
+            info!("🔐 Loading existing TLS certificate from {}", cert_path.display());
+
+            let cert_pem = std::fs::read(cert_path)
+                .context("Failed to read certificate file")?;
+            let key_pem = std::fs::read(key_path)
+                .context("Failed to read key file")?;
+
+            // Parse PEM-encoded certificate
+            let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
+                .next()
+                .ok_or_else(|| anyhow!("No certificate found in PEM file"))?
+                .context("Failed to parse certificate PEM")?;
+
+            // Parse PEM-encoded private key
+            let key_der = rustls_pemfile::private_key(&mut key_pem.as_slice())
+                .context("Failed to parse private key PEM")?
+                .ok_or_else(|| anyhow!("No private key found in PEM file"))?;
+
+            info!("🔐 TLS certificate loaded successfully");
+
+            return Ok(SelfSignedCert {
+                cert: cert_der,
+                key: key_der,
+            });
+        }
+
+        // Generate new certificate and save to disk
+        info!("🔐 Generating new TLS certificate (will be saved to {})", cert_path.display());
+
         use rcgen::{generate_simple_self_signed, CertifiedKey};
 
         // Include common names and wildcards for maximum compatibility
@@ -371,6 +450,32 @@ impl QuicMeshProtocol {
 
         let CertifiedKey { cert, signing_key } = generate_simple_self_signed(subject_alt_names)
             .context("Failed to generate certificate")?;
+
+        // Create directory if it doesn't exist
+        if let Some(parent) = cert_path.parent() {
+            std::fs::create_dir_all(parent)
+                .context("Failed to create TLS certificate directory")?;
+        }
+
+        // Save certificate and key in PEM format
+        std::fs::write(cert_path, cert.pem())
+            .context("Failed to write certificate file")?;
+        std::fs::write(key_path, signing_key.serialize_pem())
+            .context("Failed to write private key file")?;
+
+        // Set restrictive permissions on private key (Unix only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))
+                .context("Failed to set private key permissions")?;
+        }
+
+        info!("🔐 TLS certificate generated and saved to disk");
+        info!("   Certificate: {}", cert_path.display());
+        info!("   Private key: {}", key_path.display());
+        info!("   To extract hash for Android pinning:");
+        info!("   openssl x509 -in {} -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64", cert_path.display());
 
         let cert_der = CertificateDer::from(cert.der().to_vec());
 
