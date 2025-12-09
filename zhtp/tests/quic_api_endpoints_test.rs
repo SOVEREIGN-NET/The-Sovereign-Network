@@ -182,6 +182,11 @@ fn get_mock_body(path: &str) -> Option<String> {
         "/api/v1/identity/backup/export" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","passphrase":"test_passphrase"}"#.to_string()),
         "/api/v1/identity/backup/import" => Some(r#"{"backup_data":"test_backup","password":"test_password"}"#.to_string()),
         "/api/v1/identity/citizenship/apply" => Some(r#"{"identity_id":"test_id"}"#.to_string()),
+        // New identity endpoints (Issue #348)
+        "/api/v1/identity/restore/seed" => Some(r#"{"seed_phrase":"word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20"}"#.to_string()),
+        "/api/v1/identity/zkdid/create" => Some(r#"{"display_name":"Test ZK User","password":"test_password_123"}"#.to_string()),
+        "/api/v1/identity/signin-with-identity" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
+        "/api/v1/identity/verify/did:zhtp:0000000000000000000000000000000000000000000000000000000000000000" => Some(r#"{}"#.to_string()),
 
         // Storage endpoints (data must be base64 encoded)
         "/api/v1/storage/store" => Some(r#"{"data":"dGVzdCBkYXRhIGNvbnRlbnQ="}"#.to_string()), // "test data content" in base64
@@ -309,7 +314,7 @@ async fn test_all_api_endpoints() -> Result<()> {
         results.push((path, status));
     }
 
-    // Identity endpoints (13)
+    // Identity endpoints (20 - including 7 new from Issue #348)
     println!("\n🪪  Identity Endpoints");
     for (method, path) in [
         ("POST", "/api/v1/identity/create"),
@@ -326,6 +331,14 @@ async fn test_all_api_endpoints() -> Result<()> {
         ("POST", "/api/v1/identity/backup/export"),
         ("POST", "/api/v1/identity/backup/import"),
         ("POST", "/api/v1/identity/citizenship/apply"),
+        // New endpoints (Issue #348)
+        ("POST", "/api/v1/identity/restore/seed"),
+        ("POST", "/api/v1/identity/zkdid/create"),
+        ("POST", "/api/v1/identity/signin-with-identity"),
+        ("GET", "/api/v1/identity/exists/0000000000000000000000000000000000000000000000000000000000000000"),
+        ("GET", "/api/v1/identity/get/did:zhtp:0000000000000000000000000000000000000000000000000000000000000000"),
+        ("POST", "/api/v1/identity/verify/did:zhtp:0000000000000000000000000000000000000000000000000000000000000000"),
+        ("GET", "/api/v1/identity/0000000000000000000000000000000000000000000000000000000000000000/seeds"),
     ] {
         let status = test_endpoint(&connection, method, path, None).await?;
         results.push((path, status));
