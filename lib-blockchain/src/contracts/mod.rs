@@ -83,7 +83,11 @@ pub const GAS_CONTACT: u64 = 1500; // Gas cost for contact operations
 #[cfg(feature = "contracts")]
 pub const GAS_GROUP: u64 = 2500; // Gas cost for group operations
 
-/// ZHTP native token constants
+/// ZHTP Infrastructure Token Constants
+///
+/// ZHTP (Zero-Knowledge Hyper-Transfer Protocol) is the infrastructure token
+/// used for gas fees, validator staking, and network operations. It powers
+/// the technical layer of the network.
 #[cfg(feature = "contracts")]
 pub const ZHTP_TOKEN_SYMBOL: &str = "ZHTP";
 #[cfg(feature = "contracts")]
@@ -92,6 +96,25 @@ pub const ZHTP_TOKEN_NAME: &str = "ZHTP";
 pub const ZHTP_DECIMALS: u8 = 8;
 #[cfg(feature = "contracts")]
 pub const ZHTP_MAX_SUPPLY: u64 = 21_000_000 * 100_000_000; // 21M ZHTP with 8 decimals
+
+/// SOV Civic Currency Token Constants
+///
+/// SOV (Sovereign) is the civic currency token used for DAO governance,
+/// treasury allocations, and civic participation. It represents economic
+/// sovereignty and democratic participation within the network.
+#[cfg(feature = "contracts")]
+pub const SOV_TOKEN_SYMBOL: &str = "SOV";
+#[cfg(feature = "contracts")]
+pub const SOV_TOKEN_NAME: &str = "Sovereign";
+#[cfg(feature = "contracts")]
+pub const SOV_DECIMALS: u8 = 18;
+/// SOV total supply: 500 million tokens with 18 decimals
+/// Represented as 500_000_000 * 10^18 = 500_000_000_000_000_000_000_000_000
+#[cfg(feature = "contracts")]
+pub const SOV_TOTAL_SUPPLY: u128 = 500_000_000_000_000_000_000_000_000u128;
+/// SOV transfers require whitelist approval during initial distribution phase
+#[cfg(feature = "contracts")]
+pub const SOV_TRANSFER_WHITELIST_REQUIRED: bool = true;
 
 /// Contract version information
 #[cfg(feature = "contracts")]
@@ -113,10 +136,40 @@ mod tests {
     }
 
     #[test]
-    fn test_lib_constants() {
+    fn test_zhtp_constants() {
         assert_eq!(ZHTP_TOKEN_SYMBOL, "ZHTP");
         assert_eq!(ZHTP_TOKEN_NAME, "ZHTP");
         assert_eq!(ZHTP_DECIMALS, 8);
         assert_eq!(ZHTP_MAX_SUPPLY, 2_100_000_000_000_000);
+    }
+
+    #[test]
+    fn test_sov_constants() {
+        assert_eq!(SOV_TOKEN_SYMBOL, "SOV");
+        assert_eq!(SOV_TOKEN_NAME, "Sovereign");
+        assert_eq!(SOV_DECIMALS, 18);
+        // 500 million with 18 decimals
+        assert_eq!(SOV_TOTAL_SUPPLY, 500_000_000_000_000_000_000_000_000u128);
+        assert!(SOV_TRANSFER_WHITELIST_REQUIRED);
+    }
+
+    #[test]
+    fn test_sov_supply_calculation() {
+        // Verify supply is correctly 500M * 10^18
+        let expected = 500_000_000u128 * 10u128.pow(18);
+        assert_eq!(SOV_TOTAL_SUPPLY, expected);
+    }
+
+    #[test]
+    fn test_token_distinction() {
+        // ZHTP is infrastructure token (8 decimals like BTC)
+        // SOV is civic currency (18 decimals like ETH)
+        assert_ne!(ZHTP_TOKEN_SYMBOL, SOV_TOKEN_SYMBOL);
+        assert_ne!(ZHTP_DECIMALS, SOV_DECIMALS);
+        
+        // ZHTP uses smaller units (satoshi-style)
+        assert_eq!(ZHTP_DECIMALS, 8);
+        // SOV uses larger precision (wei-style)
+        assert_eq!(SOV_DECIMALS, 18);
     }
 }
