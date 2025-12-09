@@ -378,17 +378,32 @@ impl QuicMeshProtocol {
     
     /// Configure QUIC server
     fn configure_server(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> Result<ServerConfig> {
-        let mut server_config = ServerConfig::with_single_cert(vec![cert], key)
-            .context("Failed to configure server")?;
-        
+        // Build rustls ServerConfig with ALPN support
+        let mut rustls_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert], key)
+            .context("Failed to configure TLS")?;
+
+        // Configure ALPN protocols for mobile client compatibility (iOS Network.framework, Android Cronet)
+        // Security note: ALPN is metadata only - actual security comes from PQC layer (Kyber + Dilithium)
+        rustls_config.alpn_protocols = vec![
+            b"zhtp/1.0".to_vec(),  // Our native protocol (preferred)
+            b"h3".to_vec(),        // HTTP/3 compatibility
+        ];
+
+        // Create Quinn server config from rustls config
+        let quic_crypto = quinn::crypto::rustls::QuicServerConfig::try_from(rustls_config)
+            .context("Failed to create QUIC server config")?;
+        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_crypto));
+
         // Optimize for mesh networking
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.max_concurrent_bidi_streams(100u32.into());
         transport_config.max_concurrent_uni_streams(100u32.into());
         transport_config.max_idle_timeout(Some(std::time::Duration::from_secs(30).try_into().unwrap()));
-        
+
         server_config.transport_config(Arc::new(transport_config));
-        
+
         Ok(server_config)
     }
     
@@ -396,22 +411,29 @@ impl QuicMeshProtocol {
     fn configure_client() -> Result<ClientConfig> {
         // For mesh networking, we use self-signed certs and skip verification
         // (PQC layer provides actual security)
-        let crypto = rustls::ClientConfig::builder()
+        let mut crypto = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
             .with_no_client_auth();
-        
+
+        // Configure ALPN protocols to match server (required for iOS Network.framework, Android Cronet)
+        // Security note: ALPN is metadata only - actual security comes from PQC layer (Kyber + Dilithium)
+        crypto.alpn_protocols = vec![
+            b"zhtp/1.0".to_vec(),  // Our native protocol (preferred)
+            b"h3".to_vec(),        // HTTP/3 compatibility
+        ];
+
         let mut client_config = ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
                 .context("Failed to create QUIC client config")?
         ));
-        
+
         // Optimize for mesh networking
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.max_idle_timeout(Some(std::time::Duration::from_secs(30).try_into().unwrap()));
-        
+
         client_config.transport_config(Arc::new(transport_config));
-        
+
         Ok(client_config)
     }
 }
