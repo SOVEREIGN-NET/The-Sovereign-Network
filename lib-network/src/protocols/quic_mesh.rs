@@ -358,18 +358,26 @@ impl QuicMeshProtocol {
     /// Generate self-signed certificate for QUIC/TLS
     fn generate_self_signed_cert() -> Result<SelfSignedCert> {
         use rcgen::{generate_simple_self_signed, CertifiedKey};
-        
-        let subject_alt_names = vec!["zhtp-mesh".to_string(), "localhost".to_string()];
-        
+
+        // Include common names and wildcards for maximum compatibility
+        // This ensures the cert works regardless of how the client specifies the address
+        let subject_alt_names = vec![
+            "zhtp-mesh".to_string(),
+            "localhost".to_string(),
+            "127.0.0.1".to_string(),
+            "*.local".to_string(),
+            "*".to_string(), // Wildcard for any domain
+        ];
+
         let CertifiedKey { cert, signing_key } = generate_simple_self_signed(subject_alt_names)
             .context("Failed to generate certificate")?;
-        
+
         let cert_der = CertificateDer::from(cert.der().to_vec());
-        
+
         // Convert KeyPair to PrivateKeyDer by serializing to PKCS#8
         let key_der_bytes = signing_key.serialize_der();
         let key_der = PrivateKeyDer::Pkcs8(key_der_bytes.into());
-        
+
         Ok(SelfSignedCert {
             cert: cert_der,
             key: key_der,
