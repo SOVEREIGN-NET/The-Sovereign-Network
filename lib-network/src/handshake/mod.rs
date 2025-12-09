@@ -69,6 +69,9 @@ pub mod blockchain;
 // Core handshake I/O (Ticket #136)
 pub mod core;
 
+// Post-Quantum Cryptography support (Ticket #137)
+pub mod pqc;
+
 // Re-export security utilities
 pub use security::{
     TimestampConfig, SessionContext,
@@ -86,6 +89,13 @@ pub use rate_limiter::{RateLimiter, RateLimitConfig};
 pub use blockchain::{
     BlockchainHandshakeContext, BlockchainHandshakeVerifier,
     BlockchainVerificationResult, PeerTier,
+};
+
+// Re-export PQC types and functions
+pub use pqc::{
+    PqcCapability, PqcHandshakeOffer, PqcHandshakeState,
+    create_pqc_offer, verify_pqc_offer, encapsulate_pqc,
+    decapsulate_pqc, derive_hybrid_session_key,
 };
 
 // Re-export core handshake functions
@@ -365,8 +375,8 @@ pub struct HandshakeCapabilities {
     /// Supported encryption methods (ChaCha20-Poly1305, AES-GCM, etc.)
     pub encryption_methods: Vec<String>,
     
-    /// Post-quantum cryptography support
-    pub pqc_support: bool,
+    /// Post-quantum cryptography capability level (None, Kyber1024+Dilithium5, Hybrid)
+    pub pqc_capability: PqcCapability,
     
     /// DHT participation capability
     pub dht_capable: bool,
@@ -391,7 +401,7 @@ impl Default for HandshakeCapabilities {
             max_throughput: 1_000_000, // 1 MB/s default
             max_message_size: 65536,   // 64 KB default
             encryption_methods: vec!["chacha20-poly1305".to_string()],
-            pqc_support: false,
+            pqc_capability: PqcCapability::None,
             dht_capable: false,
             relay_capable: false,
             storage_capacity: 0,
@@ -409,7 +419,7 @@ impl HandshakeCapabilities {
             max_throughput: 10_000,    // 10 KB/s
             max_message_size: 512,     // 512 bytes
             encryption_methods: vec!["chacha20-poly1305".to_string()],
-            pqc_support: false,
+            pqc_capability: PqcCapability::None,
             dht_capable: false,
             relay_capable: false,
             storage_capacity: 0,
@@ -434,7 +444,7 @@ impl HandshakeCapabilities {
                 "chacha20-poly1305".to_string(),
                 "aes-256-gcm".to_string(),
             ],
-            pqc_support: true,
+            pqc_capability: PqcCapability::Kyber1024Dilithium5,
             dht_capable: true,
             relay_capable: true,
             storage_capacity: 10_737_418_240, // 10 GB
@@ -455,12 +465,18 @@ impl HandshakeCapabilities {
             .cloned()
             .collect();
         
+        // Negotiate PQC capability using the enum's negotiation logic
+        let negotiated_pqc = PqcCapability::negotiate(
+            self.pqc_capability.clone(),
+            other.pqc_capability.clone(),
+        );
+        
         NegotiatedCapabilities {
             protocol: protocols.first().cloned().unwrap_or_default(),
             max_throughput: self.max_throughput.min(other.max_throughput),
             max_message_size: self.max_message_size.min(other.max_message_size),
             encryption_method: encryption_methods.first().cloned().unwrap_or_default(),
-            pqc_enabled: self.pqc_support && other.pqc_support,
+            pqc_capability: negotiated_pqc,
             dht_enabled: self.dht_capable && other.dht_capable,
             relay_enabled: self.relay_capable && other.relay_capable,
         }
@@ -482,8 +498,8 @@ pub struct NegotiatedCapabilities {
     /// Selected encryption method
     pub encryption_method: String,
     
-    /// Whether PQC is enabled for this session
-    pub pqc_enabled: bool,
+    /// Negotiated PQC capability for this session
+    pub pqc_capability: PqcCapability,
     
     /// Whether DHT participation is enabled
     pub dht_enabled: bool,
@@ -1326,7 +1342,7 @@ mod tests {
             max_throughput: 10_000_000,
             max_message_size: 1_000_000,
             encryption_methods: vec!["chacha20-poly1305".to_string(), "aes-256-gcm".to_string()],
-            pqc_support: true,
+            pqc_capability: PqcCapability::Kyber1024Dilithium5,
             dht_capable: true,
             relay_capable: false,
             storage_capacity: 0,
@@ -1339,7 +1355,7 @@ mod tests {
             max_throughput: 50_000_000,
             max_message_size: 5_000_000,
             encryption_methods: vec!["chacha20-poly1305".to_string()],
-            pqc_support: true,
+            pqc_capability: PqcCapability::Kyber1024Dilithium5,
             dht_capable: false,
             relay_capable: true,
             storage_capacity: 1_000_000_000,
@@ -1361,8 +1377,8 @@ mod tests {
         // Should pick first common encryption
         assert_eq!(negotiated.encryption_method, "chacha20-poly1305");
         
-        // Should enable PQC (both support it)
-        assert!(negotiated.pqc_enabled);
+        // Should negotiate PQC to Kyber1024+Dilithium5 (both support it)
+        assert_eq!(negotiated.pqc_capability, PqcCapability::Kyber1024Dilithium5);
         
         // Should disable DHT (server doesn't support)
         assert!(!negotiated.dht_enabled);
@@ -1452,7 +1468,7 @@ mod tests {
         assert_eq!(minimal.protocols, vec!["ble".to_string()]);
         assert_eq!(minimal.max_throughput, 10_000);
         assert_eq!(minimal.max_message_size, 512);
-        assert!(!minimal.pqc_support);
+        assert_eq!(minimal.pqc_capability, PqcCapability::None);
         assert!(!minimal.dht_capable);
     }
     
@@ -1463,9 +1479,39 @@ mod tests {
         assert!(full.protocols.len() >= 5);
         assert!(full.max_throughput >= 100_000_000);
         assert!(full.max_message_size >= 10_000_000);
-        assert!(full.pqc_support);
+        assert_eq!(full.pqc_capability, PqcCapability::Kyber1024Dilithium5);
         assert!(full.dht_capable);
         assert!(full.relay_capable);
+    }
+
+    #[test]
+    fn test_pqc_capability_negotiation() {
+        use PqcCapability::*;
+        
+        // Both have full PQC -> full PQC
+        let full1 = HandshakeCapabilities {
+            pqc_capability: Kyber1024Dilithium5,
+            ..HandshakeCapabilities::default()
+        };
+        let full2 = HandshakeCapabilities {
+            pqc_capability: Kyber1024Dilithium5,
+            ..HandshakeCapabilities::default()
+        };
+        let neg = full1.negotiate(&full2);
+        assert_eq!(neg.pqc_capability, Kyber1024Dilithium5);
+        
+        // Full + Hybrid -> Hybrid (fallback)
+        let hybrid = HandshakeCapabilities {
+            pqc_capability: HybridEd25519Dilithium5,
+            ..HandshakeCapabilities::default()
+        };
+        let neg = full1.negotiate(&hybrid);
+        assert_eq!(neg.pqc_capability, HybridEd25519Dilithium5);
+        
+        // Hybrid + None -> None (no common support)
+        let none = HandshakeCapabilities::default();
+        let neg = hybrid.negotiate(&none);
+        assert_eq!(neg.pqc_capability, None);
     }
 
     // ============================================================================

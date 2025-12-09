@@ -480,12 +480,13 @@ async fn receive_message<T: serde::de::DeserializeOwned>(stream: &mut TcpStream)
 ///
 /// `HandshakeCapabilities` configured for WiFi Direct
 fn create_wifi_direct_capabilities() -> HandshakeCapabilities {
+    use crate::handshake::PqcCapability;
     HandshakeCapabilities {
         protocols: vec!["wifi-direct".to_string(), "tcp".to_string()],
         max_throughput: 100_000_000, // 100 Mbps (practical WiFi Direct throughput)
         max_message_size: 1_048_576,  // 1 MB (WiFi Direct can handle large messages)
         encryption_methods: vec!["chacha20-poly1305".to_string()],
-        pqc_support: false, // Post-quantum crypto adds overhead
+        pqc_capability: PqcCapability::None, // Post-quantum crypto adds overhead for mobile
         dht_capable: true,  // WiFi Direct nodes can participate in DHT
         relay_capable: true, // WiFi Direct group owners can relay traffic
         storage_capacity: 0, // No storage guarantee over WiFi Direct
