@@ -748,16 +748,20 @@ impl ZhtpMeshServer {
     }
     
     /// Start QUIC mesh protocol with persistent instance
+    ///
+    /// Uses UHP+Kyber handshake for all connections (mutual authentication + PQC key exchange)
     async fn start_quic_discovery(&mut self) -> Result<()> {
         use crate::protocols::quic_mesh::QuicMeshProtocol;
-        
-        let node_id = self.mesh_node.read().await.node_id;
-        
+
+        // Create server identity for UHP authentication
+        // TODO: This should use a persistent server identity from config
+        let identity = Arc::new(create_default_mesh_identity());
+
         // Bind to QUIC mesh port 9334 (PQC encrypted)
         let bind_addr = "0.0.0.0:9334".parse().unwrap();
-        
-        // Initialize QUIC mesh protocol
-        let mut quic_protocol = QuicMeshProtocol::new(node_id, bind_addr)?;
+
+        // Initialize QUIC mesh protocol with UHP+Kyber authentication
+        let mut quic_protocol = QuicMeshProtocol::new(identity, bind_addr)?;
         
         // If message handler is already initialized, set it
         if let Some(handler) = &self.message_handler {

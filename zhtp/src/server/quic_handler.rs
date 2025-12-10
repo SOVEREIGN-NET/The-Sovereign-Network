@@ -54,7 +54,9 @@ use tracing::{info, warn, debug, error};
 use quinn::{Connection, Incoming, RecvStream, SendStream};
 use tokio::sync::RwLock;
 
-use lib_network::protocols::quic_mesh::{QuicMeshProtocol, PqcHandshakeMessage, PqcQuicConnection};
+use lib_network::protocols::quic_mesh::{QuicMeshProtocol, PqcQuicConnection};
+use lib_network::protocols::quic_handshake::{self, QuicHandshakeResult};
+use lib_network::handshake::{HandshakeContext, NonceCache, ClientHello};
 use lib_network::messaging::message_handler::MeshMessageHandler;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
 use lib_crypto::PublicKey;
@@ -511,81 +513,84 @@ impl QuicHandler {
         }
     }
 
-    /// Handle PQC handshake stream and establish authenticated peer connection
+    /// Handle UHP+Kyber handshake for mesh peer authentication
+    ///
+    /// Uses the new secure UHP (Unified Handshake Protocol) with Kyber key exchange.
+    ///
+    /// **SECURITY IMPROVEMENTS:**
+    /// - Mutual authentication via Dilithium signatures (verified by UHP)
+    /// - NodeId verification: validates Blake3(DID || device_name)
+    /// - Replay attack prevention via nonce cache
+    /// - Post-quantum security via Kyber512 KEM bound to UHP transcript
+    /// - Master key derived from both UHP session key and Kyber shared secret
     async fn handle_pqc_handshake_stream(
         &self,
-        initial_data: Vec<u8>,
-        _recv: RecvStream,
-        mut send: SendStream,
+        _initial_data: Vec<u8>, // Not used - UHP handles its own message flow
+        _recv: RecvStream,      // Not used - UHP opens its own dedicated stream
+        _send: SendStream,      // Not used - UHP opens its own dedicated stream
         connection: Connection,
         peer_addr: SocketAddr,
     ) -> Result<()> {
-        info!("🔐 Processing PQC handshake from {}", peer_addr);
+        info!("🔐 Processing UHP+Kyber handshake from {}", peer_addr);
 
-        // Check rate limit for this IP (P1-2: Rate limiting on PQC handshakes)
+        // Check rate limit for this IP
         self.check_handshake_rate_limit(&peer_addr).await?;
 
-        // Validate handshake size (P1-4: Bincode size limits)
-        if initial_data.len() > MAX_HANDSHAKE_SIZE as usize {
-            warn!("🚫 Handshake too large from {}: {} bytes", peer_addr, initial_data.len());
-            return Err(anyhow!("Handshake message exceeds maximum size"));
-        }
+        // Get server identity from QuicMeshProtocol
+        let identity = self.quic_protocol.identity();
 
-        // Parse the client's handshake message
-        let client_msg: PqcHandshakeMessage = bincode::deserialize(&initial_data)
-            .context("Failed to deserialize PQC handshake")?;
+        // Create handshake context with nonce cache
+        let nonce_db_path = std::path::Path::new("./data/tls/quic_handler_nonce_cache");
+        let nonce_cache = NonceCache::open(nonce_db_path, 3600, 100_000)
+            .context("Failed to open nonce cache")?;
+        let handshake_ctx = HandshakeContext::new(nonce_cache);
 
-        let (peer_node_id, kyber_pubkey, dilithium_pubkey) = match client_msg {
-            PqcHandshakeMessage::KyberPublicKey { kyber_pubkey, dilithium_pubkey, node_id } => {
-                (node_id, kyber_pubkey, dilithium_pubkey)
-            }
-            _ => {
-                return Err(anyhow!("Expected KyberPublicKey message"));
-            }
-        };
+        // Perform UHP+Kyber handshake as responder
+        let handshake_result = quic_handshake::handshake_as_responder(
+            &connection,
+            identity,
+            &handshake_ctx,
+        ).await.context("UHP+Kyber handshake failed")?;
 
-        // Validate peer_node_id format (P1-5: Validate peer_node_id format)
-        if peer_node_id.iter().all(|&b| b == 0) {
-            warn!("🚫 Invalid peer_node_id from {}: all zeros", peer_addr);
-            return Err(anyhow!("Invalid peer node ID"));
-        }
+        // Extract peer node ID
+        let peer_node_id = handshake_result.peer_identity.node_id.as_bytes();
+        let mut node_id_arr = [0u8; 32];
+        node_id_arr.copy_from_slice(peer_node_id);
 
-        // Encapsulate shared secret using client's Kyber public key
-        let (ciphertext, shared_secret) = lib_crypto::post_quantum::kyber512_encapsulate(&kyber_pubkey)
-            .context("Failed to encapsulate Kyber shared secret")?;
+        info!(
+            peer_did = %handshake_result.peer_identity.did,
+            session_id = ?handshake_result.session_id,
+            "✅ UHP+Kyber handshake complete with {} (identity verified)",
+            peer_addr
+        );
 
-        // Generate our own keypair for authentication
-        let our_keypair = lib_crypto::KeyPair::generate()
-            .context("Failed to generate server keypair")?;
+        // Create PqcQuicConnection from handshake result
+        let pqc_conn = PqcQuicConnection::from_handshake_result(
+            connection.clone(),
+            peer_addr,
+            handshake_result,
+            false,
+        );
 
-        // Send encapsulation response
-        let response_msg = PqcHandshakeMessage::KyberEncapsulation {
-            ciphertext,
-            dilithium_signature: our_keypair.public_key.dilithium_pk.clone(),
-        };
+        // Store connection
+        self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
 
-        let response_bytes = bincode::serialize(&response_msg)?;
-        send.write_all(&response_bytes).await?;
-        send.finish()?;
-
-        info!("✅ PQC handshake complete with {} (node: {})",
-              peer_addr, hex::encode(&peer_node_id[..8]));
-
-        // Create PQC connection wrapper
-        let mut pqc_conn = PqcQuicConnection::new(connection.clone(), peer_addr, false);
-        pqc_conn.set_shared_secret_internal(shared_secret);
-        pqc_conn.set_peer_info_internal(peer_node_id, dilithium_pubkey);
-
-        // Store connection with bounds checking and LRU eviction (P0-3)
-        self.add_pqc_connection(peer_node_id.to_vec(), pqc_conn).await?;
-
-        // Continue accepting streams with peer authentication context
-        self.accept_additional_streams(connection, Some(peer_node_id));
+        // Continue accepting streams
+        self.accept_additional_streams(connection, Some(node_id_arr));
 
         Ok(())
     }
 
+    // NOTE: The old broken PqcHandshakeMessage-based handler has been completely REMOVED
+    // All peer authentication now uses the secure UHP+Kyber handshake above which:
+    // 1. Verifies Dilithium signatures (mutual authentication)
+    // 2. Validates NodeId derivation (Blake3(DID || device_name))
+    // 3. Prevents replay attacks (nonce cache)
+    // 4. Binds Kyber key exchange to authenticated identity (transcript hash)
+
     /// Handle encrypted mesh message stream from authenticated peer
+    ///
+    /// Uses the master key derived from UHP+Kyber handshake for decryption
     async fn handle_mesh_message_stream(
         &self,
         initial_data: Vec<u8>,
@@ -606,7 +611,7 @@ impl QuicHandler {
         }
 
         // Get connection and validate authentication (P1-3: Authentication checks before decryption)
-        let (shared_secret, connection_age) = {
+        let (master_key, _connection_age) = {
             let connections = self.pqc_connections.read().await;
             let tracked = connections.get(&peer_node_id.to_vec())
                 .ok_or_else(|| anyhow!("No PQC connection for peer - not authenticated"))?;
@@ -618,18 +623,18 @@ impl QuicHandler {
                 return Err(anyhow!("Connection expired - please re-authenticate"));
             }
 
-            // Verify shared secret exists
-            let secret = tracked.connection.get_shared_secret_ref()
-                .ok_or_else(|| anyhow!("No shared secret for peer - handshake incomplete"))?;
+            // Verify master key exists (from UHP+Kyber handshake)
+            let key = tracked.connection.get_master_key_ref()
+                .ok_or_else(|| anyhow!("No master key for peer - handshake incomplete"))?;
 
-            (*secret, age)
+            (*key, age)
         };
 
         // Update activity timestamp
         self.update_connection_activity(&peer_node_id).await;
 
-        // Decrypt with shared secret (only after authentication checks pass)
-        let decrypted = lib_crypto::symmetric::chacha20::decrypt_data(&message_data, &shared_secret)
+        // Decrypt with master key (derived from UHP+Kyber handshake)
+        let decrypted = lib_crypto::symmetric::chacha20::decrypt_data(&message_data, &master_key)
             .context("Failed to decrypt mesh message - possible tampering")?;
 
         // Deserialize mesh message with size validation
@@ -724,15 +729,15 @@ impl QuicHandler {
                     return Ok(ProtocolType::LegacyHttp(buffer));
                 }
 
-                // 3. Check for PQC handshake (bincode enum variant 0 + large Kyber keys)
-                // KyberPublicKey has: enum_tag + kyber_pk(~800B) + dilithium_pk(~1KB) + node_id(32B)
+                // 3. Check for UHP ClientHello (UHP+Kyber handshake initiation)
+                // ClientHello contains: version(1B) + identity + capabilities + nonce(32B) + signature
+                // The UHP handshake uses a dedicated bidirectional stream, so protocol detection
+                // should recognize this as a handshake initiation
                 if buffer.len() >= 100 {
-                    // Try to parse as PQC handshake
-                    if let Ok(msg) = bincode::deserialize::<PqcHandshakeMessage>(&buffer) {
-                        if matches!(msg, PqcHandshakeMessage::KyberPublicKey { .. }) {
-                            debug!("🔐 PQC handshake message detected");
-                            return Ok(ProtocolType::PqcHandshake(buffer));
-                        }
+                    // Try to parse as UHP ClientHello (first message of UHP handshake)
+                    if let Ok(_msg) = bincode::deserialize::<ClientHello>(&buffer) {
+                        debug!("🔐 UHP ClientHello detected (handshake initiation)");
+                        return Ok(ProtocolType::PqcHandshake(buffer));
                     }
                 }
 
