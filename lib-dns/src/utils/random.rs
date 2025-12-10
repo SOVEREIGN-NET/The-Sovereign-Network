@@ -5,7 +5,7 @@ pub fn gen<T>() -> T
 where
     T: Default + Copy,
 {
-    let mut rng = Lcg::new(get_seed());
+    let mut rng = Lcg::new(seed());
     rng.gen_num::<T>()
 }
 
@@ -13,7 +13,7 @@ pub fn gen_array<T, const N: usize>() -> [T; N]
 where
     T: Default + Copy,
 {
-    let mut rng = Lcg::new(get_seed());
+    let mut rng = Lcg::new(seed());
     let mut array = [T::default(); N];
     for i in 0..N {
         array[i] = rng.gen_num::<T>();
@@ -21,7 +21,7 @@ where
     array
 }
 
-fn get_seed() -> u64 {
+fn seed() -> u64 {
     let now = SystemTime::now();
     let since_the_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
     since_the_epoch.as_nanos() as u64

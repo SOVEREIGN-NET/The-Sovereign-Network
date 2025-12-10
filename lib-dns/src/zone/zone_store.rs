@@ -1,63 +1,100 @@
-use std::io;
+use std::path::PathBuf;
+use crate::messages::inter::rr_classes::RRClasses;
 use crate::utils::fqdn_utils::{encode_fqdn, decode_fqdn};
-use crate::utils::qp_trie::QpTrie;
+use crate::utils::trie::trie::Trie;
 use crate::zone::inter::zone_types::ZoneTypes;
 use crate::zone::zone::Zone;
-use crate::zone::zone_reader::ZoneReader;
+use crate::zone::zone_reader::{ZoneReader, ZoneReaderError};
 
 #[derive(Debug, Clone)]
 pub struct ZoneStore {
-    trie: QpTrie<Zone>
+    trie: Trie<Vec<Zone>>
 }
 
 impl ZoneStore {
 
     pub fn new() -> Self {
         Self {
-            trie: QpTrie::new()
+            trie: Trie::new()
         }
     }
 
-    pub fn open(&mut self, file_path: &str, fqdn: &str) -> io::Result<()> {
-        let mut zone = Zone::new(ZoneTypes::Master);
+    pub fn open<P: Into<PathBuf>>(&mut self, file_path: P, fqdn: &str, class: RRClasses) -> Result<Option<Zone>, ZoneReaderError> {
+        let mut zone = Zone::new(ZoneTypes::Master, class);
 
-        let mut reader = ZoneReader::open(file_path, fqdn)?;
-        for (name, record) in reader.iter() {
-            match name.as_str() {
-                //"." => self.add_record(record), //BE CAREFUL WITH THIS ONE - DONT ALLOW MOST OF THE TIME
-                "@" => zone.add_record("", record),
-                _ => zone.add_record(&name, record)/*{
-                    match self.trie.get_fqdn_mut(&name) {
-                        Some(zone) => zone.add_record(record),
-                        None => {
-                            let mut zone = Zone::new(ZoneTypes::Master);
-                            zone.add_record(record);
-                            self.trie.insert_fqdn(&name, zone);
-                        }
-                    }
-                }*/
-                //_ => zone.add_record_to(&name, record, ZoneTypes::Master)
+        let mut reader = ZoneReader::open(file_path, fqdn, class)?;
+
+        for record in reader.records() {
+            match record {
+                Ok((query, _type, ttl, data)) => {
+                    zone.add_record(&query, _type, ttl, data);
+                }
+                Err(e) => {
+                    println!("{}", e);
+                }
             }
         }
 
-        self.trie.insert(encode_fqdn(reader.get_origin()), zone);
-
-        Ok(())
+        Ok(self.add_zone(reader.origin(), zone))
     }
 
-    pub fn add_zone(&mut self, fqdn: &str, zone: Zone) {
-        self.trie.insert(encode_fqdn(fqdn), zone);
+    pub fn open_with_jnl<P: Into<PathBuf>>(&mut self, file_path: P, fqdn: &str, class: RRClasses, journal_path: P) -> Result<Option<Zone>, ZoneReaderError> {
+        let mut zone = Zone::new_with_jnl(ZoneTypes::Master, class, journal_path);
+
+        let mut reader = ZoneReader::open(file_path, fqdn, class)?;
+        for record in reader.records() {
+            match record {
+                Ok((query, _type, ttl, data)) => {
+                    zone.add_record(&query, _type, ttl, data);
+                }
+                Err(e) => {
+                    println!("{}", e);
+                }
+            }
+        }
+
+        Ok(self.add_zone(reader.origin(), zone))
     }
 
-    pub fn get_zone_exact(&self, apex: &str) -> Option<&Zone> {
-        self.trie.get(&encode_fqdn(apex))
+    pub fn add_zone(&mut self, fqdn: &str, zone: Zone) -> Option<Zone> {
+        let key = encode_fqdn(fqdn);
+        match self.trie.get_mut(&key) {
+            Some(zones) => {
+                let class = zone.class();
+
+                if let Some(index) = zones.iter().position(|z| z.class().eq(&class)) {
+                    return Some(std::mem::replace(&mut zones[index], zone));
+                }
+
+                zones.push(zone);
+            }
+            None => {
+                self.trie.insert(key, vec![zone]);
+            }
+        }
+        None
     }
 
-    pub fn get_deepest_zone(&self, name: &str) -> Option<&Zone> {
-        self.trie.get_longest_prefix(&encode_fqdn(name))
+    pub fn remove_zone(&mut self, fqdn: &str, class: RRClasses) {
+        //NEEDS REWORK NOW THAT CLASSES ARE INTRODUCED...
+        //self.trie.remove(&encode_fqdn(fqdn));
     }
 
-    pub fn get_deepest_zone_with_name(&self, name: &str) -> Option<(String, &Zone)> {
-        self.trie.get_longest_prefix_with_key(&encode_fqdn(name)).map(|(key, record)| (decode_fqdn(&key), record))
+    pub fn zone_exact(&self, apex: &str, class: &RRClasses) -> Option<&Zone> {
+        self.trie.get(&encode_fqdn(apex))?.iter().find(|z| z.class().eq(class))
+    }
+
+    pub fn zone_exact_mut(&mut self, apex: &str, class: &RRClasses) -> Option<&mut Zone> {
+        self.trie.get_mut(&encode_fqdn(apex))?.iter_mut().find(|z| z.class().eq(class))
+    }
+
+    pub fn deepest_zone(&self, name: &str, class: &RRClasses) -> Option<(String, &Zone)> {
+        let (key, zones) = self.trie.get_deepest(&encode_fqdn(name))?;
+        Some((decode_fqdn(&key), zones.iter().find(|z| z.class().eq(class))?))
+    }
+
+    pub fn deepest_zone_mut(&mut self, name: &str, class: &RRClasses) -> Option<(String, &mut Zone)> {
+        let (key, zones) = self.trie.get_deepest_mut(&encode_fqdn(name))?;
+        Some((decode_fqdn(&key), zones.iter_mut().find(|z| z.class().eq(class))?))
     }
 }

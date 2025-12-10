@@ -2375,6 +2375,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "lib-dns"
+version = "0.1.0"
+
+[[package]]
 name = "lib-economy"
 version = "0.1.0"
 dependencies = [
@@ -3957,10 +3961,6 @@ version = "0.1.0"
 dependencies = [
  "rlibbencode",
 ]
-
-[[package]]
-name = "rlibdns"
-version = "0.1.1"
 
 [[package]]
 name = "rocksdb"
