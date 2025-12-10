@@ -18,28 +18,7 @@ pub enum ResponseCodes {
 
 impl ResponseCodes {
 
-    pub fn from_code(code: u8) -> Option<Self> {
-        for c in [
-            Self::NoError,
-            Self::FormErr,
-            Self::ServFail,
-            Self::NxDomain,
-            Self::NotImp,
-            Self::Refused,
-            Self::YxDomain,
-            Self::XrrSet,
-            Self::NotAuth,
-            Self::NotZone
-        ] {
-            if c.get_code() == code {
-                return Some(c);
-            }
-        }
-
-        None
-    }
-
-    pub fn get_code(&self) -> u8 {
+    pub fn code(&self) -> u8 {
         match self {
             Self::NoError => 0,
             Self::FormErr => 1,
@@ -48,10 +27,41 @@ impl ResponseCodes {
             Self::NotImp => 4,
             Self::Refused => 5,
             Self::YxDomain => 6,
-            Self::XrrSet => 6,
+            Self::XrrSet => 7,
             Self::NotAuth => 8,
             Self::NotZone => 9
         }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ResponseCodeParseError(pub u8);
+
+impl fmt::Display for ResponseCodeParseError {
+
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown response code: {}", self.0)
+    }
+}
+
+impl TryFrom<u8> for ResponseCodes {
+
+    type Error = ResponseCodeParseError;
+
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        Ok(match v {
+            0 => Self::NoError,
+            1 => Self::FormErr,
+            2 => Self::ServFail,
+            3 => Self::NxDomain,
+            4 => Self::NotImp,
+            5 => Self::Refused,
+            6 => Self::YxDomain,
+            7 => Self::XrrSet,
+            8 => Self::NotAuth,
+            9 => Self::NotZone,
+            _  => return Err(ResponseCodeParseError(v))
+        })
     }
 }
 
