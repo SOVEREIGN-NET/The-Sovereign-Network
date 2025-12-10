@@ -21,12 +21,16 @@ use crate::rr_data::{
     smimea_rr_data::SmimeaRRData,
     soa_rr_data::SoaRRData,
     srv_rr_data::SrvRRData,
-    tkey_rr_data::TKeyRRData,
-    tsig_rr_data::TSigRRData,
     sshfp_rr_data::SshFpRRData,
     svcb_rr_data::SvcbRRData,
     txt_rr_data::TxtRRData,
     uri_rr_data::UriRRData
+};
+
+#[allow(unused_imports)]
+use crate::rr_data::{
+    tkey_rr_data::TKeyRRData,
+    tsig_rr_data::TSigRRData,
 };
 
 use crate::rr_data::inter::rr_data::RRData;

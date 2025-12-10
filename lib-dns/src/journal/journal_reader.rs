@@ -296,7 +296,7 @@ impl JournalReader {
         Ok(())
     }
 
-    pub fn txns(&mut self) -> JournalReaderIter {
+    pub fn txns(&mut self) -> JournalReaderIter<'_> {
         JournalReaderIter {
             reader: self
         }

@@ -254,7 +254,7 @@ impl ZoneReader {
         name.to_string()
     }
 
-    pub fn records(&mut self) -> ZoneReaderIter {
+    pub fn records(&mut self) -> ZoneReaderIter<'_> {
         ZoneReaderIter {
             reader: self
         }

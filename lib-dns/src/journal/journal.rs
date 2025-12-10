@@ -1,4 +1,5 @@
 use std::io;
+#[allow(unused_imports)]
 use crate::journal::txn::Txn;
 
 #[derive(Debug, Clone)]

@@ -1,4 +1,5 @@
 use std::any::Any;
+#[allow(unused_imports)]
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;

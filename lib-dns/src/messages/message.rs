@@ -14,7 +14,9 @@ use crate::messages::tsig::TSig;
 use crate::messages::wire::{FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError};
 use crate::rr_data::tsig_rr_data::TSigRRData;
 use crate::utils::fqdn_utils::pack_fqdn;
+#[allow(unused_imports)]
 use crate::utils::hash::hmac::hmac;
+#[allow(unused_imports)]
 use crate::utils::hash::sha256::Sha256;
 /*
                                1  1  1  1  1  1
@@ -435,7 +437,7 @@ impl Message {
         context.into_bytes()
     }
 
-    pub fn wire_chunks(&mut self, max_payload_len: usize) -> WireIter {
+    pub fn wire_chunks(&mut self, max_payload_len: usize) -> WireIter<'_> {
         let max_payload_len = match self.edns.as_ref() {
             Some(edns) => edns.payload_size() as usize,
             None => max_payload_len
@@ -474,7 +476,7 @@ impl Message {
         }
     }
 
-    pub fn wire_chunks_with_tsig(&mut self, max_payload_len: usize, key: &Key) -> WireIter {
+    pub fn wire_chunks_with_tsig(&mut self, max_payload_len: usize, key: &Key) -> WireIter<'_> {
         let max_payload_len = match self.edns.as_ref() {
             Some(edns) => edns.payload_size() as usize,
             None => max_payload_len

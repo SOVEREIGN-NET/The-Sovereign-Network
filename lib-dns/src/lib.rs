@@ -1,3 +1,10 @@
+// Suppress warnings from upstream code - can be cleaned up incrementally
+#![allow(unused_variables)]
+#![allow(unused_mut)]
+#![allow(unused_assignments)]
+#![allow(dead_code)]
+#![allow(clippy::mismatched_lifetime_syntaxes)]
+
 pub mod messages;
 pub mod rr_data;
 pub mod utils;

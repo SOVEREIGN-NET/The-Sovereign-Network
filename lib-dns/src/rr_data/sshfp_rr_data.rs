@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::fmt;
 use std::fmt::Formatter;
+#[allow(unused_imports)]
 use crate::messages::inter::rr_classes::RRClasses;
 use crate::messages::wire::{FromWireContext, FromWireLen, ToWire, ToWireContext, WireError};
 use crate::rr_data::inter::rr_data::{RRData, RRDataError};

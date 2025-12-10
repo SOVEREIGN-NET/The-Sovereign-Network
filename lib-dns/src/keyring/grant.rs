@@ -1,5 +1,7 @@
+#[allow(unused_imports)]
 use crate::messages::inter::rr_types::RRTypes;
 
+#[allow(dead_code)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum Scopes {
     Zone,
@@ -7,6 +9,7 @@ pub enum Scopes {
     Subtree
 }
 
+#[allow(dead_code)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum Actions {
     Create,
@@ -14,6 +17,7 @@ pub enum Actions {
     Delete
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Grant {
     //zone_id: ???
