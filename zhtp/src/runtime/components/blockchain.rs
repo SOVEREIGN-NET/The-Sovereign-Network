@@ -361,6 +361,24 @@ impl BlockchainComponent {
                                     info!("Block #{} mined successfully!", block_counter);
                                     block_counter += 1;
                                     consensus_round = 0;
+
+                                    // Auto-persist blockchain after mining
+                                    blockchain_guard.increment_persist_counter();
+                                    const PERSIST_INTERVAL: u64 = 5; // Save every 5 blocks
+                                    if blockchain_guard.should_auto_persist(PERSIST_INTERVAL) {
+                                        // Use development environment path for now
+                                        // TODO: Pass environment from component config
+                                        let persist_path = std::path::Path::new("./data/dev/blockchain.dat");
+                                        match blockchain_guard.save_to_file(persist_path) {
+                                            Ok(()) => {
+                                                blockchain_guard.mark_persisted();
+                                                info!("💾 Blockchain auto-persisted to disk");
+                                            }
+                                            Err(e) => {
+                                                warn!("⚠️ Failed to auto-persist blockchain: {}", e);
+                                            }
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     warn!("Failed to mine block #{}: {}", block_counter, e);
@@ -475,12 +493,22 @@ impl Component for BlockchainComponent {
     async fn stop(&self) -> Result<()> {
         info!("Stopping blockchain component...");
         *self.status.write().await = ComponentStatus::Stopping;
-        
+
+        // Persist blockchain before shutdown
+        if let Ok(shared_blockchain) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+            let blockchain_guard = shared_blockchain.read().await;
+            let persist_path = std::path::Path::new("./data/dev/blockchain.dat");
+            match blockchain_guard.save_to_file(persist_path) {
+                Ok(()) => info!("💾 Blockchain persisted to disk before shutdown"),
+                Err(e) => warn!("⚠️ Failed to persist blockchain on shutdown: {}", e),
+            }
+        }
+
         if let Some(handle) = self.mining_handle.write().await.take() {
             handle.abort();
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        
+
         *self.blockchain.write().await = None;
         *self.start_time.write().await = None;
         *self.status.write().await = ComponentStatus::Stopped;

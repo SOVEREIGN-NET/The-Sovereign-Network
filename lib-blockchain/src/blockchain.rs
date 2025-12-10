@@ -4431,6 +4431,176 @@ impl Blockchain {
     pub fn get_contract_block_height(&self, contract_id: &[u8; 32]) -> Option<u64> {
         self.contract_blocks.get(contract_id).copied()
     }
+
+    // ========================================================================
+    // FILE PERSISTENCE METHODS
+    // ========================================================================
+
+    /// Save the blockchain state to a file
+    ///
+    /// Serializes the entire blockchain (blocks, UTXOs, identities, wallets, etc.)
+    /// to disk using bincode for efficient binary serialization.
+    ///
+    /// # Arguments
+    /// * `path` - Path to save the blockchain file
+    ///
+    /// # Example
+    /// ```ignore
+    /// blockchain.save_to_file(Path::new("./data/blockchain.dat"))?;
+    /// ```
+    pub fn save_to_file(&self, path: &std::path::Path) -> Result<()> {
+        use std::io::Write;
+
+        info!("💾 Saving blockchain to {} (height: {}, identities: {}, wallets: {})",
+              path.display(), self.height, self.identity_registry.len(), self.wallet_registry.len());
+
+        let start = std::time::Instant::now();
+
+        // Create parent directories if they don't exist
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Serialize blockchain to bincode
+        let serialized = bincode::serialize(self)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize blockchain: {}", e))?;
+
+        // Write to temporary file first, then rename (atomic operation)
+        let temp_path = path.with_extension("dat.tmp");
+        let mut file = std::fs::File::create(&temp_path)?;
+        file.write_all(&serialized)?;
+        file.sync_all()?; // Ensure data is flushed to disk
+
+        // Atomic rename
+        std::fs::rename(&temp_path, path)?;
+
+        let elapsed = start.elapsed();
+        info!("💾 Blockchain saved successfully ({} bytes, {:?})", serialized.len(), elapsed);
+
+        Ok(())
+    }
+
+    /// Load blockchain state from a file
+    ///
+    /// Deserializes a blockchain from disk. If the file doesn't exist or is corrupt,
+    /// returns an error. Use `load_or_create` for graceful fallback to new blockchain.
+    ///
+    /// # Arguments
+    /// * `path` - Path to load the blockchain file from
+    ///
+    /// # Example
+    /// ```ignore
+    /// let blockchain = Blockchain::load_from_file(Path::new("./data/blockchain.dat"))?;
+    /// ```
+    pub fn load_from_file(path: &std::path::Path) -> Result<Self> {
+        info!("📂 Loading blockchain from {}", path.display());
+
+        let start = std::time::Instant::now();
+
+        // Read file
+        let serialized = std::fs::read(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read blockchain file: {}", e))?;
+
+        // Deserialize
+        let mut blockchain: Blockchain = bincode::deserialize(&serialized)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain: {}", e))?;
+
+        // Re-initialize non-serialized fields
+        blockchain.economic_processor = Some(EconomicTransactionProcessor::new());
+        // Note: consensus_coordinator, storage_manager, proof_aggregator, and broadcast_sender
+        // need to be initialized separately after loading
+
+        let elapsed = start.elapsed();
+        info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, UTXOs: {}, {:?})",
+              blockchain.height, blockchain.identity_registry.len(),
+              blockchain.wallet_registry.len(), blockchain.utxo_set.len(), elapsed);
+
+        Ok(blockchain)
+    }
+
+    /// Load blockchain from file or create a new one if file doesn't exist
+    ///
+    /// This is the recommended method for node startup. It will:
+    /// 1. Try to load existing blockchain from disk
+    /// 2. If file doesn't exist, create a new blockchain with genesis block
+    /// 3. If file exists but is corrupt, log error and create new blockchain
+    ///
+    /// # Arguments
+    /// * `path` - Path to the blockchain file
+    ///
+    /// # Returns
+    /// * `(Blockchain, bool)` - The blockchain and whether it was loaded from file (true) or created fresh (false)
+    pub fn load_or_create(path: &std::path::Path) -> Result<(Self, bool)> {
+        if path.exists() {
+            match Self::load_from_file(path) {
+                Ok(blockchain) => {
+                    info!("✅ Loaded existing blockchain from disk");
+                    return Ok((blockchain, true));
+                }
+                Err(e) => {
+                    error!("⚠️ Failed to load blockchain from {}: {}. Creating new blockchain.",
+                           path.display(), e);
+                    // Don't delete the corrupt file - keep it for debugging
+                    let backup_path = path.with_extension("dat.corrupt");
+                    if let Err(rename_err) = std::fs::rename(path, &backup_path) {
+                        warn!("Failed to backup corrupt blockchain file: {}", rename_err);
+                    } else {
+                        warn!("Corrupt blockchain backed up to {}", backup_path.display());
+                    }
+                }
+            }
+        } else {
+            info!("📂 No existing blockchain found at {}, creating new blockchain", path.display());
+        }
+
+        let blockchain = Self::new()?;
+        Ok((blockchain, false))
+    }
+
+    /// Check if a persistence file exists
+    pub fn persistence_file_exists(path: &std::path::Path) -> bool {
+        path.exists()
+    }
+
+    /// Get persistence statistics
+    pub fn get_persistence_stats(&self) -> PersistenceStats {
+        PersistenceStats {
+            height: self.height,
+            blocks_count: self.blocks.len(),
+            utxo_count: self.utxo_set.len(),
+            identity_count: self.identity_registry.len(),
+            wallet_count: self.wallet_registry.len(),
+            pending_tx_count: self.pending_transactions.len(),
+            blocks_since_last_persist: self.blocks_since_last_persist,
+        }
+    }
+
+    /// Reset the blocks since last persist counter (call after successful save)
+    pub fn mark_persisted(&mut self) {
+        self.blocks_since_last_persist = 0;
+    }
+
+    /// Increment blocks since last persist counter (call after adding a block)
+    pub fn increment_persist_counter(&mut self) {
+        self.blocks_since_last_persist += 1;
+    }
+
+    /// Check if auto-persist should trigger based on block count
+    pub fn should_auto_persist(&self, interval: u64) -> bool {
+        self.auto_persist_enabled && self.blocks_since_last_persist >= interval
+    }
+}
+
+/// Statistics about blockchain persistence state
+#[derive(Debug, Clone)]
+pub struct PersistenceStats {
+    pub height: u64,
+    pub blocks_count: usize,
+    pub utxo_count: usize,
+    pub identity_count: usize,
+    pub wallet_count: usize,
+    pub pending_tx_count: usize,
+    pub blocks_since_last_persist: u64,
 }
 
 impl Default for Blockchain {

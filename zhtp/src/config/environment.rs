@@ -161,9 +161,15 @@ impl Environment {
         }
     }
     
-    /// Get blockchain database path for this environment
+    /// Get blockchain database path for this environment (legacy)
     pub fn blockchain_db_path(&self) -> String {
         format!("{}/blockchain.db", self.data_directory())
+    }
+
+    /// Get blockchain persistence file path for this environment
+    /// This is the main blockchain state file that persists across restarts
+    pub fn blockchain_data_path(&self) -> String {
+        format!("{}/blockchain.dat", self.data_directory())
     }
     
     /// Get wallet database path for this environment

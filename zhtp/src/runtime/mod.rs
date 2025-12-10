@@ -509,9 +509,38 @@ impl RuntimeOrchestrator {
             return Ok(());
         }
         
-        // Creating NEW genesis network - initialize blockchain with genesis funding
+        // Try to load existing blockchain from disk, or create new genesis
+        let persist_path_string = self.config.environment.blockchain_data_path();
+        let persist_path = std::path::Path::new(&persist_path_string);
+        let (mut blockchain, was_loaded) = lib_blockchain::Blockchain::load_or_create(persist_path)?;
+
+        if was_loaded {
+            info!("📂 Loaded existing blockchain from {} (height: {}, identities: {}, wallets: {})",
+                  persist_path.display(),
+                  blockchain.height,
+                  blockchain.identity_registry.len(),
+                  blockchain.wallet_registry.len());
+            info!("  Skipping genesis creation - using persisted state");
+
+            // Set the blockchain as global immediately since we loaded it
+            let blockchain_arc = Arc::new(RwLock::new(blockchain));
+            set_global_blockchain(blockchain_arc.clone()).await?;
+            info!(" Global blockchain provider initialized with loaded blockchain");
+
+            // Push wallet to BlockchainComponent if already registered
+            let components = self.components.read().await;
+            if let Some(component) = components.get(&ComponentId::Blockchain) {
+                if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
+                    blockchain_comp.set_user_wallet(wallet).await;
+                    info!(" User wallet propagated to BlockchainComponent");
+                }
+            }
+
+            return Ok(());
+        }
+
+        // Creating NEW genesis network - no persisted blockchain found
         info!(" Creating NEW genesis network with user wallet funding...");
-        let mut blockchain = lib_blockchain::Blockchain::new()?;
         
         // Set development difficulty (easy mining for testing)
         // TODO: In production, keep the default INITIAL_DIFFICULTY (0x1d00ffff)
