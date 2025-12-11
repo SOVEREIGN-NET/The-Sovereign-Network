@@ -362,7 +362,7 @@ impl MeshRouter {
                            performance_metrics.avg_tx_propagation_ms) / 2.0,
             bandwidth_bps: (performance_metrics.bytes_sent_per_sec + 
                           performance_metrics.bytes_received_per_sec) as u64,
-            active_peers: connections.len(),
+            active_peers: connections.all_peers().count() as usize,
             banned_peers: banned_count,
         }
     }
@@ -404,9 +404,11 @@ impl MeshRouter {
         info!("🏥 Initializing network health monitoring (lib-network integration)...");
         
         // Create lib-network HealthMonitor with references to mesh components
+        // Ticket #149: Use peer_registry instead of connections
+        let peer_registry = Arc::new(RwLock::new(lib_network::peer_registry::PeerRegistry::new()));
         let health_monitor = HealthMonitor::new(
             self.mesh_protocol_stats.clone(),
-            self.connections.clone(),
+            peer_registry,
             Arc::new(RwLock::new(HashMap::new())), // long_range_relays (will be populated later)
         );
         
@@ -454,7 +456,7 @@ impl MeshRouter {
         let metrics = self.broadcast_metrics.read().await;
         
         // Update statistics that lib-network monitors
-        stats.active_connections = connections.len() as u32;
+        stats.active_connections = connections.all_peers().count() as u32;
         stats.total_data_routed = metrics.blocks_sent + metrics.transactions_sent;
         
         // Calculate average latency from our tracking
