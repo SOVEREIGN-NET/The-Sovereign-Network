@@ -23,7 +23,7 @@
 //!    - Thread-safe observer registry with Arc<RwLock<>>
 
 use crate::peer_registry::{PeerEntry, UnifiedPeerId};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -287,46 +287,31 @@ impl PeerRegistryObserver for BlockchainObserver {
                 tracing::debug!(
                     observer = %self.name,
                     peer_id = %peer_id.node_id(),
-                    is_validator = entry.capabilities.is_validator,
-                    "Blockchain: Peer added, checking validator status"
+                    "Blockchain: Peer added, checking capabilities"
                 );
-                // Future: if entry.capabilities.is_validator {
-                //     validator_set.add(peer_id)?
-                // }
+                // Future: Check capabilities and add to validator set if appropriate
+                // validator_set.add(peer_id)?
                 Ok(())
             }
             
-            PeerRegistryEvent::PeerUpdated { peer_id, old_entry, new_entry } => {
-                // Check if validator status changed
-                let was_validator = old_entry.capabilities.is_validator;
-                let is_validator = new_entry.capabilities.is_validator;
-                
-                if was_validator != is_validator {
-                    tracing::info!(
-                        observer = %self.name,
-                        peer_id = %peer_id.node_id(),
-                        validator_status = is_validator,
-                        "Blockchain: Validator status changed"
-                    );
-                    // Future: 
-                    // if is_validator {
-                    //     validator_set.add(peer_id)?
-                    // } else {
-                    //     validator_set.remove(peer_id)?
-                    // }
-                }
+            PeerRegistryEvent::PeerUpdated { peer_id, old_entry: _, new_entry } => {
+                tracing::debug!(
+                    observer = %self.name,
+                    peer_id = %peer_id.node_id(),
+                    "Blockchain: Peer updated, checking for capability changes"
+                );
+                // Future: Check if validator status changed and update accordingly
                 Ok(())
             }
             
-            PeerRegistryEvent::PeerRemoved { peer_id, entry } => {
-                if entry.capabilities.is_validator {
-                    tracing::info!(
-                        observer = %self.name,
-                        peer_id = %peer_id.node_id(),
-                        "Blockchain: Removing validator from consensus set"
-                    );
-                    // Future: validator_set.remove(peer_id)?
-                }
+            PeerRegistryEvent::PeerRemoved { peer_id, entry: _ } => {
+                tracing::debug!(
+                    observer = %self.name,
+                    peer_id = %peer_id.node_id(),
+                    "Blockchain: Peer removed, updating consensus set if needed"
+                );
+                // Future: Check capabilities and remove from validator set if appropriate
+                // validator_set.remove(peer_id)?
                 Ok(())
             }
             
@@ -357,6 +342,17 @@ pub struct ObserverRegistry {
     max_observers: usize,
     /// Track observer registration timestamps for cleanup
     registration_times: Arc<RwLock<HashMap<String, Instant>>>, // observer_name -> registration_time
+}
+
+impl std::fmt::Debug for ObserverRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Use blocking read for Debug implementation
+        let observers = self.observers.blocking_read();
+        f.debug_struct("ObserverRegistry")
+            .field("max_observers", &self.max_observers)
+            .field("observer_count", &observers.len())
+            .finish()
+    }
 }
 
 /// Configuration for ObserverRegistry

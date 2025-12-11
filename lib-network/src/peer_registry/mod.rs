@@ -224,7 +224,7 @@ impl Clone for RateLimiter {
 /// - **Index consistency**: Atomic updates prevent stale entries
 /// - **Audit logging**: All changes logged for security monitoring
 /// - **Rate limiting**: Per-peer and global rate limits prevent DoS attacks
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PeerRegistry {
     /// Primary storage: UnifiedPeerId → PeerEntry
     peers: HashMap<UnifiedPeerId, PeerEntry>,
@@ -788,8 +788,9 @@ impl PeerRegistry {
             .map(|(id, _)| id.clone());
 
         if let Some(peer_id) = expired_peer {
+            let audit_logging = self.config.audit_logging; // Capture before mutable borrow
             let _entry = self.remove(&peer_id);
-            if self.config.audit_logging {
+            if audit_logging {
                 info!(
                     peer_did = %peer_id.did(),
                     reason = "TTL_EXPIRED",
@@ -810,8 +811,9 @@ impl PeerRegistry {
             .map(|(id, _)| id.clone());
 
         if let Some(peer_id) = victim {
+            let audit_logging = self.config.audit_logging; // Capture before mutable borrow
             let _entry = self.remove(&peer_id);
-            if self.config.audit_logging {
+            if audit_logging {
                 info!(
                     peer_did = %peer_id.did(),
                     reason = "MAX_PEERS_EVICTION",
@@ -1163,7 +1165,7 @@ impl PeerRegistry {
     /// The `create_fn` is only called if the peer doesn't exist.
     ///
     /// Returns true if updated, false if inserted.
-    pub fn update_or_insert<U, C>(
+    pub async fn update_or_insert<U, C>(
         &mut self,
         peer_id: &UnifiedPeerId,
         update_fn: U,
@@ -1180,7 +1182,7 @@ impl PeerRegistry {
             Ok(true) // Updated
         } else {
             let new_entry = create_fn();
-            self.upsert(new_entry)?;
+            self.upsert(new_entry).await?;
             Ok(false) // Inserted
         }
     }
