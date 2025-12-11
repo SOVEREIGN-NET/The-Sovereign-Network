@@ -18,8 +18,12 @@ impl BootstrapService {
         environment: &crate::config::environment::Environment,
     ) -> Result<Blockchain> {
         use lib_network::dht::bootstrap::{DHTBootstrap, DHTBootstrapEnhancements};
+        use lib_network::peer_registry::PeerRegistry;
         
         info!(" Discovering network peers for blockchain bootstrap...");
+        
+        // Create unified peer registry for discovered peers (Ticket #150)
+        let peer_registry = PeerRegistry::new_shared_registry();
         
         // Create bootstrap with mDNS enhancements
         let enhancements = DHTBootstrapEnhancements {
@@ -33,15 +37,25 @@ impl BootstrapService {
         let node_identity = crate::runtime::create_or_load_node_identity(environment).await?;
         let mut bootstrap = DHTBootstrap::new(enhancements, node_identity);
         
-        // Use enhance_bootstrap to discover peers
-        let peers = bootstrap.enhance_bootstrap(&[]).await
-            .unwrap_or_else(|_| Vec::new());
+        // Use enhance_bootstrap to discover peers (Ticket #150: peers added to registry)
+        let peer_count = bootstrap.enhance_bootstrap(&[], peer_registry.clone()).await
+            .unwrap_or(0);
         
-        if peers.is_empty() {
+        if peer_count == 0 {
             return Err(anyhow::anyhow!("No network peers found"));
         }
         
-        info!(" Found {} potential peers, attempting blockchain sync...", peers.len());
+        info!(" Found {} potential peers, attempting blockchain sync...", peer_count);
+        
+        // Extract peer addresses from registry for blockchain sync
+        let registry = peer_registry.read().await;
+        let peers: Vec<String> = registry.all_peers()
+            .filter_map(|peer_entry| {
+                // Get first endpoint address
+                peer_entry.endpoints.first().map(|ep| ep.address.clone())
+            })
+            .collect();
+        drop(registry); // Release lock before async operations
         
         // Try each peer until we get a blockchain
         for peer in peers {

@@ -4,20 +4,31 @@ use anyhow::{Result, anyhow};
 use lib_crypto::PublicKey;
 use lib_identity::{NodeId, ZhtpIdentity};
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::peer_registry::{
+    SharedPeerRegistry, PeerEntry, PeerEndpoint, ConnectionMetrics, 
+    NodeCapabilities, DiscoveryMethod, PeerTier
+};
+use crate::identity::unified_peer::UnifiedPeerId;
 
 /// Discover peers through bootstrap process
+/// 
+/// **MIGRATION (Ticket #150):** Now adds discovered peers directly to unified peer_registry
 /// 
 /// # Arguments
 /// * `bootstrap_addresses` - List of bootstrap peer addresses to connect to
 /// * `local_identity` - Local identity for deriving NodeId and authentication
+/// * `peer_registry` - Unified peer registry to add discovered peers
 /// 
 /// # Returns
-/// List of discovered peers with identity-derived NodeIds
+/// Number of successfully discovered peers
 pub async fn discover_bootstrap_peers(
     bootstrap_addresses: &[String],
     local_identity: &ZhtpIdentity,
-) -> Result<Vec<PeerInfo>> {
-    let mut discovered_peers = Vec::new();
+    peer_registry: crate::peer_registry::SharedPeerRegistry,
+) -> Result<usize> {
+    let mut discovered_count = 0;
     let mut failed_connections = Vec::new();
 
     tracing::info!("Attempting to discover {} bootstrap peers", bootstrap_addresses.len());
@@ -30,7 +41,12 @@ pub async fn discover_bootstrap_peers(
                     address,
                     peer_info.node_id.as_ref().map(|n| n.to_hex()).unwrap_or_else(|| "none".to_string())
                 );
-                discovered_peers.push(peer_info);
+                // Ticket #150: Add peer directly to registry instead of collecting in Vec
+                if let Err(e) = add_peer_to_registry(&peer_info, peer_registry.clone()).await {
+                    tracing::warn!("Failed to add peer {} to registry: {}", address, e);
+                } else {
+                    discovered_count += 1;
+                }
             }
             Err(e) => {
                 tracing::warn!("❌ Failed to connect to bootstrap peer {}: {}", address, e);
@@ -39,7 +55,7 @@ pub async fn discover_bootstrap_peers(
         }
     }
 
-    if discovered_peers.is_empty() && !bootstrap_addresses.is_empty() {
+    if discovered_count == 0 && !bootstrap_addresses.is_empty() {
         return Err(anyhow!(
             "Failed to connect to any bootstrap peers ({} attempted, {} failed): {:?}",
             bootstrap_addresses.len(),
@@ -50,11 +66,137 @@ pub async fn discover_bootstrap_peers(
 
     tracing::info!(
         "Bootstrap discovery complete: {} successful, {} failed",
-        discovered_peers.len(),
+        discovered_count,
         failed_connections.len()
     );
 
-    Ok(discovered_peers)
+    Ok(discovered_count)
+}
+
+/// Add a discovered peer to the unified peer registry
+/// 
+/// Converts PeerInfo from bootstrap discovery into PeerEntry format
+/// and adds it to the registry with appropriate metadata.
+/// 
+/// **MIGRATION (Ticket #150):** Replaces the old pattern of accumulating
+/// peers in a local Vec and returning them to callers. Now peers are
+/// directly added to the registry so they're immediately visible to
+/// DHT and mesh components.
+/// 
+/// # Arguments
+/// * `peer_info` - Peer information from bootstrap handshake
+/// * `peer_registry` - Shared registry to add the peer to
+/// 
+/// # Returns
+/// Ok(()) if peer was successfully added to registry
+async fn add_peer_to_registry(
+    peer_info: &PeerInfo,
+    peer_registry: SharedPeerRegistry,
+) -> Result<()> {
+    // Convert PublicKey + NodeId + DID to UnifiedPeerId
+    let peer_id = if let Some(node_id) = &peer_info.node_id {
+        UnifiedPeerId::from_components(
+            peer_info.id.clone(),
+            node_id.clone(),
+            peer_info.did.clone(),
+        )
+    } else {
+        // Fallback: create UnifiedPeerId without NodeId (will be empty)
+        UnifiedPeerId::from_components(
+            peer_info.id.clone(),
+            NodeId::from_bytes(&[0u8; 32]), // Empty NodeId as fallback
+            peer_info.did.clone(),
+        )
+    };
+
+    // Convert addresses + protocols to PeerEndpoint list
+    let endpoints: Vec<PeerEndpoint> = peer_info
+        .addresses
+        .iter()
+        .map(|(protocol, address)| PeerEndpoint {
+            address: address.clone(),
+            protocol: protocol.clone(),
+            signal_strength: 1.0, // Bootstrap peers assumed to have good connectivity
+            latency_ms: 50, // Default reasonable latency for bootstrap
+        })
+        .collect();
+
+    // Get current timestamp
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| anyhow!("System time error: {}", e))?
+        .as_secs();
+
+    // Build ConnectionMetrics from PeerInfo data
+    let connection_metrics = ConnectionMetrics {
+        signal_strength: 1.0, // Bootstrap peers assumed reliable
+        bandwidth_capacity: peer_info.bandwidth_capacity,
+        latency_ms: 50, // Default for bootstrap
+        stability_score: 0.8, // Bootstrap peers assumed stable
+        connected_at: now,
+    };
+
+    // Build NodeCapabilities from PeerInfo
+    let capabilities = NodeCapabilities {
+        protocols: peer_info.protocols.clone(),
+        max_bandwidth: peer_info.bandwidth_capacity,
+        available_bandwidth: peer_info.bandwidth_capacity,
+        routing_capacity: peer_info.compute_capacity,
+        energy_level: None, // Bootstrap nodes typically not battery-powered
+        availability_percent: 99.0, // Bootstrap nodes assumed highly available
+    };
+
+    // Create PeerEntry with all metadata
+    let peer_entry = PeerEntry {
+        peer_id: peer_id.clone(),
+        
+        // Connection metadata
+        endpoints,
+        active_protocols: peer_info.protocols.clone(),
+        connection_metrics,
+        authenticated: true, // Bootstrap handshake implies authentication
+        quantum_secure: false, // Default for now
+        
+        // Routing metadata
+        next_hop: None, // Direct connection to bootstrap peer
+        hop_count: 1, // Direct connection
+        route_quality: 0.9, // Bootstrap peers assumed high quality
+        
+        // Topology/capabilities
+        capabilities,
+        location: None, // Location not typically known during bootstrap
+        reliability_score: 0.8, // Bootstrap peers assumed reliable
+        
+        // DHT metadata
+        dht_info: None, // Will be populated later by DHT component
+        
+        // Discovery metadata
+        discovery_method: DiscoveryMethod::Bootstrap,
+        first_seen: peer_info.last_seen,
+        last_seen: peer_info.last_seen,
+        
+        // Tiering and trust
+        tier: PeerTier::Tier2, // Bootstrap peers typically Tier2 (relay/routing)
+        trust_score: peer_info.reputation,
+        
+        // Statistics
+        data_transferred: 0,
+        tokens_earned: 0,
+        traffic_routed: 0,
+    };
+
+    // Add to registry (upsert will update if already exists)
+    let mut registry = peer_registry.write().await;
+    registry.upsert(peer_entry)?;
+    
+    tracing::debug!(
+        "Added bootstrap peer {} to registry (DID: {}, device: {})",
+        peer_id.to_short_string(),
+        peer_info.did,
+        peer_info.device_name
+    );
+
+    Ok(())
 }
 
 /// Connect to a bootstrap peer
