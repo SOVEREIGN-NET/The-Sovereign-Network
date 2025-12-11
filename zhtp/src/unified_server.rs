@@ -652,7 +652,7 @@ impl ZhtpUnifiedServer {
         // Initialize Bluetooth LE discovery (pass mesh_connections and peer notification channel for GATT handler)
         // Spawn as background task to avoid blocking HTTP server startup
         let bluetooth_router_clone = self.bluetooth_router.clone();
-        let mesh_connections_clone = self.mesh_router.connections.clone();
+        let peer_registry_clone = self.mesh_router.connections.clone();
         let bluetooth_provider = self.mesh_router.blockchain_provider.read().await.clone();
         let ble_peer_tx_clone = ble_peer_tx.clone();
         let our_public_key_clone = our_public_key.clone();
@@ -670,7 +670,7 @@ impl ZhtpUnifiedServer {
 
             info!("Initializing Bluetooth mesh protocol for phone connectivity...");
             match bluetooth_router_clone.initialize(
-                mesh_connections_clone,
+                peer_registry_clone,
                 Some(ble_peer_tx_clone),
                 our_public_key_clone,
                 bluetooth_provider,

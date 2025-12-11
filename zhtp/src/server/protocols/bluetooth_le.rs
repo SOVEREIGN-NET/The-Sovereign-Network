@@ -16,6 +16,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 use tracing::{debug, info, warn};
 use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
@@ -53,7 +54,7 @@ impl BluetoothRouter {
     // Ticket #146: Updated to use UnifiedPeerId as HashMap key
     pub async fn initialize(
         &self,
-        mesh_connections: Arc<RwLock<HashMap<lib_network::identity::unified_peer::UnifiedPeerId, lib_network::mesh::connection::MeshConnection>>>,
+        peer_registry: Arc<RwLock<lib_network::peer_registry::PeerRegistry>>,
         peer_discovery_tx: Option<tokio::sync::mpsc::UnboundedSender<PublicKey>>,
         our_public_key: PublicKey,
         blockchain_provider: Option<Arc<dyn lib_network::blockchain_sync::BlockchainProvider>>,
@@ -94,7 +95,7 @@ impl BluetoothRouter {
         
         // Spawn GATT message handler task with mesh_connections access
         let connected_devices = self.connected_devices.clone();
-        let mesh_conns = mesh_connections.clone();
+        let mesh_conns = peer_registry.clone();
         let ble_peer_notify = peer_discovery_tx.clone();
         let sync_coordinator_for_gatt = sync_coordinator.clone();
         let mesh_router_for_gatt = mesh_router.clone();
@@ -150,8 +151,61 @@ impl BluetoothRouter {
                             
                             // Add to mesh network (Ticket #146: Use UnifiedPeerId as key)
                             let peer_key = connection.peer.clone();
-                            let is_new_peer = !mesh_conns.read().await.contains_key(&peer_key);
-                            mesh_conns.write().await.insert(peer_key, connection);
+                            // Ticket #149: Use PeerRegistry API instead of HashMap methods
+                            let registry_read = mesh_conns.read().await;
+                            let is_new_peer = registry_read.get(&peer_key).is_none();
+                            drop(registry_read);
+                            
+                            // Create PeerEntry and upsert into registry
+                            let mut registry_write = mesh_conns.write().await;
+                            let peer_entry = lib_network::peer_registry::PeerEntry::new(
+                                peer_key,
+                                vec![lib_network::peer_registry::PeerEndpoint {
+                                    address: gatt_address.clone(),
+                                    protocol: connection.protocol.clone(),
+                                    signal_strength: 0.8,
+                                    latency_ms: 50,
+                                }],
+                                vec![connection.protocol.clone()],
+                                lib_network::peer_registry::ConnectionMetrics {
+                                    signal_strength: 0.8,
+                                    bandwidth_capacity: 1_000_000,
+                                    latency_ms: 50,
+                                    stability_score: 0.9,
+                                    connected_at: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                },
+                                true,
+                                true,
+                                None,
+                                1,
+                                0.8,
+                                lib_network::peer_registry::NodeCapabilities {
+                                    protocols: vec![connection.protocol.clone()],
+                                    max_bandwidth: 1_000_000,
+                                    available_bandwidth: 800_000,
+                                    routing_capacity: 100,
+                                    energy_level: None,
+                                    availability_percent: 95.0,
+                                },
+                                None,
+                                0.9,
+                                None,
+                                lib_network::peer_registry::DiscoveryMethod::MeshScan,
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                                lib_network::peer_registry::PeerTier::Tier3,
+                                0.8,
+                            );
+                            registry_write.upsert(peer_entry).expect("Failed to upsert peer");
                             info!("   ✅ Added GATT peer {} to mesh network", handshake.node_id);
                             
                             // FIX: Also register with BluetoothMeshProtocol.current_connections
@@ -395,17 +449,17 @@ impl BluetoothRouter {
                     let mut connections = mesh_router.connections.write().await;
                     let peer_key = connection.peer.clone();
                     // Ticket #149: Use peer_registry upsert instead of connections.insert
-                    let mut registry = connections.write().await;
-                    let peer_entry = lib_network::peer_registry::PeerEntry {
-                        peer_id: peer_key,
-                        endpoints: vec![lib_network::peer_registry::PeerEndpoint {
+                    // connections is already a write guard, use it directly
+                    let peer_entry = lib_network::peer_registry::PeerEntry::new(
+                        peer_key,
+                        vec![lib_network::peer_registry::PeerEndpoint {
                             address: String::new(), // TODO: Add actual address
-                            protocol: connection.protocol,
+                            protocol: connection.protocol.clone(),
                             signal_strength: 0.8,
                             latency_ms: 50,
                         }],
-                        active_protocols: vec![connection.protocol],
-                        connection_metrics: lib_network::peer_registry::ConnectionMetrics {
+                        vec![connection.protocol.clone()],
+                        lib_network::peer_registry::ConnectionMetrics {
                             signal_strength: 0.8,
                             bandwidth_capacity: 1_000_000,
                             latency_ms: 50,
@@ -415,42 +469,39 @@ impl BluetoothRouter {
                                 .unwrap_or_default()
                                 .as_secs(),
                         },
-                        authenticated: true,
-                        quantum_secure: true,
-                        next_hop: None,
-                        hop_count: 1,
-                        route_quality: 0.8,
-                        capabilities: lib_network::peer_registry::NodeCapabilities {
-                            protocols: vec![connection.protocol],
+                        true,
+                        true,
+                        None,
+                        1,
+                        0.8,
+                        lib_network::peer_registry::NodeCapabilities {
+                            protocols: vec![connection.protocol.clone()],
                             max_bandwidth: 1_000_000,
                             available_bandwidth: 800_000,
                             routing_capacity: 100,
                             energy_level: None,
                             availability_percent: 95.0,
                         },
-                        location: None,
-                        reliability_score: 0.9,
-                        dht_info: None,
-                        discovery_method: lib_network::peer_registry::DiscoveryMethod::MeshScan,
-                        first_seen: std::time::SystemTime::now()
+                        None,
+                        0.9,
+                        None,
+                        lib_network::peer_registry::DiscoveryMethod::MeshScan,
+                        std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs(),
-                        last_seen: std::time::SystemTime::now()
+                        std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs(),
-                        tier: lib_network::peer_registry::PeerTier::Tier3,
-                        trust_score: 0.8,
-                        data_transferred: 0,
-                        tokens_earned: 0,
-                        traffic_routed: 0,
-                    };
-                    registry.upsert(peer_entry).expect("Failed to upsert peer");
-                    drop(registry);
+                        lib_network::peer_registry::PeerTier::Tier3,
+                        0.8,
+                    );
+                    connections.upsert(peer_entry).expect("Failed to upsert peer");
+                    // No need to drop(connections) as it will be dropped automatically
                     
                     info!("✅ Bluetooth peer {} added to mesh network ({} total peers)",
-                        handshake.node_id, connections.read().await.all_peers().count());
+                        handshake.node_id, connections.all_peers().count());
                 }
                 
                 // Run full authentication, key exchange, and DHT registration (same as TCP!)

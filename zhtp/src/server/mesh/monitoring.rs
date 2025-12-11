@@ -362,7 +362,7 @@ impl MeshRouter {
                            performance_metrics.avg_tx_propagation_ms) / 2.0,
             bandwidth_bps: (performance_metrics.bytes_sent_per_sec + 
                           performance_metrics.bytes_received_per_sec) as u64,
-            active_peers: connections.all_peers().count() as u32,
+            active_peers: connections.all_peers().count() as usize,
             banned_peers: banned_count,
         }
     }
