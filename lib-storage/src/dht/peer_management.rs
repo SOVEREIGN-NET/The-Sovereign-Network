@@ -4,13 +4,14 @@
 
 use crate::types::dht_types::{DhtNode, PeerInfo, PeerStats};
 use crate::types::NodeId;
-use crate::dht::routing::KademliaRouter;
+use crate::dht::routing::{DhtRouter, NoOpRouter};
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
 /// DHT peer manager
-#[derive(Debug)]
+///
+/// **TICKET #153**: Router is now a trait object
 pub struct DhtPeerManager {
     /// Local node ID
     local_id: NodeId,
@@ -22,12 +23,14 @@ pub struct DhtPeerManager {
     max_peers: usize,
     /// Minimum reputation score for peers
     min_reputation: u32,
-    /// Kademlia router for intelligent peer selection
-    router: KademliaRouter,
+    /// Router for intelligent peer selection (trait object)
+    router: Box<dyn DhtRouter>,
 }
 
 impl DhtPeerManager {
     /// Create a new peer manager
+    ///
+    /// **TICKET #153**: Uses NoOpRouter by default
     pub fn new(local_id: NodeId, max_peers: usize, min_reputation: u32) -> Self {
         Self {
             local_id: local_id.clone(),
@@ -35,8 +38,14 @@ impl DhtPeerManager {
             peer_stats: HashMap::new(),
             max_peers,
             min_reputation,
-            router: KademliaRouter::new(local_id, 20),
+            router: Box::new(NoOpRouter),
         }
+    }
+    
+    /// Set router implementation
+    pub fn with_router(mut self, router: Box<dyn DhtRouter>) -> Self {
+        self.router = router;
+        self
     }
     
     /// Add a new peer
@@ -88,7 +97,7 @@ impl DhtPeerManager {
         self.peer_stats.insert(node_id, stats);
         
         // Add to routing table for intelligent peer selection
-        self.router.add_node(node).await?;
+        self.router.add_node_sync(node)?;
         
         Ok(())
     }

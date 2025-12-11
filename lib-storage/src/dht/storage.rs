@@ -6,7 +6,7 @@
 use crate::types::dht_types::{DhtNode, StorageEntry, DhtMessage, DhtMessageType, ZkDhtValue};
 use crate::types::{NodeId, ChunkMetadata, DhtKey};
 use crate::dht::network::DhtNetwork;
-use crate::dht::routing::KademliaRouter;
+use crate::dht::routing::{DhtRouter, NoOpRouter};
 use crate::dht::messaging::DhtMessaging;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
@@ -17,6 +17,8 @@ use lib_proofs::{ZkProof, ZeroKnowledgeProof};
 use tracing::{debug, warn};
 
 /// DHT storage manager with networking
+///
+/// **TICKET #153**: Router is now a trait object, allowing UnifiedRouter injection
 #[derive(Debug)]
 pub struct DhtStorage {
     /// Local storage for key-value pairs
@@ -29,8 +31,8 @@ pub struct DhtStorage {
     local_node_id: NodeId,
     /// Network layer for DHT communication
     network: Option<DhtNetwork>,
-    /// Kademlia router for finding closest nodes
-    router: KademliaRouter,
+    /// Router for finding closest nodes (trait object for UnifiedRouter injection)
+    router: Box<dyn DhtRouter>,
     /// Messaging system for reliable communication
     messaging: DhtMessaging,
     /// Known DHT nodes
@@ -41,6 +43,8 @@ pub struct DhtStorage {
 
 impl DhtStorage {
     /// Create a new DHT storage manager
+    ///
+    /// **TICKET #153**: Uses NoOpRouter by default. Call `with_router()` to inject UnifiedRouter.
     pub fn new(local_node_id: NodeId, max_storage_size: u64) -> Self {
         Self {
             storage: HashMap::new(),
@@ -48,11 +52,19 @@ impl DhtStorage {
             current_usage: 0,
             local_node_id: local_node_id.clone(),
             network: None,
-            router: KademliaRouter::new(local_node_id.clone(), 20),
+            router: Box::new(NoOpRouter),
             messaging: DhtMessaging::new(local_node_id),
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
         }
+    }
+    
+    /// Set router implementation (inject UnifiedRouter from lib-network)
+    ///
+    /// **TICKET #153**: Allows production code to inject UnifiedRouter
+    pub fn with_router(mut self, router: Box<dyn DhtRouter>) -> Self {
+        self.router = router;
+        self
     }
     
     /// Verify signature from a DHT node (Acceptance Criteria: PublicKey-based verification)
@@ -114,6 +126,8 @@ impl DhtStorage {
     }
 
     /// Create DHT storage with networking enabled
+    ///
+    /// **TICKET #153**: Uses NoOpRouter by default. Call with_router() to inject UnifiedRouter.
     pub async fn new_with_network(
         local_node: DhtNode, 
         bind_addr: SocketAddr, 
@@ -127,7 +141,7 @@ impl DhtStorage {
             current_usage: 0,
             local_node_id: local_node.peer.node_id().clone(),
             network: Some(network),
-            router: KademliaRouter::new(local_node.peer.node_id().clone(), 20),
+            router: Box::new(NoOpRouter),
             messaging: DhtMessaging::new(local_node.peer.node_id().clone()),
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
@@ -244,7 +258,7 @@ impl DhtStorage {
                     Ok(crate::types::dht_types::DhtQueryResponse::Nodes(nodes)) => {
                         // Add discovered nodes to routing table
                         for discovered_node in nodes {
-                            self.router.add_node(discovered_node).await?;
+                            self.router.add_node_sync(discovered_node)?;
                         }
                     }
                     Err(e) => {
@@ -977,7 +991,7 @@ impl DhtStorage {
         println!("   PublicKey available for signature verification: {:?}", !node.peer.public_key().dilithium_pk.is_empty());
         
         // Add to routing table (ACCEPTANCE CRITERIA: uses Kademlia distance based on NodeId)
-        self.router.add_node(node.clone()).await?;
+        self.router.add_node_sync(node.clone())?;
         
         // Add to known nodes
         // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for tracking
