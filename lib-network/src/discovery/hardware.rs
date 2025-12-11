@@ -5,12 +5,13 @@
 use anyhow::Result;
 use tracing::{info, debug};
 use std::collections::HashMap;
+use super::lorawan_hardware::LoRaWANHardware;
 
 /// Hardware capabilities detected on the system
 #[derive(Debug, Clone, Default)]
 pub struct HardwareCapabilities {
-    /// LoRaWAN radio hardware available
-    pub lorawan_available: bool,
+    /// LoRaWAN radio hardware with detailed capabilities
+    pub lorawan_hardware: Option<LoRaWANHardware>,
     /// Bluetooth LE hardware available
     pub bluetooth_available: bool,
     /// WiFi Direct hardware available
@@ -42,7 +43,7 @@ impl HardwareCapabilities {
         let mut capabilities = Self::default();
         
         // Detect LoRaWAN hardware
-        capabilities.lorawan_available = detect_lorawan_hardware(&mut capabilities.hardware_details).await;
+        capabilities.lorawan_hardware = detect_lorawan_hardware(&mut capabilities.hardware_details).await;
         
         // Detect Bluetooth hardware
         capabilities.bluetooth_available = detect_bluetooth_hardware(&mut capabilities.hardware_details).await;
@@ -51,7 +52,7 @@ impl HardwareCapabilities {
         capabilities.wifi_direct_available = detect_wifi_direct_hardware(&mut capabilities.hardware_details).await;
         
         info!("Hardware detection completed:");
-        info!("   LoRaWAN: {}", if capabilities.lorawan_available { "Available" } else { "Not detected" });
+        info!("   LoRaWAN: {}", if capabilities.lorawan_hardware.is_some() { "Available" } else { "Not detected" });
         info!("    Bluetooth LE: {}", if capabilities.bluetooth_available { "Available" } else { "Not detected" });
         info!("   WiFi Direct: {}", if capabilities.wifi_direct_available { "Available" } else { "Not detected" });
         
@@ -70,7 +71,7 @@ impl HardwareCapabilities {
             protocols.push("WiFi Direct".to_string());
         }
         
-        if self.lorawan_available {
+        if self.lorawan_hardware.is_some() {
             protocols.push("LoRaWAN".to_string());
         }
         
@@ -79,33 +80,35 @@ impl HardwareCapabilities {
     
     /// Check if any mesh protocols are available
     pub fn has_mesh_capabilities(&self) -> bool {
-        self.bluetooth_available || self.wifi_direct_available || self.lorawan_available
+        self.bluetooth_available || self.wifi_direct_available || self.lorawan_hardware.is_some()
     }
 }
 
 /// Detect LoRaWAN hardware across platforms
-async fn detect_lorawan_hardware(hardware_details: &mut HashMap<String, HardwareDevice>) -> bool {
+async fn detect_lorawan_hardware(hardware_details: &mut HashMap<String, HardwareDevice>) -> Option<LoRaWANHardware> {
     debug!("Detecting LoRaWAN hardware...");
     
-    #[cfg(target_os = "linux")]
-    {
-        return detect_linux_lorawan_hardware(hardware_details).await;
-    }
-    
-    #[cfg(target_os = "windows")]
-    {
-        return detect_windows_lorawan_hardware(hardware_details).await;
-    }
-    
-    #[cfg(target_os = "macos")]
-    {
-        return detect_macos_lorawan_hardware(hardware_details).await;
-    }
-    
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    {
-        warn!("LoRaWAN hardware detection not implemented for this platform");
-        false
+    // Use the dedicated lorawan_hardware detection
+    match super::lorawan_hardware::detect_lorawan_hardware().await {
+        Ok(Some(hardware)) => {
+            // Add to hardware details map
+            hardware_details.insert(
+                hardware.device_name.clone(),
+                HardwareDevice {
+                    name: hardware.device_name.clone(),
+                    device_type: hardware.connection_type.clone(),
+                    vendor_info: None,
+                    device_path: hardware.device_path.clone(),
+                    properties: HashMap::new(),
+                },
+            );
+            Some(hardware)
+        }
+        Ok(None) => None,
+        Err(e) => {
+            debug!("LoRaWAN detection error: {}", e);
+            None
+        }
     }
 }
 
