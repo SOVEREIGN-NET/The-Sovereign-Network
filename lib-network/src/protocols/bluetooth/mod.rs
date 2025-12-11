@@ -10,10 +10,6 @@
 pub mod common;
 pub mod device;
 pub mod gatt;
-pub mod gatt_stream;
-pub mod gatt_adapter;
-#[cfg(any(test, feature = "ble-mock"))]
-pub mod mock;
 
 // Bluetooth Classic RFCOMM protocol
 pub mod classic;
