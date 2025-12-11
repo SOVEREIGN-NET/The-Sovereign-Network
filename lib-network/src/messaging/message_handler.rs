@@ -213,33 +213,34 @@ impl MeshMessageHandler {
         // Establish mesh connection (Ticket #149: using peer_registry)
         // MIGRATION (Ticket #146): Convert PublicKey to UnifiedPeerId
         let unified_peer = UnifiedPeerId::from_public_key_legacy(peer.clone());
-        
-        // Create PeerEntry from connection info
-        let peer_entry = crate::peer_registry::PeerEntry {
-            peer_id: unified_peer.clone(),
-            endpoints: vec![crate::peer_registry::PeerEndpoint {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Create PeerEntry from connection info using constructor
+        let peer_entry = crate::peer_registry::PeerEntry::new(
+            unified_peer.clone(),
+            vec![crate::peer_registry::PeerEndpoint {
                 address: String::new(), // Address not available in PeerDiscovery
                 protocol: crate::protocols::NetworkProtocol::BluetoothLE,
                 signal_strength: 0.8,
                 latency_ms: 50,
             }],
-            active_protocols: vec![crate::protocols::NetworkProtocol::BluetoothLE],
-            connection_metrics: crate::peer_registry::ConnectionMetrics {
+            vec![crate::protocols::NetworkProtocol::BluetoothLE],
+            crate::peer_registry::ConnectionMetrics {
                 signal_strength: 0.8,
                 bandwidth_capacity: shared_resources.relay_bandwidth_kbps as u64 * 1024,
                 latency_ms: 50,
                 stability_score: shared_resources.reliability_score,
-                connected_at: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                connected_at: now,
             },
-            authenticated: false,
-            quantum_secure: true,
-            next_hop: None,
-            hop_count: 1,
-            route_quality: 0.8,
-            capabilities: crate::peer_registry::NodeCapabilities {
+            false, // authenticated
+            true,  // quantum_secure
+            None,  // next_hop
+            1,     // hop_count
+            0.8,   // route_quality
+            crate::peer_registry::NodeCapabilities {
                 protocols: vec![crate::protocols::NetworkProtocol::BluetoothLE],
                 max_bandwidth: shared_resources.relay_bandwidth_kbps as u64 * 1024,
                 available_bandwidth: shared_resources.relay_bandwidth_kbps as u64 * 1024,
@@ -247,18 +248,15 @@ impl MeshMessageHandler {
                 energy_level: None,
                 availability_percent: 95.0,
             },
-            location: None,
-            reliability_score: shared_resources.reliability_score,
-            dht_info: None,
-            discovery_method: crate::peer_registry::DiscoveryMethod::MeshScan,
-            first_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
-            last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
-            tier: crate::peer_registry::PeerTier::Tier3, // Standard participating nodes
-            trust_score: 0.5,
-            data_transferred: 0,
-            tokens_earned: 0,
-            traffic_routed: 0,
-        };
+            None, // location
+            shared_resources.reliability_score,
+            None, // dht_info
+            crate::peer_registry::DiscoveryMethod::MeshScan,
+            now,  // first_seen
+            now,  // last_seen
+            crate::peer_registry::PeerTier::Tier3, // Standard participating nodes
+            0.5,  // trust_score
+        );
         
         let mut registry = self.peer_registry.write().await;
         registry.upsert(peer_entry)?;
@@ -1257,28 +1255,28 @@ mod tests {
 
         // Add a peer entry first (Ticket #149)
         {
-            let peer_entry = crate::peer_registry::PeerEntry {
-                peer_id: unified_peer.clone(),
-                endpoints: vec![crate::peer_registry::PeerEndpoint {
+            let peer_entry = crate::peer_registry::PeerEntry::new(
+                unified_peer.clone(),
+                vec![crate::peer_registry::PeerEndpoint {
                     address: String::new(),
                     protocol: crate::protocols::NetworkProtocol::BluetoothLE,
                     signal_strength: 0.5,
                     latency_ms: 100,
                 }],
-                active_protocols: vec![crate::protocols::NetworkProtocol::BluetoothLE],
-                connection_metrics: crate::peer_registry::ConnectionMetrics {
+                vec![crate::protocols::NetworkProtocol::BluetoothLE],
+                crate::peer_registry::ConnectionMetrics {
                     signal_strength: 0.5,
                     bandwidth_capacity: 1000000,
                     latency_ms: 100,
                     stability_score: 0.5,
                     connected_at: 1000000,
                 },
-                authenticated: false,
-                quantum_secure: true,
-                next_hop: None,
-                hop_count: 1,
-                route_quality: 0.8,
-                capabilities: crate::peer_registry::NodeCapabilities {
+                false, // authenticated
+                true,  // quantum_secure
+                None,  // next_hop
+                1,     // hop_count
+                0.8,   // route_quality
+                crate::peer_registry::NodeCapabilities {
                     protocols: vec![crate::protocols::NetworkProtocol::BluetoothLE],
                     max_bandwidth: 1000000,
                     available_bandwidth: 1000000,
@@ -1286,18 +1284,15 @@ mod tests {
                     energy_level: None,
                     availability_percent: 95.0,
                 },
-                location: None,
-                reliability_score: 0.8,
-                dht_info: None,
-                discovery_method: crate::peer_registry::DiscoveryMethod::MeshScan,
-                first_seen: 1000000,
-                last_seen: 1000000,
-                tier: crate::peer_registry::PeerTier::Tier3, // Standard participating nodes
-                trust_score: 0.5,
-                data_transferred: 0,
-                tokens_earned: 0,
-                traffic_routed: 0,
-            };
+                None, // location
+                0.8,  // reliability_score
+                None, // dht_info
+                crate::peer_registry::DiscoveryMethod::MeshScan,
+                1000000, // first_seen
+                1000000, // last_seen
+                crate::peer_registry::PeerTier::Tier3, // Standard participating nodes
+                0.5,  // trust_score
+            );
             let mut registry = peer_registry.write().await;
             let _ = registry.upsert(peer_entry);
         }

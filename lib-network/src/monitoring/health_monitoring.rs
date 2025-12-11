@@ -101,9 +101,9 @@ impl HealthMonitor {
                 network_stats.active_connections = peer_count as u32;
                 network_stats.long_range_relays = relays.len() as u32;
                 
-                // Calculate total data routed
+                // Calculate total data routed (use getter for atomic counter)
                 network_stats.total_data_routed = registry.all_peers()
-                    .map(|entry| entry.data_transferred)
+                    .map(|entry| entry.get_data_transferred())
                     .sum();
                 
                 // Calculate average latency
@@ -131,7 +131,7 @@ impl HealthMonitor {
                 // Calculate total UBI distributed through mesh networking (Ticket #149: using peer_registry)
                 let registry_read = registry.all_peers().collect::<Vec<_>>();
                 network_stats.total_ubi_distributed = registry_read.iter()
-                    .map(|entry| entry.data_transferred)
+                    .map(|entry| entry.get_data_transferred())
                     .sum();
                 
                 info!("Network Health Update:");
@@ -186,7 +186,7 @@ impl HealthMonitor {
                         .as_secs();
 
                     let connection_age = current_time - peer_entry.connection_metrics.connected_at;
-                    if connection_age > 3600 && peer_entry.data_transferred == 0 {
+                    if connection_age > 3600 && peer_entry.get_data_transferred() == 0 {
                         warn!(" Stale connection detected: peer {} (age: {} minutes, no data)",
                               hex::encode(&peer_id.public_key().key_id[0..4]), connection_age / 60);
                         unhealthy_connections.push(peer_id.clone());
