@@ -12,12 +12,17 @@ use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
 use tracing::{debug, warn};
 
+/// Adapter used to route DHT messages through a mesh/unified router instead of direct UDP.
+pub trait DhtOutboundRouter: Send + Sync {
+    fn send(&self, target: &DhtNode, message: DhtMessage) -> Result<()>;
+}
+
 /// DHT storage manager with networking
-#[derive(Debug)]
 pub struct DhtStorage {
     /// Local storage for key-value pairs
     storage: HashMap<String, StorageEntry>,
@@ -37,6 +42,21 @@ pub struct DhtStorage {
     known_nodes: HashMap<NodeId, DhtNode>,
     /// Contract index for fast discovery by tags and metadata
     contract_index: HashMap<String, Vec<String>>, // tag -> contract_ids
+    /// Optional adapter to route via mesh/unified router
+    router_adapter: Option<Arc<dyn DhtOutboundRouter>>,
+}
+
+impl std::fmt::Debug for DhtStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DhtStorage")
+            .field("storage_len", &self.storage.len())
+            .field("max_storage_size", &self.max_storage_size)
+            .field("current_usage", &self.current_usage)
+            .field("local_node_id", &self.local_node_id)
+            .field("network", &self.network.is_some())
+            .field("known_nodes", &self.known_nodes.len())
+            .finish()
+    }
 }
 
 impl DhtStorage {
@@ -52,6 +72,7 @@ impl DhtStorage {
             messaging: DhtMessaging::new(local_node_id),
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
+            router_adapter: None,
         }
     }
     
@@ -131,6 +152,7 @@ impl DhtStorage {
             messaging: DhtMessaging::new(local_node.peer.node_id().clone()),
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
+            router_adapter: None,
         })
     }
 
@@ -140,6 +162,11 @@ impl DhtStorage {
             NodeId::from_bytes([0u8; 32]), // Default node ID
             1_000_000_000, // 1GB default storage
         )
+    }
+
+    /// Attach an outbound router so storage can send via mesh instead of raw UDP.
+    pub fn set_router_adapter(&mut self, adapter: Arc<dyn DhtOutboundRouter>) {
+        self.router_adapter = Some(adapter);
     }
 
     /// Store data with content hash as key and replicate across DHT
@@ -202,6 +229,17 @@ impl DhtStorage {
             // Send store messages to closest nodes
             // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for routing and tracking
             for node in closest_nodes {
+                if let Some(adapter) = &self.router_adapter {
+                    // Route via adapter (mesh/unified router) when available
+                    let store_message = network.build_store_message(&node, key.to_string(), data.to_vec());
+                    if let Err(e) = adapter.send(&node, store_message.clone()) {
+                        warn!("Router adapter failed, falling back to UDP: {}", e);
+                    } else {
+                        println!("Store message sent via router adapter to {}", hex::encode(&node.peer.node_id().as_bytes()[..4]));
+                        continue;
+                    }
+                }
+
                 match network.store(&node, key.to_string(), data.to_vec()).await {
                     Ok(true) => {
                         println!("Successfully stored data at node {}", hex::encode(&node.peer.node_id().as_bytes()[..4]));

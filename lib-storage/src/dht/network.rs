@@ -4,9 +4,10 @@
 //! receiving, and connection management.
 
 use crate::types::dht_types::{DhtMessage, DhtNode, DhtMessageType, DhtQueryResponse};
+use crate::dht::transport::{MultiDhtTransport, UdpDhtTransport};
 use crate::types::NodeId;
 use anyhow::{Result, anyhow};
-use std::net::{SocketAddr, UdpSocket};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
@@ -67,8 +68,8 @@ pub enum MessagePriority {
 ///
 /// Until signing is implemented, DHT messages are vulnerable to spoofing.
 pub struct DhtNetwork {
-    /// Local UDP socket
-    socket: UdpSocket,
+    /// Transport abstraction (defaults to UDP)
+    transport: MultiDhtTransport,
     /// Local node information
     local_node: DhtNode,
     /// Message timeout duration
@@ -82,7 +83,7 @@ pub struct DhtNetwork {
 impl std::fmt::Debug for DhtNetwork {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DhtNetwork")
-            .field("socket", &self.socket)
+            .field("transport", &"multi")
             .field("local_node", &self.local_node)
             .field("timeout_duration", &self.timeout_duration)
             .field("sequence_counter", &self.sequence_counter.load(Ordering::SeqCst))
@@ -93,11 +94,11 @@ impl std::fmt::Debug for DhtNetwork {
 impl DhtNetwork {
     /// Create a new DHT network manager
     pub fn new(local_node: DhtNode, bind_addr: SocketAddr) -> Result<Self> {
-        let socket = UdpSocket::bind(bind_addr)?;
-        socket.set_nonblocking(true)?;
+        let udp = UdpDhtTransport::bind(bind_addr)?;
+        let transport = MultiDhtTransport::with_primary(Box::new(udp));
 
         Ok(Self {
-            socket,
+            transport,
             local_node,
             timeout_duration: Duration::from_secs(5),
             sequence_counter: AtomicU64::new(0),
@@ -144,6 +145,46 @@ impl DhtNetwork {
     fn next_sequence(&self) -> u64 {
         self.sequence_counter.fetch_add(1, Ordering::SeqCst)
     }
+
+    pub fn build_store_message(&self, target: &DhtNode, key: String, value: Vec<u8>) -> DhtMessage {
+        DhtMessage {
+            message_id: generate_message_id(),
+            message_type: DhtMessageType::Store,
+            sender_id: self.local_node.peer.node_id().clone(),
+            target_id: Some(target.peer.node_id().clone()),
+            key: Some(key),
+            value: Some(value),
+            nodes: None,
+            contract_data: None,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            nonce: Self::generate_nonce(),
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
+        }
+    }
+
+    pub fn build_find_value_message(&self, target: &DhtNode, key: String) -> DhtMessage {
+        DhtMessage {
+            message_id: generate_message_id(),
+            message_type: DhtMessageType::FindValue,
+            sender_id: self.local_node.peer.node_id().clone(),
+            target_id: Some(target.peer.node_id().clone()),
+            key: Some(key),
+            value: None,
+            nodes: None,
+            contract_data: None,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            nonce: Self::generate_nonce(),
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
+        }
+    }
     
     /// Send a DHT message to a target node
     pub async fn send_message(&self, target: &DhtNode, message: DhtMessage) -> Result<()> {
@@ -156,7 +197,7 @@ impl DhtNetwork {
             .parse::<SocketAddr>()?;
         
         // Send message
-        self.socket.send_to(&message_bytes, target_addr)?;
+        self.transport.send(target_addr, &message_bytes)?;
         
         Ok(())
     }
@@ -173,7 +214,7 @@ impl DhtNetwork {
 
         let (size, sender_addr) = timeout(self.timeout_duration, async {
             loop {
-                match self.socket.recv_from(&mut buffer) {
+                match self.transport.recv(&mut buffer) {
                     Ok(result) => return Ok(result),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -297,20 +338,7 @@ impl DhtNetwork {
     ///
     /// - Includes nonce and sequence_number for replay protection
     pub async fn find_value(&self, target: &DhtNode, key: String) -> Result<DhtQueryResponse> {
-        let find_value_message = DhtMessage {
-            message_id: generate_message_id(),
-            message_type: DhtMessageType::FindValue,
-            sender_id: self.local_node.peer.node_id().clone(),
-            target_id: Some(target.peer.node_id().clone()),
-            key: Some(key.clone()),
-            value: None,
-            nodes: None,
-            contract_data: None,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            nonce: Self::generate_nonce(),
-            sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
-        };
+        let find_value_message = self.build_find_value_message(target, key.clone());
 
         self.send_message(target, find_value_message).await?;
 
@@ -341,20 +369,7 @@ impl DhtNetwork {
     ///
     /// - Includes nonce and sequence_number for replay protection
     pub async fn store(&self, target: &DhtNode, key: String, value: Vec<u8>) -> Result<bool> {
-        let store_message = DhtMessage {
-            message_id: generate_message_id(),
-            message_type: DhtMessageType::Store,
-            sender_id: self.local_node.peer.node_id().clone(),
-            target_id: Some(target.peer.node_id().clone()),
-            key: Some(key),
-            value: Some(value),
-            nodes: None,
-            contract_data: None,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            nonce: Self::generate_nonce(),
-            sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
-        };
+        let store_message = self.build_store_message(target, key, value);
 
         self.send_message(target, store_message).await?;
 
@@ -465,7 +480,9 @@ impl DhtNetwork {
     
     /// Get local socket address
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        Ok(self.socket.local_addr()?)
+        self.transport
+            .local_addr()
+            .ok_or_else(|| anyhow!("No primary transport configured for DHT network"))
     }
 }
 
