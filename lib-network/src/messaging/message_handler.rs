@@ -250,10 +250,10 @@ impl MeshMessageHandler {
             location: None,
             reliability_score: shared_resources.reliability_score,
             dht_info: None,
-            discovery_method: crate::peer_registry::DiscoveryMethod::MeshDiscovery,
+            discovery_method: crate::peer_registry::DiscoveryMethod::MeshScan,
             first_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
             last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
-            tier: crate::peer_registry::PeerTier::Standard,
+            tier: crate::peer_registry::PeerTier::Tier3, // Standard participating nodes
             trust_score: 0.5,
             data_transferred: 0,
             tokens_earned: 0,
@@ -475,6 +475,13 @@ impl MeshMessageHandler {
               network_quality, available_bandwidth / 1_000_000, connected_peers, uptime_hours);
 
         // Update connection statistics (Ticket #149: using peer_registry)
+        //
+        // NOTE: TOCTOU race condition accepted here. The read-clone-drop-write pattern
+        // means the peer could be removed between the read and write locks. This is
+        // acceptable for health reports because:
+        // 1. Health updates are best-effort (missing one update is not critical)
+        // 2. upsert() will re-add the peer if it was removed, which is safe
+        // 3. Using a single write lock for the entire operation would increase contention
         let registry = self.peer_registry.read().await;
         if let Some(mut peer_entry) = registry.find_by_public_key(&reporter).cloned() {
             peer_entry.connection_metrics.stability_score = network_quality;
@@ -1217,7 +1224,7 @@ mod tests {
     #[tokio::test]
     async fn test_message_handler_creation() {
         // Ticket #149: Use peer_registry instead of mesh_connections
-        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new(1000)));
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
         
@@ -1234,7 +1241,7 @@ mod tests {
     #[tokio::test]
     async fn test_health_report_handling() {
         // Ticket #149: Use peer_registry instead of mesh_connections
-        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new(1000)));
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
         
@@ -1282,10 +1289,10 @@ mod tests {
                 location: None,
                 reliability_score: 0.8,
                 dht_info: None,
-                discovery_method: crate::peer_registry::DiscoveryMethod::MeshDiscovery,
+                discovery_method: crate::peer_registry::DiscoveryMethod::MeshScan,
                 first_seen: 1000000,
                 last_seen: 1000000,
-                tier: crate::peer_registry::PeerTier::Standard,
+                tier: crate::peer_registry::PeerTier::Tier3, // Standard participating nodes
                 trust_score: 0.5,
                 data_transferred: 0,
                 tokens_earned: 0,

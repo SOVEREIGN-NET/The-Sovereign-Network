@@ -914,7 +914,7 @@ impl ZhtpMeshServer {
         let storage = Arc::new(RwLock::new(storage));
         
         // Ticket #149: Use unified peer_registry instead of separate mesh_connections
-        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new(1000)));
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));

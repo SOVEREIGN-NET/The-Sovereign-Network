@@ -517,7 +517,26 @@ impl PeerRegistry {
 
         count
     }
-    
+
+    /// Clear all peers from the registry
+    ///
+    /// Removes all peers and clears all indexes atomically.
+    /// Use with caution - typically only for shutdown or testing.
+    pub fn clear(&mut self) {
+        let count = self.peers.len();
+        self.peers.clear();
+        self.by_node_id.clear();
+        self.by_public_key.clear();
+        self.by_did.clear();
+
+        if self.config.audit_logging && count > 0 {
+            info!(
+                removed_count = count,
+                "Registry cleared - all peers removed"
+            );
+        }
+    }
+
     /// Get peer by UnifiedPeerId
     pub fn get(&self, peer_id: &UnifiedPeerId) -> Option<&PeerEntry> {
         self.peers.get(peer_id)

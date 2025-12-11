@@ -222,6 +222,7 @@ impl MeshMessageRouter {
     ///
     /// PeerRegistry automatically maintains indexes when peers are added.
     /// This method is kept for backwards compatibility but does nothing.
+    #[deprecated(since = "0.1.0", note = "PeerRegistry handles indexing automatically. This is a no-op.")]
     pub async fn index_peer(&self, _peer: &UnifiedPeerId) {
         // No-op: PeerRegistry handles indexing automatically
     }
@@ -230,6 +231,7 @@ impl MeshMessageRouter {
     ///
     /// PeerRegistry automatically maintains indexes when peers are removed.
     /// This method is kept for backwards compatibility but does nothing.
+    #[deprecated(since = "0.1.0", note = "PeerRegistry handles indexing automatically. This is a no-op.")]
     pub async fn unindex_peer(&self, _peer: &UnifiedPeerId) {
         // No-op: PeerRegistry handles indexing automatically
     }
@@ -238,6 +240,7 @@ impl MeshMessageRouter {
     ///
     /// PeerRegistry automatically maintains indexes. No rebuild needed.
     /// This method is kept for backwards compatibility but does nothing.
+    #[deprecated(since = "0.1.0", note = "PeerRegistry handles indexing automatically. This is a no-op.")]
     pub async fn rebuild_indexes(&self) {
         // No-op: PeerRegistry handles indexing automatically
     }
@@ -1062,7 +1065,7 @@ impl MeshMessageRouter {
                 }
             }
             _ => {
-                return Err(anyhow!("Unsupported protocol for mesh forwarding: {:?}", connection.protocol));
+                return Err(anyhow!("Unsupported protocol for mesh forwarding: {:?}", protocol));
             }
         }
         
@@ -1121,7 +1124,7 @@ mod tests {
     #[tokio::test]
     async fn test_message_router_creation() {
         // Ticket #149: Use peer_registry instead of mesh_connections
-        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new(1000)));
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         
         let router = MeshMessageRouter::new(peer_registry, long_range_relays);
@@ -1132,7 +1135,7 @@ mod tests {
     #[tokio::test]
     async fn test_route_caching() {
         // Ticket #149: Use peer_registry instead of mesh_connections
-        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new(1000)));
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
 
         let router = MeshMessageRouter::new(peer_registry, long_range_relays);

@@ -110,7 +110,7 @@ impl HealthMonitor {
                 if peer_count > 0 {
                     network_stats.average_latency_ms = registry.all_peers()
                         .map(|entry| entry.connection_metrics.latency_ms)
-                        .sum::<u32>() / connections.len() as u32;
+                        .sum::<u32>() / peer_count as u32;
                 } else {
                     network_stats.average_latency_ms = 0;
                 }
@@ -343,14 +343,15 @@ impl HealthMonitor {
                     info!("   Recommendation: Encourage more mesh connections for bandwidth");
                 }
                 
-                // Performance analysis
-                let avg_connection_quality: f64 = if !connections.is_empty() {
+                // Performance analysis (Ticket #149: using peer_registry)
+                let peer_entries: Vec<_> = registry.all_peers().collect();
+                let avg_connection_quality: f64 = if !peer_entries.is_empty() {
                     // Simplified quality metric based on signal strength
-                    connections.values().map(|conn| conn.signal_strength).sum::<f64>() / connections.len() as f64
+                    peer_entries.iter().map(|entry| entry.connection_metrics.signal_strength).sum::<f64>() / peer_entries.len() as f64
                 } else {
                     0.0
                 };
-                
+
                 info!("   Average connection quality: {:.1} Mbps per node", avg_connection_quality);
             }
         });
@@ -459,7 +460,7 @@ mod tests {
     async fn test_health_monitor_creation() {
         let stats = Arc::new(RwLock::new(MeshProtocolStats::default()));
         // Ticket #149: Use peer_registry instead of mesh_connections
-        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new(1000)));
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         
         let monitor = HealthMonitor::new(
@@ -475,7 +476,7 @@ mod tests {
     async fn test_health_summary() {
         let stats = Arc::new(RwLock::new(MeshProtocolStats::default()));
         // Ticket #149: Use peer_registry instead of mesh_connections
-        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new(1000)));
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         
         let monitor = HealthMonitor::new(
