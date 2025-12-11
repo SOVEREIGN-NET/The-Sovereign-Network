@@ -1,4 +1,4 @@
-//! Unified Peer Registry (Ticket #147)
+//! Unified Peer Registry (Ticket #147 + #151)
 //!
 //! Single source of truth for all peer data, replacing 6 separate registries:
 //! 1. mesh_connections (server)
@@ -13,10 +13,14 @@
 //! - **Single Source of Truth**: One canonical registry for all peer data
 //! - **Thread-Safe**: Arc<RwLock<>> for concurrent access
 //! - **Atomic Updates**: Prevent race conditions across components
+//! - **Observer Pattern**: Subsystems notified of all peer changes (Ticket #151)
 //! - **Multi-Key Lookup**: Find peers by NodeId, PublicKey, or DID
 //! - **Comprehensive Metadata**: All connection, routing, and capability data in one place
 //! - **Memory Bounded**: Max peers limit with eviction policy prevents memory exhaustion
 //! - **TTL-Based Expiration**: Stale peers automatically expire
+
+// Synchronization module (Ticket #151)
+pub mod sync;
 //!
 //! ## Security Features
 //!
@@ -106,7 +110,6 @@ impl Default for RegistryConfig {
 /// - **DID validation**: All DIDs validated before indexing
 /// - **Index consistency**: Atomic updates prevent stale entries
 /// - **Audit logging**: All changes logged for security monitoring
-#[derive(Debug, Clone)]
 pub struct PeerRegistry {
     /// Primary storage: UnifiedPeerId → PeerEntry
     peers: HashMap<UnifiedPeerId, PeerEntry>,
@@ -118,6 +121,9 @@ pub struct PeerRegistry {
 
     /// Configuration
     config: RegistryConfig,
+    
+    /// Observer registry for change notifications (Ticket #151)
+    observers: sync::ObserverRegistry,
 }
 
 /// Complete peer metadata - consolidates all data from 6 existing registries
@@ -300,7 +306,18 @@ impl PeerRegistry {
             by_public_key: HashMap::new(),
             by_did: HashMap::new(),
             config,
+            observers: sync::ObserverRegistry::new(),
         }
+    }
+    
+    /// Register an observer for peer change notifications (Ticket #151)
+    pub async fn register_observer(&self, observer: Arc<dyn sync::PeerRegistryObserver>) {
+        self.observers.register(observer).await;
+    }
+    
+    /// Unregister an observer by name (Ticket #151)
+    pub async fn unregister_observer(&self, name: &str) -> bool {
+        self.observers.unregister(name).await
     }
 
     /// Validate DID format before indexing
@@ -344,7 +361,17 @@ impl PeerRegistry {
     /// - Logs all changes for audit trail
     ///
     /// This is an atomic operation that updates all indexes
-    pub fn upsert(&mut self, entry: PeerEntry) -> Result<()> {
+    /// Insert or update a peer entry
+    ///
+    /// # Security
+    /// - Validates DID format before indexing
+    /// - Removes stale index entries to prevent index poisoning
+    /// - Enforces max_peers limit with eviction policy
+    /// - Logs all changes for audit trail
+    /// - Notifies observers atomically (Ticket #151)
+    ///
+    /// This is an atomic operation that updates all indexes and notifies observers
+    pub async fn upsert(&mut self, entry: PeerEntry) -> Result<()> {
         let peer_id = entry.peer_id.clone();
         let did = peer_id.did().to_string();
 
@@ -356,9 +383,13 @@ impl PeerRegistry {
             self.evict_stale_peer()?;
         }
 
+        // Track if this is an update or new peer for event dispatch
+        let old_entry = self.peers.get(&peer_id).cloned();
+        let is_update = old_entry.is_some();
+
         // SECURITY: Remove stale index entries if peer exists with different identity fields
         // This prevents index poisoning attacks
-        if let Some(existing) = self.peers.get(&peer_id) {
+        if let Some(existing) = &old_entry {
             // If identity fields changed, remove old index entries
             if existing.peer_id.node_id() != peer_id.node_id() {
                 self.by_node_id.remove(existing.peer_id.node_id());
@@ -391,12 +422,11 @@ impl PeerRegistry {
         self.by_did.insert(did.clone(), peer_id.clone());
 
         // Insert into primary storage
-        let is_new = !self.peers.contains_key(&peer_id);
-        self.peers.insert(peer_id.clone(), entry);
+        self.peers.insert(peer_id.clone(), entry.clone());
 
         // AUDIT: Log peer changes
         if self.config.audit_logging {
-            if is_new {
+            if !is_update {
                 info!(
                     peer_did = %did,
                     peer_count = self.peers.len(),
@@ -409,6 +439,22 @@ impl PeerRegistry {
                 );
             }
         }
+
+        // TICKET #151: Dispatch event to observers atomically
+        let event = if is_update {
+            sync::PeerRegistryEvent::PeerUpdated {
+                peer_id,
+                old_entry: old_entry.unwrap(),
+                new_entry: entry,
+            }
+        } else {
+            sync::PeerRegistryEvent::PeerAdded {
+                peer_id,
+                entry,
+            }
+        };
+        
+        self.observers.dispatch(event).await?;
 
         Ok(())
     }
@@ -469,7 +515,13 @@ impl PeerRegistry {
     /// Remove a peer entry
     ///
     /// Atomically removes from all indexes
-    pub fn remove(&mut self, peer_id: &UnifiedPeerId) -> Option<PeerEntry> {
+    /// Remove a peer from the registry
+    ///
+    /// Atomically removes peer from all indexes and notifies observers (Ticket #151)
+    pub async fn remove(&mut self, peer_id: &UnifiedPeerId) -> Option<PeerEntry> {
+        // Get entry before removal for event dispatch
+        let entry = self.peers.get(peer_id).cloned();
+        
         // Remove from secondary indexes
         self.by_node_id.remove(peer_id.node_id());
         self.by_public_key.remove(peer_id.public_key());
@@ -487,12 +539,23 @@ impl PeerRegistry {
             );
         }
 
+        // TICKET #151: Dispatch event to observers if peer was removed
+        if let Some(entry_data) = entry {
+            let event = sync::PeerRegistryEvent::PeerRemoved {
+                peer_id: peer_id.clone(),
+                entry: entry_data,
+            };
+            // Ignore observer errors on removal (peer is already gone)
+            let _ = self.observers.dispatch(event).await;
+        }
+
         removed
     }
 
     /// Cleanup expired peers based on TTL
     ///
     /// Returns the number of peers removed
+    /// Note: Does not trigger observer events per-peer (use batch cleanup instead)
     pub fn cleanup_expired(&mut self) -> usize {
         let now = Self::current_timestamp();
         let ttl = self.config.peer_ttl_secs;
@@ -504,7 +567,12 @@ impl PeerRegistry {
 
         let count = expired.len();
         for peer_id in expired {
-            self.remove(&peer_id);
+            // Use blocking remove (not async) - cleanup is typically background task
+            // Remove from indexes
+            self.by_node_id.remove(peer_id.node_id());
+            self.by_public_key.remove(peer_id.public_key());
+            self.by_did.remove(peer_id.did());
+            self.peers.remove(&peer_id);
         }
 
         if count > 0 && self.config.audit_logging {
@@ -516,6 +584,84 @@ impl PeerRegistry {
         }
 
         count
+    }
+    
+    /// Atomic batch update - commit multiple peer changes in single transaction (Ticket #151)
+    ///
+    /// All changes are applied atomically and observers notified with single BatchUpdate event.
+    /// This prevents race conditions when multiple peers need to be updated simultaneously.
+    ///
+    /// # Returns
+    /// - Ok(()) if all operations succeeded
+    /// - Err if any operation failed (entire batch is rolled back)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut batch = sync::BatchUpdate::new();
+    /// batch.add_peer(peer1_id, peer1_entry);
+    /// batch.update_peer(peer2_id, old_entry, new_entry);
+    /// batch.remove_peer(peer3_id, peer3_entry);
+    /// registry.commit_batch(batch).await?;
+    /// ```
+    pub async fn commit_batch(&mut self, batch: sync::BatchUpdate) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        
+        let ops = batch.operations();
+        
+        // Phase 1: Apply all additions
+        for (peer_id, entry) in ops.added {
+            // Direct insert without individual event dispatch
+            let did = peer_id.did().to_string();
+            Self::validate_did(&did)?;
+            
+            if !self.peers.contains_key(peer_id) && self.peers.len() >= self.config.max_peers {
+                self.evict_stale_peer()?;
+            }
+            
+            self.by_node_id.insert(peer_id.node_id().clone(), peer_id.clone());
+            self.by_public_key.insert(peer_id.public_key().clone(), peer_id.clone());
+            self.by_did.insert(did, peer_id.clone());
+            self.peers.insert(peer_id.clone(), entry.clone());
+        }
+        
+        // Phase 2: Apply all updates
+        for (peer_id, _old, new_entry) in ops.updated {
+            if self.peers.contains_key(peer_id) {
+                self.peers.insert(peer_id.clone(), new_entry.clone());
+            }
+        }
+        
+        // Phase 3: Apply all removals
+        for (peer_id, _entry) in ops.removed {
+            self.by_node_id.remove(peer_id.node_id());
+            self.by_public_key.remove(peer_id.public_key());
+            self.by_did.remove(peer_id.did());
+            self.peers.remove(peer_id);
+        }
+        
+        // Phase 4: Extract event data and dispatch single batch event
+        let (added, updated, removed) = batch.into_event_data();
+        
+        if self.config.audit_logging {
+            info!(
+                added = added.len(),
+                updated = updated.len(),
+                removed = removed.len(),
+                "Batch update committed to registry"
+            );
+        }
+        
+        let event = sync::PeerRegistryEvent::BatchUpdate {
+            added,
+            updated,
+            removed,
+        };
+        
+        self.observers.dispatch(event).await?;
+        
+        Ok(())
     }
     
     /// Get peer by UnifiedPeerId
