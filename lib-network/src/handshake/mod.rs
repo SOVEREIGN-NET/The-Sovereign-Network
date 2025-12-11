@@ -602,6 +602,10 @@ pub struct ClientHello {
     /// Protocol version (UHP_VERSION = 1)
     /// Used for version negotiation and preventing downgrade attacks
     pub protocol_version: u8,
+
+    /// Optional PQC handshake offer (Kyber1024 public key + Dilithium5 binding)
+    /// Present when client supports post-quantum cryptography
+    pub pqc_offer: Option<PqcHandshakeOffer>,
 }
 
 impl ClientHello {
@@ -634,6 +638,14 @@ impl ClientHello {
         let data = Self::data_to_sign(&identity, &capabilities, &challenge_nonce, timestamp, protocol_version)?;
         let signature = keypair.sign(&data)?;
 
+        // Create PQC offer if capability is enabled
+        let pqc_offer = if capabilities.pqc_capability.is_enabled() {
+            let (offer, _state) = create_pqc_offer(capabilities.pqc_capability.clone())?;
+            Some(offer)
+        } else {
+            None
+        };
+
         Ok(Self {
             identity,
             capabilities,
@@ -641,6 +653,7 @@ impl ClientHello {
             signature,
             timestamp,
             protocol_version,
+            pqc_offer,
         })
     }
     
@@ -790,6 +803,10 @@ pub struct ServerHello {
     /// Protocol version (UHP_VERSION = 1)
     /// Used for version negotiation
     pub protocol_version: u8,
+
+    /// Optional PQC handshake offer from server
+    /// Present when server supports post-quantum cryptography and client requested it
+    pub pqc_offer: Option<PqcHandshakeOffer>,
 }
 
 impl ServerHello {
@@ -831,6 +848,14 @@ impl ServerHello {
         )?;
         let signature = keypair.sign(&data)?;
 
+        // Create PQC offer if negotiated capability is enabled
+        let pqc_offer = if negotiated.pqc_capability.is_enabled() {
+            let (offer, _state) = create_pqc_offer(negotiated.pqc_capability.clone())?;
+            Some(offer)
+        } else {
+            None
+        };
+
         Ok(Self {
             identity,
             capabilities,
@@ -839,6 +864,7 @@ impl ServerHello {
             negotiated,
             timestamp,
             protocol_version,
+            pqc_offer,
         })
     }
 
@@ -928,6 +954,10 @@ pub struct ClientFinish {
 
     /// Optional session parameters
     pub session_params: Option<Vec<u8>>,
+
+    /// Optional Kyber1024 ciphertext (encapsulated shared secret for PQC)
+    /// Present when PQC was negotiated and client encapsulates to server's PQC offer
+    pub pqc_ciphertext: Option<Vec<u8>>,
 }
 
 impl ClientFinish {
@@ -975,11 +1005,23 @@ impl ClientFinish {
         )?;
         let signature = keypair.sign(&data)?;
 
+        // If server provided a PQC offer, encapsulate shared secret
+        let pqc_ciphertext = if let Some(ref pqc_offer) = server_hello.pqc_offer {
+            // Verify server's PQC offer signature
+            verify_pqc_offer(pqc_offer)?;
+            // Encapsulate shared secret to server's Kyber public key
+            let (ciphertext, _shared_secret) = encapsulate_pqc(pqc_offer)?;
+            Some(ciphertext)
+        } else {
+            None
+        };
+
         Ok(Self {
             signature,
             timestamp,
             protocol_version,
             session_params: None,
+            pqc_ciphertext,
         })
     }
 
@@ -1127,6 +1169,9 @@ pub struct HandshakeResult {
     
     /// Timestamp when handshake completed
     pub completed_at: u64,
+    
+    /// Whether PQC hybrid mode was used
+    pub pqc_hybrid_enabled: bool,
 }
 
 impl HandshakeResult {
@@ -1138,6 +1183,7 @@ impl HandshakeResult {
     ///
     /// # Arguments
     /// * `client_hello_timestamp` - Timestamp from ClientHello message (MUST be same on both sides)
+    /// * `pqc_shared_secret` - Optional PQC shared secret for hybrid key derivation
     pub fn new(
         peer_identity: NodeIdentity,
         capabilities: NegotiatedCapabilities,
@@ -1146,6 +1192,37 @@ impl HandshakeResult {
         client_did: &str,
         server_did: &str,
         client_hello_timestamp: u64,
+    ) -> Result<Self> {
+        Self::new_with_pqc(
+            peer_identity,
+            capabilities,
+            client_nonce,
+            server_nonce,
+            client_did,
+            server_did,
+            client_hello_timestamp,
+            None,
+        )
+    }
+    
+    /// Create a new handshake result with optional PQC hybrid key derivation
+    ///
+    /// When `pqc_shared_secret` is provided, the session key is derived using
+    /// HKDF with both the classical nonces and the PQC shared secret, providing
+    /// hybrid post-quantum security.
+    ///
+    /// # Arguments
+    /// * `client_hello_timestamp` - Timestamp from ClientHello message (MUST be same on both sides)
+    /// * `pqc_shared_secret` - Optional PQC shared secret for hybrid key derivation
+    pub fn new_with_pqc(
+        peer_identity: NodeIdentity,
+        capabilities: NegotiatedCapabilities,
+        client_nonce: &[u8; 32],
+        server_nonce: &[u8; 32],
+        client_did: &str,
+        server_did: &str,
+        client_hello_timestamp: u64,
+        pqc_shared_secret: Option<&[u8; 32]>,
     ) -> Result<Self> {
         // Build session context for HKDF domain separation
         // CRITICAL: Use ClientHello timestamp (deterministic, agreed by both parties)
@@ -1157,7 +1234,15 @@ impl HandshakeResult {
         };
 
         // Derive session key using HKDF (NIST SP 800-108 compliant)
-        let session_key = derive_session_key_hkdf(client_nonce, server_nonce, &context)?;
+        let classical_key = derive_session_key_hkdf(client_nonce, server_nonce, &context)?;
+        
+        // If PQC shared secret is provided, derive hybrid key
+        let (session_key, pqc_hybrid_enabled) = if let Some(pqc_secret) = pqc_shared_secret {
+            let hybrid_key = derive_hybrid_session_key(pqc_secret, &classical_key)?;
+            (hybrid_key, true)
+        } else {
+            (classical_key, false)
+        };
 
         // Generate session ID from first 16 bytes of session key
         let mut session_id = [0u8; 16];
@@ -1169,6 +1254,7 @@ impl HandshakeResult {
             session_key,
             session_id,
             completed_at: current_timestamp()?, // Completion time (for logging only)
+            pqc_hybrid_enabled,
         })
     }
 }

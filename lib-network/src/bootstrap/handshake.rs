@@ -469,41 +469,45 @@ mod tests {
     async fn test_tcp_bootstrap_handshake() -> Result<()> {
         // Setup server
         let server_identity = create_test_identity("server-device");
+        // Clone values we need after the spawn (server_identity is moved)
+        let server_did = server_identity.did.clone();
+        let server_node_id = server_identity.node_id;
+
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let server_addr = listener.local_addr()?;
-        
+
         // Create shared handshake context
         let ctx = HandshakeContext::new(NonceCache::new_test(300, 10000));
         let server_ctx = ctx.clone();
-        
+
         // Spawn server task
         let server_handle = tokio::spawn(async move {
             let (mut stream, _addr) = listener.accept().await.unwrap();
             handshake_as_responder(&mut stream, &server_identity, &server_ctx).await
         });
-        
+
         // Give server time to start listening
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        
+
         // Client connects and initiates handshake
         let client_identity = create_test_identity("client-device");
         let mut client_stream = TcpStream::connect(server_addr).await?;
-        
+
         let client_result = handshake_as_initiator(&mut client_stream, &client_identity, &ctx).await?;
         let server_result = server_handle.await.unwrap()?;
-        
+
         // Verify both sides derived the same session key
         assert_eq!(client_result.session_key, server_result.session_key);
         assert_eq!(client_result.session_id, server_result.session_id);
-        
+
         // Verify peer identities match
-        assert_eq!(client_result.peer_identity.did, server_identity.did);
+        assert_eq!(client_result.peer_identity.did, server_did);
         assert_eq!(server_result.peer_identity.did, client_identity.did);
-        
+
         // Verify peer NodeIds match
-        assert_eq!(client_result.peer_identity.node_id, server_identity.node_id);
+        assert_eq!(client_result.peer_identity.node_id, server_node_id);
         assert_eq!(server_result.peer_identity.node_id, client_identity.node_id);
-        
+
         Ok(())
     }
     

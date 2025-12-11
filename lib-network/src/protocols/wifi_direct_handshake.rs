@@ -511,8 +511,13 @@ mod tests {
 
     /// Helper to create test identity
     fn create_test_identity(device_name: &str) -> ZhtpIdentity {
-        ZhtpIdentity::new_ephemeral_for_test(device_name)
-            .expect("Failed to create test identity")
+        ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            device_name,
+            None,
+        ).expect("Failed to create test identity")
     }
 
     /// Test full WiFi Direct handshake (client + group owner)
@@ -659,7 +664,7 @@ mod tests {
         let mut hello = ClientHello::new(&valid_identity, create_wifi_direct_capabilities()).unwrap();
         
         // Corrupt the NodeId (simulates collision attack or invalid identity)
-        hello.identity.node_id = lib_identity::NodeId::from_bytes(&[0xFF; 32]);
+        hello.identity.node_id = lib_identity::NodeId::from_bytes([0xFF; 32]);
         
         // Verification should fail due to invalid NodeId
         let nonce_cache = NonceCache::new_test(300, 1000);

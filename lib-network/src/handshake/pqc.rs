@@ -91,12 +91,13 @@ pub fn create_pqc_offer(suite: PqcCapability) -> Result<(PqcHandshakeOffer, PqcH
     let (kyber_pk, kyber_sk) = kyber1024_keypair();
     let (dilithium_pk, dilithium_sk) = dilithium5_keypair();
 
-    let binder = binder_bytes(suite.as_str(), &kyber_pk);
+    let kyber_pk_vec = kyber_pk.to_vec();
+    let binder = binder_bytes(suite.as_str(), &kyber_pk_vec);
     let signature = dilithium5_sign(&binder, &dilithium_sk)?;
 
     let offer = PqcHandshakeOffer {
         suite: suite.clone(),
-        kyber_public_key: kyber_pk,
+        kyber_public_key: kyber_pk_vec,
         dilithium_public_key: dilithium_pk.clone(),
         signature,
     };

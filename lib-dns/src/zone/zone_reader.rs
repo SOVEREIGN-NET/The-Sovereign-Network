@@ -1,36 +1,15 @@
+use std::fmt;
+use std::fmt::Formatter;
 use std::fs::File;
-use std::io;
-use std::io::{BufRead, BufReader, Read};
-use std::ops::DerefMut;
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
+use std::str::FromStr;
 use crate::messages::inter::rr_classes::RRClasses;
 use crate::messages::inter::rr_types::RRTypes;
-use crate::records::{
-    a_record::ARecord,
-    aaaa_record::AaaaRecord,
-    cname_record::CNameRecord,
-    hinfo_record::HInfoRecord,
-    https_record::HttpsRecord,
-    loc_record::LocRecord,
-    mx_record::MxRecord,
-    naptr_record::NaptrRecord,
-    ns_record::NsRecord,
-    ptr_record::PtrRecord,
-    rrsig_record::RRSigRecord,
-    smimea_record::SmimeaRecord,
-    soa_record::SoaRecord,
-    srv_record::SrvRecord,
-    sshfp_record::SshFpRecord,
-    svcb_record::SvcbRecord,
-    txt_record::TxtRecord,
-    uri_record::UriRecord,
-};
-use crate::records::inter::naptr_flags::NaptrFlags;
-use crate::records::inter::svc_param_keys::SvcParamKeys;
-use crate::records::inter::record_base::RecordBase;
-use crate::utils::{base64, hex};
-use crate::utils::time_utils::TimeUtils;
+use crate::utils::fqdn_utils::fqdn_to_relative;
+use crate::zone::inter::zone_rr_data::ZoneRRData;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ParserState {
     Init,
     Common,
@@ -42,496 +21,259 @@ enum ParserState {
 pub struct ZoneReader {
     reader: BufReader<File>,
     origin: String,
-    name: String,
+    class: RRClasses,
     default_ttl: u32
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ZoneReaderError {
+    _type: ErrorKind,
+    message: String
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ErrorKind {
+    PathNotFound,
+    TypeNotFound,
+    Parsing,
+    WrongClass,
+    Format,
+    ExtraRRData,
+    UnexpectedEof
+}
+
+impl ZoneReaderError {
+
+    pub fn new(_type: ErrorKind, message: &str) -> Self {
+        Self {
+            _type,
+            message: message.to_string()
+        }
+    }
+}
+
+impl fmt::Display for ZoneReaderError {
+
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}: {}", self._type, self.message)
+    }
 }
 
 impl ZoneReader {
 
-    pub fn open(file_path: &str, origin: &str) -> io::Result<Self> {
-        let file = File::open(file_path)?;
+    pub fn open<P: Into<PathBuf>>(file_path: P, origin: &str, class: RRClasses) -> Result<Self, ZoneReaderError> {
+        let file = File::open(file_path.into()).map_err(|e| ZoneReaderError::new(ErrorKind::PathNotFound, &e.to_string()))?;
         let reader = BufReader::new(file);
 
         Ok(Self {
             reader,
-            origin: origin.to_string(),
-            name: String::new(),
+            origin: origin.to_lowercase(),
+            class,
             default_ttl: 300
         })
     }
 
-    pub fn parse_record(&mut self) -> Option<(String, Box<dyn RecordBase>)> {
+    pub fn read_record(&mut self) -> Result<Option<(String, RRTypes, u32, Box<dyn ZoneRRData>)>, ZoneReaderError> {
         let mut state = ParserState::Init;
-        let mut paren_count = 0;
+        let mut paren_count: u8 = 0;
 
-        let mut _type = RRTypes::default();
-        let mut class = RRClasses::default();
+        let mut name = String::new();
+        let mut _type;
         let mut ttl = self.default_ttl;
 
         let mut directive_buf = String::new();
 
-        let mut record: Option<(String, Box<dyn RecordBase>)> = None;
+        let mut record: Option<(String, RRTypes, u32, Box<dyn ZoneRRData>)> = None;
         let mut data_count = 0;
 
+        let mut line = String::new();
         loop {
-            let Some(line) = self.reader.by_ref().lines().next() else { break };
+            line.clear();
 
-            let mut pos = 0;
-            let mut quoted_buf = String::new();
-
-            for part in line.ok().unwrap().as_bytes().split_inclusive(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'(' || b == b')') {
-                let part_len = part.len();
-                let mut word_len = part_len;
-
-                if part[0] == b';' && state != ParserState::QString {
-                    break;
-                }
-
-                match part[part_len - 1] {
-                    b' ' | b'\t' | b'\n' => {
-                        word_len -= 1;
+            match self.reader.read_line(&mut line) {
+                Ok(length) => {
+                    if line.ends_with('\n') {
+                        line.pop();
+                        if line.ends_with('\r') {
+                            line.pop();
+                        }
                     }
-                    b'(' => {
-                        paren_count += 1;
-                        word_len -= 1;
+
+                    if length == 0 {
+                        break;
                     }
-                    b')' => {
-                        paren_count -= 1;
-                        word_len -= 1;
-                    }
-                    _ => {}
-                }
 
-                if word_len == 0 && (part[0] == b'\n' || state != ParserState::Init) {
-                    continue;
-                }
+                    let mut pos = 0;
+                    let mut quoted_buf = String::new();
 
-                match state {
-                    ParserState::Init => {
-                        let word = String::from_utf8(part[0..word_len].to_vec()).unwrap().to_lowercase();
+                    for part in line.as_bytes().split_inclusive(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'(' || b == b')') {
+                        let part_len = part.len();
+                        let mut word_len = part_len;
 
-                        if pos == 0 && paren_count == 0 {
-                            if word.starts_with('$') {
-                                directive_buf = word;
-                                state = ParserState::Directive;
+                        if part[0] == b';' && state != ParserState::QString {
+                            break;
+                        }
 
-                            } else {
-                                if word_len > 0 {
-                                    self.name = word;
+                        match part[part_len - 1] {
+                            b' ' | b'\t' | b'\n' => {
+                                word_len -= 1;
+                            }
+                            b'(' => {
+                                paren_count += 1;
+                                word_len -= 1;
+                            }
+                            b')' => {
+                                paren_count -= 1;
+                                word_len -= 1;
+                            }
+                            _ => {}
+                        }
+
+                        if word_len == 0 && (part[0] == b'\n' || state != ParserState::Init) {
+                            continue;
+                        }
+
+                        match state {
+                            ParserState::Init => {
+                                let word = String::from_utf8(part[0..word_len].to_vec())
+                                    .map_err(|_| ZoneReaderError::new(ErrorKind::Parsing, "unable to parse string"))?.to_lowercase();
+
+                                if pos == 0 && paren_count == 0 {
+                                    if word.starts_with('$') {
+                                        directive_buf = word;
+                                        state = ParserState::Directive;
+
+                                    } else {
+                                        if word_len > 0 {
+                                            name = word;
+                                        }
+
+                                        state = ParserState::Common;
+                                    }
+                                }
+                            }
+                            ParserState::Common => {
+                                let word = String::from_utf8(part[0..word_len].to_vec())
+                                    .map_err(|_| ZoneReaderError::new(ErrorKind::Parsing, "unable to parse string"))?.to_uppercase();
+
+                                if let Ok(c) = RRClasses::from_str(&word) {
+                                    if !c.eq(&self.class) {
+                                        return Err(ZoneReaderError::new(ErrorKind::WrongClass, "invalid class found"));
+                                    }
+
+                                } else if let Ok(t) = RRTypes::from_str(&word) {
+                                    _type = t;
+                                    state = ParserState::Data;
+                                    data_count = 0;
+                                    record = Some((self.absolute_name(&name), _type, ttl, <dyn ZoneRRData>::new(_type, &self.class)
+                                        .ok_or_else(|| ZoneReaderError::new(ErrorKind::TypeNotFound, &format!("record type {} not found", _type)))?));
+
+                                } else {
+                                    ttl = word.parse().map_err(|_| ZoneReaderError::new(ErrorKind::Parsing, &format!("unable to parse ttl {}", word)))?;
+                                }
+                            }
+                            ParserState::Directive => {
+                                let value = String::from_utf8(part[0..word_len].to_vec())
+                                    .map_err(|_| ZoneReaderError::new(ErrorKind::Parsing, "unable to parse string"))?.to_lowercase();
+
+                                match directive_buf.as_str() {
+                                    "$ttl" => self.default_ttl = value.parse()
+                                        .map_err(|_| ZoneReaderError::new(ErrorKind::Parsing, &format!("unable to parse default_ttl {}", value)))?,
+                                    "$origin" => self.origin = value.strip_suffix('.')
+                                        .ok_or_else(|| ZoneReaderError::new(ErrorKind::Format, &format!("origin is not fully qualified (missing trailing dot) {}", value)))?.to_string(),
+                                    _ => return Err(ZoneReaderError::new(ErrorKind::Format, &format!("unknown directive {}", directive_buf)))
                                 }
 
-                                state = ParserState::Common;
+                                state = ParserState::Init;
                             }
-                        }
-                    }
-                    ParserState::Common => {
-                        let word = String::from_utf8(part[0..word_len].to_vec()).unwrap().to_uppercase();
+                            ParserState::Data => {
+                                if part[0] == b'"' {
+                                    if part[word_len - 1] == b'"' {
+                                        record.as_mut().unwrap().3.set_data(data_count, &String::from_utf8(part[1..word_len - 1].to_vec())
+                                            .map_err(|_| ZoneReaderError::new(ErrorKind::Parsing, "unable to parse string"))?)?;
 
-                        if let Some(c) = RRClasses::from_str(&word) {
-                            class = c;
+                                        data_count += 1;
 
-                        } else if let Some(t) = RRTypes::from_str(&word) {
-                            _type = t;
-                            state = ParserState::Data;
-                            data_count = 0;
-                            record = Some((self.name.to_string(), <dyn RecordBase>::new(_type, ttl, class).unwrap()));
+                                    } else {
+                                        state = ParserState::QString;
+                                        quoted_buf = format!("{}{}", String::from_utf8(part[1..word_len].to_vec())
+                                            .map_err(|_| ZoneReaderError::new(ErrorKind::Parsing, "unable to parse string"))?, part[word_len] as char);
+                                    }
 
-                        } else {
-                            ttl = word.parse().unwrap();//.expect(&format!("Parse error on line {} pos {}", self.line_no, pos));
-                        }
-                    }
-                    ParserState::Directive => {
-                        let value = String::from_utf8(part[0..word_len].to_vec()).unwrap().to_lowercase();
+                                } else {
+                                    record.as_mut().unwrap().3.set_data(data_count, &String::from_utf8(part[0..word_len].to_vec())
+                                        .map_err(|_| ZoneReaderError::new(ErrorKind::Parsing, "unable to parse string"))?)?;
 
-                        if directive_buf == "$ttl" {
-                            self.default_ttl = value.parse().unwrap();//.expect(&format!("Parse error on line {} pos {}", self.line_no, pos));
-
-                        } else if directive_buf == "$origin" {
-                            self.origin = match value.strip_suffix('.') {
-                                Some(base) => base.to_string(),
-                                None => panic!("Domain is not fully qualified (missing trailing dot)")
-                            };
-
-                        } else {
-                            panic!("Unknown directive {}", directive_buf);
-                        }
-
-                        state = ParserState::Init;
-                    }
-                    ParserState::Data => {
-                        if part[0] == b'"' {
-                            if part[word_len - 1] == b'"' {
-                                if let Some((_, ref mut record)) = record {
-                                    set_data(record.deref_mut(), data_count, &String::from_utf8(part[1..word_len - 1].to_vec()).unwrap());
+                                    data_count += 1;
                                 }
-
-                                data_count += 1;
-
-                            } else {
-                                state = ParserState::QString;
-                                quoted_buf = format!("{}{}", String::from_utf8(part[1..word_len].to_vec()).unwrap(), part[word_len] as char);
                             }
+                            ParserState::QString => {
+                                if part[word_len - 1] == b'"' {
+                                    quoted_buf.push_str(&format!("{}", String::from_utf8(part[0..word_len - 1].to_vec())
+                                        .map_err(|_| ZoneReaderError::new(ErrorKind::Parsing, "unable to parse string"))?));
 
-                        } else {
-                            if let Some((_, ref mut record)) = record {
-                                set_data(record.deref_mut(), data_count, &String::from_utf8(part[0..word_len].to_vec()).unwrap());
+                                    record.as_mut().unwrap().3.set_data(data_count, &quoted_buf)?;
+
+                                    data_count += 1;
+                                    state = ParserState::Data;
+
+                                } else {
+                                    quoted_buf.push_str(&format!("{}{}", String::from_utf8(part[0..word_len].to_vec())
+                                        .map_err(|_| ZoneReaderError::new(ErrorKind::Parsing, "unable to parse string"))?, part[word_len] as char));
+                                }
                             }
-
-                            data_count += 1;
                         }
+
+                        pos += part_len;
                     }
-                    ParserState::QString => {
-                        if part[word_len - 1] == b'"' {
-                            quoted_buf.push_str(&format!("{}", String::from_utf8(part[0..word_len - 1].to_vec()).unwrap()));
 
-                            if let Some((_, ref mut record)) = record {
-                                set_data(record.deref_mut(), data_count, &quoted_buf);
-                            }
-
-                            data_count += 1;
-                            state = ParserState::Data;
-
-                        } else {
-                            quoted_buf.push_str(&format!("{}{}", String::from_utf8(part[0..word_len].to_vec()).unwrap(), part[word_len] as char));
-                        }
+                    if record.is_some() && paren_count == 0 {
+                        return Ok(record);
                     }
                 }
-
-                pos += part_len;
-            }
-
-            if record.is_some() && paren_count == 0 {
-                return record;
+                Err(e) => return Err(ZoneReaderError::new(ErrorKind::UnexpectedEof, &e.to_string()))
             }
         }
 
-        record
+        Ok(record)
     }
 
-    pub fn get_origin(&self) -> &str {
+    pub fn origin(&self) -> &str {
         &self.origin
     }
 
-    /*
     pub fn absolute_name(&self, name: &str) -> String {
-        assert!(name != "");
-
-        if name == "@" {
-            return name.to_string();//self.origin.clone();
+        if name.eq("@") {
+            return String::new();
         }
 
         if name.ends_with('.') {
-            name.to_string()
-
-        } else {
-            format!("{}.{}", name, self.origin)
+            return fqdn_to_relative(&self.origin, name.strip_suffix('.').unwrap()).unwrap();
         }
-    }
-    */
 
-    pub fn iter(&mut self) -> ZoneReaderIter {
+        name.to_string()
+    }
+
+    pub fn records(&mut self) -> ZoneReaderIter<'_> {
         ZoneReaderIter {
-            parser: self
+            reader: self
         }
     }
 }
 
 pub struct ZoneReaderIter<'a> {
-    parser: &'a mut ZoneReader
+    reader: &'a mut ZoneReader
 }
 
 impl<'a> Iterator for ZoneReaderIter<'a> {
 
-    type Item = (String, Box<dyn RecordBase>);
+    type Item = Result<(String, RRTypes, u32, Box<dyn ZoneRRData>), ZoneReaderError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.parser.parse_record()
-    }
-}
-
-fn set_data(record: &mut dyn RecordBase, pos: usize, value: &str) {
-    match record.get_type() {
-        RRTypes::A => record.as_any_mut().downcast_mut::<ARecord>().unwrap().address = Some(value.parse().unwrap()),
-        RRTypes::Aaaa => record.as_any_mut().downcast_mut::<AaaaRecord>().unwrap().address = Some(value.parse().unwrap()),
-        RRTypes::Ns => record.as_any_mut().downcast_mut::<NsRecord>().unwrap().server = Some(match value.strip_suffix('.') {
-            Some(base) => base.to_string(),
-            None => panic!("Domain is not fully qualified (missing trailing dot)")
-        }),
-        RRTypes::CName => record.as_any_mut().downcast_mut::<CNameRecord>().unwrap().target = Some(match value.strip_suffix('.') {
-            Some(base) => base.to_string(),
-            None => panic!("Domain is not fully qualified (missing trailing dot)")
-        }),
-        RRTypes::Soa => {
-            let record = record.as_any_mut().downcast_mut::<SoaRecord>().unwrap();
-            match pos {
-                0 => record.fqdn = Some(match value.strip_suffix('.') {
-                    Some(base) => base.to_string(),
-                    None => panic!("Domain is not fully qualified (missing trailing dot)")
-                }),
-                1 => record.mailbox = Some(match value.strip_suffix('.') {
-                    Some(base) => base.to_string(),
-                    None => panic!("Domain is not fully qualified (missing trailing dot)")
-                }),
-                2 => record.serial = value.parse().unwrap(),
-                3 => record.refresh = value.parse().unwrap(),
-                4 => record.retry = value.parse().unwrap(),
-                5 => record.expire = value.parse().unwrap(),
-                6 => record.minimum_ttl = value.parse().unwrap(),
-                _ => unimplemented!()
-            }
-        }
-        RRTypes::Ptr => record.as_any_mut().downcast_mut::<PtrRecord>().unwrap().fqdn = Some(match value.strip_suffix('.') {
-            Some(base) => base.to_string(),
-            None => panic!("Domain is not fully qualified (missing trailing dot)")
-        }),
-        RRTypes::HInfo => {
-            let record = record.as_any_mut().downcast_mut::<HInfoRecord>().unwrap();
-            match pos {
-                0 => record.cpu = Some(value.to_string()),
-                1 => record.os = Some(value.to_string()),
-                _ => unimplemented!()
-            }
-        }
-        RRTypes::Mx => {
-            let record = record.as_any_mut().downcast_mut::<MxRecord>().unwrap();
-            match pos {
-                0 => record.priority = value.parse().unwrap(),
-                1 => record.server = Some(match value.strip_suffix('.') {
-                    Some(base) => base.to_string(),
-                    None => panic!("Domain is not fully qualified (missing trailing dot)")
-                }),
-                _ => unimplemented!()
-            }
-        }
-        RRTypes::Txt => record.as_any_mut().downcast_mut::<TxtRecord>().unwrap().data.push(value.to_string()),
-        RRTypes::Loc => {
-            let record = record.as_any_mut().downcast_mut::<LocRecord>().unwrap();
-            match pos {
-                0 => record.latitude = value.parse::<u32>().unwrap() * 3_600_000,
-                1 => record.latitude = record.latitude + value.parse::<u32>().unwrap() * 60_000,
-                2 => record.latitude += (value.parse::<f64>().unwrap() * 1000.0).round() as u32,
-                3 => {
-                    let sign = match value {
-                        "S" | "W" => -1,
-                        "N" | "E" => 1,
-                        _ => panic!("Invalid direction")
-                    };
-
-                    let val = (sign * (record.latitude as i64)) + (1 << 31);
-                    record.latitude = val as u32
-                }
-                4 => record.longitude = value.parse::<u32>().unwrap() * 3_600_000,
-                5 => record.longitude = record.longitude + value.parse::<u32>().unwrap() * 60_000,
-                6 => record.longitude += (value.parse::<f64>().unwrap() * 1000.0).round() as u32,
-                7 => {
-                    let sign = match value {
-                        "S" | "W" => -1,
-                        "N" | "E" => 1,
-                        _ => panic!("Invalid direction")
-                    };
-
-                    let val = (sign * (record.longitude as i64)) + (1 << 31);
-                    record.longitude = val as u32
-                }
-                8 => {
-                    let clean = value.trim_end_matches('m');
-                    record.altitude = (clean.parse::<f64>().unwrap() * 100.0).round() as u32;
-                }
-                9 => {
-                    record.size = encode_loc_precision(value);
-                }
-                10 => {
-                    record.h_precision = encode_loc_precision(value);
-                }
-                11 => {
-                    record.v_precision = encode_loc_precision(value);
-                }
-                _ => unimplemented!()
-            }
-        }
-        RRTypes::Srv => {
-            let record = record.as_any_mut().downcast_mut::<SrvRecord>().unwrap();
-            match pos {
-                0 => record.priority = value.parse().unwrap(),
-                1 => record.weight = value.parse().unwrap(),
-                2 => record.port = value.parse().unwrap() ,
-                3 => record.target = Some(match value.strip_suffix('.') {
-                    Some(base) => base.to_string(),
-                    None => panic!("Domain is not fully qualified (missing trailing dot)")
-                }),
-                _ => unimplemented!()
-            }
-        }
-        RRTypes::Naptr => {
-            let record = record.as_any_mut().downcast_mut::<NaptrRecord>().unwrap();
-            match pos {
-                0 => record.order = value.parse().unwrap(),
-                1 => record.preference = value.parse().unwrap(),
-                2 => record.flags = {
-                    let mut flags = Vec::new();
-                    for flag in value.split(',') {
-                        flags.push(NaptrFlags::from_str(flag).unwrap());
-                    }
-                    flags
-                },
-                3 => record.service = Some(value.to_string()),
-                4 => record.regex = Some(value.to_string()),
-                5 => record.replacement = Some(match value.strip_suffix('.') {
-                    Some(base) => base.to_string(),
-                    None => panic!("Domain is not fully qualified (missing trailing dot)")
-                }),
-                _ => unimplemented!()
-            }
-        }
-        RRTypes::SshFp => {
-            let record = record.as_any_mut().downcast_mut::<SshFpRecord>().unwrap();
-            match pos {
-                0 => record.algorithm = value.parse().unwrap(),
-                1 => record.fingerprint_type = value.parse().unwrap(),
-                2 => record.fingerprint = hex::decode(value).unwrap(),
-                _ => unimplemented!()
-            }
-        }
-        RRTypes::RRSig => {
-            let record = record.as_any_mut().downcast_mut::<RRSigRecord>().unwrap();
-            match pos {
-                0 => record.type_covered = RRTypes::from_str(value).unwrap(),
-                1 => record.algorithm = value.parse().unwrap(),
-                2 => record.labels = value.parse().unwrap(),
-                3 => record.original_ttl = value.parse().unwrap(),
-                4 => record.expiration = u32::from_time_format(value),
-                5 => record.inception = u32::from_time_format(value),
-                6 => record.key_tag = value.parse().unwrap(),
-                7 => record.signer_name = Some(match value.strip_suffix('.') {
-                    Some(base) => base.to_string(),
-                    None => panic!("Domain is not fully qualified (missing trailing dot)")
-                }),
-                8 => record.signature = base64::decode(value).unwrap(),
-                _ => record.signature.extend_from_slice(&base64::decode(value).unwrap())
-            }
-        }
-        RRTypes::Nsec => {}//example.com.  NSEC  next.example.com. A MX RRSIG NSEC
-        RRTypes::DnsKey => {}//DNSKEY  <flags> <protocol> <algorithm> <public key>
-        RRTypes::Smimea => {
-            let record = record.as_any_mut().downcast_mut::<SmimeaRecord>().unwrap();
-            match pos {
-                0 => record.usage = value.parse().unwrap(),
-                1 => record.selector = value.parse().unwrap(),
-                2 => record.matching_type = value.parse().unwrap(),
-                3 => record.certificate = hex::decode(value).unwrap(),
-                _ => unimplemented!()
-            }
-        }
-        RRTypes::Svcb => {
-            let record = record.as_any_mut().downcast_mut::<SvcbRecord>().unwrap();
-            match pos {
-                0 => record.priority = value.parse().unwrap(),
-                1 => record.target = Some(match value.strip_suffix('.') {
-                    Some(base) => base.to_string(),
-                    None => panic!("Domain is not fully qualified (missing trailing dot)")
-                }),
-                _ => {
-                    match value.split_once('=') {
-                        Some((key, value)) => {
-                            let key = SvcParamKeys::from_str(key).unwrap();
-                            let value = match key {
-                                SvcParamKeys::Mandatory => value.split(',')
-                                    .map(|k| SvcParamKeys::from_str(k).unwrap() as u16)
-                                    .flat_map(|code| code.to_be_bytes())
-                                    .collect(),
-                                SvcParamKeys::Alpn => value
-                                    .trim_matches('"')
-                                    .split(',')
-                                    .flat_map(|proto| {
-                                        std::iter::once(proto.len() as u8).chain(proto.bytes())
-                                    })
-                                    .collect(),
-                                SvcParamKeys::NoDefaultAlpn => Vec::new(),
-                                SvcParamKeys::Port => value.parse::<u16>().unwrap().to_be_bytes().to_vec(),
-                                SvcParamKeys::Ipv4Hint => value.split(',')
-                                    .map(|ip| ip.parse::<std::net::Ipv4Addr>().expect("Invalid IPv4").octets().to_vec())
-                                    .flatten()
-                                    .collect(),
-                                SvcParamKeys::Ech => base64::decode(value).unwrap(),
-                                SvcParamKeys::Ipv6Hint => value.split(',')
-                                    .map(|ip| ip.parse::<std::net::Ipv6Addr>().expect("Invalid IPv6").octets().to_vec())
-                                    .flatten()
-                                    .collect()
-                            };
-                            record.params.insert(key, value);
-                        }
-                        None => panic!("Invalid SVCB parameter format: expected key=value")
-                    }
-                }
-            }
-        }
-        RRTypes::Https => {
-            let record = record.as_any_mut().downcast_mut::<HttpsRecord>().unwrap();
-            match pos {
-                0 => record.priority = value.parse().unwrap(),
-                1 => record.target = Some(match value.strip_suffix('.') {
-                    Some(base) => base.to_string(),
-                    None => panic!("Domain is not fully qualified (missing trailing dot)")
-                }),
-                _ => {
-                    match value.split_once('=') {
-                        Some((key, value)) => {
-                            let key = SvcParamKeys::from_str(key).unwrap();
-                            let value = match key {
-                                SvcParamKeys::Mandatory => value.split(',')
-                                    .map(|k| SvcParamKeys::from_str(k).unwrap() as u16)
-                                    .flat_map(|code| code.to_be_bytes())
-                                    .collect(),
-                                SvcParamKeys::Alpn => value
-                                    .trim_matches('"')
-                                    .split(',')
-                                    .flat_map(|proto| {
-                                        std::iter::once(proto.len() as u8).chain(proto.bytes())
-                                    })
-                                    .collect(),
-                                SvcParamKeys::NoDefaultAlpn => Vec::new(),
-                                SvcParamKeys::Port => value.parse::<u16>().unwrap().to_be_bytes().to_vec(),
-                                SvcParamKeys::Ipv4Hint => value.split(',')
-                                    .map(|ip| ip.parse::<std::net::Ipv4Addr>().expect("Invalid IPv4").octets().to_vec())
-                                    .flatten()
-                                    .collect(),
-                                SvcParamKeys::Ech => base64::decode(value).unwrap(),
-                                SvcParamKeys::Ipv6Hint => value.split(',')
-                                    .map(|ip| ip.parse::<std::net::Ipv6Addr>().expect("Invalid IPv6").octets().to_vec())
-                                    .flatten()
-                                    .collect()
-                            };
-                            record.params.insert(key, value);
-                        }
-                        None => panic!("Invalid HTTPS parameter format: expected key=value")
-                    }
-                }
-            }
-        }
-        RRTypes::Spf => {}//@       SPF   "v=spf1 include:_spf.example.com ~all"
-        RRTypes::Uri => {
-            let record = record.as_any_mut().downcast_mut::<UriRecord>().unwrap();
-            match pos {
-                0 => record.priority = value.parse().unwrap(),
-                1 => record.weight = value.parse().unwrap(),
-                2 => record.target = Some(value.to_string()),
-                _ => unimplemented!()
-            }
-        }
-        RRTypes::Caa => {}//CAA     <flags> <tag> <value>
-        _ => unimplemented!()
-    }
-}
-
-fn encode_loc_precision(s: &str) -> u8 {
-    let val = s.strip_suffix('m').unwrap_or(s).parse::<f64>().unwrap();
-    for exp in 0..=9 {
-        for base in 0..=9 {
-            let encoded = (base as f64) * 10f64.powi(exp);
-            if (val - encoded).abs() < 0.5 {
-                return ((base << 4) | exp).try_into().unwrap();
-            }
+        match self.reader.read_record() {
+            Ok(Some(rec)) => Some(Ok(rec)),
+            Ok(None) => None,
+            Err(e) => Some(Err(e))
         }
     }
-    panic!("Cannot encode LOC precision from value: {}", s);
 }

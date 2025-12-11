@@ -18,8 +18,8 @@ pub fn decode(input: &str) -> io::Result<Vec<u8>> {
     let mut i = 0;
 
     while i + 1 < buf.len() {
-        let v1 = val(buf[i]).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "Invalid hex"))?;
-        let v2 = val(buf[i + 1]).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "Invalid hex"))?;
+        let v1 = val(buf[i]).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "invalid hex"))?;
+        let v2 = val(buf[i + 1]).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "invalid hex"))?;
 
         output.push((v1 << 4) | v2);
 

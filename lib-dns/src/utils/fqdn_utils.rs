@@ -1,35 +1,19 @@
-use std::collections::HashMap;
+pub const MAX_LABEL: usize = 64;
 
-pub fn pack_fqdn(fqdn: &str, labels_map: &mut HashMap<String, usize>, off: usize, compress: bool) -> Vec<u8> {
+pub fn pack_fqdn(fqdn: &str) -> Vec<u8> {
     if fqdn.is_empty() {
         return vec![0x00];
     }
 
     let mut buf = Vec::new();
-    let mut off = off;
 
     let parts: Vec<&str> = fqdn.split('.').collect();
 
     for i in 0..parts.len() {
-        let suffix = parts[i..].join(".");
-
-        if compress {
-            if let Some(&ptr) = labels_map.get(&suffix) {
-                buf.push(0xC0 | ((ptr >> 8) as u8 & 0x3F));
-                buf.push((ptr & 0xFF) as u8);
-                return buf;
-            }
-        }
-
         let label_bytes = parts[i].as_bytes();
-        //assert!(label_bytes.len() <= 63, "label too long");
+        assert!(label_bytes.len() <= 63, "label too long");
         buf.push(label_bytes.len() as u8);
         buf.extend_from_slice(label_bytes);
-
-        if off <= 0x3FFF {
-            labels_map.entry(suffix).or_insert(off);
-        }
-        off = off.saturating_add(label_bytes.len() + 1);
     }
 
     buf.push(0x00);
@@ -119,8 +103,16 @@ pub fn decode_fqdn(buf: &[u8]) -> String {
     builder.join(".")
 }
 
+pub fn to_fqdn(apex: &str, child: &str) -> String {
+    if child.is_empty() {
+        return apex.to_string();
+    }
+
+    format!("{}.{}", child, apex)
+}
+
 pub fn fqdn_to_relative(apex: &str, child: &str) -> Option<String> {
-    if apex == child {
+    if apex.eq(child) {
         return Some(String::new());
     }
 

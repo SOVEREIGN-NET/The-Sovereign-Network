@@ -159,7 +159,33 @@ impl ZhtpUnifiedServer {
         
         false
     }
-    
+
+    /// Create a server identity for UHP+Kyber authentication
+    ///
+    /// Creates a deterministic identity based on the server UUID.
+    /// The identity is used for mutual authentication in QUIC handshakes.
+    fn create_server_identity(server_id: Uuid) -> Result<Arc<lib_identity::ZhtpIdentity>> {
+        use lib_identity::{ZhtpIdentity, IdentityType};
+
+        // Generate deterministic seed from server UUID
+        let mut seed = [0u8; 64];
+        seed[..16].copy_from_slice(server_id.as_bytes());
+        seed[16..32].copy_from_slice(server_id.as_bytes());
+        seed[32..48].copy_from_slice(server_id.as_bytes());
+        seed[48..64].copy_from_slice(server_id.as_bytes());
+
+        // Create server identity using the unified constructor
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Device, // Server is a device/service node
+            None,                 // No age for devices
+            None,                 // No jurisdiction for devices
+            "zhtp-server",        // Device name
+            Some(seed),           // Deterministic seed from UUID
+        ).context("Failed to create server identity")?;
+
+        Ok(Arc::new(identity))
+    }
+
     /// Get broadcast metrics from mesh router
     pub async fn get_broadcast_metrics(&self) -> BroadcastMetrics {
         self.mesh_router.get_broadcast_metrics().await
@@ -319,13 +345,12 @@ impl ZhtpUnifiedServer {
         let bind_addr: std::net::SocketAddr = format!("0.0.0.0:{}", quic_port).parse()
             .context("Failed to parse QUIC bind address")?;
         
-        // Convert server_id UUID to 32-byte node_id for QUIC
-        let node_id_bytes = server_id.as_bytes().to_owned();
-        let mut node_id = [0u8; 32];
-        node_id[..16].copy_from_slice(&node_id_bytes);
-        node_id[16..].copy_from_slice(&node_id_bytes); // Duplicate to fill 32 bytes
-        
-        let mut quic_mesh = QuicMeshProtocol::new(node_id, bind_addr)
+        // Create server identity for UHP+Kyber authentication
+        // Uses server_id UUID as basis for deterministic identity generation
+        let identity = Self::create_server_identity(server_id)?;
+
+        // Initialize QUIC mesh protocol with UHP+Kyber authentication
+        let mut quic_mesh = QuicMeshProtocol::new(identity, bind_addr)
             .context("Failed to create QUIC mesh protocol")?;
         
         // Create MeshMessageHandler for routing blockchain sync messages
