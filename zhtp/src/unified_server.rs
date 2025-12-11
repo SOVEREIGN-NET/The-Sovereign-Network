@@ -355,12 +355,12 @@ impl ZhtpUnifiedServer {
         
         // Create MeshMessageHandler for routing blockchain sync messages
         // Note: These will be populated properly when mesh_router is initialized
-        let mesh_connections = Arc::new(RwLock::new(std::collections::HashMap::new()));
+        let peer_registry = Arc::new(RwLock::new(lib_network::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(std::collections::HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(std::collections::HashMap::new()));
         
         let message_handler = lib_network::messaging::message_handler::MeshMessageHandler::new(
-            mesh_connections,
+            peer_registry,
             long_range_relays,
             revenue_pools,
         );

@@ -166,9 +166,63 @@ impl MeshRouter {
                 {
                     let mut connections = self.connections.write().await;
                     let peer_key = connection.peer.clone();
-                    connections.insert(peer_key, connection);
+                    // Ticket #149: Use peer_registry upsert instead of connections.insert
+                    let mut registry = connections.write().await;
+                    let peer_entry = lib_network::peer_registry::PeerEntry {
+                        peer_id: peer_key,
+                        endpoints: vec![lib_network::peer_registry::PeerEndpoint {
+                            address: String::new(), // TODO: Add actual address
+                            protocol: connection.protocol,
+                            signal_strength: 0.8,
+                            latency_ms: 50,
+                        }],
+                        active_protocols: vec![connection.protocol],
+                        connection_metrics: lib_network::peer_registry::ConnectionMetrics {
+                            signal_strength: 0.8,
+                            bandwidth_capacity: 1_000_000,
+                            latency_ms: 50,
+                            stability_score: 0.9,
+                            connected_at: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        },
+                        authenticated: true,
+                        quantum_secure: true,
+                        next_hop: None,
+                        hop_count: 1,
+                        route_quality: 0.8,
+                        capabilities: lib_network::peer_registry::NodeCapabilities {
+                            protocols: vec![connection.protocol],
+                            max_bandwidth: 1_000_000,
+                            available_bandwidth: 800_000,
+                            routing_capacity: 100,
+                            energy_level: None,
+                            availability_percent: 95.0,
+                        },
+                        location: None,
+                        reliability_score: 0.9,
+                        dht_info: None,
+                        discovery_method: lib_network::peer_registry::DiscoveryMethod::MeshScan,
+                        first_seen: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        last_seen: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        tier: lib_network::peer_registry::PeerTier::Tier3,
+                        trust_score: 0.8,
+                        data_transferred: 0,
+                        tokens_earned: 0,
+                        traffic_routed: 0,
+                    };
+                    registry.upsert(peer_entry).expect("Failed to upsert peer");
+                    drop(registry);
+                    
                     info!("✅ Peer {} added to mesh network in {:?} state ({} total peers)",
-                        handshake.node_id, final_state, connections.len());
+                        handshake.node_id, final_state, connections.read().await.all_peers().count());
                 }
 
                 // Establish QUIC connection if available (after peer is in connections)
@@ -178,14 +232,20 @@ impl MeshRouter {
                     match quic.connect_to_peer(addr).await {
                         Ok(()) => {
                             info!("✅ QUIC connection established (TLS 1.3 + Kyber PQC)");
-                            let mut connections = self.connections.write().await;
-                            // Ticket #146: Find connection by matching public key
-                            for conn in connections.values_mut() {
-                                if conn.peer.public_key() == &peer_pubkey {
-                                    conn.protocol = lib_network::protocols::NetworkProtocol::QUIC;
-                                    conn.quantum_secure = true;
-                                    break;
+                            // Ticket #149: Update peer protocol in peer_registry
+                            let mut registry = self.connections.write().await;
+                            // Find peer by public key
+                            if let Some(peer_entry) = registry.all_peers().find(|entry| entry.peer_id.public_key() == &peer_pubkey) {
+                                // We need to update this peer, but since we can't mutate directly,
+                                // we'll create an updated entry and re-insert
+                                let mut updated_entry = peer_entry.clone();
+                                updated_entry.active_protocols = vec![lib_network::protocols::NetworkProtocol::QUIC];
+                                updated_entry.quantum_secure = true;
+                                // Update endpoints if needed
+                                if let Some(endpoint) = updated_entry.endpoints.first_mut() {
+                                    endpoint.protocol = lib_network::protocols::NetworkProtocol::QUIC;
                                 }
+                                registry.upsert(updated_entry).expect("Failed to update peer");
                             }
                         }
                         Err(e) => {

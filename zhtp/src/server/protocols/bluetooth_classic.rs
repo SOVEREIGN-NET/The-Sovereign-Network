@@ -166,9 +166,63 @@ impl BluetoothClassicRouter {
                 {
                     let mut connections = mesh_router.connections.write().await;
                     let peer_key = connection.peer.clone();
-                    connections.insert(peer_key, connection);
+                    // Ticket #149: Use peer_registry upsert instead of connections.insert
+                    let mut registry = connections.write().await;
+                    let peer_entry = lib_network::peer_registry::PeerEntry {
+                        peer_id: peer_key,
+                        endpoints: vec![lib_network::peer_registry::PeerEndpoint {
+                            address: String::new(), // TODO: Add actual address
+                            protocol: connection.protocol,
+                            signal_strength: 0.8,
+                            latency_ms: 50,
+                        }],
+                        active_protocols: vec![connection.protocol],
+                        connection_metrics: lib_network::peer_registry::ConnectionMetrics {
+                            signal_strength: 0.8,
+                            bandwidth_capacity: 1_000_000,
+                            latency_ms: 50,
+                            stability_score: 0.9,
+                            connected_at: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        },
+                        authenticated: true,
+                        quantum_secure: true,
+                        next_hop: None,
+                        hop_count: 1,
+                        route_quality: 0.8,
+                        capabilities: lib_network::peer_registry::NodeCapabilities {
+                            protocols: vec![connection.protocol],
+                            max_bandwidth: 1_000_000,
+                            available_bandwidth: 800_000,
+                            routing_capacity: 100,
+                            energy_level: None,
+                            availability_percent: 95.0,
+                        },
+                        location: None,
+                        reliability_score: 0.9,
+                        dht_info: None,
+                        discovery_method: lib_network::peer_registry::DiscoveryMethod::MeshScan,
+                        first_seen: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        last_seen: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        tier: lib_network::peer_registry::PeerTier::Tier3,
+                        trust_score: 0.8,
+                        data_transferred: 0,
+                        tokens_earned: 0,
+                        traffic_routed: 0,
+                    };
+                    registry.upsert(peer_entry).expect("Failed to upsert peer");
+                    drop(registry);
+                    
                     info!("✅ Bluetooth Classic peer {} added to mesh network ({} total peers)",
-                        handshake.node_id, connections.len());
+                        handshake.node_id, connections.read().await.all_peers().count());
                 }
                 
                 // Run SAME authentication flow as BLE (transport-agnostic!)
