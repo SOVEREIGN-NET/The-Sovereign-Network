@@ -76,9 +76,6 @@ use self::enhanced::MacOSBluetoothManager;
 // Re-export public types
 pub use self::gatt::GattMessage as GattMessageType;
 pub use self::device::BleConnection as BluetoothConnection;
-pub use self::gatt_stream::GattStream;
-#[cfg(any(test, feature = "ble-mock"))]
-pub use self::mock::MockGattLink;
 
 /// Bluetooth LE mesh protocol handler
 pub struct BluetoothMeshProtocol {
