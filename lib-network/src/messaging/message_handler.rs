@@ -18,10 +18,12 @@ use crate::identity::unified_peer::UnifiedPeerId;
 use crate::relays::LongRangeRelay;
 
 /// Central mesh message handler
+///
+/// **MIGRATION (Ticket #149):** Now uses unified PeerRegistry instead of separate mesh_connections
 #[derive(Clone)]
 pub struct MeshMessageHandler {
-    /// Active mesh connections (indexed by UnifiedPeerId for Ticket #146)
-    pub mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
+    /// Unified peer registry (Ticket #149: replaces mesh_connections)
+    pub peer_registry: crate::peer_registry::SharedPeerRegistry,
     /// Long-range relays
     pub long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     /// Revenue pools
@@ -41,14 +43,14 @@ pub struct MeshMessageHandler {
 impl MeshMessageHandler {
     /// Create a new MeshMessageHandler
     ///
-    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId as connection key
+    /// **MIGRATION (Ticket #149):** Now accepts SharedPeerRegistry instead of mesh_connections
     pub fn new(
-        mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
+        peer_registry: crate::peer_registry::SharedPeerRegistry,
         long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
         revenue_pools: Arc<RwLock<HashMap<String, u64>>>,
     ) -> Self {
         Self {
-            mesh_connections,
+            peer_registry,
             long_range_relays,
             revenue_pools,
             message_router: None,
@@ -208,31 +210,58 @@ impl MeshMessageHandler {
             }
         }
         
-        // Establish mesh connection
+        // Establish mesh connection (Ticket #149: using peer_registry)
         // MIGRATION (Ticket #146): Convert PublicKey to UnifiedPeerId
         let unified_peer = UnifiedPeerId::from_public_key_legacy(peer.clone());
-        let mut connections = self.mesh_connections.write().await;
-        connections.insert(unified_peer.clone(), MeshConnection {
-            peer: unified_peer,
-            protocol: crate::protocols::NetworkProtocol::BluetoothLE, // Default for discovery
-            peer_address: None, // Address not available in PeerDiscovery message
-            signal_strength: 0.8, // Good signal
-            bandwidth_capacity: shared_resources.relay_bandwidth_kbps as u64 * 1024,
-            latency_ms: 50, // Estimate
-            connected_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+        
+        // Create PeerEntry from connection info
+        let peer_entry = crate::peer_registry::PeerEntry {
+            peer_id: unified_peer.clone(),
+            endpoints: vec![crate::peer_registry::PeerEndpoint {
+                address: String::new(), // Address not available in PeerDiscovery
+                protocol: crate::protocols::NetworkProtocol::BluetoothLE,
+                signal_strength: 0.8,
+                latency_ms: 50,
+            }],
+            active_protocols: vec![crate::protocols::NetworkProtocol::BluetoothLE],
+            connection_metrics: crate::peer_registry::ConnectionMetrics {
+                signal_strength: 0.8,
+                bandwidth_capacity: shared_resources.relay_bandwidth_kbps as u64 * 1024,
+                latency_ms: 50,
+                stability_score: shared_resources.reliability_score,
+                connected_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            },
+            authenticated: false,
+            quantum_secure: true,
+            next_hop: None,
+            hop_count: 1,
+            route_quality: 0.8,
+            capabilities: crate::peer_registry::NodeCapabilities {
+                protocols: vec![crate::protocols::NetworkProtocol::BluetoothLE],
+                max_bandwidth: shared_resources.relay_bandwidth_kbps as u64 * 1024,
+                available_bandwidth: shared_resources.relay_bandwidth_kbps as u64 * 1024,
+                routing_capacity: 100,
+                energy_level: None,
+                availability_percent: 95.0,
+            },
+            location: None,
+            reliability_score: shared_resources.reliability_score,
+            dht_info: None,
+            discovery_method: crate::peer_registry::DiscoveryMethod::MeshDiscovery,
+            first_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            tier: crate::peer_registry::PeerTier::Standard,
+            trust_score: 0.5,
             data_transferred: 0,
             tokens_earned: 0,
-            stability_score: shared_resources.reliability_score,
-            zhtp_authenticated: false,
-            quantum_secure: true,
-            bootstrap_mode: false, // Peer discovery is for authenticated nodes
-            peer_dilithium_pubkey: None,
-            kyber_shared_secret: None,
-            trust_score: 0.0,
-        });
+            traffic_routed: 0,
+        };
+        
+        let mut registry = self.peer_registry.write().await;
+        registry.upsert(peer_entry)?;
         
         Ok(())
     }
@@ -445,14 +474,14 @@ impl MeshMessageHandler {
         info!("Health report: quality={:.2}, bandwidth={} MB/s, peers={}, uptime={}h",
               network_quality, available_bandwidth / 1_000_000, connected_peers, uptime_hours);
 
-        // Update connection statistics - find connection by PublicKey
-        let mut connections = self.mesh_connections.write().await;
-        for connection in connections.values_mut() {
-            if connection.peer.public_key() == &reporter {
-                connection.stability_score = network_quality;
-                connection.bandwidth_capacity = available_bandwidth;
-                break;
-            }
+        // Update connection statistics (Ticket #149: using peer_registry)
+        let registry = self.peer_registry.read().await;
+        if let Some(mut peer_entry) = registry.find_by_public_key(&reporter).cloned() {
+            peer_entry.connection_metrics.stability_score = network_quality;
+            peer_entry.connection_metrics.bandwidth_capacity = available_bandwidth;
+            drop(registry);
+            let mut registry_write = self.peer_registry.write().await;
+            registry_write.upsert(peer_entry)?;
         }
 
         Ok(())
@@ -707,12 +736,13 @@ impl MeshMessageHandler {
     }
     
     /// Get protocol being used for peer (NEW - Phase 3)
+    /// TODO (Ticket #149): Migrated to peer_registry
     async fn get_protocol_for_peer(&self, peer_id: &PublicKey) -> Result<NetworkProtocol> {
-        let connections = self.mesh_connections.read().await;
+        let registry = self.peer_registry.read().await;
         // Find connection by PublicKey
-        for connection in connections.values() {
-            if connection.peer.public_key() == peer_id {
-                return Ok(connection.protocol.clone());
+        if let Some(peer_entry) = registry.find_by_public_key(peer_id) {
+            if let Some(endpoint) = peer_entry.endpoints.first() {
+                return Ok(endpoint.protocol.clone());
             }
         }
         Err(anyhow!("No connection to peer"))
@@ -1186,28 +1216,30 @@ mod tests {
     
     #[tokio::test]
     async fn test_message_handler_creation() {
-        let mesh_connections = Arc::new(RwLock::new(HashMap::new()));
+        // Ticket #149: Use peer_registry instead of mesh_connections
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new(1000)));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
         
         let handler = MeshMessageHandler::new(
-            mesh_connections,
+            peer_registry.clone(),
             long_range_relays,
             revenue_pools,
         );
         
         // Handler should be created successfully
-        assert!(handler.mesh_connections.read().await.is_empty());
+        assert_eq!(peer_registry.read().await.all_peers().count(), 0);
     }
     
     #[tokio::test]
     async fn test_health_report_handling() {
-        let mesh_connections = Arc::new(RwLock::new(HashMap::new()));
+        // Ticket #149: Use peer_registry instead of mesh_connections
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new(1000)));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
         
         let handler = MeshMessageHandler::new(
-            mesh_connections.clone(),
+            peer_registry.clone(),
             long_range_relays,
             revenue_pools,
         );
@@ -1216,27 +1248,51 @@ mod tests {
         // Ticket #146: Use UnifiedPeerId for HashMap key
         let unified_peer = crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(reporter.clone());
 
-        // Add a connection first
+        // Add a peer entry first (Ticket #149)
         {
-            let mut connections = mesh_connections.write().await;
-            connections.insert(unified_peer.clone(), MeshConnection {
-                peer: unified_peer.clone(),
-                protocol: crate::protocols::NetworkProtocol::BluetoothLE,
-                peer_address: None,
-                signal_strength: 0.5,
-                bandwidth_capacity: 1000000,
-                latency_ms: 100,
-                connected_at: 1000000,
+            let peer_entry = crate::peer_registry::PeerEntry {
+                peer_id: unified_peer.clone(),
+                endpoints: vec![crate::peer_registry::PeerEndpoint {
+                    address: String::new(),
+                    protocol: crate::protocols::NetworkProtocol::BluetoothLE,
+                    signal_strength: 0.5,
+                    latency_ms: 100,
+                }],
+                active_protocols: vec![crate::protocols::NetworkProtocol::BluetoothLE],
+                connection_metrics: crate::peer_registry::ConnectionMetrics {
+                    signal_strength: 0.5,
+                    bandwidth_capacity: 1000000,
+                    latency_ms: 100,
+                    stability_score: 0.5,
+                    connected_at: 1000000,
+                },
+                authenticated: false,
+                quantum_secure: true,
+                next_hop: None,
+                hop_count: 1,
+                route_quality: 0.8,
+                capabilities: crate::peer_registry::NodeCapabilities {
+                    protocols: vec![crate::protocols::NetworkProtocol::BluetoothLE],
+                    max_bandwidth: 1000000,
+                    available_bandwidth: 1000000,
+                    routing_capacity: 100,
+                    energy_level: None,
+                    availability_percent: 95.0,
+                },
+                location: None,
+                reliability_score: 0.8,
+                dht_info: None,
+                discovery_method: crate::peer_registry::DiscoveryMethod::MeshDiscovery,
+                first_seen: 1000000,
+                last_seen: 1000000,
+                tier: crate::peer_registry::PeerTier::Standard,
+                trust_score: 0.5,
                 data_transferred: 0,
                 tokens_earned: 0,
-                stability_score: 0.5,
-                zhtp_authenticated: false,
-                quantum_secure: true,
-                bootstrap_mode: false,
-                peer_dilithium_pubkey: None,
-                kyber_shared_secret: None,
-                trust_score: 0.0,
-            });
+                traffic_routed: 0,
+            };
+            let mut registry = peer_registry.write().await;
+            let _ = registry.upsert(peer_entry);
         }
 
         // Handle health report
@@ -1250,10 +1306,10 @@ mod tests {
 
         assert!(result.is_ok());
 
-        // Check that connection was updated (find by matching public key)
-        let connections = mesh_connections.read().await;
-        let connection = connections.values().find(|c| c.peer.public_key() == &reporter).unwrap();
-        assert_eq!(connection.stability_score, 0.9);
-        assert_eq!(connection.bandwidth_capacity, 2000000);
+        // Check that connection was updated (Ticket #149: using peer_registry)
+        let registry = peer_registry.read().await;
+        let peer_entry = registry.find_by_public_key(&reporter).unwrap();
+        assert_eq!(peer_entry.connection_metrics.stability_score, 0.9);
+        assert_eq!(peer_entry.connection_metrics.bandwidth_capacity, 2000000);
     }
 }
