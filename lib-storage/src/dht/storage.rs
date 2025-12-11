@@ -119,7 +119,7 @@ impl DhtStorage {
         bind_addr: SocketAddr, 
         max_storage_size: u64
     ) -> Result<Self> {
-        let network = DhtNetwork::new(local_node.clone(), bind_addr)?;
+        let network = DhtNetwork::new_udp(local_node.clone(), bind_addr)?;
         
         Ok(Self {
             storage: HashMap::new(),

@@ -1,5 +1,7 @@
 // DHT Transport Abstraction Layer
-// Enables Kademlia DHT to work over multiple protocols (UDP, BLE, WiFi Direct, LoRaWAN)
+// Enables Kademlia DHT to work over multiple protocols (UDP, BLE, WiFi Direct, LoRaWAN, QUIC)
+//
+// **TICKET #152:** Implement DHT transport layer for multi-protocol support
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -179,6 +181,171 @@ impl DhtTransport for BleDhtTransport {
         } else {
             false
         }
+    }
+}
+
+/// QUIC-based DHT transport (**TICKET #152**)
+/// Provides reliable, multiplexed transport with built-in TLS 1.3 and post-quantum security
+pub struct QuicDhtTransport {
+    endpoint: Arc<quinn::Endpoint>,
+    local_addr: SocketAddr,
+    // Active QUIC connections to peers
+    connections: Arc<RwLock<std::collections::HashMap<SocketAddr, quinn::Connection>>>,
+    // Channel for receiving DHT messages
+    receiver: Arc<RwLock<tokio::sync::mpsc::UnboundedReceiver<(Vec<u8>, SocketAddr)>>>,
+}
+
+impl QuicDhtTransport {
+    pub fn new(
+        endpoint: Arc<quinn::Endpoint>,
+        local_addr: SocketAddr,
+    ) -> (Self, tokio::sync::mpsc::UnboundedSender<(Vec<u8>, SocketAddr)>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let transport = Self {
+            endpoint,
+            local_addr,
+            connections: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            receiver: Arc::new(RwLock::new(rx)),
+        };
+        (transport, tx)
+    }
+    
+    /// Get or establish QUIC connection to peer
+    async fn get_connection(&self, addr: &SocketAddr) -> Result<quinn::Connection> {
+        // Check if we already have a connection
+        {
+            let connections = self.connections.read().await;
+            if let Some(conn) = connections.get(addr) {
+                if !conn.close_reason().is_some() {
+                    return Ok(conn.clone());
+                }
+            }
+        }
+        
+        // Establish new connection
+        let conn = self.endpoint.connect(*addr, "dht")?.await?;
+        
+        // Store connection
+        let mut connections = self.connections.write().await;
+        connections.insert(*addr, conn.clone());
+        
+        Ok(conn)
+    }
+}
+
+#[async_trait]
+impl DhtTransport for QuicDhtTransport {
+    async fn send(&self, data: &[u8], peer: &PeerId) -> Result<()> {
+        match peer {
+            PeerId::Udp(addr) => {
+                // Get or establish QUIC connection
+                let conn = self.get_connection(addr).await?;
+                
+                // Open unidirectional stream and send data
+                let mut send_stream = conn.open_uni().await?;
+                send_stream.write_all(data).await?;
+                send_stream.finish()?;
+                
+                Ok(())
+            }
+            _ => Err(anyhow::anyhow!("QUIC transport can only send to UDP-addressed peers")),
+        }
+    }
+    
+    async fn receive(&self) -> Result<(Vec<u8>, PeerId)> {
+        let mut receiver = self.receiver.write().await;
+        if let Some((data, addr)) = receiver.recv().await {
+            Ok((data, PeerId::Udp(addr)))
+        } else {
+            Err(anyhow::anyhow!("QUIC transport receiver closed"))
+        }
+    }
+    
+    fn local_peer_id(&self) -> PeerId {
+        PeerId::Udp(self.local_addr)
+    }
+    
+    async fn can_reach(&self, peer: &PeerId) -> bool {
+        matches!(peer, PeerId::Udp(_))
+    }
+    
+    fn mtu(&self) -> usize {
+        1200 // QUIC recommended MTU for reliable delivery
+    }
+    
+    fn typical_latency_ms(&self) -> u32 {
+        15 // Slightly higher than UDP due to QUIC overhead, but with reliability
+    }
+}
+
+/// WiFi Direct DHT transport (**TICKET #152**)
+/// Provides peer-to-peer transport over WiFi Direct connections
+pub struct WiFiDirectDhtTransport {
+    wifi_direct_protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>,
+    local_addr: SocketAddr,
+    // Channel for receiving DHT messages from WiFi Direct
+    receiver: Arc<RwLock<tokio::sync::mpsc::UnboundedReceiver<(Vec<u8>, SocketAddr)>>>,
+}
+
+impl WiFiDirectDhtTransport {
+    pub fn new(
+        wifi_direct_protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>,
+        local_addr: SocketAddr,
+    ) -> (Self, tokio::sync::mpsc::UnboundedSender<(Vec<u8>, SocketAddr)>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let transport = Self {
+            wifi_direct_protocol,
+            local_addr,
+            receiver: Arc::new(RwLock::new(rx)),
+        };
+        (transport, tx)
+    }
+}
+
+#[async_trait]
+impl DhtTransport for WiFiDirectDhtTransport {
+    async fn send(&self, data: &[u8], peer: &PeerId) -> Result<()> {
+        match peer {
+            PeerId::WiFiDirect(addr) => {
+                let protocol = self.wifi_direct_protocol.read().await;
+                // Send via WiFi Direct mesh protocol
+                protocol.send_mesh_message(&addr.to_string(), data).await?;
+                Ok(())
+            }
+            _ => Err(anyhow::anyhow!("WiFi Direct transport can only send to WiFi Direct peers")),
+        }
+    }
+    
+    async fn receive(&self) -> Result<(Vec<u8>, PeerId)> {
+        let mut receiver = self.receiver.write().await;
+        if let Some((data, addr)) = receiver.recv().await {
+            Ok((data, PeerId::WiFiDirect(addr)))
+        } else {
+            Err(anyhow::anyhow!("WiFi Direct transport receiver closed"))
+        }
+    }
+    
+    fn local_peer_id(&self) -> PeerId {
+        PeerId::WiFiDirect(self.local_addr)
+    }
+    
+    async fn can_reach(&self, peer: &PeerId) -> bool {
+        if let PeerId::WiFiDirect(addr) = peer {
+            let protocol = self.wifi_direct_protocol.read().await;
+            // Check if peer is in connected devices
+            let connected = protocol.connected_devices.read().await;
+            connected.contains_key(&addr.to_string())
+        } else {
+            false
+        }
+    }
+    
+    fn mtu(&self) -> usize {
+        1400 // Similar to UDP, WiFi Direct has good MTU
+    }
+    
+    fn typical_latency_ms(&self) -> u32 {
+        20 // Low latency for local P2P connections
     }
 }
 
