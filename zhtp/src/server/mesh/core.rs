@@ -83,8 +83,8 @@ use super::super::monitoring::{
 
 /// UDP mesh protocol routing and handling
 pub struct MeshRouter {
-    // Core connection management (Ticket #146: Use UnifiedPeerId as key)
-    pub connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
+    // Core connection management (Ticket #149: Use unified PeerRegistry)
+    pub connections: Arc<RwLock<lib_network::peer_registry::PeerRegistry>>,
     pub server_id: Uuid,
     pub identity_manager: Option<Arc<RwLock<IdentityManager>>>,
     pub session_manager: Arc<SessionManager>,
@@ -150,8 +150,8 @@ pub struct MeshRouter {
 
 impl MeshRouter {
     pub fn new(server_id: Uuid, session_manager: Arc<SessionManager>) -> Self {
-        // Create shared connections map
-        let connections = Arc::new(RwLock::new(HashMap::new()));
+        // Create shared peer registry (Ticket #149: replaces connections HashMap)
+        let connections = Arc::new(RwLock::new(lib_network::peer_registry::PeerRegistry::new()));
         
         // Create blockchain sync manager
         let sync_manager = Arc::new(lib_network::blockchain_sync::BlockchainSyncManager::new());
@@ -308,8 +308,8 @@ impl MeshRouter {
     /// Get list of connected peer addresses
     pub async fn get_peer_addresses(&self) -> Vec<String> {
         self.connections.read().await
-            .values()
-            .filter_map(|conn| conn.peer_address.clone())
+            .all_peers()
+            .filter_map(|peer_entry| peer_entry.endpoints.first().map(|e| e.address.clone()))
             .collect()
     }
     
@@ -389,7 +389,7 @@ impl MeshRouter {
 impl Clone for MeshRouter {
     fn clone(&self) -> Self {
         Self {
-            connections: self.connections.clone(),
+            connections: Arc::new(RwLock::new(lib_network::peer_registry::PeerRegistry::new())),
             server_id: self.server_id,
             identity_manager: self.identity_manager.clone(),
             session_manager: self.session_manager.clone(),
