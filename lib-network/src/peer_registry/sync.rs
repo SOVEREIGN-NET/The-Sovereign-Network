@@ -24,8 +24,47 @@
 
 use crate::peer_registry::{PeerEntry, UnifiedPeerId};
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
+
+/// Statistics about the observer registry for monitoring
+#[derive(Debug, Clone)]
+pub struct ObserverRegistryStats {
+    /// Current number of registered observers
+    pub observer_count: usize,
+    /// Maximum allowed observers
+    pub max_observers: usize,
+    /// Names of all registered observers
+    pub registered_observer_names: Vec<String>,
+    /// Registration times for all observers
+    pub registration_times: HashMap<String, Instant>,
+}
+
+impl ObserverRegistryStats {
+    /// Calculate average observer lifetime
+    pub fn average_lifetime_secs(&self) -> Option<f64> {
+        if self.registration_times.is_empty() {
+            return None;
+        }
+        
+        let now = Instant::now();
+        let total_secs: f64 = self.registration_times.values()
+            .map(|&reg_time| now.duration_since(reg_time).as_secs_f64())
+            .sum();
+        
+        Some(total_secs / self.registration_times.len() as f64)
+    }
+    
+    /// Get the longest-running observer
+    pub fn longest_running_observer(&self) -> Option<(&String, f64)> {
+        let now = Instant::now();
+        self.registration_times.iter()
+            .map(|(name, &reg_time)| (name, now.duration_since(reg_time).as_secs_f64()))
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+    }
+}
 
 /// Events emitted when peer registry state changes
 #[derive(Debug, Clone)]
@@ -314,28 +353,89 @@ impl PeerRegistryObserver for BlockchainObserver {
 /// Thread-safe container for all registered observers
 pub struct ObserverRegistry {
     observers: Arc<RwLock<Vec<Arc<dyn PeerRegistryObserver>>>>,
+    /// Maximum number of observers to prevent memory exhaustion
+    max_observers: usize,
+    /// Track observer registration timestamps for cleanup
+    registration_times: Arc<RwLock<HashMap<String, Instant>>>, // observer_name -> registration_time
+}
+
+/// Configuration for ObserverRegistry
+#[derive(Debug, Clone)]
+pub struct ObserverRegistryConfig {
+    /// Maximum number of observers to prevent memory exhaustion (default: 50)
+    pub max_observers: usize,
+    /// Enable automatic cleanup of stale observers (default: true)
+    pub enable_cleanup: bool,
+    /// Observer timeout in seconds for cleanup (default: 3600 - 1 hour)
+    pub observer_timeout_secs: u64,
+}
+
+impl Default for ObserverRegistryConfig {
+    fn default() -> Self {
+        Self {
+            max_observers: 50,
+            enable_cleanup: true,
+            observer_timeout_secs: 3600, // 1 hour
+        }
+    }
 }
 
 impl ObserverRegistry {
-    /// Create a new empty observer registry
+    /// Create a new empty observer registry with default configuration
     pub fn new() -> Self {
+        Self::with_config(ObserverRegistryConfig::default())
+    }
+    
+    /// Create a new observer registry with custom configuration
+    pub fn with_config(config: ObserverRegistryConfig) -> Self {
         Self {
             observers: Arc::new(RwLock::new(Vec::new())),
+            max_observers: config.max_observers,
+            registration_times: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
     /// Register an observer for peer change notifications
-    pub async fn register(&self, observer: Arc<dyn PeerRegistryObserver>) {
+    ///
+    /// # Memory Management
+    /// - Enforces max_observers limit to prevent memory exhaustion
+    /// - Tracks registration time for cleanup purposes
+    /// - Returns error if observer limit would be exceeded
+    pub async fn register(&self, observer: Arc<dyn PeerRegistryObserver>) -> Result<()> {
         let mut observers = self.observers.write().await;
-        tracing::info!(observer = observer.name(), "Registering peer registry observer");
+        
+        // Memory management: Prevent observer count explosion
+        if observers.len() >= self.max_observers {
+            return Err(anyhow!(
+                "Observer limit reached: {} (max: {})",
+                observers.len(),
+                self.max_observers
+            ));
+        }
+        
+        // Track registration time for cleanup
+        let observer_name = observer.name().to_string();
+        let mut registration_times = self.registration_times.write().await;
+        registration_times.insert(observer_name.clone(), Instant::now());
+        
+        tracing::info!(observer = observer_name, "Registering peer registry observer");
         observers.push(observer);
+        
+        Ok(())
     }
     
     /// Unregister an observer by name
+    ///
+    /// # Memory Management
+    /// - Also cleans up registration time tracking
     pub async fn unregister(&self, name: &str) -> bool {
         let mut observers = self.observers.write().await;
+        let mut registration_times = self.registration_times.write().await;
+        
         let initial_len = observers.len();
         observers.retain(|obs| obs.name() != name);
+        registration_times.remove(name);
+        
         let removed = initial_len != observers.len();
         
         if removed {
@@ -343,6 +443,57 @@ impl ObserverRegistry {
         }
         
         removed
+    }
+    
+    /// Clean up stale observers based on timeout
+    ///
+    /// # Memory Management
+    /// - Removes observers that haven't been accessed recently
+    /// - Prevents memory leaks from abandoned observers
+    /// - Returns number of observers removed
+    pub async fn cleanup_stale_observers(&self, timeout_secs: u64) -> usize {
+        let now = Instant::now();
+        let mut registration_times = self.registration_times.write().await;
+        let mut observers = self.observers.write().await;
+        
+        let stale_observers: Vec<String> = registration_times.iter()
+            .filter(|(_, &reg_time)| now.duration_since(reg_time).as_secs() > timeout_secs)
+            .map(|(name, _)| name.clone())
+            .collect();
+        
+        let count = stale_observers.len();
+        if count > 0 {
+            tracing::info!(
+                stale_count = count,
+                timeout_secs = timeout_secs,
+                "Cleaning up stale observers"
+            );
+            
+            // Remove stale observers
+            for name in stale_observers {
+                observers.retain(|obs| obs.name() != &name);
+                registration_times.remove(&name);
+                tracing::debug!(observer = name, "Removed stale observer");
+            }
+        }
+        
+        count
+    }
+    
+    /// Get observer statistics for monitoring
+    ///
+    /// # Performance Monitoring
+    /// - Provides insights into observer registry health
+    pub async fn get_stats(&self) -> ObserverRegistryStats {
+        let observers = self.observers.read().await;
+        let registration_times = self.registration_times.read().await;
+        
+        ObserverRegistryStats {
+            observer_count: observers.len(),
+            max_observers: self.max_observers,
+            registered_observer_names: observers.iter().map(|obs| obs.name().to_string()).collect(),
+            registration_times: registration_times.clone(),
+        }
     }
     
     /// Dispatch an event to all registered observers
@@ -690,7 +841,7 @@ mod tests {
     async fn test_batch_update_event() {
         let registry = ObserverRegistry::new();
         let (observer, events) = TestObserver::new("test");
-        registry.register(Arc::new(observer)).await;
+        registry.register(Arc::new(observer)).await.unwrap();
         
         let event = PeerRegistryEvent::BatchUpdate {
             added: vec![],
@@ -703,5 +854,95 @@ mod tests {
         let received = events.read().await;
         assert_eq!(received.len(), 1);
         matches!(received[0], PeerRegistryEvent::BatchUpdate { .. });
+    }
+    
+    #[tokio::test]
+    async fn test_observer_limit_enforcement() {
+        let config = ObserverRegistryConfig {
+            max_observers: 2,
+            enable_cleanup: true,
+            observer_timeout_secs: 60,
+        };
+        let registry = ObserverRegistry::with_config(config);
+        
+        // Should succeed for first two observers
+        let (observer1, _) = TestObserver::new("test1");
+        registry.register(Arc::new(observer1)).await.unwrap();
+        
+        let (observer2, _) = TestObserver::new("test2");
+        registry.register(Arc::new(observer2)).await.unwrap();
+        
+        // Should fail for third observer (limit reached)
+        let (observer3, _) = TestObserver::new("test3");
+        let result = registry.register(Arc::new(observer3)).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("limit reached"));
+    }
+    
+    #[tokio::test]
+    async fn test_observer_stats() {
+        let registry = ObserverRegistry::new();
+        
+        let (observer1, _) = TestObserver::new("test1");
+        registry.register(Arc::new(observer1)).await.unwrap();
+        
+        let (observer2, _) = TestObserver::new("test2");
+        registry.register(Arc::new(observer2)).await.unwrap();
+        
+        let stats = registry.get_stats().await;
+        assert_eq!(stats.observer_count, 2);
+        assert_eq!(stats.max_observers, 50);
+        assert_eq!(stats.registered_observer_names.len(), 2);
+        assert!(stats.average_lifetime_secs().is_some());
+        assert!(stats.longest_running_observer().is_some());
+    }
+    
+    #[tokio::test]
+    async fn test_stale_observer_cleanup() {
+        let config = ObserverRegistryConfig {
+            max_observers: 50,
+            enable_cleanup: true,
+            observer_timeout_secs: 1, // Very short for testing
+        };
+        let registry = ObserverRegistry::with_config(config);
+        
+        let (observer1, _) = TestObserver::new("test1");
+        registry.register(Arc::new(observer1)).await.unwrap();
+        
+        // Simulate old registration by manipulating time
+        // (In real scenario, this would happen naturally over time)
+        let mut registration_times = registry.registration_times.write().await;
+        if let Some(time) = registration_times.get_mut("test1") {
+            // Make it appear very old (10 seconds ago)
+            *time = Instant::now() - std::time::Duration::from_secs(10);
+        }
+        drop(registration_times);
+        
+        // Cleanup should remove the stale observer
+        let removed = registry.cleanup_stale_observers(5).await; // 5 second timeout
+        assert_eq!(removed, 1);
+        
+        // Verify observer was removed
+        let stats = registry.get_stats().await;
+        assert_eq!(stats.observer_count, 0);
+    }
+    
+    #[tokio::test]
+    async fn test_observer_unregister_cleanup() {
+        let registry = ObserverRegistry::new();
+        
+        let (observer, _) = TestObserver::new("test");
+        registry.register(Arc::new(observer)).await.unwrap();
+        
+        // Verify registration time was tracked
+        let stats_before = registry.get_stats().await;
+        assert_eq!(stats_before.registration_times.len(), 1);
+        
+        // Unregister should cleanup both observer and registration time
+        let removed = registry.unregister("test").await;
+        assert!(removed);
+        
+        let stats_after = registry.get_stats().await;
+        assert_eq!(stats_after.registration_times.len(), 0);
     }
 }

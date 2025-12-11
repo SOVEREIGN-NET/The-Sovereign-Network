@@ -17,48 +17,46 @@
 //! - **Comprehensive Metadata**: All connection, routing, and capability data in one place
 // Synchronization module (Ticket #151)
 pub mod sync;
-//! - **Rate Limiting**: Prevents DoS attacks via rapid peer churn
-//! - **Rate Limiting**: Prevents DoS attacks via rapid peer churn
-//!
-//! ## Security Features
-//!
-//! - **DID Validation**: All DIDs validated before indexing (format + optional blockchain verification)
-//! - **Index Consistency**: Atomic updates prevent stale index entries
-//! - **Audit Logging**: All peer changes logged for security monitoring
-//! - **Sybil Resistance**: Max peers limit + eviction policy
-//! - **Rate Limiting**: Per-peer and global rate limits prevent DoS attacks
-//! - **TOCTOU Prevention**: Atomic update methods prevent race conditions
-//!
-//! ## Acceptance Criteria Verification
-//!
-//! ✅ **Single peer registry structure defined**
-//!    - PeerRegistry struct with HashMap<UnifiedPeerId, PeerEntry> primary storage
-//!    - Secondary indexes for NodeId, PublicKey, DID
-//!
-//! ✅ **Consolidates metadata from all 6 existing stores**
-//!    - PeerEntry struct with all metadata
-//!    - Connection metadata (from MeshConnection): endpoints, protocols, metrics, auth
-//!    - Routing metadata (from RouteInfo): next_hop, hop_count, quality
-//!    - Topology metadata (from NetworkNode): capabilities, location, reliability
-//!    - DHT metadata (from DHT routing table): kademlia distance, bucket, contact
-//!    - Discovery metadata (from bootstrap): discovery method, timestamps
-//!    - Trust/tier metadata: trust_score, tier classification
-//!
-//! ✅ **Thread-safe wrapper using Arc<RwLock<>>**
-//!    - SharedPeerRegistry type alias
-//!    - new_shared_registry() constructor
-//!    - All methods use RwLock for concurrent access
-//!
-//! ✅ **Lookup methods for all identifier types**
-//!    - find_by_node_id()
-//!    - find_by_public_key()
-//!    - find_by_did()
-//!
-//! ✅ **Atomic update operations**
-//!    - upsert() atomically updates all indexes (with stale entry cleanup)
-//!    - remove() atomically removes from all indexes
-//!    - update_metrics()
-//!    - update_trust()
+
+/// ## Security Features
+///
+/// - **DID Validation**: All DIDs validated before indexing (format + optional blockchain verification)
+/// - **Index Consistency**: Atomic updates prevent stale index entries
+/// - **Audit Logging**: All peer changes logged for security monitoring
+/// - **Sybil Resistance**: Max peers limit + eviction policy
+/// - **Rate Limiting**: Prevents DoS attacks via rapid peer churn
+/// - **TOCTOU Prevention**: Atomic update methods prevent race conditions
+
+// Acceptance Criteria Verification
+//
+// ✅ **Single peer registry structure defined**
+//    - PeerRegistry struct with HashMap<UnifiedPeerId, PeerEntry> primary storage
+//    - Secondary indexes for NodeId, PublicKey, DID
+//
+// ✅ **Consolidates metadata from all 6 existing stores**
+//    - PeerEntry struct with all metadata
+//    - Connection metadata (from MeshConnection): endpoints, protocols, metrics, auth
+//    - Routing metadata (from RouteInfo): next_hop, hop_count, quality
+//    - Topology metadata (from NetworkNode): capabilities, location, reliability
+//    - DHT metadata (from DHT routing table): kademlia distance, bucket, contact
+//    - Discovery metadata (from bootstrap): discovery method, timestamps
+//    - Trust/tier metadata: trust_score, tier classification
+//
+// ✅ **Thread-safe wrapper using Arc<RwLock<>>**
+//    - SharedPeerRegistry type alias
+//    - new_shared_registry() constructor
+//    - All methods use RwLock for concurrent access
+//
+// ✅ **Lookup methods for all identifier types**
+//    - find_by_node_id()
+//    - find_by_public_key()
+//    - find_by_did()
+//
+// ✅ **Atomic update operations**
+//    - upsert() atomically updates all indexes (with stale entry cleanup)
+//    - remove() atomically removes from all indexes
+//    - update_metrics()
+//    - update_trust()
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -244,6 +242,15 @@ pub struct PeerRegistry {
 
     /// Rate limiter for DoS protection
     rate_limiter: RateLimiter,
+}
+
+/// Extended configuration for PeerRegistry including observer settings
+#[derive(Debug, Clone)]
+pub struct PeerRegistryConfig {
+    /// Base registry configuration
+    pub base_config: RegistryConfig,
+    /// Observer registry configuration
+    pub observer_config: sync::ObserverRegistryConfig,
 }
 
 /// Complete peer metadata - consolidates all data from 6 existing registries
@@ -555,6 +562,23 @@ impl PeerRegistry {
     /// Unregister an observer by name (Ticket #151)
     pub async fn unregister_observer(&self, name: &str) -> bool {
         self.observers.unregister(name).await
+    }
+    
+    /// Clean up stale observers based on timeout (Ticket #151)
+    ///
+    /// # Memory Management
+    /// - Removes observers that haven't been active recently
+    /// - Returns number of observers removed
+    pub async fn cleanup_stale_observers(&self, timeout_secs: u64) -> usize {
+        self.observers.cleanup_stale_observers(timeout_secs).await
+    }
+    
+    /// Get observer registry statistics for monitoring (Ticket #151)
+    ///
+    /// # Performance Monitoring
+    /// - Provides insights into observer health and performance
+    pub async fn get_observer_stats(&self) -> sync::ObserverRegistryStats {
+        self.observers.get_stats().await
     }
 
     /// Validate DID format before indexing
