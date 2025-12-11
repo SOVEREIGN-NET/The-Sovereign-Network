@@ -5,6 +5,12 @@ on:
     branches: [development]
   pull_request:
     branches: [development]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or tag to run against (defaults to current ref or development)'
+        required: false
+        default: 'development'
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,6 +35,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
       - name: Install system dependencies
         run: |
@@ -76,6 +84,7 @@ jobs:
       - name: Checkout (for service file)
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
           sparse-checkout: deploy
 
       - name: Download Release Artifact
@@ -110,3 +119,35 @@ jobs:
             systemctl start zhtp &&
             echo "Deployed and started at $(date)"
           '
+
+  macos:
+    name: Build/Test (macOS)
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build workspace
+        run: cargo build --workspace --locked
+
+      - name: Test lib-network (BLE/GATT coverage)
+        run: cargo test -p lib-network --locked -- --nocapture
