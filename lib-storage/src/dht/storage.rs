@@ -114,12 +114,15 @@ impl DhtStorage {
     }
 
     /// Create DHT storage with networking enabled
+    /// 
+    /// # Ticket #154
+    /// Migrated to accept DhtMessageRouter trait instead of bind_addr for multi-transport DHT support
     pub async fn new_with_network(
         local_node: DhtNode, 
-        bind_addr: SocketAddr, 
+        router: Option<std::sync::Arc<tokio::sync::RwLock<dyn crate::dht::network::DhtMessageRouter>>>,
         max_storage_size: u64
     ) -> Result<Self> {
-        let network = DhtNetwork::new(local_node.clone(), bind_addr)?;
+        let network = DhtNetwork::new(local_node.clone(), router)?;
         
         Ok(Self {
             storage: HashMap::new(),

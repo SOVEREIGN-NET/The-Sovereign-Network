@@ -195,7 +195,6 @@ impl MeshRouter {
             let hash_bytes = lib_crypto::hash_blake3(server_id.as_bytes());
             lib_identity::NodeId::from_bytes(hash_bytes)
         };
-        let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
         let local_node = lib_storage::types::dht_types::DhtNode {
             peer: lib_storage::types::dht_types::DhtPeerIdentity {
                 node_id: local_node_id.clone(),
@@ -207,7 +206,7 @@ impl MeshRouter {
                 did: format!("did:zhtp:{}", hex::encode(local_node_id.as_bytes())),
                 device_id: "mesh-node".to_string(),
             },
-            addresses: vec![bind_addr.to_string()],
+            addresses: vec!["0.0.0.0:0".to_string()], // Placeholder - mesh routing doesn't use fixed bind address
             public_key: PostQuantumSignature::default(),
             last_seen: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -218,23 +217,36 @@ impl MeshRouter {
         };
         
         // Create DHT storage synchronously (no network init yet) - 10GB max
-        let dht_storage_instance = DhtStorage::new(local_node_id, 10_000_000_000);
+        let dht_storage_instance = DhtStorage::new(local_node_id.clone(), 10_000_000_000);
         let dht_storage = Arc::new(tokio::sync::Mutex::new(dht_storage_instance));
         
-        // Spawn async task to initialize network and start processing
+        // Create mesh message router BEFORE DHT initialization (Ticket #154)
+        let mesh_message_router = Arc::new(RwLock::new(
+            MeshMessageRouter::new(
+                connections_for_router.clone(), 
+                Arc::new(RwLock::new(HashMap::new()))
+            )
+        ));
+        
+        // Create DHT router adapter (Ticket #154: breaks circular dependency)
+        let dht_router_adapter = Arc::new(RwLock::new(
+            lib_network::routing::dht_router_adapter::MeshDhtRouterAdapter::new(mesh_message_router.clone())
+        ));
+        
+        // Spawn async task to initialize DHT network with mesh routing
         // This avoids the "cannot block_on inside runtime" panic
         {
             let dht_storage_task = dht_storage.clone();
-            let local_node_for_task = local_node;
-            let bind_addr_for_task = bind_addr;
+            let local_node_for_task = local_node.clone();
+            let router_for_task = dht_router_adapter.clone();
             tokio::spawn(async move {
-                // Initialize network-enabled DHT asynchronously
-                match DhtStorage::new_with_network(local_node_for_task, bind_addr_for_task, 10_000_000_000).await {
+                // Initialize network-enabled DHT asynchronously (Ticket #154: uses mesh router via adapter)
+                match DhtStorage::new_with_network(local_node_for_task, Some(router_for_task), 10_000_000_000).await {
                     Ok(mut network_storage) => {
                         let _ = network_storage.start_network_processing().await;
                         let mut storage = dht_storage_task.lock().await;
                         *storage = network_storage;
-                        debug!("DHT network storage initialized successfully");
+                        debug!("DHT network storage initialized with mesh routing (Ticket #154)");
                     }
                     Err(e) => {
                         debug!("DHT network initialization failed (using local-only mode): {}", e);
@@ -271,12 +283,7 @@ impl MeshRouter {
             metrics_history: Arc::new(RwLock::new(MetricsHistory::new(720, 60))),
             latency_samples_blocks: Arc::new(RwLock::new(Vec::new())),
             latency_samples_txs: Arc::new(RwLock::new(Vec::new())),
-            mesh_message_router: Arc::new(RwLock::new(
-                MeshMessageRouter::new(
-                    connections_for_router, 
-                    Arc::new(RwLock::new(HashMap::new()))
-                )
-            )),
+            mesh_message_router,
             dht_storage,
             dht_handler: Arc::new(RwLock::new(None)),
             zhtp_router: Arc::new(RwLock::new(None)),
