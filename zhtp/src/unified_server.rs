@@ -355,12 +355,12 @@ impl ZhtpUnifiedServer {
         
         // Create MeshMessageHandler for routing blockchain sync messages
         // Note: These will be populated properly when mesh_router is initialized
-        let mesh_connections = Arc::new(RwLock::new(std::collections::HashMap::new()));
+        let peer_registry = Arc::new(RwLock::new(lib_network::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(std::collections::HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(std::collections::HashMap::new()));
         
         let message_handler = lib_network::messaging::message_handler::MeshMessageHandler::new(
-            mesh_connections,
+            peer_registry,
             long_range_relays,
             revenue_pools,
         );
@@ -652,7 +652,7 @@ impl ZhtpUnifiedServer {
         // Initialize Bluetooth LE discovery (pass mesh_connections and peer notification channel for GATT handler)
         // Spawn as background task to avoid blocking HTTP server startup
         let bluetooth_router_clone = self.bluetooth_router.clone();
-        let mesh_connections_clone = self.mesh_router.connections.clone();
+        let peer_registry_clone = self.mesh_router.connections.clone();
         let bluetooth_provider = self.mesh_router.blockchain_provider.read().await.clone();
         let ble_peer_tx_clone = ble_peer_tx.clone();
         let our_public_key_clone = our_public_key.clone();
@@ -670,7 +670,7 @@ impl ZhtpUnifiedServer {
 
             info!("Initializing Bluetooth mesh protocol for phone connectivity...");
             match bluetooth_router_clone.initialize(
-                mesh_connections_clone,
+                peer_registry_clone,
                 Some(ble_peer_tx_clone),
                 our_public_key_clone,
                 bluetooth_provider,

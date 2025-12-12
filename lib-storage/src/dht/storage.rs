@@ -17,6 +17,8 @@ use lib_proofs::{ZkProof, ZeroKnowledgeProof};
 use tracing::{debug, warn};
 
 /// DHT storage manager with networking
+///
+/// **MIGRATED (Ticket #148):** Now uses shared PeerRegistry for DHT peer storage
 #[derive(Debug)]
 pub struct DhtStorage {
     /// Local storage for key-value pairs
@@ -41,6 +43,8 @@ pub struct DhtStorage {
 
 impl DhtStorage {
     /// Create a new DHT storage manager
+    ///
+    /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
     pub fn new(local_node_id: NodeId, max_storage_size: u64) -> Self {
         Self {
             storage: HashMap::new(),
@@ -114,13 +118,15 @@ impl DhtStorage {
     }
 
     /// Create DHT storage with networking enabled
+    ///
+    /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
     pub async fn new_with_network(
         local_node: DhtNode, 
         bind_addr: SocketAddr, 
         max_storage_size: u64
     ) -> Result<Self> {
+        // Use UDP transport by default (Ticket #152 - Transport Abstraction)
         let network = DhtNetwork::new_udp(local_node.clone(), bind_addr)?;
-        
         Ok(Self {
             storage: HashMap::new(),
             max_storage_size,

@@ -90,15 +90,13 @@ impl MeshRouter {
                         let mut success_count = 0;
                         
                         if let Some(quic) = quic_protocol.read().await.as_ref() {
-                            for (_peer_key, connection) in conns.iter() {
-                                match &connection.protocol {
-                                    NetworkProtocol::QUIC => {
-                                        // Use peer_id (PublicKey) to send via QUIC
-                                        if quic.send_to_peer(&connection.peer.public_key().key_id, message.clone()).await.is_ok() {
-                                            success_count += 1;
-                                        }
+                            for peer_entry in conns.all_peers() {
+                                // Check if peer has QUIC protocol
+                                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
+                                    // Use peer_id (PublicKey) to send via QUIC
+                                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
+                                        success_count += 1;
                                     }
-                                    _ => {} // Other protocols: BluetoothLE, BluetoothClassic, WiFiDirect
                                 }
                             }
                         }
@@ -177,14 +175,12 @@ impl MeshRouter {
                         let mut success_count = 0;
                         
                         if let Some(quic) = quic_protocol.read().await.as_ref() {
-                            for (_peer_key, connection) in conns.iter() {
-                                match &connection.protocol {
-                                    NetworkProtocol::QUIC => {
-                                        if quic.send_to_peer(&connection.peer.public_key().key_id, message.clone()).await.is_ok() {
-                                            success_count += 1;
-                                        }
+                            for peer_entry in conns.all_peers() {
+                                // Check if peer has QUIC protocol
+                                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
+                                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
+                                        success_count += 1;
                                     }
-                                    _ => {}
                                 }
                             }
                         }
@@ -296,12 +292,13 @@ impl MeshRouter {
         // Ticket #146: Convert PublicKey to UnifiedPeerId for HashMap lookup
         let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_id.clone());
 
-        // Get peer's connection info
+        // Get peer's connection info (Ticket #149: Use PeerRegistry)
         let connections = self.connections.read().await;
-        let connection = connections.get(&unified_peer)
+        let peer_entry = connections.get(&unified_peer)
             .ok_or_else(|| anyhow::anyhow!("Peer not found in connections"))?;
         
-        let peer_address = connection.peer_address.as_ref()
+        let peer_address = peer_entry.endpoints.first()
+            .and_then(|endpoint| Some(endpoint.address.as_str()))
             .ok_or_else(|| anyhow::anyhow!("Peer has no address"))?;
         
         // Serialize message
@@ -311,20 +308,46 @@ impl MeshRouter {
         // Track bytes sent for performance metrics
         self.track_bytes_sent(serialized.len() as u64).await;
         
-        // Send based on protocol
-        match &connection.protocol {
-            NetworkProtocol::QUIC => {
-                if let Some(quic) = self.quic_protocol.read().await.as_ref() {
-                    quic.send_to_peer(&connection.peer.public_key().key_id, message).await
-                        .context("Failed to send QUIC message")?;
-                    info!("✅ Message sent via QUIC to peer {:?}", &connection.peer.public_key().key_id[..8]);
-                } else {
-                    return Err(anyhow::anyhow!("QUIC protocol not initialized"));
+        // Send based on protocol (Ticket #149: Use PeerRegistry)
+        // Use first protocol from active_protocols
+        if let Some(protocol) = peer_entry.active_protocols.first() {
+            match protocol {
+                NetworkProtocol::QUIC => {
+                    if let Some(quic) = self.quic_protocol.read().await.as_ref() {
+                        quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message).await
+                            .context("Failed to send QUIC message")?;
+                        info!("✅ Message sent via QUIC to peer {:?}", &peer_entry.peer_id.public_key().key_id[..8]);
+                    } else {
+                        return Err(anyhow::anyhow!("QUIC protocol not initialized"));
+                    }
+                }
+                NetworkProtocol::BluetoothLE => {
+                    warn!("Bluetooth LE protocol not supported for direct message sending");
+                    return Err(anyhow::anyhow!("Bluetooth LE not supported"));
+                }
+                NetworkProtocol::BluetoothClassic => {
+                    warn!("Bluetooth Classic protocol not supported for direct message sending");
+                    return Err(anyhow::anyhow!("Bluetooth Classic not supported"));
+                }
+                NetworkProtocol::WiFiDirect => {
+                    warn!("WiFi Direct protocol not supported for direct message sending");
+                    return Err(anyhow::anyhow!("WiFi Direct not supported"));
+                }
+                NetworkProtocol::LoRaWAN => {
+                    warn!("LoRaWAN protocol not supported for direct message sending");
+                    return Err(anyhow::anyhow!("LoRaWAN not supported"));
+                }
+                NetworkProtocol::Satellite => {
+                    warn!("Satellite protocol not supported for direct message sending");
+                    return Err(anyhow::anyhow!("Satellite not supported"));
+                }
+                _ => {
+                    warn!("Protocol {:?} not supported for direct message sending", protocol);
+                    return Err(anyhow::anyhow!("Protocol not supported"));
                 }
             }
-            _ => {
-                return Err(anyhow::anyhow!("Protocol not supported for direct sending"));
-            }
+        } else {
+            return Err(anyhow::anyhow!("No active protocols found for peer"));
         }
         
         Ok(())
@@ -339,14 +362,12 @@ impl MeshRouter {
         let mut success_count = 0;
         
         if let Some(quic) = self.quic_protocol.read().await.as_ref() {
-            for (_peer_key, connection) in connections.iter() {
-                match &connection.protocol {
-                    NetworkProtocol::QUIC => {
-                        if quic.send_to_peer(&connection.peer.public_key().key_id, message.clone()).await.is_ok() {
-                            success_count += 1;
-                        }
+            for peer_entry in connections.all_peers() {
+                // Check if peer has QUIC protocol
+                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
+                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
+                        success_count += 1;
                     }
-                    _ => {} // Other protocols
                 }
             }
         }
@@ -394,13 +415,15 @@ impl MeshRouter {
         // Ticket #146: Convert PublicKey to UnifiedPeerId for HashMap lookup
         let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
 
-        // Check if peer connection exists
+        // Check if peer connection exists (Ticket #149: Use PeerRegistry)
         let connections = self.connections.read().await;
-        let connection = connections.get(&unified_peer)
+        let peer_entry = connections.get(&unified_peer)
             .ok_or_else(|| anyhow::anyhow!("Peer not connected"))?;
         
         // Register with sync coordinator to prevent duplicate syncs
-        let protocol = connection.protocol.clone();
+        // Ticket #149: Use active_protocols instead of single protocol
+        let protocol = peer_entry.active_protocols.first().cloned()
+            .unwrap_or(lib_network::protocols::NetworkProtocol::QUIC);
         let should_sync = self.sync_coordinator.register_peer_protocol(
             peer_pubkey,
             protocol.clone(),
