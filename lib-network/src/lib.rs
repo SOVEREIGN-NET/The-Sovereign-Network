@@ -49,6 +49,9 @@ pub use crate::handshake::{
 // DHT client layer is deprecated; kept temporarily for compatibility
 pub use crate::dht::{initialize_dht_client, ZkDHTIntegration, DHTNetworkStatus, DHTClient};
 
+// Network utilities
+pub mod network_utils;
+
 // Web4 domain registry and content publishing
 pub use crate::web4::{Web4Manager, DomainRegistry, ContentPublisher, initialize_web4_system, initialize_web4_system_with_storage};
 

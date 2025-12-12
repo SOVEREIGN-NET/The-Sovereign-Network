@@ -8,13 +8,18 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::{info, debug, warn};
+use crate::network_utils::get_local_ip;
 
 /// Scan local subnet for ZHTP nodes
 pub async fn discover_local_subnet_peers(mesh_port: u16) -> Result<Vec<SocketAddr>> {
     info!("Scanning local subnet for ZHTP nodes on port {}...", mesh_port);
     
     let local_ip = get_local_ip().await?;
-    let subnet_base = get_subnet_base(&local_ip)?;
+    let local_ipv4 = match local_ip {
+        IpAddr::V4(v4) => v4,
+        IpAddr::V6(_) => Ipv4Addr::new(127, 0, 0, 1),
+    };
+    let subnet_base = get_subnet_base(&local_ipv4)?;
     
     info!("Scanning subnet {}.{}.{}.0/24 for ZHTP peers", subnet_base.0, subnet_base.1, subnet_base.2);
     
@@ -84,20 +89,6 @@ async fn test_zhtp_connection(addr: SocketAddr) -> Result<()> {
     }
 }
 
-/// Get the local IP address of this machine
-async fn get_local_ip() -> Result<Ipv4Addr> {
-    // Connect to a well-known address to determine our local IP
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect("8.8.8.8:80")?;
-    
-    match socket.local_addr()? {
-        SocketAddr::V4(addr) => Ok(*addr.ip()),
-        SocketAddr::V6(_) => {
-            // Fallback for IPv6 environments
-            Ok(Ipv4Addr::new(192, 168, 1, 100)) // Common default
-        }
-    }
-}
 
 /// Extract subnet base (first 3 octets) from IP address
 fn get_subnet_base(ip: &Ipv4Addr) -> Result<(u8, u8, u8)> {
@@ -151,7 +142,7 @@ pub async fn get_network_interfaces() -> Result<Vec<NetworkInterface>> {
     if let Ok(local_ip) = get_local_ip().await {
         interfaces.push(NetworkInterface {
             name: "primary".to_string(),
-            ip_address: IpAddr::V4(local_ip),
+            ip_address: local_ip,
             is_active: true,
             interface_type: InterfaceType::Ethernet,
         });

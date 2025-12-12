@@ -3,9 +3,10 @@
 //! Intelligently selects optimal peers based on proximity, performance, and network conditions
 
 use anyhow::Result;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use std::collections::HashMap;
 use tracing::{info, debug};
+use crate::network_utils::get_local_ip;
 
 /// Peer quality metrics for routing decisions
 #[derive(Debug, Clone)]
@@ -121,7 +122,11 @@ pub async fn categorize_peers_by_topology(
     let mut categorized: HashMap<PeerType, Vec<SocketAddr>> = HashMap::new();
     
     let local_ip = get_local_ip().await?;
-    let local_subnet = get_subnet_base(&local_ip);
+    let local_ipv4 = match local_ip {
+        IpAddr::V4(v4) => v4,
+        IpAddr::V6(_) => Ipv4Addr::new(127, 0, 0, 1),
+    };
+    let local_subnet = get_subnet_base(&local_ipv4);
     
     for peer in peers {
         let peer_type = match peer {
@@ -176,21 +181,6 @@ fn is_private_ip(ip: &std::net::Ipv4Addr) -> bool {
 fn get_subnet_base(ip: &std::net::Ipv4Addr) -> (u8, u8, u8) {
     let octets = ip.octets();
     (octets[0], octets[1], octets[2])
-}
-
-/// Get the local IP address (duplicate of network_monitor function)
-async fn get_local_ip() -> Result<std::net::Ipv4Addr> {
-    // Connect to a well-known address to determine our local IP
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect("8.8.8.8:80")?;
-    
-    match socket.local_addr()? {
-        std::net::SocketAddr::V4(addr) => Ok(*addr.ip()),
-        std::net::SocketAddr::V6(_) => {
-            // Fallback for IPv6 environments
-            Ok(std::net::Ipv4Addr::new(192, 168, 1, 100)) // Common default
-        }
-    }
 }
 
 /// Measure peer performance metrics
