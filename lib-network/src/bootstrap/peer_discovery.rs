@@ -2,7 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use lib_crypto::PublicKey;
-use lib_identity::{NodeId, ZhtpIdentity};
+use lib_identity::{NodeId, ZhtpIdentity, IdentityType, IdentityId};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -93,21 +93,16 @@ async fn add_peer_to_registry(
     peer_info: &PeerInfo,
     peer_registry: SharedPeerRegistry,
 ) -> Result<()> {
-    // Convert PublicKey + NodeId + DID to UnifiedPeerId
-    let peer_id = if let Some(node_id) = &peer_info.node_id {
-        UnifiedPeerId::from_components(
-            peer_info.id.clone(),
-            node_id.clone(),
-            peer_info.did.clone(),
-        )
-    } else {
-        // Fallback: create UnifiedPeerId without NodeId (will be empty)
-        UnifiedPeerId::from_components(
-            peer_info.id.clone(),
-            NodeId::from_bytes(&[0u8; 32]), // Empty NodeId as fallback
-            peer_info.did.clone(),
-        )
+    // Convert PeerInfo to ZhtpIdentity then to UnifiedPeerId
+    let identity = ZhtpIdentity {
+        id: IdentityId::new(), // Generate new identity ID
+        identity_type: IdentityType::Device,
+        did: peer_info.did.clone(),
+        public_key: peer_info.id.clone(),
+        node_id: peer_info.node_id.clone(),
+        ..Default::default() // Set other fields to defaults
     };
+    let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
 
     // Convert addresses + protocols to PeerEndpoint list
     let endpoints: Vec<PeerEndpoint> = peer_info
