@@ -66,6 +66,7 @@ use tokio::sync::RwLock;
 use serde::{Serialize, Deserialize};
 use anyhow::{Result, anyhow};
 use tracing::{info, warn, debug};
+use futures::executor::block_on;
 
 use crate::identity::unified_peer::UnifiedPeerId;
 use crate::protocols::NetworkProtocol;
@@ -789,7 +790,7 @@ impl PeerRegistry {
 
         if let Some(peer_id) = expired_peer {
             let audit_logging = self.config.audit_logging; // Capture before mutable borrow
-            let _entry = self.remove(&peer_id);
+            let _entry = block_on(self.remove(&peer_id));
             if audit_logging {
                 info!(
                     peer_did = %peer_id.did(),
@@ -812,7 +813,7 @@ impl PeerRegistry {
 
         if let Some(peer_id) = victim {
             let audit_logging = self.config.audit_logging; // Capture before mutable borrow
-            let _entry = self.remove(&peer_id);
+            let _entry = block_on(self.remove(&peer_id));
             if audit_logging {
                 info!(
                     peer_did = %peer_id.did(),
@@ -877,7 +878,7 @@ impl PeerRegistry {
 
         let count = expired.len();
         for peer_id in expired {
-            self.remove(&peer_id);
+            let _ = block_on(self.remove(&peer_id));
         }
 
         if count > 0 && self.config.audit_logging {
@@ -1335,7 +1336,7 @@ impl PeerRegistry {
 
         let count = failed_peers.len();
         for peer_id in failed_peers {
-            self.remove(&peer_id);
+            let _ = block_on(self.remove(&peer_id));
         }
 
         count
@@ -1379,9 +1380,10 @@ pub fn new_shared_registry() -> SharedPeerRegistry {
     Arc::new(RwLock::new(PeerRegistry::new()))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use tokio_test::block_on;
     
     fn create_test_peer_id() -> UnifiedPeerId {
         // This would use real ZhtpIdentity in production
@@ -1455,7 +1457,7 @@ mod tests {
         let peer_id = create_test_peer_id();
         let entry = create_test_entry(peer_id.clone());
         
-        registry.upsert(entry.clone()).expect("Failed to upsert");
+        block_on(registry.upsert(entry.clone())).expect("Failed to upsert");
         
         let retrieved = registry.get(&peer_id);
         assert!(retrieved.is_some());
@@ -1469,7 +1471,7 @@ mod tests {
         let node_id = peer_id.node_id().clone();
         let entry = create_test_entry(peer_id.clone());
         
-        registry.upsert(entry).expect("Failed to upsert");
+        block_on(registry.upsert(entry)).expect("Failed to upsert");
         
         let found = registry.find_by_node_id(&node_id);
         assert!(found.is_some());
@@ -1483,7 +1485,7 @@ mod tests {
         let public_key = peer_id.public_key().clone();
         let entry = create_test_entry(peer_id.clone());
         
-        registry.upsert(entry).expect("Failed to upsert");
+        block_on(registry.upsert(entry)).expect("Failed to upsert");
         
         let found = registry.find_by_public_key(&public_key);
         assert!(found.is_some());
@@ -1497,7 +1499,7 @@ mod tests {
         let did = peer_id.did().to_string();
         let entry = create_test_entry(peer_id.clone());
         
-        registry.upsert(entry).expect("Failed to upsert");
+        block_on(registry.upsert(entry)).expect("Failed to upsert");
         
         let found = registry.find_by_did(&did);
         assert!(found.is_some());
@@ -1511,10 +1513,10 @@ mod tests {
         let node_id = peer_id.node_id().clone();
         let entry = create_test_entry(peer_id.clone());
         
-        registry.upsert(entry).expect("Failed to upsert");
+        block_on(registry.upsert(entry)).expect("Failed to upsert");
         assert!(registry.get(&peer_id).is_some());
         
-        let removed = registry.remove(&peer_id);
+        let removed = block_on(registry.remove(&peer_id));
         assert!(removed.is_some());
         assert!(registry.get(&peer_id).is_none());
         assert!(registry.find_by_node_id(&node_id).is_none());
@@ -1532,8 +1534,8 @@ mod tests {
         let mut entry2 = create_test_entry(peer2);
         entry2.tier = PeerTier::Tier2;
         
-        registry.upsert(entry1).expect("Failed to upsert");
-        registry.upsert(entry2).expect("Failed to upsert");
+        block_on(registry.upsert(entry1)).expect("Failed to upsert");
+        block_on(registry.upsert(entry2)).expect("Failed to upsert");
         
         let tier1_peers: Vec<_> = registry.peers_by_tier(PeerTier::Tier1).collect();
         assert_eq!(tier1_peers.len(), 1);
@@ -1547,7 +1549,7 @@ mod tests {
             let mut reg = registry.write().await;
             let peer_id = create_test_peer_id();
             let entry = create_test_entry(peer_id);
-            reg.upsert(entry).expect("Failed to upsert");
+            reg.upsert(entry).await.expect("Failed to upsert");
         }
 
         {
@@ -1594,7 +1596,7 @@ mod tests {
             let mut entry = create_test_entry(peer_id);
             entry.tier = PeerTier::Tier3;
             entry.last_seen = i as u64; // Different last_seen times
-            registry.upsert(entry).expect("Failed to upsert");
+            block_on(registry.upsert(entry)).expect("Failed to upsert");
         }
 
         assert_eq!(registry.peers.len(), 3);
@@ -1604,7 +1606,7 @@ mod tests {
         let mut entry = create_test_entry(peer_id.clone());
         entry.tier = PeerTier::Tier1; // Higher tier = less likely to be evicted
         entry.last_seen = 100;
-        registry.upsert(entry).expect("Failed to upsert");
+        block_on(registry.upsert(entry)).expect("Failed to upsert");
 
         // Should still have 3 peers (one was evicted)
         assert_eq!(registry.peers.len(), 3);
@@ -1629,13 +1631,13 @@ mod tests {
         let peer1 = create_test_peer_id();
         let mut entry1 = create_test_entry(peer1.clone());
         entry1.last_seen = 0; // Very old
-        registry.upsert(entry1).expect("Failed to upsert");
+        block_on(registry.upsert(entry1)).expect("Failed to upsert");
 
         // Add peer with recent last_seen (not expired)
         let peer2 = create_test_peer_id();
         let mut entry2 = create_test_entry(peer2.clone());
         entry2.last_seen = PeerRegistry::current_timestamp(); // Now
-        registry.upsert(entry2).expect("Failed to upsert");
+        block_on(registry.upsert(entry2)).expect("Failed to upsert");
 
         assert_eq!(registry.peers.len(), 2);
 
@@ -1655,7 +1657,7 @@ mod tests {
         let peer_id = create_test_peer_id();
         let entry = create_test_entry(peer_id.clone());
 
-        registry.upsert(entry).expect("Failed to upsert");
+        block_on(registry.upsert(entry)).expect("Failed to upsert");
 
         let new_metrics = ConnectionMetrics {
             signal_strength: 0.95,
@@ -1678,7 +1680,7 @@ mod tests {
         let peer_id = create_test_peer_id();
         let entry = create_test_entry(peer_id.clone());
 
-        registry.upsert(entry).expect("Failed to upsert");
+        block_on(registry.upsert(entry)).expect("Failed to upsert");
 
         // Test trust score clamping to 0.0-1.0 range
         registry.update_trust(&peer_id, 1.5).expect("Failed to update");
@@ -1711,9 +1713,9 @@ mod tests {
         entry3.tier = PeerTier::Untrusted;
         entry3.authenticated = false;
 
-        registry.upsert(entry1).expect("Failed to upsert");
-        registry.upsert(entry2).expect("Failed to upsert");
-        registry.upsert(entry3).expect("Failed to upsert");
+        block_on(registry.upsert(entry1)).expect("Failed to upsert");
+        block_on(registry.upsert(entry2)).expect("Failed to upsert");
+        block_on(registry.upsert(entry3)).expect("Failed to upsert");
 
         let stats = registry.stats();
         assert_eq!(stats.total_peers, 3);
@@ -1741,7 +1743,7 @@ mod tests {
                 entry.tier = if i % 2 == 0 { PeerTier::Tier1 } else { PeerTier::Tier2 };
 
                 let mut reg = registry_clone.write().await;
-                if reg.upsert(entry).is_ok() {
+                if reg.upsert(entry).await.is_ok() {
                     success_clone.fetch_add(1, Ordering::SeqCst);
                 }
             }));
@@ -1795,7 +1797,7 @@ mod tests {
 
         // Remove from empty registry should return None
         let peer_id = create_test_peer_id();
-        assert!(registry.remove(&peer_id).is_none());
+        assert!(block_on(registry.remove(&peer_id)).is_none());
 
         // Find operations on empty registry
         assert!(registry.find_by_did("did:zhtp:nonexistent").is_none());
@@ -1827,14 +1829,14 @@ mod tests {
         // First two ops for same peer should succeed
         let peer_id = create_test_peer_id();
         let entry1 = create_test_entry(peer_id.clone());
-        assert!(registry.upsert(entry1).is_ok());
+        assert!(block_on(registry.upsert(entry1)).is_ok());
 
         let entry2 = create_test_entry(peer_id.clone());
-        assert!(registry.upsert(entry2).is_ok());
+        assert!(block_on(registry.upsert(entry2)).is_ok());
 
         // Third op for same peer should be rate limited
         let entry3 = create_test_entry(peer_id.clone());
-        let result = registry.upsert(entry3);
+        let result = block_on(registry.upsert(entry3));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("rate limit"));
     }
@@ -1865,7 +1867,7 @@ mod tests {
         let mut registry = PeerRegistry::new();
         let peer_id = create_test_peer_id();
         let entry = create_test_entry(peer_id.clone());
-        registry.upsert(entry).expect("Failed to upsert");
+        block_on(registry.upsert(entry)).expect("Failed to upsert");
 
         // Update existing peer
         let updated = registry.update_if_exists(&peer_id, |entry| {
@@ -1891,7 +1893,7 @@ mod tests {
         let peer_id = create_test_peer_id();
         let public_key = peer_id.public_key().clone();
         let entry = create_test_entry(peer_id);
-        registry.upsert(entry).expect("Failed to upsert");
+        block_on(registry.upsert(entry)).expect("Failed to upsert");
 
         // Update by public key
         let updated = registry.update_by_public_key(&public_key, |entry| {
@@ -1909,7 +1911,7 @@ mod tests {
         let mut registry = PeerRegistry::new();
         let peer_id = create_test_peer_id();
         let entry = create_test_entry(peer_id.clone());
-        registry.upsert(entry).expect("Failed to upsert");
+        block_on(registry.upsert(entry)).expect("Failed to upsert");
 
         // Update connection state atomically
         registry.update_connection_state(
