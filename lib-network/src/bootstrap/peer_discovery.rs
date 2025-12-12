@@ -2,7 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use lib_crypto::PublicKey;
-use lib_identity::{NodeId, ZhtpIdentity, IdentityType, IdentityId};
+use lib_identity::{NodeId, ZhtpIdentity};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -93,16 +93,11 @@ async fn add_peer_to_registry(
     peer_info: &PeerInfo,
     peer_registry: SharedPeerRegistry,
 ) -> Result<()> {
-    // Convert PeerInfo to ZhtpIdentity then to UnifiedPeerId
-    let identity = ZhtpIdentity {
-        id: IdentityId::new(), // Generate new identity ID
-        identity_type: IdentityType::Device,
-        did: peer_info.did.clone(),
-        public_key: peer_info.id.clone(),
-        node_id: peer_info.node_id.clone(),
-        ..Default::default() // Set other fields to defaults
-    };
-    let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
+    // Convert PeerInfo to UnifiedPeerId using legacy path
+    // This creates an unverified "bootstrap mode" peer - appropriate for initial discovery
+    // The peer can be verified later through the authentication handshake
+    #[allow(deprecated)]
+    let peer_id = UnifiedPeerId::from_public_key_legacy(peer_info.id.clone());
 
     // Convert addresses + protocols to PeerEndpoint list
     let endpoints: Vec<PeerEndpoint> = peer_info
@@ -136,57 +131,41 @@ async fn add_peer_to_registry(
         protocols: peer_info.protocols.clone(),
         max_bandwidth: peer_info.bandwidth_capacity,
         available_bandwidth: peer_info.bandwidth_capacity,
-        routing_capacity: peer_info.compute_capacity,
+        routing_capacity: peer_info.compute_capacity as u32, // Convert u64 to u32
         energy_level: None, // Bootstrap nodes typically not battery-powered
         availability_percent: 99.0, // Bootstrap nodes assumed highly available
     };
 
-    // Create PeerEntry with all metadata
-    let peer_entry = PeerEntry {
-        peer_id: peer_id.clone(),
-        
-        // Connection metadata
-        endpoints,
-        active_protocols: peer_info.protocols.clone(),
-        connection_metrics,
-        authenticated: true, // Bootstrap handshake implies authentication
-        quantum_secure: false, // Default for now
-        
-        // Routing metadata
-        next_hop: None, // Direct connection to bootstrap peer
-        hop_count: 1, // Direct connection
-        route_quality: 0.9, // Bootstrap peers assumed high quality
-        
-        // Topology/capabilities
-        capabilities,
-        location: None, // Location not typically known during bootstrap
-        reliability_score: 0.8, // Bootstrap peers assumed reliable
-        
-        // DHT metadata
-        dht_info: None, // Will be populated later by DHT component
-        
-        // Discovery metadata
-        discovery_method: DiscoveryMethod::Bootstrap,
-        first_seen: peer_info.last_seen,
-        last_seen: peer_info.last_seen,
-        
-        // Tiering and trust
-        tier: PeerTier::Tier2, // Bootstrap peers typically Tier2 (relay/routing)
-        trust_score: peer_info.reputation,
-        
-        // Statistics
-        data_transferred: 0,
-        tokens_earned: 0,
-        traffic_routed: 0,
-    };
+    // Create PeerEntry using constructor (struct has private fields)
+    // **FIXED:** Use PeerEntry::new() instead of struct literal
+    let peer_entry = PeerEntry::new(
+        peer_id.clone(),               // peer_id
+        endpoints,                      // endpoints
+        peer_info.protocols.clone(),   // active_protocols
+        connection_metrics,             // connection_metrics
+        true,                           // authenticated (bootstrap handshake implies authentication)
+        false,                          // quantum_secure (default for now)
+        None,                           // next_hop (direct connection)
+        1,                              // hop_count (direct connection)
+        0.9,                            // route_quality (bootstrap peers assumed high quality)
+        capabilities,                   // capabilities
+        None,                           // location (not typically known during bootstrap)
+        0.8,                            // reliability_score (bootstrap peers assumed reliable)
+        None,                           // dht_info (will be populated later by DHT component)
+        DiscoveryMethod::Bootstrap,     // discovery_method
+        peer_info.last_seen,           // first_seen
+        peer_info.last_seen,           // last_seen
+        PeerTier::Tier2,               // tier (bootstrap peers typically Tier2)
+        peer_info.reputation,          // trust_score
+    );
 
     // Add to registry (upsert will update if already exists)
     let mut registry = peer_registry.write().await;
-    registry.upsert(peer_entry)?;
+    registry.upsert(peer_entry).await?;
     
     tracing::debug!(
-        "Added bootstrap peer {} to registry (DID: {}, device: {})",
-        peer_id.to_short_string(),
+        "Added bootstrap peer {:?} to registry (DID: {}, device: {})",
+        peer_id,
         peer_info.did,
         peer_info.device_name
     );

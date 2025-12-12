@@ -22,7 +22,6 @@ pub use crate::bootstrap::{discover_bootstrap_peers, PeerInfo};
 
 // Import peer registry (Ticket #150)
 use crate::peer_registry::SharedPeerRegistry;
-use crate::peer_registry::SharedPeerRegistry;
 
 /// ZHTP service information from mDNS discovery
 #[derive(Debug, Clone)]

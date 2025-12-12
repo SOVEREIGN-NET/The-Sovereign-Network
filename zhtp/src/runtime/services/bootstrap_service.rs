@@ -18,12 +18,12 @@ impl BootstrapService {
         environment: &crate::config::environment::Environment,
     ) -> Result<Blockchain> {
         use lib_network::dht::bootstrap::{DHTBootstrap, DHTBootstrapEnhancements};
-        use lib_network::peer_registry::PeerRegistry;
-        
+        use lib_network::peer_registry::new_shared_registry;
+
         info!(" Discovering network peers for blockchain bootstrap...");
-        
+
         // Create unified peer registry for discovered peers (Ticket #150)
-        let peer_registry = PeerRegistry::new_shared_registry();
+        let peer_registry = new_shared_registry();
         
         // Create bootstrap with mDNS enhancements
         let enhancements = DHTBootstrapEnhancements {
