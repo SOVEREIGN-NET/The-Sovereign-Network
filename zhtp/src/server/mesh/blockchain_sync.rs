@@ -16,6 +16,9 @@ use super::core::MeshRouter;
 
 impl MeshRouter {
     /// Set the blockchain broadcast receiver and start processing task
+    /// 
+    /// # Ticket #162
+    /// Routes all broadcasts through mesh_message_router instead of calling QUIC directly.
     pub async fn set_broadcast_receiver(
         &self, 
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<lib_blockchain::BlockchainBroadcastMessage>
@@ -25,7 +28,7 @@ impl MeshRouter {
         let connections = self.connections.clone();
         let recent_blocks = self.recent_blocks.clone();
         let recent_transactions = self.recent_transactions.clone();
-        let quic_protocol = self.quic_protocol.clone();
+        let mesh_message_router = self.mesh_message_router.clone(); // Ticket #162: Use mesh router
         let broadcast_metrics = self.broadcast_metrics.clone();
         let identity_manager = self.identity_manager.clone();
         
@@ -70,38 +73,37 @@ impl MeshRouter {
                         // Create NewBlock message
                         let message = ZhtpMeshMessage::NewBlock {
                             block: block_data,
-                            sender: sender_pubkey,
+                            sender: sender_pubkey.clone(),
                             height: block.height(),
                             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
                                 .unwrap_or_default().as_secs(),
                         };
                         
-                        // Serialize message
-                        let serialized = match bincode::serialize(&message) {
-                            Ok(data) => data,
-                            Err(e) => {
-                                error!("Failed to serialize NewBlock message: {}", e);
-                                continue;
-                            }
-                        };
-                        
-                        // Broadcast to all connected peers via QUIC
+                        // Ticket #162: Broadcast via mesh_message_router instead of calling QUIC directly
                         let conns = connections.read().await;
+                        let router = mesh_message_router.read().await;
                         let mut success_count = 0;
                         
-                        if let Some(quic) = quic_protocol.read().await.as_ref() {
-                            for peer_entry in conns.all_peers() {
-                                // Check if peer has QUIC protocol
-                                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
-                                    // Use peer_id (PublicKey) to send via QUIC
-                                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
-                                        success_count += 1;
-                                    }
+                        for peer_entry in conns.all_peers() {
+                            let peer_pubkey = peer_entry.peer_id.public_key().clone();
+                            
+                            // Route through mesh network
+                            match router.route_message(
+                                message.clone(),
+                                peer_pubkey.clone(),
+                                sender_pubkey.clone()
+                            ).await {
+                                Ok(_) => {
+                                    success_count += 1;
+                                }
+                                Err(e) => {
+                                    debug!("Failed to route block to peer {:?}: {}",
+                                           hex::encode(&peer_pubkey.key_id[..8]), e);
                                 }
                             }
                         }
                         
-                        info!("📤 Block {} broadcast to {} peers", block.height(), success_count);
+                        info!("📤 Block {} broadcast to {} peers via mesh router", block.height(), success_count);
                         
                         // Update metrics
                         broadcast_metrics.write().await.blocks_sent += 1;
@@ -156,36 +158,36 @@ impl MeshRouter {
                         // Create NewTransaction message
                         let message = ZhtpMeshMessage::NewTransaction {
                             transaction: tx_data,
-                            sender: sender_pubkey,
+                            sender: sender_pubkey.clone(),
                             tx_hash: tx_hash_bytes,
-                            fee: 1000, // TODO: Extract actual fee from transaction
+                            fee: tx.fee, // Ticket #162: Extract actual fee from transaction
                         };
                         
-                        // Serialize message
-                        let serialized = match bincode::serialize(&message) {
-                            Ok(data) => data,
-                            Err(e) => {
-                                error!("Failed to serialize NewTransaction message: {}", e);
-                                continue;
-                            }
-                        };
-                        
-                        // Broadcast to all connected peers
+                        // Ticket #162: Broadcast via mesh_message_router instead of calling QUIC directly
                         let conns = connections.read().await;
+                        let router = mesh_message_router.read().await;
                         let mut success_count = 0;
                         
-                        if let Some(quic) = quic_protocol.read().await.as_ref() {
-                            for peer_entry in conns.all_peers() {
-                                // Check if peer has QUIC protocol
-                                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
-                                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
-                                        success_count += 1;
-                                    }
+                        for peer_entry in conns.all_peers() {
+                            let peer_pubkey = peer_entry.peer_id.public_key().clone();
+                            
+                            // Route through mesh network
+                            match router.route_message(
+                                message.clone(),
+                                peer_pubkey.clone(),
+                                sender_pubkey.clone()
+                            ).await {
+                                Ok(_) => {
+                                    success_count += 1;
+                                }
+                                Err(e) => {
+                                    debug!("Failed to route transaction to peer {:?}: {}",
+                                           hex::encode(&peer_pubkey.key_id[..8]), e);
                                 }
                             }
                         }
                         
-                        debug!("📤 Transaction {} broadcast to {} peers", tx.hash(), success_count);
+                        debug!("📤 Transaction {} broadcast to {} peers via mesh router", tx.hash(), success_count);
                         
                         // Update metrics
                         broadcast_metrics.write().await.transactions_sent += 1;
@@ -285,95 +287,82 @@ impl MeshRouter {
     }
     
     /// Send a mesh message to a specific peer
+    /// 
+    /// # Ticket #162
+    /// Refactored to route through mesh_message_router instead of calling protocol methods directly.
+    /// This ensures all messages are logged and can use any available transport (BLE, QUIC, WiFi).
     pub async fn send_to_peer(&self, peer_id: &PublicKey, message: ZhtpMeshMessage) -> Result<()> {
-        info!("📤 Sending message directly to peer {:?}",
+        info!("📤 Routing message to peer {:?} via mesh router",
               hex::encode(&peer_id.key_id[0..8.min(peer_id.key_id.len())]));
 
-        // Ticket #146: Convert PublicKey to UnifiedPeerId for HashMap lookup
-        let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_id.clone());
-
-        // Get peer's connection info (Ticket #149: Use PeerRegistry)
-        let connections = self.connections.read().await;
-        let peer_entry = connections.get(&unified_peer)
-            .ok_or_else(|| anyhow::anyhow!("Peer not found in connections"))?;
+        // Get sender public key from identity manager
+        let sender_pubkey = self.get_sender_public_key().await?;
         
-        let peer_address = peer_entry.endpoints.first()
-            .and_then(|endpoint| Some(endpoint.address.as_str()))
-            .ok_or_else(|| anyhow::anyhow!("Peer has no address"))?;
+        // Ticket #162: Route through mesh_message_router instead of calling protocols directly
+        let router = self.mesh_message_router.read().await;
+        let message_id = router.route_message(
+            message,
+            peer_id.clone(),
+            sender_pubkey.clone()
+        ).await.context("Failed to route message via mesh router")?;
         
-        // Serialize message
-        let serialized = bincode::serialize(&message)
-            .context("Failed to serialize message")?;
+        info!("✅ Message {} routed to peer {:?} via mesh", 
+              message_id,
+              hex::encode(&peer_id.key_id[..8]));
         
-        // Track bytes sent for performance metrics
-        self.track_bytes_sent(serialized.len() as u64).await;
-        
-        // Send based on protocol (Ticket #149: Use PeerRegistry)
-        // Use first protocol from active_protocols
-        if let Some(protocol) = peer_entry.active_protocols.first() {
-            match protocol {
-                NetworkProtocol::QUIC => {
-                    if let Some(quic) = self.quic_protocol.read().await.as_ref() {
-                        quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message).await
-                            .context("Failed to send QUIC message")?;
-                        info!("✅ Message sent via QUIC to peer {:?}", &peer_entry.peer_id.public_key().key_id[..8]);
-                    } else {
-                        return Err(anyhow::anyhow!("QUIC protocol not initialized"));
-                    }
-                }
-                NetworkProtocol::BluetoothLE => {
-                    warn!("Bluetooth LE protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("Bluetooth LE not supported"));
-                }
-                NetworkProtocol::BluetoothClassic => {
-                    warn!("Bluetooth Classic protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("Bluetooth Classic not supported"));
-                }
-                NetworkProtocol::WiFiDirect => {
-                    warn!("WiFi Direct protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("WiFi Direct not supported"));
-                }
-                NetworkProtocol::LoRaWAN => {
-                    warn!("LoRaWAN protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("LoRaWAN not supported"));
-                }
-                NetworkProtocol::Satellite => {
-                    warn!("Satellite protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("Satellite not supported"));
-                }
-                _ => {
-                    warn!("Protocol {:?} not supported for direct message sending", protocol);
-                    return Err(anyhow::anyhow!("Protocol not supported"));
-                }
-            }
-        } else {
-            return Err(anyhow::anyhow!("No active protocols found for peer"));
-        }
+        // Track bytes sent for performance metrics (estimate 1KB per message)
+        self.track_bytes_sent(1024).await;
         
         Ok(())
     }
     
     /// Broadcast message to all connected peers
+    /// 
+    /// # Ticket #162
+    /// Refactored to route through mesh_message_router instead of calling QUIC protocol directly.
+    /// This ensures all messages are logged and can use any available transport.
     pub async fn broadcast_to_peers(&self, message: ZhtpMeshMessage) -> Result<usize> {
-        let serialized = bincode::serialize(&message)
-            .context("Failed to serialize message")?;
+        info!("📡 Broadcasting message to all connected peers via mesh router");
         
+        // Get sender public key
+        let sender_pubkey = self.get_sender_public_key().await?;
+        
+        // Get all connected peers
         let connections = self.connections.read().await;
+        let all_peers = connections.all_peers();
+        let peer_count = all_peers.len();
+        
+        info!("📤 Broadcasting to {} connected peers", peer_count);
+        
+        // Route message to each peer via mesh router
+        let router = self.mesh_message_router.read().await;
         let mut success_count = 0;
         
-        if let Some(quic) = self.quic_protocol.read().await.as_ref() {
-            for peer_entry in connections.all_peers() {
-                // Check if peer has QUIC protocol
-                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
-                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
-                        success_count += 1;
-                    }
+        for peer_entry in all_peers {
+            let peer_pubkey = peer_entry.peer_id.public_key().clone();
+            
+            // Ticket #162: Route through mesh_message_router
+            match router.route_message(
+                message.clone(),
+                peer_pubkey.clone(),
+                sender_pubkey.clone()
+            ).await {
+                Ok(message_id) => {
+                    debug!("✅ Broadcast message {} routed to peer {:?}",
+                           message_id,
+                           hex::encode(&peer_pubkey.key_id[..8]));
+                    success_count += 1;
+                }
+                Err(e) => {
+                    warn!("⚠️  Failed to route broadcast to peer {:?}: {}",
+                          hex::encode(&peer_pubkey.key_id[..8]), e);
                 }
             }
         }
         
-        self.track_bytes_sent((serialized.len() * success_count) as u64).await;
-        info!("📤 Broadcast complete: {} peers reached", success_count);
+        // Track bytes sent (estimate 1KB per successful message)
+        self.track_bytes_sent((1024 * success_count) as u64).await;
+        info!("📤 Broadcast complete: {}/{} peers reached", success_count, peer_count);
         
         Ok(success_count)
     }
