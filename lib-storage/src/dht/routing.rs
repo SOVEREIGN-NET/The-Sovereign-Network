@@ -22,29 +22,29 @@ pub struct RoutingStats {
 }
 
 /// DHT routing operations trait
-/// 
+///
 /// **TICKET #153**: This trait allows DhtStorage to work with any routing implementation
 /// without depending on lib-network (which would create a cyclic dependency).
-/// 
+///
 /// Implementations:
 /// - lib-network::routing::unified_router::UnifiedRouterAdapter (production)
 /// - NoOpRouter (default/testing)
 pub trait DhtRouter: Send + Sync + std::fmt::Debug {
     /// Find K closest nodes to a target
     fn find_closest_nodes(&self, target: &NodeId, count: usize) -> Vec<DhtNode>;
-    
+
     /// Add a node to the routing table (synchronous wrapper)
     fn add_node_sync(&mut self, node: DhtNode) -> Result<()>;
-    
+
     /// Mark a node as failed
     fn mark_node_failed(&mut self, node_id: &NodeId);
-    
+
     /// Mark a node as responsive
     fn mark_node_responsive(&mut self, node_id: &NodeId) -> Result<()>;
-    
+
     /// Remove a node
     fn remove_node(&mut self, node_id: &NodeId);
-    
+
     /// Get routing statistics
     fn get_stats(&self) -> RoutingStats;
 }
@@ -57,19 +57,19 @@ impl DhtRouter for NoOpRouter {
     fn find_closest_nodes(&self, _target: &NodeId, _count: usize) -> Vec<DhtNode> {
         Vec::new()
     }
-    
+
     fn add_node_sync(&mut self, _node: DhtNode) -> Result<()> {
         Ok(())
     }
-    
+
     fn mark_node_failed(&mut self, _node_id: &NodeId) {}
-    
+
     fn mark_node_responsive(&mut self, _node_id: &NodeId) -> Result<()> {
         Ok(())
     }
-    
+
     fn remove_node(&mut self, _node_id: &NodeId) {}
-    
+
     fn get_stats(&self) -> RoutingStats {
         RoutingStats {
             total_nodes: 0,

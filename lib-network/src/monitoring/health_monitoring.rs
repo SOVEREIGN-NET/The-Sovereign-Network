@@ -13,12 +13,14 @@ use crate::mesh::{MeshConnection, MeshProtocolStats};
 use crate::relays::LongRangeRelay;
 
 /// Network health monitoring system
+///
+/// **MIGRATION (Ticket #149):** Now uses unified PeerRegistry instead of separate mesh_connections
 #[derive(Clone)]
 pub struct HealthMonitor {
     /// Mesh protocol statistics
     pub stats: Arc<RwLock<MeshProtocolStats>>,
-    /// Active mesh connections (keyed by UnifiedPeerId for full identity)
-    pub mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
+    /// Unified peer registry (Ticket #149: replaces mesh_connections)
+    pub peer_registry: crate::peer_registry::SharedPeerRegistry,
     /// Long-range relays
     pub long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     /// Monitoring active flag
@@ -27,14 +29,16 @@ pub struct HealthMonitor {
 
 impl HealthMonitor {
     /// Create new health monitor
+    ///
+    /// **MIGRATION (Ticket #149):** Now accepts SharedPeerRegistry instead of mesh_connections
     pub fn new(
         stats: Arc<RwLock<MeshProtocolStats>>,
-        mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
+        peer_registry: crate::peer_registry::SharedPeerRegistry,
         long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     ) -> Self {
         Self {
             stats,
-            mesh_connections,
+            peer_registry,
             long_range_relays,
             monitoring_active: Arc::new(RwLock::new(false)),
         }
@@ -69,9 +73,10 @@ impl HealthMonitor {
     }
     
     /// Start statistics collection loop
+    /// TODO (Ticket #149): Update to use peer_registry methods
     async fn start_statistics_collection(&self) -> Result<()> {
         let stats = self.stats.clone();
-        let mesh_connections = self.mesh_connections.clone();
+        let peer_registry = self.peer_registry.clone();
         let long_range_relays = self.long_range_relays.clone();
         let monitoring_active = self.monitoring_active.clone();
         
@@ -86,25 +91,26 @@ impl HealthMonitor {
                     break;
                 }
                 
-                // Update network statistics
+                // Update network statistics (Ticket #149: using peer_registry)
                 let mut network_stats = stats.write().await;
-                let connections = mesh_connections.read().await;
+                let registry = peer_registry.read().await;
                 let relays = long_range_relays.read().await;
                 
                 // Update connection count
-                network_stats.active_connections = connections.len() as u32;
+                let peer_count = registry.all_peers().count();
+                network_stats.active_connections = peer_count as u32;
                 network_stats.long_range_relays = relays.len() as u32;
                 
-                // Calculate total data routed
-                network_stats.total_data_routed = connections.values()
-                    .map(|conn| conn.data_transferred)
+                // Calculate total data routed (use getter for atomic counter)
+                network_stats.total_data_routed = registry.all_peers()
+                    .map(|entry| entry.get_data_transferred())
                     .sum();
                 
                 // Calculate average latency
-                if !connections.is_empty() {
-                    network_stats.average_latency_ms = connections.values()
-                        .map(|conn| conn.latency_ms)
-                        .sum::<u32>() / connections.len() as u32;
+                if peer_count > 0 {
+                    network_stats.average_latency_ms = registry.all_peers()
+                        .map(|entry| entry.connection_metrics.latency_ms)
+                        .sum::<u32>() / peer_count as u32;
                 } else {
                     network_stats.average_latency_ms = 0;
                 }
@@ -122,15 +128,15 @@ impl HealthMonitor {
                 network_stats.people_with_free_internet = 
                     (network_stats.coverage_area_km2 * 100.0) as u32;
                 
-                // Calculate total UBI distributed through mesh networking
-                let mesh_conn_read = mesh_connections.read().await;
-                network_stats.total_ubi_distributed = mesh_conn_read.values()
-                    .map(|conn| conn.data_transferred)
+                // Calculate total UBI distributed through mesh networking (Ticket #149: using peer_registry)
+                let registry_read = registry.all_peers().collect::<Vec<_>>();
+                network_stats.total_ubi_distributed = registry_read.iter()
+                    .map(|entry| entry.get_data_transferred())
                     .sum();
                 
                 info!("Network Health Update:");
                 info!("   Active connections: {}", network_stats.active_connections);
-                info!("   Mesh connections: {}", mesh_conn_read.len());
+                info!("   Mesh connections: {}", registry_read.len());
                 info!("   Long-range relays: {}", network_stats.long_range_relays);
                 info!("   Data routed: {:.2} MB", network_stats.total_data_routed as f64 / 1_000_000.0);
                 info!("   Average latency: {} ms", network_stats.average_latency_ms);
@@ -144,8 +150,9 @@ impl HealthMonitor {
     }
     
     /// Start connection health checking
+    /// TODO (Ticket #149): Fully migrate to peer_registry methods
     async fn start_connection_health_check(&self) -> Result<()> {
-        let mesh_connections = self.mesh_connections.clone();
+        let peer_registry = self.peer_registry.clone();
         let monitoring_active = self.monitoring_active.clone();
         
         tokio::spawn(async move {
@@ -159,15 +166,16 @@ impl HealthMonitor {
                     break;
                 }
                 
-                // Check connection health
-                let mut connections = mesh_connections.write().await;
+                // Check connection health (Ticket #149: using peer_registry)
+                let registry = peer_registry.read().await;
                 let mut unhealthy_connections = Vec::new();
                 
-                for (peer_id, connection) in connections.iter() {
+                for peer_entry in registry.all_peers() {
+                    let peer_id = &peer_entry.peer_id;
                     // Check connection stability
-                    if connection.stability_score < 0.3 {
+                    if peer_entry.connection_metrics.stability_score < 0.3 {
                         warn!(" Unstable connection detected: peer {} (stability: {:.2})",
-                              hex::encode(&peer_id.public_key().key_id[0..4]), connection.stability_score);
+                              hex::encode(&peer_id.public_key().key_id[0..4]), peer_entry.connection_metrics.stability_score);
                         unhealthy_connections.push(peer_id.clone());
                     }
 
@@ -177,29 +185,33 @@ impl HealthMonitor {
                         .unwrap_or_default()
                         .as_secs();
 
-                    let connection_age = current_time - connection.connected_at;
-                    if connection_age > 3600 && connection.data_transferred == 0 {
+                    let connection_age = current_time - peer_entry.connection_metrics.connected_at;
+                    if connection_age > 3600 && peer_entry.get_data_transferred() == 0 {
                         warn!(" Stale connection detected: peer {} (age: {} minutes, no data)",
                               hex::encode(&peer_id.public_key().key_id[0..4]), connection_age / 60);
                         unhealthy_connections.push(peer_id.clone());
                     }
 
                     // Check for high latency
-                    if connection.latency_ms > 1000 {
+                    if peer_entry.connection_metrics.latency_ms > 1000 {
                         warn!(" High latency connection: peer {} (latency: {} ms)",
-                              hex::encode(&peer_id.public_key().key_id[0..4]), connection.latency_ms);
+                              hex::encode(&peer_id.public_key().key_id[0..4]), peer_entry.connection_metrics.latency_ms);
                     }
                 }
 
-                // Remove unhealthy connections
+                // Remove unhealthy connections (Ticket #149: using peer_registry)
+                drop(registry); // Release read lock
+                let mut registry_write = peer_registry.write().await;
                 for peer_id in unhealthy_connections {
                     info!(" Removing unhealthy connection: {}",
                           hex::encode(&peer_id.public_key().key_id[0..4]));
-                    connections.remove(&peer_id);
+                    registry_write.remove(&peer_id);
                 }
+                let active_count = registry_write.all_peers().count();
+                drop(registry_write);
                 
                 info!("Connection health check completed: {} active connections", 
-                      connections.len());
+                      active_count);
             }
         });
         
@@ -260,9 +272,10 @@ impl HealthMonitor {
     }
     
     /// Start coverage analysis
+    /// TODO (Ticket #149): Fully migrated to peer_registry
     async fn start_coverage_analysis(&self) -> Result<()> {
         let long_range_relays = self.long_range_relays.clone();
-        let mesh_connections = self.mesh_connections.clone();
+        let peer_registry = self.peer_registry.clone();
         let stats = self.stats.clone();
         let monitoring_active = self.monitoring_active.clone();
         
@@ -277,9 +290,9 @@ impl HealthMonitor {
                     break;
                 }
                 
-                // Analyze network coverage
+                // Analyze network coverage (Ticket #149: using peer_registry)
                 let relays = long_range_relays.read().await;
-                let connections = mesh_connections.read().await;
+                let registry = peer_registry.read().await;
                 let network_stats = stats.write().await;
                 
                 // Calculate coverage metrics
@@ -293,8 +306,8 @@ impl HealthMonitor {
                     .map(|relay| relay.coverage_radius_km)
                     .sum();
                 
-                let total_mesh_bandwidth: u32 = connections.values()
-                    .map(|conn| (conn.bandwidth_capacity / 1_000_000) as u32) // Convert to Mbps
+                let total_mesh_bandwidth: u32 = registry.all_peers()
+                    .map(|entry| (entry.connection_metrics.bandwidth_capacity / 1_000_000) as u32) // Convert to Mbps
                     .sum();
                 
                 // Update coverage analysis
@@ -330,14 +343,15 @@ impl HealthMonitor {
                     info!("   Recommendation: Encourage more mesh connections for bandwidth");
                 }
                 
-                // Performance analysis
-                let avg_connection_quality: f64 = if !connections.is_empty() {
+                // Performance analysis (Ticket #149: using peer_registry)
+                let peer_entries: Vec<_> = registry.all_peers().collect();
+                let avg_connection_quality: f64 = if !peer_entries.is_empty() {
                     // Simplified quality metric based on signal strength
-                    connections.values().map(|conn| conn.signal_strength).sum::<f64>() / connections.len() as f64
+                    peer_entries.iter().map(|entry| entry.connection_metrics.signal_strength).sum::<f64>() / peer_entries.len() as f64
                 } else {
                     0.0
                 };
-                
+
                 info!("   Average connection quality: {:.1} Mbps per node", avg_connection_quality);
             }
         });
@@ -371,19 +385,21 @@ impl HealthMonitor {
     }
     
     /// Get current network health summary
+    /// TODO (Ticket #149): Fully migrated to peer_registry
     pub async fn get_health_summary(&self) -> NetworkHealthSummary {
         let stats = self.stats.read().await;
-        let connections = self.mesh_connections.read().await;
+        let registry = self.peer_registry.read().await;
         // WiFi sharing removed for legal compliance
         let relays = self.long_range_relays.read().await;
         
-        // Calculate health metrics
-        let connection_health = if connections.is_empty() {
+        // Calculate health metrics (Ticket #149: using peer_registry)
+        let peer_entries: Vec<_> = registry.all_peers().collect();
+        let connection_health = if peer_entries.is_empty() {
             0.0
         } else {
-            connections.values()
-                .map(|conn| conn.stability_score)
-                .sum::<f64>() / connections.len() as f64
+            peer_entries.iter()
+                .map(|entry| entry.connection_metrics.stability_score)
+                .sum::<f64>() / peer_entries.len() as f64
         };
         
         let bandwidth_utilization = if stats.active_connections > 0 {
@@ -443,12 +459,13 @@ mod tests {
     #[tokio::test]
     async fn test_health_monitor_creation() {
         let stats = Arc::new(RwLock::new(MeshProtocolStats::default()));
-        let mesh_connections = Arc::new(RwLock::new(HashMap::new()));
+        // Ticket #149: Use peer_registry instead of mesh_connections
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         
         let monitor = HealthMonitor::new(
             stats,
-            mesh_connections,
+            peer_registry,
             long_range_relays,
         );
         
@@ -458,12 +475,13 @@ mod tests {
     #[tokio::test]
     async fn test_health_summary() {
         let stats = Arc::new(RwLock::new(MeshProtocolStats::default()));
-        let mesh_connections = Arc::new(RwLock::new(HashMap::new()));
+        // Ticket #149: Use peer_registry instead of mesh_connections
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         
         let monitor = HealthMonitor::new(
             stats,
-            mesh_connections,
+            peer_registry,
             long_range_relays,
         );
         

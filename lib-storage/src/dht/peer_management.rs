@@ -1,5 +1,5 @@
 //! DHT Peer Management
-//! 
+//!
 //! Handles peer discovery, connection management, and peer reputation tracking.
 
 use crate::types::dht_types::{DhtNode, PeerInfo, PeerStats};
@@ -11,7 +11,9 @@ use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
 /// DHT peer manager
 ///
-/// **TICKET #153**: Router is now a trait object
+/// **TICKET #153**: Router is now a trait object, allowing UnifiedRouter injection
+/// **MIGRATED (Ticket #148):** Now uses shared PeerRegistry for peer storage
+#[derive(Debug)]
 pub struct DhtPeerManager {
     /// Local node ID
     local_id: NodeId,
@@ -31,6 +33,7 @@ impl DhtPeerManager {
     /// Create a new peer manager
     ///
     /// **TICKET #153**: Uses NoOpRouter by default
+    /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
     pub fn new(local_id: NodeId, max_peers: usize, min_reputation: u32) -> Self {
         Self {
             local_id: local_id.clone(),
@@ -41,13 +44,13 @@ impl DhtPeerManager {
             router: Box::new(NoOpRouter),
         }
     }
-    
+
     /// Set router implementation
     pub fn with_router(mut self, router: Box<dyn DhtRouter>) -> Self {
         self.router = router;
         self
     }
-    
+
     /// Add a new peer
     ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for peer tracking
@@ -56,20 +59,20 @@ impl DhtPeerManager {
         if node.reputation < self.min_reputation {
             return Err(anyhow!("Peer reputation {} below minimum {}", node.reputation, self.min_reputation));
         }
-        
+
         let node_id = node.peer.node_id();
-        
+
         // Don't add ourselves
         if *node_id == self.local_id {
             return Err(anyhow!("Cannot add self as peer"));
         }
-        
+
         // Check if we're at capacity
         if self.peers.len() >= self.max_peers && !self.peers.contains_key(node_id) {
             // Remove lowest reputation peer
             self.evict_worst_peer().await?;
         }
-        
+
         let peer_info = PeerInfo {
             node: node.clone(),
             connection_time: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
@@ -77,10 +80,10 @@ impl DhtPeerManager {
             status: crate::types::dht_types::PeerStatus::Connected,
             capabilities: Vec::new(), // Would be negotiated during handshake
         };
-        
+
         let node_id = node.peer.node_id().clone();
         self.peers.insert(node_id.clone(), peer_info);
-        
+
         // Initialize peer statistics
         let stats = PeerStats {
             messages_sent: 0,
@@ -93,32 +96,32 @@ impl DhtPeerManager {
             uptime_percentage: 100.0,
             last_updated: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         };
-        
+
         self.peer_stats.insert(node_id, stats);
-        
+
         // Add to routing table for intelligent peer selection
         self.router.add_node_sync(node)?;
-        
+
         Ok(())
     }
-    
+
     /// Remove a peer
     pub fn remove_peer(&mut self, peer_id: &NodeId) -> Option<PeerInfo> {
         self.peer_stats.remove(peer_id);
         self.router.remove_node(peer_id);
         self.peers.remove(peer_id)
     }
-    
+
     /// Get peer information
     pub fn get_peer(&self, peer_id: &NodeId) -> Option<&PeerInfo> {
         self.peers.get(peer_id)
     }
-    
+
     /// Get all connected peers
     pub fn get_all_peers(&self) -> Vec<&DhtNode> {
         self.peers.values().map(|info| &info.node).collect()
     }
-    
+
     /// Get peers with specific capabilities
     pub fn get_peers_with_capability(&self, capability: &str) -> Vec<&DhtNode> {
         self.peers.values()
@@ -126,7 +129,7 @@ impl DhtPeerManager {
             .map(|info| &info.node)
             .collect()
     }
-    
+
     /// Update peer statistics
     pub fn update_peer_stats(&mut self, peer_id: &NodeId, bytes_sent: u64, bytes_received: u64, response_time: f64, success: bool) -> Result<()> {
         if let Some(stats) = self.peer_stats.get_mut(peer_id) {
@@ -134,37 +137,37 @@ impl DhtPeerManager {
             stats.messages_received += if bytes_received > 0 { 1 } else { 0 };
             stats.bytes_sent += bytes_sent;
             stats.bytes_received += bytes_received;
-            
+
             if success {
                 stats.successful_requests += 1;
             } else {
                 stats.failed_requests += 1;
             }
-            
+
             // Update average response time
             let total_requests = stats.successful_requests + stats.failed_requests;
             if total_requests > 0 {
                 stats.avg_response_time = (stats.avg_response_time * (total_requests - 1) as f64 + response_time) / total_requests as f64;
             }
-            
+
             stats.last_updated = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         }
-        
+
         Ok(())
     }
-    
+
     /// Mark peer as unresponsive
     pub fn mark_peer_unresponsive(&mut self, peer_id: &NodeId) {
         if let Some(peer_info) = self.peers.get_mut(peer_id) {
             peer_info.status = crate::types::dht_types::PeerStatus::Disconnected;
         }
     }
-    
+
     /// Get peer statistics
     pub fn get_peer_stats(&self, peer_id: &NodeId) -> Option<&PeerStats> {
         self.peer_stats.get(peer_id)
     }
-    
+
     /// Get best peers for routing (highest reputation and lowest latency)
     ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for stats lookup
@@ -178,20 +181,20 @@ impl DhtPeerManager {
                 (info, combined_score)
             })
             .collect();
-        
+
         peer_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         peer_scores.into_iter()
             .take(count)
             .map(|(info, _)| &info.node)
             .collect()
     }
-    
+
     /// Cleanup disconnected peers
     pub async fn cleanup_disconnected(&mut self, timeout: Duration) -> Result<usize> {
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let timeout_secs = timeout.as_secs();
-        
+
         let disconnected_peers: Vec<NodeId> = self.peers.iter()
             .filter_map(|(id, info)| {
                 if matches!(info.status, crate::types::dht_types::PeerStatus::Disconnected) &&
@@ -202,28 +205,28 @@ impl DhtPeerManager {
                 }
             })
             .collect();
-        
+
         let count = disconnected_peers.len();
         for peer_id in disconnected_peers {
             self.remove_peer(&peer_id);
         }
-        
+
         Ok(count)
     }
-    
+
     /// Evict the worst performing peer
     async fn evict_worst_peer(&mut self) -> Result<()> {
         let worst_peer_id = self.peers.iter()
             .min_by_key(|(_, info)| info.node.reputation)
             .map(|(id, _)| id.clone());
-        
+
         if let Some(peer_id) = worst_peer_id {
             self.remove_peer(&peer_id);
         }
-        
+
         Ok(())
     }
-    
+
     /// Find closest peers to a target using Kademlia routing
     ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for peer lookup
@@ -250,7 +253,7 @@ impl DhtPeerManager {
         let connected_peers = self.peers.values()
             .filter(|info| matches!(info.status, crate::types::dht_types::PeerStatus::Connected))
             .count();
-        
+
         let avg_reputation = if total_peers > 0 {
             let total_reputation: u32 = self.peers.values()
                 .map(|info| info.node.reputation)
@@ -259,7 +262,7 @@ impl DhtPeerManager {
         } else {
             0.0
         };
-        
+
         PeerManagementStats {
             total_peers,
             connected_peers,
@@ -305,7 +308,7 @@ mod tests {
             device_name,
             None,
         ).expect("Failed to create test identity");
-        
+
         DhtPeerIdentity {
             node_id: identity.node_id.clone(),
             public_key: identity.public_key.clone(),
@@ -324,55 +327,55 @@ mod tests {
             storage_info: None,
         }
     }
-    
+
     #[tokio::test]
     async fn test_peer_manager_creation() {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let manager = DhtPeerManager::new(local_id, 100, 500);
-        
+
         assert_eq!(manager.max_peers, 100);
         assert_eq!(manager.min_reputation, 500);
         assert_eq!(manager.peers.len(), 0);
     }
-    
+
     #[tokio::test]
     async fn test_add_peer() {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut manager = DhtPeerManager::new(local_id, 100, 500);
-        
+
         let test_peer = create_test_peer("test-device");
         let test_node = build_node(test_peer.clone(), 1000);
-        
+
         manager.add_peer(test_node.clone()).await.unwrap();
-        
+
         assert_eq!(manager.peers.len(), 1);
         assert!(manager.get_peer(test_peer.node_id()).is_some());
     }
-    
+
     #[tokio::test]
     async fn test_reject_low_reputation_peer() {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut manager = DhtPeerManager::new(local_id, 100, 500);
-        
+
         let low_rep_peer = create_test_peer("low-rep-device");
         let low_rep_node = build_node(low_rep_peer, 100); // Below minimum of 500
-        
+
         let result = manager.add_peer(low_rep_node).await;
         assert!(result.is_err());
         assert_eq!(manager.peers.len(), 0);
     }
-    
+
     #[tokio::test]
     async fn test_update_peer_stats() {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut manager = DhtPeerManager::new(local_id, 100, 500);
-        
+
         let test_peer = create_test_peer("test-device");
         let test_node = build_node(test_peer.clone(), 1000);
-        
+
         manager.add_peer(test_node.clone()).await.unwrap();
         manager.update_peer_stats(test_peer.node_id(), 100, 50, 0.5, true).unwrap();
-        
+
         let stats = manager.get_peer_stats(test_peer.node_id()).unwrap();
         assert_eq!(stats.bytes_sent, 100);
         assert_eq!(stats.bytes_received, 50);

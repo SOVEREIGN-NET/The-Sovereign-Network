@@ -19,6 +19,7 @@ use tracing::{debug, warn};
 /// DHT storage manager with networking
 ///
 /// **TICKET #153**: Router is now a trait object, allowing UnifiedRouter injection
+/// **MIGRATED (Ticket #148):** Now uses shared PeerRegistry for DHT peer storage
 #[derive(Debug)]
 pub struct DhtStorage {
     /// Local storage for key-value pairs
@@ -45,6 +46,7 @@ impl DhtStorage {
     /// Create a new DHT storage manager
     ///
     /// **TICKET #153**: Uses NoOpRouter by default. Call `with_router()` to inject UnifiedRouter.
+    /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
     pub fn new(local_node_id: NodeId, max_storage_size: u64) -> Self {
         Self {
             storage: HashMap::new(),
@@ -58,7 +60,7 @@ impl DhtStorage {
             contract_index: HashMap::new(),
         }
     }
-    
+
     /// Set router implementation (inject UnifiedRouter from lib-network)
     ///
     /// **TICKET #153**: Allows production code to inject UnifiedRouter
@@ -66,7 +68,7 @@ impl DhtStorage {
         self.router = router;
         self
     }
-    
+
     /// Verify signature from a DHT node (Acceptance Criteria: PublicKey-based verification)
     ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.public_key()` for signature verification
@@ -128,13 +130,14 @@ impl DhtStorage {
     /// Create DHT storage with networking enabled
     ///
     /// **TICKET #153**: Uses NoOpRouter by default. Call with_router() to inject UnifiedRouter.
+    /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
     pub async fn new_with_network(
-        local_node: DhtNode, 
-        bind_addr: SocketAddr, 
+        local_node: DhtNode,
+        bind_addr: SocketAddr,
         max_storage_size: u64
     ) -> Result<Self> {
         let network = DhtNetwork::new(local_node.clone(), bind_addr)?;
-        
+
         Ok(Self {
             storage: HashMap::new(),
             max_storage_size,
@@ -160,30 +163,30 @@ impl DhtStorage {
     pub async fn store_data(&mut self, content_hash: Hash, data: Vec<u8>) -> Result<()> {
         let key: DhtKey = content_hash; // Use DhtKey type for strongly typed keys
         let key_str = hex::encode(key.as_bytes());
-        
+
         println!(" 💾 DhtStorage::store_data() called");
         println!("    Hash (first 16 chars): {}...", &key_str[..16.min(key_str.len())]);
         println!("    Full hex key: {}", key_str);
         println!("    Data size: {} bytes", data.len());
-        
+
         // Store locally first
         self.store(key_str.clone(), data.clone(), None).await?;
-        
+
         println!("     Stored locally in HashMap with key: {}", key_str);
         println!("    HashMap now contains {} entries", self.storage.len());
-        
+
         // Verify it was actually stored
         if self.storage.contains_key(&key_str) {
             println!("     VERIFIED: Key exists in HashMap");
         } else {
             println!("     WARNING: Key NOT found in HashMap after store!");
         }
-        
+
         // If network is available, replicate to other nodes
         if self.network.is_some() {
             self.replicate_to_dht(&key_str, &data).await?;
         }
-        
+
         Ok(())
     }
 
@@ -191,17 +194,17 @@ impl DhtStorage {
     pub async fn retrieve_data(&mut self, content_hash: Hash) -> Result<Option<Vec<u8>>> {
         let key: DhtKey = content_hash; // Use DhtKey type for strongly typed keys
         let key_str = hex::encode(key.as_bytes());
-        
+
         // Check local storage first
         if let Some(data) = self.get(&key_str).await? {
             return Ok(Some(data));
         }
-        
+
         // If not found locally and network is available, query DHT
         if self.network.is_some() {
             return self.retrieve_from_dht(&key_str).await;
         }
-        
+
         Ok(None)
     }
 
@@ -211,7 +214,7 @@ impl DhtStorage {
         let key_hash = Hash::from_bytes(&blake3::hash(key.as_bytes()).as_bytes()[..32]);
         let target_key = NodeId::from_storage_hash(&key_hash);
         let closest_nodes = self.router.find_closest_nodes(&target_key, 3);
-        
+
         if let Some(network) = &self.network {
             // Send store messages to closest nodes
             // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for routing and tracking
@@ -231,7 +234,7 @@ impl DhtStorage {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -241,7 +244,7 @@ impl DhtStorage {
         let key_hash = Hash::from_bytes(&blake3::hash(key.as_bytes()).as_bytes()[..32]);
         let target_key = NodeId::from_storage_hash(&key_hash);
         let closest_nodes = self.router.find_closest_nodes(&target_key, 5);
-        
+
         if let Some(network) = &self.network {
             // Query nodes for the value
             // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for routing and tracking
@@ -250,7 +253,7 @@ impl DhtStorage {
                     Ok(crate::types::dht_types::DhtQueryResponse::Value(data)) => {
                         println!("Found data at node {}", hex::encode(&node.peer.node_id().as_bytes()[..4]));
                         self.router.mark_node_responsive(node.peer.node_id())?;
-                        
+
                         // Store locally for caching
                         let _ = self.store(key.to_string(), data.clone(), None).await;
                         return Ok(Some(data));
@@ -268,7 +271,7 @@ impl DhtStorage {
                 }
             }
         }
-        
+
         Ok(None)
     }
 
@@ -282,18 +285,18 @@ impl DhtStorage {
     /// Store zero-knowledge enhanced value
     pub async fn store_zk_value(&mut self, key: DhtKey, zk_value: ZkDhtValue) -> Result<()> {
         let key_str = hex::encode(key.as_bytes());
-        
+
         // Verify the zero-knowledge proof before storing
         if !self.verify_full_zk_proof(&zk_value.validity_proof, &key_str, &zk_value.encrypted_data).await? {
             return Err(anyhow!("Invalid zero-knowledge proof for DHT value"));
         }
-        
+
         // Serialize the ZK value
         let serialized_value = bincode::serialize(&zk_value)?;
-        
+
         // Convert ZeroKnowledgeProof to ZkProof for storage
         let zk_proof = self.convert_to_zk_proof(&zk_value.validity_proof)?;
-        
+
         // Store with ZK proof validation
         self.store(key_str, serialized_value, Some(zk_proof)).await
     }
@@ -301,16 +304,16 @@ impl DhtStorage {
     /// Retrieve zero-knowledge enhanced value
     pub async fn retrieve_zk_value(&mut self, key: DhtKey) -> Result<Option<ZkDhtValue>> {
         let key_str = hex::encode(key.as_bytes());
-        
+
         if let Some(data) = self.get(&key_str).await? {
             // Deserialize ZK value
             let zk_value: ZkDhtValue = bincode::deserialize(&data)?;
-            
+
             // Verify ZK proof
             if !self.verify_full_zk_proof(&zk_value.validity_proof, &key_str, &zk_value.encrypted_data).await? {
                 return Err(anyhow!("ZK proof verification failed for retrieved value"));
             }
-            
+
             Ok(Some(zk_value))
         } else {
             Ok(None)
@@ -327,7 +330,7 @@ impl DhtStorage {
             zk_proof.verification_key.clone(),
             zk_proof.plonky2_proof.clone(),
         );
-        
+
         Ok(converted_proof)
     }
 
@@ -336,7 +339,7 @@ impl DhtStorage {
         // Initialize the ZK proof system from lib-proofs
         let zk_system = lib_proofs::initialize_zk_system()
             .map_err(|e| anyhow!("Failed to initialize ZK system: {}", e))?;
-        
+
         // Check if this is a Plonky2 proof (preferred verification method)
         if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
             // Determine proof type based on the proof system identifier
@@ -359,12 +362,12 @@ impl DhtStorage {
                 },
                 _ => {
                     // Generic proof verification for unknown types
-                    return Ok(plonky2_proof.proof.len() > 0 && 
+                    return Ok(plonky2_proof.proof.len() > 0 &&
                              !plonky2_proof.public_inputs.is_empty());
                 }
             }
         }
-        
+
         // Fallback to traditional ZK proof verification
         // Create public inputs from the ZK value for validation
         let value_hash = blake3::hash(&zk_value.encrypted_data);
@@ -373,7 +376,7 @@ impl DhtStorage {
             crate::types::dht_types::AccessLevel::Private => 1u64,
             crate::types::dht_types::AccessLevel::Restricted => 2u64,
         };
-        
+
         // Generate cryptographic access key from node identity and request context
         let node_key_material = self.local_node_id.as_bytes();
         let access_key = blake3::hash(&[node_key_material as &[u8], value_hash.as_bytes()].concat());
@@ -383,7 +386,7 @@ impl DhtStorage {
             access_key.as_bytes()[4], access_key.as_bytes()[5],
             access_key.as_bytes()[6], access_key.as_bytes()[7],
         ]);
-        
+
         // Generate requester secret from ZK value metadata
         let requester_context = [
             &zk_value.nonce,
@@ -396,22 +399,22 @@ impl DhtStorage {
             requester_secret_hash.as_bytes()[4], requester_secret_hash.as_bytes()[5],
             requester_secret_hash.as_bytes()[6], requester_secret_hash.as_bytes()[7],
         ]);
-        
+
         // Convert data hash to u64 for ZK system compatibility
         let data_hash_u64 = u64::from_be_bytes([
-            value_hash.as_bytes()[0], value_hash.as_bytes()[1], 
+            value_hash.as_bytes()[0], value_hash.as_bytes()[1],
             value_hash.as_bytes()[2], value_hash.as_bytes()[3],
             value_hash.as_bytes()[4], value_hash.as_bytes()[5],
             value_hash.as_bytes()[6], value_hash.as_bytes()[7],
         ]);
-        
+
         // Determine required permission based on access level
         let required_permission = match zk_value.access_level {
             crate::types::dht_types::AccessLevel::Public => 0u64,
             crate::types::dht_types::AccessLevel::Private => 1u64,
             crate::types::dht_types::AccessLevel::Restricted => 2u64,
         };
-        
+
         // Generate expected proof with cryptographic parameters
         let expected_proof = zk_system.prove_storage_access(
             access_key_u64,
@@ -420,33 +423,33 @@ impl DhtStorage {
             access_level_u64,
             required_permission,
         )?;
-        
+
         // Verify proof system compatibility
         if zk_proof.proof_system != "Plonky2" {
             return Ok(false);
         }
-        
+
         // Validate proof completeness
         if zk_proof.public_inputs.is_empty() || zk_proof.verification_key.is_empty() {
             return Ok(false);
         }
-        
+
         // Verify proof against expected cryptographic parameters
         if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
             // Compare critical proof components with the expected proof
             if plonky2_proof.public_inputs != expected_proof.public_inputs {
                 return Ok(false);
             }
-            
+
             // Verify proof validity using ZK system
             return zk_system.verify_storage_access(plonky2_proof)
                 .map_err(|e| anyhow!("Storage access proof verification failed: {}", e));
         }
-        
+
         // Fallback to generic proof verification with cryptographic validation
         let proof_valid = zk_proof.verify()
             .map_err(|e| anyhow!("ZK proof verification error: {}", e))?;
-        
+
         // Additional cryptographic integrity check
         let expected_public_inputs = [
             access_key_u64.to_be_bytes(),
@@ -454,28 +457,28 @@ impl DhtStorage {
             access_level_u64.to_be_bytes(),
             required_permission.to_be_bytes(),
         ].concat();
-        
+
         let public_inputs_match = zk_proof.public_inputs.len() >= expected_public_inputs.len() &&
             &zk_proof.public_inputs[..expected_public_inputs.len()] == &expected_public_inputs;
-        
+
         Ok(proof_valid && public_inputs_match)
     }
-    
+
     /// Store a key-value pair with cryptographic access control and ZK proof verification
     pub async fn store(&mut self, key: String, value: Vec<u8>, proof: Option<ZkProof>) -> Result<()> {
         // Validate storage operation permissions
         self.validate_storage_permissions(&key, &value, proof.as_ref()).await?;
-        
+
         // Check storage capacity with overhead calculation
         let value_size = value.len() as u64;
         let metadata_overhead = 256u64; // Estimated metadata size
         let total_size = value_size + metadata_overhead;
-        
+
         if self.current_usage + total_size > self.max_storage_size {
-            return Err(anyhow!("Storage capacity exceeded: {} + {} > {}", 
+            return Err(anyhow!("Storage capacity exceeded: {} + {} > {}",
                 self.current_usage, total_size, self.max_storage_size));
         }
-        
+
         // Perform mandatory ZK proof verification for secure storage
         if let Some(zk_proof) = &proof {
             if !self.verify_storage_proof(zk_proof, &key, &value).await? {
@@ -487,7 +490,7 @@ impl DhtStorage {
                 return Err(anyhow!("Zero-knowledge proof required for this storage operation"));
             }
         }
-        
+
         // Create storage entry
         let entry = StorageEntry {
             key: key.clone(),
@@ -509,7 +512,7 @@ impl DhtStorage {
             replicas: Vec::new(),
             access_control: None,
         };
-        
+
         // Update storage
         if let Some(old_entry) = self.storage.insert(key, entry) {
             // If replacing existing entry, adjust usage
@@ -519,17 +522,17 @@ impl DhtStorage {
         } else {
             self.current_usage += value_size;
         }
-        
+
         Ok(())
     }
-    
+
     /// Retrieve a value by key
     pub async fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
         if let Some(entry) = self.storage.get_mut(key) {
             // Update access statistics
             entry.metadata.access_count += 1;
             entry.metadata.last_access = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            
+
             // Check if entry has expired
             if let Some(expiry) = entry.expiry {
                 if SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() > expiry {
@@ -539,13 +542,13 @@ impl DhtStorage {
                     return Ok(None);
                 }
             }
-            
+
             Ok(Some(entry.value.clone()))
         } else {
             Ok(None)
         }
     }
-    
+
     /// Remove a key-value pair
     pub async fn remove(&mut self, key: &str) -> Result<bool> {
         if let Some(entry) = self.storage.remove(key) {
@@ -555,35 +558,35 @@ impl DhtStorage {
             Ok(false)
         }
     }
-    
+
     /// Get storage entry metadata
     pub fn get_metadata(&self, key: &str) -> Option<&ChunkMetadata> {
         self.storage.get(key).map(|entry| &entry.metadata)
     }
-    
+
     /// List all stored keys
     pub fn list_keys(&self) -> Vec<String> {
         self.storage.keys().cloned().collect()
     }
-    
+
     /// List all stored keys with their sizes (for debugging)
     pub fn list_keys_with_info(&self) -> Vec<(String, usize)> {
         self.storage.iter()
             .map(|(key, entry)| (key.clone(), entry.value.len()))
             .collect()
     }
-    
+
     /// Check if a specific key exists in storage
     pub fn contains_key(&self, key: &str) -> bool {
         self.storage.contains_key(key)
     }
-    
+
     /// Get storage statistics
     pub fn get_storage_stats(&self) -> StorageStats {
         let total_entries = self.storage.len();
         let total_size = self.current_usage;
         let available_space = self.max_storage_size.saturating_sub(self.current_usage);
-        
+
         // Calculate average access count
         let total_accesses: u64 = self.storage.values()
             .map(|entry| entry.metadata.access_count)
@@ -593,7 +596,7 @@ impl DhtStorage {
         } else {
             0.0
         };
-        
+
         StorageStats {
             total_entries,
             total_size,
@@ -602,12 +605,12 @@ impl DhtStorage {
             avg_access_count,
         }
     }
-    
+
     /// Cleanup expired entries
     pub async fn cleanup_expired(&mut self) -> Result<usize> {
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let mut removed_count = 0;
-        
+
         let expired_keys: Vec<String> = self.storage.iter()
             .filter_map(|(key, entry)| {
                 if let Some(expiry) = entry.expiry {
@@ -621,17 +624,17 @@ impl DhtStorage {
                 }
             })
             .collect();
-        
+
         for key in expired_keys {
             if let Some(entry) = self.storage.remove(&key) {
                 self.current_usage = self.current_usage.saturating_sub(entry.value.len() as u64);
                 removed_count += 1;
             }
         }
-        
+
         Ok(removed_count)
     }
-    
+
     /// Set entry expiry time
     pub fn set_expiry(&mut self, key: &str, expiry: u64) -> Result<()> {
         if let Some(entry) = self.storage.get_mut(key) {
@@ -641,7 +644,7 @@ impl DhtStorage {
             Err(anyhow!("Key not found: {}", key))
         }
     }
-    
+
     /// Get entries that need replication
     pub fn get_replication_candidates(&self, min_replicas: usize) -> Vec<String> {
         self.storage.iter()
@@ -654,7 +657,7 @@ impl DhtStorage {
             })
             .collect()
     }
-    
+
     /// Update replica information for a key
     pub fn update_replicas(&mut self, key: &str, replicas: Vec<NodeId>) -> Result<()> {
         if let Some(entry) = self.storage.get_mut(key) {
@@ -664,20 +667,20 @@ impl DhtStorage {
             Err(anyhow!("Key not found: {}", key))
         }
     }
-    
+
     /// Verify zero-knowledge storage proof with cryptographic validation
     async fn verify_storage_proof(&self, proof: &ZkProof, key: &str, value: &[u8]) -> Result<bool> {
         // Initialize ZK system for proof verification
         let zk_system = lib_proofs::initialize_zk_system()
             .map_err(|e| anyhow!("Failed to initialize ZK system: {}", e))?;
-        
+
         if proof.is_empty() {
             return Ok(false);
         }
 
         // Generate cryptographically secure commitment to the storage operation
         let storage_commitment = self.generate_storage_commitment(key, value)?;
-        
+
         // Create public inputs using cryptographic operations
         let data_hash = blake3::hash(value);
         let key_hash = blake3::hash(key.as_bytes());
@@ -689,15 +692,15 @@ impl DhtStorage {
 
         // Convert to ZK proof system format (big-endian for consistency)
         let mut public_inputs_u64 = Vec::new();
-        
+
         // Add storage commitment (4 u64 values)
         for chunk in storage_commitment.as_bytes().chunks(8) {
             let mut bytes = [0u8; 8];
             bytes[..chunk.len()].copy_from_slice(chunk);
             public_inputs_u64.push(u64::from_be_bytes(bytes));
         }
-        
-        // Add node commitment (4 u64 values) 
+
+        // Add node commitment (4 u64 values)
         for chunk in node_commitment.as_bytes().chunks(8) {
             let mut bytes = [0u8; 8];
             bytes[..chunk.len()].copy_from_slice(chunk);
@@ -713,7 +716,7 @@ impl DhtStorage {
         if proof.public_inputs.len() < expected_public_inputs.len() {
             return Ok(false);
         }
-        
+
         let inputs_match = &proof.public_inputs[..expected_public_inputs.len()] == &expected_public_inputs;
         if !inputs_match {
             return Ok(false);
@@ -761,12 +764,12 @@ impl DhtStorage {
         if proof.proof.is_empty() || proof.public_inputs.is_empty() {
             return Ok(false);
         }
-        
+
         // Verify public inputs match expected values
         if proof.public_inputs.len() < expected_inputs.len() {
             return Ok(false);
         }
-        
+
         // Convert u64 public inputs to bytes for comparison
         let proof_inputs_bytes: Vec<u8> = proof.public_inputs.iter()
             .flat_map(|&x| x.to_be_bytes())
@@ -775,18 +778,18 @@ impl DhtStorage {
         if !inputs_match {
             return Ok(false);
         }
-        
+
         // Verify proof size meets minimum cryptographic security requirements
         let min_proof_size = 256; // Minimum bytes for secure proof
         if proof.proof.len() < min_proof_size {
             return Ok(false);
         }
-        
+
         // Verify verification key hash is present and valid
         if proof.verification_key_hash == [0u8; 32] {
             return Ok(false);
         }
-        
+
         // Cryptographic integrity check - verify proof commitment
         let proof_hash = blake3::hash(&proof.proof);
         let public_inputs_bytes: Vec<u8> = proof.public_inputs.iter()
@@ -797,12 +800,12 @@ impl DhtStorage {
             &proof.verification_key_hash[..],
             proof_hash.as_bytes(),
         ].concat());
-        
+
         // Verify the commitment is cryptographically sound
         let commitment_valid = commitment_hash.as_bytes().iter()
             .zip(proof.verification_key_hash.iter().cycle())
             .fold(0u8, |acc, (&a, &b)| acc ^ a ^ b) != 0;
-        
+
         Ok(commitment_valid)
     }
 
@@ -812,31 +815,31 @@ impl DhtStorage {
         if key.is_empty() || key.len() > 256 {
             return Err(anyhow!("Invalid key format: must be 1-256 characters"));
         }
-        
+
         // Check value size constraints
         if value.is_empty() {
             return Err(anyhow!("Cannot store empty value"));
         }
-        
+
         let max_value_size = 10 * 1024 * 1024; // 10MB max per entry
         if value.len() > max_value_size {
-            return Err(anyhow!("Value too large: {} bytes exceeds {} byte limit", 
+            return Err(anyhow!("Value too large: {} bytes exceeds {} byte limit",
                 value.len(), max_value_size));
         }
-        
+
         // Validate key cryptographic integrity
         let key_hash = blake3::hash(key.as_bytes());
         if self.is_reserved_key(&key_hash)? {
             return Err(anyhow!("Cannot store to reserved key namespace"));
         }
-        
+
         // Check for overwrite permissions if key exists
         if let Some(existing_entry) = self.storage.get(key) {
             if !self.can_overwrite_entry(existing_entry, proof).await? {
                 return Err(anyhow!("Insufficient permissions to overwrite existing entry"));
             }
         }
-        
+
         Ok(())
     }
 
@@ -845,18 +848,18 @@ impl DhtStorage {
         //  TEST MODE: Disable ZK proof requirement for testing
         // This allows us to test DHT storage without setting up ZK proofs
         Ok(false)
-        
+
         // ORIGINAL CODE (re-enable for production):
         // // Large values require proof
         // if value.len() > 1024 * 1024 { // 1MB threshold
         //     return Ok(true);
         // }
-        // 
+        //
         // // System or private keys require proof
         // if key.starts_with("system:") || key.starts_with("private:") || key.starts_with("secure:") {
         //     return Ok(true);
         // }
-        // 
+        //
         // // Check if value contains sensitive patterns
         // let sensitive_patterns = [&b"password"[..], &b"private_key"[..], &b"secret"[..], &b"token"[..]];
         // for pattern in &sensitive_patterns {
@@ -864,13 +867,13 @@ impl DhtStorage {
         //         return Ok(true);
         //     }
         // }
-        // 
+        //
         // // Values with high entropy (likely encrypted) require proof
         // let entropy = self.calculate_entropy(value)?;
         // if entropy > 7.5 { // High entropy threshold
         //     return Ok(true);
         // }
-        // 
+        //
         // Ok(false)
     }
 
@@ -882,14 +885,14 @@ impl DhtStorage {
             blake3::hash(b"admin"),
             blake3::hash(b"root"),
         ];
-        
+
         for reserved in &reserved_prefixes {
             // Check if key hash starts with reserved prefix pattern
             if key_hash.as_bytes()[..8] == reserved.as_bytes()[..8] {
                 return Ok(true);
             }
         }
-        
+
         Ok(false)
     }
 
@@ -899,12 +902,12 @@ impl DhtStorage {
         if let Some(zk_proof) = proof {
             return Ok(!zk_proof.is_empty());
         }
-        
+
         // Allow overwrite if no existing proof (public data)
         if existing.proof.is_none() {
             return Ok(true);
         }
-        
+
         // Check if existing entry has expired
         if let Some(expiry) = existing.expiry {
             let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -912,7 +915,7 @@ impl DhtStorage {
                 return Ok(true);
             }
         }
-        
+
         // Deny overwrite for protected entries without proof
         Ok(false)
     }
@@ -922,12 +925,12 @@ impl DhtStorage {
         if data.is_empty() {
             return Ok(0.0);
         }
-        
+
         let mut counts = [0u32; 256];
         for &byte in data {
             counts[byte as usize] += 1;
         }
-        
+
         let len = data.len() as f64;
         let entropy = counts.iter()
             .filter(|&&count| count > 0)
@@ -936,7 +939,7 @@ impl DhtStorage {
                 -p * p.log2()
             })
             .sum();
-        
+
         Ok(entropy)
     }
 
@@ -944,11 +947,11 @@ impl DhtStorage {
     async fn verify_full_zk_proof(&self, proof: &ZeroKnowledgeProof, key: &str, value: &[u8]) -> Result<bool> {
         // This would use the full ZeroKnowledgeProof system for more complex proofs
         // For now, we'll validate the structure and basic integrity
-        
+
         if proof.proof_system.is_empty() || proof.proof_data.is_empty() {
             return Ok(false);
         }
-        
+
         // Validate proof system type
         match proof.proof_system.as_str() {
             "plonky2" => {
@@ -964,20 +967,20 @@ impl DhtStorage {
             }
             _ => return Ok(false), // Unknown proof system
         }
-        
+
         // Basic integrity check
         let combined_data = [key.as_bytes(), value].concat();
         let expected_hash = blake3::hash(&combined_data);
-        
+
         // Check if public inputs contain the expected hash
         if proof.public_inputs.len() >= 32 {
             let input_hash = &proof.public_inputs[..32];
             return Ok(input_hash == expected_hash.as_bytes());
         }
-        
+
         Ok(false)
     }
-    
+
     /// Add a DHT node to the routing table and known nodes
     ///
     /// **ACCEPTANCE CRITERIA (Ticket #145):**
@@ -989,15 +992,15 @@ impl DhtStorage {
         println!("   DID: {}", node.peer.did());
         println!("   Device: {}", node.peer.device_id());
         println!("   PublicKey available for signature verification: {:?}", !node.peer.public_key().dilithium_pk.is_empty());
-        
+
         // Add to routing table (ACCEPTANCE CRITERIA: uses Kademlia distance based on NodeId)
         self.router.add_node_sync(node.clone())?;
-        
+
         // Add to known nodes
         // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for tracking
         let node_id = node.peer.node_id().clone();
         self.known_nodes.insert(node_id.clone(), node.clone());
-        
+
         // Test connectivity if network is available
         if let Some(network) = &self.network {
             match network.ping(&node).await {
@@ -1015,7 +1018,7 @@ impl DhtStorage {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -1037,8 +1040,8 @@ impl DhtStorage {
             if let Some(queued_msg) = self.messaging.get_next_message() {
                 match network.send_message(&queued_msg.target_node, queued_msg.message.clone()).await {
                     Ok(_) => {
-                        println!(" Sent message {} to {}", 
-                                queued_msg.message.message_id, 
+                        println!(" Sent message {} to {}",
+                                queued_msg.message.message_id,
                                 hex::encode(&queued_msg.target_node.peer.node_id().as_bytes()[..4]));
                     }
                     Err(e) => {
@@ -1047,15 +1050,15 @@ impl DhtStorage {
                     }
                 }
             }
-            
+
             // Process incoming messages
             let should_continue = match network.receive_message().await {
                 Ok((message, sender_addr)) => {
                     // Log incoming message with sender info
-                    println!("Received message {} from {}", 
-                            message.message_id, 
+                    println!("Received message {} from {}",
+                            message.message_id,
                             sender_addr);
-                    
+
                     if let Ok(response) = self.messaging.handle_incoming(message.clone()).await {
                         if let Some(response_msg) = response {
                             // Send response back
@@ -1064,15 +1067,15 @@ impl DhtStorage {
                             }
                         }
                     }
-                    
+
                     // Put network back before handling storage message
                     self.network = Some(network);
-                    
+
                     // Handle storage-specific messages (now self is available)
                     if let Err(e) = self.handle_storage_message(message).await {
                         eprintln!("Failed to handle storage message: {}", e);
                     }
-                    
+
                     true // Continue processing
                 }
                 Err(e) => {
@@ -1084,18 +1087,18 @@ impl DhtStorage {
                     true
                 }
             };
-            
+
             if !should_continue {
                 break;
             }
-            
+
             // Cleanup and maintenance
             self.messaging.cleanup_expired_responses(Duration::from_secs(300));
-            
+
             // Small delay to prevent busy-waiting
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        
+
         Ok(())
     }
 
@@ -1107,7 +1110,7 @@ impl DhtStorage {
                     // Store the data locally
                     match self.store(key.clone(), value.clone(), None).await {
                         Ok(_) => {
-                            println!(" Stored data for key {} from {}", 
+                            println!(" Stored data for key {} from {}",
                                     key, hex::encode(&message.sender_id.as_bytes()[..4]));
                         }
                         Err(e) => {
@@ -1128,7 +1131,7 @@ impl DhtStorage {
                 if let Some(target_id) = &message.target_id {
                     // Return closest nodes we know about
                     let closest = self.router.find_closest_nodes(target_id, 8);
-                    println!("🗺️ Returning {} closest nodes for target {}", 
+                    println!("🗺️ Returning {} closest nodes for target {}",
                             closest.len(), hex::encode(&target_id.as_bytes()[..4]));
                 }
             }
@@ -1157,17 +1160,17 @@ impl DhtStorage {
                 // Other message types are handled by messaging layer
             }
         }
-        
+
         Ok(())
     }
 
     /// Handle smart contract deployment through DHT
     async fn handle_contract_deploy(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
         println!(" Contract deployment request from {}", hex::encode(&sender_id.as_bytes()[..4]));
-        
+
         if let (Some(bytecode), Some(metadata)) = (&contract_data.bytecode, &contract_data.metadata) {
             let contract_key = format!("contract:{}", contract_data.contract_id);
-            
+
             // Store contract bytecode and metadata in DHT
             let contract_info = serde_json::json!({
                 "contract_id": contract_data.contract_id,
@@ -1180,14 +1183,14 @@ impl DhtStorage {
                 "bytecode_size": bytecode.len(),
                 "version": metadata.version.as_str()
             });
-            
+
             if let Ok(serialized) = serde_json::to_vec(&contract_info) {
                 match self.store(contract_key, serialized, None).await {
                     Ok(_) => {
                         // Index contract by tags for discovery
                         self.index_contract_by_tags(&contract_data.contract_id, metadata);
                         println!(" Contract {} deployed and indexed successfully", contract_data.contract_id);
-                        
+
                         // Store contract summary for quick discovery
                         let summary_key = format!("contract_summary:{}", contract_data.contract_id);
                         let summary = serde_json::json!({
@@ -1201,7 +1204,7 @@ impl DhtStorage {
                                 .unwrap_or_default().as_secs(),
                             "size": bytecode.len()
                         });
-                        
+
                         if let Ok(summary_serialized) = serde_json::to_vec(&summary) {
                             let _ = self.store(summary_key, summary_serialized, None).await;
                         }
@@ -1215,30 +1218,30 @@ impl DhtStorage {
     /// Handle smart contract query through DHT
     async fn handle_contract_query(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
         println!(" Contract query from {}", hex::encode(&sender_id.as_bytes()[..4]));
-        
+
         let contract_key = format!("contract:{}", contract_data.contract_id);
-        
+
         match self.get(&contract_key).await {
             Ok(Some(stored_contract)) => {
-                println!(" Found contract {} for query ({} bytes)", 
-                        contract_data.contract_id, 
+                println!(" Found contract {} for query ({} bytes)",
+                        contract_data.contract_id,
                         stored_contract.len());
-                
+
                 // Parse contract info and provide detailed response
                 if let Ok(contract_info) = serde_json::from_slice::<serde_json::Value>(&stored_contract) {
                     if let Some(metadata) = contract_info.get("metadata") {
-                        println!(" Contract metadata: {}", 
+                        println!(" Contract metadata: {}",
                                 serde_json::to_string_pretty(metadata).unwrap_or_default());
                     }
-                    
-                    println!("⏰ Deployed at: {}", 
+
+                    println!("⏰ Deployed at: {}",
                             contract_info["deployed_at"].as_u64().unwrap_or(0));
-                    println!(" Deployed by: {}", 
+                    println!(" Deployed by: {}",
                             contract_info["deployer"].as_str().unwrap_or("unknown"));
-                    println!("📏 Bytecode size: {} bytes", 
+                    println!("📏 Bytecode size: {} bytes",
                             contract_info["bytecode_size"].as_u64().unwrap_or(0));
                 }
-                
+
                 // In a full implementation, this would integrate with the WASM runtime
                 // to execute read-only contract queries
             }
@@ -1254,13 +1257,13 @@ impl DhtStorage {
     /// Handle smart contract execution through DHT
     async fn handle_contract_execute(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
         println!(" Contract execution request from {}", hex::encode(&sender_id.as_bytes()[..4]));
-        
+
         let contract_key = format!("contract:{}", contract_data.contract_id);
-        
+
         match self.get(&contract_key).await {
             Ok(Some(_contract_data)) => {
-                println!(" Executing contract {} function {:?}", 
-                        contract_data.contract_id, 
+                println!(" Executing contract {} function {:?}",
+                        contract_data.contract_id,
                         contract_data.function_name.as_deref().unwrap_or("default"));
                 // In a full implementation, this would:
                 // 1. Load contract from DHT storage
@@ -1280,15 +1283,15 @@ impl DhtStorage {
     /// Handle smart contract find through DHT
     async fn handle_contract_find(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
         println!(" Contract search from {}", hex::encode(&sender_id.as_bytes()[..4]));
-        
+
         // If specific contract ID provided, look it up directly
         if !contract_data.contract_id.is_empty() {
             let contract_key = format!("contract:{}", contract_data.contract_id);
-            
+
             match self.get(&contract_key).await {
                 Ok(Some(contract_info)) => {
-                    println!(" Found contract {} ({} bytes)", 
-                            contract_data.contract_id, 
+                    println!(" Found contract {} ({} bytes)",
+                            contract_data.contract_id,
                             contract_info.len());
                     // Return contract metadata through DHT response
                 }
@@ -1302,11 +1305,11 @@ impl DhtStorage {
         } else if let Some(metadata) = &contract_data.metadata {
             // Search by tags if no specific ID provided
             println!(" Searching contracts by tags: {:?}", metadata.tags);
-            
+
             match self.find_contracts_by_tags(&metadata.tags, 10).await {
                 Ok(matching_contracts) => {
                     println!(" Found {} contracts matching tags", matching_contracts.len());
-                    
+
                     // Return list of matching contract summaries
                     for contract_id in &matching_contracts {
                         let summary_key = format!("contract_summary:{}", contract_id);
@@ -1324,7 +1327,7 @@ impl DhtStorage {
             println!(" Listing all available contracts");
             let all_contracts = self.list_contracts().await;
             println!(" Found {} contracts in DHT storage", all_contracts.len());
-            
+
             for contract_id in all_contracts.iter().take(10) {
                 println!("   Contract: {}", contract_id);
             }
@@ -1340,21 +1343,21 @@ impl DhtStorage {
                 .or_insert_with(Vec::new)
                 .push(contract_id.to_string());
         }
-        
+
         // Index by name for name-based discovery
         let name = &metadata.name;
         self.contract_index
             .entry(format!("name:{}", name))
             .or_insert_with(Vec::new)
             .push(contract_id.to_string());
-        
+
         println!(" Indexed contract {} with {} tags", contract_id, metadata.tags.len());
     }
 
     /// Find contracts by tags through DHT
     pub async fn find_contracts_by_tags(&self, tags: &[String], limit: usize) -> Result<Vec<String>> {
         let mut matching_contracts = std::collections::HashSet::new();
-        
+
         // Find contracts that match any of the provided tags
         for tag in tags {
             if let Some(contracts) = self.contract_index.get(tag) {
@@ -1366,14 +1369,14 @@ impl DhtStorage {
                 }
             }
         }
-        
+
         Ok(matching_contracts.into_iter().collect())
     }
 
     /// Get contract bytecode from DHT storage
     pub async fn get_contract_bytecode(&mut self, contract_id: &str) -> Result<Option<Vec<u8>>> {
         let contract_key = format!("contract:{}", contract_id);
-        
+
         match self.get(&contract_key).await {
             Ok(Some(contract_data)) => {
                 // Parse the stored contract info
@@ -1394,7 +1397,7 @@ impl DhtStorage {
     /// Get contract metadata from DHT storage
     pub async fn get_contract_metadata(&mut self, contract_id: &str) -> Result<Option<crate::types::dht_types::ContractMetadata>> {
         let contract_key = format!("contract:{}", contract_id);
-        
+
         match self.get(&contract_key).await {
             Ok(Some(contract_data)) => {
                 // Parse the stored contract info
@@ -1415,7 +1418,7 @@ impl DhtStorage {
     /// List all contracts stored in this DHT node
     pub async fn list_contracts(&self) -> Vec<String> {
         let mut contracts = Vec::new();
-        
+
         for key in self.storage.keys() {
             if key.starts_with("contract:") && !key.starts_with("contract_summary:") {
                 if let Some(contract_id) = key.strip_prefix("contract:") {
@@ -1423,7 +1426,7 @@ impl DhtStorage {
                 }
             }
         }
-        
+
         contracts
     }
 
@@ -1431,24 +1434,24 @@ impl DhtStorage {
     pub fn get_contract_stats(&self) -> (usize, usize, u64) {
         let mut contract_count = 0;
         let mut total_size = 0u64;
-        
+
         for (key, entry) in &self.storage {
             if key.starts_with("contract:") && !key.starts_with("contract_summary:") {
                 contract_count += 1;
                 total_size += entry.value.len() as u64;
             }
         }
-        
+
         (contract_count, self.contract_index.len(), total_size)
     }
 
     /// Perform DHT maintenance (refresh routing table, check node liveness)
     pub async fn perform_maintenance(&mut self) -> Result<()> {
         println!("Performing DHT maintenance...");
-        
+
         // Check liveness of known nodes
         let node_ids: Vec<NodeId> = self.known_nodes.keys().cloned().collect();
-        
+
         if let Some(network) = &self.network {
             for node_id in node_ids {
                 if let Some(node) = self.known_nodes.get(&node_id) {
@@ -1458,7 +1461,7 @@ impl DhtStorage {
                         }
                         Ok(false) | Err(_) => {
                             self.router.mark_node_failed(&node_id);
-                            
+
                             // Remove unresponsive nodes after too many failures
                             // This would be configurable in production
                             self.router.remove_node(&node_id);
@@ -1468,16 +1471,16 @@ impl DhtStorage {
                 }
             }
         }
-        
+
         // Cleanup expired storage entries
         let expired_count = self.cleanup_expired().await?;
         if expired_count > 0 {
             println!("🗑️ Cleaned up {} expired storage entries", expired_count);
         }
-        
+
         let stats = self.router.get_stats();
         println!("DHT stats: {} nodes in {} buckets", stats.total_nodes, stats.non_empty_buckets);
-        
+
         Ok(())
     }
 
@@ -1485,13 +1488,13 @@ impl DhtStorage {
     fn calculate_checksum(&self, data: &[u8]) -> Vec<u8> {
         // Use BLAKE3 for cryptographically secure checksums
         let hash = blake3::hash(data);
-        
+
         // Include node identity in checksum for authenticity verification
         let node_authenticated_hash = blake3::hash(&[
             hash.as_bytes(),
             self.local_node_id.as_bytes() as &[u8],
         ].concat());
-        
+
         // Return first 32 bytes for storage efficiency while maintaining security
         node_authenticated_hash.as_bytes().to_vec()
     }
@@ -1506,7 +1509,7 @@ impl DhtStorage {
         self.router.get_stats()
     }
 
-    /// Get messaging queue statistics  
+    /// Get messaging queue statistics
     pub fn get_messaging_stats(&self) -> crate::dht::messaging::QueueStats {
         self.messaging.get_queue_stats()
     }
@@ -1525,87 +1528,87 @@ pub struct StorageStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_storage_creation() {
         let node_id = NodeId::from_bytes([1u8; 32]);
         let storage = DhtStorage::new(node_id, 1024 * 1024); // 1MB
-        
+
         assert_eq!(storage.current_usage, 0);
         assert_eq!(storage.max_storage_size, 1024 * 1024);
     }
-    
+
     #[tokio::test]
     async fn test_store_and_retrieve() {
         let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 1024 * 1024);
-        
+
         let key = "test_key".to_string();
         let value = b"test_value".to_vec();
-        
+
         // Store value
         storage.store(key.clone(), value.clone(), None).await.unwrap();
-        
+
         // Retrieve value
         let retrieved = storage.get(&key).await.unwrap();
         assert_eq!(retrieved, Some(value));
-        
+
         // Check statistics
         let stats = storage.get_storage_stats();
         assert_eq!(stats.total_entries, 1);
         assert_eq!(stats.total_size, 10); // "test_value" is 10 bytes
     }
-    
+
     #[tokio::test]
     async fn test_capacity_limit() {
         let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 5); // Very small capacity
-        
+
         let key = "test_key".to_string();
         let large_value = vec![0u8; 10]; // 10 bytes, exceeds capacity
-        
+
         // Attempt to store large value
         let result = storage.store(key, large_value, None).await;
         assert!(result.is_err());
     }
-    
+
     #[tokio::test]
     async fn test_remove() {
         let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 1024);
-        
+
         let key = "test_key".to_string();
         let value = b"test_value".to_vec();
-        
+
         // Store and remove
         storage.store(key.clone(), value, None).await.unwrap();
         let removed = storage.remove(&key).await.unwrap();
         assert!(removed);
-        
+
         // Verify removal
         let retrieved = storage.get(&key).await.unwrap();
         assert_eq!(retrieved, None);
-        
+
         let stats = storage.get_storage_stats();
         assert_eq!(stats.total_entries, 0);
         assert_eq!(stats.total_size, 0);
     }
-    
+
     #[tokio::test]
     async fn test_expiry() {
         let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 1024);
-        
+
         let key = "test_key".to_string();
         let value = b"test_value".to_vec();
-        
+
         // Store value
         storage.store(key.clone(), value, None).await.unwrap();
-        
+
         // Set expiry in the past
         let past_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() - 3600;
         storage.set_expiry(&key, past_time).unwrap();
-        
+
         // Try to retrieve expired value
         let retrieved = storage.get(&key).await.unwrap();
         assert_eq!(retrieved, None); // Should be None due to expiry
