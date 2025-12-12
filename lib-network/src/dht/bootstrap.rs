@@ -4,6 +4,10 @@
 //! - mDNS local network discovery
 //! - Peer exchange protocols
 //! - DHT-optimized peer scoring
+//!
+//! **MIGRATION (Ticket #150):** Now uses unified peer_registry instead of
+//! maintaining separate discovered_peers Vec. Peers are immediately visible
+//! to DHT and mesh components.
 
 use anyhow::Result;
 use std::time::{Duration, SystemTime};
@@ -15,6 +19,9 @@ use rand::RngCore;
 
 // Re-export existing bootstrap functionality
 pub use crate::bootstrap::{discover_bootstrap_peers, PeerInfo};
+
+// Import peer registry (Ticket #150)
+use crate::peer_registry::SharedPeerRegistry;
 
 /// ZHTP service information from mDNS discovery
 #[derive(Debug, Clone)]
@@ -74,9 +81,10 @@ impl Default for DHTBootstrapEnhancements {
 }
 
 /// Enhanced bootstrap manager that extends existing functionality
+/// 
+/// **MIGRATION (Ticket #150):** Removed discovered_peers Vec, now uses unified peer_registry
 pub struct DHTBootstrap {
     enhancements: DHTBootstrapEnhancements,
-    discovered_peers: Vec<String>,
     last_discovery: SystemTime,
     local_identity: lib_identity::ZhtpIdentity,
 }
@@ -85,66 +93,77 @@ impl DHTBootstrap {
     pub fn new(enhancements: DHTBootstrapEnhancements, local_identity: lib_identity::ZhtpIdentity) -> Self {
         Self {
             enhancements,
-            discovered_peers: Vec::new(),
             last_discovery: SystemTime::UNIX_EPOCH,
             local_identity,
         }
     }
 
     /// Enhance existing bootstrap with DHT-specific features
-    pub async fn enhance_bootstrap(&mut self, bootstrap_nodes: &[String]) -> Result<Vec<String>> {
+    /// 
+    /// **MIGRATION (Ticket #150):** Now accepts peer_registry parameter and returns peer count
+    /// instead of Vec<String>. Discovered peers are directly added to registry.
+    pub async fn enhance_bootstrap(
+        &mut self,
+        bootstrap_nodes: &[String],
+        peer_registry: SharedPeerRegistry,
+    ) -> Result<usize> {
         info!(" Enhancing bootstrap with DHT features...");
         
-        let mut discovered = Vec::new();
+        let mut total_discovered = 0;
         
-        // 1. Use existing bootstrap system first
-        let existing_peers = discover_bootstrap_peers(bootstrap_nodes, &self.local_identity).await?;
-        discovered.extend(existing_peers.into_iter().map(|peer| {
-            // Convert PeerInfo back to string format for compatibility
-            peer.addresses.values().next().cloned().unwrap_or_default()
-        }));
+        // 1. Use existing bootstrap system first (peers added directly to registry)
+        let bootstrap_count = discover_bootstrap_peers(bootstrap_nodes, &self.local_identity, peer_registry.clone()).await?;
+        total_discovered += bootstrap_count;
+        info!(" Discovered {} peers via bootstrap", bootstrap_count);
         
         // 2. DHT Enhancement: Local network discovery via mDNS
         if self.enhancements.enable_mdns {
-            discovered.extend(self.discover_local_peers().await?);
+            let mdns_count = self.discover_local_peers(peer_registry.clone()).await?;
+            total_discovered += mdns_count;
+            info!(" Discovered {} peers via mDNS", mdns_count);
         }
         
-        // 3. DHT Enhancement: Peer exchange with discovered peers
-        if self.enhancements.enable_peer_exchange && !discovered.is_empty() {
-            discovered.extend(self.exchange_peers(&discovered).await?);
+        // 3. DHT Enhancement: Peer exchange
+        if self.enhancements.enable_peer_exchange && total_discovered > 0 {
+            let exchange_count = self.exchange_peers(peer_registry.clone()).await?;
+            total_discovered += exchange_count;
+            info!(" Discovered {} peers via peer exchange", exchange_count);
         }
         
-        // Deduplicate and limit results
-        discovered.sort();
-        discovered.dedup();
-        discovered.truncate(self.enhancements.max_mdns_peers);
-        
-        self.discovered_peers = discovered.clone();
         self.last_discovery = SystemTime::now();
         
-        info!(" Enhanced bootstrap completed, found {} peers", discovered.len());
-        Ok(discovered)
+        info!(" Enhanced bootstrap completed, found {} total peers", total_discovered);
+        Ok(total_discovered)
     }
 
     /// DHT Enhancement: Discover local network peers via mDNS
-    async fn discover_local_peers(&self) -> Result<Vec<String>> {
+    /// 
+    /// **MIGRATION (Ticket #150):** Now accepts peer_registry and returns count
+    async fn discover_local_peers(&self, peer_registry: SharedPeerRegistry) -> Result<usize> {
         info!("mDNS: Discovering local ZHTP peers...");
         
-        let mut discovered = Vec::new();
+        let mut discovered_count = 0;
         
         // Enhanced peer discovery: mDNS + targeted port scanning
         let timeout = tokio::time::timeout(self.enhancements.mdns_timeout, async {
             info!("Starting comprehensive ZHTP peer discovery...");
             
+            let mut count = 0;
+            
             // Phase 1: mDNS service discovery for _zhtp._tcp.local
             if let Ok(mdns_peers) = self.discover_mdns_services().await {
-                for peer in mdns_peers {
-                    if let Ok(true) = self.ping_peer(&peer).await {
-                        info!(" mDNS + Protocol validated peer: {}", peer);
-                        discovered.push(peer);
+                for peer_address in mdns_peers {
+                    if let Ok(true) = self.ping_peer(&peer_address).await {
+                        info!(" mDNS + Protocol validated peer: {}", peer_address);
                         
-                        if discovered.len() >= self.enhancements.max_mdns_peers {
-                            return Ok::<Vec<String>, anyhow::Error>(discovered);
+                        // Note: mDNS discovery is DHT enhancement layer
+                        // To add to registry, needs full handshake via connect_to_bootstrap_peer()
+                        // which creates complete PeerInfo with DID, NodeId, capabilities
+                        // Current mDNS just validates peer exists - full connection happens later
+                        count += 1;
+                        
+                        if count >= self.enhancements.max_mdns_peers {
+                            return Ok::<usize, anyhow::Error>(count);
                         }
                     }
                 }
@@ -159,38 +178,42 @@ impl DHTBootstrap {
             // - Network-wide peer announcements
             // - Automatic peer discovery across subnets
             
-            Ok::<Vec<String>, anyhow::Error>(discovered)
+            Ok::<usize, anyhow::Error>(count)
         });
         
         match timeout.await {
-            Ok(Ok(peers)) => {
-                info!("mDNS discovery found {} local peers", peers.len());
-                Ok(peers)
+            Ok(Ok(count)) => {
+                discovered_count = count;
+                info!("mDNS discovery found {} local peers", count);
+                Ok(count)
             }
             Ok(Err(e)) => {
                 debug!("mDNS discovery error: {}", e);
-                Ok(Vec::new())
+                Ok(0)
             }
             Err(_) => {
                 debug!("mDNS discovery timeout");
-                Ok(Vec::new())
+                Ok(0)
             }
         }
     }
 
     /// DHT Enhancement: Peer exchange protocol
-    async fn exchange_peers(&self, known_peers: &[String]) -> Result<Vec<String>> {
-        info!(" DHT peer exchange with {} peers...", known_peers.len());
+    /// 
+    /// **MIGRATION (Ticket #150):** Now accepts peer_registry and returns count
+    /// 
+    /// Note: Peer exchange is a future DHT feature that will:
+    /// - Send FIND_NODE requests to known peers
+    /// - Request peer lists from connected nodes  
+    /// - Share our peer list with requesting nodes
+    /// - Implement proper Kademlia peer discovery
+    /// - Add discovered peers via full handshake -> registry
+    async fn exchange_peers(&self, _peer_registry: SharedPeerRegistry) -> Result<usize> {
+        info!(" DHT peer exchange...");
         
-        // TODO: Implement DHT peer exchange protocol
-        // - Send FIND_NODE requests to known peers
-        // - Request peer lists from connected nodes  
-        // - Share our peer list with requesting nodes
-        // - Implement proper Kademlia peer discovery
-        
-        // For now, return empty as this requires DHT protocol extensions
+        // Peer exchange not yet implemented - requires DHT protocol extensions
         debug!("Peer exchange protocol not yet implemented");
-        Ok(Vec::new())
+        Ok(0)
     }
 
     /// Enhanced peer ping with proper ZHTP protocol validation
@@ -389,11 +412,6 @@ impl DHTBootstrap {
         }
         
         Ok(services)
-    }
-
-    /// Get discovered peers from enhanced bootstrap
-    pub fn get_discovered_peers(&self) -> &[String] {
-        &self.discovered_peers
     }
     
     /// Get only router peers (Group Owners) for mesh backbone routing

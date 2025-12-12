@@ -50,6 +50,9 @@ governor = "0.6"
 # Security: LRU cache for bounded nonce storage
 lru = "0.12"
 
+# Platform directories for secure file locations
+dirs = "5.0"
+
 # CRITICAL FIX C3: Faster RwLock for atomic state updates
 parking_lot = "0.12"
 
