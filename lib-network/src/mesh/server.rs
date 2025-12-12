@@ -226,8 +226,8 @@ pub struct ZhtpMeshServer {
     pub economics: Arc<RwLock<EconomicModel>>,
     /// Distributed storage system
     pub storage: Arc<RwLock<UnifiedStorageSystem>>,
-    /// Active mesh connections (indexed by UnifiedPeerId for Ticket #146 migration)
-    pub mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
+    /// Unified peer registry (Ticket #149: replaces separate mesh_connections)
+    pub peer_registry: crate::peer_registry::SharedPeerRegistry,
     /// Long-range relay nodes (LoRaWAN gateways, satellite uplinks)
     pub long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
 
@@ -848,8 +848,9 @@ impl ZhtpMeshServer {
     }
 
     /// Start monitoring for Bluetooth protocol
+    /// TODO (Ticket #149): Update to use peer_registry
     async fn start_bluetooth_monitoring(&self, protocol: Arc<RwLock<crate::protocols::bluetooth::BluetoothMeshProtocol>>) -> Result<()> {
-        let connections = self.mesh_connections.clone();
+        let peer_registry = self.peer_registry.clone();
         
         tokio::spawn(async move {
             loop {
@@ -865,8 +866,9 @@ impl ZhtpMeshServer {
     }
 
     /// Start monitoring for WiFi Direct protocol
+    /// TODO (Ticket #149): Update to use peer_registry
     async fn start_wifi_direct_monitoring(&self, protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>) -> Result<()> {
-        let connections = self.mesh_connections.clone();
+        let peer_registry = self.peer_registry.clone();
         
         tokio::spawn(async move {
             loop {
@@ -910,7 +912,10 @@ impl ZhtpMeshServer {
         
         let economics = Arc::new(RwLock::new(EconomicModel::new()));
         let storage = Arc::new(RwLock::new(storage));
-        let mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>> = Arc::new(RwLock::new(HashMap::new()));
+        
+        // Ticket #149: Use unified peer_registry instead of separate mesh_connections
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
         let stats = Arc::new(RwLock::new(MeshProtocolStats::default()));
@@ -918,10 +923,10 @@ impl ZhtpMeshServer {
         // Create participant tracking for UBI
         let ubi_participants = Arc::new(RwLock::new(HashMap::<String, String>::new()));
         
-        // Initialize health monitor
+        // Initialize health monitor (Ticket #149: update to use peer_registry)
         let health_monitor = HealthMonitor::new(
             stats.clone(),
-            mesh_connections.clone(),
+            peer_registry.clone(),
             long_range_relays.clone(),
         );
         
@@ -942,7 +947,7 @@ impl ZhtpMeshServer {
             mesh_node,
             economics,
             storage,
-            mesh_connections,
+            peer_registry, // Ticket #149: Using unified registry
             long_range_relays,
             revenue_pools,
             stats,
@@ -1188,19 +1193,19 @@ impl ZhtpMeshServer {
     pub async fn initialize_message_forwarding(&self) -> Result<()> {
         info!(" Initializing message forwarding components...");
         
-        // Create message handler
+        // Create message handler (Ticket #149: using peer_registry)
         let message_handler = Arc::new(RwLock::new(
             crate::messaging::message_handler::MeshMessageHandler::new(
-                self.mesh_connections.clone(),
+                self.peer_registry.clone(),
                 self.long_range_relays.clone(),
                 self.revenue_pools.clone(),
             )
         ));
         
-        // Create message router
+        // Create message router (Ticket #149: using peer_registry)
         let message_router = Arc::new(RwLock::new(
             crate::routing::message_routing::MeshMessageRouter::new(
-                self.mesh_connections.clone(),
+                self.peer_registry.clone(),
                 self.long_range_relays.clone(),
             )
         ));
@@ -1330,10 +1335,10 @@ impl ZhtpMeshServer {
         }
         
         // Check if it's a connected user (can only disconnect own connections)
-        // MIGRATION (Ticket #146): Compare via UnifiedPeerId.public_key()
-        let connections = self.mesh_connections.read().await;
-        for (peer_key, _) in connections.iter() {
-            if peer_key.public_key() == caller_key {
+        // MIGRATION (Ticket #149): Use peer_registry
+        let registry = self.peer_registry.read().await;
+        for peer_entry in registry.all_peers() {
+            if peer_entry.peer_id.public_key() == caller_key {
                 return PermissionLevel::User;
             }
         }
@@ -1578,8 +1583,8 @@ impl ZhtpMeshServer {
             }
         }
         
-        // Clear all connections immediately
-        self.mesh_connections.write().await.clear();
+        // Clear all connections immediately (Ticket #149: using peer_registry)
+        self.peer_registry.write().await.clear();
         self.long_range_relays.write().await.clear();
         self.connection_attempts.write().await.clear();
         
@@ -1610,9 +1615,11 @@ impl ZhtpMeshServer {
             return Ok(());
         }
         
-        // Gracefully disconnect all mesh connections
-        let connections = self.mesh_connections.read().await;
-        println!("Disconnecting {} mesh connections...", connections.len());
+        // Gracefully disconnect all mesh connections (Ticket #149: using peer_registry)
+        let registry = self.peer_registry.read().await;
+        let peer_count = registry.all_peers().count();
+        println!("Disconnecting {} mesh connections...", peer_count);
+        drop(registry);
         
         // Disconnect protocols gracefully
         if let Some(ref bt_protocol) = self.bluetooth_protocol {
@@ -1624,8 +1631,8 @@ impl ZhtpMeshServer {
             }
         }
         
-        // Clear all in-memory state
-        self.mesh_connections.write().await.clear();
+        // Clear all in-memory state (Ticket #149: using peer_registry)
+        self.peer_registry.write().await.clear();
         self.long_range_relays.write().await.clear();
         self.connection_attempts.write().await.clear();
         
@@ -1650,8 +1657,10 @@ impl ZhtpMeshServer {
     }
     
     /// Get current connection count and limit status
+    /// TODO (Ticket #149): Migrated to peer_registry
     pub async fn get_connection_status(&self) -> (usize, usize, bool) {
-        let current = self.mesh_connections.read().await.len();
+        let registry = self.peer_registry.read().await;
+        let current = registry.all_peers().count();
         let max = *self.max_connections.read().await;
         let at_limit = current >= max;
         (current, max, at_limit)
@@ -1715,17 +1724,18 @@ impl ZhtpMeshServer {
             }
         }
         
-        // Remove from mesh connections by address lookup
-        let mut connections = self.mesh_connections.write().await;
-        if let Some(key_to_remove) = connections.iter()
-            .find(|(_, connection)| {
+        // Remove from peer registry by address lookup (Ticket #149: using peer_registry)
+        let registry = self.peer_registry.read().await;
+        if let Some(key_to_remove) = registry.all_peers()
+            .find(|entry| {
                 // Try to match by peer DID or public key string representation
-                // **MIGRATION (Ticket #146):** Changed from connection.peer_id to connection.peer
-                format!("{:?}", connection.peer.public_key()).contains(address) ||
-                connection.peer.did().contains(address)
+                format!("{:?}", entry.peer_id.public_key()).contains(address) ||
+                entry.peer_id.did().contains(address)
             })
-            .map(|(k, _)| k.clone()) {
-            connections.remove(&key_to_remove);
+            .map(|entry| entry.peer_id.clone()) {
+            drop(registry);
+            let mut registry_write = self.peer_registry.write().await;
+            registry_write.remove(&key_to_remove);
             self.log_security_operation(
                 "disconnect_peer_by_address",
                 &credentials.caller_key,
@@ -1754,12 +1764,13 @@ impl ZhtpMeshServer {
             }
         }
         
-        // Add mesh connection peers
-        let connections = self.mesh_connections.read().await;
-        for (public_key, connection) in connections.iter() {
+        // Add mesh connection peers (Ticket #149: using peer_registry)
+        let registry = self.peer_registry.read().await;
+        for peer_entry in registry.all_peers() {
+            let endpoint = peer_entry.endpoints.first();
             peers.push(format!("MESH: {} ({:?})", 
-                hex::encode(&public_key.key_id[..8]), // First 8 bytes of key ID
-                connection.protocol
+                hex::encode(&peer_entry.peer_id.public_key().key_id[..8]), // First 8 bytes of key ID
+                endpoint.map(|e| &e.protocol)
             ));
         }
         
@@ -1805,8 +1816,8 @@ impl ZhtpMeshServer {
             }
         }
         
-        // Clear all mesh connections
-        self.mesh_connections.write().await.clear();
+        // Clear all mesh connections (Ticket #149: using peer_registry)
+        self.peer_registry.write().await.clear();
         self.connection_attempts.write().await.clear();
         
         self.log_security_operation(
