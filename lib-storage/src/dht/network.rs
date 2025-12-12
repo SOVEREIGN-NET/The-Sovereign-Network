@@ -192,6 +192,9 @@ impl DhtNetwork {
         } else if target_addr.starts_with("wifid://") {
             let addr = target_addr.trim_start_matches("wifid://").parse()?;
             PeerId::WiFiDirect(addr)
+        } else if target_addr.starts_with("quic://") {
+            let addr = target_addr.trim_start_matches("quic://").parse()?;
+            PeerId::Quic(addr)
         } else if target_addr.starts_with("lora://") {
             PeerId::LoRaWAN(target_addr.trim_start_matches("lora://").to_string())
         } else {
@@ -213,7 +216,7 @@ impl DhtNetwork {
     /// - Validates message timestamp (rejects > 5 min old)
     /// - Validates nonce is non-zero
     /// - Caller should verify signature and check nonce against seen-nonce cache
-    pub async fn receive_message(&self) -> Result<(DhtMessage, SocketAddr)> {
+    pub async fn receive_message(&self) -> Result<(DhtMessage, PeerId)> {
         // Receive from transport abstraction
         let (message_bytes, peer_id) = timeout(
             self.timeout_duration,
@@ -223,24 +226,10 @@ impl DhtNetwork {
         // Deserialize message
         let message: DhtMessage = bincode::deserialize(&message_bytes)?;
 
-        // Convert PeerId back to SocketAddr for compatibility
-        let sender_addr = match peer_id {
-            PeerId::Udp(addr) => addr,
-            PeerId::WiFiDirect(addr) => addr,
-            PeerId::Quic(addr) => addr,
-            PeerId::Bluetooth(_) => {
-                // For Bluetooth, create a pseudo-address (not used for routing)
-                "0.0.0.0:0".parse()?
-            }
-            PeerId::LoRaWAN(_) => {
-                "0.0.0.0:0".parse()?
-            }
-        };
-
         // SECURITY: Validate message freshness and replay protection fields
         if let Err(e) = message.validate_freshness() {
             warn!(
-                sender = %sender_addr,
+                sender = %peer_id,
                 msg_type = ?message.message_type,
                 error = %e,
                 "Rejecting stale or invalid DHT message"
@@ -249,14 +238,14 @@ impl DhtNetwork {
         }
 
         debug!(
-            sender = %sender_addr,
+            sender = %peer_id,
             msg_type = ?message.message_type,
             seq = message.sequence_number,
             protocol = peer_id.protocol(),
             "Received valid DHT message"
         );
 
-        Ok((message, sender_addr))
+        Ok((message, peer_id))
     }
     
     /// Send PING message to check node liveness
@@ -432,7 +421,7 @@ impl DhtNetwork {
     ///
     /// - Response messages include nonce and sequence_number for replay protection
     /// - Incoming message freshness is already validated by receive_message()
-    pub async fn handle_incoming_message(&self, message: DhtMessage, _sender_addr: SocketAddr) -> Result<Option<DhtMessage>> {
+    pub async fn handle_incoming_message(&self, message: DhtMessage, _sender: PeerId) -> Result<Option<DhtMessage>> {
         match message.message_type {
             DhtMessageType::Ping => {
                 Ok(Some(DhtMessage {
@@ -635,8 +624,8 @@ mod tests {
             signature: None,
         };
         
-        let sender_addr = "127.0.0.1:12345".parse().unwrap();
-        let response = network.handle_incoming_message(ping_message, sender_addr).await.unwrap();
+        let sender = PeerId::Udp("127.0.0.1:12345".parse().unwrap());
+        let response = network.handle_incoming_message(ping_message, sender).await.unwrap();
 
         assert!(response.is_some());
         if let Some(pong) = response {

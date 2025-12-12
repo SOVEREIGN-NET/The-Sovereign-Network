@@ -22,10 +22,14 @@
 //!    - Batch updates committed in single transaction
 //!    - Thread-safe observer registry with Arc<RwLock<>>
 
-use crate::peer_registry::{PeerEntry, UnifiedPeerId};
+use crate::peer_registry::{
+    ConnectionMetrics, DhtPeerInfo, DiscoveryMethod, NodeCapabilities, PeerEntry, PeerTier,
+    UnifiedPeerId,
+};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
@@ -655,37 +659,62 @@ mod tests {
     
     fn create_test_peer_entry(node_id_bytes: [u8; 32]) -> PeerEntry {
         use crate::peer_registry::*;
-        
-        let node_id = NodeId::from_bytes(node_id_bytes);
-        let public_key = PublicKey {
-            dilithium_pk: vec![1, 2, 3],
-            kyber_pk: vec![4, 5, 6],
-            key_id: [0u8; 32],
-        };
-        
-        let peer_id = UnifiedPeerId::new(node_id, public_key.clone(), format!("did:zhtp:{}", hex::encode(&node_id_bytes[0..16])));
-        
+        use lib_identity::ZhtpIdentity;
+
+        let identity = ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            "test-device",
+            None,
+        ).expect("Failed to create test identity");
+
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)
+            .expect("Failed to create UnifiedPeerId");
+
         PeerEntry {
             peer_id,
             endpoints: vec![],
             active_protocols: vec![],
-            connection_metrics: ConnectionMetrics::default(),
+            connection_metrics: ConnectionMetrics {
+                signal_strength: 1.0,
+                bandwidth_capacity: 1_000_000,
+                latency_ms: 10,
+                stability_score: 1.0,
+                connected_at: 0,
+            },
             authenticated: true,
             quantum_secure: true,
             next_hop: None,
             hop_count: 0,
             route_quality: 1.0,
-            capabilities: NodeCapabilities::default(),
+            capabilities: NodeCapabilities {
+                protocols: vec![NetworkProtocol::QUIC],
+                max_bandwidth: 1_000_000,
+                available_bandwidth: 1_000_000,
+                routing_capacity: 100,
+                energy_level: Some(1.0),
+                availability_percent: 99.0,
+            },
             location: None,
             reliability_score: 1.0,
-            kademlia_distance: 0,
-            k_bucket_index: 0,
-            last_dht_contact: 0,
+            dht_info: Some(DhtPeerInfo {
+                kademlia_distance: 0,
+                bucket_index: 0,
+                last_contact: 0,
+                failed_attempts: 0,
+            }),
             discovery_method: DiscoveryMethod::Bootstrap,
             first_seen: 0,
             last_seen: 0,
+            tier: PeerTier::Tier3,
             trust_score: 1.0,
-            tier: PeerTier::Trusted,
+            data_transferred: Arc::new(AtomicU64::new(0)),
+            tokens_earned: Arc::new(AtomicU64::new(0)),
+            traffic_routed: Arc::new(AtomicU64::new(0)),
+            data_transferred_value: 0,
+            tokens_earned_value: 0,
+            traffic_routed_value: 0,
         }
     }
     

@@ -12,6 +12,8 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::future::{select_all, BoxFuture};
+use futures::FutureExt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -135,7 +137,7 @@ impl QuicDhtTransport {
 impl DhtTransport for QuicDhtTransport {
     async fn send(&self, data: &[u8], peer: &PeerId) -> Result<()> {
         match peer {
-            PeerId::Udp(addr) => {
+            PeerId::Quic(addr) => {
                 // Get or establish QUIC connection
                 let conn = self.get_connection(addr).await?;
                 
@@ -146,25 +148,25 @@ impl DhtTransport for QuicDhtTransport {
                 
                 Ok(())
             }
-            _ => Err(anyhow::anyhow!("QUIC transport can only send to UDP-addressed peers")),
+            _ => Err(anyhow::anyhow!("QUIC transport can only send to QUIC-addressed peers")),
         }
     }
     
     async fn receive(&self) -> Result<(Vec<u8>, PeerId)> {
         let mut receiver = self.receiver.write().await;
         if let Some((data, addr)) = receiver.recv().await {
-            Ok((data, PeerId::Udp(addr)))
+            Ok((data, PeerId::Quic(addr)))
         } else {
             Err(anyhow::anyhow!("QUIC transport receiver closed"))
         }
     }
     
     fn local_peer_id(&self) -> PeerId {
-        PeerId::Udp(self.local_addr)
+        PeerId::Quic(self.local_addr)
     }
     
     async fn can_reach(&self, peer: &PeerId) -> bool {
-        matches!(peer, PeerId::Udp(_))
+        matches!(peer, PeerId::Quic(_))
     }
     
     fn mtu(&self) -> usize {
@@ -292,13 +294,21 @@ impl DhtTransport for MultiDhtTransport {
     }
     
     async fn receive(&self) -> Result<(Vec<u8>, PeerId)> {
-        // Use tokio::select! to receive from any transport
-        // For now, just receive from first available transport
-        if let Some(transport) = self.transports.first() {
-            transport.receive().await
-        } else {
-            Err(anyhow::anyhow!("No transports available"))
+        use futures::future::select_all;
+
+        if self.transports.is_empty() {
+            return Err(anyhow::anyhow!("No transports available"));
         }
+
+        // Race all transports and return whichever delivers first
+        let mut futures: Vec<BoxFuture<'_, _>> = self
+            .transports
+            .iter()
+            .map(|t| t.receive().boxed())
+            .collect();
+
+        let (res, _, _) = select_all(futures).await;
+        res
     }
     
     fn local_peer_id(&self) -> PeerId {
@@ -346,17 +356,10 @@ impl PeerAddressResolver {
     
     /// Convert PeerId to DHT node address (for Kademlia compatibility)
     pub fn peer_id_to_dht_address(&self, peer_id: &PeerId) -> Vec<u8> {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        
-        // Hash the peer ID to create a stable 20-byte Kademlia address
-        let mut hasher = DefaultHasher::new();
-        peer_id.to_address_string().hash(&mut hasher);
-        let hash = hasher.finish();
-        
-        // Extend to 20 bytes (Kademlia standard)
+        // Use a full 160-bit digest to avoid address-space collapse/collisions
+        let digest = blake3::hash(peer_id.to_address_string().as_bytes());
         let mut addr = vec![0u8; 20];
-        addr[0..8].copy_from_slice(&hash.to_be_bytes());
+        addr.copy_from_slice(&digest.as_bytes()[0..20]);
         addr
     }
 }
