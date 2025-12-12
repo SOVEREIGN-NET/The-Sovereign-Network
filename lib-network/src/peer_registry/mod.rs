@@ -15,49 +15,48 @@
 //! - **Atomic Updates**: Prevent race conditions across components
 //! - **Multi-Key Lookup**: Find peers by NodeId, PublicKey, or DID
 //! - **Comprehensive Metadata**: All connection, routing, and capability data in one place
-//! - **Memory Bounded**: Max peers limit with eviction policy prevents memory exhaustion
-//! - **TTL-Based Expiration**: Stale peers automatically expire
-//! - **Rate Limiting**: Prevents DoS attacks via rapid peer churn
-//!
-//! ## Security Features
-//!
-//! - **DID Validation**: All DIDs validated before indexing (format + optional blockchain verification)
-//! - **Index Consistency**: Atomic updates prevent stale index entries
-//! - **Audit Logging**: All peer changes logged for security monitoring
-//! - **Sybil Resistance**: Max peers limit + eviction policy
-//! - **Rate Limiting**: Per-peer and global rate limits prevent DoS attacks
-//! - **TOCTOU Prevention**: Atomic update methods prevent race conditions
-//!
-//! ## Acceptance Criteria Verification
-//!
-//! ✅ **Single peer registry structure defined**
-//!    - PeerRegistry struct with HashMap<UnifiedPeerId, PeerEntry> primary storage
-//!    - Secondary indexes for NodeId, PublicKey, DID
-//!
-//! ✅ **Consolidates metadata from all 6 existing stores**
-//!    - PeerEntry struct with all metadata
-//!    - Connection metadata (from MeshConnection): endpoints, protocols, metrics, auth
-//!    - Routing metadata (from RouteInfo): next_hop, hop_count, quality
-//!    - Topology metadata (from NetworkNode): capabilities, location, reliability
-//!    - DHT metadata (from DHT routing table): kademlia distance, bucket, contact
-//!    - Discovery metadata (from bootstrap): discovery method, timestamps
-//!    - Trust/tier metadata: trust_score, tier classification
-//!
-//! ✅ **Thread-safe wrapper using Arc<RwLock<>>**
-//!    - SharedPeerRegistry type alias
-//!    - new_shared_registry() constructor
-//!    - All methods use RwLock for concurrent access
-//!
-//! ✅ **Lookup methods for all identifier types**
-//!    - find_by_node_id()
-//!    - find_by_public_key()
-//!    - find_by_did()
-//!
-//! ✅ **Atomic update operations**
-//!    - upsert() atomically updates all indexes (with stale entry cleanup)
-//!    - remove() atomically removes from all indexes
-//!    - update_metrics()
-//!    - update_trust()
+// Synchronization module (Ticket #151)
+pub mod sync;
+
+/// ## Security Features
+///
+/// - **DID Validation**: All DIDs validated before indexing (format + optional blockchain verification)
+/// - **Index Consistency**: Atomic updates prevent stale index entries
+/// - **Audit Logging**: All peer changes logged for security monitoring
+/// - **Sybil Resistance**: Max peers limit + eviction policy
+/// - **Rate Limiting**: Prevents DoS attacks via rapid peer churn
+/// - **TOCTOU Prevention**: Atomic update methods prevent race conditions
+
+// Acceptance Criteria Verification
+//
+// ✅ **Single peer registry structure defined**
+//    - PeerRegistry struct with HashMap<UnifiedPeerId, PeerEntry> primary storage
+//    - Secondary indexes for NodeId, PublicKey, DID
+//
+// ✅ **Consolidates metadata from all 6 existing stores**
+//    - PeerEntry struct with all metadata
+//    - Connection metadata (from MeshConnection): endpoints, protocols, metrics, auth
+//    - Routing metadata (from RouteInfo): next_hop, hop_count, quality
+//    - Topology metadata (from NetworkNode): capabilities, location, reliability
+//    - DHT metadata (from DHT routing table): kademlia distance, bucket, contact
+//    - Discovery metadata (from bootstrap): discovery method, timestamps
+//    - Trust/tier metadata: trust_score, tier classification
+//
+// ✅ **Thread-safe wrapper using Arc<RwLock<>>**
+//    - SharedPeerRegistry type alias
+//    - new_shared_registry() constructor
+//    - All methods use RwLock for concurrent access
+//
+// ✅ **Lookup methods for all identifier types**
+//    - find_by_node_id()
+//    - find_by_public_key()
+//    - find_by_did()
+//
+// ✅ **Atomic update operations**
+//    - upsert() atomically updates all indexes (with stale entry cleanup)
+//    - remove() atomically removes from all indexes
+//    - update_metrics()
+//    - update_trust()
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -225,7 +224,7 @@ impl Clone for RateLimiter {
 /// - **Index consistency**: Atomic updates prevent stale entries
 /// - **Audit logging**: All changes logged for security monitoring
 /// - **Rate limiting**: Per-peer and global rate limits prevent DoS attacks
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PeerRegistry {
     /// Primary storage: UnifiedPeerId → PeerEntry
     peers: HashMap<UnifiedPeerId, PeerEntry>,
@@ -238,8 +237,20 @@ pub struct PeerRegistry {
     /// Configuration
     config: RegistryConfig,
 
+    /// Observer registry for change notifications (Ticket #151)
+    observers: sync::ObserverRegistry,
+
     /// Rate limiter for DoS protection
     rate_limiter: RateLimiter,
+}
+
+/// Extended configuration for PeerRegistry including observer settings
+#[derive(Debug, Clone)]
+pub struct PeerRegistryConfig {
+    /// Base registry configuration
+    pub base_config: RegistryConfig,
+    /// Observer registry configuration
+    pub observer_config: sync::ObserverRegistryConfig,
 }
 
 /// Complete peer metadata - consolidates all data from 6 existing registries
@@ -538,8 +549,36 @@ impl PeerRegistry {
             by_public_key: HashMap::new(),
             by_did: HashMap::new(),
             config,
+            observers: sync::ObserverRegistry::new(),
             rate_limiter,
         }
+    }
+    
+    /// Register an observer for peer change notifications (Ticket #151)
+    pub async fn register_observer(&self, observer: Arc<dyn sync::PeerRegistryObserver>) {
+        self.observers.register(observer).await;
+    }
+    
+    /// Unregister an observer by name (Ticket #151)
+    pub async fn unregister_observer(&self, name: &str) -> bool {
+        self.observers.unregister(name).await
+    }
+    
+    /// Clean up stale observers based on timeout (Ticket #151)
+    ///
+    /// # Memory Management
+    /// - Removes observers that haven't been active recently
+    /// - Returns number of observers removed
+    pub async fn cleanup_stale_observers(&self, timeout_secs: u64) -> usize {
+        self.observers.cleanup_stale_observers(timeout_secs).await
+    }
+    
+    /// Get observer registry statistics for monitoring (Ticket #151)
+    ///
+    /// # Performance Monitoring
+    /// - Provides insights into observer health and performance
+    pub async fn get_observer_stats(&self) -> sync::ObserverRegistryStats {
+        self.observers.get_stats().await
     }
 
     /// Validate DID format before indexing
@@ -631,7 +670,17 @@ impl PeerRegistry {
     /// - Logs all changes for audit trail
     ///
     /// This is an atomic operation that updates all indexes
-    pub fn upsert(&mut self, entry: PeerEntry) -> Result<()> {
+    /// Insert or update a peer entry
+    ///
+    /// # Security
+    /// - Validates DID format before indexing
+    /// - Removes stale index entries to prevent index poisoning
+    /// - Enforces max_peers limit with eviction policy
+    /// - Logs all changes for audit trail
+    /// - Notifies observers atomically (Ticket #151)
+    ///
+    /// This is an atomic operation that updates all indexes and notifies observers
+    pub async fn upsert(&mut self, entry: PeerEntry) -> Result<()> {
         let peer_id = entry.peer_id.clone();
         let did = peer_id.did().to_string();
 
@@ -646,9 +695,13 @@ impl PeerRegistry {
             self.evict_stale_peer()?;
         }
 
+        // Track if this is an update or new peer for event dispatch
+        let old_entry = self.peers.get(&peer_id).cloned();
+        let is_update = old_entry.is_some();
+
         // SECURITY: Remove stale index entries if peer exists with different identity fields
         // This prevents index poisoning attacks
-        if let Some(existing) = self.peers.get(&peer_id) {
+        if let Some(existing) = &old_entry {
             // If identity fields changed, remove old index entries
             if existing.peer_id.node_id() != peer_id.node_id() {
                 self.by_node_id.remove(existing.peer_id.node_id());
@@ -681,12 +734,11 @@ impl PeerRegistry {
         self.by_did.insert(did.clone(), peer_id.clone());
 
         // Insert into primary storage
-        let is_new = !self.peers.contains_key(&peer_id);
-        self.peers.insert(peer_id.clone(), entry);
+        self.peers.insert(peer_id.clone(), entry.clone());
 
         // AUDIT: Log peer changes
         if self.config.audit_logging {
-            if is_new {
+            if !is_update {
                 info!(
                     peer_did = %did,
                     peer_count = self.peers.len(),
@@ -699,6 +751,22 @@ impl PeerRegistry {
                 );
             }
         }
+
+        // TICKET #151: Dispatch event to observers atomically
+        let event = if is_update {
+            sync::PeerRegistryEvent::PeerUpdated {
+                peer_id,
+                old_entry: old_entry.unwrap(),
+                new_entry: entry,
+            }
+        } else {
+            sync::PeerRegistryEvent::PeerAdded {
+                peer_id,
+                entry,
+            }
+        };
+        
+        self.observers.dispatch(event).await?;
 
         Ok(())
     }
@@ -720,8 +788,9 @@ impl PeerRegistry {
             .map(|(id, _)| id.clone());
 
         if let Some(peer_id) = expired_peer {
+            let audit_logging = self.config.audit_logging; // Capture before mutable borrow
             let _entry = self.remove(&peer_id);
-            if self.config.audit_logging {
+            if audit_logging {
                 info!(
                     peer_did = %peer_id.did(),
                     reason = "TTL_EXPIRED",
@@ -742,8 +811,9 @@ impl PeerRegistry {
             .map(|(id, _)| id.clone());
 
         if let Some(peer_id) = victim {
+            let audit_logging = self.config.audit_logging; // Capture before mutable borrow
             let _entry = self.remove(&peer_id);
-            if self.config.audit_logging {
+            if audit_logging {
                 info!(
                     peer_did = %peer_id.did(),
                     reason = "MAX_PEERS_EVICTION",
@@ -758,8 +828,11 @@ impl PeerRegistry {
 
     /// Remove a peer entry
     ///
-    /// Atomically removes from all indexes
-    pub fn remove(&mut self, peer_id: &UnifiedPeerId) -> Option<PeerEntry> {
+    /// Atomically removes peer from all indexes and notifies observers (Ticket #151)
+    pub async fn remove(&mut self, peer_id: &UnifiedPeerId) -> Option<PeerEntry> {
+        // Get entry before removal for event dispatch
+        let entry = self.peers.get(peer_id).cloned();
+        
         // Remove from secondary indexes
         self.by_node_id.remove(peer_id.node_id());
         self.by_public_key.remove(peer_id.public_key());
@@ -775,6 +848,16 @@ impl PeerRegistry {
                 peer_count = self.peers.len(),
                 "Peer removed from registry"
             );
+        }
+
+        // TICKET #151: Dispatch event to observers if peer was removed
+        if let Some(entry_data) = entry {
+            let event = sync::PeerRegistryEvent::PeerRemoved {
+                peer_id: peer_id.clone(),
+                entry: entry_data,
+            };
+            // Ignore observer errors on removal (peer is already gone)
+            let _ = self.observers.dispatch(event).await;
         }
 
         removed
@@ -825,6 +908,84 @@ impl PeerRegistry {
                 "Registry cleared - all peers removed"
             );
         }
+    }
+    
+    /// Atomic batch update - commit multiple peer changes in single transaction (Ticket #151)
+    ///
+    /// All changes are applied atomically and observers notified with single BatchUpdate event.
+    /// This prevents race conditions when multiple peers need to be updated simultaneously.
+    ///
+    /// # Returns
+    /// - Ok(()) if all operations succeeded
+    /// - Err if any operation failed (entire batch is rolled back)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut batch = sync::BatchUpdate::new();
+    /// batch.add_peer(peer1_id, peer1_entry);
+    /// batch.update_peer(peer2_id, old_entry, new_entry);
+    /// batch.remove_peer(peer3_id, peer3_entry);
+    /// registry.commit_batch(batch).await?;
+    /// ```
+    pub async fn commit_batch(&mut self, batch: sync::BatchUpdate) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        
+        let ops = batch.operations();
+        
+        // Phase 1: Apply all additions
+        for (peer_id, entry) in ops.added {
+            // Direct insert without individual event dispatch
+            let did = peer_id.did().to_string();
+            Self::validate_did(&did)?;
+            
+            if !self.peers.contains_key(peer_id) && self.peers.len() >= self.config.max_peers {
+                self.evict_stale_peer()?;
+            }
+            
+            self.by_node_id.insert(peer_id.node_id().clone(), peer_id.clone());
+            self.by_public_key.insert(peer_id.public_key().clone(), peer_id.clone());
+            self.by_did.insert(did, peer_id.clone());
+            self.peers.insert(peer_id.clone(), entry.clone());
+        }
+        
+        // Phase 2: Apply all updates
+        for (peer_id, _old, new_entry) in ops.updated {
+            if self.peers.contains_key(peer_id) {
+                self.peers.insert(peer_id.clone(), new_entry.clone());
+            }
+        }
+        
+        // Phase 3: Apply all removals
+        for (peer_id, _entry) in ops.removed {
+            self.by_node_id.remove(peer_id.node_id());
+            self.by_public_key.remove(peer_id.public_key());
+            self.by_did.remove(peer_id.did());
+            self.peers.remove(peer_id);
+        }
+        
+        // Phase 4: Extract event data and dispatch single batch event
+        let (added, updated, removed) = batch.into_event_data();
+        
+        if self.config.audit_logging {
+            info!(
+                added = added.len(),
+                updated = updated.len(),
+                removed = removed.len(),
+                "Batch update committed to registry"
+            );
+        }
+        
+        let event = sync::PeerRegistryEvent::BatchUpdate {
+            added,
+            updated,
+            removed,
+        };
+        
+        self.observers.dispatch(event).await?;
+        
+        Ok(())
     }
 
     /// Get peer by UnifiedPeerId
@@ -1004,7 +1165,7 @@ impl PeerRegistry {
     /// The `create_fn` is only called if the peer doesn't exist.
     ///
     /// Returns true if updated, false if inserted.
-    pub fn update_or_insert<U, C>(
+    pub async fn update_or_insert<U, C>(
         &mut self,
         peer_id: &UnifiedPeerId,
         update_fn: U,
@@ -1021,7 +1182,7 @@ impl PeerRegistry {
             Ok(true) // Updated
         } else {
             let new_entry = create_fn();
-            self.upsert(new_entry)?;
+            self.upsert(new_entry).await?;
             Ok(false) // Inserted
         }
     }
@@ -1063,6 +1224,122 @@ impl PeerRegistry {
     pub fn rate_limiter_stats(&self) -> (u32, usize) {
         (self.rate_limiter.global_count, self.rate_limiter.per_peer_counts.len())
     }
+
+    // ========== DHT-SPECIFIC METHODS (Ticket #148) ==========
+
+    /// Get all DHT peers (peers with DHT info)
+    pub fn dht_peers(&self) -> impl Iterator<Item = &PeerEntry> {
+        self.peers.values().filter(|entry| entry.dht_info.is_some())
+    }
+
+    /// Get DHT peers in a specific K-bucket
+    ///
+    /// This enables K-bucket operations while using unified registry for storage
+    pub fn dht_peers_in_bucket(&self, bucket_index: usize) -> impl Iterator<Item = &PeerEntry> {
+        self.peers.values().filter(move |entry| {
+            entry.dht_info.as_ref()
+                .map(|info| info.bucket_index == bucket_index)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Find K closest DHT peers to a target NodeId
+    ///
+    /// This implements Kademlia routing using the unified registry
+    pub fn find_closest_dht_peers(&self, target: &NodeId, k: usize) -> Vec<&PeerEntry> {
+        let mut dht_peers: Vec<_> = self.dht_peers()
+            .map(|entry| {
+                let distance = target.kademlia_distance(entry.peer_id.node_id());
+                (entry, distance)
+            })
+            .collect();
+
+        // Sort by distance to target
+        dht_peers.sort_by_key(|(_, distance)| *distance);
+
+        // Return k closest
+        dht_peers.into_iter()
+            .take(k)
+            .map(|(entry, _)| entry)
+            .collect()
+    }
+
+    /// Update DHT-specific info for a peer
+    ///
+    /// This is used by KademliaRouter to update K-bucket metadata
+    pub fn update_dht_info(&mut self, peer_id: &UnifiedPeerId, dht_info: DhtPeerInfo) -> Result<()> {
+        let entry = self.peers.get_mut(peer_id)
+            .ok_or_else(|| anyhow!("Peer not found"))?;
+        entry.dht_info = Some(dht_info);
+        entry.last_seen = Self::current_timestamp();
+        Ok(())
+    }
+
+    /// Mark DHT peer as failed (increment failed attempts)
+    pub fn mark_dht_peer_failed(&mut self, node_id: &NodeId) -> Result<()> {
+        self.update_by_node_id(node_id, |entry| {
+            if let Some(ref mut dht_info) = entry.dht_info {
+                dht_info.failed_attempts += 1;
+            }
+        });
+        Ok(())
+    }
+
+    /// Mark DHT peer as responsive (reset failed attempts, update last_contact)
+    pub fn mark_dht_peer_responsive(&mut self, node_id: &NodeId) -> Result<()> {
+        self.update_by_node_id(node_id, |entry| {
+            if let Some(ref mut dht_info) = entry.dht_info {
+                dht_info.failed_attempts = 0;
+                dht_info.last_contact = Self::current_timestamp();
+            }
+            entry.last_seen = Self::current_timestamp();
+        });
+        Ok(())
+    }
+
+    /// Get DHT routing statistics
+    pub fn dht_stats(&self) -> DhtStats {
+        let total_dht_peers = self.dht_peers().count();
+        
+        // Count peers per bucket
+        let mut bucket_distribution = std::collections::HashMap::new();
+        for entry in self.dht_peers() {
+            if let Some(dht_info) = &entry.dht_info {
+                *bucket_distribution.entry(dht_info.bucket_index).or_insert(0) += 1;
+            }
+        }
+
+        let non_empty_buckets = bucket_distribution.len();
+        let max_bucket_size = bucket_distribution.values().max().copied().unwrap_or(0);
+
+        DhtStats {
+            total_dht_peers,
+            non_empty_buckets,
+            max_bucket_size,
+            bucket_distribution,
+        }
+    }
+
+    /// Remove DHT peers with excessive failed attempts
+    ///
+    /// This implements K-bucket maintenance
+    pub fn cleanup_failed_dht_peers(&mut self, max_failed_attempts: u32) -> usize {
+        let failed_peers: Vec<UnifiedPeerId> = self.dht_peers()
+            .filter(|entry| {
+                entry.dht_info.as_ref()
+                    .map(|info| info.failed_attempts > max_failed_attempts)
+                    .unwrap_or(false)
+            })
+            .map(|entry| entry.peer_id.clone())
+            .collect();
+
+        let count = failed_peers.len();
+        for peer_id in failed_peers {
+            self.remove(&peer_id);
+        }
+
+        count
+    }
 }
 
 /// Registry statistics
@@ -1075,6 +1352,15 @@ pub struct RegistryStats {
     pub tier4_count: usize,
     pub untrusted_count: usize,
     pub authenticated_count: usize,
+}
+
+/// DHT routing statistics (Ticket #148)
+#[derive(Debug, Clone)]
+pub struct DhtStats {
+    pub total_dht_peers: usize,
+    pub non_empty_buckets: usize,
+    pub max_bucket_size: usize,
+    pub bucket_distribution: std::collections::HashMap<usize, usize>,
 }
 
 impl Default for PeerRegistry {
