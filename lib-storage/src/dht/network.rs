@@ -17,7 +17,8 @@ use tracing::{debug, warn};
 use serde::{Serialize, Deserialize};
 
 // Import transport abstraction (Ticket #152)
-use lib_network::dht::transport::{DhtTransport, PeerId};
+// Trait defined in lib-storage to avoid circular dependency with lib-network
+use crate::dht::transport::{DhtTransport, PeerId};
 
 /// Network envelope for DHT messages with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,20 +112,23 @@ impl DhtNetwork {
     
     /// Create DHT network with specific bind address (legacy compatibility)
     /// Creates a UDP transport for the given address
+    ///
+    /// **TICKET #152:** Now uses UdpDhtTransport from lib-storage (not lib-network)
+    /// to avoid circular dependency
     pub fn new_udp(local_node: DhtNode, bind_addr: SocketAddr) -> Result<Self> {
-        use lib_network::dht::transport::UdpDhtTransport;
-        
+        use crate::dht::transport::UdpDhtTransport;
+
         // Create tokio UDP socket
         let socket = std::net::UdpSocket::bind(bind_addr)?;
         socket.set_nonblocking(true)?;
         let tokio_socket = tokio::net::UdpSocket::from_std(socket)?;
-        
+
         // Create UDP transport
         let transport = Arc::new(UdpDhtTransport::new(
             Arc::new(tokio_socket),
             bind_addr,
         ));
-        
+
         Self::new(local_node, transport)
     }
 
@@ -223,12 +227,13 @@ impl DhtNetwork {
         let sender_addr = match peer_id {
             PeerId::Udp(addr) => addr,
             PeerId::WiFiDirect(addr) => addr,
-            PeerId::Bluetooth(addr) => {
+            PeerId::Quic(addr) => addr,
+            PeerId::Bluetooth(_) => {
                 // For Bluetooth, create a pseudo-address (not used for routing)
-                format!("0.0.0.0:0").parse()?
+                "0.0.0.0:0".parse()?
             }
             PeerId::LoRaWAN(_) => {
-                format!("0.0.0.0:0").parse()?
+                "0.0.0.0:0".parse()?
             }
         };
 
@@ -515,6 +520,7 @@ impl DhtNetwork {
         match self.transport.local_peer_id() {
             PeerId::Udp(addr) => Ok(addr),
             PeerId::WiFiDirect(addr) => Ok(addr),
+            PeerId::Quic(addr) => Ok(addr),
             PeerId::Bluetooth(_) | PeerId::LoRaWAN(_) => {
                 // For non-IP protocols, return a placeholder
                 Ok("0.0.0.0:0".parse()?)
@@ -770,8 +776,8 @@ mod tests {
             storage_info: None,
         };
 
-        let bind_addr = \"127.0.0.1:0\".parse().unwrap();
-        let network = DhtNetwork::new_udp(test_node, bind_addr).expect(\"Failed to create network\");
+        let bind_addr = "127.0.0.1:0".parse().unwrap();
+        let network = DhtNetwork::new_udp(test_node, bind_addr).expect("Failed to create network");
 
         let seq1 = network.next_sequence();
         let seq2 = network.next_sequence();

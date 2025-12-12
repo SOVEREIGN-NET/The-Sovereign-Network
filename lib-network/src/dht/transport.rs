@@ -1,7 +1,14 @@
-// DHT Transport Abstraction Layer
-// Enables Kademlia DHT to work over multiple protocols (UDP, BLE, WiFi Direct, LoRaWAN, QUIC)
-//
-// **TICKET #152:** Implement DHT transport layer for multi-protocol support
+//! DHT Transport Implementations for lib-network
+//!
+//! **TICKET #152:** Multi-protocol DHT transport implementations
+//!
+//! This module provides advanced DHT transport implementations that build on
+//! the `DhtTransport` trait defined in lib-storage. These implementations
+//! use lib-network's protocol stacks (BLE, QUIC, WiFi Direct).
+//!
+//! **Architecture Note:** The `DhtTransport` trait and `PeerId` enum are defined
+//! in lib-storage to avoid circular dependencies. This module re-exports them
+//! and provides protocol-specific implementations.
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -9,117 +16,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Peer identifier for protocol-agnostic addressing
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PeerId {
-    /// UDP peer identified by socket address
-    Udp(SocketAddr),
-    /// Bluetooth peer identified by address (MAC or UUID)
-    Bluetooth(String),
-    /// WiFi Direct peer identified by IP address
-    WiFiDirect(SocketAddr),
-    /// LoRaWAN peer identified by device EUI
-    LoRaWAN(String),
-}
-
-impl PeerId {
-    /// Convert to string representation for routing
-    pub fn to_address_string(&self) -> String {
-        match self {
-            PeerId::Udp(addr) => addr.to_string(),
-            PeerId::Bluetooth(addr) => format!("gatt://{}", addr),
-            PeerId::WiFiDirect(addr) => format!("wifid://{}", addr),
-            PeerId::LoRaWAN(eui) => format!("lora://{}", eui),
-        }
-    }
-    
-    /// Get protocol type
-    pub fn protocol(&self) -> &str {
-        match self {
-            PeerId::Udp(_) => "udp",
-            PeerId::Bluetooth(_) => "bluetooth",
-            PeerId::WiFiDirect(_) => "wifidirect",
-            PeerId::LoRaWAN(_) => "lorawan",
-        }
-    }
-}
-
-/// Transport abstraction for DHT operations
-/// Allows Kademlia to work over any protocol
-#[async_trait]
-pub trait DhtTransport: Send + Sync {
-    /// Send DHT message to peer
-    async fn send(&self, data: &[u8], peer: &PeerId) -> Result<()>;
-    
-    /// Receive DHT message (returns data and sender peer ID)
-    async fn receive(&self) -> Result<(Vec<u8>, PeerId)>;
-    
-    /// Get local peer ID for this transport
-    fn local_peer_id(&self) -> PeerId;
-    
-    /// Check if peer is reachable via this transport
-    async fn can_reach(&self, peer: &PeerId) -> bool;
-    
-    /// Get maximum transmission unit for this transport
-    fn mtu(&self) -> usize {
-        match self.local_peer_id() {
-            PeerId::Udp(_) => 1400,           // UDP mesh default
-            PeerId::Bluetooth(_) => 512,      // BLE MTU minus overhead
-            PeerId::WiFiDirect(_) => 1400,    // Similar to UDP
-            PeerId::LoRaWAN(_) => 242,        // LoRaWAN SF7 max payload
-        }
-    }
-    
-    /// Get typical latency for this transport (milliseconds)
-    fn typical_latency_ms(&self) -> u32 {
-        match self.local_peer_id() {
-            PeerId::Udp(_) => 10,
-            PeerId::Bluetooth(_) => 100,
-            PeerId::WiFiDirect(_) => 20,
-            PeerId::LoRaWAN(_) => 1000,
-        }
-    }
-}
-
-/// UDP-based DHT transport (original implementation)
-pub struct UdpDhtTransport {
-    socket: Arc<tokio::net::UdpSocket>,
-    local_addr: SocketAddr,
-}
-
-impl UdpDhtTransport {
-    pub fn new(socket: Arc<tokio::net::UdpSocket>, local_addr: SocketAddr) -> Self {
-        Self { socket, local_addr }
-    }
-}
-
-#[async_trait]
-impl DhtTransport for UdpDhtTransport {
-    async fn send(&self, data: &[u8], peer: &PeerId) -> Result<()> {
-        match peer {
-            PeerId::Udp(addr) => {
-                self.socket.send_to(data, addr).await?;
-                Ok(())
-            }
-            _ => Err(anyhow::anyhow!("UDP transport can only send to UDP peers")),
-        }
-    }
-    
-    async fn receive(&self) -> Result<(Vec<u8>, PeerId)> {
-        let mut buf = vec![0u8; 65536];
-        let (len, addr) = self.socket.recv_from(&mut buf).await?;
-        buf.truncate(len);
-        Ok((buf, PeerId::Udp(addr)))
-    }
-    
-    fn local_peer_id(&self) -> PeerId {
-        PeerId::Udp(self.local_addr)
-    }
-    
-    async fn can_reach(&self, peer: &PeerId) -> bool {
-        matches!(peer, PeerId::Udp(_))
-    }
-}
+// Re-export from lib-storage (the canonical location)
+pub use lib_storage::dht::transport::{DhtTransport, PeerId, UdpDhtTransport};
 
 /// Bluetooth-based DHT transport (routes through mesh)
 pub struct BleDhtTransport {
