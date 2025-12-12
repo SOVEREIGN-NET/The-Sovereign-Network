@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
 /// DHT peer manager
+///
+/// **MIGRATED (Ticket #148):** Now uses shared PeerRegistry for peer storage
 #[derive(Debug)]
 pub struct DhtPeerManager {
     /// Local node ID
@@ -28,6 +30,8 @@ pub struct DhtPeerManager {
 
 impl DhtPeerManager {
     /// Create a new peer manager
+    ///
+    /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
     pub fn new(local_id: NodeId, max_peers: usize, min_reputation: u32) -> Self {
         Self {
             local_id: local_id.clone(),

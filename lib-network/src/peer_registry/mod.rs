@@ -1224,6 +1224,122 @@ impl PeerRegistry {
     pub fn rate_limiter_stats(&self) -> (u32, usize) {
         (self.rate_limiter.global_count, self.rate_limiter.per_peer_counts.len())
     }
+
+    // ========== DHT-SPECIFIC METHODS (Ticket #148) ==========
+
+    /// Get all DHT peers (peers with DHT info)
+    pub fn dht_peers(&self) -> impl Iterator<Item = &PeerEntry> {
+        self.peers.values().filter(|entry| entry.dht_info.is_some())
+    }
+
+    /// Get DHT peers in a specific K-bucket
+    ///
+    /// This enables K-bucket operations while using unified registry for storage
+    pub fn dht_peers_in_bucket(&self, bucket_index: usize) -> impl Iterator<Item = &PeerEntry> {
+        self.peers.values().filter(move |entry| {
+            entry.dht_info.as_ref()
+                .map(|info| info.bucket_index == bucket_index)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Find K closest DHT peers to a target NodeId
+    ///
+    /// This implements Kademlia routing using the unified registry
+    pub fn find_closest_dht_peers(&self, target: &NodeId, k: usize) -> Vec<&PeerEntry> {
+        let mut dht_peers: Vec<_> = self.dht_peers()
+            .map(|entry| {
+                let distance = target.kademlia_distance(entry.peer_id.node_id());
+                (entry, distance)
+            })
+            .collect();
+
+        // Sort by distance to target
+        dht_peers.sort_by_key(|(_, distance)| *distance);
+
+        // Return k closest
+        dht_peers.into_iter()
+            .take(k)
+            .map(|(entry, _)| entry)
+            .collect()
+    }
+
+    /// Update DHT-specific info for a peer
+    ///
+    /// This is used by KademliaRouter to update K-bucket metadata
+    pub fn update_dht_info(&mut self, peer_id: &UnifiedPeerId, dht_info: DhtPeerInfo) -> Result<()> {
+        let entry = self.peers.get_mut(peer_id)
+            .ok_or_else(|| anyhow!("Peer not found"))?;
+        entry.dht_info = Some(dht_info);
+        entry.last_seen = Self::current_timestamp();
+        Ok(())
+    }
+
+    /// Mark DHT peer as failed (increment failed attempts)
+    pub fn mark_dht_peer_failed(&mut self, node_id: &NodeId) -> Result<()> {
+        self.update_by_node_id(node_id, |entry| {
+            if let Some(ref mut dht_info) = entry.dht_info {
+                dht_info.failed_attempts += 1;
+            }
+        });
+        Ok(())
+    }
+
+    /// Mark DHT peer as responsive (reset failed attempts, update last_contact)
+    pub fn mark_dht_peer_responsive(&mut self, node_id: &NodeId) -> Result<()> {
+        self.update_by_node_id(node_id, |entry| {
+            if let Some(ref mut dht_info) = entry.dht_info {
+                dht_info.failed_attempts = 0;
+                dht_info.last_contact = Self::current_timestamp();
+            }
+            entry.last_seen = Self::current_timestamp();
+        });
+        Ok(())
+    }
+
+    /// Get DHT routing statistics
+    pub fn dht_stats(&self) -> DhtStats {
+        let total_dht_peers = self.dht_peers().count();
+        
+        // Count peers per bucket
+        let mut bucket_distribution = std::collections::HashMap::new();
+        for entry in self.dht_peers() {
+            if let Some(dht_info) = &entry.dht_info {
+                *bucket_distribution.entry(dht_info.bucket_index).or_insert(0) += 1;
+            }
+        }
+
+        let non_empty_buckets = bucket_distribution.len();
+        let max_bucket_size = bucket_distribution.values().max().copied().unwrap_or(0);
+
+        DhtStats {
+            total_dht_peers,
+            non_empty_buckets,
+            max_bucket_size,
+            bucket_distribution,
+        }
+    }
+
+    /// Remove DHT peers with excessive failed attempts
+    ///
+    /// This implements K-bucket maintenance
+    pub fn cleanup_failed_dht_peers(&mut self, max_failed_attempts: u32) -> usize {
+        let failed_peers: Vec<UnifiedPeerId> = self.dht_peers()
+            .filter(|entry| {
+                entry.dht_info.as_ref()
+                    .map(|info| info.failed_attempts > max_failed_attempts)
+                    .unwrap_or(false)
+            })
+            .map(|entry| entry.peer_id.clone())
+            .collect();
+
+        let count = failed_peers.len();
+        for peer_id in failed_peers {
+            self.remove(&peer_id);
+        }
+
+        count
+    }
 }
 
 /// Registry statistics
@@ -1236,6 +1352,15 @@ pub struct RegistryStats {
     pub tier4_count: usize,
     pub untrusted_count: usize,
     pub authenticated_count: usize,
+}
+
+/// DHT routing statistics (Ticket #148)
+#[derive(Debug, Clone)]
+pub struct DhtStats {
+    pub total_dht_peers: usize,
+    pub non_empty_buckets: usize,
+    pub max_bucket_size: usize,
+    pub bucket_distribution: std::collections::HashMap<usize, usize>,
 }
 
 impl Default for PeerRegistry {
