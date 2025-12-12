@@ -15,7 +15,6 @@ use crate::peer_registry::{
 use crate::identity::unified_peer::UnifiedPeerId;
 
 // SECURITY FIX: Add dirs crate for secure data directory
-#[cfg(not(test))]
 use dirs;
 
 // SECURITY FIX: Bootstrap connection rate limiter
@@ -434,11 +433,7 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
 
     // SECURITY FIX: Use secure data directory for nonce cache
     // Prevents world-writable /tmp vulnerabilities
-    let nonce_cache = if cfg!(test) {
-        // Use memory cache for tests to avoid filesystem dependencies
-        tracing::debug!("Using memory nonce cache for bootstrap (test mode)");
-        crate::handshake::NonceCache::new_memory(300)
-    } else {
+    let nonce_cache = {
         // Production: Use secure data directory
         let cache_dir = if let Some(data_dir) = dirs::data_dir() {
             data_dir.join("zhtp").join("bootstrap")
