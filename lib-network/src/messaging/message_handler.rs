@@ -259,7 +259,7 @@ impl MeshMessageHandler {
         );
         
         let mut registry = self.peer_registry.write().await;
-        registry.upsert(peer_entry)?;
+        registry.upsert(peer_entry).await?;
         
         Ok(())
     }
@@ -486,7 +486,7 @@ impl MeshMessageHandler {
             peer_entry.connection_metrics.bandwidth_capacity = available_bandwidth;
             drop(registry);
             let mut registry_write = self.peer_registry.write().await;
-            registry_write.upsert(peer_entry)?;
+            registry_write.upsert(peer_entry).await?;
         }
 
         Ok(())
@@ -1294,7 +1294,7 @@ mod tests {
                 0.5,  // trust_score
             );
             let mut registry = peer_registry.write().await;
-            let _ = registry.upsert(peer_entry);
+            let _ = registry.upsert(peer_entry).await;
         }
 
         // Handle health report
