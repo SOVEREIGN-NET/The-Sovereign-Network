@@ -70,7 +70,7 @@ impl DhtNodeManager {
     ) -> Result<Self> {
         let local_node = Self::create_local_node(local_peer, addresses)?;
         let storage = DhtStorage::new_with_network(local_node.clone(), bind_addr, max_storage_size).await?;
-        let network = DhtNetwork::new(local_node.clone(), bind_addr)?;
+        let network = DhtNetwork::new_udp(local_node.clone(), bind_addr)?;
         
         Ok(Self {
             local_node,
