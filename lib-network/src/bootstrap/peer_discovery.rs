@@ -433,44 +433,35 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
 
     // SECURITY FIX: Use secure data directory for nonce cache
     // Prevents world-writable /tmp vulnerabilities
-    let nonce_cache = {
-        // Production: Use secure data directory
-        let cache_dir = if let Some(data_dir) = dirs::data_dir() {
-            data_dir.join("zhtp").join("bootstrap")
-        } else {
-            // Fallback to secure location if no standard data dir
-            std::path::PathBuf::from("/var/lib/zhtp/bootstrap")
-        };
-        
-        // Create directory if it doesn't exist
-        if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-            tracing::warn!("Failed to create secure cache directory, falling back to memory cache: {}", e);
-            // Fallback to in-memory cache if directory creation fails
-            tracing::error!("⚠️  Bootstrap nonce cache using memory-only mode - replay protection limited to this session!");
-            crate::handshake::NonceCache::new_memory(300)
-        } else {
-            // Set secure permissions (read/write for owner only)
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Err(e) = std::fs::set_permissions(&cache_dir, std::fs::Permissions::from_mode(0o700)) {
-                    tracing::warn!("Failed to set secure permissions on cache directory: {}", e);
-                }
-            }
-            
-            let cache_path = cache_dir.join("nonce_cache.db");
-            
-            // Try to open secure nonce cache, fallback to memory on failure
-            match crate::handshake::NonceCache::open_secure(&cache_path, 300) {
-                Ok(cache) => cache,
-                Err(e) => {
-                    tracing::warn!("Failed to open secure nonce cache, falling back to memory cache: {}", e);
-                    tracing::error!("⚠️  Bootstrap nonce cache using memory-only mode - replay protection limited to this session!");
-                    crate::handshake::NonceCache::new_memory(300)
-                }
+    let cache_dir = if let Some(data_dir) = dirs::data_dir() {
+        data_dir.join("zhtp").join("bootstrap")
+    } else {
+        // Fallback to secure location if no standard data dir
+        std::path::PathBuf::from("/var/lib/zhtp/bootstrap")
+    };
+    
+    // Create directory if it doesn't exist
+    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+        tracing::warn!("Failed to create secure cache directory: {}", e);
+    } else {
+        // Set secure permissions (read/write for owner only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) = std::fs::set_permissions(&cache_dir, std::fs::Permissions::from_mode(0o700)) {
+                tracing::warn!("Failed to set secure permissions on cache directory: {}", e);
             }
         }
-    };
+    }
+    
+    let cache_path = cache_dir.join("nonce_cache.db");
+    
+    // Use the standard open_default method for secure nonce cache
+    let nonce_cache = crate::handshake::NonceCache::open_default(&cache_path, 300)
+        .map_err(|e| {
+            tracing::warn!("Failed to open secure nonce cache, bootstrap may be vulnerable to replay attacks: {}", e);
+            anyhow!("Nonce cache initialization failed: {}", e)
+        })?;
     
     let ctx = crate::handshake::HandshakeContext::new(nonce_cache);
 
