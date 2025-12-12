@@ -978,14 +978,14 @@ impl MeshMessageRouter {
     ) -> Result<u64> {
         info!(" Routing message to {:?}", hex::encode(&destination.key_id[0..4]));
 
-        // Create envelope
+        // Create envelope with single-pass serialization (Ticket #163)
         let message_id = self.generate_message_id().await;
-        let envelope = MeshMessageEnvelope::new(
+        let envelope = MeshMessageEnvelope::from_message(
             message_id,
             origin.clone(),
             destination.clone(),
             message,
-        );
+        )?;
 
         info!(" Created envelope {} (TTL: {})", message_id, envelope.ttl);
 
@@ -1057,8 +1057,9 @@ impl MeshMessageRouter {
                 // Get QUIC protocol handler
                 if let Some(ref quic_handler) = self.quic_handler {
                     let handler = quic_handler.read().await;
-                    // Send mesh message via QUIC - extract pubkey and message from envelope
-                    handler.send_to_peer(&peer_id.public_key().as_bytes(), envelope.message.clone()).await?;
+                    // Send mesh message via QUIC - deserialize message from envelope payload
+                    let message = envelope.deserialize_message()?;
+                    handler.send_to_peer(&peer_id.public_key().as_bytes(), message).await?;
                     info!("📡 Sent via QUIC (quantum-safe encrypted)");
                 } else {
                     return Err(anyhow!("QUIC handler not configured"));

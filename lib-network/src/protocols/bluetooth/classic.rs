@@ -2301,14 +2301,17 @@ impl BluetoothClassicProtocol {
     
     /// Process message intended for this node (NEW - Phase 1)
     async fn process_local_message(&self, envelope: MeshMessageEnvelope) -> Result<()> {
-        info!("Processing local message type: {:?}", std::mem::discriminant(&envelope.message));
+        info!("Processing local message type: {:?}", envelope.message_type);
+        
+        // Deserialize message from envelope (Ticket #163 - single-pass deserialization)
+        let message = envelope.deserialize_message()?;
         
         // Get message handler if available
         if let Some(handler) = &self.message_handler {
             let handler_guard = handler.read().await;
             
             // Dispatch to appropriate handler based on message type
-            match envelope.message {
+            match message {
                 ZhtpMeshMessage::ZhtpRequest(request) => {
                     // Convert ZhtpHeaders to HashMap for compatibility
                     let mut headers_map = std::collections::HashMap::new();
