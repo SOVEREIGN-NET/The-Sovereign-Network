@@ -685,7 +685,7 @@ impl MeshMessageHandler {
                         if let Some(router) = &self.message_router {
                             if let Some(node_id) = &self.node_id {
                                 for chunk in chunks {
-                                    if let Err(e) = router.write().await.route_message(chunk, requester.clone(), node_id.clone()).await {
+                                    if let Err(e) = router.write().await.route_message_with_forwarding(requester.clone(), chunk, node_id.clone()).await {
                                         warn!("Failed to send blockchain chunk: {}", e);
                                     }
                                 }
@@ -720,7 +720,7 @@ impl MeshMessageHandler {
                         
                         if let Some(router) = &self.message_router {
                             if let Some(node_id) = &self.node_id {
-                                if let Err(e) = router.write().await.route_message(response, requester, node_id.clone()).await {
+                                if let Err(e) = router.write().await.route_message_with_forwarding(requester, response, node_id.clone()).await {
                                     warn!("Failed to send headers response: {}", e);
                                 }
                             }
@@ -934,7 +934,7 @@ impl MeshMessageHandler {
         if let Some(router) = &self.message_router {
             let router_lock = router.read().await;
             if let Some(sender_node_id) = &self.node_id {
-                router_lock.route_message(response_message, requester, sender_node_id.clone()).await?;
+                router_lock.route_message_with_forwarding(requester, response_message, sender_node_id.clone()).await?;
                 info!(" Bootstrap proof response sent to edge node");
             } else {
                 warn!(" Node ID not set - cannot send response");
@@ -1063,7 +1063,7 @@ impl MeshMessageHandler {
         if let Some(router) = &self.message_router {
             let router_lock = router.read().await;
             if let Some(sender_node_id) = &self.node_id {
-                router_lock.route_message(response_message, requester, sender_node_id.clone()).await?;
+                router_lock.route_message_with_forwarding(requester, response_message, sender_node_id.clone()).await?;
                 info!("📤 Sent {} headers to edge node", headers.len());
             } else {
                 warn!(" Node ID not set - cannot send response");
@@ -1071,7 +1071,7 @@ impl MeshMessageHandler {
         } else {
             warn!(" Message router not available - cannot send response");
         }
-        
+
         Ok(())
     }
 

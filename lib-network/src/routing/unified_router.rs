@@ -360,6 +360,29 @@ impl UnifiedRouter {
         }
     }
 
+    /// **BACKWARD COMPATIBILITY**: Create router from PeerRegistry
+    ///
+    /// This constructor exists for backward compatibility with MeshMessageRouter.
+    /// It creates a dummy local peer and imports long-range relays.
+    #[deprecated(since = "0.2.0", note = "Use new(UnifiedPeerId, k) constructor instead")]
+    #[allow(deprecated)]
+    pub fn from_peer_registry(
+        _peer_registry: Arc<RwLock<crate::peer_registry::PeerRegistry>>,
+        long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
+    ) -> Self {
+        // Create a placeholder local peer (will be replaced by set_local_peer)
+        let placeholder_peer = UnifiedPeerId::from_public_key_legacy(PublicKey::new(vec![]));
+
+        let mut router = Self::new(placeholder_peer, 20);
+        router.long_range_relays = long_range_relays;
+        router
+    }
+
+    /// Set the local peer identity (for routers created with from_peer_registry)
+    pub fn set_local_peer(&mut self, peer: UnifiedPeerId) {
+        self.local_peer = peer;
+    }
+
     // ========================================================================
     // KADEMLIA ROUTING METHODS
     // ========================================================================
@@ -384,7 +407,7 @@ impl UnifiedRouter {
         }
 
         // Validate node has non-empty public key
-        if peer.public_key().is_none() {
+        if peer.public_key().dilithium_pk.is_empty() {
             return Err(anyhow!("Node must have a public key for routing"));
         }
 
@@ -557,7 +580,8 @@ impl UnifiedRouter {
         let node_id = peer.node_id().clone();
         self.node_id_index.write().await.insert(node_id, peer.clone());
 
-        if let Some(public_key) = peer.public_key() {
+        let public_key = peer.public_key();
+        if !public_key.dilithium_pk.is_empty() {
             self.public_key_index.write().await.insert(public_key.clone(), peer.clone());
         }
     }
@@ -567,7 +591,8 @@ impl UnifiedRouter {
         let node_id = peer.node_id();
         self.node_id_index.write().await.remove(node_id);
 
-        if let Some(public_key) = peer.public_key() {
+        let public_key = peer.public_key();
+        if !public_key.dilithium_pk.is_empty() {
             self.public_key_index.write().await.remove(public_key);
         }
     }
@@ -636,7 +661,7 @@ impl UnifiedRouter {
         if let Some(route_info) = self.direct_routes.read().await.get(destination) {
             return Ok(vec![RouteHop {
                 peer_id: route_info.next_hop.clone(),
-                protocol: NetworkProtocol::Tcp, // Default
+                protocol: NetworkProtocol::TCP, // Default
                 relay_id: None,
                 hop_latency_ms: route_info.estimated_latency_ms,
             }]);
@@ -648,10 +673,10 @@ impl UnifiedRouter {
         }
 
         // Use graph pathfinding
-        if let Some(dest_pk) = destination.public_key() {
-            if let Some(local_pk) = self.local_peer.public_key() {
-                return self.find_graph_path(local_pk, dest_pk).await;
-            }
+        let dest_pk = destination.public_key();
+        let local_pk = self.local_peer.public_key();
+        if !dest_pk.dilithium_pk.is_empty() && !local_pk.dilithium_pk.is_empty() {
+            return self.find_graph_path(local_pk, dest_pk).await;
         }
 
         Err(anyhow!("No route found to destination"))
@@ -661,7 +686,7 @@ impl UnifiedRouter {
     async fn send_direct(&self, connection: &MeshConnection, message: ZhtpMeshMessage) -> Result<()> {
         // Actual sending logic would go here
         // For now, just log
-        info!("Sending direct message to {:?}", connection.peer_id);
+        info!("Sending direct message to {:?}", connection.peer);
         Ok(())
     }
 
@@ -793,7 +818,7 @@ impl UnifiedRouter {
             if let Some(peer) = self.find_peer_by_public_key(pk).await {
                 hops.push(RouteHop {
                     peer_id: peer,
-                    protocol: NetworkProtocol::Tcp, // Default, could be smarter
+                    protocol: NetworkProtocol::TCP, // Default, could be smarter
                     relay_id: None,
                     hop_latency_ms: 50, // Estimate
                 });
@@ -814,13 +839,14 @@ impl UnifiedRouter {
         graph.adjacency_list.clear();
 
         // Add local node
-        if let Some(local_pk) = self.local_peer.public_key() {
+        let local_pk = self.local_peer.public_key();
+        if !local_pk.dilithium_pk.is_empty() {
             graph.nodes.insert(
                 local_pk.clone(),
                 NetworkNode {
                     node_id: local_pk.clone(),
                     capabilities: NodeCapabilities {
-                        protocols: vec![NetworkProtocol::Tcp],
+                        protocols: vec![NetworkProtocol::TCP],
                         max_bandwidth: 100_000_000,
                         available_bandwidth: 100_000_000,
                         routing_capacity: 1000,
@@ -836,7 +862,8 @@ impl UnifiedRouter {
 
         // Add connected peers
         for (peer, conn) in connections.iter() {
-            if let Some(peer_pk) = peer.public_key() {
+            let peer_pk = peer.public_key();
+            if !peer_pk.dilithium_pk.is_empty() {
                 // Add node
                 graph.nodes.insert(
                     peer_pk.clone(),
@@ -857,7 +884,7 @@ impl UnifiedRouter {
                 );
 
                 // Add edge (bidirectional)
-                if let Some(local_pk) = self.local_peer.public_key() {
+                if !local_pk.dilithium_pk.is_empty() {
                     let edge_key = (local_pk.clone(), peer_pk.clone());
                     graph.edges.insert(
                         edge_key.clone(),
@@ -944,7 +971,8 @@ impl UnifiedRouter {
 
         for peer in connections.keys() {
             node_id_idx.insert(peer.node_id().clone(), peer.clone());
-            if let Some(pk) = peer.public_key() {
+            let pk = peer.public_key();
+            if !pk.dilithium_pk.is_empty() {
                 public_key_idx.insert(pk.clone(), peer.clone());
             }
         }
@@ -973,6 +1001,58 @@ impl UnifiedRouter {
                 expires_at: now + ttl,
             },
         );
+    }
+
+    // ========================================================================
+    // BACKWARD COMPATIBILITY METHODS (from MeshMessageRouter)
+    // ========================================================================
+
+    /// Route message with forwarding (backward compatibility with MeshMessageRouter)
+    ///
+    /// **TICKET #153**: This method provides backward compatibility during migration.
+    /// It routes a message to a destination by public key with optional forwarding.
+    pub async fn route_message_with_forwarding(
+        &self,
+        destination: PublicKey,
+        message: ZhtpMeshMessage,
+        _sender_id: PublicKey,
+    ) -> Result<()> {
+        // Find peer by public key
+        if let Some(dest_peer) = self.find_peer_by_public_key(&destination).await {
+            return self.route_message(message, &dest_peer).await;
+        }
+
+        // Try finding via NodeId lookup (destination might be a node we know)
+        warn!("Could not find peer for public key, message may not be delivered");
+        Err(anyhow!("No route to destination public key"))
+    }
+
+    /// Find next hop for destination (backward compatibility with MeshMessageRouter)
+    ///
+    /// **TICKET #153**: This method provides backward compatibility during migration.
+    pub async fn find_next_hop_for_destination(
+        &self,
+        destination: &UnifiedPeerId,
+    ) -> Result<UnifiedPeerId> {
+        // Check if we have a direct connection
+        if self.mesh_connections.read().await.contains_key(destination) {
+            return Ok(destination.clone());
+        }
+
+        // Find optimal route
+        let route = self.find_optimal_route(destination).await?;
+        if let Some(first_hop) = route.first() {
+            return Ok(first_hop.peer_id.clone());
+        }
+
+        Err(anyhow!("No next hop found for destination"))
+    }
+
+    /// Get reference to mesh server (for reward tracking)
+    ///
+    /// **TICKET #153**: Provides access for backward compatibility.
+    pub fn get_mesh_server(&self) -> &Option<Arc<RwLock<crate::mesh::server::ZhtpMeshServer>>> {
+        &self.mesh_server
     }
 }
 

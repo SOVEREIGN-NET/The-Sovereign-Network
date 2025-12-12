@@ -1203,17 +1203,19 @@ impl ZhtpMeshServer {
         ));
         
         // Create message router (Ticket #149: using peer_registry)
+        // Note: MeshMessageRouter is now a type alias for UnifiedRouter (Ticket #153)
+        #[allow(deprecated)]
         let message_router = Arc::new(RwLock::new(
-            crate::routing::message_routing::MeshMessageRouter::new(
+            crate::routing::unified_router::UnifiedRouter::from_peer_registry(
                 self.peer_registry.clone(),
                 self.long_range_relays.clone(),
             )
         ));
-        
+
         // Set mesh server reference in router for reward tracking
         {
             let mut router_guard = message_router.write().await;
-            router_guard.mesh_server = Some(Arc::new(RwLock::new(self.clone())));
+            router_guard.set_mesh_server(Arc::new(RwLock::new(self.clone())));
         }
         
         // Set router reference in message handler

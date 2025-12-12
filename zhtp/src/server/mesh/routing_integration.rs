@@ -144,11 +144,10 @@ impl MeshRouter {
         // Identity verified - proceed with routing
         let router = self.mesh_message_router.read().await;
 
-        match router.route_message(message, destination.clone(), sender.clone()).await {
-            Ok(message_id) => {
-                info!("✅ Message routed successfully (ID: {}, verification: {:?})",
-                      message_id, verification_result);
-                Ok(message_id)
+        match router.route_message_with_forwarding(destination.clone(), message, sender.clone()).await {
+            Ok(()) => {
+                info!("✅ Message routed successfully (verification: {:?})", verification_result);
+                Ok(0) // Message ID not returned by route_message_with_forwarding
             }
             Err(e) => {
                 warn!("❌ All routing attempts failed for {}: {}",
@@ -181,7 +180,7 @@ impl MeshRouter {
         let sender_unified = UnifiedPeerId::from_public_key_legacy(sender.clone());
 
         let router = self.mesh_message_router.read().await;
-        let route = router.find_optimal_route(&dest_unified, &sender_unified).await
+        let route = router.find_optimal_route(&dest_unified).await
             .context("No route found to destination")?;
 
         info!("✅ Route found: {} hops", route.len());

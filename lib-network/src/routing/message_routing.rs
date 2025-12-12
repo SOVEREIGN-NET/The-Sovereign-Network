@@ -18,3 +18,10 @@
 
 // Re-export unified router
 pub use super::unified_router::*;
+
+/// **DEPRECATED:** Type alias for backward compatibility
+///
+/// **TICKET #153**: MeshMessageRouter has been replaced by UnifiedRouter.
+/// This alias exists only for migration purposes and will be removed in v0.3.0.
+#[deprecated(since = "0.2.0", note = "Use UnifiedRouter instead")]
+pub type MeshMessageRouter = UnifiedRouter;
