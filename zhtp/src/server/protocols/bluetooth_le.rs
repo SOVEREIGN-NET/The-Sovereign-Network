@@ -205,7 +205,7 @@ impl BluetoothRouter {
                                 lib_network::peer_registry::PeerTier::Tier3,
                                 0.8,
                             );
-                            registry_write.upsert(peer_entry).expect("Failed to upsert peer");
+                            registry_write.upsert(peer_entry).await.expect("Failed to upsert peer");
                             info!("   ✅ Added GATT peer {} to mesh network", handshake.node_id);
                             
                             // FIX: Also register with BluetoothMeshProtocol.current_connections
@@ -497,7 +497,7 @@ impl BluetoothRouter {
                         lib_network::peer_registry::PeerTier::Tier3,
                         0.8,
                     );
-                    connections.upsert(peer_entry).expect("Failed to upsert peer");
+                    connections.upsert(peer_entry).await.expect("Failed to upsert peer");
                     // No need to drop(connections) as it will be dropped automatically
                     
                     info!("✅ Bluetooth peer {} added to mesh network ({} total peers)",

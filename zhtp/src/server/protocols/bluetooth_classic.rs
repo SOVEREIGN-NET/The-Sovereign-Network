@@ -216,7 +216,7 @@ impl BluetoothClassicRouter {
                         lib_network::peer_registry::PeerTier::Tier3,
                         0.8,
                     );
-                    connections.upsert(peer_entry).expect("Failed to upsert peer");
+                    connections.upsert(peer_entry).await.expect("Failed to upsert peer");
                     // No need to drop(connections) as it will be dropped automatically
                     
                     info!("✅ Bluetooth Classic peer {} added to mesh network ({} total peers)",
@@ -389,7 +389,7 @@ impl BluetoothClassicRouter {
                                 lib_network::peer_registry::PeerTier::Tier3,
                                 0.8,
                             );
-                            registry.upsert(peer_entry).expect("Failed to upsert peer");
+                            registry.upsert(peer_entry).await.expect("Failed to upsert peer");
 
                             info!("✅ Added {} to mesh network", device.address);
                             

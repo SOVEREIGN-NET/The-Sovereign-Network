@@ -216,7 +216,7 @@ impl MeshRouter {
                         lib_network::peer_registry::PeerTier::Tier3,
                         0.8,
                     );
-                    connections.upsert(peer_entry).expect("Failed to upsert peer");
+                    connections.upsert(peer_entry).await.expect("Failed to upsert peer");
                     // No need to drop(connections) as it will be dropped automatically
                     
                     info!("✅ Peer {} added to mesh network in {:?} state ({} total peers)",
@@ -247,7 +247,7 @@ impl MeshRouter {
                                     if let Some(endpoint) = updated_entry.endpoints.first_mut() {
                                         endpoint.protocol = lib_network::protocols::NetworkProtocol::QUIC;
                                     }
-                                    registry.upsert(updated_entry).expect("Failed to update peer");
+                                    registry.upsert(updated_entry).await.expect("Failed to update peer");
                                 }
                             }
                         }
