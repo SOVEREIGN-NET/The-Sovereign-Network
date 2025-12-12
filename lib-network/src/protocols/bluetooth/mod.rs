@@ -6,6 +6,8 @@
 //! - Platform-specific implementations (windows_gatt, macos_core)
 //! - Common utilities (common, device, gatt modules)
 
+use crate::mtu::BLE_MTU;
+
 // Core Bluetooth modules
 pub mod common;
 pub mod device;
@@ -1402,7 +1404,7 @@ impl BluetoothMeshProtocol {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            mtu: 247,
+            mtu: BLE_MTU,
             address: peer.address.clone(),
             last_seen: peer.last_seen,
             rssi: peer.rssi,
@@ -1430,7 +1432,7 @@ impl BluetoothMeshProtocol {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs(),
-                    mtu: 247,
+                    mtu: BLE_MTU,
                     address: peer_clone.address.clone(),
                     last_seen: peer_clone.last_seen,
                     rssi: peer_clone.rssi,
@@ -1461,7 +1463,7 @@ impl BluetoothMeshProtocol {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            mtu: 247,
+            mtu: BLE_MTU,
             address: peer.address.clone(),
             last_seen: peer.last_seen,
             rssi: peer.rssi,
@@ -1490,7 +1492,7 @@ impl BluetoothMeshProtocol {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
-                mtu: 247,
+                mtu: BLE_MTU,
                 address: peer.address.clone(),
                 last_seen: peer.last_seen,
                 rssi: peer.rssi,

@@ -157,12 +157,10 @@ impl FragmentReassembler {
 
 /// Calculate optimal MTU for connection
 pub fn calculate_optimal_mtu(requested_mtu: u16, max_mtu: u16) -> u16 {
-    // BLE spec minimum is 23, maximum is typically 512
-    const MIN_MTU: u16 = 23;
-    const MAX_BLE_MTU: u16 = 512;
+    use crate::mtu::{BLE_MIN_MTU, BLE_MAX_MTU};
     
-    let effective_max = max_mtu.min(MAX_BLE_MTU);
-    requested_mtu.clamp(MIN_MTU, effective_max)
+    let effective_max = max_mtu.min(BLE_MAX_MTU);
+    requested_mtu.clamp(BLE_MIN_MTU, effective_max)
 }
 
 /// GATT message types for unified handling

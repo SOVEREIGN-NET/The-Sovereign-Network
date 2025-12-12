@@ -20,6 +20,7 @@ use lib_crypto::PublicKey;
 use crate::identity::unified_peer::UnifiedPeerId;
 use crate::protocols::zhtp_auth::{ZhtpAuthManager, NodeCapabilities, ZhtpAuthVerification};
 use crate::types::mesh_message::{MeshMessageEnvelope, ZhtpMeshMessage};
+use crate::mtu::BT_CLASSIC_MTU;
 
 // Import common Bluetooth utilities to avoid duplication
 use super::common::{
@@ -1617,7 +1618,7 @@ impl BluetoothClassicProtocol {
                     .unwrap_or_default()
                     .as_secs(),
                 channel,
-                mtu: 1000, // Windows RFCOMM typical MTU
+                mtu: BT_CLASSIC_MTU, // Windows RFCOMM MTU
                 last_seen: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -1908,7 +1909,7 @@ impl BluetoothClassicProtocol {
                 .unwrap_or_default()
                 .as_secs(),
             channel,
-            mtu: 1000,
+            mtu: BT_CLASSIC_MTU,
             last_seen: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -2083,7 +2084,7 @@ impl BluetoothClassicProtocol {
                 .unwrap_or_default()
                 .as_secs(),
             channel,
-            mtu: 1000,
+            mtu: BT_CLASSIC_MTU,
             last_seen: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -2475,7 +2476,7 @@ impl BluetoothClassicProtocol {
                                 .unwrap_or_default()
                                 .as_secs(),
                             channel,
-                            mtu: 1000,
+                            mtu: BT_CLASSIC_MTU,
                             last_seen: std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
@@ -2656,7 +2657,7 @@ mod tests {
             peer_address: "AA:BB:CC:DD:EE:FF".to_string(),
             connected_at: 1234567890,
             channel: 3,
-            mtu: 1000,
+            mtu: BT_CLASSIC_MTU,
             last_seen: 1234567890,
             is_outgoing: true,
         };

@@ -73,6 +73,9 @@ pub mod platform;
 pub mod dht; // Native binary DHT protocol with lib-storage backend
 pub mod web4; // Web4 domain registry and content publishing
 pub mod blockchain_sync; // Blockchain synchronization over mesh protocols
+pub mod network_utils; // Centralized network utility functions
+pub mod mtu; // MTU constants for all protocols
+pub mod fragmentation; // Message fragmentation and reassembly
 
 // Re-export protocol constants for convenience
 pub use constants::*;

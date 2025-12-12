@@ -4,6 +4,8 @@
 
 use anyhow::Result;
 use tracing::{info, warn};
+use crate::mtu::{LORA_MAX_PAYLOAD, LORA_CHUNK_SIZE};
+use crate::fragmentation::{fragment_message, serialize_fragment};
 
 /// LoRaWAN mesh protocol handler
 pub struct LoRaWANMeshProtocol {
@@ -450,34 +452,29 @@ impl LoRaWANMeshProtocol {
     
     async fn get_max_payload_size(&self) -> Result<usize> {
         // LoRaWAN payload size depends on spreading factor and region
-        // EU868: SF7=242, SF8=242, SF9=115, SF10=59, SF11=59, SF12=59
-        // US915: SF7=242, SF8=242, SF9=115, SF10=11
-        Ok(242) // Conservative estimate for SF7/SF8
+        // Using centralized constant from mtu module
+        Ok(LORA_MAX_PAYLOAD)
     }
     
     async fn send_fragmented_message(&self, target_address: &str, message: &[u8]) -> Result<()> {
-        let max_payload = self.get_max_payload_size().await?;
-        let header_size = 8; // Fragment header
-        let chunk_size = max_payload - header_size;
+        // Use centralized fragmentation logic
+        // Generate message ID from timestamp + random to avoid collisions
+        let message_id = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64) ^ rand::random::<u64>();
+        let fragments = fragment_message(message_id, message, LORA_CHUNK_SIZE)?;
         
-        let total_fragments = (message.len() + chunk_size - 1) / chunk_size;
-        info!(" Fragmenting message into {} parts", total_fragments);
+        info!(" Fragmenting message into {} parts", fragments.len());
         
-        for (fragment_id, chunk) in message.chunks(chunk_size).enumerate() {
-            let mut fragment = Vec::new();
-            
-            // Fragment header
-            fragment.extend_from_slice(&(fragment_id as u16).to_le_bytes());
-            fragment.extend_from_slice(&(total_fragments as u16).to_le_bytes());
-            fragment.extend_from_slice(&(message.len() as u32).to_le_bytes());
-            
-            // Fragment payload
-            fragment.extend_from_slice(chunk);
-            
-            let frame = self.prepare_lorawan_frame(target_address, &fragment).await?;
+        for fragment in fragments {
+            let fragment_bytes = serialize_fragment(&fragment)?;
+            let frame = self.prepare_lorawan_frame(target_address, &fragment_bytes).await?;
             self.transmit_frame(&frame).await?;
             
-            info!("Fragment {}/{} transmitted", fragment_id + 1, total_fragments);
+            info!("Fragment {}/{} transmitted", 
+                fragment.header.fragment_index + 1, 
+                fragment.header.total_fragments);
             
             // Delay between fragments to respect duty cycle
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
