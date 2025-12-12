@@ -2416,7 +2416,7 @@ impl BluetoothClassicProtocol {
                     
                     // Record routing activity for rewards
                     let message_size = envelope.size();
-                    if let Some(mesh_server) = router_guard.get_mesh_server().as_ref() {
+                    if let Some(mesh_server) = router_guard.mesh_server.as_ref() {
                         mesh_server.read().await.record_routing_activity(
                             message_size,
                             envelope.hop_count,

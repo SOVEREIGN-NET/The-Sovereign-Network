@@ -271,11 +271,9 @@ impl MeshRouter {
             metrics_history: Arc::new(RwLock::new(MetricsHistory::new(720, 60))),
             latency_samples_blocks: Arc::new(RwLock::new(Vec::new())),
             latency_samples_txs: Arc::new(RwLock::new(Vec::new())),
-            // Note: MeshMessageRouter is now a type alias for UnifiedRouter (Ticket #153)
-            #[allow(deprecated)]
             mesh_message_router: Arc::new(RwLock::new(
-                MeshMessageRouter::from_peer_registry(
-                    connections_for_router,
+                MeshMessageRouter::new(
+                    connections_for_router, 
                     Arc::new(RwLock::new(HashMap::new()))
                 )
             )),

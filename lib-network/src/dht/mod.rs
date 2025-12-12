@@ -34,7 +34,7 @@ use hex;
 // Re-export lib-storage's DHT types (the actual backend)
 pub use lib_storage::dht::{
     storage::DhtStorage,
-    routing::{DhtRouter, NoOpRouter, RoutingStats},
+    routing::KademliaRouter,
 };
 pub use lib_storage::types::dht_types::DhtNode;
 

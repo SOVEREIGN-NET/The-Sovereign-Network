@@ -623,6 +623,7 @@ pub struct BatchOperations<'a> {
 mod tests {
     use super::*;
     use crate::peer_registry::{NodeId, PublicKey};
+    use crate::protocols::NetworkProtocol;
     
     /// Mock observer for testing
     struct TestObserver {
@@ -653,40 +654,65 @@ mod tests {
         }
     }
     
-    fn create_test_peer_entry(node_id_bytes: [u8; 32]) -> PeerEntry {
+    fn create_test_peer_entry(_node_id_bytes: [u8; 32]) -> PeerEntry {
         use crate::peer_registry::*;
-        
-        let node_id = NodeId::from_bytes(node_id_bytes);
-        let public_key = PublicKey {
-            dilithium_pk: vec![1, 2, 3],
-            kyber_pk: vec![4, 5, 6],
-            key_id: [0u8; 32],
+        use lib_identity::ZhtpIdentity;
+
+        let identity = ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Device,
+            None,
+            None,
+            "test-device",
+            None,
+        ).expect("Failed to create test identity");
+
+        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)
+            .expect("Failed to create UnifiedPeerId");
+
+        let connection_metrics = ConnectionMetrics {
+            signal_strength: 1.0,
+            bandwidth_capacity: 1_000_000,
+            latency_ms: 10,
+            stability_score: 1.0,
+            connected_at: 0,
         };
-        
-        let peer_id = UnifiedPeerId::new(node_id, public_key.clone(), format!("did:zhtp:{}", hex::encode(&node_id_bytes[0..16])));
-        
-        PeerEntry {
-            peer_id,
-            endpoints: vec![],
-            active_protocols: vec![],
-            connection_metrics: ConnectionMetrics::default(),
-            authenticated: true,
-            quantum_secure: true,
-            next_hop: None,
-            hop_count: 0,
-            route_quality: 1.0,
-            capabilities: NodeCapabilities::default(),
-            location: None,
-            reliability_score: 1.0,
+
+        let capabilities = NodeCapabilities {
+            protocols: vec![NetworkProtocol::QUIC],
+            max_bandwidth: 1_000_000,
+            available_bandwidth: 1_000_000,
+            routing_capacity: 100,
+            energy_level: Some(1.0),
+            availability_percent: 99.0,
+        };
+
+        let dht_info = DhtPeerInfo {
             kademlia_distance: 0,
-            k_bucket_index: 0,
-            last_dht_contact: 0,
-            discovery_method: DiscoveryMethod::Bootstrap,
-            first_seen: 0,
-            last_seen: 0,
-            trust_score: 1.0,
-            tier: PeerTier::Trusted,
-        }
+            bucket_index: 0,
+            last_contact: 0,
+            failed_attempts: 0,
+        };
+
+        PeerEntry::new(
+            peer_id,
+            vec![],
+            vec![NetworkProtocol::QUIC],
+            connection_metrics,
+            true,
+            true,
+            None,
+            0,
+            1.0,
+            capabilities,
+            None,
+            1.0,
+            Some(dht_info),
+            DiscoveryMethod::Bootstrap,
+            0,
+            0,
+            PeerTier::Tier3,
+            1.0,
+        )
     }
     
     #[tokio::test]

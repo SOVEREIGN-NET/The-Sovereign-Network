@@ -690,7 +690,7 @@ impl LongRangeRoutingManager {
                                 _ => NetworkProtocol::UDP,
                             },
                             relay_id: Some(global_hop.relay_id.clone()),
-                            hop_latency_ms: global_hop.latency_ms,
+                            latency_ms: global_hop.latency_ms,
                         }
                     })
                     .collect();
