@@ -138,6 +138,58 @@ pub async fn handle_deploy_command(args: DeployArgs, cli: &ZhtpCli) -> Result<()
                 cli,
             ).await
         }
+
+        DeployAction::History {
+            domain,
+            limit,
+            keystore,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
+        } => {
+            let trust_config = build_trust_config(
+                pin_spki.clone(),
+                node_did.clone(),
+                *tofu,
+                *trust_node,
+            )?;
+
+            show_deployment_history(
+                domain,
+                *limit,
+                keystore.as_deref(),
+                trust_config,
+                cli,
+            ).await
+        }
+
+        DeployAction::Rollback {
+            domain,
+            to_version,
+            keystore,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
+            force,
+        } => {
+            let trust_config = build_trust_config(
+                pin_spki.clone(),
+                node_did.clone(),
+                *tofu,
+                *trust_node,
+            )?;
+
+            rollback_deployment(
+                domain,
+                *to_version,
+                keystore,
+                trust_config,
+                *force,
+                cli,
+            ).await
+        }
     }
 }
 
@@ -407,18 +459,65 @@ async fn deploy_site(
     println!("   Root CID: {}", root_cid);
     println!("   Manifest CID: {}", manifest_cid);
 
-    // Register domain (ownership bound to deploy identity)
-    println!("\nRegistering domain {}...", domain);
-    let result = client.register_domain(domain, &manifest_cid).await
-        .context("Failed to register domain")?;
+    // Check if domain already exists to determine update vs register
+    println!("\nChecking domain status...");
+    let domain_status = client.get_domain_status(domain).await
+        .context("Failed to check domain status")?;
+
+    let result = if domain_status.get("found").and_then(|v| v.as_bool()).unwrap_or(false) {
+        // Domain exists - perform versioned update
+        let current_version = domain_status.get("version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let current_cid = domain_status.get("current_manifest_cid")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let domain_owner = domain_status.get("owner_did")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        println!("   Domain exists at v{}", current_version);
+        println!("   Owner: {}", domain_owner);
+
+        // Verify we own the domain
+        if !domain_owner.is_empty() && domain_owner != owner_did {
+            return Err(anyhow!(
+                "Domain {} is owned by {}, not by your identity {}. Cannot update.",
+                domain, domain_owner, owner_did
+            ));
+        }
+
+        println!("\nUpdating domain {} (v{} -> v{})...", domain, current_version, current_version + 1);
+
+        client.update_domain(domain, &manifest_cid, &current_cid).await
+            .context("Failed to update domain")?
+    } else {
+        // New domain - register it
+        println!("\nRegistering new domain {}...", domain);
+        client.register_domain(domain, &manifest_cid).await
+            .context("Failed to register domain")?
+    };
 
     client.close().await;
+
+    // Extract version info from result
+    let new_version = result.get("new_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1);
+    let is_update = result.get("previous_manifest_cid").is_some();
 
     println!("\nDeployment successful!");
     println!("   Domain: {}", domain);
     println!("   URL: zhtp://{}", domain);
+    println!("   Version: v{}", new_version);
     println!("   Manifest: {}", manifest_cid);
     println!("   Owner: {}", owner_did);
+    if is_update {
+        if let Some(prev_cid) = result.get("previous_manifest_cid").and_then(|v| v.as_str()) {
+            println!("   Previous: {}...", &prev_cid[..16.min(prev_cid.len())]);
+        }
+    }
 
     if let Some(tx_hash) = result.get("blockchain_transaction") {
         println!("   Transaction: {}", tx_hash);
@@ -731,6 +830,182 @@ fn get_default_keystore_path() -> Result<String> {
         .context("Could not determine home directory")?;
 
     Ok(format!("{}/.zhtp/keystore", home))
+}
+
+/// Show deployment version history for a domain
+async fn show_deployment_history(
+    domain: &str,
+    limit: usize,
+    keystore: Option<&str>,
+    trust_config: TrustConfig,
+    cli: &ZhtpCli,
+) -> Result<()> {
+    println!("Deployment history for: {}", domain);
+    println!();
+
+    // Load identity from provided keystore or default location
+    let keystore_path = keystore
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| get_default_keystore_path().unwrap_or_else(|_| "~/.zhtp/keystore".to_string()));
+    let identity = load_identity(&keystore_path)
+        .context("Failed to load identity. Create one with: zhtp identity create")?;
+
+    // Connect to node with trust configuration
+    let mut client = Web4Client::new_with_trust(identity, trust_config).await
+        .context("Failed to create Web4 client")?;
+
+    client.connect(&cli.server).await
+        .context("Failed to connect to ZHTP node")?;
+
+    // Get domain history
+    let history = client.get_domain_history(domain, Some(limit)).await?;
+
+    let current_version = history.get("current_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let versions = history.get("versions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    println!("Current version: v{}", current_version);
+    println!("Showing {} versions:", versions.len());
+    println!();
+
+    for ver in &versions {
+        let version = ver.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
+        let manifest_cid = ver.get("manifest_cid")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let created_at = ver.get("created_at")
+            .and_then(|v| v.as_u64())
+            .map(|ts| {
+                chrono::DateTime::from_timestamp(ts as i64, 0)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        let message = ver.get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let build_hash = ver.get("build_hash")
+            .and_then(|v| v.as_str())
+            .map(|s| &s[..8.min(s.len())])
+            .unwrap_or("");
+
+        let current_marker = if version == current_version { " <- current" } else { "" };
+
+        println!("  v{}{}", version, current_marker);
+        println!("    CID: {}...", &manifest_cid[..16.min(manifest_cid.len())]);
+        println!("    Hash: {}...", build_hash);
+        println!("    Date: {}", created_at);
+        if !message.is_empty() {
+            println!("    Message: {}", message);
+        }
+        println!();
+    }
+
+    if versions.is_empty() {
+        println!("  No version history available.");
+    }
+
+    println!("Rollback with:");
+    println!("  zhtp deploy rollback {} --to-version N --keystore {}", domain, keystore_path);
+
+    client.close().await;
+    Ok(())
+}
+
+/// Rollback a domain to a previous version
+async fn rollback_deployment(
+    domain: &str,
+    to_version: u64,
+    keystore: &str,
+    trust_config: TrustConfig,
+    force: bool,
+    cli: &ZhtpCli,
+) -> Result<()> {
+    println!("Rolling back {} to version {}", domain, to_version);
+    println!();
+
+    // Load identity (REQUIRED)
+    let identity = load_identity(keystore)
+        .context("Failed to load identity. Keystore is required for rollback.")?;
+
+    println!("Identity: {}", identity.did);
+
+    // Connect to node with trust configuration
+    let mut client = Web4Client::new_with_trust(identity, trust_config).await
+        .context("Failed to create Web4 client")?;
+
+    client.connect(&cli.server).await
+        .context("Failed to connect to ZHTP node")?;
+
+    // Get current status first
+    let status = client.get_domain_status(domain).await?;
+    let current_version = status.get("version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let owner_did = status.get("owner_did")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    println!("Current version: v{}", current_version);
+    println!("Domain owner: {}", owner_did);
+    println!();
+
+    if to_version >= current_version {
+        return Err(anyhow!(
+            "Cannot rollback to v{} - current version is v{}. Target must be < current.",
+            to_version, current_version
+        ));
+    }
+
+    if to_version == 0 {
+        return Err(anyhow!("Cannot rollback to version 0. Minimum is v1."));
+    }
+
+    // Confirm unless force flag is set
+    if !force {
+        println!("This will create a new version (v{}) pointing to the content from v{}.",
+            current_version + 1, to_version);
+        print!("Continue? [y/N] ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Rollback cancelled.");
+            client.close().await;
+            return Ok(());
+        }
+    }
+
+    // Perform rollback
+    println!("\nExecuting rollback...");
+    let result = client.rollback_domain(domain, to_version).await?;
+
+    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let new_version = result.get("new_version").and_then(|v| v.as_u64()).unwrap_or(0);
+    let new_cid = result.get("new_manifest_cid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if success {
+        println!("\nRollback successful!");
+        println!("   Domain: {}", domain);
+        println!("   New version: v{}", new_version);
+        println!("   Manifest: {}...", &new_cid[..16.min(new_cid.len())]);
+        println!("   Content from: v{}", to_version);
+    } else {
+        let error = result.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        return Err(anyhow!("Rollback failed: {}", error));
+    }
+
+    client.close().await;
+    Ok(())
 }
 
 #[cfg(test)]
