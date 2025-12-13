@@ -19,6 +19,10 @@ pub use local_network::*;
 // Export unified discovery as the primary interface
 pub use unified::{
     DiscoveryProtocol, DiscoveryResult, DiscoveryService, UnifiedDiscoveryService,
+    // Security exports
+    NonceTracker, PeerReputation, ReputationTracker,
+    SecurityMetrics, SecurityMetricsSnapshot,
+    validate_public_key,
 };
 
 use anyhow::Result;
