@@ -3,22 +3,29 @@
 //! Provides HTTPS termination for browsers to access Web4 content.
 //! Uses axum with rustls for TLS termination.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::BufReader;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use axum::{
+    body::Body,
+    extract::{ConnectInfo, State},
+    http::{Request, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::get,
     Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn, error};
 
@@ -27,11 +34,91 @@ use lib_network::{DomainRegistry, Web4ContentService, ZdnsResolver, ZdnsConfig};
 use super::config::{GatewayTlsConfig, TlsMode};
 use super::handlers::{gateway_handler, redirect_handler, health_handler, info_handler, GatewayState};
 
+/// Rate limit configuration
+const RATE_LIMIT_REQUESTS_PER_MINUTE: u32 = 100;
+const RATE_LIMIT_CLEANUP_INTERVAL_SECS: u64 = 60;
+const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+const REQUEST_TIMEOUT_SECS: u64 = 30;
+
+/// Per-IP rate limiting state
+#[derive(Clone)]
+struct RateLimitState {
+    requests: Arc<RwLock<HashMap<IpAddr, (u32, Instant)>>>,
+}
+
+impl RateLimitState {
+    fn new() -> Self {
+        Self {
+            requests: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Check if an IP has exceeded the rate limit
+    async fn check_rate_limit(&self, ip: IpAddr) -> bool {
+        let mut requests = self.requests.write().await;
+        let now = Instant::now();
+
+        // Clean up old entries (older than 1 minute)
+        requests.retain(|_, (_, timestamp)| now.duration_since(*timestamp).as_secs() < 60);
+
+        // Check/update this IP's count
+        let entry = requests.entry(ip).or_insert((0, now));
+
+        // Reset if window expired
+        if now.duration_since(entry.1).as_secs() >= 60 {
+            entry.0 = 0;
+            entry.1 = now;
+        }
+
+        entry.0 += 1;
+
+        entry.0 <= RATE_LIMIT_REQUESTS_PER_MINUTE
+    }
+}
+
+/// Rate limiting middleware
+async fn rate_limit_middleware(
+    State(rate_limit): State<RateLimitState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let ip = addr.ip();
+
+    if !rate_limit.check_rate_limit(ip).await {
+        warn!(ip = %ip, "Rate limit exceeded");
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("Retry-After", "60")],
+            "Rate limit exceeded. Please try again later.",
+        ).into_response();
+    }
+
+    next.run(request).await
+}
+
+/// Server handle for graceful shutdown
+struct ServerHandle {
+    shutdown_tx: watch::Sender<bool>,
+}
+
+impl ServerHandle {
+    fn new() -> (Self, watch::Receiver<bool>) {
+        let (tx, rx) = watch::channel(false);
+        (Self { shutdown_tx: tx }, rx)
+    }
+
+    fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+    }
+}
+
 /// HTTPS Gateway Server for Web4 browser access
 pub struct HttpsGateway {
     config: GatewayTlsConfig,
     content_service: Arc<Web4ContentService>,
     is_running: Arc<RwLock<bool>>,
+    server_handles: Arc<RwLock<Vec<ServerHandle>>>,
 }
 
 impl HttpsGateway {
@@ -48,6 +135,7 @@ impl HttpsGateway {
             config,
             content_service,
             is_running: Arc::new(RwLock::new(false)),
+            server_handles: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -65,6 +153,7 @@ impl HttpsGateway {
             config,
             content_service,
             is_running: Arc::new(RwLock::new(false)),
+            server_handles: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -79,6 +168,7 @@ impl HttpsGateway {
             config,
             content_service,
             is_running: Arc::new(RwLock::new(false)),
+            server_handles: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -92,7 +182,11 @@ impl HttpsGateway {
             }
         }
 
-        // Mark as running
+        // Clear any old handles and mark as running
+        {
+            let mut handles = self.server_handles.write().await;
+            handles.clear();
+        }
         *self.is_running.write().await = true;
 
         info!("Starting HTTPS Gateway...");
@@ -103,6 +197,9 @@ impl HttpsGateway {
         }
         info!("  Gateway Suffix: '{}'", self.config.gateway_suffix);
         info!("  Bare Domains: {}", self.config.allow_bare_sovereign_domains);
+        info!("  Rate Limit: {} req/min per IP", RATE_LIMIT_REQUESTS_PER_MINUTE);
+        info!("  Max Body Size: {} MB", MAX_REQUEST_BODY_SIZE / 1024 / 1024);
+        info!("  Request Timeout: {}s", REQUEST_TIMEOUT_SECS);
 
         // Build shared state
         let state = GatewayState {
@@ -110,55 +207,108 @@ impl HttpsGateway {
             config: Arc::new(self.config.clone()),
         };
 
+        // Build rate limit state
+        let rate_limit = RateLimitState::new();
+
         // Build CORS layer
         let cors = CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
             .allow_headers(Any);
 
-        // Build main router
+        // Build main router with rate limiting, body limits, and timeouts
+        // Note: Layer order is bottom-up (first added = outermost layer)
         let app = Router::new()
             .route("/health", get(health_handler))
             .route("/info", get(info_handler))
             .fallback(gateway_handler)
-            .layer(TraceLayer::new_for_http())
             .layer(cors)
+            .layer(TraceLayer::new_for_http())
+            .layer(TimeoutLayer::new(Duration::from_secs(REQUEST_TIMEOUT_SECS)))
+            .layer(axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BODY_SIZE))
+            .route_layer(middleware::from_fn_with_state(
+                rate_limit.clone(),
+                rate_limit_middleware,
+            ))
             .with_state(state.clone());
 
-        // Start HTTPS server
+        // Start HTTPS server with graceful shutdown
         if self.config.mode != TlsMode::Disabled {
             let tls_config = self.build_tls_config().await?;
             let https_addr = SocketAddr::new(self.config.bind_addr, self.config.https_port);
 
             info!("  HTTPS listening on: {}", https_addr);
 
+            let (handle, mut shutdown_rx) = ServerHandle::new();
+            {
+                let mut handles = self.server_handles.write().await;
+                handles.push(handle);
+            }
+
             let is_running = self.is_running.clone();
+            let app_clone = app.clone();
             tokio::spawn(async move {
-                if let Err(e) = axum_server::bind_rustls(https_addr, tls_config)
-                    .serve(app.into_make_service())
-                    .await
-                {
-                    error!("HTTPS server error: {}", e);
-                    *is_running.write().await = false;
+                let server = axum_server::bind_rustls(https_addr, tls_config)
+                    .serve(app_clone.into_make_service_with_connect_info::<SocketAddr>());
+
+                tokio::select! {
+                    result = server => {
+                        if let Err(e) = result {
+                            error!("HTTPS server error: {}", e);
+                            *is_running.write().await = false;
+                        }
+                    }
+                    _ = shutdown_rx.changed() => {
+                        info!("HTTPS server received shutdown signal");
+                    }
                 }
             });
         }
 
-        // Start HTTP redirect server (optional)
+        // Start HTTP redirect server (optional) with graceful shutdown
         if let Some(http_port) = self.config.http_port {
             if self.config.enable_http_redirect && self.config.mode != TlsMode::Disabled {
                 let http_addr = SocketAddr::new(self.config.bind_addr, http_port);
                 let redirect_app = Router::new()
                     .route("/health", get(health_handler))
                     .fallback(redirect_handler)
+                    .route_layer(middleware::from_fn_with_state(
+                        rate_limit.clone(),
+                        rate_limit_middleware,
+                    ))
                     .with_state(state);
 
                 info!("  HTTP redirect listening on: {}", http_addr);
 
+                let (handle, mut shutdown_rx) = ServerHandle::new();
+                {
+                    let mut handles = self.server_handles.write().await;
+                    handles.push(handle);
+                }
+
                 tokio::spawn(async move {
-                    let listener = tokio::net::TcpListener::bind(http_addr).await.unwrap();
-                    if let Err(e) = axum::serve(listener, redirect_app).await {
-                        error!("HTTP redirect server error: {}", e);
+                    let listener = match tokio::net::TcpListener::bind(http_addr).await {
+                        Ok(l) => l,
+                        Err(e) => {
+                            error!("Failed to bind HTTP redirect listener: {}", e);
+                            return;
+                        }
+                    };
+
+                    let server = axum::serve(
+                        listener,
+                        redirect_app.into_make_service_with_connect_info::<SocketAddr>(),
+                    );
+
+                    tokio::select! {
+                        result = server => {
+                            if let Err(e) = result {
+                                error!("HTTP redirect server error: {}", e);
+                            }
+                        }
+                        _ = shutdown_rx.changed() => {
+                            info!("HTTP redirect server received shutdown signal");
+                        }
                     }
                 });
             } else if self.config.mode == TlsMode::Disabled {
@@ -167,20 +317,38 @@ impl HttpsGateway {
 
                 info!("  HTTP listening on: {} (TLS disabled)", http_addr);
 
+                let (handle, mut shutdown_rx) = ServerHandle::new();
+                {
+                    let mut handles = self.server_handles.write().await;
+                    handles.push(handle);
+                }
+
                 let is_running = self.is_running.clone();
                 tokio::spawn(async move {
-                    let listener = tokio::net::TcpListener::bind(http_addr).await.unwrap();
-                    let app = Router::new()
-                        .route("/health", get(health_handler))
-                        .route("/info", get(info_handler))
-                        .fallback(gateway_handler)
-                        .layer(TraceLayer::new_for_http())
-                        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
-                        .with_state(state);
+                    let listener = match tokio::net::TcpListener::bind(http_addr).await {
+                        Ok(l) => l,
+                        Err(e) => {
+                            error!("Failed to bind HTTP listener: {}", e);
+                            *is_running.write().await = false;
+                            return;
+                        }
+                    };
 
-                    if let Err(e) = axum::serve(listener, app).await {
-                        error!("HTTP server error: {}", e);
-                        *is_running.write().await = false;
+                    let server = axum::serve(
+                        listener,
+                        app.into_make_service_with_connect_info::<SocketAddr>(),
+                    );
+
+                    tokio::select! {
+                        result = server => {
+                            if let Err(e) = result {
+                                error!("HTTP server error: {}", e);
+                                *is_running.write().await = false;
+                            }
+                        }
+                        _ = shutdown_rx.changed() => {
+                            info!("HTTP server received shutdown signal");
+                        }
                     }
                 });
             }
@@ -190,12 +358,27 @@ impl HttpsGateway {
         Ok(())
     }
 
-    /// Stop the gateway server
+    /// Stop the gateway server gracefully
     pub async fn stop(&self) {
         info!("Stopping HTTPS Gateway...");
+
+        // Signal all servers to shutdown
+        {
+            let handles = self.server_handles.read().await;
+            for handle in handles.iter() {
+                handle.shutdown();
+            }
+            info!("  Sent shutdown signal to {} server(s)", handles.len());
+        }
+
+        // Clear handles and mark as stopped
+        {
+            let mut handles = self.server_handles.write().await;
+            handles.clear();
+        }
         *self.is_running.write().await = false;
-        // Note: Graceful shutdown would require tracking the server handles
-        // For now, the server will stop on next request timeout
+
+        info!("HTTPS Gateway stopped");
     }
 
     /// Check if gateway is running

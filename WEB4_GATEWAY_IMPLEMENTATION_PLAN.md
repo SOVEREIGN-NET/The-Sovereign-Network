@@ -965,19 +965,30 @@ ProtocolsComponent::new_gateway_node(env, port, gateway_ip, https_config)
 - Self-signed certificate auto-generation for development
 - Wildcard SANs for `*.zhtp`, `*.sov`, `*.zhtp.localhost`
 - HTTP to HTTPS redirect (configurable)
-- HSTS support with configurable max-age
+- HSTS enforcement with configurable max-age (all responses include `Strict-Transport-Security` header)
 - CORS configuration
 - Health check and info endpoints
 - Integration with ZDNS resolver for cached lookups
 
+### Security Features (Security Review Fixes)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **HSTS Enforcement** | All HTTPS responses include `Strict-Transport-Security` header | ✅ |
+| **Per-IP Rate Limiting** | 100 requests/minute per IP address with automatic cleanup | ✅ |
+| **Request Body Limits** | Maximum 10 MB request body size via `DefaultBodyLimit` | ✅ |
+| **Request Timeout** | 30-second timeout for all requests via `TimeoutLayer` | ✅ |
+| **Graceful Shutdown** | Server handles tracked with `watch::channel` for clean shutdown | ✅ |
+
 ### Tests
 
-23 tests covering:
+25 tests covering:
 - Config validation
 - Builder patterns
 - Path normalization
 - Domain extraction
 - TLD filtering
+- HSTS header generation (enabled/disabled modes)
 
 ---
 
