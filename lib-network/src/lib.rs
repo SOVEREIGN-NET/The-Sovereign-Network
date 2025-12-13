@@ -71,6 +71,7 @@ pub mod zk_integration;
 pub mod testing;
 pub mod platform;
 pub mod dht; // Native binary DHT protocol with lib-storage backend
+pub mod transport;
 pub mod web4; // Web4 domain registry and content publishing
 pub mod blockchain_sync; // Blockchain synchronization over mesh protocols
 

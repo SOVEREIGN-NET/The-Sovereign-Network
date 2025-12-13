@@ -2023,7 +2023,7 @@ impl ZhtpMeshServer {
     /// created and added to the blockchain to prevent double-counting.
     /// 
     /// # Example
-    /// ```rust
+    /// ```ignore
     /// // After creating reward transaction
     /// mesh_server.reset_reward_counter().await;
     /// ```

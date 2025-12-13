@@ -15,10 +15,10 @@
 //!
 //! # Usage
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use lib_network::handshake::{HandshakeContext, handshake_as_initiator};
 //! use tokio::net::TcpStream;
-//!
+//! 
 //! async fn connect(stream: &mut TcpStream, ctx: &HandshakeContext) {
 //!     let result = handshake_as_initiator(stream, ctx).await.unwrap();
 //!     println!("Session established: {:?}", result.session_id);

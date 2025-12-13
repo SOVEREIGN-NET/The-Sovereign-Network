@@ -3,6 +3,7 @@
 //! Advanced peer-to-peer message delivery with intelligent routing
 
 use anyhow::{anyhow, Result};
+use bincode;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -15,7 +16,11 @@ use crate::mesh::connection::MeshConnection;
 use crate::relays::LongRangeRelay;
 use crate::protocols::NetworkProtocol;
 use crate::identity::unified_peer::UnifiedPeerId;
+use crate::transport::TransportManager;
 use lib_identity::NodeId;
+
+/// Maximum cached routes to bound memory and prevent cache abuse
+const MAX_ROUTE_CACHE_ENTRIES: usize = 1024;
 
 /// Intelligent mesh message router
 ///
@@ -43,14 +48,8 @@ pub struct MeshMessageRouter {
     pub route_cache: Arc<RwLock<HashMap<UnifiedPeerId, CachedRoute>>>,
     /// Optional mesh server reference for reward tracking
     pub mesh_server: Option<Arc<RwLock<crate::mesh::server::ZhtpMeshServer>>>,
-    /// Bluetooth protocol handler for sending messages (Phase 2)
-    pub bluetooth_handler: Option<Arc<RwLock<crate::protocols::bluetooth::classic::BluetoothClassicProtocol>>>,
-    /// WiFi Direct protocol handler (Phase 2)
-    pub wifi_handler: Option<Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>>,
-    /// LoRa protocol handler (Phase 2)
-    pub lora_handler: Option<Arc<RwLock<crate::protocols::lorawan::LoRaWANMeshProtocol>>>,
-    /// QUIC protocol handler (Phase 2)
-    pub quic_handler: Option<Arc<RwLock<crate::protocols::quic_mesh::QuicMeshProtocol>>>,
+    /// Transport manager for enforcing secure handler selection
+    pub transport_manager: Option<TransportManager>,
 }
 
 /// Routing table for mesh network
@@ -150,6 +149,8 @@ pub struct CachedRoute {
     pub cached_at: u64,
     /// Cache validity duration in seconds
     pub validity_duration: u64,
+    /// Maximum MTU across all hops (helps enforce fragmentation)
+    pub max_mtu: u64,
 }
 
 /// Message delivery status tracking
@@ -211,10 +212,7 @@ impl MeshMessageRouter {
             delivery_tracking: Arc::new(RwLock::new(HashMap::new())),
             route_cache: Arc::new(RwLock::new(HashMap::new())),
             mesh_server: None, // Can be set later with set_mesh_server()
-            bluetooth_handler: None,
-            wifi_handler: None,
-            lora_handler: None,
-            quic_handler: None,
+            transport_manager: None,
         }
     }
 
@@ -271,6 +269,12 @@ impl MeshMessageRouter {
             trust_score: entry.trust_score,
             bootstrap_mode: false, // Default
         })
+    }
+
+    fn transport_manager(&self) -> Result<TransportManager> {
+        self.transport_manager
+            .clone()
+            .ok_or_else(|| anyhow!("TransportManager not configured"))
     }
 
     /// **ACCEPTANCE CRITERIA (Ticket #146):** Find connection by NodeId
@@ -332,24 +336,9 @@ impl MeshMessageRouter {
         self.mesh_server = Some(mesh_server);
     }
     
-    /// Set Bluetooth protocol handler (Phase 2)
-    pub fn set_bluetooth_handler(&mut self, handler: Arc<RwLock<crate::protocols::bluetooth::classic::BluetoothClassicProtocol>>) {
-        self.bluetooth_handler = Some(handler);
-    }
-    
-    /// Set WiFi Direct protocol handler (Phase 2)
-    pub fn set_wifi_handler(&mut self, handler: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>) {
-        self.wifi_handler = Some(handler);
-    }
-    
-    /// Set LoRa protocol handler (Phase 2)
-    pub fn set_lora_handler(&mut self, handler: Arc<RwLock<crate::protocols::lorawan::LoRaWANMeshProtocol>>) {
-        self.lora_handler = Some(handler);
-    }
-    
-    /// Set QUIC protocol handler (Phase 2)
-    pub fn set_quic_handler(&mut self, handler: Arc<RwLock<crate::protocols::quic_mesh::QuicMeshProtocol>>) {
-        self.quic_handler = Some(handler);
+    /// Set TransportManager to enforce handler availability and no-downgrade
+    pub fn set_transport_manager(&mut self, manager: TransportManager) {
+        self.transport_manager = Some(manager);
     }
     
     /// Estimate message size in bytes
@@ -385,6 +374,10 @@ impl MeshMessageRouter {
               message_id, hex::encode(&destination.key_id[0..4]));
 
         // Create delivery tracking
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+            .as_secs();
         let delivery_status = DeliveryStatus {
             message_id,
             destination: destination.clone(),
@@ -392,14 +385,8 @@ impl MeshMessageRouter {
             route: Vec::new(),
             current_hop: 0,
             attempts: 0,
-            started_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            last_update: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            started_at: now,
+            last_update: now,
         };
 
         {
@@ -447,6 +434,14 @@ impl MeshMessageRouter {
         // Check for direct connection (Ticket #149: use peer_registry)
         let registry = self.peer_registry.read().await;
         if let Some(peer_entry) = registry.get(destination) {
+            // Enforce secure routing only: authenticated + quantum secure
+            if !peer_entry.authenticated || !peer_entry.quantum_secure {
+                return Err(anyhow::anyhow!(
+                    "Direct route rejected: insecure transport for peer {}",
+                    destination.to_compact_string()
+                ));
+            }
+
             info!("Direct connection available to destination");
             let endpoint = peer_entry.endpoints.first()
                 .ok_or_else(|| anyhow::anyhow!("Peer has no endpoints"))?;
@@ -516,7 +511,9 @@ impl MeshMessageRouter {
                 .min_by(|a, b| {
                     let dist_a = distances.get(a).unwrap_or(&f64::INFINITY);
                     let dist_b = distances.get(b).unwrap_or(&f64::INFINITY);
-                    dist_a.partial_cmp(dist_b).unwrap()
+                    dist_a
+                        .partial_cmp(dist_b)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .cloned();
             
@@ -690,7 +687,7 @@ impl MeshMessageRouter {
                 status.attempts += 1;
                 status.last_update = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
+                    .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                     .as_secs();
             }
         }
@@ -732,7 +729,7 @@ impl MeshMessageRouter {
                 status.stage = DeliveryStage::Delivered;
                 status.last_update = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
+                    .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                     .as_secs();
             }
         }
@@ -793,7 +790,9 @@ impl MeshMessageRouter {
         info!("Satellite uplink active - message can reach ANY location on Earth!");
         info!(" ZHTP revolutionizing global communications - no ISP needed!");
         
-        Ok(())
+        Err(anyhow::anyhow!(
+            "Satellite routing not configured: no uplink handler available"
+        ))
     }
     
     /// Route via long-range relay
@@ -813,7 +812,9 @@ impl MeshMessageRouter {
             }
         }
         
-        Ok(())
+        Err(anyhow::anyhow!(
+            "Long-range routing not configured: no relay send implementation"
+        ))
     }
     
     /// Route via mesh connection
@@ -828,12 +829,39 @@ impl MeshMessageRouter {
         
         // Ticket #149: Use peer_registry instead of mesh_connections
         let registry = self.peer_registry.read().await;
-        if let Some(peer_entry) = registry.get(&hop.peer_id) {
-            let endpoint = peer_entry.endpoints.first();
-            debug!(" Forwarding via {} (quality: {:.2})", 
-                   format!("{:?}", endpoint.map(|e| &e.protocol)), peer_entry.connection_metrics.stability_score);
-        }
-        
+        let peer_entry = registry
+            .get(&hop.peer_id)
+            .ok_or_else(|| anyhow!("Mesh route rejected: destination not in peer registry"))?;
+
+        // Enforce secure link requirements
+        if !peer_entry.authenticated || !peer_entry.quantum_secure {
+                return Err(anyhow!(
+                    "Mesh route rejected: insecure link to peer {}",
+                    hop.peer_id.to_compact_string()
+                ));
+            }
+
+        // Pick endpoint matching the chosen protocol
+        let endpoint = peer_entry
+            .endpoints
+            .iter()
+            .find(|e| e.protocol == hop.protocol)
+            .ok_or_else(|| anyhow!("No endpoint for {:?} to {}", hop.protocol, hop.peer_id.to_compact_string()))?;
+
+        debug!(
+            " Forwarding via {:?} (quality: {:.2})",
+            endpoint.protocol, peer_entry.connection_metrics.stability_score
+        );
+
+        // Serialize message once for transports that take raw bytes
+        let message_bytes = bincode::serialize(message)
+            .map_err(|e| anyhow!("Failed to serialize mesh message: {}", e))?;
+
+        let manager = self.transport_manager()?;
+        manager
+            .send(&hop.protocol, endpoint, &hop.peer_id, message, &message_bytes)
+            .await?;
+
         Ok(())
     }
     
@@ -845,7 +873,7 @@ impl MeshMessageRouter {
         if let Some(cached) = cache.get(destination) {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs();
             
             if current_time - cached.cached_at < cached.validity_duration {
@@ -859,17 +887,30 @@ impl MeshMessageRouter {
     ///
     /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
     pub async fn cache_route(&self, destination: UnifiedPeerId, route: Vec<RouteHop>, quality_score: f64) {
+        // Compute max MTU across hops; fallback to min latency_ms as proxy if not available
+        let max_mtu = route.iter().map(|h| h.latency_ms as u64).max().unwrap_or(0);
         let cached_route = CachedRoute {
             hops: route,
             quality_score,
             cached_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs(),
             validity_duration: 300, // 5 minutes
+            max_mtu,
         };
         
         let mut cache = self.route_cache.write().await;
+        if cache.len() >= MAX_ROUTE_CACHE_ENTRIES {
+            // Evict the oldest entry to respect the bound
+            if let Some((oldest_key, _)) = cache
+                .iter()
+                .min_by_key(|(_, v)| v.cached_at)
+                .map(|(k, v)| (k.clone(), v.cached_at))
+            {
+                cache.remove(&oldest_key);
+            }
+        }
         cache.insert(destination, cached_route);
     }
     
@@ -1016,59 +1057,29 @@ impl MeshMessageRouter {
         let registry = self.peer_registry.read().await;
         let peer_entry = registry.get(peer_id)
             .ok_or_else(|| anyhow!("No connection to peer"))?;
-        let endpoint = peer_entry.endpoints.first()
+        if !peer_entry.authenticated || !peer_entry.quantum_secure {
+            return Err(anyhow!(
+                "Mesh route rejected: insecure link to peer {}",
+                peer_id.to_compact_string()
+            ));
+        }
+        let endpoint = peer_entry
+            .endpoints
+            .first()
+            .cloned()
             .ok_or_else(|| anyhow!("Peer has no endpoints"))?;
         let protocol = endpoint.protocol.clone();
         drop(registry); // Release lock before protocol handler calls
-        
-        // Delegate to appropriate protocol handler based on connection type
-        match protocol {
-            NetworkProtocol::BluetoothLE | NetworkProtocol::BluetoothClassic => {
-                // Get Bluetooth protocol handler
-                if let Some(bt_handler) = &self.bluetooth_handler {
-                    let handler = bt_handler.read().await;
-                    handler.send_mesh_envelope(peer_id.public_key(), envelope).await?;
-                    info!(" Sent via Bluetooth");
-                } else {
-                    return Err(anyhow!("Bluetooth handler not available"));
-                }
-            }
-            NetworkProtocol::WiFiDirect => {
-                // Get WiFi Direct handler
-                if let Some(ref wifi_handler) = self.wifi_handler {
-                    let handler = wifi_handler.read().await;
-                    handler.send_mesh_envelope(peer_id.public_key(), envelope).await?;
-                    info!(" Sent via WiFi Direct");
-                } else {
-                    return Err(anyhow!("WiFi Direct handler not configured"));
-                }
-            }
-            NetworkProtocol::LoRaWAN => {
-                // Get LoRa handler
-                if let Some(ref lora_handler) = self.lora_handler {
-                    let handler = lora_handler.read().await;
-                    handler.send_mesh_envelope(peer_id.public_key(), envelope).await?;
-                    info!(" Sent via LoRaWAN");
-                } else {
-                    return Err(anyhow!("LoRa handler not configured"));
-                }
-            }
-            NetworkProtocol::QUIC => {
-                // Get QUIC protocol handler
-                if let Some(ref quic_handler) = self.quic_handler {
-                    let handler = quic_handler.read().await;
-                    // Send mesh message via QUIC - extract pubkey and message from envelope
-                    handler.send_to_peer(&peer_id.public_key().as_bytes(), envelope.message.clone()).await?;
-                    info!("📡 Sent via QUIC (quantum-safe encrypted)");
-                } else {
-                    return Err(anyhow!("QUIC handler not configured"));
-                }
-            }
-            _ => {
-                return Err(anyhow!("Unsupported protocol for mesh forwarding: {:?}", protocol));
-            }
-        }
-        
+
+        // Enforce handler availability and transport policy through TransportManager
+        let manager = self.transport_manager()?;
+        let message_bytes = bincode::serialize(&envelope.message)
+            .map_err(|e| anyhow!("Failed to serialize envelope message: {}", e))?;
+        manager
+            .send(&protocol, &endpoint, peer_id, &envelope.message, &message_bytes)
+            .await?;
+        info!(" Sent via {:?} (TransportManager enforced)", protocol);
+
         Ok(())
     }
     
@@ -1096,7 +1107,7 @@ impl MeshMessageRouter {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_nanos() as u64;
         
         // Combine timestamp with random bits for uniqueness
