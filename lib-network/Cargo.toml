@@ -77,6 +77,9 @@ sha2 = "0.10"
 # Date and time utilities
 chrono = "0.4"
 
+# URL encoding/decoding for path normalization security
+urlencoding = "2.1"
+
 # Network IP detection
 local-ip-address = "0.5"
 
