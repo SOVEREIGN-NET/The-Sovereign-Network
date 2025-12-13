@@ -61,25 +61,32 @@ impl RateLimitState {
         }
     }
 
-    /// Start background cleanup task
-    /// Returns a handle that can be used to stop the task
-    fn start_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
+    /// Start background cleanup task with shutdown support
+    /// Task will exit when shutdown signal is received
+    fn start_cleanup_task(&self, mut shutdown_rx: watch::Receiver<bool>) -> tokio::task::JoinHandle<()> {
         let requests = self.requests.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(RATE_LIMIT_CLEANUP_INTERVAL_SECS));
             loop {
-                interval.tick().await;
-                let mut map = requests.write().await;
-                let before = map.len();
-                let now = Instant::now();
-                map.retain(|_, (_, timestamp)| now.duration_since(*timestamp).as_secs() < RATE_LIMIT_WINDOW_SECS);
-                let after = map.len();
-                if before != after {
-                    debug!(
-                        evicted = before - after,
-                        remaining = after,
-                        "Rate limiter cleanup"
-                    );
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let mut map = requests.write().await;
+                        let before = map.len();
+                        let now = Instant::now();
+                        map.retain(|_, (_, timestamp)| now.duration_since(*timestamp).as_secs() < RATE_LIMIT_WINDOW_SECS);
+                        let after = map.len();
+                        if before != after {
+                            debug!(
+                                evicted = before - after,
+                                remaining = after,
+                                "Rate limiter cleanup"
+                            );
+                        }
+                    }
+                    _ = shutdown_rx.changed() => {
+                        debug!("Rate limiter cleanup task received shutdown signal");
+                        break;
+                    }
                 }
             }
         })
@@ -240,6 +247,8 @@ pub struct HttpsGateway {
     content_service: Arc<Web4ContentService>,
     is_running: Arc<RwLock<bool>>,
     server_handles: Arc<RwLock<Vec<ServerHandle>>>,
+    /// Background task handles (cleanup tasks, etc.) that should be aborted on shutdown
+    background_tasks: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl HttpsGateway {
@@ -257,6 +266,7 @@ impl HttpsGateway {
             content_service,
             is_running: Arc::new(RwLock::new(false)),
             server_handles: Arc::new(RwLock::new(Vec::new())),
+            background_tasks: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -275,6 +285,7 @@ impl HttpsGateway {
             content_service,
             is_running: Arc::new(RwLock::new(false)),
             server_handles: Arc::new(RwLock::new(Vec::new())),
+            background_tasks: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -290,6 +301,7 @@ impl HttpsGateway {
             content_service,
             is_running: Arc::new(RwLock::new(false)),
             server_handles: Arc::new(RwLock::new(Vec::new())),
+            background_tasks: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -307,6 +319,13 @@ impl HttpsGateway {
         {
             let mut handles = self.server_handles.write().await;
             handles.clear();
+        }
+        {
+            let mut tasks = self.background_tasks.write().await;
+            // Abort any lingering background tasks from previous runs
+            for task in tasks.drain(..) {
+                task.abort();
+            }
         }
         *self.is_running.write().await = true;
 
@@ -328,9 +347,18 @@ impl HttpsGateway {
             config: Arc::new(self.config.clone()),
         };
 
-        // Build rate limit state and start background cleanup
+        // Build rate limit state and start background cleanup with shutdown support
         let rate_limit = RateLimitState::new();
-        let _cleanup_handle = rate_limit.start_cleanup_task();
+        let (cleanup_handle, cleanup_shutdown_rx) = ServerHandle::new();
+        let cleanup_task = rate_limit.start_cleanup_task(cleanup_shutdown_rx);
+        {
+            let mut handles = self.server_handles.write().await;
+            handles.push(cleanup_handle);
+        }
+        {
+            let mut tasks = self.background_tasks.write().await;
+            tasks.push(cleanup_task);
+        }
         debug!("  Rate limiter cleanup task started (interval: {}s)", RATE_LIMIT_CLEANUP_INTERVAL_SECS);
 
         // Build HSTS state
@@ -497,13 +525,26 @@ impl HttpsGateway {
     pub async fn stop(&self) {
         info!("Stopping HTTPS Gateway...");
 
-        // Signal all servers to shutdown
+        // Signal all servers and background tasks to shutdown
         {
             let handles = self.server_handles.read().await;
             for handle in handles.iter() {
                 handle.shutdown();
             }
-            info!("  Sent shutdown signal to {} server(s)", handles.len());
+            info!("  Sent shutdown signal to {} server/task handle(s)", handles.len());
+        }
+
+        // Wait briefly for graceful shutdown, then abort any lingering background tasks
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        {
+            let mut tasks = self.background_tasks.write().await;
+            let task_count = tasks.len();
+            for task in tasks.drain(..) {
+                task.abort();
+            }
+            if task_count > 0 {
+                debug!("  Aborted {} background task(s)", task_count);
+            }
         }
 
         // Clear handles and mark as stopped
@@ -762,5 +803,31 @@ mod tests {
             hsts.header_value.unwrap(),
             "max-age=63072000; includeSubDomains"
         );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_task_responds_to_shutdown() {
+        let rate_limit = RateLimitState::new();
+        let (handle, shutdown_rx) = ServerHandle::new();
+
+        // Start the cleanup task
+        let task = rate_limit.start_cleanup_task(shutdown_rx);
+
+        // Give task time to start
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Task should be running
+        assert!(!task.is_finished());
+
+        // Send shutdown signal
+        handle.shutdown();
+
+        // Task should complete within a reasonable time
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            task
+        ).await;
+
+        assert!(result.is_ok(), "Cleanup task should complete after shutdown signal");
     }
 }
