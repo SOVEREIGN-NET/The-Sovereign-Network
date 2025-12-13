@@ -50,7 +50,12 @@ pub use crate::handshake::{
 pub use crate::dht::{initialize_dht_client, ZkDHTIntegration, DHTNetworkStatus, DHTClient};
 
 // Web4 domain registry and content publishing
-pub use crate::web4::{Web4Manager, DomainRegistry, ContentPublisher, initialize_web4_system, initialize_web4_system_with_storage};
+pub use crate::web4::{
+    Web4Manager, DomainRegistry, ContentPublisher,
+    Web4ContentService, Web4ContentDefaults, DomainContentConfig, ContentResult,
+    ContentMode, Web4Capability,
+    initialize_web4_system, initialize_web4_system_with_storage,
+};
 
 // Core modules
 pub mod types;

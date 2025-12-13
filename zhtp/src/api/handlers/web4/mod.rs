@@ -1,21 +1,34 @@
 //! Web4 API Handlers
-//! 
+//!
 //! Web4 domain registration and content publishing endpoints that integrate
-//! with the existing ZHTP server infrastructure
+//! with the existing ZHTP server infrastructure.
+//!
+//! # Content Serving
+//!
+//! The `GET /api/v1/web4/content/{domain}/{path}` endpoint serves Web4 content
+//! using the `Web4ContentService`. This is the canonical API for content retrieval.
+//!
+//! # Gateway Handler
+//!
+//! The `Web4GatewayHandler` provides Host-based routing for Web4 domains.
+//! It intercepts requests like `myapp.zhtp.localhost` and routes them to
+//! the appropriate Web4 content.
 
 pub mod domains;
 pub mod content;
+pub mod gateway;
 
 pub use domains::*;
 pub use content::*;
+pub use gateway::*;
 
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use lib_network::Web4Manager;
-use tracing::{info, error};
+use lib_network::{Web4Manager, Web4ContentService};
+use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use chrono;
 use uuid;
@@ -32,6 +45,8 @@ pub struct ErrorResponse {
 pub struct Web4Handler {
     /// Web4 system manager
     web4_manager: Arc<RwLock<Web4Manager>>,
+    /// Content service for serving Web4 content
+    content_service: Arc<Web4ContentService>,
     /// Wallet-content ownership manager
     wallet_content_manager: Arc<RwLock<lib_storage::WalletContentManager>>,
     /// Identity manager for owner DID lookups
@@ -48,17 +63,21 @@ impl Web4Handler {
         blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
     ) -> ZhtpResult<Self> {
         info!("Initializing Web4 API handler with existing storage system");
-        
+
         let web4_manager = lib_network::initialize_web4_system_with_storage(storage).await
             .map_err(|e| anyhow::anyhow!("Failed to initialize Web4 system: {}", e))?;
-        
-        info!(" Web4 API handler initialized successfully");
-        
+
+        // Create content service using the registry from the manager
+        let content_service = Web4ContentService::new(Arc::clone(&web4_manager.registry));
+
+        info!("Web4 API handler initialized successfully");
+
         // Initialize wallet-content manager for ownership tracking
         let wallet_content_manager = lib_storage::WalletContentManager::new();
-        
+
         Ok(Self {
             web4_manager: Arc::new(RwLock::new(web4_manager)),
+            content_service: Arc::new(content_service),
             wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
             identity_manager,
             blockchain,
@@ -241,6 +260,94 @@ impl Web4Handler {
             }
         }
     }
+
+    /// Serve Web4 content
+    /// GET /api/v1/web4/content/{domain}/{path...}
+    ///
+    /// This is the canonical content serving endpoint. It uses Web4ContentService
+    /// which handles:
+    /// - Path normalization (security-critical)
+    /// - SPA routing policy
+    /// - MIME type resolution
+    /// - Cache header generation
+    async fn serve_content(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Parse domain and path from URL
+        // URL format: /api/v1/web4/content/{domain}/{path...}
+        let content_path = request.uri
+            .strip_prefix("/api/v1/web4/content/")
+            .ok_or_else(|| anyhow::anyhow!("Invalid content URL"))?;
+
+        // Split into domain and path
+        let (domain, path) = match content_path.find('/') {
+            Some(idx) => {
+                let (d, p) = content_path.split_at(idx);
+                (d.to_string(), p.to_string()) // path includes leading /
+            }
+            None => {
+                // No path specified, serve root
+                (content_path.to_string(), "/".to_string())
+            }
+        };
+
+        debug!(
+            domain = %domain,
+            path = %path,
+            "Serving Web4 content"
+        );
+
+        // Use content service to serve the content
+        match self.content_service.serve(&domain, &path).await {
+            Ok(result) => {
+                info!(
+                    domain = %domain,
+                    path = %path,
+                    mime_type = %result.mime_type,
+                    cache_control = %result.cache_control,
+                    is_fallback = result.is_fallback,
+                    content_length = result.content.len(),
+                    "Content served successfully"
+                );
+
+                // Build response with headers
+                let mut response = ZhtpResponse::success_with_content_type(
+                    result.content,
+                    result.mime_type,
+                    None,
+                )
+                .with_cache_control(result.cache_control);
+
+                // Add ETag if present
+                if let Some(etag) = result.etag {
+                    response = response.with_etag(etag);
+                }
+
+                // Add any custom headers from the result
+                for (key, value) in result.headers {
+                    response = response.with_custom_header(key, value);
+                }
+
+                // Add fallback indicator header (useful for debugging SPA routing)
+                if result.is_fallback {
+                    response = response.with_custom_header(
+                        "X-Web4-Fallback".to_string(),
+                        "true".to_string(),
+                    );
+                }
+
+                Ok(response)
+            }
+            Err(e) => {
+                warn!(
+                    domain = %domain,
+                    path = %path,
+                    error = %e,
+                    "Content not found"
+                );
+
+                self.json_error(ZhtpStatus::NotFound, format!("Content not found: {}", e))
+            }
+        }
+    }
 }
 
 /// Implement ZHTP request handler trait to integrate with existing server
@@ -296,6 +403,10 @@ impl ZhtpRequestHandler for Web4Handler {
             }
             path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Delete => {
                 self.delete_content(request).await
+            }
+            // Content serving endpoint (GET) - uses Web4ContentService
+            path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Get => {
+                self.serve_content(request).await
             }
 
             // Statistics endpoint
