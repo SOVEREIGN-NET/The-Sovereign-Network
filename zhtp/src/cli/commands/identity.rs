@@ -1,250 +1,338 @@
-//! Identity commands for ZHTP orchestrator
+//! Identity commands for ZHTP CLI
+//!
+//! All identity operations that require node communication use authenticated QUIC.
+//! Local keystore operations (generate, export, import) work offline.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result, Context};
+use std::path::PathBuf;
+use tracing::{info, warn};
+
+use lib_identity::{ZhtpIdentity, IdentityType};
+use lib_network::ZhtpClient;
+use lib_network::web4::TrustConfig;
+
 use crate::cli::{IdentityArgs, IdentityAction, ZhtpCli, format_output};
-use serde_json::json;
-use chrono;
-use uuid;
 
+/// Handle identity commands
 pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Result<()> {
-    let client = reqwest::Client::builder()
-        .http1_only()  // Force HTTP/1.1 to avoid version parsing issues
-        .build()?;
-    let base_url = format!("http://{}/api/v1", cli.server);
-    
     match args.action {
         IdentityAction::Create { name } => {
-            println!("Creating new ZHTP DID identity: {}", name);
-            
-            // Use the correct API format that matches the working PowerShell command
-            let request_body = json!({
-                "identity_type": "human",
-                "display_name": name,
-                "recovery_options": [
-                    format!("recovery_phrase_{}", name.to_lowercase()),
-                    format!("backup_phrase_{}", chrono::Utc::now().timestamp())
-                ],
-                "initial_wallet_type": "citizen_wallet"
-            });
-            
-            let response = client
-                .post(&format!("{}/identity/create", base_url))
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .json(&request_body)
-                .send()
-                .await?;
-                
-            if response.status().is_success() {
-                let result: serde_json::Value = response.json().await?;
-                
-                // Extract key information from the successful response
-                if let Some(did) = result.get("did") {
-                    println!("DID Created Successfully!");
-                    println!("DID: {}", did.as_str().unwrap_or("N/A"));
-                }
-                if let Some(identity_id) = result.get("identity_id") {
-                    println!("Identity ID: {}", identity_id.as_str().unwrap_or("N/A"));
-                }
-                if let Some(primary_wallet) = result.get("primary_wallet_id") {
-                    println!("Primary Wallet: {}", primary_wallet.as_str().unwrap_or("N/A"));
-                }
-                if let Some(blockchain) = result.get("blockchain") {
-                    if let Some(tx_hash) = blockchain.get("transaction_hash") {
-                        println!("Blockchain TX: {}", tx_hash.as_str().unwrap_or("N/A"));
-                    }
-                    if let Some(status) = blockchain.get("registration_status") {
-                        println!("Status: {}", status.as_str().unwrap_or("N/A"));
-                    }
-                }
-                
-                if cli.verbose {
-                    let formatted = format_output(&result, &cli.format)?;
-                    println!("\nFull Response:");
-                    println!("{}", formatted);
-                }
-            } else {
-                let status = response.status();
-                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                println!("Failed to create DID identity: {} - {}", status, error_text);
-            }
+            // Create identity locally and optionally register on blockchain
+            create_identity(&name, None, cli).await
         }
         IdentityAction::CreateDid { name, identity_type, recovery_options } => {
-            println!("Creating zero-knowledge DID identity: {}", name);
-            println!("🔖 Identity Type: {}", identity_type);
-            
-            // Use provided recovery options or generate defaults
-            let final_recovery_options = if recovery_options.is_empty() {
-                vec![
-                    format!("recovery_phrase_{}", name.to_lowercase()),
-                    format!("backup_phrase_{}", chrono::Utc::now().timestamp()),
-                    format!("emergency_recovery_{}", uuid::Uuid::new_v4().to_string()[..8].to_string())
-                ]
-            } else {
-                recovery_options
-            };
-            
-            let request_body = json!({
-                "identity_type": identity_type,
-                "display_name": name,
-                "recovery_options": final_recovery_options,
-                "initial_wallet_type": "citizen_wallet"
-            });
-            
-            println!("Recovery options configured: {} phrases", final_recovery_options.len());
-            
-            let response = client
-                .post(&format!("{}/identity/create", base_url))
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .json(&request_body)
-                .send()
-                .await?;
-                
-            if response.status().is_success() {
-                let result: serde_json::Value = response.json().await?;
-                
-                println!("Zero-Knowledge DID Created Successfully!");
-                
-                // Extract and display comprehensive DID information
-                if let Some(did) = result.get("did") {
-                    println!("DID: {}", did.as_str().unwrap_or("N/A"));
-                }
-                if let Some(identity_id) = result.get("identity_id") {
-                    println!("Identity ID: {}", identity_id.as_str().unwrap_or("N/A"));
-                }
-                
-                // Wallet information
-                if let Some(primary_wallet) = result.get("primary_wallet_id") {
-                    println!("Primary Wallet: {}", primary_wallet.as_str().unwrap_or("N/A"));
-                }
-                if let Some(ubi_wallet) = result.get("ubi_wallet_id") {
-                    println!("🎁 UBI Wallet: {}", ubi_wallet.as_str().unwrap_or("N/A"));
-                }
-                if let Some(savings_wallet) = result.get("savings_wallet_id") {
-                    println!("🏦 Savings Wallet: {}", savings_wallet.as_str().unwrap_or("N/A"));
-                }
-                
-                // DAO registration
-                if let Some(dao_reg) = result.get("dao_registration") {
-                    if let Some(voting_power) = dao_reg.get("voting_power") {
-                        println!(" DAO Voting Power: {}", voting_power);
-                    }
-                }
-                
-                // UBI registration
-                if let Some(ubi_reg) = result.get("ubi_registration") {
-                    if let Some(daily_amount) = ubi_reg.get("daily_amount") {
-                        println!("Daily UBI: {} ZHTP", daily_amount.as_u64().unwrap_or(0) as f64 / 1_000_000_000_000_000_000.0);
-                    }
-                }
-                
-                // Blockchain status
-                if let Some(blockchain) = result.get("blockchain") {
-                    if let Some(tx_hash) = blockchain.get("transaction_hash") {
-                        println!("Blockchain TX: {}", tx_hash.as_str().unwrap_or("N/A"));
-                    }
-                    if let Some(status) = blockchain.get("registration_status") {
-                        println!("Registration Status: {}", status.as_str().unwrap_or("N/A"));
-                    }
-                }
-                
-                println!(" Full Web4 citizen onboarding completed!");
-                
-                if cli.verbose {
-                    let formatted = format_output(&result, &cli.format)?;
-                    println!("\nComplete Response:");
-                    println!("{}", formatted);
-                }
-            } else {
-                let status = response.status();
-                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                println!("Failed to create zero-knowledge DID: {} - {}", status, error_text);
-            }
+            // Create identity locally with options and optionally register
+            create_identity_with_options(&name, &identity_type, recovery_options, cli).await
         }
         IdentityAction::Verify { identity_id } => {
-            println!("Verifying ZHTP identity: {}", identity_id);
-            
-            let request_body = json!({
-                "identity_data": {
-                    "identity_id": identity_id,
-                    "verification_requested": true
-                },
-                "verification_level": "Standard"
-            });
-            
-            let response = client
-                .post(&format!("{}/identity/verify", base_url))
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .json(&request_body)
-                .send()
-                .await?;
-                
-            if response.status().is_success() {
-                let result: serde_json::Value = response.json().await?;
-                
-                // Extract verification results
-                if let Some(verified) = result.get("verified") {
-                    if verified.as_bool().unwrap_or(false) {
-                        println!("Identity verification successful!");
-                    } else {
-                        println!("Identity verification failed!");
-                    }
-                }
-                if let Some(score) = result.get("verification_score") {
-                    println!("Verification Score: {}", score);
-                }
-                if let Some(level) = result.get("verification_level") {
-                    println!(" Security Level: {}", level.as_str().unwrap_or("N/A"));
-                }
-                
-                if cli.verbose {
-                    let formatted = format_output(&result, &cli.format)?;
-                    println!("\nFull Response:");
-                    println!("{}", formatted);
-                }
-            } else {
-                let status = response.status();
-                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                println!("Failed to verify identity: {} - {}", status, error_text);
-            }
+            // Verify identity on blockchain (requires QUIC connection)
+            verify_identity(&identity_id, cli).await
         }
         IdentityAction::List => {
-            println!("Listing ZHTP identities from blockchain...");
-            
-            // Since there's no direct list endpoint, we'll get blockchain status
-            // and show identity information from there
-            let response = client
-                .get(&format!("{}/blockchain/block", base_url))
-                .header("Accept", "application/json")
-                .send()
-                .await?;
-                
-            if response.status().is_success() {
-                let result: serde_json::Value = response.json().await?;
-                
-                println!("Blockchain Identity Status:");
-                if let Some(height) = result.get("latest_height") {
-                    println!("Latest Block: {}", height);
-                }
-                
-                // For now, show a message about checking server logs for created identities
-                println!("To see created identities, check the server logs for DID creation events");
-                println!("   or use 'zhtp blockchain stats' to see blockchain statistics");
-                
-                if cli.verbose {
-                    let formatted = format_output(&result, &cli.format)?;
-                    println!("\nBlockchain Status:");
-                    println!("{}", formatted);
-                }
-            } else {
-                let status = response.status();
-                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                println!("Failed to get blockchain status: {} - {}", status, error_text);
-            }
+            // List identities from blockchain (requires QUIC connection)
+            list_identities(cli).await
         }
     }
-    
+}
+
+/// Create a new identity locally and save to keystore
+async fn create_identity(name: &str, keystore_path: Option<&str>, cli: &ZhtpCli) -> Result<()> {
+    println!("Creating new ZHTP DID identity: {}", name);
+
+    // Determine keystore path
+    let keystore = match keystore_path {
+        Some(path) => PathBuf::from(path),
+        None => get_default_keystore_path()?,
+    };
+
+    // Check if identity already exists
+    let identity_file = keystore.join("identity.json");
+    if identity_file.exists() {
+        return Err(anyhow!(
+            "Identity already exists at {:?}\n\
+            Use a different keystore path or delete the existing identity first.",
+            identity_file
+        ));
+    }
+
+    // Create keystore directory
+    std::fs::create_dir_all(&keystore)
+        .context("Failed to create keystore directory")?;
+
+    // Generate new identity locally (no network required)
+    // Uses seed-anchored architecture: all secrets derived from single master seed
+    println!("Generating cryptographic keys (post-quantum Dilithium + Kyber)...");
+    let identity = ZhtpIdentity::new_unified(
+        IdentityType::Human,
+        None, // age (optional)
+        None, // jurisdiction (optional)
+        name, // device name (used for NodeId derivation)
+        None, // seed (None = generate random seed)
+    ).context("Failed to generate identity")?;
+
+    println!("DID: {}", identity.did);
+    println!("Identity ID: {}", identity.id);
+    println!("NodeId: {}", hex::encode(&identity.node_id.as_bytes()[..16]));
+
+    // Save to keystore
+    let identity_json = serde_json::to_string_pretty(&identity)
+        .context("Failed to serialize identity")?;
+    std::fs::write(&identity_file, identity_json)
+        .context("Failed to write identity.json")?;
+
+    // Set restrictive permissions on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&identity_file, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    println!("\nIdentity saved to: {:?}", identity_file);
+    println!("\nTo register this identity on the blockchain, run:");
+    println!("  zhtp identity register --keystore {:?}", keystore.display());
+
+    // If node is available, offer to register now
+    if !cli.server.is_empty() {
+        println!("\nOr connect to {} to register now.", cli.server);
+    }
+
     Ok(())
+}
+
+/// Create identity with options (identity type, recovery phrases)
+async fn create_identity_with_options(
+    name: &str,
+    identity_type: &str,
+    recovery_options: Vec<String>,
+    cli: &ZhtpCli,
+) -> Result<()> {
+    println!("Creating zero-knowledge DID identity: {}", name);
+    println!("Identity Type: {}", identity_type);
+
+    // Get default keystore path
+    let keystore = get_default_keystore_path()?;
+
+    // Check if identity already exists
+    let identity_file = keystore.join("identity.json");
+    if identity_file.exists() {
+        return Err(anyhow!(
+            "Identity already exists at {:?}\n\
+            Use a different keystore path or delete the existing identity first.",
+            identity_file
+        ));
+    }
+
+    // Create keystore directory
+    std::fs::create_dir_all(&keystore)
+        .context("Failed to create keystore directory")?;
+
+    // Parse identity type from string
+    let id_type = match identity_type.to_lowercase().as_str() {
+        "human" => IdentityType::Human,
+        "agent" => IdentityType::Agent,
+        "contract" => IdentityType::Contract,
+        "organization" => IdentityType::Organization,
+        "device" => IdentityType::Device,
+        _ => IdentityType::Human, // Default to Human
+    };
+
+    // Generate new identity locally
+    // Uses seed-anchored architecture: all secrets derived from single master seed
+    println!("Generating cryptographic keys (post-quantum Dilithium + Kyber)...");
+    let identity = ZhtpIdentity::new_unified(
+        id_type,
+        None, // age (optional)
+        None, // jurisdiction (optional)
+        name, // device name (used for NodeId derivation)
+        None, // seed (None = generate random seed)
+    ).context("Failed to generate identity")?;
+
+    // Recovery phrases are derived from master seed in the unified identity system
+    // The user should backup their seed phrase for recovery
+    let _recovery_options = recovery_options; // Acknowledge but don't use - seed phrase is the recovery mechanism
+
+    println!("DID: {}", identity.did);
+    println!("Identity ID: {}", identity.id);
+    println!("NodeId: {}", hex::encode(&identity.node_id.as_bytes()[..16]));
+    println!("\nIMPORTANT: Your identity is derived from a master seed.");
+    println!("To backup, export your seed phrase using: zhtp identity export-seed");
+
+    // Save to keystore
+    let identity_json = serde_json::to_string_pretty(&identity)
+        .context("Failed to serialize identity")?;
+    std::fs::write(&identity_file, identity_json)
+        .context("Failed to write identity.json")?;
+
+    // Set restrictive permissions on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&identity_file, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    println!("\nIdentity saved to: {:?}", identity_file);
+
+    Ok(())
+}
+
+/// Verify identity on blockchain (requires QUIC connection)
+async fn verify_identity(identity_id: &str, cli: &ZhtpCli) -> Result<()> {
+    println!("Verifying ZHTP identity: {}", identity_id);
+
+    // Load identity from default keystore for authentication
+    let keystore = get_default_keystore_path()?;
+    let identity = load_identity_from_keystore(&keystore)?;
+
+    // Create QUIC client
+    let trust_config = build_trust_config_from_cli(cli)?;
+    let mut client = ZhtpClient::new(identity, trust_config).await
+        .context("Failed to create QUIC client")?;
+
+    // Connect to node
+    println!("Connecting to node at {}...", cli.server);
+    client.connect(&cli.server).await
+        .context("Failed to connect to ZHTP node")?;
+
+    if let Some(peer_did) = client.peer_did() {
+        println!("Connected to node: {}", peer_did);
+    }
+
+    // Send verification request
+    let request_body = serde_json::json!({
+        "identity_data": {
+            "identity_id": identity_id,
+            "verification_requested": true
+        },
+        "verification_level": "Standard"
+    });
+
+    let response = client.post_json("/api/v1/identity/verify", &request_body).await?;
+
+    if response.status.is_success() {
+        let result: serde_json::Value = serde_json::from_slice(&response.body)?;
+
+        if let Some(verified) = result.get("verified") {
+            if verified.as_bool().unwrap_or(false) {
+                println!("Identity verification successful!");
+            } else {
+                println!("Identity verification failed!");
+            }
+        }
+        if let Some(score) = result.get("verification_score") {
+            println!("Verification Score: {}", score);
+        }
+        if let Some(level) = result.get("verification_level") {
+            println!("Security Level: {}", level.as_str().unwrap_or("N/A"));
+        }
+
+        if cli.verbose {
+            let formatted = format_output(&result, &cli.format)?;
+            println!("\nFull Response:");
+            println!("{}", formatted);
+        }
+    } else {
+        println!(
+            "Failed to verify identity: {} {}",
+            response.status.code(),
+            response.status_message
+        );
+    }
+
+    client.close().await;
+    Ok(())
+}
+
+/// List identities from blockchain (requires QUIC connection)
+async fn list_identities(cli: &ZhtpCli) -> Result<()> {
+    println!("Listing ZHTP identities from blockchain...");
+
+    // Load identity from default keystore for authentication
+    let keystore = get_default_keystore_path()?;
+    let identity = load_identity_from_keystore(&keystore)?;
+
+    // Create QUIC client
+    let trust_config = build_trust_config_from_cli(cli)?;
+    let mut client = ZhtpClient::new(identity, trust_config).await
+        .context("Failed to create QUIC client")?;
+
+    // Connect to node
+    println!("Connecting to node at {}...", cli.server);
+    client.connect(&cli.server).await
+        .context("Failed to connect to ZHTP node")?;
+
+    if let Some(peer_did) = client.peer_did() {
+        println!("Connected to node: {}", peer_did);
+    }
+
+    // Get blockchain status
+    let response = client.get("/api/v1/blockchain/block").await?;
+
+    if response.status.is_success() {
+        let result: serde_json::Value = serde_json::from_slice(&response.body)?;
+
+        println!("Blockchain Identity Status:");
+        if let Some(height) = result.get("latest_height") {
+            println!("Latest Block: {}", height);
+        }
+
+        println!("To see created identities, check the server logs for DID creation events");
+        println!("   or use 'zhtp blockchain stats' to see blockchain statistics");
+
+        if cli.verbose {
+            let formatted = format_output(&result, &cli.format)?;
+            println!("\nBlockchain Status:");
+            println!("{}", formatted);
+        }
+    } else {
+        println!(
+            "Failed to get blockchain status: {} {}",
+            response.status.code(),
+            response.status_message
+        );
+    }
+
+    client.close().await;
+    Ok(())
+}
+
+/// Get default keystore path
+fn get_default_keystore_path() -> Result<PathBuf> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow!("Could not determine home directory"))?;
+    Ok(home.join(".zhtp").join("keystore"))
+}
+
+/// Load identity from keystore
+fn load_identity_from_keystore(keystore: &PathBuf) -> Result<ZhtpIdentity> {
+    let identity_file = keystore.join("identity.json");
+
+    if !identity_file.exists() {
+        return Err(anyhow!(
+            "No identity found at {:?}\n\
+            Create an identity first with: zhtp identity create <name>",
+            identity_file
+        ));
+    }
+
+    let data = std::fs::read_to_string(&identity_file)
+        .context("Failed to read identity.json")?;
+    let identity: ZhtpIdentity = serde_json::from_str(&data)
+        .context("Failed to parse identity.json")?;
+
+    info!("Loaded identity {} from {:?}", identity.did, identity_file);
+    Ok(identity)
+}
+
+/// Build trust config from CLI flags
+fn build_trust_config_from_cli(cli: &ZhtpCli) -> Result<TrustConfig> {
+    // For now, use bootstrap mode with explicit enablement
+    // TODO: Add TOFU and pinning support to CLI flags
+    if std::env::var("ZHTP_ALLOW_BOOTSTRAP").ok().map(|v| v == "1").unwrap_or(false) {
+        warn!("Using bootstrap mode - TLS verification disabled (dev only)");
+        Ok(TrustConfig::bootstrap())
+    } else {
+        // Default to TOFU
+        let trustdb_path = TrustConfig::default_trustdb_path()?;
+        Ok(TrustConfig::with_tofu(trustdb_path))
+    }
 }
