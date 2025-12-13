@@ -62,16 +62,15 @@ impl DhtNodeManager {
     /// Create DHT node manager with networking enabled
     ///
     /// **MIGRATION (Ticket #145):** Now accepts DhtPeerIdentity instead of NodeId
-    /// **MIGRATION (Ticket #154):** Now accepts DhtMessageRouter instead of bind_addr for multi-transport support
     pub async fn new_with_network(
         local_peer: DhtPeerIdentity,
         addresses: Vec<String>,
-        router: Option<std::sync::Arc<tokio::sync::RwLock<dyn crate::dht::network::DhtMessageRouter>>>,
+        bind_addr: SocketAddr,
         max_storage_size: u64
     ) -> Result<Self> {
         let local_node = Self::create_local_node(local_peer, addresses)?;
-        let storage = DhtStorage::new_with_network(local_node.clone(), router.clone(), max_storage_size).await?;
-        let network = DhtNetwork::new(local_node.clone(), router)?;
+        let storage = DhtStorage::new_with_network(local_node.clone(), bind_addr, max_storage_size).await?;
+        let network = DhtNetwork::new_udp(local_node.clone(), bind_addr)?;
         
         Ok(Self {
             local_node,

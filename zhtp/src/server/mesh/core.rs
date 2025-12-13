@@ -219,29 +219,36 @@ impl MeshRouter {
         // Create DHT storage synchronously (no network init yet) - 10GB max
         let dht_storage_instance = DhtStorage::new(local_node_id.clone(), 10_000_000_000);
         let dht_storage = Arc::new(tokio::sync::Mutex::new(dht_storage_instance));
-        
+
         // Create mesh message router BEFORE DHT initialization (Ticket #154)
         let mesh_message_router = Arc::new(RwLock::new(
             MeshMessageRouter::new(
-                connections_for_router.clone(), 
+                connections_for_router.clone(),
                 Arc::new(RwLock::new(HashMap::new()))
             )
         ));
-        
-        // Create DHT router adapter (Ticket #154: breaks circular dependency)
-        let dht_router_adapter = Arc::new(RwLock::new(
-            lib_network::routing::dht_router_adapter::MeshDhtRouterAdapter::new(mesh_message_router.clone())
-        ));
-        
+
+        // Create DHT mesh transport (Ticket #154: routes DHT through mesh network)
+        let (mesh_dht_transport, _dht_receiver) =
+            lib_network::routing::dht_router_adapter::MeshDhtTransport::new(
+                mesh_message_router.clone(),
+                local_node.peer.public_key.clone(),
+            );
+        let mesh_dht_transport = Arc::new(mesh_dht_transport);
+
         // Spawn async task to initialize DHT network with mesh routing
         // This avoids the "cannot block_on inside runtime" panic
         {
             let dht_storage_task = dht_storage.clone();
             let local_node_for_task = local_node.clone();
-            let router_for_task = dht_router_adapter.clone();
+            let transport_for_task = mesh_dht_transport.clone();
             tokio::spawn(async move {
-                // Initialize network-enabled DHT asynchronously (Ticket #154: uses mesh router via adapter)
-                match DhtStorage::new_with_network(local_node_for_task, Some(router_for_task), 10_000_000_000).await {
+                // Initialize network-enabled DHT with mesh transport (Ticket #154)
+                match DhtStorage::new_with_transport(
+                    local_node_for_task,
+                    transport_for_task,
+                    10_000_000_000
+                ) {
                     Ok(mut network_storage) => {
                         let _ = network_storage.start_network_processing().await;
                         let mut storage = dht_storage_task.lock().await;

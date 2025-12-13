@@ -30,6 +30,7 @@ pub mod messaging;
 pub mod peer_management;
 pub mod replication;
 pub mod peer_registry; // Ticket #148: Internal DHT peer registry
+pub mod transport; // Ticket #152: Multi-protocol transport abstraction
 
 // Re-export main DHT components
 pub use node::*;
@@ -40,6 +41,7 @@ pub use messaging::*;
 pub use peer_management::*;
 pub use replication::*;
 pub use peer_registry::*; // Ticket #148
+pub use transport::{DhtTransport, PeerId, UdpDhtTransport}; // Ticket #152
 
 // DHT Configuration Constants
 pub const DHT_PORT: u16 = 33442;

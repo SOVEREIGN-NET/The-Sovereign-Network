@@ -1,43 +1,24 @@
 //! DHT Network Operations
 //! 
-//! **MIGRATED (Ticket #154):** Routes DHT traffic through mesh network instead of raw UDP.
-//! DHT messages now support multi-transport delivery (BLE, QUIC, WiFi, UDP) via DhtMessageRouter trait.
+//! **TICKET #152:** Multi-protocol DHT transport abstraction
+//! 
+//! Handles communication for DHT operations over multiple protocols (UDP, BLE, QUIC, WiFi Direct)
+//! using the DhtTransport abstraction from lib-network.
 
 use crate::types::dht_types::{DhtMessage, DhtNode, DhtMessageType, DhtQueryResponse};
 use crate::types::NodeId;
 use anyhow::{Result, anyhow};
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
 use tokio::time::timeout;
-use tracing::{debug, warn, info};
+use tracing::{debug, warn};
 use serde::{Serialize, Deserialize};
 
-/// Trait for routing DHT messages through various transports
-/// 
-/// # Ticket #154
-/// This abstraction allows DHT to route through mesh network without circular dependencies.
-/// Implementations can use UDP, BLE, QUIC, WiFi Direct, or any other transport.
-#[async_trait::async_trait]
-pub trait DhtMessageRouter: Send + Sync {
-    /// Route a DHT message to a destination peer
-    /// 
-    /// # Arguments
-    /// * `message` - Serialized DHT message payload
-    /// * `destination` - Target peer's public key
-    /// * `sender` - Sender's public key
-    /// 
-    /// # Returns
-    /// Message ID for tracking delivery status
-    async fn route_dht_message(
-        &self,
-        message: Vec<u8>,
-        destination: &lib_crypto::PublicKey,
-        sender: &lib_crypto::PublicKey,
-    ) -> Result<u64>;
-}
+// Import transport abstraction (Ticket #152)
+// Trait defined in lib-storage to avoid circular dependency with lib-network
+use crate::dht::transport::{DhtTransport, PeerId};
 
 /// Network envelope for DHT messages with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,10 +51,7 @@ pub enum MessagePriority {
     Critical,
 }
 
-/// DHT network manager for mesh-routed communication
-///
-/// **MIGRATED (Ticket #154):** Uses MeshMessageRouter for transport-agnostic delivery.
-/// DHT traffic can now use BLE, QUIC, WiFi Direct, or UDP based on mesh routing decisions.
+/// DHT network manager for UDP communication
 ///
 /// # Security (HIGH-5): Message Signing
 ///
@@ -96,9 +74,8 @@ pub enum MessagePriority {
 ///
 /// Until signing is implemented, DHT messages are vulnerable to spoofing.
 pub struct DhtNetwork {
-    /// Message router for transport-agnostic delivery (Ticket #154)
-    /// Uses trait object to avoid circular dependencies
-    router: Option<Arc<RwLock<dyn DhtMessageRouter>>>,
+    /// **TICKET #152:** Multi-protocol transport abstraction
+    transport: Arc<dyn DhtTransport>,
     /// Local node information
     local_node: DhtNode,
     /// Message timeout duration
@@ -112,7 +89,7 @@ pub struct DhtNetwork {
 impl std::fmt::Debug for DhtNetwork {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DhtNetwork")
-            .field("has_router", &self.router.is_some())
+            .field("transport", &"Arc<dyn DhtTransport>")
             .field("local_node", &self.local_node)
             .field("timeout_duration", &self.timeout_duration)
             .field("sequence_counter", &self.sequence_counter.load(Ordering::SeqCst))
@@ -121,24 +98,38 @@ impl std::fmt::Debug for DhtNetwork {
 }
 
 impl DhtNetwork {
-    /// Create a new DHT network manager that routes traffic through the mesh network.
+    /// Create a new DHT network manager with multi-protocol transport
     /// 
-    /// # Arguments
-    /// * `local_node` - The local DHT node identity
-    /// * `router` - Optional message router for multi-transport DHT operations
-    /// 
-    /// # Ticket #154
-    /// Migrated from raw UDP socket to DhtMessageRouter trait for BLE/QUIC/WiFi support
-    pub fn new(
-        local_node: DhtNode,
-        router: Option<Arc<RwLock<dyn DhtMessageRouter>>>,
-    ) -> Result<Self> {
+    /// **TICKET #152:** Now accepts DhtTransport instead of hardcoded UDP socket
+    pub fn new(local_node: DhtNode, transport: Arc<dyn DhtTransport>) -> Result<Self> {
         Ok(Self {
-            router,
+            transport,
             local_node,
             timeout_duration: Duration::from_secs(5),
             sequence_counter: AtomicU64::new(0),
         })
+    }
+    
+    /// Create DHT network with specific bind address (legacy compatibility)
+    /// Creates a UDP transport for the given address
+    ///
+    /// **TICKET #152:** Now uses UdpDhtTransport from lib-storage (not lib-network)
+    /// to avoid circular dependency
+    pub fn new_udp(local_node: DhtNode, bind_addr: SocketAddr) -> Result<Self> {
+        use crate::dht::transport::UdpDhtTransport;
+
+        // Create tokio UDP socket
+        let socket = std::net::UdpSocket::bind(bind_addr)?;
+        socket.set_nonblocking(true)?;
+        let tokio_socket = tokio::net::UdpSocket::from_std(socket)?;
+
+        // Create UDP transport
+        let transport = Arc::new(UdpDhtTransport::new(
+            Arc::new(tokio_socket),
+            bind_addr,
+        ));
+
+        Self::new(local_node, transport)
     }
 
     /// Generate a cryptographically secure random nonce
@@ -182,64 +173,79 @@ impl DhtNetwork {
         self.sequence_counter.fetch_add(1, Ordering::SeqCst)
     }
     
-    /// Send a DHT message to a target node via mesh routing
+    /// Send a DHT message to a target node
     /// 
-    /// # Ticket #154
-    /// Routes DHT traffic through mesh network instead of raw UDP.
-    /// Supports BLE, QUIC, WiFi Direct, and UDP transports.
+    /// **TICKET #152:** Now uses DhtTransport abstraction for multi-protocol support
     pub async fn send_message(&self, target: &DhtNode, message: DhtMessage) -> Result<()> {
-        // Get router reference
-        let router = self.router.as_ref()
-            .ok_or_else(|| anyhow!("No message router configured for DHT network"))?;
-
-        // Serialize DHT message
+        // Serialize message
         let message_bytes = bincode::serialize(&message)?;
-
-        // Get public keys for routing
-        let destination_pubkey = target.peer.public_key();
-        let sender_pubkey = self.local_node.peer.public_key();
-
-        // Route message through network layer
-        let router_lock = router.read().await;
-        let message_id = router_lock.route_dht_message(
-            message_bytes,
-            destination_pubkey,
-            sender_pubkey,
-        ).await?;
-
-        info!(
-            "Routed DHT message {} to {} via mesh (message_id: {})",
-            message.message_id, target.peer.node_id(), message_id
-        );
-
+        
+        // Get target address and create PeerId
+        let target_addr = target.addresses.first()
+            .ok_or_else(|| anyhow!("No address available for target node"))?;
+        
+        // Parse address to PeerId (default to UDP for socket addresses)
+        let peer_id = if let Ok(socket_addr) = target_addr.parse::<SocketAddr>() {
+            PeerId::Udp(socket_addr)
+        } else if target_addr.starts_with("gatt://") {
+            PeerId::Bluetooth(target_addr.trim_start_matches("gatt://").to_string())
+        } else if target_addr.starts_with("wifid://") {
+            let addr = target_addr.trim_start_matches("wifid://").parse()?;
+            PeerId::WiFiDirect(addr)
+        } else if target_addr.starts_with("quic://") {
+            let addr = target_addr.trim_start_matches("quic://").parse()?;
+            PeerId::Quic(addr)
+        } else if target_addr.starts_with("lora://") {
+            PeerId::LoRaWAN(target_addr.trim_start_matches("lora://").to_string())
+        } else {
+            return Err(anyhow!("Unknown address format: {}", target_addr));
+        };
+        
+        // Send via transport abstraction
+        self.transport.send(&message_bytes, &peer_id).await?;
+        
         Ok(())
     }
     
     /// Receive and parse DHT message with freshness validation
     ///
-    /// # Ticket #154 - ARCHITECTURAL NOTE
-    ///
-    /// **DEPRECATED:** This polling-based receive pattern is incompatible with mesh routing.
-    /// Mesh networks use event-driven message delivery via callbacks/channels.
-    ///
-    /// **MIGRATION PATH:**
-    /// 1. Register DHT message handlers with MeshMessageRouter
-    /// 2. Use async channels (tokio::sync::mpsc) to receive DHT messages
-    /// 3. MeshServer will invoke handlers when DHT messages arrive
-    ///
-    /// **TEMPORARY:** Returns error to prevent usage until event-driven architecture is implemented.
+    /// **TICKET #152:** Now uses DhtTransport abstraction for multi-protocol support
     ///
     /// # Security
     ///
     /// - Validates message timestamp (rejects > 5 min old)
     /// - Validates nonce is non-zero
     /// - Caller should verify signature and check nonce against seen-nonce cache
-    pub async fn receive_message(&self) -> Result<(DhtMessage, std::net::SocketAddr)> {
-        Err(anyhow!(
-            "receive_message() is deprecated after Ticket #154 mesh migration. \
-             Use event-driven message handling with MeshMessageRouter callbacks instead. \
-             DHT messages now arrive via mesh network events, not UDP polling."
-        ))
+    pub async fn receive_message(&self) -> Result<(DhtMessage, PeerId)> {
+        // Receive from transport abstraction
+        let (message_bytes, peer_id) = timeout(
+            self.timeout_duration,
+            self.transport.receive()
+        ).await??;
+
+        // Deserialize message
+        let message: DhtMessage = bincode::deserialize(&message_bytes)?;
+
+        // SECURITY: Validate message freshness and replay protection fields
+        if let Err(e) = message.validate_freshness() {
+            warn!(
+                sender = %peer_id,
+                msg_type = ?message.message_type,
+                error = %e,
+                "Rejecting stale or invalid DHT message"
+            );
+            return Err(anyhow!("Message validation failed: {}", e));
+        }
+
+        debug!(
+            sender = %peer_id,
+            msg_type = ?message.message_type,
+            seq = message.sequence_number,
+            protocol = peer_id.protocol(),
+            "Received valid DHT message"
+        );
+
+        Ok((message, peer_id))
     }
     
     /// Send PING message to check node liveness
@@ -415,7 +421,7 @@ impl DhtNetwork {
     ///
     /// - Response messages include nonce and sequence_number for replay protection
     /// - Incoming message freshness is already validated by receive_message()
-    pub async fn handle_incoming_message(&self, message: DhtMessage, _sender_addr: SocketAddr) -> Result<Option<DhtMessage>> {
+    pub async fn handle_incoming_message(&self, message: DhtMessage, _sender: PeerId) -> Result<Option<DhtMessage>> {
         match message.message_type {
             DhtMessageType::Ping => {
                 Ok(Some(DhtMessage {
@@ -496,6 +502,20 @@ impl DhtNetwork {
             _ => Ok(None), // Response messages don't need responses
         }
     }
+    
+    /// Get local socket address
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        // Extract address from transport's local peer ID
+        match self.transport.local_peer_id() {
+            PeerId::Udp(addr) => Ok(addr),
+            PeerId::WiFiDirect(addr) => Ok(addr),
+            PeerId::Quic(addr) => Ok(addr),
+            PeerId::Bluetooth(_) | PeerId::LoRaWAN(_) | PeerId::Mesh(_) => {
+                // For non-IP protocols, return a placeholder
+                Ok("0.0.0.0:0".parse()?)
+            }
+        }
+    }
 }
 
 /// Generate a unique message ID
@@ -565,9 +585,13 @@ mod tests {
             storage_info: None,
         };
         
-        let network = DhtNetwork::new(test_node, None); // No mesh router in test
+        let bind_addr = "127.0.0.1:0".parse().unwrap(); // Use any available port
+        let network = DhtNetwork::new_udp(test_node, bind_addr);
 
         assert!(network.is_ok());
+        if let Ok(net) = network {
+            assert!(net.local_addr().is_ok());
+        }
     }
     
     #[tokio::test]
@@ -581,7 +605,8 @@ mod tests {
             storage_info: None,
         };
         
-        let network = DhtNetwork::new(test_node, None).expect("Failed to create network"); // No mesh router in test
+        let bind_addr = "127.0.0.1:0".parse().unwrap();
+        let network = DhtNetwork::new_udp(test_node, bind_addr).expect("Failed to create network");
         
         // Test PING message handling
         let ping_message = DhtMessage {
@@ -599,8 +624,8 @@ mod tests {
             signature: None,
         };
         
-        let sender_addr = "127.0.0.1:12345".parse().unwrap();
-        let response = network.handle_incoming_message(ping_message, sender_addr).await.unwrap();
+        let sender = PeerId::Udp("127.0.0.1:12345".parse().unwrap());
+        let response = network.handle_incoming_message(ping_message, sender).await.unwrap();
 
         assert!(response.is_some());
         if let Some(pong) = response {
@@ -740,7 +765,8 @@ mod tests {
             storage_info: None,
         };
 
-        let network = DhtNetwork::new(test_node, None).expect("Failed to create network"); // No mesh router in test
+        let bind_addr = "127.0.0.1:0".parse().unwrap();
+        let network = DhtNetwork::new_udp(test_node, bind_addr).expect("Failed to create network");
 
         let seq1 = network.next_sequence();
         let seq2 = network.next_sequence();

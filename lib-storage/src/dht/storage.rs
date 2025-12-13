@@ -10,6 +10,7 @@ use crate::dht::routing::KademliaRouter;
 use crate::dht::messaging::DhtMessaging;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::net::SocketAddr;
 use lib_crypto::Hash;
@@ -119,16 +120,36 @@ impl DhtStorage {
 
     /// Create DHT storage with networking enabled
     ///
-    /// # Ticket #154 & #148
-    /// Migrated to accept DhtMessageRouter trait instead of bind_addr for multi-transport DHT support
-    /// Also uses shared PeerRegistry
+    /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
     pub async fn new_with_network(
-        local_node: DhtNode,
-        router: Option<std::sync::Arc<tokio::sync::RwLock<dyn crate::dht::network::DhtMessageRouter>>>,
+        local_node: DhtNode, 
+        bind_addr: SocketAddr, 
         max_storage_size: u64
     ) -> Result<Self> {
-        let network = DhtNetwork::new(local_node.clone(), router)?;
+        // Use UDP transport by default (Ticket #152 - Transport Abstraction)
+        let network = DhtNetwork::new_udp(local_node.clone(), bind_addr)?;
+        Ok(Self {
+            storage: HashMap::new(),
+            max_storage_size,
+            current_usage: 0,
+            local_node_id: local_node.peer.node_id().clone(),
+            network: Some(network),
+            router: KademliaRouter::new(local_node.peer.node_id().clone(), 20),
+            messaging: DhtMessaging::new(local_node.peer.node_id().clone()),
+            known_nodes: HashMap::new(),
+            contract_index: HashMap::new(),
+        })
+    }
 
+    /// Create DHT storage with custom transport
+    ///
+    /// **TICKET #154:** Allows using any DhtTransport implementation (including mesh routing)
+    pub fn new_with_transport(
+        local_node: DhtNode,
+        transport: Arc<dyn crate::dht::transport::DhtTransport>,
+        max_storage_size: u64,
+    ) -> Result<Self> {
+        let network = DhtNetwork::new(local_node.clone(), transport)?;
         Ok(Self {
             storage: HashMap::new(),
             max_storage_size,
