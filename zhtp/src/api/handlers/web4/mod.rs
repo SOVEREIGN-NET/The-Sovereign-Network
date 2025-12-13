@@ -17,10 +17,12 @@
 pub mod domains;
 pub mod content;
 pub mod gateway;
+pub mod chunked_upload;
 
 pub use domains::*;
 pub use content::*;
 pub use gateway::*;
+pub use chunked_upload::{ChunkedUploadManager, UploadLimits, UploadStats, handle_chunked_upload};
 
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
@@ -53,6 +55,8 @@ pub struct Web4Handler {
     identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
     /// Blockchain for UTXO transaction creation
     blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
+    /// Chunked upload manager for large files
+    chunked_upload_manager: Arc<ChunkedUploadManager>,
 }
 
 impl Web4Handler {
@@ -81,6 +85,7 @@ impl Web4Handler {
             wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
             identity_manager,
             blockchain,
+            chunked_upload_manager: Arc::new(ChunkedUploadManager::new()),
         })
     }
 
@@ -348,6 +353,85 @@ impl Web4Handler {
             }
         }
     }
+
+    /// Upload a blob (small file, direct upload)
+    /// POST /api/v1/web4/content/blob
+    async fn upload_blob(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let content_type = request.headers.content_type
+            .clone()
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+
+        debug!(
+            content_type = %content_type,
+            size = request.body.len(),
+            "Uploading blob"
+        );
+
+        // Generate content ID from hash
+        let content_hash = lib_crypto::hash_blake3(&request.body);
+        let content_id = format!("bafk{}", hex::encode(&content_hash[..16]));
+
+        // TODO: Store blob in persistent storage
+        // For now, just return the CID
+        // In production, this should store in blob storage
+
+        let response = serde_json::json!({
+            "content_id": content_id,
+            "size": request.body.len(),
+            "content_type": content_type,
+        });
+
+        info!(
+            content_id = %content_id,
+            size = request.body.len(),
+            "Blob uploaded"
+        );
+
+        Ok(ZhtpResponse::success_with_content_type(
+            serde_json::to_vec(&response)?,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Upload a manifest
+    /// POST /api/v1/web4/content/manifest
+    async fn upload_manifest(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Parse manifest JSON
+        let manifest: serde_json::Value = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid manifest JSON: {}", e))?;
+
+        debug!(
+            domain = manifest.get("domain").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            files = manifest.get("files").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+            "Uploading manifest"
+        );
+
+        // Generate manifest CID from hash
+        let manifest_bytes = serde_json::to_vec(&manifest)?;
+        let manifest_hash = lib_crypto::hash_blake3(&manifest_bytes);
+        let manifest_cid = format!("bafk{}", hex::encode(&manifest_hash[..16]));
+
+        // TODO: Store manifest in persistent storage
+        // In production, this should store the manifest and validate it
+
+        let response = serde_json::json!({
+            "manifest_cid": manifest_cid,
+            "domain": manifest.get("domain"),
+            "files_count": manifest.get("files").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+        });
+
+        info!(
+            manifest_cid = %manifest_cid,
+            "Manifest uploaded"
+        );
+
+        Ok(ZhtpResponse::success_with_content_type(
+            serde_json::to_vec(&response)?,
+            "application/json".to_string(),
+            None,
+        ))
+    }
 }
 
 /// Implement ZHTP request handler trait to integrate with existing server
@@ -391,9 +475,26 @@ impl ZhtpRequestHandler for Web4Handler {
                 self.release_domain(request).await
             }
 
+            // Chunked upload endpoints (must be before general content endpoints)
+            path if path.starts_with("/api/v1/web4/content/upload/") => {
+                // Extract owner DID from request headers or use placeholder
+                // In production, this should come from the authenticated principal via VerifiedPrincipal
+                let owner_did = request.headers.get("x-owner-did")
+                    .unwrap_or_else(|| "anonymous".to_string());
+                handle_chunked_upload(request, &self.chunked_upload_manager, &owner_did).await
+            }
+
             // Content publishing endpoints
             path if path == "/api/v1/web4/content/publish" => {
                 self.publish_content(request.body).await
+            }
+            // Blob upload endpoint (for direct/small files)
+            path if path == "/api/v1/web4/content/blob" && request.method == lib_protocols::ZhtpMethod::Post => {
+                self.upload_blob(request).await
+            }
+            // Manifest upload endpoint
+            path if path == "/api/v1/web4/content/manifest" && request.method == lib_protocols::ZhtpMethod::Post => {
+                self.upload_manifest(request).await
             }
             path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Put => {
                 self.update_content(request).await

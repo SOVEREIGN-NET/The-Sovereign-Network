@@ -17,11 +17,15 @@ pub mod domain_registry;
 pub mod content_publisher;
 pub mod content_service;
 pub mod types;
+pub mod client;
+pub mod trust;
 
 pub use domain_registry::*;
 pub use content_publisher::*;
 pub use content_service::*;
 pub use types::*;
+pub use client::Web4Client;
+pub use trust::{TrustConfig, TrustDb, TrustAnchor, TrustPolicy, TrustAuditEntry, ZhtpTrustVerifier};
 
 use anyhow::Result;
 use crate::dht::ZkDHTIntegration;
