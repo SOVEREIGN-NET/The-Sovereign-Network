@@ -11,7 +11,7 @@ use tracing::{info, warn, debug};
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::components::identity::create_default_storage_config;
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
-use lib_network::{ZdnsResolver, ZdnsConfig};
+use lib_network::{ZdnsResolver, ZdnsConfig, ZdnsTransportServer, ZdnsServerConfig};
 
 /// Protocols component - thin wrapper for unified server
 pub struct ProtocolsComponent {
@@ -20,10 +20,15 @@ pub struct ProtocolsComponent {
     unified_server: Arc<RwLock<Option<crate::unified_server::ZhtpUnifiedServer>>>,
     zdns_server: Arc<RwLock<Option<ZdnsServer>>>,
     zdns_resolver: Arc<RwLock<Option<Arc<ZdnsResolver>>>>,
+    zdns_transport: Arc<RwLock<Option<Arc<ZdnsTransportServer>>>>,
     lib_integration: Arc<RwLock<Option<ZhtpIntegration>>>,
     environment: crate::config::environment::Environment,
     api_port: u16,
     is_edge_node: bool,
+    /// Enable ZDNS transport server (UDP/TCP DNS on port 53)
+    enable_zdns_transport: bool,
+    /// Gateway IP for ZDNS transport responses
+    zdns_gateway_ip: std::net::Ipv4Addr,
 }
 
 impl std::fmt::Debug for ProtocolsComponent {
@@ -44,10 +49,13 @@ impl ProtocolsComponent {
             unified_server: Arc::new(RwLock::new(None)),
             zdns_server: Arc::new(RwLock::new(None)),
             zdns_resolver: Arc::new(RwLock::new(None)),
+            zdns_transport: Arc::new(RwLock::new(None)),
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
             is_edge_node: false,
+            enable_zdns_transport: false, // Disabled by default (requires root for port 53)
+            zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
         }
     }
 
@@ -58,10 +66,35 @@ impl ProtocolsComponent {
             unified_server: Arc::new(RwLock::new(None)),
             zdns_server: Arc::new(RwLock::new(None)),
             zdns_resolver: Arc::new(RwLock::new(None)),
+            zdns_transport: Arc::new(RwLock::new(None)),
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
             is_edge_node,
+            enable_zdns_transport: false, // Disabled by default
+            zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
+        }
+    }
+
+    /// Create with ZDNS transport enabled (for gateway nodes)
+    pub fn new_with_zdns_transport(
+        environment: crate::config::environment::Environment,
+        api_port: u16,
+        gateway_ip: std::net::Ipv4Addr,
+    ) -> Self {
+        Self {
+            status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
+            start_time: Arc::new(RwLock::new(None)),
+            unified_server: Arc::new(RwLock::new(None)),
+            zdns_server: Arc::new(RwLock::new(None)),
+            zdns_resolver: Arc::new(RwLock::new(None)),
+            zdns_transport: Arc::new(RwLock::new(None)),
+            lib_integration: Arc::new(RwLock::new(None)),
+            environment,
+            api_port,
+            is_edge_node: false,
+            enable_zdns_transport: true,
+            zdns_gateway_ip: gateway_ip,
         }
     }
 
@@ -191,6 +224,27 @@ impl Component for ProtocolsComponent {
         *self.zdns_resolver.write().await = Some(zdns_resolver.clone());
         info!(" ✓ ZDNS resolver initialized with LRU cache (size: 10000, TTL: up to 1hr)");
 
+        // Start ZDNS transport server if enabled (UDP/TCP DNS on port 53)
+        if self.enable_zdns_transport {
+            info!(" Starting ZDNS transport server (DNS on port 53)...");
+            let transport_config = ZdnsServerConfig::production(self.zdns_gateway_ip);
+            let transport_server = Arc::new(ZdnsTransportServer::new(
+                zdns_resolver.clone(),
+                transport_config,
+            ));
+
+            // Start the transport server in a background task
+            let transport_clone = Arc::clone(&transport_server);
+            tokio::spawn(async move {
+                if let Err(e) = transport_clone.start().await {
+                    warn!("ZDNS transport server error: {}", e);
+                }
+            });
+
+            *self.zdns_transport.write().await = Some(transport_server);
+            info!(" ✓ ZDNS transport server started (gateway IP: {})", self.zdns_gateway_ip);
+        }
+
         // Connect to bootstrap peers if configured
         let bootstrap_peers = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers().await;
         if let Some(peers) = bootstrap_peers {
@@ -213,11 +267,17 @@ impl Component for ProtocolsComponent {
     async fn stop(&self) -> Result<()> {
         info!("Stopping protocols component...");
         *self.status.write().await = ComponentStatus::Stopping;
-        
+
+        // Stop ZDNS transport server if running
+        if let Some(transport) = self.zdns_transport.write().await.take() {
+            info!(" Stopping ZDNS transport server...");
+            transport.stop().await;
+        }
+
         if let Some(mut server) = self.unified_server.write().await.take() {
             let _ = server.stop().await;
         }
-        
+
         *self.start_time.write().await = None;
         *self.status.write().await = ComponentStatus::Stopped;
         Ok(())
