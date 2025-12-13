@@ -2504,6 +2504,7 @@ dependencies = [
  "tokio-test",
  "tracing",
  "tracing-subscriber",
+ "urlencoding",
  "uuid",
  "windows 0.51.1",
  "x25519-dalek",
