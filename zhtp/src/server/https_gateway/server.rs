@@ -36,13 +36,19 @@ use super::handlers::{gateway_handler, redirect_handler, health_handler, info_ha
 
 /// Rate limit configuration
 const RATE_LIMIT_REQUESTS_PER_MINUTE: u32 = 100;
-const RATE_LIMIT_CLEANUP_INTERVAL_SECS: u64 = 60;
+const RATE_LIMIT_WINDOW_SECS: u64 = 60;
+const RATE_LIMIT_CLEANUP_INTERVAL_SECS: u64 = 30; // Background cleanup interval
 const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 /// Maximum unique IPs to track in rate limiter (prevents memory exhaustion from spoofed sources)
 const RATE_LIMIT_MAX_ENTRIES: usize = 10_000;
 
-/// Per-IP rate limiting state with bounded size
+/// Per-IP rate limiting state with bounded size and background cleanup
+///
+/// Design: O(1) per-request hot path, O(n) cleanup in background task
+/// - check_rate_limit() only does HashMap get/insert (O(1) amortized)
+/// - Background task runs every 30s to evict expired entries
+/// - Max 10k entries prevents memory exhaustion from IP spoofing
 #[derive(Clone)]
 struct RateLimitState {
     requests: Arc<RwLock<HashMap<IpAddr, (u32, Instant)>>>,
@@ -55,19 +61,78 @@ impl RateLimitState {
         }
     }
 
-    /// Check if an IP has exceeded the rate limit
+    /// Start background cleanup task
+    /// Returns a handle that can be used to stop the task
+    fn start_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
+        let requests = self.requests.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(RATE_LIMIT_CLEANUP_INTERVAL_SECS));
+            loop {
+                interval.tick().await;
+                let mut map = requests.write().await;
+                let before = map.len();
+                let now = Instant::now();
+                map.retain(|_, (_, timestamp)| now.duration_since(*timestamp).as_secs() < RATE_LIMIT_WINDOW_SECS);
+                let after = map.len();
+                if before != after {
+                    debug!(
+                        evicted = before - after,
+                        remaining = after,
+                        "Rate limiter cleanup"
+                    );
+                }
+            }
+        })
+    }
+
+    /// Check if an IP has exceeded the rate limit - O(1) hot path
     /// Returns false if rate limit exceeded OR if map is full (rejects new IPs when at capacity)
     async fn check_rate_limit(&self, ip: IpAddr) -> bool {
-        let mut requests = self.requests.write().await;
         let now = Instant::now();
 
-        // Clean up old entries (older than 1 minute)
-        requests.retain(|_, (_, timestamp)| now.duration_since(*timestamp).as_secs() < 60);
+        // Fast path: check with read lock first
+        {
+            let requests = self.requests.read().await;
+            if let Some((count, timestamp)) = requests.get(&ip) {
+                // Check if window is still valid
+                if now.duration_since(*timestamp).as_secs() < RATE_LIMIT_WINDOW_SECS {
+                    // Need write lock to increment, but we know this IP exists
+                    drop(requests);
+                    return self.increment_existing(ip, now).await;
+                }
+                // Window expired - need write lock to reset
+            }
+        }
 
-        // Check if this IP is already tracked
+        // Slow path: need write lock for new entry or reset
+        self.add_or_reset(ip, now).await
+    }
+
+    /// Increment counter for existing IP (already confirmed to exist with valid window)
+    async fn increment_existing(&self, ip: IpAddr, now: Instant) -> bool {
+        let mut requests = self.requests.write().await;
         if let Some(entry) = requests.get_mut(&ip) {
-            // Reset if window expired
-            if now.duration_since(entry.1).as_secs() >= 60 {
+            // Re-check window in case of race
+            if now.duration_since(entry.1).as_secs() >= RATE_LIMIT_WINDOW_SECS {
+                entry.0 = 1;
+                entry.1 = now;
+                return true;
+            }
+            entry.0 += 1;
+            return entry.0 <= RATE_LIMIT_REQUESTS_PER_MINUTE;
+        }
+        // Entry was removed between read and write - treat as new
+        self.try_insert_new(&mut requests, ip, now)
+    }
+
+    /// Add new entry or reset expired one
+    async fn add_or_reset(&self, ip: IpAddr, now: Instant) -> bool {
+        let mut requests = self.requests.write().await;
+
+        // Check if entry exists (might have been added since read lock)
+        if let Some(entry) = requests.get_mut(&ip) {
+            if now.duration_since(entry.1).as_secs() >= RATE_LIMIT_WINDOW_SECS {
+                // Reset expired window
                 entry.0 = 1;
                 entry.1 = now;
                 return true;
@@ -76,9 +141,12 @@ impl RateLimitState {
             return entry.0 <= RATE_LIMIT_REQUESTS_PER_MINUTE;
         }
 
-        // New IP - check if we have capacity
+        self.try_insert_new(&mut requests, ip, now)
+    }
+
+    /// Try to insert a new IP entry, respecting capacity limits
+    fn try_insert_new(&self, requests: &mut HashMap<IpAddr, (u32, Instant)>, ip: IpAddr, now: Instant) -> bool {
         if requests.len() >= RATE_LIMIT_MAX_ENTRIES {
-            // Map is full - reject new IPs to prevent memory exhaustion
             warn!(
                 ip = %ip,
                 entries = requests.len(),
@@ -86,8 +154,6 @@ impl RateLimitState {
             );
             return false;
         }
-
-        // Add new IP entry
         requests.insert(ip, (1, now));
         true
     }
@@ -262,8 +328,10 @@ impl HttpsGateway {
             config: Arc::new(self.config.clone()),
         };
 
-        // Build rate limit state
+        // Build rate limit state and start background cleanup
         let rate_limit = RateLimitState::new();
+        let _cleanup_handle = rate_limit.start_cleanup_task();
+        debug!("  Rate limiter cleanup task started (interval: {}s)", RATE_LIMIT_CLEANUP_INTERVAL_SECS);
 
         // Build HSTS state
         let hsts = HstsState::new(&self.config);
