@@ -6,12 +6,25 @@
 use anyhow::{anyhow, Result, Context};
 use std::path::PathBuf;
 use tracing::{info, warn};
+use serde::{Serialize, Deserialize};
 
 use lib_identity::{ZhtpIdentity, IdentityType};
 use lib_network::ZhtpClient;
 use lib_network::web4::TrustConfig;
 
 use crate::cli::{IdentityArgs, IdentityAction, ZhtpCli, format_output};
+
+/// Private key storage format for keystore
+/// Stored separately from identity.json for security
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KeystorePrivateKey {
+    /// Dilithium secret key bytes
+    dilithium_sk: Vec<u8>,
+    /// Kyber secret key bytes
+    kyber_sk: Vec<u8>,
+    /// Master seed for key derivation
+    master_seed: Vec<u8>,
+}
 
 /// Handle identity commands
 pub async fn handle_identity_command(args: IdentityArgs, cli: &ZhtpCli) -> Result<()> {
@@ -75,13 +88,36 @@ async fn create_identity(name: &str, keystore_path: Option<&str>, cli: &ZhtpCli)
     println!("Identity ID: {}", identity.id);
     println!("NodeId: {}", hex::encode(&identity.node_id.as_bytes()[..16]));
 
-    // Save to keystore
+    // Extract private key before serialization (it's skipped by serde)
+    let private_key = identity.private_key.as_ref()
+        .ok_or_else(|| anyhow!("No private key in generated identity"))?;
+
+    // Save private key to separate keystore file (security: separate from identity)
+    let private_key_file = keystore.join("private_key.json");
+    let keystore_key = KeystorePrivateKey {
+        dilithium_sk: private_key.dilithium_sk.clone(),
+        kyber_sk: private_key.kyber_sk.clone(),
+        master_seed: private_key.master_seed.clone(),
+    };
+    let private_key_json = serde_json::to_string_pretty(&keystore_key)
+        .context("Failed to serialize private key")?;
+    std::fs::write(&private_key_file, private_key_json)
+        .context("Failed to write private_key.json")?;
+
+    // Set restrictive permissions on private key (0600 - owner read/write only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&private_key_file, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    // Save identity (public data only - private_key is #[serde(skip)])
     let identity_json = serde_json::to_string_pretty(&identity)
         .context("Failed to serialize identity")?;
     std::fs::write(&identity_file, identity_json)
         .context("Failed to write identity.json")?;
 
-    // Set restrictive permissions on Unix
+    // Set permissions on identity file too
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -89,6 +125,8 @@ async fn create_identity(name: &str, keystore_path: Option<&str>, cli: &ZhtpCli)
     }
 
     println!("\nIdentity saved to: {:?}", identity_file);
+    println!("Private key saved to: {:?}", private_key_file);
+    println!("\nWARNING: Keep private_key.json secure! It contains your signing keys.");
     println!("\nTo register this identity on the blockchain, run:");
     println!("  zhtp identity register --keystore {:?}", keystore.display());
 
