@@ -913,33 +913,86 @@ async fn resolve_dns_query(&self, query: &DnsPacket) -> Option<DnsPacket> {
 
 ---
 
-## Phase 4: TLS Strategy
+## Phase 4: TLS Strategy ✅ COMPLETE
 
-### Option 1: Gateway TLS with Normal Domains (Recommended for Alpha)
+**Branch**: `feature/web4-tls-strategy-phase4`
+**PR**: #397
 
+### Implementation
+
+Created HTTPS Gateway (`zhtp/src/server/https_gateway/`) with:
+- **config.rs** - TLS configuration with multiple modes
+- **server.rs** - Axum-based HTTPS server with rustls
+- **handlers.rs** - HTTP request handlers for Web4 content
+
+### TLS Modes Supported
+
+| Mode | Use Case | Status |
+|------|----------|--------|
+| `SelfSigned` | Development (default) | ✅ |
+| `StandardCa` | Production (Let's Encrypt) | ✅ |
+| `PrivateCa` | Enterprise `.zhtp`/`.sov` | ✅ |
+| `Disabled` | HTTP-only (not recommended) | ✅ |
+
+### Configuration API
+
+```rust
+// Development (self-signed, localhost)
+GatewayTlsConfig::development()
+
+// Production with Let's Encrypt
+GatewayTlsConfig::production("gateway.example.com")
+
+// Private CA for sovereign domains
+GatewayTlsConfig::private_ca(ca_cert, server_cert, server_key)
+
+// Full gateway node (ZDNS + HTTPS)
+ProtocolsComponent::new_gateway_node(env, port, gateway_ip, https_config)
 ```
-https://myapp.yourdomain.tld → Gateway (standard CA cert)
-Gateway reads Host, resolves Web4, serves content
+
+### Integration with ProtocolsComponent
+
+```rust
+// Enable HTTPS gateway on node startup
+ProtocolsComponent::new_with_https_gateway(env, port, config)
+
+// Or full gateway mode (ZDNS transport + HTTPS)
+ProtocolsComponent::new_gateway_node(env, port, gateway_ip, https_config)
 ```
 
-- Works immediately with standard browsers
-- No custom CA installation required
-- `.zhtp` is internal naming, not public TLS
-- **This is not "impure" - it's how ENS, IPFS, and every successful decentralized web system actually shipped**
+### Features
 
-### Option 2: Private CA for .zhtp (Enterprise/Controlled Environments)
+- Self-signed certificate auto-generation for development
+- Wildcard SANs for `*.zhtp`, `*.sov`, `*.zhtp.localhost`
+- HTTP to HTTPS redirect (configurable)
+- HSTS enforcement with configurable max-age (all responses include `Strict-Transport-Security` header)
+- CORS configuration
+- Health check and info endpoints
+- Integration with ZDNS resolver for cached lookups
 
-```
-https://myapp.zhtp → Gateway (private CA cert)
-Requires: CA cert installed on device (MDM, manual)
-```
+### Security Features (Security Review Fixes)
 
-- Pure `.zhtp` experience
-- Operationally heavy
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **HSTS Middleware** | Dedicated middleware adds `Strict-Transport-Security` to ALL responses (HTTPS + HTTP redirect) | ✅ |
+| **Per-IP Rate Limiting** | 100 requests/minute per IP with automatic cleanup | ✅ |
+| **Rate Limit Map Bounds** | Maximum 10,000 unique IPs tracked; new IPs rejected at capacity (prevents spoofed-source flood) | ✅ |
+| **Request Body Limits** | Maximum 10 MB request body size via `DefaultBodyLimit` | ✅ |
+| **Request Timeout** | 30-second timeout for all requests via `TimeoutLayer` | ✅ |
+| **Graceful Shutdown** | Server handles tracked with `watch::channel` for clean shutdown | ✅ |
+| **PrivateCa Validation** | Proper validation of ca_cert_path for PrivateCa mode | ✅ |
+| **Configurable CORS** | CORS origins from `config.cors_origins` (supports wildcard or explicit list) | ✅ |
 
-**Implementation**: Start with Option 1, add Option 2 for enterprise deployments.
+### Tests
 
-Trying to do `.zhtp` + TLS + zero-config browsers first is how projects stall.
+31 tests covering:
+- Config validation (including PrivateCa cert/key/ca paths)
+- Builder patterns
+- Path normalization
+- Domain extraction
+- TLD filtering
+- HSTS middleware (enabled/disabled/production modes)
+- Rate limiter bounds (allows, blocks, max entries)
 
 ---
 

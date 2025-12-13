@@ -10,6 +10,7 @@ use tracing::{info, warn, debug};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::components::identity::create_default_storage_config;
+use crate::server::https_gateway::{HttpsGateway, GatewayTlsConfig, TlsMode};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
 use lib_network::{ZdnsResolver, ZdnsConfig, ZdnsTransportServer, ZdnsServerConfig};
 
@@ -31,6 +32,12 @@ pub struct ProtocolsComponent {
     zdns_gateway_ip: std::net::Ipv4Addr,
     /// Bind address for ZDNS transport (defaults to localhost for safety)
     zdns_bind_addr: std::net::IpAddr,
+    /// Enable HTTPS gateway for browser-based Web4 access
+    enable_https_gateway: bool,
+    /// HTTPS gateway configuration
+    https_gateway_config: Option<GatewayTlsConfig>,
+    /// HTTPS gateway instance
+    https_gateway: Arc<RwLock<Option<HttpsGateway>>>,
 }
 
 impl std::fmt::Debug for ProtocolsComponent {
@@ -59,6 +66,9 @@ impl ProtocolsComponent {
             enable_zdns_transport: false, // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            enable_https_gateway: false, // Disabled by default
+            https_gateway_config: None,
+            https_gateway: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -77,6 +87,9 @@ impl ProtocolsComponent {
             enable_zdns_transport: false, // Disabled by default
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            enable_https_gateway: false,
+            https_gateway_config: None,
+            https_gateway: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -102,6 +115,63 @@ impl ProtocolsComponent {
             zdns_gateway_ip: gateway_ip,
             // SECURITY: Default to localhost even when enabled
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            enable_https_gateway: false,
+            https_gateway_config: None,
+            https_gateway: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Create with HTTPS gateway enabled for browser-based Web4 access
+    /// SECURITY: Default config uses self-signed certs on port 8443
+    pub fn new_with_https_gateway(
+        environment: crate::config::environment::Environment,
+        api_port: u16,
+        gateway_config: GatewayTlsConfig,
+    ) -> Self {
+        Self {
+            status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
+            start_time: Arc::new(RwLock::new(None)),
+            unified_server: Arc::new(RwLock::new(None)),
+            zdns_server: Arc::new(RwLock::new(None)),
+            zdns_resolver: Arc::new(RwLock::new(None)),
+            zdns_transport: Arc::new(RwLock::new(None)),
+            lib_integration: Arc::new(RwLock::new(None)),
+            environment,
+            api_port,
+            is_edge_node: false,
+            enable_zdns_transport: false,
+            zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
+            zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            enable_https_gateway: true,
+            https_gateway_config: Some(gateway_config),
+            https_gateway: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Create a full gateway node with both ZDNS transport and HTTPS gateway
+    pub fn new_gateway_node(
+        environment: crate::config::environment::Environment,
+        api_port: u16,
+        gateway_ip: std::net::Ipv4Addr,
+        https_config: GatewayTlsConfig,
+    ) -> Self {
+        Self {
+            status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
+            start_time: Arc::new(RwLock::new(None)),
+            unified_server: Arc::new(RwLock::new(None)),
+            zdns_server: Arc::new(RwLock::new(None)),
+            zdns_resolver: Arc::new(RwLock::new(None)),
+            zdns_transport: Arc::new(RwLock::new(None)),
+            lib_integration: Arc::new(RwLock::new(None)),
+            environment,
+            api_port,
+            is_edge_node: false,
+            enable_zdns_transport: true,
+            zdns_gateway_ip: gateway_ip,
+            zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            enable_https_gateway: true,
+            https_gateway_config: Some(https_config),
+            https_gateway: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -231,7 +301,7 @@ impl Component for ProtocolsComponent {
         info!(" Initializing ZDNS resolver with canonical domain registry...");
         let domain_registry = unified_server.get_domain_registry();
         let zdns_resolver = Arc::new(ZdnsResolver::new(
-            domain_registry,
+            domain_registry.clone(),
             ZdnsConfig::default(),
         ));
         *self.zdns_resolver.write().await = Some(zdns_resolver.clone());
@@ -261,6 +331,35 @@ impl Component for ProtocolsComponent {
                   self.zdns_gateway_ip, self.zdns_bind_addr);
         }
 
+        // Start HTTPS gateway if enabled (browser-based Web4 access)
+        if self.enable_https_gateway {
+            if let Some(ref gateway_config) = self.https_gateway_config {
+                info!(" Starting HTTPS Gateway for browser-based Web4 access...");
+                match HttpsGateway::new_with_zdns(
+                    domain_registry.clone(),
+                    zdns_resolver.clone(),
+                    gateway_config.clone(),
+                ).await {
+                    Ok(gateway) => {
+                        if let Err(e) = gateway.start().await {
+                            warn!("Failed to start HTTPS gateway: {}", e);
+                        } else {
+                            info!(" ✓ HTTPS Gateway started on port {}", gateway_config.https_port);
+                            if let Some(http_port) = gateway_config.http_port {
+                                info!("   HTTP redirect on port {}", http_port);
+                            }
+                            *self.https_gateway.write().await = Some(gateway);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to create HTTPS gateway: {}", e);
+                    }
+                }
+            } else {
+                warn!("HTTPS gateway enabled but no configuration provided");
+            }
+        }
+
         // Connect to bootstrap peers if configured
         let bootstrap_peers = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers().await;
         if let Some(peers) = bootstrap_peers {
@@ -283,6 +382,12 @@ impl Component for ProtocolsComponent {
     async fn stop(&self) -> Result<()> {
         info!("Stopping protocols component...");
         *self.status.write().await = ComponentStatus::Stopping;
+
+        // Stop HTTPS gateway if running
+        if let Some(gateway) = self.https_gateway.write().await.take() {
+            info!(" Stopping HTTPS gateway...");
+            gateway.stop().await;
+        }
 
         // Stop ZDNS transport server if running
         if let Some(transport) = self.zdns_transport.write().await.take() {
