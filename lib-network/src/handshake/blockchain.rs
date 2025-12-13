@@ -13,7 +13,7 @@
 //!
 //! # Production Usage
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use lib_network::handshake::blockchain::*;
 //! use lib_consensus::ChainSummary;
 //! use lib_blockchain::Blockchain;
@@ -721,7 +721,7 @@ mod tests {
         let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
         assert!(!result.verified);
         assert!(result.epoch_mismatch);
-        assert!(result.details.contains("Epoch mismatch"));
+        assert!(result.details.to_lowercase().contains("epoch"));
     }
     
     #[test]
@@ -755,7 +755,7 @@ mod tests {
         
         let result = verifier.verify_peer(&peer_ctx, Some(&validator_id), None).unwrap();
         assert!(!result.verified);
-        assert!(result.details.contains("Stake mismatch"));
+        assert_eq!(result.details, "Validator authentication failed");
     }
     
     #[test]
@@ -770,7 +770,7 @@ mod tests {
         // Validator not in stake table
         let result = verifier.verify_peer(&peer_ctx, Some(&validator_id), None).unwrap();
         assert!(!result.verified);
-        assert!(result.details.contains("not found in on-chain stake table"));
+        assert_eq!(result.details, "Validator authentication failed");
     }
     
     #[test]

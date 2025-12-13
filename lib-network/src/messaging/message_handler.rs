@@ -38,7 +38,17 @@ pub struct MeshMessageHandler {
     pub edge_sync_manager: Option<Arc<crate::blockchain_sync::EdgeNodeSyncManager>>,
     /// Blockchain provider for accessing chain data (injected by application layer)
     pub blockchain_provider: Arc<dyn crate::blockchain_sync::BlockchainProvider>,
+    /// DHT payload sender for forwarding received DHT messages (Ticket #154)
+    /// Connected to MeshDhtTransport's receiver for message injection
+    pub dht_payload_sender: Option<tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)>>,
+    /// Rate limiter for DHT messages per peer (Ticket #154)
+    /// Key: hex-encoded peer key_id prefix, Value: (count, window_start)
+    pub dht_rate_limits: Arc<RwLock<HashMap<String, (u32, u64)>>>,
 }
+
+/// DHT rate limit configuration
+const DHT_RATE_LIMIT_MAX: u32 = 100;      // Max DHT messages per peer per window
+const DHT_RATE_LIMIT_WINDOW_SECS: u64 = 60; // Rate limit window in seconds
 
 impl MeshMessageHandler {
     /// Create a new MeshMessageHandler
@@ -58,7 +68,20 @@ impl MeshMessageHandler {
             sync_manager: Arc::new(crate::blockchain_sync::BlockchainSyncManager::new()),
             edge_sync_manager: None, // Only set for edge nodes
             blockchain_provider: Arc::new(crate::blockchain_sync::NullBlockchainProvider),
+            dht_payload_sender: None,
+            dht_rate_limits: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Set DHT payload sender for forwarding received DHT messages (Ticket #154)
+    ///
+    /// This connects the message handler to the MeshDhtTransport's receiver,
+    /// allowing DHT payloads received over mesh to be processed by DhtStorage.
+    pub fn set_dht_payload_sender(
+        &mut self,
+        sender: tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)>
+    ) {
+        self.dht_payload_sender = Some(sender);
     }
     
     /// Set message router for sending responses (Phase 2)
@@ -188,6 +211,10 @@ impl MeshMessageHandler {
             ZhtpMeshMessage::DhtPong { request_id, timestamp } => {
                 self.handle_dht_pong(request_id, timestamp).await?;
             },
+            ZhtpMeshMessage::DhtGenericPayload { requester, payload, signature } => {
+                // Ticket #154: Handle generic DHT payload routed through mesh network
+                self.handle_dht_generic_payload(requester, payload, signature).await?;
+            },
         }
         Ok(())
     }
@@ -259,7 +286,7 @@ impl MeshMessageHandler {
         );
         
         let mut registry = self.peer_registry.write().await;
-        registry.upsert(peer_entry)?;
+        registry.upsert(peer_entry).await?;
         
         Ok(())
     }
@@ -486,7 +513,7 @@ impl MeshMessageHandler {
             peer_entry.connection_metrics.bandwidth_capacity = available_bandwidth;
             drop(registry);
             let mut registry_write = self.peer_registry.write().await;
-            registry_write.upsert(peer_entry)?;
+            registry_write.upsert(peer_entry).await?;
         }
 
         Ok(())
@@ -1206,9 +1233,138 @@ impl MeshMessageHandler {
     
     async fn handle_dht_pong(&self, request_id: u64, timestamp: u64) -> Result<()> {
         debug!("DHT Pong: request_id={}, timestamp={}", request_id, timestamp);
-        
+
         // This confirms the peer is still alive
         // Application layer should update the routing table's last_seen timestamp
+        Ok(())
+    }
+
+    /// Handle generic DHT payload routed through mesh network (Ticket #154)
+    ///
+    /// This method receives DHT messages that were serialized by lib-storage's DhtNetwork
+    /// and routed through the mesh network. It deserializes and processes the DHT message
+    /// using the storage layer's DHT protocol.
+    ///
+    /// # Architecture (Ticket #154)
+    ///
+    /// The flow is:
+    /// 1. lib-storage DhtNetwork creates DhtMessage
+    /// 2. lib-storage serializes to bytes and calls DhtTransport.send()
+    /// 3. MeshDhtTransport wraps in DhtGenericPayload and routes through mesh
+    /// 4. This handler receives the payload and forwards to DhtStorage
+    /// 5. DhtStorage processes the message via its DhtTransport.receive()
+    ///
+    /// # Rate Limiting
+    ///
+    /// DHT messages are rate-limited to prevent DoS attacks:
+    /// - Max 100 messages per peer per 60-second window
+    /// - Exceeded peers are logged and their messages dropped
+    async fn handle_dht_generic_payload(&self, requester: PublicKey, payload: Vec<u8>, signature: Vec<u8>) -> Result<()> {
+        let peer_id_hex = hex::encode(&requester.key_id[0..8.min(requester.key_id.len())]);
+
+        debug!(
+            "DHT Generic Payload: requester={}, payload_size={}, signature_size={}",
+            peer_id_hex,
+            payload.len(),
+            signature.len()
+        );
+
+        // SECURITY FIX #1: Verify message signature to prevent spoofing
+        // Construct the signed data: requester.key_id + payload
+        let mut signed_data = Vec::with_capacity(requester.key_id.len() + payload.len());
+        signed_data.extend_from_slice(&requester.key_id);
+        signed_data.extend_from_slice(&payload);
+
+        // Convert signature bytes to Signature type with the requester's public key
+        let sig = lib_crypto::Signature::from_bytes_with_key(&signature, requester.clone());
+
+        match requester.verify(&signed_data, &sig) {
+            Ok(true) => {
+                debug!(
+                    "DHT message signature verified successfully from peer {}",
+                    peer_id_hex
+                );
+            }
+            Ok(false) => {
+                warn!(
+                    "DHT message signature verification FAILED from peer {} - possible spoofing attempt",
+                    peer_id_hex
+                );
+                return Err(anyhow!("Invalid DHT message signature"));
+            }
+            Err(e) => {
+                warn!(
+                    "DHT message signature verification error from peer {}: {}",
+                    peer_id_hex, e
+                );
+                return Err(anyhow!("Signature verification error: {}", e));
+            }
+        }
+
+        // Rate limiting check (Ticket #154)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        {
+            let mut rate_limits = self.dht_rate_limits.write().await;
+            let entry = rate_limits.entry(peer_id_hex.clone()).or_insert((0, now));
+
+            // Check if window has expired
+            if now - entry.1 >= DHT_RATE_LIMIT_WINDOW_SECS {
+                // Reset window
+                *entry = (1, now);
+            } else {
+                // Increment count
+                entry.0 += 1;
+
+                // Check rate limit
+                if entry.0 > DHT_RATE_LIMIT_MAX {
+                    warn!(
+                        "DHT rate limit exceeded for peer {} ({}/{} in {}s window)",
+                        peer_id_hex, entry.0, DHT_RATE_LIMIT_MAX, DHT_RATE_LIMIT_WINDOW_SECS
+                    );
+                    return Err(anyhow!("DHT rate limit exceeded"));
+                }
+            }
+        }
+
+        // Validate payload size (max 64KB for DHT messages)
+        const MAX_DHT_PAYLOAD_SIZE: usize = 65536;
+        if payload.len() > MAX_DHT_PAYLOAD_SIZE {
+            warn!(
+                "DHT payload too large from peer {}: {} bytes (max {})",
+                peer_id_hex, payload.len(), MAX_DHT_PAYLOAD_SIZE
+            );
+            return Err(anyhow!("DHT payload exceeds maximum size"));
+        }
+
+        // Forward to DHT transport if sender is configured
+        if let Some(sender) = &self.dht_payload_sender {
+            let peer_id = lib_storage::dht::transport::PeerId::Mesh(requester.key_id.to_vec());
+
+            if let Err(e) = sender.send((payload.clone(), peer_id)) {
+                warn!(
+                    "Failed to forward DHT payload to transport: {} (peer: {})",
+                    e, peer_id_hex
+                );
+                return Err(anyhow!("Failed to forward DHT payload: {}", e));
+            }
+
+            debug!(
+                "Forwarded DHT payload ({} bytes) from peer {} to DhtStorage",
+                payload.len(), peer_id_hex
+            );
+        } else {
+            // No sender configured - log for debugging
+            debug!(
+                "DHT payload received but no handler configured (peer: {}, {} bytes). \
+                 Call set_dht_payload_sender() to enable DHT message processing.",
+                peer_id_hex, payload.len()
+            );
+        }
+
         Ok(())
     }
 }
@@ -1294,7 +1450,7 @@ mod tests {
                 0.5,  // trust_score
             );
             let mut registry = peer_registry.write().await;
-            let _ = registry.upsert(peer_entry);
+            let _ = registry.upsert(peer_entry).await;
         }
 
         // Handle health report
@@ -1313,5 +1469,104 @@ mod tests {
         let peer_entry = registry.find_by_public_key(&reporter).unwrap();
         assert_eq!(peer_entry.connection_metrics.stability_score, 0.9);
         assert_eq!(peer_entry.connection_metrics.bandwidth_capacity, 2000000);
+    }
+    
+    /// Test DHT signature verification - valid signature
+    #[tokio::test]
+    async fn test_dht_signature_verification_valid() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        
+        let mut handler = MeshMessageHandler::new(
+            peer_registry.clone(),
+            long_range_relays,
+            revenue_pools,
+        );
+        
+        // Create a test key pair
+        let test_key = lib_crypto::KeyPair::generate().unwrap();
+        let public_key = test_key.public_key.clone();
+
+        // Create test payload
+        let payload = b"test dht payload".to_vec();
+
+        // Create signed data: key_id + payload (matching the format used in handle_dht_generic_payload)
+        let mut signed_data = Vec::with_capacity(public_key.key_id.len() + payload.len());
+        signed_data.extend_from_slice(&public_key.key_id);
+        signed_data.extend_from_slice(&payload);
+
+        // Sign the data and extract raw signature bytes
+        let sig = test_key.sign(&signed_data).unwrap();
+        let signature = sig.signature.clone(); // Raw signature bytes
+
+        // This should succeed (signature verification passes)
+        let result = handler.handle_dht_generic_payload(public_key, payload, signature).await;
+
+        // Signature verification passes, and without dht_payload_sender configured,
+        // the function gracefully returns Ok (logs debug message but doesn't error)
+        assert!(result.is_ok(), "Valid signature should pass verification: {:?}", result);
+    }
+    
+    /// Test DHT signature verification - invalid signature
+    #[tokio::test]
+    async fn test_dht_signature_verification_invalid() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        
+        let mut handler = MeshMessageHandler::new(
+            peer_registry.clone(),
+            long_range_relays,
+            revenue_pools,
+        );
+        
+        // Create test keys
+        let test_key = lib_crypto::KeyPair::generate().unwrap();
+        let wrong_key = lib_crypto::KeyPair::generate().unwrap();
+
+        // Create test payload
+        let payload = b"test dht payload".to_vec();
+
+        // Create signed data with wrong key (simulates spoofing attempt)
+        let mut signed_data = Vec::with_capacity(wrong_key.public_key.key_id.len() + payload.len());
+        signed_data.extend_from_slice(&wrong_key.public_key.key_id);
+        signed_data.extend_from_slice(&payload);
+
+        // Sign with wrong key (this signature won't match test_key.public_key)
+        let sig = wrong_key.sign(&signed_data).unwrap();
+        let signature = sig.signature.clone(); // Raw signature bytes
+
+        // This should fail signature verification
+        let result = handler.handle_dht_generic_payload(test_key.public_key, payload, signature).await;
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("signature"));
+    }
+    
+    /// Test DHT signature verification - malformed signature
+    #[tokio::test]
+    async fn test_dht_signature_verification_malformed() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        
+        let mut handler = MeshMessageHandler::new(
+            peer_registry.clone(),
+            long_range_relays,
+            revenue_pools,
+        );
+        
+        let test_key = lib_crypto::KeyPair::generate().unwrap();
+        let payload = b"test dht payload".to_vec();
+
+        // Use invalid signature (wrong length for Dilithium signature)
+        let invalid_signature = vec![0u8; 10]; // Too short for any valid signature
+
+        // This should fail signature verification
+        let result = handler.handle_dht_generic_payload(test_key.public_key, payload, invalid_signature).await;
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("signature"));
     }
 }
