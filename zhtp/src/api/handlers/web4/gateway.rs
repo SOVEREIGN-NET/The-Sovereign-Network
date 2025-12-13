@@ -335,48 +335,231 @@ mod tests {
         }
     }
 
+    /// Helper struct to test extract_domain without needing a real DomainRegistry
+    struct TestExtractor {
+        config: GatewayConfig,
+    }
+
+    impl TestExtractor {
+        fn new(config: GatewayConfig) -> Self {
+            Self { config }
+        }
+
+        /// Extract domain from host (mirrors Web4GatewayHandler::extract_domain logic)
+        fn extract_domain(&self, host: &str) -> Option<String> {
+            // Sanitize host - remove port if present
+            let host = host.split(':').next().unwrap_or(host);
+
+            // Check length
+            if host.len() > self.config.max_domain_length {
+                return None;
+            }
+
+            // Pattern 1: {domain}.zhtp.{gateway_suffix}
+            let gateway_suffix = &self.config.gateway_suffix;
+            if let Some(without_suffix) = host.strip_suffix(gateway_suffix) {
+                if without_suffix.ends_with(".zhtp") {
+                    return Some(without_suffix.to_string());
+                }
+            }
+
+            // Pattern 2: {domain}.zhtp (bare domain, if allowed)
+            if self.config.allow_bare_zhtp && host.ends_with(".zhtp") {
+                return Some(host.to_string());
+            }
+
+            // Pattern 3: {domain}.sov.{gateway_suffix}
+            if let Some(without_suffix) = host.strip_suffix(gateway_suffix) {
+                if without_suffix.ends_with(".sov") {
+                    return Some(without_suffix.to_string());
+                }
+            }
+
+            // Pattern 4: {domain}.sov (bare .sov domain, if allowed)
+            if self.config.allow_bare_zhtp && host.ends_with(".sov") {
+                return Some(host.to_string());
+            }
+
+            None
+        }
+
+        /// Validate domain name
+        fn validate_domain(&self, domain: &str) -> bool {
+            if domain.is_empty() || domain.len() > self.config.max_domain_length {
+                return false;
+            }
+            if !domain
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+            {
+                return false;
+            }
+            if domain.contains("..") {
+                return false;
+            }
+            if !domain.ends_with(".zhtp") && !domain.ends_with(".sov") {
+                return false;
+            }
+            true
+        }
+    }
+
+    // ========================================
+    // Domain Extraction Tests
+    // ========================================
+
     #[test]
-    fn test_extract_domain_gateway_suffix() {
-        let handler = Web4GatewayHandler::with_config(
-            Arc::new(DomainRegistry::new_with_dht(None).await.unwrap()),
-            create_test_config(),
+    fn test_extract_domain_with_gateway_suffix() {
+        let extractor = TestExtractor::new(create_test_config());
+
+        // .zhtp domains with .localhost suffix
+        assert_eq!(
+            extractor.extract_domain("myapp.zhtp.localhost"),
+            Some("myapp.zhtp".to_string())
+        );
+        assert_eq!(
+            extractor.extract_domain("my-app.zhtp.localhost"),
+            Some("my-app.zhtp".to_string())
+        );
+        assert_eq!(
+            extractor.extract_domain("sub.domain.zhtp.localhost"),
+            Some("sub.domain.zhtp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_domain_bare_zhtp() {
+        let extractor = TestExtractor::new(create_test_config());
+
+        // Bare .zhtp domains (when allow_bare_zhtp is true)
+        assert_eq!(
+            extractor.extract_domain("myapp.zhtp"),
+            Some("myapp.zhtp".to_string())
+        );
+        assert_eq!(
+            extractor.extract_domain("my-app.zhtp"),
+            Some("my-app.zhtp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_domain_sov() {
+        let extractor = TestExtractor::new(create_test_config());
+
+        // .sov domains with suffix
+        assert_eq!(
+            extractor.extract_domain("myapp.commerce.sov.localhost"),
+            Some("myapp.commerce.sov".to_string())
         );
 
-        // This test would need async runtime, but we can test the logic
-        // The actual handler tests would be integration tests
+        // Bare .sov domains
+        assert_eq!(
+            extractor.extract_domain("myapp.commerce.sov"),
+            Some("myapp.commerce.sov".to_string())
+        );
+        assert_eq!(
+            extractor.extract_domain("central.sov"),
+            Some("central.sov".to_string())
+        );
     }
 
     #[test]
-    fn test_validate_domain() {
-        let config = create_test_config();
+    fn test_extract_domain_with_port() {
+        let extractor = TestExtractor::new(create_test_config());
 
-        // Valid domains
-        assert!(validate_domain_chars("myapp.zhtp", &config));
-        assert!(validate_domain_chars("my-app.zhtp", &config));
-        assert!(validate_domain_chars("myapp.commerce.sov", &config));
-
-        // Invalid domains
-        assert!(!validate_domain_chars("myapp.com", &config));  // Wrong TLD
-        assert!(!validate_domain_chars("my..app.zhtp", &config));  // Double dot
-        assert!(!validate_domain_chars("", &config));  // Empty
+        // Should strip port before extraction
+        assert_eq!(
+            extractor.extract_domain("myapp.zhtp.localhost:8080"),
+            Some("myapp.zhtp".to_string())
+        );
+        assert_eq!(
+            extractor.extract_domain("myapp.zhtp:443"),
+            Some("myapp.zhtp".to_string())
+        );
     }
 
-    fn validate_domain_chars(domain: &str, config: &GatewayConfig) -> bool {
-        if domain.is_empty() || domain.len() > config.max_domain_length {
-            return false;
-        }
-        if !domain
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-        {
-            return false;
-        }
-        if domain.contains("..") {
-            return false;
-        }
-        if !domain.ends_with(".zhtp") && !domain.ends_with(".sov") {
-            return false;
-        }
-        true
+    #[test]
+    fn test_extract_domain_invalid() {
+        let extractor = TestExtractor::new(create_test_config());
+
+        // Non-Web4 domains should return None
+        assert_eq!(extractor.extract_domain("example.com"), None);
+        assert_eq!(extractor.extract_domain("google.com.localhost"), None);
+        assert_eq!(extractor.extract_domain("localhost"), None);
+        assert_eq!(extractor.extract_domain(""), None);
+    }
+
+    #[test]
+    fn test_extract_domain_bare_disabled() {
+        let mut config = create_test_config();
+        config.allow_bare_zhtp = false;
+        let extractor = TestExtractor::new(config);
+
+        // With bare disabled, only suffix-based extraction works
+        assert_eq!(
+            extractor.extract_domain("myapp.zhtp.localhost"),
+            Some("myapp.zhtp".to_string())
+        );
+        assert_eq!(extractor.extract_domain("myapp.zhtp"), None);
+    }
+
+    // ========================================
+    // Domain Validation Tests
+    // ========================================
+
+    #[test]
+    fn test_validate_domain_valid() {
+        let extractor = TestExtractor::new(create_test_config());
+
+        assert!(extractor.validate_domain("myapp.zhtp"));
+        assert!(extractor.validate_domain("my-app.zhtp"));
+        assert!(extractor.validate_domain("sub.domain.zhtp"));
+        assert!(extractor.validate_domain("myapp.commerce.sov"));
+        assert!(extractor.validate_domain("central.sov"));
+        assert!(extractor.validate_domain("a.sov")); // Minimum valid
+    }
+
+    #[test]
+    fn test_validate_domain_invalid_tld() {
+        let extractor = TestExtractor::new(create_test_config());
+
+        assert!(!extractor.validate_domain("myapp.com"));
+        assert!(!extractor.validate_domain("myapp.org"));
+        assert!(!extractor.validate_domain("myapp.localhost"));
+    }
+
+    #[test]
+    fn test_validate_domain_invalid_chars() {
+        let extractor = TestExtractor::new(create_test_config());
+
+        assert!(!extractor.validate_domain("my_app.zhtp")); // Underscore
+        assert!(!extractor.validate_domain("my app.zhtp")); // Space
+        assert!(!extractor.validate_domain("my@app.zhtp")); // Special char
+    }
+
+    #[test]
+    fn test_validate_domain_double_dot() {
+        let extractor = TestExtractor::new(create_test_config());
+
+        // Double dots could indicate path traversal attempts
+        assert!(!extractor.validate_domain("my..app.zhtp"));
+        assert!(!extractor.validate_domain("..zhtp"));
+    }
+
+    #[test]
+    fn test_validate_domain_empty() {
+        let extractor = TestExtractor::new(create_test_config());
+
+        assert!(!extractor.validate_domain(""));
+    }
+
+    #[test]
+    fn test_validate_domain_too_long() {
+        let mut config = create_test_config();
+        config.max_domain_length = 20;
+        let extractor = TestExtractor::new(config);
+
+        assert!(extractor.validate_domain("short.zhtp")); // 10 chars
+        assert!(!extractor.validate_domain("this-is-a-very-long-domain-name.zhtp")); // > 20 chars
     }
 }

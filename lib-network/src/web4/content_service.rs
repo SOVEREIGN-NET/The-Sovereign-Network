@@ -197,7 +197,6 @@ impl Web4ContentService {
 
         // Split into segments
         let mut segments: Vec<&str> = Vec::new();
-        let mut escape_attempts = 0;
 
         for segment in path.split('/') {
             match segment {
@@ -206,9 +205,16 @@ impl Web4ContentService {
                     continue;
                 }
                 ".." => {
-                    // Go up one level, but don't escape root
+                    // Go up one level, but REJECT if trying to escape root
                     if segments.pop().is_none() {
-                        escape_attempts += 1;
+                        // Attempting to go above root - this is a security violation
+                        warn!(
+                            "Path traversal attack blocked: attempted to escape root in path '{}'",
+                            path
+                        );
+                        return Err(anyhow!(
+                            "Path traversal rejected: cannot navigate above root"
+                        ));
                     }
                 }
                 s => {
@@ -223,14 +229,6 @@ impl Web4ContentService {
                     segments.push(s);
                 }
             }
-        }
-
-        // If there were escape attempts, log a warning
-        if escape_attempts > 0 {
-            warn!(
-                "Path traversal attempt blocked: {} escape attempts in path '{}'",
-                escape_attempts, path
-            );
         }
 
         // Build normalized path
@@ -583,14 +581,15 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_path_dotdot_escape_blocked() {
-        // Should NOT escape root - these all resolve to /
-        assert_eq!(Web4ContentService::normalize_path("/..").unwrap(), "/");
-        assert_eq!(Web4ContentService::normalize_path("/../..").unwrap(), "/");
-        assert_eq!(Web4ContentService::normalize_path("/../../../etc/passwd").unwrap(), "/etc/passwd");
+    fn test_normalize_path_dotdot_escape_rejected() {
+        // Any attempt to escape root MUST return an error
+        assert!(Web4ContentService::normalize_path("/..").is_err());
+        assert!(Web4ContentService::normalize_path("/../..").is_err());
+        assert!(Web4ContentService::normalize_path("/../../../etc/passwd").is_err());
+        assert!(Web4ContentService::normalize_path("/foo/../../bar").is_err());
 
-        // The key security property: we can't escape to parent directories
-        // Even though the path mentions .., we stay within the root
+        // The key security property: we reject paths that attempt to escape root
+        // This prevents path traversal attacks like accessing /etc/passwd
     }
 
     #[test]
