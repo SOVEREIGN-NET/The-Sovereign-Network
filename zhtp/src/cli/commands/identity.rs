@@ -61,11 +61,12 @@ async fn create_identity(name: &str, keystore_path: Option<&str>, cli: &ZhtpCli)
 
     // Generate new identity locally (no network required)
     // Uses seed-anchored architecture: all secrets derived from single master seed
+    // Using Device type for CLI tools (doesn't require age/jurisdiction)
     println!("Generating cryptographic keys (post-quantum Dilithium + Kyber)...");
     let identity = ZhtpIdentity::new_unified(
-        IdentityType::Human,
-        None, // age (optional)
-        None, // jurisdiction (optional)
+        IdentityType::Device, // Device type for CLI (no age/jurisdiction required)
+        None, // age (not needed for Device)
+        None, // jurisdiction (not needed for Device)
         name, // device name (used for NodeId derivation)
         None, // seed (None = generate random seed)
     ).context("Failed to generate identity")?;
