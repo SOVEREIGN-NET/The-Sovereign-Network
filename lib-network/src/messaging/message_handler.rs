@@ -211,7 +211,7 @@ impl MeshMessageHandler {
             ZhtpMeshMessage::DhtPong { request_id, timestamp } => {
                 self.handle_dht_pong(request_id, timestamp).await?;
             },
-            ZhtpMeshMessage::DhtGenericPayload { requester, payload } => {
+            ZhtpMeshMessage::DhtGenericPayload { requester, payload, signature } => {
                 // Ticket #154: Handle generic DHT payload routed through mesh network
                 self.handle_dht_generic_payload(requester, payload, signature).await?;
             },
@@ -1270,22 +1270,36 @@ impl MeshMessageHandler {
         );
 
         // SECURITY FIX #1: Verify message signature to prevent spoofing
-        // Construct the signed data: requester.public_key_bytes + payload
-        let mut signed_data = requester.key_id.clone();
+        // Construct the signed data: requester.key_id + payload
+        let mut signed_data = Vec::with_capacity(requester.key_id.len() + payload.len());
+        signed_data.extend_from_slice(&requester.key_id);
         signed_data.extend_from_slice(&payload);
-        
-        if !requester.verify(&signed_data, &signature) {
-            warn!(
-                "DHT message signature verification FAILED from peer {} - possible spoofing attempt",
-                peer_id_hex
-            );
-            return Err(anyhow!("Invalid DHT message signature"));
+
+        // Convert signature bytes to Signature type with the requester's public key
+        let sig = lib_crypto::Signature::from_bytes_with_key(&signature, requester.clone());
+
+        match requester.verify(&signed_data, &sig) {
+            Ok(true) => {
+                debug!(
+                    "DHT message signature verified successfully from peer {}",
+                    peer_id_hex
+                );
+            }
+            Ok(false) => {
+                warn!(
+                    "DHT message signature verification FAILED from peer {} - possible spoofing attempt",
+                    peer_id_hex
+                );
+                return Err(anyhow!("Invalid DHT message signature"));
+            }
+            Err(e) => {
+                warn!(
+                    "DHT message signature verification error from peer {}: {}",
+                    peer_id_hex, e
+                );
+                return Err(anyhow!("Signature verification error: {}", e));
+            }
         }
-        
-        info!(
-            "DHT message signature verified successfully from peer {}",
-            peer_id_hex
-        );
 
         // Rate limiting check (Ticket #154)
         let now = SystemTime::now()
@@ -1471,25 +1485,27 @@ mod tests {
         );
         
         // Create a test key pair
-        let test_key = lib_crypto::KeyPair::generate_test_keypair();
+        let test_key = lib_crypto::KeyPair::generate().unwrap();
         let public_key = test_key.public_key.clone();
-        
+
         // Create test payload
         let payload = b"test dht payload".to_vec();
-        
-        // Create signed data: public_key_bytes + payload
-        let mut signed_data = public_key.key_id.clone();
+
+        // Create signed data: key_id + payload (matching the format used in handle_dht_generic_payload)
+        let mut signed_data = Vec::with_capacity(public_key.key_id.len() + payload.len());
+        signed_data.extend_from_slice(&public_key.key_id);
         signed_data.extend_from_slice(&payload);
-        
-        // Sign the data
-        let signature = test_key.sign(&signed_data).unwrap();
-        
+
+        // Sign the data and extract raw signature bytes
+        let sig = test_key.sign(&signed_data).unwrap();
+        let signature = sig.signature.clone(); // Raw signature bytes
+
         // This should succeed (signature verification passes)
         let result = handler.handle_dht_generic_payload(public_key, payload, signature).await;
-        
-        // Should fail because no dht_payload_sender is configured, but signature should pass
-        assert!(result.is_err());
-        assert!(!result.unwrap_err().to_string().contains("signature"));
+
+        // Signature verification passes, and without dht_payload_sender configured,
+        // the function gracefully returns Ok (logs debug message but doesn't error)
+        assert!(result.is_ok(), "Valid signature should pass verification: {:?}", result);
     }
     
     /// Test DHT signature verification - invalid signature
@@ -1506,19 +1522,21 @@ mod tests {
         );
         
         // Create test keys
-        let test_key = lib_crypto::KeyPair::generate_test_keypair();
-        let wrong_key = lib_crypto::KeyPair::generate_test_keypair();
-        
+        let test_key = lib_crypto::KeyPair::generate().unwrap();
+        let wrong_key = lib_crypto::KeyPair::generate().unwrap();
+
         // Create test payload
         let payload = b"test dht payload".to_vec();
-        
-        // Create signed data with wrong key
-        let mut signed_data = wrong_key.public_key.key_id.clone();
+
+        // Create signed data with wrong key (simulates spoofing attempt)
+        let mut signed_data = Vec::with_capacity(wrong_key.public_key.key_id.len() + payload.len());
+        signed_data.extend_from_slice(&wrong_key.public_key.key_id);
         signed_data.extend_from_slice(&payload);
-        
-        // Sign with wrong key
-        let signature = wrong_key.sign(&signed_data).unwrap();
-        
+
+        // Sign with wrong key (this signature won't match test_key.public_key)
+        let sig = wrong_key.sign(&signed_data).unwrap();
+        let signature = sig.signature.clone(); // Raw signature bytes
+
         // This should fail signature verification
         let result = handler.handle_dht_generic_payload(test_key.public_key, payload, signature).await;
         
@@ -1539,12 +1557,12 @@ mod tests {
             revenue_pools,
         );
         
-        let test_key = lib_crypto::KeyPair::generate_test_keypair();
+        let test_key = lib_crypto::KeyPair::generate().unwrap();
         let payload = b"test dht payload".to_vec();
-        
-        // Use invalid signature (wrong length)
-        let invalid_signature = vec![0u8; 10]; // Too short for ED25519 signature
-        
+
+        // Use invalid signature (wrong length for Dilithium signature)
+        let invalid_signature = vec![0u8; 10]; // Too short for any valid signature
+
         // This should fail signature verification
         let result = handler.handle_dht_generic_payload(test_key.public_key, payload, invalid_signature).await;
         

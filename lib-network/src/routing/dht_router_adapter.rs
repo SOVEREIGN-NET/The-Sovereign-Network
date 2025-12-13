@@ -7,7 +7,7 @@
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use lib_crypto::PublicKey;
+use lib_crypto::{KeyPair, PublicKey};
 use lib_storage::dht::transport::{DhtTransport, PeerId};
 use crate::routing::message_routing::MeshMessageRouter;
 use crate::types::mesh_message::ZhtpMeshMessage;
@@ -26,7 +26,8 @@ use crate::types::mesh_message::ZhtpMeshMessage;
 /// through the mesh network.
 pub struct MeshDhtTransport {
     mesh_router: Arc<RwLock<MeshMessageRouter>>,
-    local_pubkey: PublicKey,
+    /// Local keypair for signing outgoing DHT messages
+    local_keypair: Arc<KeyPair>,
     /// Channel for receiving DHT messages from mesh
     receiver: Arc<RwLock<tokio::sync::mpsc::UnboundedReceiver<(Vec<u8>, PeerId)>>>,
 }
@@ -36,29 +37,42 @@ impl MeshDhtTransport {
     ///
     /// # Arguments
     /// * `mesh_router` - The mesh message router for sending messages
-    /// * `local_pubkey` - This node's public key
+    /// * `local_keypair` - This node's keypair (for signing outgoing messages)
     ///
     /// # Returns
     /// Tuple of (transport, sender) - sender is used to inject received DHT messages
     pub fn new(
         mesh_router: Arc<RwLock<MeshMessageRouter>>,
-        local_pubkey: PublicKey,
+        local_keypair: Arc<KeyPair>,
     ) -> (Self, tokio::sync::mpsc::UnboundedSender<(Vec<u8>, PeerId)>) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let transport = Self {
             mesh_router,
-            local_pubkey,
+            local_keypair,
             receiver: Arc::new(RwLock::new(rx)),
         };
         (transport, tx)
     }
 
-    /// Convert serialized DHT message to ZhtpMeshMessage envelope
-    fn wrap_dht_payload(payload: Vec<u8>, requester: PublicKey) -> ZhtpMeshMessage {
-        ZhtpMeshMessage::DhtGenericPayload {
-            requester,
+    /// Convert serialized DHT message to ZhtpMeshMessage envelope with signature
+    ///
+    /// # Security
+    /// Signs the message with the local keypair to prevent spoofing.
+    /// The signed data is: requester.key_id + payload
+    fn wrap_dht_payload(payload: Vec<u8>, keypair: &KeyPair) -> Result<ZhtpMeshMessage> {
+        // Construct data to sign: key_id + payload
+        let mut signed_data = Vec::with_capacity(keypair.public_key.key_id.len() + payload.len());
+        signed_data.extend_from_slice(&keypair.public_key.key_id);
+        signed_data.extend_from_slice(&payload);
+
+        // Sign the data
+        let signature = keypair.sign(&signed_data)?;
+
+        Ok(ZhtpMeshMessage::DhtGenericPayload {
+            requester: keypair.public_key.clone(),
             payload,
-        }
+            signature: signature.signature,
+        })
     }
 
     /// Extract PublicKey from mesh PeerId
@@ -97,12 +111,12 @@ impl DhtTransport for MeshDhtTransport {
     async fn send(&self, data: &[u8], peer: &PeerId) -> Result<()> {
         let destination = Self::peer_id_to_pubkey(peer)?;
 
-        // Wrap the DHT message
-        let mesh_message = Self::wrap_dht_payload(data.to_vec(), self.local_pubkey.clone());
+        // Wrap and sign the DHT message
+        let mesh_message = Self::wrap_dht_payload(data.to_vec(), &self.local_keypair)?;
 
         // Route through mesh network
         let router = self.mesh_router.read().await;
-        router.route_message(mesh_message, destination, self.local_pubkey.clone()).await?;
+        router.route_message(mesh_message, destination, self.local_keypair.public_key.clone()).await?;
 
         Ok(())
     }
@@ -117,7 +131,7 @@ impl DhtTransport for MeshDhtTransport {
     }
 
     fn local_peer_id(&self) -> PeerId {
-        PeerId::Mesh(self.local_pubkey.key_id.to_vec())
+        PeerId::Mesh(self.local_keypair.public_key.key_id.to_vec())
     }
 
     async fn can_reach(&self, peer: &PeerId) -> bool {
@@ -142,12 +156,16 @@ mod tests {
 
     #[test]
     fn test_peer_id_conversion() {
-        let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
-        let peer_id = PeerId::Mesh(pubkey.key_id.clone());
+        // Create a 32-byte key (valid size)
+        let key_bytes = vec![1u8; 32];
+        let peer_id = PeerId::Mesh(key_bytes.clone());
 
         let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().key_id, pubkey.key_id);
+        // The resulting PublicKey will have key_bytes as the dilithium_pk,
+        // and key_id will be the hash of key_bytes
+        let pubkey = result.unwrap();
+        assert_eq!(pubkey.dilithium_pk, key_bytes);
     }
 
     #[test]
@@ -160,11 +178,15 @@ mod tests {
     /// Test public key validation - correct length
     #[test]
     fn test_valid_public_key() {
-        let valid_key = vec![1u8; 32]; // 32 bytes = valid ED25519 key length
+        let valid_key = vec![2u8; 32]; // 32 bytes, no null bytes
         let peer_id = PeerId::Mesh(valid_key.clone());
         let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().key_id, valid_key);
+        // The input key becomes the dilithium_pk, key_id is its hash
+        let pubkey = result.unwrap();
+        assert_eq!(pubkey.dilithium_pk, valid_key);
+        // key_id should be the blake3 hash of valid_key
+        assert_eq!(pubkey.key_id, lib_crypto::hash_blake3(&valid_key));
     }
     
     /// Test public key validation - wrong length (too short)

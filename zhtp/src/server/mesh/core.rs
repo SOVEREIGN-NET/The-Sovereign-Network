@@ -232,10 +232,14 @@ impl MeshRouter {
 
         // Create DHT mesh transport (Ticket #154: routes DHT through mesh network)
         // The dht_payload_sender is used to inject received DHT messages into the transport
+        // Note: Using generated keypair for DHT signing - in production this should be
+        // wired to the node's actual identity keypair after handshake completes
+        let dht_keypair = Arc::new(lib_crypto::KeyPair::generate()
+            .expect("Failed to generate DHT keypair"));
         let (mesh_dht_transport, dht_payload_sender) =
             lib_network::routing::dht_router_adapter::MeshDhtTransport::new(
                 mesh_message_router.clone(),
-                local_node.peer.public_key.clone(),
+                dht_keypair,
             );
         let mesh_dht_transport = Arc::new(mesh_dht_transport);
 
