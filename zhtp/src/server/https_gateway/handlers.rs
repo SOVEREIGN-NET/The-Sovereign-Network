@@ -1,11 +1,14 @@
 //! HTTP Request Handlers for HTTPS Gateway
 //!
 //! Routes incoming HTTP requests to Web4 content via Web4ContentService.
+//!
+//! Note: HSTS headers are added via middleware in server.rs to ensure ALL
+//! responses include Strict-Transport-Security, including /health endpoint.
 
 use axum::{
     body::Body,
-    extract::{Host, Path, State},
-    http::{header, HeaderValue, Request, Response, StatusCode, Uri},
+    extract::{Host, State},
+    http::{header, Request, Response, StatusCode, Uri},
     response::IntoResponse,
 };
 use std::sync::Arc;
@@ -13,25 +16,13 @@ use tracing::{debug, info, warn};
 
 use lib_network::{Web4ContentService, Web4Capability, ContentResult};
 
-use super::config::{GatewayTlsConfig, TlsMode};
+use super::config::GatewayTlsConfig;
 
 /// Shared state for gateway handlers
 #[derive(Clone)]
 pub struct GatewayState {
     pub content_service: Arc<Web4ContentService>,
     pub config: Arc<GatewayTlsConfig>,
-}
-
-/// Build HSTS header value from config
-fn build_hsts_header(config: &GatewayTlsConfig) -> Option<HeaderValue> {
-    // Only add HSTS for TLS-enabled modes
-    if config.mode == TlsMode::Disabled {
-        return None;
-    }
-
-    // Build HSTS header: max-age=<seconds>; includeSubDomains
-    let hsts_value = format!("max-age={}; includeSubDomains", config.hsts_max_age);
-    HeaderValue::from_str(&hsts_value).ok()
 }
 
 /// Extract domain from Host header based on gateway configuration
@@ -104,30 +95,21 @@ fn validate_domain(domain: &str) -> bool {
 }
 
 /// Main gateway handler for all Web4 content requests
+/// Note: HSTS header is added by middleware in server.rs
 pub async fn gateway_handler(
     State(state): State<GatewayState>,
     Host(host): Host,
     request: Request<Body>,
 ) -> impl IntoResponse {
-    // Build HSTS header for this response
-    let hsts_header = build_hsts_header(&state.config);
-
     // Extract domain from host
     let domain = match extract_domain(&host, &state.config) {
         Some(d) => d,
         None => {
             // Not a Web4 domain - return landing page or 404
-            let mut response = Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .header(header::CONTENT_TYPE, "text/html; charset=utf-8");
-
-            // Add HSTS header
-            if let Some(hsts) = &hsts_header {
-                response = response.header(header::STRICT_TRANSPORT_SECURITY, hsts);
-            }
-
-            return response
-                .body(Body::from(format!(
+            return (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                format!(
                     r#"<!DOCTYPE html>
 <html>
 <head><title>Web4 Gateway</title></head>
@@ -138,27 +120,18 @@ pub async fn gateway_handler(
 </body>
 </html>"#,
                     state.config.gateway_suffix
-                )))
-                .unwrap()
-                .into_response();
+                ),
+            ).into_response();
         }
     };
 
     // Validate domain
     if !validate_domain(&domain) {
         warn!("Invalid domain: {}", domain);
-        let mut response = Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .header(header::CONTENT_TYPE, "text/plain");
-
-        if let Some(hsts) = &hsts_header {
-            response = response.header(header::STRICT_TRANSPORT_SECURITY, hsts);
-        }
-
-        return response
-            .body(Body::from("Invalid domain name"))
-            .unwrap()
-            .into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "Invalid domain name",
+        ).into_response();
     }
 
     // Get path from URI
@@ -186,11 +159,6 @@ pub async fn gateway_handler(
                 .header(header::CACHE_CONTROL, &result.cache_control)
                 .header("X-Web4-Domain", &domain);
 
-            // Add HSTS header
-            if let Some(hsts) = &hsts_header {
-                response = response.header(header::STRICT_TRANSPORT_SECURITY, hsts.clone());
-            }
-
             // Add ETag if present
             if let Some(etag) = &result.etag {
                 response = response.header(header::ETAG, etag);
@@ -214,16 +182,10 @@ pub async fn gateway_handler(
         Err(e) => {
             warn!(domain = %domain, path = %path, error = %e, "Gateway: Content not found");
 
-            let mut response = Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .header(header::CONTENT_TYPE, "text/html; charset=utf-8");
-
-            if let Some(hsts) = &hsts_header {
-                response = response.header(header::STRICT_TRANSPORT_SECURITY, hsts.clone());
-            }
-
-            response
-                .body(Body::from(format!(
+            (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                format!(
                     r#"<!DOCTYPE html>
 <html>
 <head><title>404 - Not Found</title></head>
@@ -234,9 +196,8 @@ pub async fn gateway_handler(
 </body>
 </html>"#,
                     path, domain, e
-                )))
-                .unwrap()
-                .into_response()
+                ),
+            ).into_response()
         }
     }
 }
@@ -269,6 +230,7 @@ pub async fn health_handler() -> impl IntoResponse {
 }
 
 /// Gateway info endpoint (returns JSON)
+/// Note: HSTS header is added by middleware in server.rs
 pub async fn info_handler(
     State(state): State<GatewayState>,
 ) -> impl IntoResponse {
@@ -280,18 +242,11 @@ pub async fn info_handler(
         "allow_bare_domains": state.config.allow_bare_sovereign_domains,
     });
 
-    let mut response = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/json");
-
-    if let Some(hsts) = build_hsts_header(&state.config) {
-        response = response.header(header::STRICT_TRANSPORT_SECURITY, hsts);
-    }
-
-    response
-        .body(Body::from(serde_json::to_string(&info).unwrap_or_default()))
-        .unwrap()
-        .into_response()
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::to_string(&info).unwrap_or_default(),
+    )
 }
 
 #[cfg(test)]
@@ -401,31 +356,5 @@ mod tests {
         assert!(!validate_domain(&long_domain));
     }
 
-    #[test]
-    fn test_build_hsts_header_enabled() {
-        let config = GatewayTlsConfig {
-            mode: TlsMode::SelfSigned,
-            hsts_max_age: 31536000,
-            ..Default::default()
-        };
-
-        let hsts = build_hsts_header(&config);
-        assert!(hsts.is_some());
-        assert_eq!(
-            hsts.unwrap().to_str().unwrap(),
-            "max-age=31536000; includeSubDomains"
-        );
-    }
-
-    #[test]
-    fn test_build_hsts_header_disabled_mode() {
-        let config = GatewayTlsConfig {
-            mode: TlsMode::Disabled,
-            hsts_max_age: 31536000,
-            ..Default::default()
-        };
-
-        let hsts = build_hsts_header(&config);
-        assert!(hsts.is_none());
-    }
+    // Note: HSTS tests are now in server.rs since HSTS is handled via middleware
 }

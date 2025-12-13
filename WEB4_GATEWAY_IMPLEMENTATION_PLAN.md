@@ -974,21 +974,23 @@ ProtocolsComponent::new_gateway_node(env, port, gateway_ip, https_config)
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| **HSTS Enforcement** | All HTTPS responses include `Strict-Transport-Security` header | ✅ |
-| **Per-IP Rate Limiting** | 100 requests/minute per IP address with automatic cleanup | ✅ |
+| **HSTS Middleware** | Dedicated middleware adds `Strict-Transport-Security` to ALL responses (including /health) | ✅ |
+| **Per-IP Rate Limiting** | 100 requests/minute per IP with automatic cleanup | ✅ |
+| **Rate Limit Map Bounds** | Maximum 10,000 unique IPs tracked; new IPs rejected at capacity (prevents spoofed-source flood) | ✅ |
 | **Request Body Limits** | Maximum 10 MB request body size via `DefaultBodyLimit` | ✅ |
 | **Request Timeout** | 30-second timeout for all requests via `TimeoutLayer` | ✅ |
 | **Graceful Shutdown** | Server handles tracked with `watch::channel` for clean shutdown | ✅ |
 
 ### Tests
 
-25 tests covering:
+27 tests covering:
 - Config validation
 - Builder patterns
 - Path normalization
 - Domain extraction
 - TLD filtering
-- HSTS header generation (enabled/disabled modes)
+- HSTS middleware (enabled/disabled/production modes)
+- Rate limiter bounds (allows, blocks, max entries)
 
 ---
 

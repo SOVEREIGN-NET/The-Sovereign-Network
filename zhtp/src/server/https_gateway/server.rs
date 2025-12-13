@@ -39,8 +39,10 @@ const RATE_LIMIT_REQUESTS_PER_MINUTE: u32 = 100;
 const RATE_LIMIT_CLEANUP_INTERVAL_SECS: u64 = 60;
 const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 const REQUEST_TIMEOUT_SECS: u64 = 30;
+/// Maximum unique IPs to track in rate limiter (prevents memory exhaustion from spoofed sources)
+const RATE_LIMIT_MAX_ENTRIES: usize = 10_000;
 
-/// Per-IP rate limiting state
+/// Per-IP rate limiting state with bounded size
 #[derive(Clone)]
 struct RateLimitState {
     requests: Arc<RwLock<HashMap<IpAddr, (u32, Instant)>>>,
@@ -54,6 +56,7 @@ impl RateLimitState {
     }
 
     /// Check if an IP has exceeded the rate limit
+    /// Returns false if rate limit exceeded OR if map is full (rejects new IPs when at capacity)
     async fn check_rate_limit(&self, ip: IpAddr) -> bool {
         let mut requests = self.requests.write().await;
         let now = Instant::now();
@@ -61,18 +64,32 @@ impl RateLimitState {
         // Clean up old entries (older than 1 minute)
         requests.retain(|_, (_, timestamp)| now.duration_since(*timestamp).as_secs() < 60);
 
-        // Check/update this IP's count
-        let entry = requests.entry(ip).or_insert((0, now));
-
-        // Reset if window expired
-        if now.duration_since(entry.1).as_secs() >= 60 {
-            entry.0 = 0;
-            entry.1 = now;
+        // Check if this IP is already tracked
+        if let Some(entry) = requests.get_mut(&ip) {
+            // Reset if window expired
+            if now.duration_since(entry.1).as_secs() >= 60 {
+                entry.0 = 1;
+                entry.1 = now;
+                return true;
+            }
+            entry.0 += 1;
+            return entry.0 <= RATE_LIMIT_REQUESTS_PER_MINUTE;
         }
 
-        entry.0 += 1;
+        // New IP - check if we have capacity
+        if requests.len() >= RATE_LIMIT_MAX_ENTRIES {
+            // Map is full - reject new IPs to prevent memory exhaustion
+            warn!(
+                ip = %ip,
+                entries = requests.len(),
+                "Rate limit map at capacity, rejecting new IP"
+            );
+            return false;
+        }
 
-        entry.0 <= RATE_LIMIT_REQUESTS_PER_MINUTE
+        // Add new IP entry
+        requests.insert(ip, (1, now));
+        true
     }
 }
 
@@ -95,6 +112,44 @@ async fn rate_limit_middleware(
     }
 
     next.run(request).await
+}
+
+/// HSTS state for middleware
+#[derive(Clone)]
+struct HstsState {
+    header_value: Option<String>,
+}
+
+impl HstsState {
+    fn new(config: &GatewayTlsConfig) -> Self {
+        let header_value = if config.mode != TlsMode::Disabled {
+            Some(format!("max-age={}; includeSubDomains", config.hsts_max_age))
+        } else {
+            None
+        };
+        Self { header_value }
+    }
+}
+
+/// HSTS middleware - adds Strict-Transport-Security header to ALL responses
+async fn hsts_middleware(
+    State(hsts): State<HstsState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+
+    // Add HSTS header if TLS is enabled
+    if let Some(ref hsts_value) = hsts.header_value {
+        if let Ok(value) = axum::http::HeaderValue::from_str(hsts_value) {
+            response.headers_mut().insert(
+                axum::http::header::STRICT_TRANSPORT_SECURITY,
+                value,
+            );
+        }
+    }
+
+    response
 }
 
 /// Server handle for graceful shutdown
@@ -210,14 +265,18 @@ impl HttpsGateway {
         // Build rate limit state
         let rate_limit = RateLimitState::new();
 
+        // Build HSTS state
+        let hsts = HstsState::new(&self.config);
+
         // Build CORS layer
         let cors = CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
             .allow_headers(Any);
 
-        // Build main router with rate limiting, body limits, and timeouts
+        // Build main router with rate limiting, body limits, timeouts, and HSTS
         // Note: Layer order is bottom-up (first added = outermost layer)
+        // HSTS middleware is outermost to ensure header is added to ALL responses
         let app = Router::new()
             .route("/health", get(health_handler))
             .route("/info", get(info_handler))
@@ -229,6 +288,10 @@ impl HttpsGateway {
             .route_layer(middleware::from_fn_with_state(
                 rate_limit.clone(),
                 rate_limit_middleware,
+            ))
+            .route_layer(middleware::from_fn_with_state(
+                hsts.clone(),
+                hsts_middleware,
             ))
             .with_state(state.clone());
 
@@ -496,5 +559,103 @@ impl HttpsGateway {
                 format!("http://{}:{}", self.config.bind_addr, port)
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[tokio::test]
+    async fn test_rate_limit_allows_requests() {
+        let rate_limit = RateLimitState::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+
+        // First request should be allowed
+        assert!(rate_limit.check_rate_limit(ip).await);
+
+        // Requests up to limit should be allowed
+        for _ in 1..RATE_LIMIT_REQUESTS_PER_MINUTE {
+            assert!(rate_limit.check_rate_limit(ip).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_blocks_excess() {
+        let rate_limit = RateLimitState::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2));
+
+        // Use up all requests
+        for _ in 0..RATE_LIMIT_REQUESTS_PER_MINUTE {
+            rate_limit.check_rate_limit(ip).await;
+        }
+
+        // Next request should be blocked
+        assert!(!rate_limit.check_rate_limit(ip).await);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_max_entries() {
+        let rate_limit = RateLimitState::new();
+
+        // Fill up to max entries
+        for i in 0..RATE_LIMIT_MAX_ENTRIES {
+            let ip = IpAddr::V4(Ipv4Addr::new(
+                ((i >> 24) & 0xFF) as u8,
+                ((i >> 16) & 0xFF) as u8,
+                ((i >> 8) & 0xFF) as u8,
+                (i & 0xFF) as u8,
+            ));
+            assert!(rate_limit.check_rate_limit(ip).await, "Entry {} should be allowed", i);
+        }
+
+        // New IP should be rejected when at capacity
+        let new_ip = IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255));
+        assert!(!rate_limit.check_rate_limit(new_ip).await, "Should reject new IPs at capacity");
+    }
+
+    #[test]
+    fn test_hsts_state_enabled() {
+        let config = GatewayTlsConfig {
+            mode: TlsMode::SelfSigned,
+            hsts_max_age: 31536000,
+            ..Default::default()
+        };
+
+        let hsts = HstsState::new(&config);
+        assert!(hsts.header_value.is_some());
+        assert_eq!(
+            hsts.header_value.unwrap(),
+            "max-age=31536000; includeSubDomains"
+        );
+    }
+
+    #[test]
+    fn test_hsts_state_disabled() {
+        let config = GatewayTlsConfig {
+            mode: TlsMode::Disabled,
+            hsts_max_age: 31536000,
+            ..Default::default()
+        };
+
+        let hsts = HstsState::new(&config);
+        assert!(hsts.header_value.is_none());
+    }
+
+    #[test]
+    fn test_hsts_state_production() {
+        let config = GatewayTlsConfig {
+            mode: TlsMode::StandardCa,
+            hsts_max_age: 63072000, // 2 years
+            ..Default::default()
+        };
+
+        let hsts = HstsState::new(&config);
+        assert!(hsts.header_value.is_some());
+        assert_eq!(
+            hsts.header_value.unwrap(),
+            "max-age=63072000; includeSubDomains"
+        );
     }
 }
