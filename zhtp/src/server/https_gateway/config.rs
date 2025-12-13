@@ -225,20 +225,33 @@ impl GatewayTlsConfig {
 
         // Check certificate paths for non-self-signed modes
         match self.mode {
-            TlsMode::StandardCa | TlsMode::PrivateCa => {
+            TlsMode::StandardCa => {
                 if self.cert_path.is_none() {
-                    return Err(format!("{:?} mode requires cert_path", self.mode));
+                    return Err("StandardCa mode requires cert_path".to_string());
                 }
                 if self.key_path.is_none() {
-                    return Err(format!("{:?} mode requires key_path", self.mode));
+                    return Err("StandardCa mode requires key_path".to_string());
                 }
             }
             TlsMode::PrivateCa => {
+                if self.cert_path.is_none() {
+                    return Err("PrivateCa mode requires cert_path".to_string());
+                }
+                if self.key_path.is_none() {
+                    return Err("PrivateCa mode requires key_path".to_string());
+                }
                 if self.ca_cert_path.is_none() {
                     return Err("PrivateCa mode requires ca_cert_path".to_string());
                 }
             }
-            _ => {}
+            TlsMode::SelfSigned | TlsMode::Disabled => {
+                // No certificate paths required
+            }
+        }
+
+        // Validate CORS origins
+        if self.cors_origins.is_empty() {
+            return Err("cors_origins cannot be empty".to_string());
         }
 
         Ok(())

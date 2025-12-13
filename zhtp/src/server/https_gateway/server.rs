@@ -24,10 +24,10 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::sync::{RwLock, watch};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use tracing::{info, warn, error};
+use tracing::{info, warn, error, debug};
 
 use lib_network::{DomainRegistry, Web4ContentService, ZdnsResolver, ZdnsConfig};
 
@@ -268,11 +268,9 @@ impl HttpsGateway {
         // Build HSTS state
         let hsts = HstsState::new(&self.config);
 
-        // Build CORS layer
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
+        // Build CORS layer from configuration
+        let cors = self.build_cors_layer();
+        debug!("  CORS origins: {:?}", self.config.cors_origins);
 
         // Build main router with rate limiting, body limits, timeouts, and HSTS
         // Note: Layer order is bottom-up (first added = outermost layer)
@@ -329,6 +327,8 @@ impl HttpsGateway {
         }
 
         // Start HTTP redirect server (optional) with graceful shutdown
+        // Note: HTTP redirect server also includes HSTS middleware so first-touch
+        // HTTP responses set HSTS and browsers will persist the upgrade policy.
         if let Some(http_port) = self.config.http_port {
             if self.config.enable_http_redirect && self.config.mode != TlsMode::Disabled {
                 let http_addr = SocketAddr::new(self.config.bind_addr, http_port);
@@ -338,6 +338,10 @@ impl HttpsGateway {
                     .route_layer(middleware::from_fn_with_state(
                         rate_limit.clone(),
                         rate_limit_middleware,
+                    ))
+                    .route_layer(middleware::from_fn_with_state(
+                        hsts.clone(),
+                        hsts_middleware,
                     ))
                     .with_state(state);
 
@@ -559,6 +563,39 @@ impl HttpsGateway {
                 format!("http://{}:{}", self.config.bind_addr, port)
             }
         })
+    }
+
+    /// Build CORS layer from configuration
+    fn build_cors_layer(&self) -> CorsLayer {
+        // Check if wildcard is configured
+        let has_wildcard = self.config.cors_origins.iter().any(|o| o == "*");
+
+        if has_wildcard {
+            // Allow any origin
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        } else {
+            // Parse configured origins
+            let origins: Vec<_> = self.config.cors_origins
+                .iter()
+                .filter_map(|origin| origin.parse().ok())
+                .collect();
+
+            if origins.is_empty() {
+                // Fallback to restrictive - no origins allowed
+                warn!("No valid CORS origins configured, using restrictive policy");
+                CorsLayer::new()
+                    .allow_methods(Any)
+                    .allow_headers(Any)
+            } else {
+                CorsLayer::new()
+                    .allow_origin(origins)
+                    .allow_methods(Any)
+                    .allow_headers(Any)
+            }
+        }
     }
 }
 

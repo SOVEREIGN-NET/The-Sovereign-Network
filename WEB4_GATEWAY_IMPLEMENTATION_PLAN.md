@@ -974,17 +974,19 @@ ProtocolsComponent::new_gateway_node(env, port, gateway_ip, https_config)
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| **HSTS Middleware** | Dedicated middleware adds `Strict-Transport-Security` to ALL responses (including /health) | ✅ |
+| **HSTS Middleware** | Dedicated middleware adds `Strict-Transport-Security` to ALL responses (HTTPS + HTTP redirect) | ✅ |
 | **Per-IP Rate Limiting** | 100 requests/minute per IP with automatic cleanup | ✅ |
 | **Rate Limit Map Bounds** | Maximum 10,000 unique IPs tracked; new IPs rejected at capacity (prevents spoofed-source flood) | ✅ |
 | **Request Body Limits** | Maximum 10 MB request body size via `DefaultBodyLimit` | ✅ |
 | **Request Timeout** | 30-second timeout for all requests via `TimeoutLayer` | ✅ |
 | **Graceful Shutdown** | Server handles tracked with `watch::channel` for clean shutdown | ✅ |
+| **PrivateCa Validation** | Proper validation of ca_cert_path for PrivateCa mode | ✅ |
+| **Configurable CORS** | CORS origins from `config.cors_origins` (supports wildcard or explicit list) | ✅ |
 
 ### Tests
 
-27 tests covering:
-- Config validation
+31 tests covering:
+- Config validation (including PrivateCa cert/key/ca paths)
 - Builder patterns
 - Path normalization
 - Domain extraction

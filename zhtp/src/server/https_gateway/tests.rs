@@ -121,12 +121,35 @@ fn test_config_validate_private_ca_requires_ca_cert() {
         ca_cert_path: None, // Missing!
         ..Default::default()
     };
-    // Note: validate() checks for ca_cert_path but the current impl has a bug
-    // where PrivateCa validation is inside StandardCa match arm
-    // This test documents expected behavior
     let result = config.validate();
-    // Should fail due to missing ca_cert_path
-    assert!(result.is_err() || result.is_ok()); // Placeholder until bug is fixed
+    assert!(result.is_err(), "PrivateCa without ca_cert_path should fail validation");
+    assert!(result.unwrap_err().contains("ca_cert_path"));
+}
+
+#[test]
+fn test_config_validate_private_ca_requires_cert_path() {
+    let config = GatewayTlsConfig {
+        mode: TlsMode::PrivateCa,
+        cert_path: None, // Missing!
+        key_path: Some(PathBuf::from("/etc/pki/server.key")),
+        ca_cert_path: Some(PathBuf::from("/etc/pki/ca.crt")),
+        ..Default::default()
+    };
+    let result = config.validate();
+    assert!(result.is_err(), "PrivateCa without cert_path should fail validation");
+    assert!(result.unwrap_err().contains("cert_path"));
+}
+
+#[test]
+fn test_config_validate_private_ca_success() {
+    let config = GatewayTlsConfig {
+        mode: TlsMode::PrivateCa,
+        cert_path: Some(PathBuf::from("/etc/pki/server.crt")),
+        key_path: Some(PathBuf::from("/etc/pki/server.key")),
+        ca_cert_path: Some(PathBuf::from("/etc/pki/ca.crt")),
+        ..Default::default()
+    };
+    assert!(config.validate().is_ok(), "PrivateCa with all paths should pass validation");
 }
 
 #[test]
