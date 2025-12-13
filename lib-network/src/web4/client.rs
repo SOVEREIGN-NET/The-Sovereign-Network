@@ -328,11 +328,9 @@ impl Web4Client {
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
 
-        // Configure ALPN protocols to match server (required for QUIC handshake)
-        crypto.alpn_protocols = vec![
-            b"zhtp/1.0".to_vec(),  // ZHTP native protocol
-            b"h3".to_vec(),        // HTTP/3 fallback
-        ];
+        // Configure ALPN for control plane operations (UHP handshake required)
+        // This tells the server to expect UHP handshake before API requests
+        crypto.alpn_protocols = crate::constants::client_control_plane_alpns();
 
         let mut config = ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?

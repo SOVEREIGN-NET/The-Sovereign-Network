@@ -229,6 +229,89 @@ impl ZhtpRouter {
         Ok(())
     }
 
+    /// Handle authenticated ZHTP stream from control plane connection
+    /// The session contains authentication context from UHP+Kyber handshake
+    pub async fn handle_authenticated_zhtp_stream(
+        &self,
+        buffered: &mut crate::server::quic_handler::BufferedStream,
+        mut send: SendStream,
+        session: &crate::server::quic_handler::ControlPlaneSession,
+    ) -> Result<()> {
+        debug!("📨 Processing authenticated ZHTP request from {}", session.peer_did);
+
+        // Read request data from buffered stream
+        let request_data = buffered.read_to_end(super::serialization::MAX_MESSAGE_SIZE)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read ZHTP request from buffered stream: {}", e))?;
+
+        if request_data.is_empty() {
+            warn!("⚠️ Empty ZHTP request received from authenticated session");
+            return Ok(());
+        }
+
+        debug!("📦 Received {} bytes of authenticated ZHTP request data", request_data.len());
+
+        // Deserialize ZHTP request
+        let mut request = match deserialize_request(&request_data) {
+            Ok(req) => req,
+            Err(e) => {
+                warn!("❌ Failed to deserialize ZHTP request from {}: {}", session.peer_did, e);
+                let error_response = ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid ZHTP request: {}", e),
+                );
+                let response_data = serialize_response(&error_response)?;
+                send.write_all(&response_data).await
+                    .map_err(|e| anyhow::anyhow!("Write error: {}", e))?;
+                send.finish()
+                    .map_err(|e| anyhow::anyhow!("Finish error: {}", e))?;
+                return Ok(());
+            }
+        };
+
+        // Add authenticated requester identity to request context
+        // IdentityId is a Hash of the DID
+        request.requester = Some(lib_crypto::Hash(lib_crypto::hash_blake3(session.peer_did.as_bytes())));
+
+        info!("✅ Authenticated ZHTP {} {} from {}", request.method, request.uri, session.peer_did);
+
+        // Process middleware
+        let (processed_request, middleware_response) = self.process_middleware(request).await?;
+
+        // If middleware returned a response, use it
+        let response = if let Some(middleware_resp) = middleware_response {
+            middleware_resp
+        } else {
+            // Route to handler
+            match self.route_request(processed_request).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    warn!("❌ Handler error for authenticated request: {}", e);
+                    ZhtpResponse::error(
+                        ZhtpStatus::InternalServerError,
+                        format!("Handler error: {}", e),
+                    )
+                }
+            }
+        };
+
+        debug!("📤 Sending authenticated ZHTP response: {:?}", response.status);
+
+        // Serialize response
+        let response_data = serialize_response(&response)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize ZHTP response: {}", e))?;
+
+        // Send response over QUIC stream
+        send.write_all(&response_data).await
+            .map_err(|e| anyhow::anyhow!("Failed to write ZHTP response to QUIC stream: {}", e))?;
+
+        send.finish()
+            .map_err(|e| anyhow::anyhow!("Failed to finish QUIC stream: {}", e))?;
+
+        info!("✅ Authenticated ZHTP response sent to {}", session.peer_did);
+        Ok(())
+    }
+
     /// Route a ZHTP request to the appropriate handler
     pub async fn route_request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let path = &request.uri;
