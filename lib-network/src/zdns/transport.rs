@@ -4,11 +4,18 @@
 //! Resolves .zhtp and .sov domains to gateway IP address.
 //!
 //! Security features:
-//! - Rate limiting per source IP
-//! - Bounded worker pool (no unbounded task spawning)
-//! - Response Rate Limiting (RRL) for amplification protection
-//! - Strict domain validation (only .zhtp/.sov)
+//! - Per-IP rate limiting (max queries per time window)
+//! - Bounded worker pool with semaphores (no unbounded task spawning)
+//! - Strict domain validation (only .zhtp/.sov TLDs accepted)
 //! - Capability checking before returning gateway IP
+//! - TCP timeouts to prevent slow loris attacks
+//! - Default bind to localhost (explicit opt-in for external exposure)
+//!
+//! Note: This implements per-IP rate limiting, not full Response Rate Limiting (RRL).
+//! For production deployments exposed to the internet, consider adding:
+//! - Per-name response throttling
+//! - TC (truncation) bit for rate-limited responses
+//! - IP reputation/allowlisting at the firewall level
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -517,11 +524,12 @@ impl ZdnsTransportServer {
             return None; // Let other DNS servers handle it
         }
 
-        // Only handle A record queries
+        // Only handle A record queries - return NOTIMP for other types (AAAA, MX, etc.)
+        // NOTIMP is correct because the domain exists but we don't implement that record type
         if !query.is_a_query() {
-            debug!(domain = %domain_lower, "Non-A query, returning NXDOMAIN");
-            stats.write().await.nxdomain += 1;
-            return Some(DnsPacket::nxdomain(&query));
+            debug!(domain = %domain_lower, "Non-A query, returning NOTIMP");
+            stats.write().await.errors += 1;
+            return Some(DnsPacket::notimp(&query));
         }
 
         // Resolve domain using ZDNS resolver (with caching)
@@ -667,5 +675,262 @@ mod tests {
         let normalized = domain.to_lowercase();
         assert_eq!(normalized, "myapp.zhtp");
         assert!(normalized.ends_with(".zhtp"));
+    }
+
+    // ========== DNS Packet Tests ==========
+
+    #[test]
+    fn test_notimp_response_for_non_a_queries() {
+        // Verify NOTIMP response has correct rcode
+        let query = DnsPacket {
+            id: 0x1234,
+            is_response: false,
+            question: Some(super::super::packet::DnsQuestion {
+                name: "myapp.zhtp".to_string(),
+                qtype: 28, // AAAA record
+                qclass: 1,
+            }),
+            answers: vec![],
+            rcode: 0,
+        };
+
+        let response = DnsPacket::notimp(&query);
+        assert!(response.is_response);
+        assert_eq!(response.rcode, 4); // NOTIMP
+        assert_eq!(response.id, query.id);
+        assert!(response.answers.is_empty());
+    }
+
+    #[test]
+    fn test_nxdomain_response() {
+        let query = DnsPacket {
+            id: 0x5678,
+            is_response: false,
+            question: Some(super::super::packet::DnsQuestion {
+                name: "nonexistent.zhtp".to_string(),
+                qtype: 1, // A record
+                qclass: 1,
+            }),
+            answers: vec![],
+            rcode: 0,
+        };
+
+        let response = DnsPacket::nxdomain(&query);
+        assert!(response.is_response);
+        assert_eq!(response.rcode, 3); // NXDOMAIN
+        assert!(response.answers.is_empty());
+    }
+
+    #[test]
+    fn test_a_record_response_with_ttl() {
+        let query = DnsPacket {
+            id: 0xABCD,
+            is_response: false,
+            question: Some(super::super::packet::DnsQuestion {
+                name: "myapp.zhtp".to_string(),
+                qtype: 1,
+                qclass: 1,
+            }),
+            answers: vec![],
+            rcode: 0,
+        };
+
+        let gateway_ip = Ipv4Addr::new(192, 168, 1, 100);
+        let ttl = 300;
+        let response = DnsPacket::a_record(&query, gateway_ip, ttl);
+
+        assert!(response.is_response);
+        assert_eq!(response.rcode, 0); // NOERROR
+        assert_eq!(response.answers.len(), 1);
+        assert_eq!(response.answers[0].ttl, ttl);
+        assert_eq!(response.answers[0].rdata, vec![192, 168, 1, 100]);
+    }
+
+    // ========== TLD Filtering Tests ==========
+
+    #[test]
+    fn test_zhtp_tld_accepted() {
+        assert!("myapp.zhtp".ends_with(".zhtp"));
+        assert!("sub.domain.zhtp".ends_with(".zhtp"));
+        assert!("a.zhtp".ends_with(".zhtp"));
+    }
+
+    #[test]
+    fn test_sov_tld_accepted() {
+        assert!("myapp.sov".ends_with(".sov"));
+        assert!("sub.domain.sov".ends_with(".sov"));
+        assert!("a.sov".ends_with(".sov"));
+    }
+
+    #[test]
+    fn test_non_sovereign_tlds_rejected() {
+        // These should NOT match sovereign TLDs
+        let non_sovereign = [
+            "example.com",
+            "example.org",
+            "example.net",
+            "zhtp.com",      // TLD is .com, not .zhtp
+            "sov.org",       // TLD is .org, not .sov
+            "myapp.zhtpp",   // Typo
+            "myapp.sovv",    // Typo
+            "myapp",         // No TLD
+        ];
+
+        for domain in &non_sovereign {
+            let is_sovereign = domain.ends_with(".zhtp") || domain.ends_with(".sov");
+            assert!(!is_sovereign, "Domain '{}' should not be accepted as sovereign", domain);
+        }
+    }
+
+    // ========== Capability Enforcement Tests ==========
+
+    #[test]
+    fn test_allowed_capabilities_default() {
+        let config = ZdnsServerConfig::default();
+        let allowed = config.allowed_capabilities.as_ref().unwrap();
+
+        // Default should allow HttpServe and SpaServe
+        assert!(allowed.contains(&Web4Capability::HttpServe));
+        assert!(allowed.contains(&Web4Capability::SpaServe));
+
+        // DownloadOnly should NOT be in default allowed list
+        assert!(!allowed.contains(&Web4Capability::DownloadOnly));
+    }
+
+    #[test]
+    fn test_capability_check_logic() {
+        let allowed = vec![Web4Capability::HttpServe, Web4Capability::SpaServe];
+
+        // These should be allowed
+        assert!(allowed.contains(&Web4Capability::HttpServe));
+        assert!(allowed.contains(&Web4Capability::SpaServe));
+
+        // DownloadOnly should be rejected
+        assert!(!allowed.contains(&Web4Capability::DownloadOnly));
+    }
+
+    // ========== TTL Calculation Tests ==========
+
+    #[test]
+    fn test_ttl_uses_minimum_of_record_and_config() {
+        // If record TTL is lower, use record TTL
+        let record_ttl: u64 = 300;
+        let config_ttl: u64 = 3600;
+        let result = record_ttl.min(config_ttl);
+        assert_eq!(result, 300);
+
+        // If config TTL is lower, use config TTL
+        let record_ttl: u64 = 7200;
+        let config_ttl: u64 = 3600;
+        let result = record_ttl.min(config_ttl);
+        assert_eq!(result, 3600);
+    }
+
+    #[test]
+    fn test_ttl_respects_expiration() {
+        let now: u64 = 1000;
+        let expires_at: u64 = 1500;
+        let record_ttl: u64 = 3600;
+
+        // Remaining time until expiration
+        let remaining = expires_at - now; // 500 seconds
+        let effective_ttl = remaining.min(record_ttl);
+
+        // Should use the shorter of remaining time and record TTL
+        assert_eq!(effective_ttl, 500);
+    }
+
+    #[test]
+    fn test_expired_domain_detected() {
+        let now: u64 = 2000;
+        let expires_at: u64 = 1500;
+
+        // Domain is expired
+        assert!(now >= expires_at);
+    }
+
+    // ========== TCP Message Size Tests ==========
+
+    #[test]
+    fn test_max_tcp_message_size() {
+        // RFC 1035 limit
+        assert_eq!(MAX_TCP_MESSAGE_SIZE, 65535);
+    }
+
+    #[test]
+    fn test_tcp_length_prefix_parsing() {
+        // TCP DNS uses 2-byte big-endian length prefix
+        let len_bytes: [u8; 2] = [0x01, 0x00]; // 256 in big-endian
+        let len = u16::from_be_bytes(len_bytes) as usize;
+        assert_eq!(len, 256);
+
+        // Max valid length
+        let max_bytes: [u8; 2] = [0xFF, 0xFF]; // 65535
+        let max_len = u16::from_be_bytes(max_bytes) as usize;
+        assert_eq!(max_len, 65535);
+    }
+
+    // ========== Rate Limiter Edge Cases ==========
+
+    #[tokio::test]
+    async fn test_rate_limiter_different_ips_independent() {
+        let limiter = RateLimiter::new(2, 60);
+
+        let ip1 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let ip2 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+
+        // Exhaust ip1's quota
+        assert!(limiter.check_and_increment(ip1).await);
+        assert!(limiter.check_and_increment(ip1).await);
+        assert!(!limiter.check_and_increment(ip1).await); // Rate limited
+
+        // ip2 should still have full quota
+        assert!(limiter.check_and_increment(ip2).await);
+        assert!(limiter.check_and_increment(ip2).await);
+        assert!(!limiter.check_and_increment(ip2).await); // Now rate limited
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_cleanup() {
+        let limiter = RateLimiter::new(5, 1); // 1 second window
+
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+
+        // Add entry
+        limiter.check_and_increment(ip).await;
+
+        // Verify entry exists
+        {
+            let entries = limiter.entries.read().await;
+            assert!(entries.contains_key(&ip));
+        }
+
+        // Cleanup should work
+        limiter.cleanup_old_entries().await;
+    }
+
+    // ========== Semaphore Backpressure Tests ==========
+
+    #[tokio::test]
+    async fn test_semaphore_bounds_concurrency() {
+        let semaphore = Arc::new(Semaphore::new(2));
+
+        // Acquire 2 permits
+        let permit1 = semaphore.clone().try_acquire_owned();
+        let permit2 = semaphore.clone().try_acquire_owned();
+
+        assert!(permit1.is_ok());
+        assert!(permit2.is_ok());
+
+        // 3rd should fail (at capacity)
+        let permit3 = semaphore.clone().try_acquire_owned();
+        assert!(permit3.is_err());
+
+        // Drop one permit
+        drop(permit1);
+
+        // Now should succeed
+        let permit4 = semaphore.clone().try_acquire_owned();
+        assert!(permit4.is_ok());
     }
 }

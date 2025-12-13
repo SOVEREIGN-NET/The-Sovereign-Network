@@ -13,6 +13,7 @@ const AA_AUTHORITATIVE: u16 = 0x0400;
 const RD_RECURSION_DESIRED: u16 = 0x0100;
 const RA_RECURSION_AVAILABLE: u16 = 0x0080;
 const RCODE_NOERROR: u16 = 0x0000;
+const RCODE_NOTIMP: u16 = 0x0004;
 const RCODE_NXDOMAIN: u16 = 0x0003;
 
 /// DNS record types
@@ -236,6 +237,18 @@ impl DnsPacket {
             question: query.question.clone(),
             answers: vec![],
             rcode: 2, // SERVFAIL
+        }
+    }
+
+    /// Create a NOTIMP (Not Implemented) response for unsupported query types
+    /// Used when the domain exists but we don't support the requested record type (e.g., AAAA, MX)
+    pub fn notimp(query: &DnsPacket) -> Self {
+        DnsPacket {
+            id: query.id,
+            is_response: true,
+            question: query.question.clone(),
+            answers: vec![],
+            rcode: 4, // NOTIMP
         }
     }
 
