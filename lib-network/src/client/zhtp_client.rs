@@ -258,10 +258,16 @@ impl ZhtpClient {
         // Install crypto provider
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        let crypto = rustls::ClientConfig::builder()
+        let mut crypto = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
+
+        // Configure ALPN protocols to match server (required for QUIC handshake)
+        crypto.alpn_protocols = vec![
+            b"zhtp/1.0".to_vec(),  // ZHTP native protocol
+            b"h3".to_vec(),        // HTTP/3 fallback
+        ];
 
         let mut config = ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?
