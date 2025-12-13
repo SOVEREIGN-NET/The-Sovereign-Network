@@ -29,10 +29,10 @@
 //! resolver.invalidate("myapp.zhtp");
 //! ```
 
-mod resolver;
-mod config;
-mod error;
+pub mod resolver;
+pub mod config;
+pub mod error;
 
-pub use resolver::{ZdnsResolver, Web4Record, CachedRecord};
+pub use resolver::{ZdnsResolver, Web4Record, CachedRecord, ResolverMetrics};
 pub use config::ZdnsConfig;
 pub use error::ZdnsError;

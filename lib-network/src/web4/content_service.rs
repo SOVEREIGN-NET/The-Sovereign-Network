@@ -488,19 +488,39 @@ impl Web4ContentService {
     ///
     /// Flow:
     /// 1. Normalize path (SECURITY CRITICAL - must be first!)
-    /// 2. Check if path is index/directory
-    /// 3. Try to fetch content from registry
-    /// 4. If not found and SPA mode, apply fallback logic
-    /// 5. Return content with appropriate headers
+    /// 2. Resolve domain via ZDNS (cached) to validate and get config
+    /// 3. Check if path is index/directory
+    /// 4. Try to fetch content from registry
+    /// 5. If not found and SPA mode, apply fallback logic
+    /// 6. Return content with appropriate headers
     pub async fn serve(&self, domain: &str, path: &str) -> Result<ContentResult> {
         // STEP 1: Normalize path FIRST (security critical!)
         let normalized_path = Self::normalize_path(path)?;
         debug!("Normalized path: '{}' -> '{}'", path, normalized_path);
 
-        // Get domain configuration
-        let content_mode = self.get_content_mode(domain).await;
-        let index_doc = self.get_index_document(domain).await;
-        let capability = self.get_capability(domain).await;
+        // STEP 2: Resolve domain via ZDNS resolver (uses cache if available)
+        // This validates the domain exists and gets its configuration
+        let (content_mode, index_doc, capability) = if let Some(resolver) = &self.zdns_resolver {
+            // Use ZDNS resolver for cached lookup
+            match resolver.resolve_web4(domain).await {
+                Ok(record) => {
+                    let mode = record.content_mode.unwrap_or(self.defaults.content_mode);
+                    let index = record.spa_entry.unwrap_or_else(|| self.defaults.index_document.clone());
+                    let cap = record.capability.unwrap_or(self.defaults.capability);
+                    (mode, index, cap)
+                }
+                Err(e) => {
+                    warn!(domain = %domain, error = %e, "ZDNS resolution failed");
+                    return Err(anyhow!("Domain not found: {}", domain));
+                }
+            }
+        } else {
+            // Fall back to domain_configs and defaults (no ZDNS resolver)
+            let mode = self.get_content_mode(domain).await;
+            let index = self.get_index_document(domain).await;
+            let cap = self.get_capability(domain).await;
+            (mode, index, cap)
+        };
 
         // Check capability
         if capability == Web4Capability::DownloadOnly {
@@ -511,7 +531,7 @@ impl Web4ContentService {
             }
         }
 
-        // STEP 2: Determine effective path
+        // STEP 3: Determine effective path
         let effective_path = if normalized_path == "/" {
             // Root path -> index document
             format!("/{}", index_doc)
@@ -522,7 +542,7 @@ impl Web4ContentService {
             normalized_path.clone()
         };
 
-        // STEP 3: Try to fetch content
+        // STEP 4: Try to fetch content
         let is_index = effective_path.ends_with(&index_doc);
 
         match self.fetch_content(domain, &effective_path).await {

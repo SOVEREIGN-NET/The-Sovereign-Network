@@ -574,4 +574,86 @@ mod tests {
         assert!(extractor.validate_domain("short.zhtp")); // 10 chars
         assert!(!extractor.validate_domain("this-is-a-very-long-domain-name.zhtp")); // > 20 chars
     }
+
+    // ========================================
+    // ZDNS Resolver Integration Tests
+    // ========================================
+
+    #[test]
+    fn test_zdns_resolver_domain_validation() {
+        use lib_network::zdns::resolver::ZdnsResolver;
+
+        // Test that ZDNS resolver enforces .zhtp/.sov TLDs
+        // (These are sync validation checks, no async needed)
+
+        // Valid sovereign domains
+        assert!(ZdnsResolver::is_valid_domain("myapp.zhtp"));
+        assert!(ZdnsResolver::is_valid_domain("my-app.zhtp"));
+        assert!(ZdnsResolver::is_valid_domain("sub.domain.zhtp"));
+        assert!(ZdnsResolver::is_valid_domain("myapp.sov"));
+        assert!(ZdnsResolver::is_valid_domain("commerce.myapp.sov"));
+
+        // Invalid: wrong TLD
+        assert!(!ZdnsResolver::is_valid_domain("myapp.com"));
+        assert!(!ZdnsResolver::is_valid_domain("myapp.localhost"));
+        assert!(!ZdnsResolver::is_valid_domain("myapp")); // No TLD
+
+        // Invalid: underscores (not DNS compliant)
+        assert!(!ZdnsResolver::is_valid_domain("my_app.zhtp"));
+
+        // Invalid: format violations
+        assert!(!ZdnsResolver::is_valid_domain(""));
+        assert!(!ZdnsResolver::is_valid_domain("-myapp.zhtp"));
+        assert!(!ZdnsResolver::is_valid_domain("myapp-.zhtp"));
+    }
+
+    #[test]
+    fn test_gateway_with_zdns_constructor() {
+        // Test that with_zdns constructor compiles and creates handler
+        // This is a compile-time check that the API is correct
+        // (We can't easily test the full flow without async runtime and storage)
+        fn _compile_check() {
+            // This function is never called, just checks compilation
+            async fn _inner() {
+                let storage = std::sync::Arc::new(
+                    tokio::sync::RwLock::new(
+                        lib_storage::UnifiedStorageSystem::new(
+                            lib_storage::UnifiedStorageConfig::default()
+                        ).await.unwrap()
+                    )
+                );
+                let registry = std::sync::Arc::new(
+                    lib_network::DomainRegistry::new_with_storage(storage).await.unwrap()
+                );
+                let resolver = std::sync::Arc::new(
+                    lib_network::ZdnsResolver::new(
+                        registry.clone(),
+                        lib_network::ZdnsConfig::default(),
+                    )
+                );
+                let _gateway = Web4GatewayHandler::with_zdns(
+                    registry,
+                    resolver,
+                    GatewayConfig::default(),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_zdns_cache_metrics() {
+        use lib_network::zdns::resolver::ResolverMetrics;
+
+        // Test cache metrics calculations
+        let mut metrics = ResolverMetrics::default();
+        assert_eq!(metrics.hit_ratio(), 0.0);
+
+        metrics.cache_hits = 80;
+        metrics.cache_misses = 20;
+        assert!((metrics.hit_ratio() - 0.8).abs() < 0.001);
+
+        metrics.cache_hits = 0;
+        metrics.cache_misses = 0;
+        assert_eq!(metrics.hit_ratio(), 0.0); // Avoid division by zero
+    }
 }

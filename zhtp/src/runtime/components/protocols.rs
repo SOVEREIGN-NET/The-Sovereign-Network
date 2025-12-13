@@ -11,7 +11,7 @@ use tracing::{info, warn, debug};
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::components::identity::create_default_storage_config;
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
-use lib_network::{ZdnsResolver, ZdnsConfig, DomainRegistry};
+use lib_network::{ZdnsResolver, ZdnsConfig};
 
 /// Protocols component - thin wrapper for unified server
 pub struct ProtocolsComponent {
@@ -178,18 +178,18 @@ impl Component for ProtocolsComponent {
         // Initialize WiFi Direct auth
         let _ = unified_server.initialize_wifi_direct_auth(identity_manager.clone()).await;
         
-        // Initialize ZDNS resolver with caching for Web4 domain lookups
-        info!(" Initializing ZDNS resolver with caching...");
-        let domain_registry = Arc::new(DomainRegistry::new_with_storage(storage.clone()).await?);
+        info!("Starting unified server on port {}...", self.api_port);
+        unified_server.start().await?;
+
+        // Initialize ZDNS resolver with caching, using the canonical domain registry
+        info!(" Initializing ZDNS resolver with canonical domain registry...");
+        let domain_registry = unified_server.get_domain_registry();
         let zdns_resolver = Arc::new(ZdnsResolver::new(
             domain_registry,
             ZdnsConfig::default(),
         ));
         *self.zdns_resolver.write().await = Some(zdns_resolver.clone());
-        info!(" ✓ ZDNS resolver initialized with LRU cache (size: 10000, TTL: 5min)");
-
-        info!("Starting unified server on port {}...", self.api_port);
-        unified_server.start().await?;
+        info!(" ✓ ZDNS resolver initialized with LRU cache (size: 10000, TTL: up to 1hr)");
 
         // Connect to bootstrap peers if configured
         let bootstrap_peers = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers().await;

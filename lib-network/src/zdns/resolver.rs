@@ -344,18 +344,48 @@ impl ZdnsResolver {
     }
 
     /// Convert DomainRecord to Web4Record
+    ///
+    /// TTL is calculated as the minimum of:
+    /// - Time until domain expiration
+    /// - Maximum cache TTL (1 hour)
     fn domain_record_to_web4(record: DomainRecord) -> Web4Record {
         // Extract owner as hex-encoded hash for privacy
         let owner = hex::encode(&record.owner.0[..16]);
 
-        // Default TTL of 5 minutes (300 seconds)
-        let ttl = 300u64;
+        // Calculate TTL based on domain expiration
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // TTL is time until expiration, capped at 1 hour max
+        const MAX_TTL_SECS: u64 = 3600; // 1 hour max cache
+        let time_until_expiry = record.expires_at.saturating_sub(now);
+        let ttl = time_until_expiry.min(MAX_TTL_SECS);
+
+        // Determine content mode from metadata category
+        // Domains with "static" category serve static content, others use SPA
+        let content_mode = if record.metadata.category.to_lowercase() == "static" {
+            ContentMode::Static
+        } else {
+            ContentMode::Spa
+        };
+
+        // Determine capability from metadata
+        // If public = false, restrict to download only
+        let capability = if !record.metadata.public {
+            Web4Capability::DownloadOnly
+        } else if content_mode == ContentMode::Static {
+            Web4Capability::HttpServe
+        } else {
+            Web4Capability::SpaServe
+        };
 
         Web4Record {
             domain: record.domain,
             owner,
             content_mappings: record.content_mappings,
-            content_mode: Some(ContentMode::Spa), // Default to SPA mode
+            content_mode: Some(content_mode),
             spa_entry: Some("index.html".to_string()),
             asset_prefixes: Some(vec![
                 "/assets/".to_string(),
@@ -364,15 +394,24 @@ impl ZdnsResolver {
                 "/css/".to_string(),
                 "/images/".to_string(),
             ]),
-            capability: Some(Web4Capability::SpaServe),
+            capability: Some(capability),
             ttl,
             registered_at: record.registered_at,
             expires_at: record.expires_at,
         }
     }
 
+    /// Allowed sovereign TLDs
+    pub const ALLOWED_TLDS: &'static [&'static str] = &[".zhtp", ".sov"];
+
     /// Validate domain name format
-    fn is_valid_domain(domain: &str) -> bool {
+    ///
+    /// Enforces:
+    /// - Must end with .zhtp or .sov (sovereign namespaces only)
+    /// - DNS-compliant label rules (alphanumeric + hyphen, no leading/trailing hyphen)
+    /// - Maximum 253 characters total, 63 per label
+    /// - No underscores (not DNS compliant)
+    pub fn is_valid_domain(domain: &str) -> bool {
         // Must not be empty
         if domain.is_empty() {
             return false;
@@ -383,16 +422,23 @@ impl ZdnsResolver {
             return false;
         }
 
-        // Must contain only valid characters
+        // CRITICAL: Must end with allowed sovereign TLD (.zhtp or .sov)
+        let has_valid_tld = Self::ALLOWED_TLDS.iter().any(|tld| domain.ends_with(tld));
+        if !has_valid_tld {
+            return false;
+        }
+
+        // Must contain only valid DNS characters (alphanumeric, hyphen, dot)
+        // Note: underscores are NOT DNS compliant and are rejected
         for c in domain.chars() {
-            if !c.is_alphanumeric() && c != '-' && c != '.' && c != '_' {
+            if !c.is_ascii_alphanumeric() && c != '-' && c != '.' {
                 return false;
             }
         }
 
         // Must not start or end with hyphen or dot
         if domain.starts_with('-') || domain.starts_with('.')
-            || domain.ends_with('-') || domain.ends_with('.') {
+            || domain.ends_with('-') {
             return false;
         }
 
@@ -401,7 +447,7 @@ impl ZdnsResolver {
             return false;
         }
 
-        // Each label must not start or end with hyphen
+        // Each label must not start or end with hyphen and must not exceed 63 chars
         for label in domain.split('.') {
             if label.is_empty() {
                 return false;
@@ -425,19 +471,32 @@ mod tests {
 
     #[test]
     fn test_is_valid_domain() {
-        // Valid domains
+        // Valid .zhtp domains
         assert!(ZdnsResolver::is_valid_domain("myapp.zhtp"));
         assert!(ZdnsResolver::is_valid_domain("my-app.zhtp"));
-        assert!(ZdnsResolver::is_valid_domain("my_app.zhtp"));
         assert!(ZdnsResolver::is_valid_domain("app123.test.zhtp"));
-        assert!(ZdnsResolver::is_valid_domain("a"));
+        assert!(ZdnsResolver::is_valid_domain("a.zhtp"));
+        assert!(ZdnsResolver::is_valid_domain("sub.domain.zhtp"));
 
-        // Invalid domains
+        // Valid .sov domains
+        assert!(ZdnsResolver::is_valid_domain("myapp.sov"));
+        assert!(ZdnsResolver::is_valid_domain("commerce.myapp.sov"));
+        assert!(ZdnsResolver::is_valid_domain("a.sov"));
+
+        // Invalid: missing sovereign TLD
+        assert!(!ZdnsResolver::is_valid_domain("myapp.com"));
+        assert!(!ZdnsResolver::is_valid_domain("myapp.org"));
+        assert!(!ZdnsResolver::is_valid_domain("myapp"));
+        assert!(!ZdnsResolver::is_valid_domain("a")); // no TLD
+
+        // Invalid: underscores not allowed (not DNS compliant)
+        assert!(!ZdnsResolver::is_valid_domain("my_app.zhtp"));
+
+        // Invalid: basic format violations
         assert!(!ZdnsResolver::is_valid_domain(""));
         assert!(!ZdnsResolver::is_valid_domain("-myapp.zhtp"));
         assert!(!ZdnsResolver::is_valid_domain("myapp-.zhtp"));
         assert!(!ZdnsResolver::is_valid_domain(".myapp.zhtp"));
-        assert!(!ZdnsResolver::is_valid_domain("myapp.zhtp."));
         assert!(!ZdnsResolver::is_valid_domain("my..app.zhtp"));
         assert!(!ZdnsResolver::is_valid_domain("my app.zhtp")); // space
         assert!(!ZdnsResolver::is_valid_domain("myapp@zhtp")); // invalid char
