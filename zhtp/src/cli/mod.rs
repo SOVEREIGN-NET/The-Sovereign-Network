@@ -502,6 +502,70 @@ pub enum DeployAction {
         #[arg(long)]
         trust_node: bool,
     },
+
+    /// View deployment history for a domain
+    History {
+        /// Domain to check
+        domain: String,
+
+        /// Maximum number of versions to show
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+    },
+
+    /// Rollback domain to a previous version
+    Rollback {
+        /// Domain to rollback
+        domain: String,
+
+        /// Target version number to rollback to
+        #[arg(short, long)]
+        to_version: u64,
+
+        /// Path to identity keystore directory (REQUIRED)
+        #[arg(short, long)]
+        keystore: String,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+
+        /// Force rollback without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 /// Trust management commands
