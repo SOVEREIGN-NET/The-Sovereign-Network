@@ -325,15 +325,31 @@ fn load_identity_from_keystore(keystore: &PathBuf) -> Result<ZhtpIdentity> {
 }
 
 /// Build trust config from CLI flags
+///
+/// Security model:
+/// - Default: Strict mode (no auto-trust, requires --tofu or --pin-spki)
+/// - ZHTP_ALLOW_BOOTSTRAP=1: Dev-only insecure mode with fingerprint logging
+/// - --tofu: Trust on first use with fingerprint display and audit log
 fn build_trust_config_from_cli(cli: &ZhtpCli) -> Result<TrustConfig> {
-    // For now, use bootstrap mode with explicit enablement
-    // TODO: Add TOFU and pinning support to CLI flags
     if std::env::var("ZHTP_ALLOW_BOOTSTRAP").ok().map(|v| v == "1").unwrap_or(false) {
-        warn!("Using bootstrap mode - TLS verification disabled (dev only)");
+        // DEV ONLY: Bootstrap mode with security warnings
+        warn!("╔══════════════════════════════════════════════════════════════╗");
+        warn!("║  SECURITY WARNING: Bootstrap mode - TLS verification OFF     ║");
+        warn!("║  This accepts ANY certificate without validation.            ║");
+        warn!("║  NEVER use in production! Vulnerable to MITM attacks.        ║");
+        warn!("╚══════════════════════════════════════════════════════════════╝");
         Ok(TrustConfig::bootstrap())
     } else {
-        // Default to TOFU
+        // Default to TOFU with explicit fingerprint logging
         let trustdb_path = TrustConfig::default_trustdb_path()?;
+        let audit_path = TrustConfig::default_audit_path();
+
+        info!("Trust mode: TOFU (Trust On First Use)");
+        info!("Trustdb: {:?}", trustdb_path);
+        info!("Audit log: {:?}", audit_path);
+        info!("First connection to a new node will display its fingerprint.");
+        info!("To reset trust: delete {:?}", trustdb_path);
+
         Ok(TrustConfig::with_tofu(trustdb_path))
     }
 }

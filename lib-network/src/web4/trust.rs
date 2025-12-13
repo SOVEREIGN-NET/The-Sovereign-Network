@@ -533,11 +533,18 @@ impl ServerCertVerifier for ZhtpTrustVerifier {
 
         // 3. Check TOFU
         if self.config.allow_tofu {
-            warn!(
-                node_addr = %self.node_addr,
-                fingerprint = %fingerprint,
-                "TOFU: Accepting certificate on first use"
-            );
+            // Print fingerprint prominently for user awareness
+            warn!("╔══════════════════════════════════════════════════════════════╗");
+            warn!("║  TOFU: Trusting certificate on first use                     ║");
+            warn!("╠══════════════════════════════════════════════════════════════╣");
+            warn!("║  Node: {:<52} ║", &self.node_addr);
+            warn!("║  Fingerprint: {:<46} ║", &fingerprint);
+            warn!("║  SPKI Hash: {}...  ║", &spki_hash[..32]);
+            warn!("╠══════════════════════════════════════════════════════════════╣");
+            warn!("║  This certificate is now trusted for future connections.     ║");
+            warn!("║  If this is unexpected, your connection may be compromised!  ║");
+            warn!("║  To reset: delete ~/.zhtp/trustdb.json                       ║");
+            warn!("╚══════════════════════════════════════════════════════════════╝");
 
             // Store anchor
             if let Err(e) = self.store_tofu_anchor(&spki_hash, &fingerprint) {
@@ -556,10 +563,18 @@ impl ServerCertVerifier for ZhtpTrustVerifier {
 
         // 4. Check bootstrap mode
         if self.config.bootstrap_mode {
-            warn!(
-                fingerprint = %fingerprint,
-                "INSECURE: Bootstrap mode - accepting any certificate"
-            );
+            // Log fingerprint even in bootstrap mode for debugging/auditing
+            warn!("╔══════════════════════════════════════════════════════════════╗");
+            warn!("║  INSECURE: Bootstrap mode - accepting ANY certificate        ║");
+            warn!("╠══════════════════════════════════════════════════════════════╣");
+            warn!("║  Node: {:<52} ║", &self.node_addr);
+            warn!("║  Fingerprint: {:<46} ║", &fingerprint);
+            warn!("║  SPKI Hash: {}...  ║", &spki_hash[..32]);
+            warn!("╠══════════════════════════════════════════════════════════════╣");
+            warn!("║  WARNING: No verification performed! Vulnerable to MITM!     ║");
+            warn!("║  For production, use: --pin-spki {} ║", &spki_hash[..32]);
+            warn!("╚══════════════════════════════════════════════════════════════╝");
+
             if let Ok(mut result) = self.result.write() {
                 *result = Some(TlsVerificationResult {
                     spki_sha256: spki_hash,

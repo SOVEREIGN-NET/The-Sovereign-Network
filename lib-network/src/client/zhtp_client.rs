@@ -71,13 +71,18 @@ impl AuthenticatedConnection {
         self.sequence.fetch_add(1, Ordering::SeqCst)
     }
 
+    /// Derive application-layer MAC key from master key
+    ///
+    /// MUST match server-side derivation in quic_api_dispatcher.rs.
+    /// Label: "zhtp-web4-app-mac"
+    /// Order: server_did (peer from client's view) then client_did
     fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], peer_did: &str, client_did: &str) -> [u8; 32] {
         let mut input = Vec::new();
-        input.extend_from_slice(b"zhtp-app-key-v1");
+        input.extend_from_slice(b"zhtp-web4-app-mac"); // Must match server
         input.extend_from_slice(master_key);
         input.extend_from_slice(session_id);
-        input.extend_from_slice(peer_did.as_bytes());
-        input.extend_from_slice(client_did.as_bytes());
+        input.extend_from_slice(peer_did.as_bytes());  // Server's DID
+        input.extend_from_slice(client_did.as_bytes()); // Client's DID
         *blake3::hash(&input).as_bytes()
     }
 }
@@ -103,7 +108,10 @@ impl ZhtpClient {
             .join(".zhtp")
             .join("client_nonce_cache");
 
-        std::fs::create_dir_all(&nonce_db_path.parent().unwrap_or(Path::new(".")))?;
+        // Safely get parent directory, defaulting to current dir if path is malformed
+        if let Some(parent) = nonce_db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 10_000)
             .context("Failed to open nonce cache")?;
