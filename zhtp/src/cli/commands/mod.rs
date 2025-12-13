@@ -12,6 +12,7 @@ pub mod interactive;
 pub mod server;
 pub mod isolation;
 pub mod rewards;
+pub mod deploy;
 
 pub use node::handle_node_command;
 pub use wallet::handle_wallet_command;
@@ -25,3 +26,4 @@ pub use isolation::handle_isolation_command;
 pub use interactive::handle_interactive_command;
 pub use server::handle_server_command;
 pub use rewards::handle_reward_command;
+pub use deploy::handle_deploy_command;

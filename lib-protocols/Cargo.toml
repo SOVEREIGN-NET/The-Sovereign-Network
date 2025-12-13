@@ -46,6 +46,10 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 dashmap = "5.0"
 urlencoding = "2.1"
 
+# Wire protocol serialization
+ciborium = "0.2"
+getrandom = "0.2"
+
 # Internal ZHTP packages
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }

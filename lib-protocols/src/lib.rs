@@ -99,6 +99,7 @@ pub mod crypto;
 pub mod economics;
 pub mod storage;
 pub mod integration;
+pub mod wire;
 
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -142,6 +143,7 @@ pub use economics::{ZhtpEconomics, EconomicConfig, EconomicAssessment, EconomicS
 pub use storage::{StorageIntegration, StorageConfig, StorageContract, StorageStats};
 pub use identity::{ProtocolIdentityService, IdentityServiceConfig, IdentitySession, IdentityAuthRequest, IdentityAuthResponse};
 pub use integration::{ZhtpIntegration, IntegrationConfig, IntegrationStats};
+pub use wire::{ZhtpRequestWire, ZhtpResponseWire, read_request, write_request, read_response, write_response, WIRE_VERSION};
 
 // Re-export ZDNS functions
 pub use zdns::{

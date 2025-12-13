@@ -47,36 +47,39 @@ pub struct ZhtpCli {
 pub enum ZhtpCommand {
     /// Start the ZHTP orchestrator node
     Node(NodeArgs),
-    
+
     /// Wallet operations (orchestrated)
     Wallet(WalletArgs),
-    
+
     /// DAO operations (orchestrated)
     Dao(DaoArgs),
-    
+
     /// Identity operations (orchestrated)
     Identity(IdentityArgs),
-    
+
     /// Network operations (orchestrated)
     Network(NetworkArgs),
-    
+
     /// Blockchain operations (orchestrated)
     Blockchain(BlockchainArgs),
-    
+
     /// System monitoring and status
     Monitor(MonitorArgs),
-    
+
     /// Component management
     Component(ComponentArgs),
-    
+
     /// Interactive shell
     Interactive(InteractiveArgs),
-    
+
     /// Server management
     Server(ServerArgs),
-    
+
     /// Network isolation management
     Isolation(IsolationArgs),
+
+    /// Deploy Web4 sites (React, Next.js, etc.)
+    Deploy(DeployArgs),
 }
 
 /// Node management commands
@@ -376,6 +379,52 @@ pub enum IsolationAction {
     Test,
 }
 
+/// Deploy commands for Web4 sites
+#[derive(Args, Debug, Clone)]
+pub struct DeployArgs {
+    #[command(subcommand)]
+    pub action: DeployAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DeployAction {
+    /// Deploy a static site to Web4
+    Site {
+        /// Build directory containing static files
+        #[arg(value_name = "BUILD_DIR")]
+        build_dir: String,
+
+        /// Target domain (e.g., myapp.zhtp)
+        #[arg(short, long)]
+        domain: String,
+
+        /// Deployment mode: 'spa' (single page app) or 'static'
+        #[arg(short, long, default_value = "spa")]
+        mode: Option<String>,
+
+        /// Owner identity (DID or identity hash)
+        #[arg(short, long)]
+        owner: Option<String>,
+
+        /// Fee to pay for deployment (in ZHTP tokens)
+        #[arg(short, long)]
+        fee: Option<u64>,
+
+        /// Dry run - show what would be deployed without deploying
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Check deployment status for a domain
+    Status {
+        /// Domain to check
+        domain: String,
+    },
+
+    /// List all deployed domains
+    List,
+}
+
 /// Main CLI runner
 pub async fn run_cli() -> Result<()> {
     let cli = ZhtpCli::parse();
@@ -398,6 +447,7 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Interactive(args) => commands::interactive::handle_interactive_command(args.clone(), &cli).await,
         ZhtpCommand::Server(args) => commands::server::handle_server_command(args.clone(), &cli).await,
         ZhtpCommand::Isolation(args) => commands::isolation::handle_isolation_command(args.clone(), &cli).await,
+        ZhtpCommand::Deploy(args) => commands::deploy::handle_deploy_command(args.clone(), &cli).await,
     }
 }
 
