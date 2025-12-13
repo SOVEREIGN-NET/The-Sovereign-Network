@@ -29,6 +29,8 @@ pub struct ProtocolsComponent {
     enable_zdns_transport: bool,
     /// Gateway IP for ZDNS transport responses
     zdns_gateway_ip: std::net::Ipv4Addr,
+    /// Bind address for ZDNS transport (defaults to localhost for safety)
+    zdns_bind_addr: std::net::IpAddr,
 }
 
 impl std::fmt::Debug for ProtocolsComponent {
@@ -56,6 +58,7 @@ impl ProtocolsComponent {
             is_edge_node: false,
             enable_zdns_transport: false, // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
+            zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
         }
     }
 
@@ -73,10 +76,12 @@ impl ProtocolsComponent {
             is_edge_node,
             enable_zdns_transport: false, // Disabled by default
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
+            zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
         }
     }
 
     /// Create with ZDNS transport enabled (for gateway nodes)
+    /// SECURITY: Binds to localhost by default - use with_zdns_bind_addr() for external exposure
     pub fn new_with_zdns_transport(
         environment: crate::config::environment::Environment,
         api_port: u16,
@@ -95,7 +100,15 @@ impl ProtocolsComponent {
             is_edge_node: false,
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
+            // SECURITY: Default to localhost even when enabled
+            zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
         }
+    }
+
+    /// Set ZDNS transport bind address (use with caution for 0.0.0.0)
+    pub fn with_zdns_bind_addr(mut self, bind_addr: std::net::IpAddr) -> Self {
+        self.zdns_bind_addr = bind_addr;
+        self
     }
 
     /// Get reference to the ZDNS resolver (if initialized)
@@ -227,7 +240,9 @@ impl Component for ProtocolsComponent {
         // Start ZDNS transport server if enabled (UDP/TCP DNS on port 53)
         if self.enable_zdns_transport {
             info!(" Starting ZDNS transport server (DNS on port 53)...");
-            let transport_config = ZdnsServerConfig::production(self.zdns_gateway_ip);
+            // SECURITY: Use builder pattern with explicit bind address
+            let transport_config = ZdnsServerConfig::production(self.zdns_gateway_ip)
+                .with_bind_addr(self.zdns_bind_addr);
             let transport_server = Arc::new(ZdnsTransportServer::new(
                 zdns_resolver.clone(),
                 transport_config,
@@ -242,7 +257,8 @@ impl Component for ProtocolsComponent {
             });
 
             *self.zdns_transport.write().await = Some(transport_server);
-            info!(" ✓ ZDNS transport server started (gateway IP: {})", self.zdns_gateway_ip);
+            info!(" ✓ ZDNS transport server started (gateway IP: {}, bind: {})",
+                  self.zdns_gateway_ip, self.zdns_bind_addr);
         }
 
         // Connect to bootstrap peers if configured
