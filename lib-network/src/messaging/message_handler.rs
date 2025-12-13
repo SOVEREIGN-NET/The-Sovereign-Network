@@ -38,7 +38,17 @@ pub struct MeshMessageHandler {
     pub edge_sync_manager: Option<Arc<crate::blockchain_sync::EdgeNodeSyncManager>>,
     /// Blockchain provider for accessing chain data (injected by application layer)
     pub blockchain_provider: Arc<dyn crate::blockchain_sync::BlockchainProvider>,
+    /// DHT payload sender for forwarding received DHT messages (Ticket #154)
+    /// Connected to MeshDhtTransport's receiver for message injection
+    pub dht_payload_sender: Option<tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)>>,
+    /// Rate limiter for DHT messages per peer (Ticket #154)
+    /// Key: hex-encoded peer key_id prefix, Value: (count, window_start)
+    pub dht_rate_limits: Arc<RwLock<HashMap<String, (u32, u64)>>>,
 }
+
+/// DHT rate limit configuration
+const DHT_RATE_LIMIT_MAX: u32 = 100;      // Max DHT messages per peer per window
+const DHT_RATE_LIMIT_WINDOW_SECS: u64 = 60; // Rate limit window in seconds
 
 impl MeshMessageHandler {
     /// Create a new MeshMessageHandler
@@ -58,7 +68,20 @@ impl MeshMessageHandler {
             sync_manager: Arc::new(crate::blockchain_sync::BlockchainSyncManager::new()),
             edge_sync_manager: None, // Only set for edge nodes
             blockchain_provider: Arc::new(crate::blockchain_sync::NullBlockchainProvider),
+            dht_payload_sender: None,
+            dht_rate_limits: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Set DHT payload sender for forwarding received DHT messages (Ticket #154)
+    ///
+    /// This connects the message handler to the MeshDhtTransport's receiver,
+    /// allowing DHT payloads received over mesh to be processed by DhtStorage.
+    pub fn set_dht_payload_sender(
+        &mut self,
+        sender: tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)>
+    ) {
+        self.dht_payload_sender = Some(sender);
     }
     
     /// Set message router for sending responses (Phase 2)
@@ -1222,37 +1245,92 @@ impl MeshMessageHandler {
     /// and routed through the mesh network. It deserializes and processes the DHT message
     /// using the storage layer's DHT protocol.
     ///
-    /// # Architecture
+    /// # Architecture (Ticket #154)
     ///
     /// The flow is:
     /// 1. lib-storage DhtNetwork creates DhtMessage
-    /// 2. lib-storage serializes to bytes and calls DhtMessageRouter.route_dht_message()
-    /// 3. lib-network's UnifiedRouter wraps in DhtGenericPayload and routes through mesh
-    /// 4. This handler receives and deserializes the payload
-    /// 5. The DhtMessage is forwarded to application-layer DHT storage for processing
+    /// 2. lib-storage serializes to bytes and calls DhtTransport.send()
+    /// 3. MeshDhtTransport wraps in DhtGenericPayload and routes through mesh
+    /// 4. This handler receives the payload and forwards to DhtStorage
+    /// 5. DhtStorage processes the message via its DhtTransport.receive()
+    ///
+    /// # Rate Limiting
+    ///
+    /// DHT messages are rate-limited to prevent DoS attacks:
+    /// - Max 100 messages per peer per 60-second window
+    /// - Exceeded peers are logged and their messages dropped
     async fn handle_dht_generic_payload(&self, requester: PublicKey, payload: Vec<u8>) -> Result<()> {
+        let peer_id_hex = hex::encode(&requester.key_id[0..8.min(requester.key_id.len())]);
+
         debug!(
             "DHT Generic Payload: requester={}, payload_size={}",
-            hex::encode(&requester.key_id[0..8.min(requester.key_id.len())]),
+            peer_id_hex,
             payload.len()
         );
 
-        // Deserialize the DHT message from the payload
-        // Note: lib_storage::types::dht_types::DhtMessage is the canonical type
-        // We log the receipt and let the application layer handle the actual DHT logic
-        // via callbacks or channels registered with the DHT subsystem.
+        // Rate limiting check (Ticket #154)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
-        // For now, log receipt - full integration requires DHT storage callback registration
-        info!(
-            "Received DHT payload ({} bytes) from peer {}. \
-             Application layer should register DHT message handlers to process these payloads.",
-            payload.len(),
-            hex::encode(&requester.key_id[0..8.min(requester.key_id.len())])
-        );
+        {
+            let mut rate_limits = self.dht_rate_limits.write().await;
+            let entry = rate_limits.entry(peer_id_hex.clone()).or_insert((0, now));
 
-        // TODO: Implement DHT message callback/channel dispatch
-        // The application layer (zhtp server) should register a handler for DHT messages
-        // that connects to lib-storage's DhtStorage for processing.
+            // Check if window has expired
+            if now - entry.1 >= DHT_RATE_LIMIT_WINDOW_SECS {
+                // Reset window
+                *entry = (1, now);
+            } else {
+                // Increment count
+                entry.0 += 1;
+
+                // Check rate limit
+                if entry.0 > DHT_RATE_LIMIT_MAX {
+                    warn!(
+                        "DHT rate limit exceeded for peer {} ({}/{} in {}s window)",
+                        peer_id_hex, entry.0, DHT_RATE_LIMIT_MAX, DHT_RATE_LIMIT_WINDOW_SECS
+                    );
+                    return Err(anyhow!("DHT rate limit exceeded"));
+                }
+            }
+        }
+
+        // Validate payload size (max 64KB for DHT messages)
+        const MAX_DHT_PAYLOAD_SIZE: usize = 65536;
+        if payload.len() > MAX_DHT_PAYLOAD_SIZE {
+            warn!(
+                "DHT payload too large from peer {}: {} bytes (max {})",
+                peer_id_hex, payload.len(), MAX_DHT_PAYLOAD_SIZE
+            );
+            return Err(anyhow!("DHT payload exceeds maximum size"));
+        }
+
+        // Forward to DHT transport if sender is configured
+        if let Some(sender) = &self.dht_payload_sender {
+            let peer_id = lib_storage::dht::transport::PeerId::Mesh(requester.key_id.to_vec());
+
+            if let Err(e) = sender.send((payload.clone(), peer_id)) {
+                warn!(
+                    "Failed to forward DHT payload to transport: {} (peer: {})",
+                    e, peer_id_hex
+                );
+                return Err(anyhow!("Failed to forward DHT payload: {}", e));
+            }
+
+            debug!(
+                "Forwarded DHT payload ({} bytes) from peer {} to DhtStorage",
+                payload.len(), peer_id_hex
+            );
+        } else {
+            // No sender configured - log for debugging
+            debug!(
+                "DHT payload received but no handler configured (peer: {}, {} bytes). \
+                 Call set_dht_payload_sender() to enable DHT message processing.",
+                peer_id_hex, payload.len()
+            );
+        }
 
         Ok(())
     }
