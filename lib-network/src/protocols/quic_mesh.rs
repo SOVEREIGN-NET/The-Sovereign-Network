@@ -182,6 +182,10 @@ impl QuicMeshProtocol {
     ) -> Result<Self> {
         info!("🔐 Initializing QUIC mesh protocol on {} with UHP+Kyber authentication", bind_addr);
 
+        // Install the ring crypto provider for rustls 0.23+
+        // This must be done before any rustls ServerConfig/ClientConfig creation
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         // Validate identity has private key for signing
         if identity.private_key.is_none() {
             return Err(anyhow!("Identity must have private key for UHP signing"));

@@ -85,6 +85,10 @@ pub mod transport;
 pub mod web4; // Web4 domain registry and content publishing
 pub mod zdns; // ZDNS resolver with LRU caching
 pub mod blockchain_sync; // Blockchain synchronization over mesh protocols
+pub mod client; // QUIC client for control-plane operations
+
+// Re-export ZhtpClient for convenience
+pub use client::ZhtpClient;
 
 // Re-export protocol constants for convenience
 pub use constants::*;
