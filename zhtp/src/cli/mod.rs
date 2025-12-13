@@ -80,6 +80,9 @@ pub enum ZhtpCommand {
 
     /// Deploy Web4 sites (React, Next.js, etc.)
     Deploy(DeployArgs),
+
+    /// Manage trust anchors and audit logs
+    Trust(TrustArgs),
 }
 
 /// Node management commands
@@ -386,6 +389,26 @@ pub struct DeployArgs {
     pub action: DeployAction,
 }
 
+/// Common trust configuration flags
+#[derive(Args, Debug, Clone)]
+pub struct TrustFlags {
+    /// Pin to specific SPKI hash (hex encoded). Most secure option.
+    #[arg(long)]
+    pub pin_spki: Option<String>,
+
+    /// Expected node DID. Verified after UHP handshake.
+    #[arg(long)]
+    pub node_did: Option<String>,
+
+    /// Trust on first use. Stores fingerprint for future verification.
+    #[arg(long)]
+    pub tofu: bool,
+
+    /// Bootstrap mode - accept any certificate (INSECURE, dev only)
+    #[arg(long)]
+    pub trust_node: bool,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum DeployAction {
     /// Deploy a static site to Web4
@@ -402,13 +425,29 @@ pub enum DeployAction {
         #[arg(short, long, default_value = "spa")]
         mode: Option<String>,
 
-        /// Owner identity (DID or identity hash)
+        /// Path to identity keystore directory (REQUIRED for production deploys)
         #[arg(short, long)]
-        owner: Option<String>,
+        keystore: String,
 
         /// Fee to pay for deployment (in ZHTP tokens)
         #[arg(short, long)]
         fee: Option<u64>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
 
         /// Dry run - show what would be deployed without deploying
         #[arg(long)]
@@ -419,10 +458,72 @@ pub enum DeployAction {
     Status {
         /// Domain to check
         domain: String,
+
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
     },
 
     /// List all deployed domains
+    List {
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+    },
+}
+
+/// Trust management commands
+#[derive(Args, Debug, Clone)]
+pub struct TrustArgs {
+    #[command(subcommand)]
+    pub action: TrustAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum TrustAction {
+    /// List trusted nodes (trustdb)
     List,
+
+    /// Show audit log entries (TOFU acceptance)
+    Audit,
+
+    /// Reset trust for a node
+    Reset {
+        /// Node address (host:port)
+        node: String,
+    },
 }
 
 /// Main CLI runner
@@ -448,6 +549,7 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Server(args) => commands::server::handle_server_command(args.clone(), &cli).await,
         ZhtpCommand::Isolation(args) => commands::isolation::handle_isolation_command(args.clone(), &cli).await,
         ZhtpCommand::Deploy(args) => commands::deploy::handle_deploy_command(args.clone(), &cli).await,
+        ZhtpCommand::Trust(args) => commands::trust::handle_trust_command(args.clone()).await,
     }
 }
 

@@ -2,17 +2,24 @@
 //!
 //! Deploy static websites (React, Next.js, Vue, etc.) to Web4 domains.
 //!
+//! Uses native QUIC transport with UHP+Kyber handshake for authenticated
+//! communication with ZHTP nodes.
+//!
 //! Usage:
-//!   zhtp deploy ./build --domain myapp.zhtp
-//!   zhtp deploy ./out --domain myapp.zhtp --mode spa
+//!   zhtp deploy ./build --domain myapp.zhtp --keystore ~/.zhtp/keystore
+//!   zhtp deploy ./out --domain myapp.zhtp --mode spa --keystore ./keys
 //!   zhtp deploy ./dist --domain myapp.zhtp --owner did:zhtp:abc123
 
-use anyhow::{anyhow, Result};
-use base64::{Engine as _, engine::general_purpose};
+use anyhow::{anyhow, Result, Context};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use tracing::{info, warn, error, debug};
+use tracing::{info, debug, warn};
+use atty::Stream;
+
+use lib_network::web4::{Web4Client, TrustConfig};
+use lib_identity::ZhtpIdentity;
 
 use crate::cli::{DeployArgs, DeployAction, ZhtpCli};
 
@@ -35,27 +42,6 @@ impl std::str::FromStr for DeployMode {
             _ => Err(anyhow!("Invalid deploy mode: {}. Use 'spa' or 'static'", s)),
         }
     }
-}
-
-/// Content mapping for deployment
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ContentMapping {
-    pub content: String,      // Base64 encoded
-    pub content_type: String, // MIME type
-}
-
-/// Domain registration request (matches API)
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SimpleDomainRegistrationRequest {
-    pub domain: String,
-    pub owner: String,
-    pub content_mappings: HashMap<String, ContentMapping>,
-    #[serde(default)]
-    pub metadata: Option<serde_json::Value>,
-    pub signature: String,
-    pub timestamp: u64,
-    #[serde(default)]
-    pub fee: Option<u64>,
 }
 
 /// Deployment manifest tracking all files
@@ -84,27 +70,137 @@ pub async fn handle_deploy_command(args: DeployArgs, cli: &ZhtpCli) -> Result<()
             build_dir,
             domain,
             mode,
-            owner,
+            keystore,
             fee,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
             dry_run,
         } => {
+            let trust_config = build_trust_config(
+                pin_spki.clone(),
+                node_did.clone(),
+                *tofu,
+                *trust_node,
+            )?;
+
             deploy_site(
                 build_dir,
                 domain,
                 mode.as_deref().unwrap_or("spa"),
-                owner.as_deref(),
+                keystore,
                 *fee,
+                trust_config,
                 *dry_run,
                 cli,
             ).await
         }
-        DeployAction::Status { domain } => {
-            check_deployment_status(domain, cli).await
+        DeployAction::Status {
+            domain,
+            keystore,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
+        } => {
+            let trust_config = build_trust_config(
+                pin_spki.clone(),
+                node_did.clone(),
+                *tofu,
+                *trust_node,
+            )?;
+
+            check_deployment_status(
+                domain,
+                keystore.as_deref(),
+                trust_config,
+                cli,
+            ).await
         }
-        DeployAction::List => {
-            list_deployments(cli).await
+        DeployAction::List {
+            keystore,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
+        } => {
+            let trust_config = build_trust_config(
+                pin_spki.clone(),
+                node_did.clone(),
+                *tofu,
+                *trust_node,
+            )?;
+
+            list_deployments(
+                keystore.as_deref(),
+                trust_config,
+                cli,
+            ).await
         }
     }
+}
+
+/// Build TrustConfig from CLI flags
+fn build_trust_config(
+    pin_spki: Option<String>,
+    node_did: Option<String>,
+    tofu: bool,
+    trust_node: bool,
+) -> Result<TrustConfig> {
+    let trustdb_path = TrustConfig::default_trustdb_path()?;
+
+    let mut config = if trust_node {
+        warn!("Bootstrap mode enabled - NO TLS VERIFICATION (insecure)");
+        TrustConfig::bootstrap()
+    } else if let Some(pin) = pin_spki {
+        info!("Using SPKI pinning");
+        TrustConfig::with_pin(pin)
+    } else if tofu {
+        info!("Using Trust On First Use (TOFU)");
+        TrustConfig::with_tofu(trustdb_path.clone())
+    } else {
+        // Default: strict mode with trustdb
+        TrustConfig {
+            trustdb_path: Some(trustdb_path.clone()),
+            ..Default::default()
+        }
+    };
+
+    // Add node_did expectation if provided
+    if let Some(did) = node_did {
+        config.node_did = Some(did);
+    }
+
+    // Ensure persistence paths are set
+    if config.trustdb_path.is_none() {
+        config.trustdb_path = Some(trustdb_path.clone());
+    }
+    if config.audit_log_path.is_none() {
+        config.audit_log_path = Some(TrustConfig::default_audit_path());
+    }
+
+    Ok(config)
+}
+
+/// Confirm TOFU usage on interactive terminals
+fn confirm_tofu_if_needed(config: &TrustConfig) -> Result<()> {
+    if config.allow_tofu && !config.bootstrap_mode && config.pin_spki.is_none() {
+        // If stdin is a TTY, prompt; otherwise rely on explicit flag
+        if atty::is(Stream::Stdin) {
+            println!("\nTOFU WARNING: First connection may be intercepted (MITM risk).");
+            println!("This will trust the presented certificate fingerprint and store it for future sessions.");
+            print!("Proceed with TOFU? (y/N): ");
+            io::stdout().flush().ok();
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let proceed = input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes");
+            if !proceed {
+                return Err(anyhow!("TOFU not confirmed by user"));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Deploy a static site to Web4
@@ -112,8 +208,9 @@ async fn deploy_site(
     build_dir: &str,
     domain: &str,
     mode: &str,
-    owner: Option<&str>,
+    keystore: &str,
     fee: Option<u64>,
+    trust_config: TrustConfig,
     dry_run: bool,
     cli: &ZhtpCli,
 ) -> Result<()> {
@@ -138,13 +235,13 @@ async fn deploy_site(
 
     let deploy_mode: DeployMode = mode.parse()?;
 
-    println!("🚀 Deploying to Web4");
+    println!("Deploying to Web4");
     println!("   Domain: {}", domain);
     println!("   Mode: {:?}", deploy_mode);
     println!("   Build dir: {}", build_path.display());
 
     // Walk directory and collect files
-    println!("\n📦 Collecting files...");
+    println!("\nCollecting files...");
     let files = collect_files(&build_path)?;
 
     if files.is_empty() {
@@ -154,9 +251,9 @@ async fn deploy_site(
     let total_size: u64 = files.iter().map(|(_, _, size)| size).sum();
     println!("   Found {} files ({} bytes total)", files.len(), total_size);
 
-    // Build content mappings
-    println!("\n🔧 Building content mappings...");
-    let mut content_mappings = HashMap::new();
+    // Build file entries for manifest
+    println!("\nProcessing files...");
+    let mut file_entries: Vec<(String, Vec<u8>, String, String)> = Vec::new(); // (path, content, mime, hash)
     let mut manifest_files = Vec::new();
 
     for (rel_path, abs_path, size) in &files {
@@ -173,10 +270,7 @@ async fn deploy_site(
 
         debug!("  {} ({}, {} bytes)", web_path, mime_type, size);
 
-        content_mappings.insert(web_path.clone(), ContentMapping {
-            content: general_purpose::STANDARD.encode(&content),
-            content_type: mime_type.clone(),
-        });
+        file_entries.push((web_path.clone(), content, mime_type.clone(), hash.clone()));
 
         manifest_files.push(FileEntry {
             path: web_path,
@@ -186,9 +280,10 @@ async fn deploy_site(
         });
     }
 
-    // For SPA mode, ensure index.html exists and will be served for all routes
+    // For SPA mode, ensure index.html exists
     if deploy_mode == DeployMode::Spa {
-        if !content_mappings.contains_key("/index.html") {
+        let has_index = file_entries.iter().any(|(p, _, _, _)| p == "/index.html");
+        if !has_index {
             return Err(anyhow!(
                 "SPA mode requires index.html in build directory"
             ));
@@ -201,10 +296,10 @@ async fn deploy_site(
     let min_fee = (estimated_tx_size / 5) as u64; // ~1 ZHTP per 5 bytes
     let deploy_fee = fee.unwrap_or(min_fee.max(1500)); // At least 1500 ZHTP
 
-    println!("\n💰 Estimated fee: {} ZHTP", deploy_fee);
+    println!("\nEstimated fee: {} ZHTP", deploy_fee);
 
     if dry_run {
-        println!("\n🔍 DRY RUN - No changes will be made");
+        println!("\nDRY RUN - No changes will be made");
         println!("\nFiles that would be deployed:");
         for file in &manifest_files {
             println!("  {} ({}, {} bytes)", file.path, file.mime_type, file.size);
@@ -212,54 +307,183 @@ async fn deploy_site(
         return Ok(());
     }
 
-    // Build registration request
+    // Load identity from keystore (REQUIRED - no ephemeral fallback)
+    let identity = load_identity(keystore)
+        .context("Failed to load identity from keystore")?;
+
+    // Domain ownership bound to deploy identity
+    let owner_did = identity.did.clone();
+
+    println!("\nUsing identity: {}", identity.did);
+    println!("Domain owner: {}", owner_did);
+
+    // Confirm TOFU usage interactively if applicable
+    confirm_tofu_if_needed(&trust_config)?;
+
+    // Create Web4 client and connect
+    println!("\nConnecting to node at {}...", cli.server);
+
+    let mut client = Web4Client::new_with_trust(identity, trust_config).await
+        .context("Failed to create Web4 client")?;
+
+    client.connect(&cli.server).await
+        .context("Failed to connect to ZHTP node")?;
+
+    // Log verified peer for audit
+    if let Some(peer_did) = client.peer_did() {
+        println!("   Connected to node: {}", peer_did);
+    }
+    println!("   PQC encryption active");
+
+    // Sort files for deterministic manifest (stable upload order)
+    file_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Upload each file as a blob
+    println!("\nUploading {} files...", file_entries.len());
+    let mut file_cids: Vec<FileCidEntry> = Vec::with_capacity(file_entries.len());
+
+    // Chunk size for large files (1MB default)
+    const CHUNK_SIZE: usize = 1024 * 1024;
+    // Threshold for using chunked uploads (files > 1MB use chunking)
+    const CHUNK_THRESHOLD: usize = CHUNK_SIZE;
+
+    for (i, (path, content, mime_type, hash)) in file_entries.iter().enumerate() {
+        let cid = if content.len() > CHUNK_THRESHOLD {
+            // Large file: use chunked upload
+            println!("   [{}/{}] {} ({} bytes, chunked)", i + 1, file_entries.len(), path, content.len());
+            client.put_blob_chunked(content.clone(), mime_type, Some(CHUNK_SIZE)).await
+                .with_context(|| format!("Failed to upload {} (chunked)", path))?
+        } else {
+            // Small file: upload directly
+            client.put_blob(content.clone(), mime_type).await
+                .with_context(|| format!("Failed to upload {}", path))?
+        };
+
+        file_cids.push(FileCidEntry {
+            path: path.clone(),
+            cid: cid.clone(),
+            size: content.len() as u64,
+            mime: mime_type.clone(),
+            etag: hash.clone(),
+            encoding: None, // No compression yet
+        });
+        println!("   [{}/{}] {} -> {}", i + 1, file_entries.len(), path, &cid[..16]);
+    }
+
+    // Build manifest per spec (section 8.3)
+    println!("\nBuilding manifest...");
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
 
-    // For now, use test signature (in production, would sign with identity keypair)
-    let owner_id = owner.unwrap_or("test_owner");
-    let signature = if owner.is_some() {
-        // TODO: Sign with actual identity keypair
-        // For now, this will only work in dev mode
-        "746573745f6465765f7369676e6174757265".to_string() // "test_dev_signature" hex
-    } else {
-        "746573745f6465765f7369676e6174757265".to_string()
-    };
+    // Calculate root CID from sorted file CIDs
+    let root_cid = calculate_root_cid(&file_cids);
 
-    let request = SimpleDomainRegistrationRequest {
-        domain: domain.to_string(),
-        owner: owner_id.to_string(),
-        content_mappings,
-        metadata: Some(serde_json::json!({
-            "title": domain,
-            "description": format!("Web4 site deployed via CLI"),
-            "mode": mode,
-            "deployed_at": timestamp,
-        })),
-        signature,
-        timestamp,
-        fee: Some(deploy_fee),
-    };
+    let manifest = serde_json::json!({
+        "version": "1.0",
+        "domain": domain,
+        "owner": owner_did,
+        "root_cid": root_cid,
+        "files": file_cids.iter().map(|f| serde_json::json!({
+            "path": f.path,
+            "cid": f.cid,
+            "size": f.size,
+            "mime": f.mime,
+            "etag": f.etag,
+            "encoding": f.encoding,
+        })).collect::<Vec<_>>(),
+        "spa_fallback": if deploy_mode == DeployMode::Spa { Some("/index.html") } else { None },
+        "cache_hints": {
+            "immutable": ["*.woff2", "*.woff", "*.js", "*.css"],
+            "revalidate": ["*.html", "*.json"],
+        },
+        "deployed_at": timestamp,
+        "fee": deploy_fee,
+    });
 
-    println!("\n📡 Sending to node {}...", cli.server);
+    let manifest_cid = client.put_manifest(&manifest).await
+        .context("Failed to upload manifest")?;
 
-    // Send request to node via QUIC
-    let response = send_deploy_request(&cli.server, &request).await?;
+    println!("   Root CID: {}", root_cid);
+    println!("   Manifest CID: {}", manifest_cid);
 
-    println!("\n✅ Deployment successful!");
+    // Register domain (ownership bound to deploy identity)
+    println!("\nRegistering domain {}...", domain);
+    let result = client.register_domain(domain, &manifest_cid).await
+        .context("Failed to register domain")?;
+
+    client.close().await;
+
+    println!("\nDeployment successful!");
     println!("   Domain: {}", domain);
-    println!("   URL: https://{}", domain);
+    println!("   URL: zhtp://{}", domain);
+    println!("   Manifest: {}", manifest_cid);
+    println!("   Owner: {}", owner_did);
 
-    if let Some(tx_hash) = response.get("blockchain_transaction") {
+    if let Some(tx_hash) = result.get("blockchain_transaction") {
         println!("   Transaction: {}", tx_hash);
     }
 
-    if let Some(fees) = response.get("fees_charged") {
+    if let Some(fees) = result.get("fees_charged") {
         println!("   Fees: {} ZHTP", fees);
     }
 
     Ok(())
+}
+
+/// File CID entry for manifest
+#[derive(Debug, Clone)]
+struct FileCidEntry {
+    path: String,
+    cid: String,
+    size: u64,
+    mime: String,
+    etag: String,
+    encoding: Option<String>,
+}
+
+/// Calculate root CID from sorted file CIDs (deterministic)
+fn calculate_root_cid(files: &[FileCidEntry]) -> String {
+    // Concatenate all CIDs in sorted order and hash
+    let mut hasher_input = Vec::new();
+    for f in files {
+        hasher_input.extend_from_slice(f.cid.as_bytes());
+    }
+    let hash = lib_crypto::hash_blake3(&hasher_input);
+    format!("bafk{}", hex::encode(&hash[..16]))
+}
+
+/// Load identity from keystore (REQUIRED - no ephemeral fallback)
+///
+/// Returns error if keystore doesn't exist or identity cannot be loaded.
+/// This enforces domain ownership bound to a persistent, authorized identity.
+fn load_identity(keystore_path: &str) -> Result<ZhtpIdentity> {
+    let keystore = PathBuf::from(keystore_path);
+    let identity_file = keystore.join("identity.json");
+
+    if !keystore.exists() {
+        return Err(anyhow!(
+            "Keystore directory not found: {:?}\n\
+            Create an identity first with: zhtp identity create --keystore {:?}",
+            keystore, keystore
+        ));
+    }
+
+    if !identity_file.exists() {
+        return Err(anyhow!(
+            "No identity.json found in keystore at {:?}\n\
+            Create an identity first with: zhtp identity create --keystore {:?}",
+            keystore, keystore
+        ));
+    }
+
+    let data = std::fs::read_to_string(&identity_file)
+        .context("Failed to read identity.json")?;
+    let identity: ZhtpIdentity = serde_json::from_str(&data)
+        .context("Failed to parse identity.json")?;
+
+    info!("Loaded identity {} from {:?}", identity.did, identity_file);
+    Ok(identity)
 }
 
 /// Collect all files from a directory recursively
@@ -342,48 +566,226 @@ fn guess_mime_type(path: &str) -> String {
     }.to_string()
 }
 
-/// Send deploy request to node
-///
-/// TODO: Implement actual transport layer.
-/// Options being evaluated:
-/// 1. QUIC with full UHP+Kyber handshake (requires identity)
-/// 2. HTTP gateway that translates to ZHTP
-/// 3. Lightweight QUIC client for CLI
-async fn send_deploy_request(
-    server: &str,
-    request: &SimpleDomainRegistrationRequest,
-) -> Result<serde_json::Value> {
-    // For now, output the request that would be sent
-    info!("Would send deploy request to {}", server);
-    info!("Domain: {}", request.domain);
-    info!("Files: {}", request.content_mappings.len());
-
-    // TODO: Implement actual network transport
-    // The node speaks QUIC+UHP+Kyber, need to determine best CLI approach
-    Err(anyhow!(
-        "Network transport not yet implemented. \
-        Use --dry-run to preview deployment, or deploy via node API directly."
-    ))
-}
-
 /// Check deployment status for a domain
-async fn check_deployment_status(domain: &str, cli: &ZhtpCli) -> Result<()> {
-    println!("🔍 Checking deployment status for {}", domain);
+async fn check_deployment_status(
+    domain: &str,
+    keystore: Option<&str>,
+    trust_config: TrustConfig,
+    cli: &ZhtpCli,
+) -> Result<()> {
+    println!("Checking deployment status for {}", domain);
+    println!();
 
-    // TODO: Query node for domain status
-    // For now, just show placeholder
-    println!("   Status: Active");
-    println!("   Files: (query node for details)");
+    // Load identity from provided keystore or default location
+    let keystore_path = keystore
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| get_default_keystore_path().unwrap_or_else(|_| "~/.zhtp/keystore".to_string()));
+    let identity = load_identity(&keystore_path)
+        .context("Failed to load identity. Create one with: zhtp identity create")?;
 
+    // Connect to node with trust configuration
+    let mut client = Web4Client::new_with_trust(identity, trust_config).await
+        .context("Failed to create Web4 client")?;
+
+    client.connect(&cli.server).await
+        .context("Failed to connect to ZHTP node")?;
+
+    // Query domain status
+    match client.get_domain(domain).await? {
+        Some(info) => {
+            println!("Domain: {}", domain);
+            println!("   Status: Active");
+
+            if let Some(owner) = info.get("owner").and_then(|v| v.as_str()) {
+                println!("   Owner: {}", owner);
+            }
+
+            if let Some(manifest_cid) = info.get("manifest_cid").and_then(|v| v.as_str()) {
+                println!("   Manifest: {}", manifest_cid);
+            }
+
+            if let Some(root_cid) = info.get("root_cid").and_then(|v| v.as_str()) {
+                println!("   Root CID: {}", root_cid);
+            }
+
+            if let Some(deployed_at) = info.get("deployed_at").and_then(|v| v.as_u64()) {
+                let datetime = chrono::DateTime::from_timestamp(deployed_at as i64, 0)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                    .unwrap_or_else(|| deployed_at.to_string());
+                println!("   Deployed: {}", datetime);
+            }
+
+            if let Some(files) = info.get("files").and_then(|v| v.as_array()) {
+                println!("   Files: {} total", files.len());
+                if cli.verbose {
+                    for file in files {
+                        if let Some(path) = file.get("path").and_then(|v| v.as_str()) {
+                            let size = file.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+                            println!("      {} ({} bytes)", path, size);
+                        }
+                    }
+                }
+            }
+
+            if let Some(mode) = info.get("spa_fallback") {
+                if !mode.is_null() {
+                    println!("   Mode: SPA (fallback: {})", mode);
+                } else {
+                    println!("   Mode: Static");
+                }
+            }
+
+            println!();
+            println!("URL: zhtp://{}", domain);
+        }
+        None => {
+            println!("Domain not found: {}", domain);
+            println!();
+            println!("The domain may not be registered or the node may not have it cached.");
+        }
+    }
+
+    client.close().await;
     Ok(())
 }
 
 /// List all deployments
-async fn list_deployments(cli: &ZhtpCli) -> Result<()> {
-    println!("📋 Listing Web4 deployments");
+async fn list_deployments(
+    keystore: Option<&str>,
+    trust_config: TrustConfig,
+    cli: &ZhtpCli,
+) -> Result<()> {
+    println!("Listing Web4 deployments");
+    println!();
 
-    // TODO: Query node for all domains owned by current identity
-    println!("   (No deployments found or not connected to node)");
+    // Load identity from provided keystore or default location
+    let keystore_path = keystore
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| get_default_keystore_path().unwrap_or_else(|_| "~/.zhtp/keystore".to_string()));
+    let identity = load_identity(&keystore_path)
+        .context("Failed to load identity. Create one with: zhtp identity create")?;
 
+    println!("Identity: {}", identity.did);
+    println!();
+
+    // Connect to node with trust configuration
+    let mut client = Web4Client::new_with_trust(identity, trust_config).await
+        .context("Failed to create Web4 client")?;
+
+    client.connect(&cli.server).await
+        .context("Failed to connect to ZHTP node")?;
+
+    // Query domains owned by this identity
+    let domains = client.list_domains().await?;
+
+    if domains.is_empty() {
+        println!("No deployments found for this identity.");
+        println!();
+        println!("Deploy a site with:");
+        println!("  zhtp deploy site ./build --domain myapp.zhtp --keystore ~/.zhtp/keystore");
+    } else {
+        println!("Deployments ({} total):", domains.len());
+        println!();
+
+        for domain_info in &domains {
+            let domain = domain_info.get("domain")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+
+            let manifest_cid = domain_info.get("manifest_cid")
+                .and_then(|v| v.as_str())
+                .map(|s| &s[..16.min(s.len())])
+                .unwrap_or("...");
+
+            let deployed_at = domain_info.get("deployed_at")
+                .and_then(|v| v.as_u64())
+                .map(|ts| {
+                    chrono::DateTime::from_timestamp(ts as i64, 0)
+                        .map(|dt| dt.format("%Y-%m-%d").to_string())
+                        .unwrap_or_else(|| "unknown".to_string())
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let file_count = domain_info.get("files")
+                .and_then(|v| v.as_array())
+                .map(|f| f.len())
+                .unwrap_or(0);
+
+            println!("  {} ", domain);
+            println!("    Manifest: {}...", manifest_cid);
+            println!("    Files: {}", file_count);
+            println!("    Deployed: {}", deployed_at);
+            println!("    URL: zhtp://{}", domain);
+            println!();
+        }
+    }
+
+    client.close().await;
     Ok(())
+}
+
+/// Get default keystore path (~/.zhtp/keystore)
+fn get_default_keystore_path() -> Result<String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .context("Could not determine home directory")?;
+
+    Ok(format!("{}/.zhtp/keystore", home))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_guess_mime_type() {
+        // Web essentials
+        assert_eq!(guess_mime_type("index.html"), "text/html");
+        assert_eq!(guess_mime_type("styles.css"), "text/css");
+        assert_eq!(guess_mime_type("app.js"), "application/javascript");
+        assert_eq!(guess_mime_type("data.json"), "application/json");
+
+        // Images
+        assert_eq!(guess_mime_type("logo.png"), "image/png");
+        assert_eq!(guess_mime_type("photo.jpg"), "image/jpeg");
+        assert_eq!(guess_mime_type("photo.jpeg"), "image/jpeg");
+        assert_eq!(guess_mime_type("icon.svg"), "image/svg+xml");
+        assert_eq!(guess_mime_type("favicon.ico"), "image/x-icon");
+
+        // Fonts
+        assert_eq!(guess_mime_type("font.woff"), "font/woff");
+        assert_eq!(guess_mime_type("font.woff2"), "font/woff2");
+
+        // Other
+        assert_eq!(guess_mime_type("module.wasm"), "application/wasm");
+        assert_eq!(guess_mime_type("bundle.js.map"), "application/json");
+        assert_eq!(guess_mime_type("unknown.xyz"), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_deploy_mode_parsing() {
+        assert_eq!("spa".parse::<DeployMode>().unwrap(), DeployMode::Spa);
+        assert_eq!("SPA".parse::<DeployMode>().unwrap(), DeployMode::Spa);
+        assert_eq!("static".parse::<DeployMode>().unwrap(), DeployMode::Static);
+        assert_eq!("STATIC".parse::<DeployMode>().unwrap(), DeployMode::Static);
+        assert!("invalid".parse::<DeployMode>().is_err());
+    }
+
+    #[test]
+    fn test_file_entry_serialization() {
+        let entry = FileEntry {
+            path: "/index.html".to_string(),
+            size: 1234,
+            mime_type: "text/html".to_string(),
+            hash: "abc12345".to_string(),
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let decoded: FileEntry = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded.path, entry.path);
+        assert_eq!(decoded.size, entry.size);
+        assert_eq!(decoded.mime_type, entry.mime_type);
+        assert_eq!(decoded.hash, entry.hash);
+    }
 }

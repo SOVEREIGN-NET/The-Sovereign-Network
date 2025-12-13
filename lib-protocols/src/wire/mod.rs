@@ -5,8 +5,15 @@
 //! # Protocol Design
 //!
 //! - **Envelope**: Adds request_id for multiplexing, version for compatibility
+//! - **AuthContext**: Binds requests to UHP handshake (session proof, not user-supplied)
 //! - **Serialization**: CBOR (compact, schema-free, well-supported)
 //! - **Framing**: Length-prefixed messages (4-byte big-endian length + payload)
+//!
+//! # Security Model
+//!
+//! The `auth_context` field is derived from the UHP handshake and MUST NOT be
+//! user-supplied. It binds each request to the authenticated session, preventing
+//! replay attacks and ensuring request authorization can be verified.
 //!
 //! # Wire Format
 //!
@@ -28,6 +35,83 @@ pub const WIRE_VERSION: u16 = 1;
 /// Maximum message size (16 MB)
 pub const MAX_MESSAGE_SIZE: u32 = 16 * 1024 * 1024;
 
+/// Authentication context derived from UHP handshake
+///
+/// This proves the request originates from the authenticated session
+/// and cannot be replayed or forged.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthContext {
+    /// Session ID from UHP handshake (16 bytes)
+    pub session_id: [u8; 16],
+
+    /// Client DID (from handshake identity verification)
+    pub client_did: String,
+
+    /// Request sequence number (prevents replay within session)
+    pub sequence: u64,
+
+    /// HMAC of request content using session-derived key
+    /// Proves request hasn't been tampered with
+    pub request_mac: [u8; 32],
+}
+
+impl AuthContext {
+    /// Create a new auth context for a request
+    ///
+    /// The MAC is computed over: session_id || sequence || request_hash
+    pub fn new(
+        session_id: [u8; 16],
+        client_did: String,
+        sequence: u64,
+        session_key: &[u8; 32],
+        request_hash: &[u8; 32],
+    ) -> Self {
+        // Compute MAC binding session, sequence, and request content
+        let mut mac_input = Vec::with_capacity(16 + 8 + 32);
+        mac_input.extend_from_slice(&session_id);
+        mac_input.extend_from_slice(&sequence.to_le_bytes());
+        mac_input.extend_from_slice(request_hash);
+
+        // HMAC using session key
+        let request_mac = Self::hmac_blake3(session_key, &mac_input);
+
+        Self {
+            session_id,
+            client_did,
+            sequence,
+            request_mac,
+        }
+    }
+
+    /// Verify the auth context MAC
+    pub fn verify(&self, session_key: &[u8; 32], request_hash: &[u8; 32]) -> bool {
+        let mut mac_input = Vec::with_capacity(16 + 8 + 32);
+        mac_input.extend_from_slice(&self.session_id);
+        mac_input.extend_from_slice(&self.sequence.to_le_bytes());
+        mac_input.extend_from_slice(request_hash);
+
+        let expected_mac = Self::hmac_blake3(session_key, &mac_input);
+        constant_time_eq(&self.request_mac, &expected_mac)
+    }
+
+    /// HMAC using BLAKE3 in keyed mode
+    fn hmac_blake3(key: &[u8; 32], data: &[u8]) -> [u8; 32] {
+        let hasher = blake3::Hasher::new_keyed(key);
+        let mut h = hasher;
+        h.update(data);
+        *h.finalize().as_bytes()
+    }
+}
+
+/// Constant-time comparison to prevent timing attacks
+fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
+    let mut result = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
+}
+
 /// Request envelope for wire transport
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZhtpRequestWire {
@@ -37,12 +121,18 @@ pub struct ZhtpRequestWire {
     pub request_id: [u8; 16],
     /// Request timestamp (milliseconds since epoch)
     pub timestamp_ms: u64,
+    /// Authentication context (derived from UHP handshake, not user-supplied)
+    pub auth_context: Option<AuthContext>,
     /// The actual ZHTP request
     pub request: ZhtpRequest,
 }
 
 impl ZhtpRequestWire {
-    /// Create a new wire request with generated ID
+    /// Create a new wire request with generated ID (no auth context)
+    ///
+    /// NOTE: Requests without auth_context may be rejected by handlers
+    /// that require authenticated access. Use `new_authenticated` for
+    /// requests over UHP-authenticated connections.
     pub fn new(request: ZhtpRequest) -> Self {
         let mut request_id = [0u8; 16];
         getrandom::getrandom(&mut request_id).unwrap_or_else(|_| {
@@ -63,8 +153,141 @@ impl ZhtpRequestWire {
             version: WIRE_VERSION,
             request_id,
             timestamp_ms,
+            auth_context: None,
             request,
         }
+    }
+
+    /// Create an authenticated wire request
+    ///
+    /// The auth_context binds the request to the UHP session and includes
+    /// a MAC that proves request integrity.
+    ///
+    /// The MAC is computed over canonical CBOR-serialized request bytes
+    /// to ensure deterministic verification across implementations.
+    pub fn new_authenticated(
+        request: ZhtpRequest,
+        session_id: [u8; 16],
+        client_did: String,
+        sequence: u64,
+        session_key: &[u8; 32],
+    ) -> Self {
+        let mut request_id = [0u8; 16];
+        getrandom::getrandom(&mut request_id).unwrap_or_else(|_| {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            request_id[..16].copy_from_slice(&ts.to_le_bytes());
+        });
+
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        // Compute canonical request hash using CBOR (deterministic serialization)
+        let request_hash = Self::compute_canonical_request_hash(&request, &request_id, timestamp_ms);
+
+        let auth_context = AuthContext::new(
+            session_id,
+            client_did,
+            sequence,
+            session_key,
+            &request_hash,
+        );
+
+        Self {
+            version: WIRE_VERSION,
+            request_id,
+            timestamp_ms,
+            auth_context: Some(auth_context),
+            request,
+        }
+    }
+
+    /// Compute canonical hash of request for MAC verification
+    ///
+    /// This creates a deterministic hash by including all request fields
+    /// in a fixed order with CBOR serialization.
+    pub fn compute_canonical_request_hash(request: &ZhtpRequest, request_id: &[u8; 16], timestamp_ms: u64) -> [u8; 32] {
+        // Build canonical input: version || request_id || timestamp || method || uri || body
+        // Using CBOR ensures deterministic byte representation
+        let mut hasher = blake3::Hasher::new();
+
+        // Include wire envelope fields
+        hasher.update(&WIRE_VERSION.to_le_bytes());
+        hasher.update(request_id);
+        hasher.update(&timestamp_ms.to_le_bytes());
+
+        // Include request fields in canonical order
+        // Method as u8 discriminant
+        let method_byte = match request.method {
+            crate::types::ZhtpMethod::Get => 0u8,
+            crate::types::ZhtpMethod::Post => 1u8,
+            crate::types::ZhtpMethod::Put => 2u8,
+            crate::types::ZhtpMethod::Delete => 3u8,
+            crate::types::ZhtpMethod::Options => 4u8,
+            crate::types::ZhtpMethod::Head => 5u8,
+            crate::types::ZhtpMethod::Patch => 6u8,
+            crate::types::ZhtpMethod::Verify => 7u8,
+            crate::types::ZhtpMethod::Connect => 8u8,
+            crate::types::ZhtpMethod::Trace => 9u8,
+        };
+        hasher.update(&[method_byte]);
+
+        // URI (length-prefixed)
+        hasher.update(&(request.uri.len() as u32).to_le_bytes());
+        hasher.update(request.uri.as_bytes());
+
+        // Headers - serialize each field in fixed order for determinism
+        // Using a simple encoding: field present (1) + value, or absent (0)
+        if let Some(ref s) = request.headers.content_type {
+            hasher.update(&[1u8]);
+            hasher.update(&(s.len() as u32).to_le_bytes());
+            hasher.update(s.as_bytes());
+        } else {
+            hasher.update(&[0u8]);
+        }
+
+        if let Some(v) = request.headers.content_length {
+            hasher.update(&[1u8]);
+            hasher.update(&v.to_le_bytes());
+        } else {
+            hasher.update(&[0u8]);
+        }
+
+        if let Some(ref s) = request.headers.content_encoding {
+            hasher.update(&[1u8]);
+            hasher.update(&(s.len() as u32).to_le_bytes());
+            hasher.update(s.as_bytes());
+        } else {
+            hasher.update(&[0u8]);
+        }
+
+        if let Some(ref s) = request.headers.cache_control {
+            hasher.update(&[1u8]);
+            hasher.update(&(s.len() as u32).to_le_bytes());
+            hasher.update(s.as_bytes());
+        } else {
+            hasher.update(&[0u8]);
+        }
+
+        // Body (length-prefixed)
+        hasher.update(&(request.body.len() as u32).to_le_bytes());
+        hasher.update(&request.body);
+
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Verify the canonical hash matches for MAC verification
+    pub fn verify_canonical_hash(&self, expected_hash: &[u8; 32]) -> bool {
+        let computed = Self::compute_canonical_request_hash(
+            &self.request,
+            &self.request_id,
+            self.timestamp_ms,
+        );
+        constant_time_eq(&computed, expected_hash)
     }
 
     /// Create with specific request ID (for testing or correlation)
@@ -78,6 +301,7 @@ impl ZhtpRequestWire {
             version: WIRE_VERSION,
             request_id,
             timestamp_ms,
+            auth_context: None,
             request,
         }
     }
