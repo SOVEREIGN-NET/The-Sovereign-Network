@@ -1019,8 +1019,271 @@ impl Web4Handler {
     // Web4 contract deployment is now handled as an OUTPUT in the proper
     // UTXO-based payment transaction above, with:
     // - Real UTXO inputs (proves ownership)
-    // - Real fees (economic spam protection)  
+    // - Real fees (economic spam protection)
     // - Real Dilithium2 signatures (cryptographic proof)
     // - Full on-chain validation (security)
     // ============================================================================
+
+    // ============================================================================
+    // Domain Versioning API (Addendum Phase 5)
+    // ============================================================================
+
+    /// Get domain status with version info
+    /// GET /api/v1/web4/domains/status/{domain}
+    pub async fn get_domain_status(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Extract domain from path: /api/v1/web4/domains/status/{domain}
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        if path_parts.len() < 7 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Invalid domain status path".to_string(),
+            ));
+        }
+
+        let domain = path_parts[6];
+        info!(" Getting status for domain: {}", domain);
+
+        let manager = self.web4_manager.read().await;
+
+        match manager.registry.get_domain_status(domain).await {
+            Ok(status) => {
+                let response_json = serde_json::to_vec(&status)
+                    .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
+
+                Ok(ZhtpResponse::success_with_content_type(
+                    response_json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("Failed to get domain status: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to get domain status: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Get domain version history
+    /// GET /api/v1/web4/domains/history/{domain}
+    pub async fn get_domain_history(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Extract domain from path: /api/v1/web4/domains/history/{domain}
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        if path_parts.len() < 7 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Invalid domain history path".to_string(),
+            ));
+        }
+
+        let domain = path_parts[6];
+
+        // Parse optional limit from query string
+        let limit = request.uri
+            .split("limit=")
+            .nth(1)
+            .and_then(|s| s.split('&').next())
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(50);
+
+        info!(" Getting history for domain: {} (limit: {})", domain, limit);
+
+        let manager = self.web4_manager.read().await;
+
+        match manager.registry.get_domain_history(domain, limit).await {
+            Ok(history) => {
+                let response_json = serde_json::to_vec(&history)
+                    .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
+
+                Ok(ZhtpResponse::success_with_content_type(
+                    response_json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("Failed to get domain history: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Domain not found: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Update domain with new manifest (atomic compare-and-swap)
+    /// POST /api/v1/web4/domains/update
+    pub async fn update_domain_version(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!(" Processing domain update request");
+
+        // Parse update request
+        let update_request: lib_network::web4::DomainUpdateRequest =
+            serde_json::from_slice(&request.body)
+                .map_err(|e| anyhow!("Invalid domain update request: {}", e))?;
+
+        info!(
+            " Updating domain {} (expected CID: {}...)",
+            update_request.domain,
+            &update_request.expected_previous_manifest_cid[..16.min(update_request.expected_previous_manifest_cid.len())]
+        );
+
+        // TODO: Verify signature matches domain owner
+        // For now, we trust the caller has authenticated
+
+        let manager = self.web4_manager.read().await;
+
+        match manager.registry.update_domain(update_request).await {
+            Ok(response) => {
+                if response.success {
+                    info!(
+                        " Domain updated to v{} (CID: {}...)",
+                        response.new_version,
+                        &response.new_manifest_cid[..16.min(response.new_manifest_cid.len())]
+                    );
+                } else {
+                    warn!(
+                        " Domain update failed: {}",
+                        response.error.as_deref().unwrap_or("Unknown error")
+                    );
+                }
+
+                let response_json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
+
+                Ok(ZhtpResponse::success_with_content_type(
+                    response_json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("Failed to update domain: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Domain update failed: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Resolve domain to current manifest
+    /// POST /api/v1/web4/domains/resolve
+    pub async fn resolve_domain_manifest(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct ResolveRequest {
+            domain: String,
+            version: Option<u64>,
+        }
+
+        let resolve_req: ResolveRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow!("Invalid resolve request: {}", e))?;
+
+        info!(" Resolving domain: {} (version: {:?})", resolve_req.domain, resolve_req.version);
+
+        let manager = self.web4_manager.read().await;
+
+        // Get domain status
+        let status = manager.registry.get_domain_status(&resolve_req.domain).await
+            .map_err(|e| anyhow!("Domain not found: {}", e))?;
+
+        if !status.found {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                format!("Domain not found: {}", resolve_req.domain),
+            ));
+        }
+
+        // If specific version requested, look up that manifest
+        let manifest_cid = if let Some(version) = resolve_req.version {
+            let history = manager.registry.get_domain_history(&resolve_req.domain, 1000).await
+                .map_err(|e| anyhow!("Failed to get history: {}", e))?;
+
+            history.versions.iter()
+                .find(|v| v.version == version)
+                .map(|v| v.manifest_cid.clone())
+                .ok_or_else(|| anyhow!("Version {} not found", version))?
+        } else {
+            status.current_manifest_cid.clone()
+        };
+
+        let response = serde_json::json!({
+            "domain": resolve_req.domain,
+            "version": resolve_req.version.unwrap_or(status.version),
+            "manifest_cid": manifest_cid,
+            "owner_did": status.owner_did,
+            "updated_at": status.updated_at,
+        });
+
+        let response_json = serde_json::to_vec(&response)
+            .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            response_json,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Rollback domain to previous version
+    /// POST /api/v1/web4/domains/{domain}/rollback
+    pub async fn rollback_domain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct RollbackRequest {
+            to_version: u64,
+            signature: Option<String>,
+        }
+
+        // Extract domain from path
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        if path_parts.len() < 7 {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Invalid rollback path".to_string(),
+            ));
+        }
+
+        let domain = path_parts[5]; // /api/v1/web4/domains/{domain}/rollback
+
+        let rollback_req: RollbackRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow!("Invalid rollback request: {}", e))?;
+
+        info!(" Rolling back domain {} to version {}", domain, rollback_req.to_version);
+
+        // TODO: Verify signature matches domain owner
+        let owner_did = request.headers.get("x-owner-did")
+            .unwrap_or_else(|| "anonymous".to_string());
+
+        let manager = self.web4_manager.read().await;
+
+        match manager.registry.rollback_domain(domain, rollback_req.to_version, &owner_did).await {
+            Ok(response) => {
+                if response.success {
+                    info!(
+                        " Domain {} rolled back to v{} (new version: v{})",
+                        domain,
+                        rollback_req.to_version,
+                        response.new_version
+                    );
+                }
+
+                let response_json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
+
+                Ok(ZhtpResponse::success_with_content_type(
+                    response_json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("Failed to rollback domain: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Rollback failed: {}", e),
+                ))
+            }
+        }
+    }
 }
