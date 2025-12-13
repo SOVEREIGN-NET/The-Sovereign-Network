@@ -54,25 +54,30 @@ pub struct MeshDhtTransport {
 - Returns `(transport, sender)` tuple for message injection
 - Good error handling with proper Result types
 
-**TODO (Non-blocking):**
-- The `_dht_receiver` sender returned by `new()` is currently unused in zhtp/core.rs
-- Full integration requires wiring the receiver to `handle_dht_generic_payload`
+**Wiring (COMPLETED):**
+- `dht_payload_sender` is stored in MeshRouter
+- `wire_dht_to_message_handler()` method wires sender to any MeshMessageHandler
+- `get_dht_payload_sender()` returns clone for external wiring
 
-### 4. DhtGenericPayload Handling: PARTIAL IMPLEMENTATION
+### 4. DhtGenericPayload Handling: FULLY IMPLEMENTED ✅
 
-**File:** `lib-network/src/messaging/message_handler.rs:1233`
+**File:** `lib-network/src/messaging/message_handler.rs:1262`
 
-The `handle_dht_generic_payload` method logs the message but does not fully process it:
+The `handle_dht_generic_payload` method now fully processes DHT payloads:
 
 ```rust
-// TODO: Implement DHT message callback/channel dispatch
-// The application layer (zhtp server) should register a handler for DHT messages
-// that connects to lib-storage's DhtStorage for processing.
+async fn handle_dht_generic_payload(&self, requester: PublicKey, payload: Vec<u8>) -> Result<()> {
+    // 1. Rate limiting check (100 msgs/peer/60s)
+    // 2. Payload size validation (max 64KB)
+    // 3. Forward to DhtStorage via dht_payload_sender channel
+}
 ```
 
-**Impact:** DHT messages routed through mesh will be received but not processed.
-
-**Recommendation:** Create follow-up ticket for completing the DHT message dispatch integration.
+**Features:**
+- Rate limiting: 100 messages per peer per 60-second window
+- Payload size validation: max 64KB
+- Channel-based dispatch to DhtStorage
+- Proper error handling and logging
 
 ### 5. DhtStorage::new_with_transport: APPROVED
 
@@ -153,11 +158,20 @@ The unbounded channel for receiving DHT messages is internal:
 - Sender is held by mesh message handler
 - No external access to the sender
 
-### 5. Rate Limiting: NOT IMPLEMENTED
+### 5. Rate Limiting: IMPLEMENTED ✅
 
-**Missing:** No rate limiting on `DhtGenericPayload` messages.
+**Implementation:**
+- 100 messages per peer per 60-second sliding window
+- Per-peer tracking using hex-encoded key_id prefix
+- Rate limit exceeded peers logged and blocked
+- Payload size limit: 64KB max
 
-**Recommendation:** Add rate limiting similar to other mesh message types when full DHT processing is implemented.
+**Configuration:**
+```rust
+const DHT_RATE_LIMIT_MAX: u32 = 100;      // Max DHT messages per peer per window
+const DHT_RATE_LIMIT_WINDOW_SECS: u64 = 60; // Rate limit window in seconds
+const MAX_DHT_PAYLOAD_SIZE: usize = 65536;  // 64KB max payload
+```
 
 ---
 
@@ -181,19 +195,23 @@ The unbounded channel for receiving DHT messages is internal:
 
 The PR compiles, tests pass, and the architecture is sound.
 
-### Non-Blocking Follow-ups:
+### Completed Improvements:
 
-1. **Complete DHT Message Dispatch** (New Ticket)
-   - Wire `_dht_receiver` to inject received DHT messages
-   - Implement full `handle_dht_generic_payload` processing
-   - Connect to lib-storage's DhtStorage for handling
+1. **Complete DHT Message Dispatch** ✅ IMPLEMENTED
+   - Wired `dht_payload_sender` to inject received DHT messages
+   - Implemented full `handle_dht_generic_payload` processing with validation
+   - Connected to lib-storage's DhtStorage via channel
 
-2. **DHT Message Signing** (Existing HIGH-5 TODO)
+2. **Rate Limiting for DHT Messages** ✅ IMPLEMENTED
+   - Added rate limiting: 100 msgs/peer/60s window
+   - Payload size validation: max 64KB
+   - Rate limit exceeded peers are logged and blocked
+
+### Remaining Follow-ups:
+
+1. **DHT Message Signing** (Existing HIGH-5 TODO)
    - Implement signature verification in message handling
    - Document security properties
-
-3. **Rate Limiting for DHT Messages** (Future)
-   - Add rate limiting for `DhtGenericPayload` messages
 
 ### Approval Conditions:
 
