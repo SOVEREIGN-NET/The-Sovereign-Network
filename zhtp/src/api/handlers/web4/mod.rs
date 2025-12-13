@@ -461,6 +461,23 @@ impl ZhtpRequestHandler for Web4Handler {
                 self.resolve_web4_domain(request).await
             }
 
+            // Domain versioning endpoints (must come before general domain endpoints)
+            "/api/v1/web4/domains/resolve" if request.method == lib_protocols::ZhtpMethod::Post => {
+                self.resolve_domain_manifest(request).await
+            }
+            "/api/v1/web4/domains/update" if request.method == lib_protocols::ZhtpMethod::Post => {
+                self.update_domain_version(request).await
+            }
+            path if path.starts_with("/api/v1/web4/domains/status/") && request.method == lib_protocols::ZhtpMethod::Get => {
+                self.get_domain_status(request).await
+            }
+            path if path.starts_with("/api/v1/web4/domains/history/") && request.method == lib_protocols::ZhtpMethod::Get => {
+                self.get_domain_history(request).await
+            }
+            path if path.starts_with("/api/v1/web4/domains/") && path.ends_with("/rollback") && request.method == lib_protocols::ZhtpMethod::Post => {
+                self.rollback_domain(request).await
+            }
+
             // Domain management endpoints
             path if path.starts_with("/api/v1/web4/domains/register") => {
                 self.register_domain_simple(request.body).await

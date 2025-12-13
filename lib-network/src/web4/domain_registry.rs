@@ -30,6 +30,8 @@ pub struct DomainRegistry {
     content_cache: Arc<RwLock<HashMap<String, Vec<u8>>>>,
     /// Registry statistics
     stats: Arc<RwLock<Web4Statistics>>,
+    /// Manifest history per domain (domain -> list of manifests, oldest first)
+    manifest_history: Arc<RwLock<HashMap<String, Vec<Web4Manifest>>>>,
 }
 
 impl DomainRegistry {
@@ -45,6 +47,7 @@ impl DomainRegistry {
             dht_client: Arc::new(RwLock::new(None)), // No DHT client needed when using shared storage
             storage_system: storage,
             content_cache: Arc::new(RwLock::new(HashMap::new())),
+            manifest_history: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(Web4Statistics {
                 total_domains: 0,
                 total_content: 0,
@@ -71,6 +74,7 @@ impl DomainRegistry {
             dht_client: Arc::new(RwLock::new(dht_client)), // Use provided DHT client if available
             storage_system: Arc::new(RwLock::new(storage_system)),
             content_cache: Arc::new(RwLock::new(HashMap::new())),
+            manifest_history: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(Web4Statistics {
                 total_domains: 0,
                 total_content: 0,
@@ -141,10 +145,21 @@ impl DomainRegistry {
             content_mappings.insert(path.clone(), content_hash);
         }
 
+        // Create initial manifest for version 1
+        let initial_manifest_cid = format!(
+            "bafk{}",
+            hex::encode(&lib_crypto::hash_blake3(
+                format!("{}:v1:{}", request.domain, current_time).as_bytes()
+            )[..16])
+        );
+
         let domain_record = DomainRecord {
             domain: request.domain.clone(),
             owner: request.owner.id.clone(),
+            current_manifest_cid: initial_manifest_cid,
+            version: 1,
             registered_at: current_time,
+            updated_at: current_time,
             expires_at,
             ownership_proof,
             content_mappings,
@@ -312,10 +327,21 @@ impl DomainRegistry {
             },
         };
 
+        // Generate manifest CID from contract data
+        let manifest_cid = format!(
+            "bafk{}",
+            hex::encode(&lib_crypto::hash_blake3(
+                format!("{}:v1:{}", web4_contract.domain, web4_contract.created_at).as_bytes()
+            )[..16])
+        );
+
         Ok(DomainRecord {
             domain: web4_contract.domain.clone(),
             owner,
+            current_manifest_cid: manifest_cid,
+            version: 1, // Contracts imported from blockchain start at version 1
             registered_at: web4_contract.created_at,
+            updated_at: web4_contract.created_at,
             expires_at: web4_contract.created_at + (365 * 24 * 60 * 60), // 1 year default
             content_mappings,
             metadata: domain_metadata,
@@ -722,6 +748,239 @@ impl DomainRegistry {
 
         // Retrieve content
         self.get_content(content_hash).await
+    }
+
+    // ========================================================================
+    // Domain Versioning API
+    // ========================================================================
+
+    /// Get domain status (version info)
+    pub async fn get_domain_status(&self, domain: &str) -> Result<DomainStatusResponse> {
+        let records = self.domain_records.read().await;
+
+        if let Some(record) = records.get(domain) {
+            Ok(DomainStatusResponse {
+                found: true,
+                domain: record.domain.clone(),
+                version: record.version,
+                current_manifest_cid: record.current_manifest_cid.clone(),
+                owner_did: format!("did:zhtp:{}", hex::encode(&record.owner.0[..16])),
+                updated_at: record.updated_at,
+                expires_at: record.expires_at,
+                build_hash: hex::encode(&hash_blake3(record.current_manifest_cid.as_bytes())[..16]),
+            })
+        } else {
+            Ok(DomainStatusResponse {
+                found: false,
+                domain: domain.to_string(),
+                version: 0,
+                current_manifest_cid: String::new(),
+                owner_did: String::new(),
+                updated_at: 0,
+                expires_at: 0,
+                build_hash: String::new(),
+            })
+        }
+    }
+
+    /// Get domain version history
+    pub async fn get_domain_history(&self, domain: &str, limit: usize) -> Result<DomainHistoryResponse> {
+        let records = self.domain_records.read().await;
+        let manifests = self.manifest_history.read().await;
+
+        let record = records.get(domain)
+            .ok_or_else(|| anyhow!("Domain not found: {}", domain))?;
+
+        // Get version history from manifest storage
+        let mut versions = Vec::new();
+
+        if let Some(domain_manifests) = manifests.get(domain) {
+            for manifest in domain_manifests.iter().rev().take(limit) {
+                versions.push(DomainVersionEntry {
+                    version: manifest.version,
+                    manifest_cid: manifest.compute_cid(),
+                    created_at: manifest.created_at,
+                    created_by: manifest.created_by.clone(),
+                    message: manifest.message.clone(),
+                    build_hash: manifest.build_hash.clone(),
+                });
+            }
+        } else {
+            // No history, return current version only
+            versions.push(DomainVersionEntry {
+                version: record.version,
+                manifest_cid: record.current_manifest_cid.clone(),
+                created_at: record.updated_at,
+                created_by: format!("did:zhtp:{}", hex::encode(&record.owner.0[..16])),
+                message: Some("Initial deployment".to_string()),
+                build_hash: hex::encode(&hash_blake3(record.current_manifest_cid.as_bytes())[..16]),
+            });
+        }
+
+        Ok(DomainHistoryResponse {
+            domain: domain.to_string(),
+            current_version: record.version,
+            total_versions: versions.len() as u64,
+            versions,
+        })
+    }
+
+    /// Update domain with new manifest (atomic compare-and-swap)
+    pub async fn update_domain(&self, update_request: DomainUpdateRequest) -> Result<DomainUpdateResponse> {
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        // Validate timestamp (within 5 minutes)
+        let time_diff = if current_time > update_request.timestamp {
+            current_time - update_request.timestamp
+        } else {
+            update_request.timestamp - current_time
+        };
+
+        if time_diff > 300 {
+            return Ok(DomainUpdateResponse {
+                success: false,
+                new_version: 0,
+                new_manifest_cid: String::new(),
+                previous_manifest_cid: String::new(),
+                updated_at: 0,
+                error: Some(format!("Request expired. Timestamp difference: {} seconds", time_diff)),
+            });
+        }
+
+        let mut records = self.domain_records.write().await;
+
+        let record = records.get_mut(&update_request.domain)
+            .ok_or_else(|| anyhow!("Domain not found: {}", update_request.domain))?;
+
+        // Compare-and-swap: verify expected previous CID matches current
+        if record.current_manifest_cid != update_request.expected_previous_manifest_cid {
+            return Ok(DomainUpdateResponse {
+                success: false,
+                new_version: record.version,
+                new_manifest_cid: record.current_manifest_cid.clone(),
+                previous_manifest_cid: record.current_manifest_cid.clone(),
+                updated_at: record.updated_at,
+                error: Some(format!(
+                    "Concurrent update detected. Expected previous CID: {}, actual: {}",
+                    update_request.expected_previous_manifest_cid,
+                    record.current_manifest_cid
+                )),
+            });
+        }
+
+        // TODO: Verify signature matches domain owner
+        // For now, we trust the caller has verified authorization
+
+        let previous_manifest_cid = record.current_manifest_cid.clone();
+        let new_version = record.version + 1;
+
+        // Update record atomically
+        record.current_manifest_cid = update_request.new_manifest_cid.clone();
+        record.version = new_version;
+        record.updated_at = current_time;
+
+        info!(
+            " Domain {} updated: v{} -> v{} (CID: {} -> {})",
+            update_request.domain,
+            new_version - 1,
+            new_version,
+            &previous_manifest_cid[..16.min(previous_manifest_cid.len())],
+            &update_request.new_manifest_cid[..16.min(update_request.new_manifest_cid.len())]
+        );
+
+        Ok(DomainUpdateResponse {
+            success: true,
+            new_version,
+            new_manifest_cid: update_request.new_manifest_cid,
+            previous_manifest_cid,
+            updated_at: current_time,
+            error: None,
+        })
+    }
+
+    /// Store a manifest in history
+    pub async fn store_manifest(&self, manifest: Web4Manifest) -> Result<String> {
+        let cid = manifest.compute_cid();
+
+        // Validate manifest chain if we have the previous one
+        if manifest.version > 1 {
+            let manifests = self.manifest_history.read().await;
+            if let Some(domain_manifests) = manifests.get(&manifest.domain) {
+                if let Some(prev) = domain_manifests.last() {
+                    manifest.validate_chain(Some(prev))
+                        .map_err(|e| anyhow!("Manifest chain validation failed: {}", e))?;
+                }
+            }
+        } else {
+            manifest.validate_chain(None)
+                .map_err(|e| anyhow!("Manifest validation failed: {}", e))?;
+        }
+
+        // Store manifest in history
+        let mut manifests = self.manifest_history.write().await;
+        manifests
+            .entry(manifest.domain.clone())
+            .or_insert_with(Vec::new)
+            .push(manifest);
+
+        info!(" Stored manifest {} for domain", cid);
+        Ok(cid)
+    }
+
+    /// Get manifest by CID
+    pub async fn get_manifest(&self, domain: &str, cid: &str) -> Result<Option<Web4Manifest>> {
+        let manifests = self.manifest_history.read().await;
+
+        if let Some(domain_manifests) = manifests.get(domain) {
+            for manifest in domain_manifests {
+                if manifest.compute_cid() == cid {
+                    return Ok(Some(manifest.clone()));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Rollback domain to a previous version
+    pub async fn rollback_domain(&self, domain: &str, target_version: u64, owner_did: &str) -> Result<DomainUpdateResponse> {
+        // Get the target manifest
+        let manifests = self.manifest_history.read().await;
+        let domain_manifests = manifests.get(domain)
+            .ok_or_else(|| anyhow!("No history found for domain: {}", domain))?;
+
+        let target_manifest = domain_manifests.iter()
+            .find(|m| m.version == target_version)
+            .ok_or_else(|| anyhow!("Version {} not found for domain {}", target_version, domain))?
+            .clone();
+
+        drop(manifests);
+
+        let target_cid = target_manifest.compute_cid();
+
+        // Get current state
+        let records = self.domain_records.read().await;
+        let current_cid = records.get(domain)
+            .map(|r| r.current_manifest_cid.clone())
+            .ok_or_else(|| anyhow!("Domain not found: {}", domain))?;
+        drop(records);
+
+        // Create rollback update request
+        let update_request = DomainUpdateRequest {
+            domain: domain.to_string(),
+            new_manifest_cid: target_cid,
+            expected_previous_manifest_cid: current_cid,
+            signature: String::new(), // TODO: Require signature
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+        };
+
+        // Note: This creates a new version pointing to old content
+        // The version number continues to increment (not reset to target)
+        self.update_domain(update_request).await
     }
 }
 

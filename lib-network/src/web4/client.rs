@@ -587,6 +587,153 @@ impl Web4Client {
         }
     }
 
+    // ========================================================================
+    // Domain Versioning API
+    // ========================================================================
+
+    /// Get domain version status
+    pub async fn get_domain_status(&self, domain: &str) -> Result<serde_json::Value> {
+        let request = ZhtpRequest::get(
+            format!("/api/v1/web4/domains/status/{}", domain),
+            Some(self.identity.id.clone()),
+        )?;
+
+        let response = self.send_request(request, false).await?;
+
+        if !response.status.is_success() {
+            return Err(anyhow!(
+                "Failed to get domain status: {} {}",
+                response.status.code(),
+                response.status_message
+            ));
+        }
+
+        serde_json::from_slice(&response.body)
+            .context("Invalid JSON response")
+    }
+
+    /// Get domain version history
+    pub async fn get_domain_history(&self, domain: &str, limit: Option<usize>) -> Result<serde_json::Value> {
+        let url = if let Some(limit) = limit {
+            format!("/api/v1/web4/domains/history/{}?limit={}", domain, limit)
+        } else {
+            format!("/api/v1/web4/domains/history/{}", domain)
+        };
+
+        let request = ZhtpRequest::get(
+            url,
+            Some(self.identity.id.clone()),
+        )?;
+
+        let response = self.send_request(request, false).await?;
+
+        if !response.status.is_success() {
+            return Err(anyhow!(
+                "Failed to get domain history: {} {}",
+                response.status.code(),
+                response.status_message
+            ));
+        }
+
+        serde_json::from_slice(&response.body)
+            .context("Invalid JSON response")
+    }
+
+    /// Update domain with new manifest (atomic compare-and-swap)
+    pub async fn update_domain(
+        &self,
+        domain: &str,
+        new_manifest_cid: &str,
+        expected_previous_cid: &str,
+    ) -> Result<serde_json::Value> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        let body = serde_json::json!({
+            "domain": domain,
+            "new_manifest_cid": new_manifest_cid,
+            "expected_previous_manifest_cid": expected_previous_cid,
+            "signature": "", // TODO: Sign with identity
+            "timestamp": timestamp,
+        });
+
+        let request = ZhtpRequest::post(
+            "/api/v1/web4/domains/update".to_string(),
+            serde_json::to_vec(&body)?,
+            "application/json".to_string(),
+            Some(self.identity.id.clone()),
+        )?;
+
+        let response = self.send_request(request, true).await?;
+
+        if !response.status.is_success() {
+            return Err(anyhow!(
+                "Failed to update domain: {} {}",
+                response.status.code(),
+                response.status_message
+            ));
+        }
+
+        serde_json::from_slice(&response.body)
+            .context("Invalid JSON response")
+    }
+
+    /// Rollback domain to a previous version
+    pub async fn rollback_domain(&self, domain: &str, to_version: u64) -> Result<serde_json::Value> {
+        let body = serde_json::json!({
+            "to_version": to_version,
+        });
+
+        let request = ZhtpRequest::post(
+            format!("/api/v1/web4/domains/{}/rollback", domain),
+            serde_json::to_vec(&body)?,
+            "application/json".to_string(),
+            Some(self.identity.id.clone()),
+        )?;
+
+        let response = self.send_request(request, true).await?;
+
+        if !response.status.is_success() {
+            return Err(anyhow!(
+                "Failed to rollback domain: {} {}",
+                response.status.code(),
+                response.status_message
+            ));
+        }
+
+        serde_json::from_slice(&response.body)
+            .context("Invalid JSON response")
+    }
+
+    /// Resolve domain to manifest (optionally at specific version)
+    pub async fn resolve_domain(&self, domain: &str, version: Option<u64>) -> Result<serde_json::Value> {
+        let body = serde_json::json!({
+            "domain": domain,
+            "version": version,
+        });
+
+        let request = ZhtpRequest::post(
+            "/api/v1/web4/domains/resolve".to_string(),
+            serde_json::to_vec(&body)?,
+            "application/json".to_string(),
+            Some(self.identity.id.clone()),
+        )?;
+
+        let response = self.send_request(request, false).await?;
+
+        if !response.status.is_success() {
+            return Err(anyhow!(
+                "Failed to resolve domain: {} {}",
+                response.status.code(),
+                response.status_message
+            ));
+        }
+
+        serde_json::from_slice(&response.body)
+            .context("Invalid JSON response")
+    }
+
     /// Upload a blob with automatic chunking for large files
     ///
     /// Files smaller than `chunk_size` are uploaded directly.

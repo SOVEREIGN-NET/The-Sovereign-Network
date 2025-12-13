@@ -1,29 +1,220 @@
 //! Web4 Domain Registry Types and Structures
+//!
+//! ## Versioning Model
+//!
+//! Web4 domains use a **versioned pointer** model:
+//! - `DomainRecord` holds the current manifest CID and version number
+//! - `Web4Manifest` is an immutable, content-addressed structure
+//! - Each manifest links to its predecessor via `previous_manifest`
+//! - Updates require atomic compare-and-swap on `expected_previous_manifest_cid`
+//!
+//! This ensures:
+//! - Atomic, ordered updates (no concurrent overwrites)
+//! - Cryptographically linked history
+//! - Rollback via re-pointing to old manifest CID
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::{ZhtpIdentity, IdentityId};
 
-/// Web4 domain registration record
+/// Web4 domain registration record (versioned pointer)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainRecord {
     /// Domain name (e.g., "myapp.zhtp")
     pub domain: String,
     /// Owner's identity
     pub owner: IdentityId,
+    /// Current manifest CID (content-addressed pointer)
+    pub current_manifest_cid: String,
+    /// Current version number (monotonically increasing)
+    pub version: u64,
     /// Registration timestamp
     pub registered_at: u64,
+    /// Last update timestamp
+    pub updated_at: u64,
     /// Expiration timestamp
     pub expires_at: u64,
     /// Domain ownership proof
     pub ownership_proof: ZeroKnowledgeProof,
-    /// Content mappings (path -> content_hash)
+    /// Content mappings (path -> content_hash) - cached from current manifest
     pub content_mappings: HashMap<String, String>,
     /// Domain metadata
     pub metadata: DomainMetadata,
     /// Transfer history
     pub transfer_history: Vec<DomainTransfer>,
+}
+
+/// Web4 Manifest - Immutable, content-addressed deployment snapshot
+///
+/// Each deployment creates a new manifest with:
+/// - Incremented version
+/// - Link to previous manifest (for history chain)
+/// - Build hash for integrity verification
+/// - File mappings (path -> CID)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Web4Manifest {
+    /// Domain this manifest belongs to
+    pub domain: String,
+    /// Version number (must be previous.version + 1)
+    pub version: u64,
+    /// Previous manifest CID (required for version > 1)
+    pub previous_manifest: Option<String>,
+    /// BLAKE3 hash of the entire build output
+    pub build_hash: String,
+    /// File mappings (path -> content CID)
+    pub files: HashMap<String, ManifestFile>,
+    /// Creation timestamp
+    pub created_at: u64,
+    /// Creator identity (DID)
+    pub created_by: String,
+    /// Optional deployment message (like git commit message)
+    pub message: Option<String>,
+}
+
+/// File entry in a manifest
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestFile {
+    /// Content CID
+    pub cid: String,
+    /// File size in bytes
+    pub size: u64,
+    /// Content type (MIME)
+    pub content_type: String,
+    /// BLAKE3 hash of file content
+    pub hash: String,
+}
+
+impl Web4Manifest {
+    /// Compute the CID of this manifest (content-addressed identifier)
+    pub fn compute_cid(&self) -> String {
+        let canonical = serde_json::to_vec(self).unwrap_or_default();
+        let hash = lib_crypto::hash_blake3(&canonical);
+        format!("bafk{}", hex::encode(&hash[..16]))
+    }
+
+    /// Validate manifest chain integrity
+    pub fn validate_chain(&self, previous: Option<&Web4Manifest>) -> Result<(), String> {
+        if self.version == 1 {
+            // First version must not have previous manifest
+            if self.previous_manifest.is_some() {
+                return Err("Version 1 manifest must not have previous_manifest".to_string());
+            }
+            if previous.is_some() {
+                return Err("Version 1 should not have a previous manifest".to_string());
+            }
+            return Ok(());
+        }
+
+        // Version > 1 must have previous manifest
+        let prev_cid = self.previous_manifest.as_ref()
+            .ok_or("Version > 1 must have previous_manifest")?;
+
+        // If we have the previous manifest, validate the link
+        if let Some(prev) = previous {
+            let expected_cid = prev.compute_cid();
+            if prev_cid != &expected_cid {
+                return Err(format!(
+                    "previous_manifest mismatch: expected {}, got {}",
+                    expected_cid, prev_cid
+                ));
+            }
+            if self.version != prev.version + 1 {
+                return Err(format!(
+                    "Version must be previous + 1: expected {}, got {}",
+                    prev.version + 1, self.version
+                ));
+            }
+            if self.domain != prev.domain {
+                return Err("Domain mismatch in manifest chain".to_string());
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Domain update request (atomic compare-and-swap)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainUpdateRequest {
+    /// Domain to update
+    pub domain: String,
+    /// New manifest CID
+    pub new_manifest_cid: String,
+    /// Expected current manifest CID (for compare-and-swap)
+    pub expected_previous_manifest_cid: String,
+    /// Signature from domain owner
+    pub signature: String,
+    /// Request timestamp
+    pub timestamp: u64,
+}
+
+/// Domain update response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainUpdateResponse {
+    /// Update successful
+    pub success: bool,
+    /// New version number
+    pub new_version: u64,
+    /// New manifest CID
+    pub new_manifest_cid: String,
+    /// Previous manifest CID
+    pub previous_manifest_cid: String,
+    /// Update timestamp
+    pub updated_at: u64,
+    /// Error message if failed
+    pub error: Option<String>,
+}
+
+/// Domain version history entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainVersionEntry {
+    /// Version number
+    pub version: u64,
+    /// Manifest CID for this version
+    pub manifest_cid: String,
+    /// Creation timestamp
+    pub created_at: u64,
+    /// Creator DID
+    pub created_by: String,
+    /// Deployment message
+    pub message: Option<String>,
+    /// Build hash
+    pub build_hash: String,
+}
+
+/// Domain history response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainHistoryResponse {
+    /// Domain name
+    pub domain: String,
+    /// Current version
+    pub current_version: u64,
+    /// Version history (newest first)
+    pub versions: Vec<DomainVersionEntry>,
+    /// Total version count
+    pub total_versions: u64,
+}
+
+/// Domain status response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainStatusResponse {
+    /// Domain found
+    pub found: bool,
+    /// Domain name
+    pub domain: String,
+    /// Current version
+    pub version: u64,
+    /// Current manifest CID
+    pub current_manifest_cid: String,
+    /// Owner DID
+    pub owner_did: String,
+    /// Last update timestamp
+    pub updated_at: u64,
+    /// Expiration timestamp
+    pub expires_at: u64,
+    /// Build hash of current version
+    pub build_hash: String,
 }
 
 /// Domain metadata
