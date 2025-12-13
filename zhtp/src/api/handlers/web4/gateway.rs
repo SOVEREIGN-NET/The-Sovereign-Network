@@ -19,7 +19,7 @@
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::zhtp::ZhtpRequestHandler;
-use lib_network::{Web4ContentService, DomainRegistry};
+use lib_network::{Web4ContentService, DomainRegistry, ZdnsResolver};
 use std::sync::Arc;
 use tracing::{info, warn, debug, error};
 use serde::{Serialize, Deserialize};
@@ -79,6 +79,18 @@ impl Web4GatewayHandler {
     ) -> Self {
         Self {
             content_service,
+            config,
+        }
+    }
+
+    /// Create with ZDNS resolver for cached domain lookups
+    pub fn with_zdns(
+        registry: Arc<DomainRegistry>,
+        zdns_resolver: Arc<ZdnsResolver>,
+        config: GatewayConfig,
+    ) -> Self {
+        Self {
+            content_service: Arc::new(Web4ContentService::with_zdns(registry, zdns_resolver)),
             config,
         }
     }

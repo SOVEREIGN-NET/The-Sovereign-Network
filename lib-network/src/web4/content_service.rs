@@ -24,6 +24,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::domain_registry::DomainRegistry;
+use crate::zdns::{ZdnsResolver, Web4Record};
 
 /// Content serving mode for a domain
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -119,6 +120,8 @@ pub struct ContentResult {
 pub struct Web4ContentService {
     /// Domain registry for lookups
     registry: Arc<DomainRegistry>,
+    /// Optional ZDNS resolver for cached domain lookups
+    zdns_resolver: Option<Arc<ZdnsResolver>>,
     /// Service-level defaults
     defaults: Web4ContentDefaults,
     /// Domain-specific configurations (domain -> config)
@@ -130,6 +133,7 @@ impl Web4ContentService {
     pub fn new(registry: Arc<DomainRegistry>) -> Self {
         Self {
             registry,
+            zdns_resolver: None,
             defaults: Web4ContentDefaults::default(),
             domain_configs: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -139,8 +143,87 @@ impl Web4ContentService {
     pub fn with_defaults(registry: Arc<DomainRegistry>, defaults: Web4ContentDefaults) -> Self {
         Self {
             registry,
+            zdns_resolver: None,
             defaults,
             domain_configs: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Create with ZDNS resolver for cached domain lookups
+    pub fn with_zdns(
+        registry: Arc<DomainRegistry>,
+        zdns_resolver: Arc<ZdnsResolver>,
+    ) -> Self {
+        Self {
+            registry,
+            zdns_resolver: Some(zdns_resolver),
+            defaults: Web4ContentDefaults::default(),
+            domain_configs: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Create with ZDNS resolver and custom defaults
+    pub fn with_zdns_and_defaults(
+        registry: Arc<DomainRegistry>,
+        zdns_resolver: Arc<ZdnsResolver>,
+        defaults: Web4ContentDefaults,
+    ) -> Self {
+        Self {
+            registry,
+            zdns_resolver: Some(zdns_resolver),
+            defaults,
+            domain_configs: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Get reference to ZDNS resolver (if configured)
+    pub fn zdns_resolver(&self) -> Option<&Arc<ZdnsResolver>> {
+        self.zdns_resolver.as_ref()
+    }
+
+    /// Resolve domain metadata using ZDNS (cached) or registry (direct)
+    ///
+    /// Prefers ZDNS resolver if available for caching benefits.
+    pub async fn resolve_domain(&self, domain: &str) -> Result<Web4Record> {
+        if let Some(resolver) = &self.zdns_resolver {
+            // Use ZDNS resolver for cached lookup
+            resolver.resolve_web4(domain).await.map_err(|e| anyhow!("{}", e))
+        } else {
+            // Fall back to direct registry lookup
+            let lookup = self.registry.lookup_domain(domain).await?;
+            if lookup.found {
+                if let Some(record) = lookup.record {
+                    Ok(Web4Record {
+                        domain: record.domain,
+                        owner: hex::encode(&record.owner.0[..16]),
+                        content_mappings: record.content_mappings,
+                        content_mode: Some(ContentMode::Spa),
+                        spa_entry: Some("index.html".to_string()),
+                        asset_prefixes: Some(vec![
+                            "/assets/".to_string(),
+                            "/static/".to_string(),
+                            "/js/".to_string(),
+                            "/css/".to_string(),
+                            "/images/".to_string(),
+                        ]),
+                        capability: Some(Web4Capability::SpaServe),
+                        ttl: 300,
+                        registered_at: record.registered_at,
+                        expires_at: record.expires_at,
+                    })
+                } else {
+                    Err(anyhow!("Domain not found: {}", domain))
+                }
+            } else {
+                Err(anyhow!("Domain not found: {}", domain))
+            }
+        }
+    }
+
+    /// Invalidate ZDNS cache for a domain (call after publish/update)
+    pub async fn invalidate_domain_cache(&self, domain: &str) {
+        if let Some(resolver) = &self.zdns_resolver {
+            resolver.invalidate(domain).await;
         }
     }
 

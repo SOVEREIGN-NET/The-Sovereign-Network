@@ -57,6 +57,9 @@ pub use crate::web4::{
     initialize_web4_system, initialize_web4_system_with_storage,
 };
 
+// ZDNS (Zero-Knowledge Domain Name System) resolver with caching
+pub use crate::zdns::{ZdnsResolver, ZdnsConfig, ZdnsError, Web4Record};
+
 // Core modules
 pub mod types;
 pub mod mesh;
@@ -78,6 +81,7 @@ pub mod platform;
 pub mod dht; // Native binary DHT protocol with lib-storage backend
 pub mod transport;
 pub mod web4; // Web4 domain registry and content publishing
+pub mod zdns; // ZDNS resolver with LRU caching
 pub mod blockchain_sync; // Blockchain synchronization over mesh protocols
 
 // Re-export protocol constants for convenience
