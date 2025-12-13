@@ -361,6 +361,14 @@ pub enum ZhtpMeshMessage {
         request_id: u64,
         timestamp: u64,
     },
+
+    /// DHT Generic Payload - serialized DHT message (Ticket #154)
+    /// Used for routing DHT messages without circular dependencies
+    DhtGenericPayload {
+        requester: PublicKey,
+        payload: Vec<u8>, // Bincode-serialized DhtMessage
+        signature: Vec<u8>, // ED25519 signature of (requester + payload)
+    },
 }
 
 /// Types of blockchain data requests

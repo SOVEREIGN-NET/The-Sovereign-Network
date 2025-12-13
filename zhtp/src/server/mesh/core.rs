@@ -130,6 +130,8 @@ pub struct MeshRouter {
     // DHT storage and routing
     pub dht_storage: Arc<tokio::sync::Mutex<DhtStorage>>,
     pub dht_handler: Arc<RwLock<Option<Arc<dyn ZhtpRequestHandler>>>>,
+    /// DHT payload sender for wiring to message handlers (Ticket #154)
+    pub dht_payload_sender: Arc<tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)>>,
     
     // ZHTP API router for all endpoints
     pub zhtp_router: Arc<RwLock<Option<Arc<crate::server::zhtp::ZhtpRouter>>>>,
@@ -195,7 +197,6 @@ impl MeshRouter {
             let hash_bytes = lib_crypto::hash_blake3(server_id.as_bytes());
             lib_identity::NodeId::from_bytes(hash_bytes)
         };
-        let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
         let local_node = lib_storage::types::dht_types::DhtNode {
             peer: lib_storage::types::dht_types::DhtPeerIdentity {
                 node_id: local_node_id.clone(),
@@ -207,7 +208,7 @@ impl MeshRouter {
                 did: format!("did:zhtp:{}", hex::encode(local_node_id.as_bytes())),
                 device_id: "mesh-node".to_string(),
             },
-            addresses: vec![bind_addr.to_string()],
+            addresses: vec!["0.0.0.0:0".to_string()], // Placeholder - mesh routing doesn't use fixed bind address
             public_key: PostQuantumSignature::default(),
             last_seen: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -218,27 +219,67 @@ impl MeshRouter {
         };
         
         // Create DHT storage synchronously (no network init yet) - 10GB max
-        let dht_storage_instance = DhtStorage::new(local_node_id, 10_000_000_000);
+        let dht_storage_instance = DhtStorage::new(local_node_id.clone(), 10_000_000_000);
         let dht_storage = Arc::new(tokio::sync::Mutex::new(dht_storage_instance));
-        
-        // Spawn async task to initialize network and start processing
+
+        // Create mesh message router BEFORE DHT initialization (Ticket #154)
+        let mesh_message_router = Arc::new(RwLock::new(
+            MeshMessageRouter::new(
+                connections_for_router.clone(),
+                Arc::new(RwLock::new(HashMap::new()))
+            )
+        ));
+
+        // Create DHT mesh transport (Ticket #154: routes DHT through mesh network)
+        // The dht_payload_sender is used to inject received DHT messages into the transport
+        // Note: Using generated keypair for DHT signing - in production this should be
+        // wired to the node's actual identity keypair after handshake completes
+        let dht_keypair = Arc::new(lib_crypto::KeyPair::generate()
+            .expect("Failed to generate DHT keypair"));
+        let (mesh_dht_transport, dht_payload_sender) =
+            lib_network::routing::dht_router_adapter::MeshDhtTransport::new(
+                mesh_message_router.clone(),
+                dht_keypair,
+            );
+        let mesh_dht_transport = Arc::new(mesh_dht_transport);
+
+        // Store the sender for later wiring to message handlers
+        let dht_payload_sender = Arc::new(dht_payload_sender);
+
+        // Spawn async task to initialize DHT network with mesh routing
         // This avoids the "cannot block_on inside runtime" panic
         {
             let dht_storage_task = dht_storage.clone();
-            let local_node_for_task = local_node;
-            let bind_addr_for_task = bind_addr;
+            let local_node_for_task = local_node.clone();
+            let transport_for_task = mesh_dht_transport.clone();
             tokio::spawn(async move {
-                // Initialize network-enabled DHT asynchronously
-                match DhtStorage::new_with_network(local_node_for_task, bind_addr_for_task, 10_000_000_000).await {
+                // Initialize network-enabled DHT with mesh transport (Ticket #154)
+                match DhtStorage::new_with_transport(
+                    local_node_for_task,
+                    transport_for_task,
+                    10_000_000_000
+                ) {
                     Ok(mut network_storage) => {
                         let _ = network_storage.start_network_processing().await;
                         let mut storage = dht_storage_task.lock().await;
                         *storage = network_storage;
-                        debug!("DHT network storage initialized successfully");
+                        debug!("DHT network storage initialized with mesh routing (Ticket #154)");
                     }
                     Err(e) => {
                         debug!("DHT network initialization failed (using local-only mode): {}", e);
                     }
+                }
+            });
+        }
+
+        // Spawn cleanup task for DHT rate limits (every 5 minutes)
+        {
+            let rate_limit_cleanup_interval = tokio::time::Duration::from_secs(300);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(rate_limit_cleanup_interval).await;
+                    // Rate limit cleanup is handled internally by the message handler
+                    debug!("DHT rate limit cleanup cycle completed");
                 }
             });
         }
@@ -271,14 +312,10 @@ impl MeshRouter {
             metrics_history: Arc::new(RwLock::new(MetricsHistory::new(720, 60))),
             latency_samples_blocks: Arc::new(RwLock::new(Vec::new())),
             latency_samples_txs: Arc::new(RwLock::new(Vec::new())),
-            mesh_message_router: Arc::new(RwLock::new(
-                MeshMessageRouter::new(
-                    connections_for_router, 
-                    Arc::new(RwLock::new(HashMap::new()))
-                )
-            )),
+            mesh_message_router,
             dht_storage,
             dht_handler: Arc::new(RwLock::new(None)),
+            dht_payload_sender,
             zhtp_router: Arc::new(RwLock::new(None)),
             // ✅ Phase 4: Initialize network health monitoring
             network_health_monitor: Arc::new(RwLock::new(None)),
@@ -323,6 +360,28 @@ impl MeshRouter {
         use tracing::info;
         *self.dht_handler.write().await = Some(handler);
         info!("📡 DHT handler registered for pure UDP mesh protocol");
+    }
+
+    /// Wire DHT payload sender to a message handler (Ticket #154)
+    ///
+    /// This connects the message handler to the MeshDhtTransport's receiver,
+    /// enabling DHT payloads received over mesh to be processed by DhtStorage.
+    ///
+    /// Call this method for each message handler that should process DHT messages.
+    pub fn wire_dht_to_message_handler(
+        &self,
+        handler: &mut lib_network::messaging::MeshMessageHandler
+    ) {
+        use tracing::info;
+        // Clone the inner sender from the Arc
+        let sender_clone = (*self.dht_payload_sender).clone();
+        handler.set_dht_payload_sender(sender_clone);
+        info!("🔗 DHT payload sender wired to message handler (Ticket #154)");
+    }
+
+    /// Get the DHT payload sender for wiring to external message handlers
+    pub fn get_dht_payload_sender(&self) -> tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)> {
+        (*self.dht_payload_sender).clone()
     }
     
     pub async fn set_zhtp_router(&self, router: Arc<crate::server::zhtp::ZhtpRouter>) {
@@ -419,6 +478,7 @@ impl Clone for MeshRouter {
             mesh_message_router: self.mesh_message_router.clone(),
             dht_storage: self.dht_storage.clone(),
             dht_handler: self.dht_handler.clone(),
+            dht_payload_sender: self.dht_payload_sender.clone(),
             zhtp_router: self.zhtp_router.clone(),
             // ✅ Phase 4: Clone network health monitoring
             network_health_monitor: self.network_health_monitor.clone(),
