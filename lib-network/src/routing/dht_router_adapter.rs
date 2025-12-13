@@ -62,9 +62,29 @@ impl MeshDhtTransport {
     }
 
     /// Extract PublicKey from mesh PeerId
+    /// 
+    /// # Security
+    /// - Validates public key length (must be 32 bytes for ED25519)
+    /// - Prevents malformed public keys from being used
     fn peer_id_to_pubkey(peer_id: &PeerId) -> Result<PublicKey> {
         match peer_id {
             PeerId::Mesh(key_bytes) => {
+                // SECURITY FIX #2: Validate public key format
+                // ED25519 public keys must be exactly 32 bytes
+                if key_bytes.len() != 32 {
+                    return Err(anyhow!(
+                        "Invalid ED25519 public key length: {} bytes (expected 32)",
+                        key_bytes.len()
+                    ));
+                }
+                
+                // Additional validation: Check for null bytes (should not be present in valid keys)
+                if key_bytes.iter().any(|&byte| byte == 0) {
+                    return Err(anyhow!(
+                        "Invalid public key: contains null bytes"
+                    ));
+                }
+                
                 Ok(PublicKey::new(key_bytes.clone()))
             }
             _ => Err(anyhow!("MeshDhtTransport only accepts Mesh peer IDs, got: {:?}", peer_id)),
@@ -135,5 +155,46 @@ mod tests {
         let peer_id = PeerId::Udp("127.0.0.1:8080".parse().unwrap());
         let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
         assert!(result.is_err());
+    }
+    
+    /// Test public key validation - correct length
+    #[test]
+    fn test_valid_public_key() {
+        let valid_key = vec![1u8; 32]; // 32 bytes = valid ED25519 key length
+        let peer_id = PeerId::Mesh(valid_key.clone());
+        let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().key_id, valid_key);
+    }
+    
+    /// Test public key validation - wrong length (too short)
+    #[test]
+    fn test_invalid_public_key_too_short() {
+        let short_key = vec![1u8; 16]; // Too short
+        let peer_id = PeerId::Mesh(short_key);
+        let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid ED25519 public key length"));
+    }
+    
+    /// Test public key validation - wrong length (too long)
+    #[test]
+    fn test_invalid_public_key_too_long() {
+        let long_key = vec![1u8; 64]; // Too long
+        let peer_id = PeerId::Mesh(long_key);
+        let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid ED25519 public key length"));
+    }
+    
+    /// Test public key validation - contains null bytes
+    #[test]
+    fn test_invalid_public_key_with_null_bytes() {
+        let mut key_with_nulls = vec![1u8; 32];
+        key_with_nulls[15] = 0; // Add null byte
+        let peer_id = PeerId::Mesh(key_with_nulls);
+        let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("contains null bytes"));
     }
 }

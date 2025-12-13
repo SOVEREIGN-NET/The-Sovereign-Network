@@ -213,7 +213,7 @@ impl MeshMessageHandler {
             },
             ZhtpMeshMessage::DhtGenericPayload { requester, payload } => {
                 // Ticket #154: Handle generic DHT payload routed through mesh network
-                self.handle_dht_generic_payload(requester, payload).await?;
+                self.handle_dht_generic_payload(requester, payload, signature).await?;
             },
         }
         Ok(())
@@ -1259,13 +1259,32 @@ impl MeshMessageHandler {
     /// DHT messages are rate-limited to prevent DoS attacks:
     /// - Max 100 messages per peer per 60-second window
     /// - Exceeded peers are logged and their messages dropped
-    async fn handle_dht_generic_payload(&self, requester: PublicKey, payload: Vec<u8>) -> Result<()> {
+    async fn handle_dht_generic_payload(&self, requester: PublicKey, payload: Vec<u8>, signature: Vec<u8>) -> Result<()> {
         let peer_id_hex = hex::encode(&requester.key_id[0..8.min(requester.key_id.len())]);
 
         debug!(
-            "DHT Generic Payload: requester={}, payload_size={}",
+            "DHT Generic Payload: requester={}, payload_size={}, signature_size={}",
             peer_id_hex,
-            payload.len()
+            payload.len(),
+            signature.len()
+        );
+
+        // SECURITY FIX #1: Verify message signature to prevent spoofing
+        // Construct the signed data: requester.public_key_bytes + payload
+        let mut signed_data = requester.key_id.clone();
+        signed_data.extend_from_slice(&payload);
+        
+        if !requester.verify(&signed_data, &signature) {
+            warn!(
+                "DHT message signature verification FAILED from peer {} - possible spoofing attempt",
+                peer_id_hex
+            );
+            return Err(anyhow!("Invalid DHT message signature"));
+        }
+        
+        info!(
+            "DHT message signature verified successfully from peer {}",
+            peer_id_hex
         );
 
         // Rate limiting check (Ticket #154)
@@ -1436,5 +1455,100 @@ mod tests {
         let peer_entry = registry.find_by_public_key(&reporter).unwrap();
         assert_eq!(peer_entry.connection_metrics.stability_score, 0.9);
         assert_eq!(peer_entry.connection_metrics.bandwidth_capacity, 2000000);
+    }
+    
+    /// Test DHT signature verification - valid signature
+    #[tokio::test]
+    async fn test_dht_signature_verification_valid() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        
+        let mut handler = MeshMessageHandler::new(
+            peer_registry.clone(),
+            long_range_relays,
+            revenue_pools,
+        );
+        
+        // Create a test key pair
+        let test_key = lib_crypto::KeyPair::generate_test_keypair();
+        let public_key = test_key.public_key.clone();
+        
+        // Create test payload
+        let payload = b"test dht payload".to_vec();
+        
+        // Create signed data: public_key_bytes + payload
+        let mut signed_data = public_key.key_id.clone();
+        signed_data.extend_from_slice(&payload);
+        
+        // Sign the data
+        let signature = test_key.sign(&signed_data).unwrap();
+        
+        // This should succeed (signature verification passes)
+        let result = handler.handle_dht_generic_payload(public_key, payload, signature).await;
+        
+        // Should fail because no dht_payload_sender is configured, but signature should pass
+        assert!(result.is_err());
+        assert!(!result.unwrap_err().to_string().contains("signature"));
+    }
+    
+    /// Test DHT signature verification - invalid signature
+    #[tokio::test]
+    async fn test_dht_signature_verification_invalid() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        
+        let mut handler = MeshMessageHandler::new(
+            peer_registry.clone(),
+            long_range_relays,
+            revenue_pools,
+        );
+        
+        // Create test keys
+        let test_key = lib_crypto::KeyPair::generate_test_keypair();
+        let wrong_key = lib_crypto::KeyPair::generate_test_keypair();
+        
+        // Create test payload
+        let payload = b"test dht payload".to_vec();
+        
+        // Create signed data with wrong key
+        let mut signed_data = wrong_key.public_key.key_id.clone();
+        signed_data.extend_from_slice(&payload);
+        
+        // Sign with wrong key
+        let signature = wrong_key.sign(&signed_data).unwrap();
+        
+        // This should fail signature verification
+        let result = handler.handle_dht_generic_payload(test_key.public_key, payload, signature).await;
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("signature"));
+    }
+    
+    /// Test DHT signature verification - malformed signature
+    #[tokio::test]
+    async fn test_dht_signature_verification_malformed() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        
+        let mut handler = MeshMessageHandler::new(
+            peer_registry.clone(),
+            long_range_relays,
+            revenue_pools,
+        );
+        
+        let test_key = lib_crypto::KeyPair::generate_test_keypair();
+        let payload = b"test dht payload".to_vec();
+        
+        // Use invalid signature (wrong length)
+        let invalid_signature = vec![0u8; 10]; // Too short for ED25519 signature
+        
+        // This should fail signature verification
+        let result = handler.handle_dht_generic_payload(test_key.public_key, payload, invalid_signature).await;
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("signature"));
     }
 }

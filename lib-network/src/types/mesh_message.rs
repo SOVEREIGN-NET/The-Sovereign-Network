@@ -367,6 +367,7 @@ pub enum ZhtpMeshMessage {
     DhtGenericPayload {
         requester: PublicKey,
         payload: Vec<u8>, // Bincode-serialized DhtMessage
+        signature: Vec<u8>, // ED25519 signature of (requester + payload)
     },
 }
 
