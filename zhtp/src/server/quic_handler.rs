@@ -99,6 +99,47 @@ struct TrackedConnection {
     last_activity: Instant,
 }
 
+/// Session state for authenticated control plane connections
+/// Created after successful UHP+Kyber handshake
+pub struct ControlPlaneSession {
+    /// Session ID from UHP handshake
+    pub session_id: [u8; 16],
+    /// Authenticated peer DID
+    pub peer_did: String,
+    /// Application-layer MAC key derived from master key
+    pub app_key: [u8; 32],
+    /// Session creation time for expiration checks
+    pub created_at: Instant,
+    /// Sequence number window for replay protection
+    pub sequence_window: std::sync::atomic::AtomicU64,
+}
+
+/// Connection mode based on negotiated ALPN
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionMode {
+    /// Control plane: UHP handshake required, then authenticated API requests
+    /// ALPN: zhtp-uhp/1
+    ControlPlane,
+    /// HTTP-compatible: No UHP handshake, direct HTTP requests
+    /// ALPN: zhtp-http/1, zhtp/1.0, h3
+    HttpCompat,
+    /// Mesh peer-to-peer: UHP handshake, then encrypted mesh messages
+    /// ALPN: zhtp-mesh/1
+    Mesh,
+}
+
+impl ConnectionMode {
+    /// Determine connection mode from negotiated ALPN
+    pub fn from_alpn(alpn: Option<&[u8]>) -> Self {
+        match alpn {
+            Some(b"zhtp-uhp/1") => ConnectionMode::ControlPlane,
+            Some(b"zhtp-mesh/1") => ConnectionMode::Mesh,
+            Some(b"zhtp-http/1") | Some(b"zhtp/1.0") | Some(b"h3") => ConnectionMode::HttpCompat,
+            _ => ConnectionMode::HttpCompat, // Default to HTTP-compat for unknown
+        }
+    }
+}
+
 /// Protocol detection result (includes buffered data for forwarding)
 #[derive(Debug)]
 enum ProtocolType {
@@ -345,12 +386,239 @@ impl QuicHandler {
     }
 
     /// Handle a single QUIC connection (multiple streams)
-    /// First stream determines if this is peer-to-peer (PQC handshake) or client (HTTP/ZHTP)
+    ///
+    /// Dispatches based on negotiated ALPN:
+    /// - zhtp-uhp/1: Control plane - UHP handshake first, then authenticated API requests
+    /// - zhtp-mesh/1: Mesh - UHP handshake first, then encrypted mesh messages
+    /// - zhtp-http/1, zhtp/1.0, h3: HTTP-compat - direct HTTP/ZHTP requests
     async fn handle_connection(&self, connection: Connection) -> Result<()> {
         let peer_addr = connection.remote_address();
-        debug!("📡 Handling QUIC connection from {}", peer_addr);
 
-        // Check if first stream is PQC handshake (peer-to-peer) or client request
+        // Determine connection mode from negotiated ALPN
+        let alpn = connection.handshake_data()
+            .and_then(|hd| hd.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
+            .and_then(|hd| hd.protocol.clone());
+
+        let mode = ConnectionMode::from_alpn(alpn.as_deref());
+
+        debug!("📡 Handling QUIC connection from {} (mode: {:?}, alpn: {:?})",
+               peer_addr, mode, alpn.as_ref().map(|a| String::from_utf8_lossy(a)));
+
+        match mode {
+            ConnectionMode::ControlPlane => {
+                // Control plane: Perform UHP handshake, then handle authenticated API requests
+                self.handle_control_plane_connection(connection, peer_addr).await
+            }
+            ConnectionMode::Mesh => {
+                // Mesh: Perform UHP handshake, then handle mesh messages
+                self.handle_mesh_connection(connection, peer_addr).await
+            }
+            ConnectionMode::HttpCompat => {
+                // HTTP-compat: Handle HTTP/ZHTP requests directly (no UHP handshake)
+                self.handle_http_compat_connection(connection, peer_addr).await
+            }
+        }
+    }
+
+    /// Handle control plane connection (CLI, Web4 deploy, admin APIs)
+    ///
+    /// Protocol flow:
+    /// 1. Perform UHP+Kyber handshake to authenticate client
+    /// 2. Derive session keys and create authenticated session
+    /// 3. Accept streams with authenticated API requests
+    async fn handle_control_plane_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
+        info!("🔐 Control plane connection from {} - starting UHP handshake", peer_addr);
+
+        // Check rate limit for this IP
+        self.check_handshake_rate_limit(&peer_addr).await?;
+
+        // Get server identity
+        let identity = self.quic_protocol.identity();
+
+        // Create handshake context with nonce cache
+        let nonce_db_path = std::path::Path::new("./data/tls/control_plane_nonce_cache");
+        let nonce_cache = NonceCache::open(nonce_db_path, 3600, 100_000)
+            .context("Failed to open nonce cache")?;
+        let handshake_ctx = HandshakeContext::new(nonce_cache);
+
+        // Perform UHP+Kyber handshake as responder
+        let handshake_result = quic_handshake::handshake_as_responder(
+            &connection,
+            identity,
+            &handshake_ctx,
+        ).await.context("UHP+Kyber handshake failed")?;
+
+        let peer_did = handshake_result.peer_identity.did.clone();
+        let session_id = handshake_result.session_id;
+        let master_key = handshake_result.master_key;
+
+        // Derive application-layer MAC key (same derivation as client)
+        let app_key = Self::derive_app_key(&master_key, &session_id, &identity.did, &peer_did);
+
+        info!(
+            peer_did = %peer_did,
+            session_id = ?hex::encode(&session_id[..8]),
+            "✅ Control plane authenticated from {} (PQC encryption active)",
+            peer_addr
+        );
+
+        // Create session state for authenticated requests
+        let session = ControlPlaneSession {
+            session_id,
+            peer_did: peer_did.clone(),
+            app_key,
+            created_at: Instant::now(),
+            sequence_window: std::sync::atomic::AtomicU64::new(0),
+        };
+
+        // Handle streams with this authenticated session
+        self.handle_control_plane_streams(connection, session, peer_addr).await
+    }
+
+    /// Derive application-layer MAC key from master key
+    /// MUST match client-side derivation in Web4Client/ZhtpClient
+    fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], server_did: &str, client_did: &str) -> [u8; 32] {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"zhtp-web4-app-mac");
+        input.extend_from_slice(master_key);
+        input.extend_from_slice(session_id);
+        input.extend_from_slice(server_did.as_bytes());  // Server DID
+        input.extend_from_slice(client_did.as_bytes());  // Client DID
+        lib_crypto::hash_blake3(&input)
+    }
+
+    /// Handle authenticated control plane streams
+    async fn handle_control_plane_streams(
+        &self,
+        connection: Connection,
+        session: ControlPlaneSession,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        let session = Arc::new(session);
+
+        loop {
+            let stream_result = tokio::time::timeout(
+                CLIENT_IDLE_TIMEOUT,
+                connection.accept_bi()
+            ).await;
+
+            match stream_result {
+                Ok(Ok((send, recv))) => {
+                    let handler = self.clone();
+                    let session = session.clone();
+
+                    tokio::spawn(async move {
+                        if let Err(e) = handler.handle_authenticated_stream(recv, send, &session).await {
+                            warn!("⚠️ Control plane stream error from {}: {}", peer_addr, e);
+                        }
+                    });
+                }
+                Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
+                    debug!("🔒 Control plane connection closed from {}", peer_addr);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    warn!("⚠️ Control plane stream error from {}: {}", peer_addr, e);
+                    break;
+                }
+                Err(_) => {
+                    debug!("⏱️ Control plane connection idle timeout from {}", peer_addr);
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle a single authenticated stream (with AuthContext validation)
+    async fn handle_authenticated_stream(
+        &self,
+        recv: RecvStream,
+        send: SendStream,
+        session: &ControlPlaneSession,
+    ) -> Result<()> {
+        // Create buffered stream for protocol detection
+        let mut buffered = BufferedStream::new(Vec::new(), recv);
+
+        // Read some data to detect protocol
+        let mut peek_buf = vec![0u8; PROTOCOL_DETECT_SIZE];
+        let n = buffered.stream.read(&mut peek_buf).await?
+            .ok_or_else(|| anyhow!("Empty stream"))?;
+        peek_buf.truncate(n);
+
+        // Put data back for processing
+        let mut buffered = BufferedStream::new(peek_buf, buffered.stream);
+
+        // Route based on content (ZHTP magic or HTTP method)
+        if n >= 4 && &buffered.prepended_data[..4] == ZHTP_MAGIC {
+            // Native ZHTP protocol - pass session for auth validation
+            let router = self.zhtp_router.read().await;
+            router.handle_authenticated_zhtp_stream(&mut buffered, send, session).await
+        } else {
+            // HTTP-over-QUIC - convert and pass session
+            self.http_compat.handle_authenticated_http_stream(&mut buffered, send, session).await
+        }
+    }
+
+    /// Handle mesh peer connection (node-to-node)
+    async fn handle_mesh_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
+        info!("🔗 Mesh peer connection from {} - starting UHP handshake", peer_addr);
+
+        // Check rate limit
+        self.check_handshake_rate_limit(&peer_addr).await?;
+
+        // Get server identity
+        let identity = self.quic_protocol.identity();
+
+        // Create handshake context
+        let nonce_db_path = std::path::Path::new("./data/tls/mesh_nonce_cache");
+        let nonce_cache = NonceCache::open(nonce_db_path, 3600, 100_000)
+            .context("Failed to open nonce cache")?;
+        let handshake_ctx = HandshakeContext::new(nonce_cache);
+
+        // Perform UHP+Kyber handshake
+        let handshake_result = quic_handshake::handshake_as_responder(
+            &connection,
+            identity,
+            &handshake_ctx,
+        ).await.context("Mesh UHP+Kyber handshake failed")?;
+
+        // Extract peer node ID
+        let peer_node_id = handshake_result.peer_identity.node_id.as_bytes();
+        let mut node_id_arr = [0u8; 32];
+        node_id_arr.copy_from_slice(peer_node_id);
+
+        info!(
+            peer_did = %handshake_result.peer_identity.did,
+            session_id = ?handshake_result.session_id,
+            "✅ Mesh peer authenticated from {} (identity verified)",
+            peer_addr
+        );
+
+        // Create PqcQuicConnection from handshake result
+        let pqc_conn = PqcQuicConnection::from_handshake_result(
+            connection.clone(),
+            peer_addr,
+            handshake_result,
+            false,
+        );
+
+        // Store connection
+        self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
+
+        // Continue accepting mesh streams
+        self.accept_additional_streams(connection, Some(node_id_arr));
+
+        Ok(())
+    }
+
+    /// Handle HTTP-compatible connection (mobile apps, browsers)
+    /// No UHP handshake - direct HTTP/ZHTP requests
+    async fn handle_http_compat_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
+        debug!("📱 HTTP-compat connection from {}", peer_addr);
+
+        // Wait for first stream
         let first_stream_result = tokio::time::timeout(
             Duration::from_secs(30),
             connection.accept_bi()
@@ -358,28 +626,24 @@ impl QuicHandler {
 
         match first_stream_result {
             Ok(Ok((send, recv))) => {
-                // Detect protocol on first stream
+                // Handle first stream with protocol detection
                 let handler = self.clone();
                 let conn_clone = connection.clone();
 
-                // Handle first stream - this determines connection type
                 let result = handler.handle_first_stream(recv, send, conn_clone, peer_addr).await;
 
                 if let Err(e) = result {
-                    warn!("⚠️ First stream handling error from {}: {}", peer_addr, e);
+                    warn!("⚠️ HTTP-compat stream error from {}: {}", peer_addr, e);
                 }
             }
             Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
-                debug!("🔒 Connection closed before first stream from {}", peer_addr);
-                return Ok(());
+                debug!("🔒 HTTP-compat connection closed before first stream from {}", peer_addr);
             }
             Ok(Err(e)) => {
-                warn!("⚠️ Failed to accept first stream from {}: {}", peer_addr, e);
-                return Err(e.into());
+                warn!("⚠️ HTTP-compat stream error from {}: {}", peer_addr, e);
             }
             Err(_) => {
-                warn!("⏱️ Timeout waiting for first stream from {}", peer_addr);
-                return Ok(());
+                warn!("⏱️ HTTP-compat timeout waiting for first stream from {}", peer_addr);
             }
         }
 
