@@ -20,6 +20,15 @@ use atty::Stream;
 
 use lib_network::web4::{Web4Client, TrustConfig};
 use lib_identity::ZhtpIdentity;
+use lib_crypto::PrivateKey;
+
+/// Private key storage format (matches identity.rs)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KeystorePrivateKey {
+    dilithium_sk: Vec<u8>,
+    kyber_sk: Vec<u8>,
+    master_seed: Vec<u8>,
+}
 
 use crate::cli::{DeployArgs, DeployAction, ZhtpCli};
 
@@ -556,30 +565,58 @@ fn calculate_root_cid(files: &[FileCidEntry]) -> String {
 ///
 /// Returns error if keystore doesn't exist or identity cannot be loaded.
 /// This enforces domain ownership bound to a persistent, authorized identity.
+///
+/// Loads identity.json (public data) and private_key.json (secrets) separately,
+/// then uses ZhtpIdentity::from_serialized() for secure re-derivation.
 fn load_identity(keystore_path: &str) -> Result<ZhtpIdentity> {
     let keystore = PathBuf::from(keystore_path);
     let identity_file = keystore.join("identity.json");
+    let private_key_file = keystore.join("private_key.json");
 
     if !keystore.exists() {
         return Err(anyhow!(
             "Keystore directory not found: {:?}\n\
-            Create an identity first with: zhtp identity create --keystore {:?}",
-            keystore, keystore
+            Create an identity first with: zhtp identity create",
+            keystore
         ));
     }
 
     if !identity_file.exists() {
         return Err(anyhow!(
             "No identity.json found in keystore at {:?}\n\
-            Create an identity first with: zhtp identity create --keystore {:?}",
-            keystore, keystore
+            Create an identity first with: zhtp identity create",
+            keystore
         ));
     }
 
-    let data = std::fs::read_to_string(&identity_file)
+    if !private_key_file.exists() {
+        return Err(anyhow!(
+            "No private_key.json found in keystore at {:?}\n\
+            Your keystore may be from an older version. Re-create with: zhtp identity create",
+            keystore
+        ));
+    }
+
+    // Load identity (public data)
+    let identity_data = std::fs::read_to_string(&identity_file)
         .context("Failed to read identity.json")?;
-    let identity: ZhtpIdentity = serde_json::from_str(&data)
-        .context("Failed to parse identity.json")?;
+
+    // Load private key from separate file
+    let private_key_data = std::fs::read_to_string(&private_key_file)
+        .context("Failed to read private_key.json")?;
+
+    let keystore_key: KeystorePrivateKey = serde_json::from_str(&private_key_data)
+        .context("Failed to parse private_key.json")?;
+
+    let private_key = PrivateKey {
+        dilithium_sk: keystore_key.dilithium_sk,
+        kyber_sk: keystore_key.kyber_sk,
+        master_seed: keystore_key.master_seed,
+    };
+
+    // Use secure deserialization that re-derives all secrets
+    let identity = ZhtpIdentity::from_serialized(&identity_data, &private_key)
+        .context("Failed to load identity with secret re-derivation")?;
 
     info!("Loaded identity {} from {:?}", identity.did, identity_file);
     Ok(identity)
