@@ -32,7 +32,11 @@
 pub mod resolver;
 pub mod config;
 pub mod error;
+pub mod packet;
+pub mod transport;
 
 pub use resolver::{ZdnsResolver, Web4Record, CachedRecord, ResolverMetrics};
 pub use config::ZdnsConfig;
 pub use error::ZdnsError;
+pub use packet::{DnsPacket, DnsQuestion, DnsAnswer, MAX_UDP_SIZE};
+pub use transport::{ZdnsTransportServer, ZdnsServerConfig, TransportStats, DNS_PORT};
