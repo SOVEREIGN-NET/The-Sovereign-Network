@@ -11,6 +11,7 @@ use tracing::{info, warn, debug};
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::components::identity::create_default_storage_config;
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
+use lib_network::{ZdnsResolver, ZdnsConfig};
 
 /// Protocols component - thin wrapper for unified server
 pub struct ProtocolsComponent {
@@ -18,6 +19,7 @@ pub struct ProtocolsComponent {
     start_time: Arc<RwLock<Option<Instant>>>,
     unified_server: Arc<RwLock<Option<crate::unified_server::ZhtpUnifiedServer>>>,
     zdns_server: Arc<RwLock<Option<ZdnsServer>>>,
+    zdns_resolver: Arc<RwLock<Option<Arc<ZdnsResolver>>>>,
     lib_integration: Arc<RwLock<Option<ZhtpIntegration>>>,
     environment: crate::config::environment::Environment,
     api_port: u16,
@@ -41,24 +43,31 @@ impl ProtocolsComponent {
             start_time: Arc::new(RwLock::new(None)),
             unified_server: Arc::new(RwLock::new(None)),
             zdns_server: Arc::new(RwLock::new(None)),
+            zdns_resolver: Arc::new(RwLock::new(None)),
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
             is_edge_node: false,
         }
     }
-    
+
     pub fn new_with_node_type(environment: crate::config::environment::Environment, api_port: u16, is_edge_node: bool) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
             unified_server: Arc::new(RwLock::new(None)),
             zdns_server: Arc::new(RwLock::new(None)),
+            zdns_resolver: Arc::new(RwLock::new(None)),
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
             is_edge_node,
         }
+    }
+
+    /// Get reference to the ZDNS resolver (if initialized)
+    pub async fn get_zdns_resolver(&self) -> Option<Arc<ZdnsResolver>> {
+        self.zdns_resolver.read().await.clone()
     }
 }
 
@@ -171,7 +180,17 @@ impl Component for ProtocolsComponent {
         
         info!("Starting unified server on port {}...", self.api_port);
         unified_server.start().await?;
-        
+
+        // Initialize ZDNS resolver with caching, using the canonical domain registry
+        info!(" Initializing ZDNS resolver with canonical domain registry...");
+        let domain_registry = unified_server.get_domain_registry();
+        let zdns_resolver = Arc::new(ZdnsResolver::new(
+            domain_registry,
+            ZdnsConfig::default(),
+        ));
+        *self.zdns_resolver.write().await = Some(zdns_resolver.clone());
+        info!(" ✓ ZDNS resolver initialized with LRU cache (size: 10000, TTL: up to 1hr)");
+
         // Connect to bootstrap peers if configured
         let bootstrap_peers = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers().await;
         if let Some(peers) = bootstrap_peers {

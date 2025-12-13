@@ -24,6 +24,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::domain_registry::DomainRegistry;
+use crate::zdns::{ZdnsResolver, Web4Record};
 
 /// Content serving mode for a domain
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -119,6 +120,8 @@ pub struct ContentResult {
 pub struct Web4ContentService {
     /// Domain registry for lookups
     registry: Arc<DomainRegistry>,
+    /// Optional ZDNS resolver for cached domain lookups
+    zdns_resolver: Option<Arc<ZdnsResolver>>,
     /// Service-level defaults
     defaults: Web4ContentDefaults,
     /// Domain-specific configurations (domain -> config)
@@ -130,6 +133,7 @@ impl Web4ContentService {
     pub fn new(registry: Arc<DomainRegistry>) -> Self {
         Self {
             registry,
+            zdns_resolver: None,
             defaults: Web4ContentDefaults::default(),
             domain_configs: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -139,8 +143,87 @@ impl Web4ContentService {
     pub fn with_defaults(registry: Arc<DomainRegistry>, defaults: Web4ContentDefaults) -> Self {
         Self {
             registry,
+            zdns_resolver: None,
             defaults,
             domain_configs: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Create with ZDNS resolver for cached domain lookups
+    pub fn with_zdns(
+        registry: Arc<DomainRegistry>,
+        zdns_resolver: Arc<ZdnsResolver>,
+    ) -> Self {
+        Self {
+            registry,
+            zdns_resolver: Some(zdns_resolver),
+            defaults: Web4ContentDefaults::default(),
+            domain_configs: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Create with ZDNS resolver and custom defaults
+    pub fn with_zdns_and_defaults(
+        registry: Arc<DomainRegistry>,
+        zdns_resolver: Arc<ZdnsResolver>,
+        defaults: Web4ContentDefaults,
+    ) -> Self {
+        Self {
+            registry,
+            zdns_resolver: Some(zdns_resolver),
+            defaults,
+            domain_configs: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Get reference to ZDNS resolver (if configured)
+    pub fn zdns_resolver(&self) -> Option<&Arc<ZdnsResolver>> {
+        self.zdns_resolver.as_ref()
+    }
+
+    /// Resolve domain metadata using ZDNS (cached) or registry (direct)
+    ///
+    /// Prefers ZDNS resolver if available for caching benefits.
+    pub async fn resolve_domain(&self, domain: &str) -> Result<Web4Record> {
+        if let Some(resolver) = &self.zdns_resolver {
+            // Use ZDNS resolver for cached lookup
+            resolver.resolve_web4(domain).await.map_err(|e| anyhow!("{}", e))
+        } else {
+            // Fall back to direct registry lookup
+            let lookup = self.registry.lookup_domain(domain).await?;
+            if lookup.found {
+                if let Some(record) = lookup.record {
+                    Ok(Web4Record {
+                        domain: record.domain,
+                        owner: hex::encode(&record.owner.0[..16]),
+                        content_mappings: record.content_mappings,
+                        content_mode: Some(ContentMode::Spa),
+                        spa_entry: Some("index.html".to_string()),
+                        asset_prefixes: Some(vec![
+                            "/assets/".to_string(),
+                            "/static/".to_string(),
+                            "/js/".to_string(),
+                            "/css/".to_string(),
+                            "/images/".to_string(),
+                        ]),
+                        capability: Some(Web4Capability::SpaServe),
+                        ttl: 300,
+                        registered_at: record.registered_at,
+                        expires_at: record.expires_at,
+                    })
+                } else {
+                    Err(anyhow!("Domain not found: {}", domain))
+                }
+            } else {
+                Err(anyhow!("Domain not found: {}", domain))
+            }
+        }
+    }
+
+    /// Invalidate ZDNS cache for a domain (call after publish/update)
+    pub async fn invalidate_domain_cache(&self, domain: &str) {
+        if let Some(resolver) = &self.zdns_resolver {
+            resolver.invalidate(domain).await;
         }
     }
 
@@ -405,19 +488,39 @@ impl Web4ContentService {
     ///
     /// Flow:
     /// 1. Normalize path (SECURITY CRITICAL - must be first!)
-    /// 2. Check if path is index/directory
-    /// 3. Try to fetch content from registry
-    /// 4. If not found and SPA mode, apply fallback logic
-    /// 5. Return content with appropriate headers
+    /// 2. Resolve domain via ZDNS (cached) to validate and get config
+    /// 3. Check if path is index/directory
+    /// 4. Try to fetch content from registry
+    /// 5. If not found and SPA mode, apply fallback logic
+    /// 6. Return content with appropriate headers
     pub async fn serve(&self, domain: &str, path: &str) -> Result<ContentResult> {
         // STEP 1: Normalize path FIRST (security critical!)
         let normalized_path = Self::normalize_path(path)?;
         debug!("Normalized path: '{}' -> '{}'", path, normalized_path);
 
-        // Get domain configuration
-        let content_mode = self.get_content_mode(domain).await;
-        let index_doc = self.get_index_document(domain).await;
-        let capability = self.get_capability(domain).await;
+        // STEP 2: Resolve domain via ZDNS resolver (uses cache if available)
+        // This validates the domain exists and gets its configuration
+        let (content_mode, index_doc, capability) = if let Some(resolver) = &self.zdns_resolver {
+            // Use ZDNS resolver for cached lookup
+            match resolver.resolve_web4(domain).await {
+                Ok(record) => {
+                    let mode = record.content_mode.unwrap_or(self.defaults.content_mode);
+                    let index = record.spa_entry.unwrap_or_else(|| self.defaults.index_document.clone());
+                    let cap = record.capability.unwrap_or(self.defaults.capability);
+                    (mode, index, cap)
+                }
+                Err(e) => {
+                    warn!(domain = %domain, error = %e, "ZDNS resolution failed");
+                    return Err(anyhow!("Domain not found: {}", domain));
+                }
+            }
+        } else {
+            // Fall back to domain_configs and defaults (no ZDNS resolver)
+            let mode = self.get_content_mode(domain).await;
+            let index = self.get_index_document(domain).await;
+            let cap = self.get_capability(domain).await;
+            (mode, index, cap)
+        };
 
         // Check capability
         if capability == Web4Capability::DownloadOnly {
@@ -428,7 +531,7 @@ impl Web4ContentService {
             }
         }
 
-        // STEP 2: Determine effective path
+        // STEP 3: Determine effective path
         let effective_path = if normalized_path == "/" {
             // Root path -> index document
             format!("/{}", index_doc)
@@ -439,7 +542,7 @@ impl Web4ContentService {
             normalized_path.clone()
         };
 
-        // STEP 3: Try to fetch content
+        // STEP 4: Try to fetch content
         let is_index = effective_path.ends_with(&index_doc);
 
         match self.fetch_content(domain, &effective_path).await {

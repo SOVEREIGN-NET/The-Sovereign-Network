@@ -102,10 +102,13 @@ pub struct ZhtpUnifiedServer {
     
     // Session management
     session_manager: Arc<SessionManager>,
-    
+
     // Discovery coordinator (Phase 3 fix)
     discovery_coordinator: Arc<crate::discovery_coordinator::DiscoveryCoordinator>,
-    
+
+    // Web4 domain registry (shared, canonical instance)
+    domain_registry: Arc<lib_network::DomainRegistry>,
+
     // Server state
     is_running: Arc<RwLock<bool>>,
     server_id: Uuid,
@@ -310,11 +313,17 @@ impl ZhtpUnifiedServer {
             quic_arc.clone(),                    // QuicMeshProtocol for transport
         ));
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
-        
+
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
         mesh_router.set_zhtp_router(zhtp_router_arc.clone()).await;
         info!(" ZHTP router registered with mesh router for UDP endpoint handling");
-        
+
+        // Create canonical domain registry (shared by all components)
+        let domain_registry = Arc::new(
+            lib_network::DomainRegistry::new_with_storage(storage.clone()).await?
+        );
+        info!(" Domain registry initialized (canonical instance)");
+
         Ok(Self {
             quic_mesh: quic_arc,
             quic_handler,
@@ -330,6 +339,7 @@ impl ZhtpUnifiedServer {
             economic_model,
             session_manager,
             discovery_coordinator,
+            domain_registry,
             is_running: Arc::new(RwLock::new(false)),
             server_id,
             port,
@@ -1172,6 +1182,13 @@ impl ZhtpUnifiedServer {
     /// Get server information
     pub fn get_server_info(&self) -> (Uuid, u16) {
         (self.server_id, self.port)
+    }
+
+    /// Get reference to the canonical domain registry
+    ///
+    /// This is the single source of truth for domain resolution across all components.
+    pub fn get_domain_registry(&self) -> Arc<lib_network::DomainRegistry> {
+        Arc::clone(&self.domain_registry)
     }
     
     /// Get blockchain statistics
