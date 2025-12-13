@@ -59,6 +59,8 @@ pub use crate::web4::{
 
 // ZDNS (Zero-Knowledge Domain Name System) resolver with caching
 pub use crate::zdns::{ZdnsResolver, ZdnsConfig, ZdnsError, Web4Record};
+// ZDNS DNS transport layer (UDP/TCP server on port 53)
+pub use crate::zdns::{ZdnsTransportServer, ZdnsServerConfig, TransportStats, DnsPacket, DNS_PORT};
 
 // Core modules
 pub mod types;
