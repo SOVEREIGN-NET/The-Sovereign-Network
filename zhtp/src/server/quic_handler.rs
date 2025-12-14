@@ -833,19 +833,45 @@ impl QuicHandler {
         }
     }
 
-    /// Handle public HTTP stream - only allows GET requests to public endpoints
+    /// Handle public HTTP stream - allows GET and whitelisted POST endpoints
     async fn handle_public_http_stream(&self, initial_data: Vec<u8>, recv: RecvStream, mut send: SendStream) -> Result<()> {
-        // Check if it's a GET request (public read-only)
-        if !initial_data.starts_with(b"GET ") {
-            // Reject non-GET methods on public connection
-            let response = b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: 52\r\n\r\nPublic connections only allow GET requests (read-only)";
-            send.write_all(response).await?;
-            send.finish()?;
-            return Ok(());
+        // GET requests always allowed on public connection
+        if initial_data.starts_with(b"GET ") {
+            return self.handle_http_stream_with_prefix(initial_data, recv, send).await;
         }
 
-        // It's a GET request - forward to HTTP handler
-        self.handle_http_stream_with_prefix(initial_data, recv, send).await
+        // POST requests only allowed to specific unauthenticated endpoints
+        if initial_data.starts_with(b"POST ") {
+            // Whitelist of POST endpoints allowed without authentication:
+            // - Identity creation (user has no identity yet)
+            // - Health checks
+            // - Web4 content fetching (read-only, public data)
+            let allowed_post_prefixes = [
+                // Identity bootstrap
+                b"POST /api/v1/identity/create".as_slice(),
+                b"POST /api/v1/identity ".as_slice(),
+                // Health
+                b"POST /api/v1/protocol/health".as_slice(),
+                // Web4 content (read-only fetches, not mutations)
+                b"POST /api/v1/web4/domains".as_slice(),
+                b"POST /api/v1/web4/content".as_slice(),
+                b"POST /api/v1/web4/resolve".as_slice(),
+            ];
+
+            let is_allowed = allowed_post_prefixes.iter().any(|prefix| {
+                initial_data.starts_with(prefix)
+            });
+
+            if is_allowed {
+                return self.handle_http_stream_with_prefix(initial_data, recv, send).await;
+            }
+        }
+
+        // Reject all other methods (PUT, DELETE, PATCH, etc.) and non-whitelisted POSTs
+        let response = b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: 62\r\n\r\nPublic connections only allow GET and whitelisted POST requests";
+        send.write_all(response).await?;
+        send.finish()?;
+        Ok(())
     }
 
     /// Handle public ZHTP stream - only allows read operations
