@@ -39,6 +39,19 @@ pub struct ApiDomainRegistrationRequest {
     pub registration_proof: String,
 }
 
+/// Manifest-based domain registration request (used by CLI deploy)
+/// This is a simpler format where content has already been uploaded
+/// and the manifest_cid references the uploaded manifest
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ManifestDomainRegistrationRequest {
+    /// Domain to register
+    pub domain: String,
+    /// CID of the uploaded manifest
+    pub manifest_cid: String,
+    /// Owner DID (did:zhtp:hex format)
+    pub owner: String,
+}
+
 /// Simple domain registration request (for easier testing)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SimpleDomainRegistrationRequest {
@@ -95,12 +108,21 @@ pub struct ApiDomainReleaseRequest {
 
 impl Web4Handler {
     /// Register a domain using simplified format (for easy testing/deployment)
+    /// Supports both manifest-based (from CLI deploy) and content-based formats
     pub async fn register_domain_simple(&self, request_body: Vec<u8>) -> ZhtpResult<ZhtpResponse> {
+        info!("Processing Web4 domain registration request");
+
+        // Try manifest-based request first (simpler format from CLI deploy)
+        if let Ok(manifest_request) = serde_json::from_slice::<ManifestDomainRegistrationRequest>(&request_body) {
+            return self.register_domain_from_manifest(manifest_request).await;
+        }
+
+        // Fall back to simple request with inline content
         info!("Processing simple Web4 domain registration request");
 
         // Parse simple request
         let simple_request: SimpleDomainRegistrationRequest = serde_json::from_slice(&request_body)
-            .map_err(|e| anyhow!("Invalid simple domain registration request: {}", e))?;
+            .map_err(|e| anyhow!("Invalid domain registration request: {}", e))?;
 
         info!(" Registering domain: {}", simple_request.domain);
         info!(" Owner: {}", simple_request.owner);
@@ -737,9 +759,92 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
 
         info!(" Domain {} registered successfully with {} ZHTP fees", simple_request.domain, total_fees);
-        
+
         Ok(ZhtpResponse::success_with_content_type(
             response_json,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Register a domain using manifest CID (from CLI deploy command)
+    /// This is a simplified flow where content has already been uploaded
+    async fn register_domain_from_manifest(&self, request: ManifestDomainRegistrationRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("Processing manifest-based domain registration");
+        info!(" Domain: {}", request.domain);
+        info!(" Manifest CID: {}", request.manifest_cid);
+        info!(" Owner: {}", request.owner);
+
+        // Parse owner DID
+        let owner_identity_id = if request.owner.starts_with("did:zhtp:") {
+            let hex_part = request.owner.strip_prefix("did:zhtp:")
+                .ok_or_else(|| anyhow!("Invalid DID format"))?;
+            let id_bytes = hex::decode(hex_part)
+                .map_err(|e| anyhow!("Invalid DID hex encoding: {}", e))?;
+            lib_crypto::Hash::from_bytes(&id_bytes)
+        } else {
+            let id_bytes = hex::decode(&request.owner)
+                .map_err(|e| anyhow!("Owner must be DID format (did:zhtp:hex) or raw hex. Error: {}", e))?;
+            lib_crypto::Hash::from_bytes(&id_bytes)
+        };
+
+        // Look up owner identity
+        let identity_mgr = self.identity_manager.read().await;
+        let owner_identity = identity_mgr.get_identity(&owner_identity_id)
+            .ok_or_else(|| anyhow!(
+                "Owner identity not found: {}. Register identity first.",
+                request.owner
+            ))?
+            .clone();
+        drop(identity_mgr);
+
+        let owner_did = format!("did:zhtp:{}", hex::encode(&owner_identity.id.0));
+        info!(" Verified owner identity: {}", owner_did);
+
+        // Register domain with Web4Manager using manifest CID
+        let mut manager = self.web4_manager.write().await;
+
+        // Create domain metadata
+        let metadata = lib_network::web4::DomainMetadata {
+            title: request.domain.clone(),
+            description: format!("Domain registered via manifest {}", request.manifest_cid),
+            category: "website".to_string(),
+            tags: vec!["web4".to_string(), "manifest".to_string()],
+            public: true,
+            economic_settings: lib_network::web4::DomainEconomicSettings {
+                registration_fee: 0.0,
+                renewal_fee: 0.0,
+                transfer_fee: 0.0,
+                hosting_budget: 0.0,
+            },
+        };
+
+        // Create domain registration request
+        let domain_request = DomainRegistrationRequest {
+            domain: request.domain.clone(),
+            owner: owner_identity.clone(),
+            duration_days: 365, // Default 1 year
+            metadata,
+            initial_content: HashMap::new(), // Content already uploaded via manifest
+            registration_proof: ZeroKnowledgeProof::default(),
+        };
+
+        let registration_result = manager.registry.register_domain(domain_request).await
+            .map_err(|e| anyhow!("Failed to register domain: {}", e))?;
+
+        info!(" Domain {} registered with manifest {}", request.domain, request.manifest_cid);
+
+        let response = serde_json::json!({
+            "status": "success",
+            "domain": request.domain,
+            "manifest_cid": request.manifest_cid,
+            "owner": owner_did,
+            "registration_id": registration_result.registration_id,
+            "message": "Domain registered successfully"
+        });
+
+        Ok(ZhtpResponse::success_with_content_type(
+            serde_json::to_vec(&response)?,
             "application/json".to_string(),
             None,
         ))

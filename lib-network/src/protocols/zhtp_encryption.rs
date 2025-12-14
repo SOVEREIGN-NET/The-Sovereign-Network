@@ -110,7 +110,9 @@ impl ZhtpEncryptionSession {
         info!(" Responding to Kyber key exchange for session: {}", &init.session_id[..8]);
         
         // Encapsulate shared secret with peer's public key
-        let (ciphertext, shared_secret) = kyber512_encapsulate(&init.kyber_public_key)?;
+        // NOTE: kdf_info must match the one used in complete_key_exchange by the initiator
+        let kdf_info = b"ZHTP-KEM-v1.0";
+        let (ciphertext, shared_secret) = kyber512_encapsulate(&init.kyber_public_key, kdf_info)?;
         
         debug!("Encapsulated shared secret (ciphertext: {} bytes)", ciphertext.len());
         
