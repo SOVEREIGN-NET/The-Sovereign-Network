@@ -530,11 +530,14 @@ pub async fn handshake_as_responder(
         // Phase 3: Master Key Derivation
         // ================================================================
 
+        // Use responder's (server's) node ID for key derivation
+        // NOTE: Both initiator and responder must use the SAME node ID (responder's)
+        // to derive matching master keys and session IDs
         let master_key = derive_quic_master_key(
             &uhp_session_key,
             &pqc_shared_secret,
             &uhp_transcript_hash,
-            client_hello.identity.node_id.as_bytes(),
+            server_hello.identity.node_id.as_bytes(),
         )?;
 
         // Zeroize intermediate keys
