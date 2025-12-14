@@ -775,18 +775,11 @@ impl Web4Handler {
         info!(" Manifest CID: {}", request.manifest_cid);
         info!(" Owner: {}", request.owner);
 
-        // Parse owner DID
-        let owner_identity_id = if request.owner.starts_with("did:zhtp:") {
-            let hex_part = request.owner.strip_prefix("did:zhtp:")
-                .ok_or_else(|| anyhow!("Invalid DID format"))?;
-            let id_bytes = hex::decode(hex_part)
-                .map_err(|e| anyhow!("Invalid DID hex encoding: {}", e))?;
-            lib_crypto::Hash::from_bytes(&id_bytes)
-        } else {
-            let id_bytes = hex::decode(&request.owner)
-                .map_err(|e| anyhow!("Owner must be DID format (did:zhtp:hex) or raw hex. Error: {}", e))?;
-            lib_crypto::Hash::from_bytes(&id_bytes)
-        };
+        // Derive owner identity ID from DID
+        // Identity ID = Blake3(DID string) - same derivation as ZhtpIdentity::new()
+        let owner_identity_id = lib_crypto::Hash::from_bytes(
+            &lib_crypto::hash_blake3(request.owner.as_bytes()).to_vec()
+        );
 
         // Look up owner identity
         let identity_mgr = self.identity_manager.read().await;
