@@ -174,6 +174,8 @@ impl DomainRegistry {
         {
             let mut records = self.domain_records.write().await;
             records.insert(request.domain.clone(), domain_record);
+            info!(" DEBUG: Stored domain in registry. Total domains: {}. Registry ptr: {:p}",
+                records.len(), &*self.domain_records);
         }
 
         // Update statistics
@@ -761,6 +763,8 @@ impl DomainRegistry {
     /// Get domain status (version info)
     pub async fn get_domain_status(&self, domain: &str) -> Result<DomainStatusResponse> {
         let records = self.domain_records.read().await;
+        info!(" DEBUG: get_domain_status for '{}'. Total domains: {}. Registry ptr: {:p}",
+            domain, records.len(), &*self.domain_records);
 
         if let Some(record) = records.get(domain) {
             Ok(DomainStatusResponse {
