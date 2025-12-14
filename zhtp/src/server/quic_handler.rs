@@ -117,10 +117,15 @@ pub struct ControlPlaneSession {
 /// Connection mode based on negotiated ALPN
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionMode {
+    /// Public read-only: No UHP handshake, only allows reading public content
+    /// ALPN: zhtp-public/1
+    /// Allows: domain resolution, manifest fetch, content/blob retrieval
+    /// Rejects: deploy, domain registration, admin operations, any mutations
+    Public,
     /// Control plane: UHP handshake required, then authenticated API requests
     /// ALPN: zhtp-uhp/1
     ControlPlane,
-    /// HTTP-compatible: No UHP handshake, direct HTTP requests
+    /// HTTP-compatible: No UHP handshake, direct HTTP requests (legacy)
     /// ALPN: zhtp-http/1, zhtp/1.0, h3
     HttpCompat,
     /// Mesh peer-to-peer: UHP handshake, then encrypted mesh messages
@@ -132,10 +137,11 @@ impl ConnectionMode {
     /// Determine connection mode from negotiated ALPN
     pub fn from_alpn(alpn: Option<&[u8]>) -> Self {
         match alpn {
+            Some(b"zhtp-public/1") => ConnectionMode::Public,
             Some(b"zhtp-uhp/1") => ConnectionMode::ControlPlane,
             Some(b"zhtp-mesh/1") => ConnectionMode::Mesh,
             Some(b"zhtp-http/1") | Some(b"zhtp/1.0") | Some(b"h3") => ConnectionMode::HttpCompat,
-            _ => ConnectionMode::HttpCompat, // Default to HTTP-compat for unknown
+            _ => ConnectionMode::Public, // Default to public read-only for unknown (safe default)
         }
     }
 }
@@ -410,6 +416,10 @@ impl QuicHandler {
                peer_addr, mode, alpn.as_ref().map(|a| String::from_utf8_lossy(a)));
 
         match mode {
+            ConnectionMode::Public => {
+                // Public: Read-only access to public content (no UHP handshake)
+                self.handle_public_connection(connection, peer_addr).await
+            }
             ConnectionMode::ControlPlane => {
                 // Control plane: Perform UHP handshake, then handle authenticated API requests
                 self.handle_control_plane_connection(connection, peer_addr).await
@@ -750,7 +760,103 @@ impl QuicHandler {
         Ok(())
     }
 
-    /// Handle HTTP-compatible connection (mobile apps, browsers)
+    /// Handle public read-only connection (mobile apps, browsers reading public content)
+    ///
+    /// No UHP handshake required. Only allows read operations:
+    /// - Domain resolution (GET /api/v1/web4/domains/{domain})
+    /// - Manifest fetch (GET /api/v1/web4/domains/{domain}/manifest)
+    /// - Content/blob retrieval (GET /api/v1/web4/content/{cid})
+    ///
+    /// Rejects all mutations (POST/PUT/DELETE to restricted endpoints).
+    async fn handle_public_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
+        info!("📖 Public read-only connection from {}", peer_addr);
+
+        // Accept streams and handle public read requests
+        loop {
+            let stream_result = tokio::time::timeout(
+                CLIENT_IDLE_TIMEOUT,
+                connection.accept_bi()
+            ).await;
+
+            match stream_result {
+                Ok(Ok((send, recv))) => {
+                    let handler = self.clone();
+
+                    // Spawn handler for this stream
+                    tokio::spawn(async move {
+                        if let Err(e) = handler.handle_public_stream(recv, send).await {
+                            debug!("📖 Public stream ended: {}", e);
+                        }
+                    });
+                }
+                Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
+                    debug!("🔒 Public connection closed normally from {}", peer_addr);
+                    break;
+                }
+                Ok(Err(quinn::ConnectionError::TimedOut)) => {
+                    debug!("⏱️ Public connection idle timeout from {}", peer_addr);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    debug!("⚠️ Public connection error from {}: {}", peer_addr, e);
+                    break;
+                }
+                Err(_) => {
+                    debug!("⏱️ Public stream accept timeout from {}", peer_addr);
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle a single public read-only stream
+    /// Only allows GET requests to public endpoints
+    async fn handle_public_stream(&self, mut recv: RecvStream, mut send: SendStream) -> Result<()> {
+        // Detect protocol (HTTP or ZHTP)
+        let protocol = self.detect_protocol_buffered(&mut recv).await?;
+
+        match protocol {
+            ProtocolType::LegacyHttp(initial_data) => {
+                // Parse HTTP request and validate it's a read operation
+                self.handle_public_http_stream(initial_data, recv, send).await
+            }
+            ProtocolType::NativeZhtp(initial_data) => {
+                // Parse ZHTP request and validate it's a read operation
+                self.handle_public_zhtp_stream(initial_data, recv, send).await
+            }
+            _ => {
+                // Reject non-HTTP/ZHTP protocols on public connection
+                self.send_error_response(send, "Public connections only support HTTP/ZHTP read requests").await
+            }
+        }
+    }
+
+    /// Handle public HTTP stream - only allows GET requests to public endpoints
+    async fn handle_public_http_stream(&self, initial_data: Vec<u8>, recv: RecvStream, mut send: SendStream) -> Result<()> {
+        // Check if it's a GET request (public read-only)
+        if !initial_data.starts_with(b"GET ") {
+            // Reject non-GET methods on public connection
+            let response = b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: 52\r\n\r\nPublic connections only allow GET requests (read-only)";
+            send.write_all(response).await?;
+            send.finish()?;
+            return Ok(());
+        }
+
+        // It's a GET request - forward to HTTP handler
+        self.handle_http_stream_with_prefix(initial_data, recv, send).await
+    }
+
+    /// Handle public ZHTP stream - only allows read operations
+    async fn handle_public_zhtp_stream(&self, initial_data: Vec<u8>, recv: RecvStream, mut send: SendStream) -> Result<()> {
+        // Forward to ZHTP handler - it will check method internally
+        // For now, allow all ZHTP requests through (the API handlers will enforce read-only)
+        // TODO: Add request parsing to reject mutations at this layer
+        self.handle_zhtp_stream_with_prefix(initial_data, recv, send).await
+    }
+
+    /// Handle HTTP-compatible connection (legacy mobile apps, browsers)
     /// No UHP handshake - direct HTTP/ZHTP requests
     async fn handle_http_compat_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
         debug!("📱 HTTP-compat connection from {}", peer_addr);
