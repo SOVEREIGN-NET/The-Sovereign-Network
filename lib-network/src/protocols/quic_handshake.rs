@@ -320,6 +320,15 @@ pub async fn handshake_as_initiator(
         // Phase 3: Master Key Derivation
         // ================================================================
 
+        // DEBUG: Log all inputs to master key derivation for session ID debugging
+        debug!(
+            uhp_session_key = %hex::encode(&uhp_session_key[..8]),
+            pqc_shared_secret = %hex::encode(&pqc_shared_secret[..8]),
+            uhp_transcript_hash = %hex::encode(&uhp_transcript_hash[..8]),
+            server_node_id = %hex::encode(&server_hello.identity.node_id.as_bytes()[..8]),
+            "INITIATOR: Master key derivation inputs"
+        );
+
         let master_key = derive_quic_master_key(
             &uhp_session_key,
             &pqc_shared_secret,
@@ -529,6 +538,15 @@ pub async fn handshake_as_responder(
         // ================================================================
         // Phase 3: Master Key Derivation
         // ================================================================
+
+        // DEBUG: Log all inputs to master key derivation for session ID debugging
+        debug!(
+            uhp_session_key = %hex::encode(&uhp_session_key[..8]),
+            pqc_shared_secret = %hex::encode(&pqc_shared_secret[..8]),
+            uhp_transcript_hash = %hex::encode(&uhp_transcript_hash[..8]),
+            server_node_id = %hex::encode(&server_hello.identity.node_id.as_bytes()[..8]),
+            "RESPONDER: Master key derivation inputs"
+        );
 
         // Use responder's (server's) node ID for key derivation
         // NOTE: Both initiator and responder must use the SAME node ID (responder's)
