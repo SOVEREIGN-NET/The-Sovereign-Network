@@ -1278,15 +1278,19 @@ impl Web4Handler {
         let resolve_req: ResolveRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow!("Invalid resolve request: {}", e))?;
 
-        info!(" Resolving domain: {} (version: {:?})", resolve_req.domain, resolve_req.version);
+        info!("🔍 resolve_domain_manifest: Resolving '{}' (version: {:?})", resolve_req.domain, resolve_req.version);
 
         let manager = self.web4_manager.read().await;
+        info!("🔍 resolve_domain_manifest: Got manager, registry ptr: {:p}", &*manager.registry);
 
         // Get domain status
         let status = manager.registry.get_domain_status(&resolve_req.domain).await
             .map_err(|e| anyhow!("Domain not found: {}", e))?;
 
+        info!("🔍 resolve_domain_manifest: status.found={} for '{}'", status.found, resolve_req.domain);
+
         if !status.found {
+            warn!("❌ resolve_domain_manifest: Domain '{}' NOT FOUND in registry", resolve_req.domain);
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 format!("Domain not found: {}", resolve_req.domain),
