@@ -271,6 +271,7 @@ pub async fn handshake_as_initiator(
             &client_hello_bytes,
             &server_hello_bytes,
             &client_finish_bytes,
+            "INITIATOR",
         );
 
         // ================================================================
@@ -487,6 +488,7 @@ pub async fn handshake_as_responder(
             &client_hello_bytes,
             &server_hello_bytes,
             &client_finish_bytes,
+            "RESPONDER",
         );
 
         // ================================================================
@@ -517,8 +519,11 @@ pub async fn handshake_as_responder(
         debug!("QUIC handshake: KyberRequest received and verified");
 
         // Encapsulate shared secret using client's public key
-        let (ciphertext, mut pqc_shared_secret) = kyber512_encapsulate(&kyber_request.kyber_pubkey)
-            .context("Failed to encapsulate Kyber shared secret")?;
+        // NOTE: kdf_info must match the one used in decapsulate by the initiator
+        let (ciphertext, mut pqc_shared_secret) = kyber512_encapsulate(
+            &kyber_request.kyber_pubkey,
+            b"ZHTP-QUIC-KEM-v1.0",
+        ).context("Failed to encapsulate Kyber shared secret")?;
 
         // Send KyberResponse
         let kyber_response = KyberResponse {
@@ -650,7 +655,20 @@ fn compute_uhp_transcript_hash(
     client_hello_bytes: &[u8],
     server_hello_bytes: &[u8],
     client_finish_bytes: &[u8],
+    role: &str,
 ) -> [u8; 32] {
+    // DEBUG: Log byte lengths and first 16 bytes of each message
+    debug!(
+        role = %role,
+        client_hello_len = client_hello_bytes.len(),
+        server_hello_len = server_hello_bytes.len(),
+        client_finish_len = client_finish_bytes.len(),
+        client_hello_head = %hex::encode(&client_hello_bytes[..std::cmp::min(16, client_hello_bytes.len())]),
+        server_hello_head = %hex::encode(&server_hello_bytes[..std::cmp::min(16, server_hello_bytes.len())]),
+        client_finish_head = %hex::encode(&client_finish_bytes[..std::cmp::min(16, client_finish_bytes.len())]),
+        "Transcript hash inputs"
+    );
+
     let mut transcript = Vec::with_capacity(
         client_hello_bytes.len() + server_hello_bytes.len() + client_finish_bytes.len()
     );
@@ -658,7 +676,16 @@ fn compute_uhp_transcript_hash(
     transcript.extend_from_slice(server_hello_bytes);
     transcript.extend_from_slice(client_finish_bytes);
 
-    hash_blake3(&transcript)
+    let hash = hash_blake3(&transcript);
+
+    debug!(
+        role = %role,
+        transcript_len = transcript.len(),
+        transcript_hash = %hex::encode(&hash[..8]),
+        "Transcript hash computed"
+    );
+
+    hash
 }
 
 // ============================================================================
