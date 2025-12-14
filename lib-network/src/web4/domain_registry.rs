@@ -454,17 +454,21 @@ impl DomainRegistry {
 
     /// Validate domain name format
     fn validate_domain_name(&self, domain: &str) -> Result<()> {
-        // Must end with .zhtp
-        if !domain.ends_with(".zhtp") {
-            return Err(anyhow!("Domain must end with .zhtp"));
-        }
+        // Must end with .zhtp or .sov
+        let tld_len = if domain.ends_with(".zhtp") {
+            5
+        } else if domain.ends_with(".sov") {
+            4
+        } else {
+            return Err(anyhow!("Domain must end with .zhtp or .sov"));
+        };
 
-        // Extract the name part (before .zhtp)
-        let name = &domain[..domain.len() - 5]; // Remove ".zhtp"
+        // Extract the name part (before TLD)
+        let name = &domain[..domain.len() - tld_len];
         
         // Must be 3-63 characters
         if name.len() < 3 || name.len() > 63 {
-            return Err(anyhow!("Domain name must be 3-63 characters (excluding .zhtp)"));
+            return Err(anyhow!("Domain name must be 3-63 characters (excluding TLD)"));
         }
 
         // Must contain only valid characters
