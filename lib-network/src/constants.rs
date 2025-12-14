@@ -21,7 +21,13 @@
 /// These connections perform UHP handshake FIRST, then send authenticated requests.
 pub const ALPN_CONTROL_PLANE: &[u8] = b"zhtp-uhp/1";
 
-/// ALPN for HTTP-compatible connections (mobile apps, browsers)
+/// ALPN for public read-only connections (mobile apps, browsers reading public content)
+/// These connections do NOT perform UHP handshake.
+/// Only allows: domain resolution, manifest fetch, content/blob retrieval.
+/// Rejects: deploy, domain registration, admin operations, any mutations.
+pub const ALPN_PUBLIC: &[u8] = b"zhtp-public/1";
+
+/// ALPN for HTTP-compatible connections (legacy mobile apps, browsers)
 /// These connections send HTTP requests directly without UHP handshake.
 /// Mutations require session tokens or other auth mechanisms.
 pub const ALPN_HTTP_COMPAT: &[u8] = b"zhtp-http/1";
@@ -40,9 +46,10 @@ pub const ALPN_H3: &[u8] = b"h3";
 /// All supported server ALPNs (ordered by preference)
 pub fn server_alpns() -> Vec<Vec<u8>> {
     vec![
-        ALPN_CONTROL_PLANE.to_vec(),  // Preferred: control plane with UHP
+        ALPN_PUBLIC.to_vec(),          // Public read-only (mobile apps, browsers)
+        ALPN_CONTROL_PLANE.to_vec(),   // Control plane with UHP (CLI, deploy)
         ALPN_MESH.to_vec(),            // Mesh protocol
-        ALPN_HTTP_COMPAT.to_vec(),     // HTTP-compat mode
+        ALPN_HTTP_COMPAT.to_vec(),     // HTTP-compat mode (legacy)
         ALPN_LEGACY.to_vec(),          // Legacy (treated as HTTP-compat)
         ALPN_H3.to_vec(),              // HTTP/3 browsers
     ]
@@ -55,7 +62,14 @@ pub fn client_control_plane_alpns() -> Vec<Vec<u8>> {
     ]
 }
 
-/// Client ALPNs for HTTP-only operations (mobile apps)
+/// Client ALPNs for public read-only operations (mobile apps reading content)
+pub fn client_public_alpns() -> Vec<Vec<u8>> {
+    vec![
+        ALPN_PUBLIC.to_vec(),          // Public read-only (preferred)
+    ]
+}
+
+/// Client ALPNs for HTTP-only operations (legacy mobile apps)
 pub fn client_http_alpns() -> Vec<Vec<u8>> {
     vec![
         ALPN_HTTP_COMPAT.to_vec(),     // HTTP-compat mode
