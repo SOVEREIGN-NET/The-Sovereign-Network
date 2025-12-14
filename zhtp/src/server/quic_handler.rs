@@ -531,34 +531,95 @@ impl QuicHandler {
         Ok(())
     }
 
-    /// Handle a single authenticated stream (with AuthContext validation)
+    /// Handle a single authenticated stream (ZHTP wire protocol)
+    ///
+    /// After UHP handshake, all streams use ZHTP length-prefixed CBOR format.
+    /// No protocol detection or HTTP fallback - the connection mode was already
+    /// determined by ALPN negotiation.
     async fn handle_authenticated_stream(
         &self,
-        recv: RecvStream,
-        send: SendStream,
+        mut recv: RecvStream,
+        mut send: SendStream,
         session: &ControlPlaneSession,
     ) -> Result<()> {
-        // Create buffered stream for protocol detection
-        let mut buffered = BufferedStream::new(Vec::new(), recv);
+        use lib_protocols::wire::{read_request, write_response, ZhtpResponseWire};
+        use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
 
-        // Read some data to detect protocol
-        let mut peek_buf = vec![0u8; PROTOCOL_DETECT_SIZE];
-        let n = buffered.stream.read(&mut peek_buf).await?
-            .ok_or_else(|| anyhow!("Empty stream"))?;
-        peek_buf.truncate(n);
+        // Read ZHTP wire request (length-prefixed CBOR)
+        let wire_request = read_request(&mut recv).await
+            .context("Failed to read ZHTP wire request")?;
 
-        // Put data back for processing
-        let mut buffered = BufferedStream::new(peek_buf, buffered.stream);
+        debug!(
+            request_id = %wire_request.request_id_hex(),
+            uri = %wire_request.request.uri,
+            method = ?wire_request.request.method,
+            has_auth = wire_request.auth_context.is_some(),
+            peer_did = %session.peer_did,
+            "Received authenticated ZHTP request"
+        );
 
-        // Route based on content (ZHTP magic or HTTP method)
-        if n >= 4 && &buffered.prepended_data[..4] == ZHTP_MAGIC {
-            // Native ZHTP protocol - pass session for auth validation
-            let router = self.zhtp_router.read().await;
-            router.handle_authenticated_zhtp_stream(&mut buffered, send, session).await
-        } else {
-            // HTTP-over-QUIC - convert and pass session
-            self.http_compat.handle_authenticated_http_stream(&mut buffered, send, session).await
+        // Validate auth context if present
+        if let Some(ref auth_ctx) = wire_request.auth_context {
+            // Verify session ID matches
+            if auth_ctx.session_id != session.session_id {
+                warn!("Session ID mismatch in auth context");
+                let error_response = ZhtpResponseWire::error(
+                    wire_request.request_id,
+                    ZhtpStatus::Unauthorized,
+                    "Invalid session".to_string(),
+                );
+                write_response(&mut send, &error_response).await?;
+                return Ok(());
+            }
+
+            // Verify client DID matches
+            if auth_ctx.client_did != session.peer_did {
+                warn!("Client DID mismatch in auth context");
+                let error_response = ZhtpResponseWire::error(
+                    wire_request.request_id,
+                    ZhtpStatus::Unauthorized,
+                    "Invalid client".to_string(),
+                );
+                write_response(&mut send, &error_response).await?;
+                return Ok(());
+            }
+
+            // Verify MAC using canonical request hash
+            use lib_protocols::wire::ZhtpRequestWire;
+            let request_hash = ZhtpRequestWire::compute_canonical_request_hash(
+                &wire_request.request,
+                &wire_request.request_id,
+                wire_request.timestamp_ms,
+            );
+            if !auth_ctx.verify(&session.app_key, &request_hash) {
+                warn!("MAC verification failed for authenticated request");
+                let error_response = ZhtpResponseWire::error(
+                    wire_request.request_id,
+                    ZhtpStatus::Unauthorized,
+                    "Invalid MAC".to_string(),
+                );
+                write_response(&mut send, &error_response).await?;
+                return Ok(());
+            }
         }
+
+        // Route request through ZHTP router
+        let mut request = wire_request.request;
+        request.requester = Some(lib_crypto::Hash(lib_crypto::hash_blake3(session.peer_did.as_bytes())));
+
+        let router = self.zhtp_router.read().await;
+        let response = router.route_request(request).await
+            .unwrap_or_else(|e| {
+                warn!("Handler error: {}", e);
+                ZhtpResponse::error(ZhtpStatus::InternalServerError, e.to_string())
+            });
+
+        // Send wire response (length-prefixed CBOR)
+        let wire_response = ZhtpResponseWire::success(wire_request.request_id, response);
+        write_response(&mut send, &wire_response).await
+            .context("Failed to write ZHTP wire response")?;
+
+        Ok(())
     }
 
     /// Handle mesh peer connection (node-to-node)
