@@ -311,6 +311,7 @@ impl ZhtpUnifiedServer {
         let quic_handler = Arc::new(QuicHandler::new(
             Arc::new(RwLock::new((*zhtp_router_arc).clone())),  // Native ZhtpRouter wrapped in RwLock
             quic_arc.clone(),                    // QuicMeshProtocol for transport
+            identity_manager.clone(),            // Identity manager for auto-registration
         ));
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 

@@ -244,6 +244,93 @@ impl ZhtpIdentity {
         })
     }
 
+    /// Create an "observed" identity from handshake public information
+    ///
+    /// This creates a lightweight identity from the public information exchanged
+    /// during UHP+Kyber handshake. The identity is marked as observed (not locally
+    /// created) and has no private key.
+    ///
+    /// # Purpose
+    /// When a peer authenticates via UHP handshake, they prove control of their
+    /// identity cryptographically. The node should auto-register this identity
+    /// so subsequent operations (domain registration, etc.) can reference it.
+    ///
+    /// # What this does NOT do
+    /// - Grant any privileges (registration ≠ authorization)
+    /// - Provide private key access
+    /// - Enable signing on behalf of the identity
+    ///
+    /// # Arguments
+    /// * `did` - The peer's DID (e.g., "did:zhtp:...")
+    /// * `public_key` - The peer's public key
+    /// * `device_id` - The peer's device identifier
+    /// * `node_id` - The peer's NodeId
+    ///
+    /// # Returns
+    /// A ZhtpIdentity populated with public fields from the handshake
+    pub fn from_observed_handshake(
+        did: String,
+        public_key: PublicKey,
+        device_id: String,
+        node_id: NodeId,
+    ) -> Result<Self> {
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        // Derive identity ID from DID (same derivation as new())
+        let id = Hash::from_bytes(&lib_crypto::hash_blake3(did.as_bytes()).to_vec());
+
+        // Initialize device mapping with the observed device
+        let mut device_node_ids = HashMap::new();
+        device_node_ids.insert(device_id.clone(), node_id.clone());
+
+        // Create minimal wallet manager (no wallets - this is an observed identity)
+        let wallet_manager = crate::wallets::WalletManager::new(id.clone());
+
+        Ok(ZhtpIdentity {
+            id: id.clone(),
+            identity_type: IdentityType::Human, // Default; actual type unknown
+            did,
+            public_key,
+            private_key: None, // No private key - this is an observed identity
+            node_id,
+            device_node_ids,
+            primary_device: device_id,
+            ownership_proof: ZeroKnowledgeProof::default(),
+            credentials: HashMap::new(),
+            reputation: 0,
+            age: None,
+            access_level: AccessLevel::default(),
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("observed".to_string(), "true".to_string());
+                m.insert("first_seen".to_string(), current_time.to_string());
+                m
+            },
+            private_data_id: None,
+            wallet_manager,
+            attestations: Vec::new(),
+            created_at: current_time,
+            last_active: current_time,
+            recovery_keys: Vec::new(),
+            did_document_hash: None,
+            owner_identity_id: None,
+            reward_wallet_id: None,
+            encrypted_master_seed: None,
+            next_wallet_index: 0,
+            password_hash: None,
+            master_seed_phrase: None,
+            zk_identity_secret: [0u8; 32], // No ZK secret for observed identity
+            zk_credential_hash: [0u8; 32],
+            wallet_master_seed: [0u8; 64],
+            dao_member_id: String::new(),
+            dao_voting_power: 0,
+            citizenship_verified: false,
+            jurisdiction: None,
+        })
+    }
+
     /// Create a new ZHTP identity with seed-anchored deterministic derivation
     ///
     /// This constructor implements seed-anchored identity where the seed is the root

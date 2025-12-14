@@ -226,6 +226,9 @@ pub struct QuicHandler {
 
     /// Handshake rate limiting (IP -> (count, window_start))
     handshake_rate_limits: Arc<RwLock<HashMap<SocketAddr, (usize, Instant)>>>,
+
+    /// Identity manager for auto-registration of authenticated peers
+    identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
 }
 
 impl QuicHandler {
@@ -233,6 +236,7 @@ impl QuicHandler {
     pub fn new(
         zhtp_router: Arc<RwLock<ZhtpRouter>>,
         quic_protocol: Arc<QuicMeshProtocol>,
+        identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
     ) -> Self {
         let http_compat = Arc::new(HttpCompatibilityLayer::new(
             zhtp_router.clone()
@@ -245,6 +249,7 @@ impl QuicHandler {
             mesh_handler: None,
             pqc_connections: Arc::new(RwLock::new(HashMap::new())),
             handshake_rate_limits: Arc::new(RwLock::new(HashMap::new())),
+            identity_manager,
         }
     }
 
@@ -462,6 +467,10 @@ impl QuicHandler {
             peer_addr
         );
 
+        // Auto-register the authenticated peer identity
+        // Authentication IS registration: successful UHP+Kyber proves identity control
+        self.auto_register_peer_identity(&handshake_result.peer_identity).await;
+
         // Create session state for authenticated requests
         let session = ControlPlaneSession {
             session_id,
@@ -485,6 +494,73 @@ impl QuicHandler {
         input.extend_from_slice(server_did.as_bytes());  // Server DID
         input.extend_from_slice(client_did.as_bytes());  // Client DID
         lib_crypto::hash_blake3(&input)
+    }
+
+    /// Auto-register peer identity after successful UHP+Kyber handshake
+    ///
+    /// # Design Principle
+    /// Authentication IS registration. A successful cryptographic handshake proves:
+    /// - The peer controls the private key of the DID
+    /// - The DID is live, not replayed
+    /// - The session is bound to that identity
+    ///
+    /// # What this does
+    /// - Creates an "observed" identity from the handshake's NodeIdentity
+    /// - Records: DID, public keys, first_seen timestamp, last_seen
+    /// - Marks identity as known but unprivileged
+    ///
+    /// # What this does NOT do
+    /// - Grant domain ownership
+    /// - Grant admin privileges
+    /// - Grant validator rights
+    /// - Grant storage quotas
+    /// - Grant economic privileges
+    ///
+    /// Registration ≠ authorization. Authorization happens at the API layer.
+    async fn auto_register_peer_identity(&self, peer_identity: &lib_network::handshake::NodeIdentity) {
+        let peer_did = &peer_identity.did;
+
+        // Check if identity already exists
+        let identity_id = lib_crypto::Hash::from_bytes(
+            &lib_crypto::hash_blake3(peer_did.as_bytes()).to_vec()
+        );
+
+        {
+            let identity_mgr = self.identity_manager.read().await;
+            if identity_mgr.get_identity(&identity_id).is_some() {
+                debug!(
+                    peer_did = %peer_did,
+                    "Peer identity already registered, updating last_seen"
+                );
+                // TODO: Update last_seen timestamp
+                return;
+            }
+        }
+
+        // Create observed identity from handshake
+        // Note: peer_identity.node_id is already a lib_identity::NodeId
+        match lib_identity::ZhtpIdentity::from_observed_handshake(
+            peer_identity.did.clone(),
+            peer_identity.public_key.clone(),
+            peer_identity.device_id.clone(),
+            peer_identity.node_id.clone(),
+        ) {
+            Ok(observed_identity) => {
+                let mut identity_mgr = self.identity_manager.write().await;
+                identity_mgr.add_identity(observed_identity);
+                info!(
+                    peer_did = %peer_did,
+                    "📝 Auto-registered authenticated peer identity (observed, unprivileged)"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    peer_did = %peer_did,
+                    error = %e,
+                    "Failed to auto-register peer identity"
+                );
+            }
+        }
     }
 
     /// Handle authenticated control plane streams
@@ -1100,6 +1176,7 @@ impl Clone for QuicHandler {
             mesh_handler: self.mesh_handler.clone(),
             pqc_connections: self.pqc_connections.clone(),
             handshake_rate_limits: self.handshake_rate_limits.clone(),
+            identity_manager: self.identity_manager.clone(),
         }
     }
 }
