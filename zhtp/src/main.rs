@@ -25,6 +25,10 @@ use zhtp::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install rustls crypto provider before any TLS/QUIC operations
+    // This MUST be done before any rustls usage to avoid panic
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Initialize logging system with INFO level by default.
     // Add explicit filter directives to silence noisy third-party targets
     // (mdns_sd) and to suppress firewall rule WARNs from network_isolation.
