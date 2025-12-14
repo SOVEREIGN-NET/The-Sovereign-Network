@@ -796,6 +796,7 @@ impl Web4Handler {
 
         // Register domain with Web4Manager using manifest CID
         let mut manager = self.web4_manager.write().await;
+        info!("🔍 register_domain_from_manifest: DomainRegistry ptr: {:p}", &*manager.registry as *const _);
 
         // Create domain metadata
         let metadata = lib_network::web4::DomainMetadata {
@@ -812,6 +813,18 @@ impl Web4Handler {
             },
         };
 
+        // Create registration proof (simplified for manifest-based registration)
+        let registration_proof = ZeroKnowledgeProof::new(
+            "Plonky2".to_string(),
+            lib_crypto::hash_blake3(&[
+                owner_identity.id.0.as_slice(),
+                request.domain.as_bytes(),
+            ].concat()).to_vec(),
+            owner_identity.id.0.to_vec(),
+            owner_identity.id.0.to_vec(),
+            None,
+        );
+
         // Create domain registration request
         let domain_request = DomainRegistrationRequest {
             domain: request.domain.clone(),
@@ -819,7 +832,8 @@ impl Web4Handler {
             duration_days: 365, // Default 1 year
             metadata,
             initial_content: HashMap::new(), // Content already uploaded via manifest
-            registration_proof: ZeroKnowledgeProof::default(),
+            registration_proof,
+            manifest_cid: Some(request.manifest_cid.clone()), // Use the uploaded manifest CID
         };
 
         let registration_result = manager.registry.register_domain(domain_request).await
@@ -900,6 +914,7 @@ impl Web4Handler {
             metadata,
             initial_content,
             registration_proof,
+            manifest_cid: None, // Auto-generate for non-manifest registration
         };
 
         // Process registration
@@ -1281,7 +1296,7 @@ impl Web4Handler {
         info!("🔍 resolve_domain_manifest: Resolving '{}' (version: {:?})", resolve_req.domain, resolve_req.version);
 
         let manager = self.web4_manager.read().await;
-        info!("🔍 resolve_domain_manifest: Got manager, registry ptr: {:p}", &*manager.registry);
+        info!("🔍 resolve_domain_manifest: Got manager, DomainRegistry ptr: {:p}", &*manager.registry as *const _);
 
         // Get domain status
         let status = manager.registry.get_domain_status(&resolve_req.domain).await
@@ -1309,6 +1324,22 @@ impl Web4Handler {
         } else {
             status.current_manifest_cid.clone()
         };
+
+        // Debug: load manifest details to log what will be served
+        if let Ok(Some(manifest)) = manager.registry.get_manifest(&resolve_req.domain, &manifest_cid).await {
+            let manifest_cid_computed = manifest.compute_cid();
+            let files_count = manifest.files.len();
+            info!(
+                domain = %manifest.domain,
+                version = manifest.version,
+                previous_manifest = manifest.previous_manifest.as_deref().unwrap_or("none"),
+                build_hash = %manifest.build_hash,
+                files = files_count,
+                manifest_cid = %manifest_cid_computed,
+                requested_cid = %manifest_cid,
+                "resolve_domain_manifest: serving manifest"
+            );
+        }
 
         let response = serde_json::json!({
             "domain": resolve_req.domain,
