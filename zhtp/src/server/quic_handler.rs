@@ -835,6 +835,10 @@ impl QuicHandler {
 
     /// Handle public HTTP stream - allows GET and whitelisted POST endpoints
     async fn handle_public_http_stream(&self, initial_data: Vec<u8>, recv: RecvStream, mut send: SendStream) -> Result<()> {
+        // Debug log the incoming request
+        let request_preview = String::from_utf8_lossy(&initial_data[..initial_data.len().min(200)]);
+        info!("📖 PUBLIC HTTP request: {}", request_preview.lines().next().unwrap_or("(empty)"));
+
         // GET requests always allowed on public connection
         if initial_data.starts_with(b"GET ") {
             return self.handle_http_stream_with_prefix(initial_data, recv, send).await;
