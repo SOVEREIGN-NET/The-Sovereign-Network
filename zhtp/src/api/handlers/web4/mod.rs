@@ -388,9 +388,20 @@ impl Web4Handler {
         }
     }
 
-    /// Upload a blob (small file, direct upload)
+    /// Upload or fetch a blob
     /// POST /api/v1/web4/content/blob
-    async fn upload_blob(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+    /// Upload: raw bytes in body
+    /// Fetch: body is {"cid": "bafk..."}
+    async fn handle_blob(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Check if this is a fetch request (body is JSON with "cid" field)
+        if let Ok(fetch_req) = serde_json::from_slice::<serde_json::Value>(&request.body) {
+            if let Some(cid) = fetch_req.get("cid").and_then(|v| v.as_str()) {
+                // This is a FETCH request - retrieve blob by CID
+                return self.fetch_content_by_cid(cid).await;
+            }
+        }
+
+        // This is an UPLOAD request - store the blob
         let content_type = request.headers.content_type
             .clone()
             .unwrap_or_else(|| "application/octet-stream".to_string());
@@ -401,13 +412,10 @@ impl Web4Handler {
             "Uploading blob"
         );
 
-        // Generate content ID from hash
-        let content_hash = lib_crypto::hash_blake3(&request.body);
-        let content_id = format!("bafk{}", hex::encode(&content_hash[..16]));
-
-        // TODO: Store blob in persistent storage
-        // For now, just return the CID
-        // In production, this should store in blob storage
+        // Store blob in content-addressed storage
+        let manager = self.web4_manager.read().await;
+        let content_id = manager.registry.store_content_by_cid(request.body.clone()).await
+            .map_err(|e| anyhow::anyhow!("Failed to store blob: {}", e))?;
 
         let response = serde_json::json!({
             "content_id": content_id,
@@ -428,36 +436,49 @@ impl Web4Handler {
         ))
     }
 
-    /// Upload a manifest
+    /// Upload or fetch a manifest
     /// POST /api/v1/web4/content/manifest
-    async fn upload_manifest(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        // Parse manifest JSON
+    /// Upload: body is the manifest JSON
+    /// Fetch: body is {"cid": "bafk..."}
+    async fn handle_manifest(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Check if this is a fetch request (body contains {"cid": "..."})
+        if let Ok(fetch_req) = serde_json::from_slice::<serde_json::Value>(&request.body) {
+            if let Some(cid) = fetch_req.get("cid").and_then(|v| v.as_str()) {
+                // This is a FETCH request - retrieve manifest by CID
+                return self.fetch_content_by_cid(cid).await;
+            }
+        }
+
+        // This is an UPLOAD request - store the manifest
         let manifest: serde_json::Value = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid manifest JSON: {}", e))?;
 
+        let files_count = manifest.get("files")
+            .and_then(|v| v.as_object())
+            .map(|o| o.len())
+            .unwrap_or(0);
+
         debug!(
             domain = manifest.get("domain").and_then(|v| v.as_str()).unwrap_or("unknown"),
-            files = manifest.get("files").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+            files = files_count,
             "Uploading manifest"
         );
 
-        // Generate manifest CID from hash
-        let manifest_bytes = serde_json::to_vec(&manifest)?;
-        let manifest_hash = lib_crypto::hash_blake3(&manifest_bytes);
-        let manifest_cid = format!("bafk{}", hex::encode(&manifest_hash[..16]));
-
-        // TODO: Store manifest in persistent storage
-        // In production, this should store the manifest and validate it
+        // Store manifest in content-addressed storage
+        let manager = self.web4_manager.read().await;
+        let manifest_cid = manager.registry.store_content_by_cid(request.body.clone()).await
+            .map_err(|e| anyhow::anyhow!("Failed to store manifest: {}", e))?;
 
         let response = serde_json::json!({
             "manifest_cid": manifest_cid,
             "domain": manifest.get("domain"),
-            "files_count": manifest.get("files").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0),
+            "files_count": files_count,
         });
 
         info!(
             manifest_cid = %manifest_cid,
-            "Manifest uploaded"
+            files_count = files_count,
+            "Manifest uploaded and stored"
         );
 
         Ok(ZhtpResponse::success_with_content_type(
@@ -465,6 +486,35 @@ impl Web4Handler {
             "application/json".to_string(),
             None,
         ))
+    }
+
+    /// Fetch content by CID
+    /// GET /api/v1/web4/cid/{cid} or POST with {"cid": "..."}
+    async fn fetch_content_by_cid(&self, cid: &str) -> ZhtpResult<ZhtpResponse> {
+        info!("Fetching content by CID: {}", cid);
+
+        let manager = self.web4_manager.read().await;
+        let content = manager.registry.get_content_by_cid(cid).await
+            .map_err(|e| anyhow::anyhow!("Failed to retrieve content: {}", e))?;
+
+        match content {
+            Some(data) => {
+                info!("Content found for CID {}: {} bytes", cid, data.len());
+                // Return raw content (could be manifest JSON or blob bytes)
+                Ok(ZhtpResponse::success_with_content_type(
+                    data,
+                    "application/octet-stream".to_string(),
+                    None,
+                ))
+            }
+            None => {
+                warn!("Content not found for CID: {}", cid);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Content not found: {}", cid),
+                ))
+            }
+        }
     }
 }
 
@@ -539,13 +589,13 @@ impl ZhtpRequestHandler for Web4Handler {
             path if path == "/api/v1/web4/content/publish" => {
                 self.publish_content(request.body).await
             }
-            // Blob upload endpoint (for direct/small files)
+            // Blob upload/fetch endpoint
             path if path == "/api/v1/web4/content/blob" && request.method == lib_protocols::ZhtpMethod::Post => {
-                self.upload_blob(request).await
+                self.handle_blob(request).await
             }
-            // Manifest upload endpoint
+            // Manifest upload/fetch endpoint
             path if path == "/api/v1/web4/content/manifest" && request.method == lib_protocols::ZhtpMethod::Post => {
-                self.upload_manifest(request).await
+                self.handle_manifest(request).await
             }
             path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Put => {
                 self.update_content(request).await

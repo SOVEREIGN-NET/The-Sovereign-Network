@@ -277,6 +277,9 @@ pub struct DomainRegistrationRequest {
     pub initial_content: HashMap<String, Vec<u8>>,
     /// Registration proof
     pub registration_proof: ZeroKnowledgeProof,
+    /// Manifest CID (if registering with pre-uploaded manifest)
+    #[serde(default)]
+    pub manifest_cid: Option<String>,
 }
 
 /// Domain registration response

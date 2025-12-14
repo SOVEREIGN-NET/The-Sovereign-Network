@@ -145,18 +145,20 @@ impl DomainRegistry {
             content_mappings.insert(path.clone(), content_hash);
         }
 
-        // Create initial manifest for version 1
-        let initial_manifest_cid = format!(
-            "bafk{}",
-            hex::encode(&lib_crypto::hash_blake3(
-                format!("{}:v1:{}", request.domain, current_time).as_bytes()
-            )[..16])
-        );
+        // Use provided manifest CID or generate one
+        let manifest_cid = request.manifest_cid.clone().unwrap_or_else(|| {
+            format!(
+                "bafk{}",
+                hex::encode(&lib_crypto::hash_blake3(
+                    format!("{}:v1:{}", request.domain, current_time).as_bytes()
+                )[..16])
+            )
+        });
 
         let domain_record = DomainRecord {
             domain: request.domain.clone(),
             owner: request.owner.id.clone(),
-            current_manifest_cid: initial_manifest_cid,
+            current_manifest_cid: manifest_cid,
             version: 1,
             registered_at: current_time,
             updated_at: current_time,
@@ -763,8 +765,8 @@ impl DomainRegistry {
     /// Get domain status (version info)
     pub async fn get_domain_status(&self, domain: &str) -> Result<DomainStatusResponse> {
         let records = self.domain_records.read().await;
-        info!(" DEBUG: get_domain_status for '{}'. Total domains: {}. Registry ptr: {:p}",
-            domain, records.len(), &*self.domain_records);
+        info!(" DEBUG: get_domain_status for '{}'. Total domains: {}. DomainRegistry self ptr: {:p}",
+            domain, records.len(), self);
 
         if let Some(record) = records.get(domain) {
             Ok(DomainStatusResponse {
@@ -789,6 +791,42 @@ impl DomainRegistry {
                 build_hash: String::new(),
             })
         }
+    }
+
+    // ========================================================================
+    // Content-Addressed Storage API
+    // ========================================================================
+
+    /// Store content by CID (content-addressed)
+    /// Returns the CID after successful storage
+    pub async fn store_content_by_cid(&self, content: Vec<u8>) -> Result<String> {
+        // Compute CID from content hash
+        let content_hash = hash_blake3(&content);
+        let cid = format!("bafk{}", hex::encode(&content_hash[..16]));
+
+        // Store in content cache
+        {
+            let mut cache = self.content_cache.write().await;
+            cache.insert(cid.clone(), content);
+            info!(" Stored content by CID: {} ({} bytes)", cid, cache.get(&cid).map(|c| c.len()).unwrap_or(0));
+        }
+
+        Ok(cid)
+    }
+
+    /// Retrieve content by CID
+    /// Returns None if content not found
+    pub async fn get_content_by_cid(&self, cid: &str) -> Result<Option<Vec<u8>>> {
+        let cache = self.content_cache.read().await;
+        let content = cache.get(cid).cloned();
+
+        if content.is_some() {
+            info!(" Retrieved content by CID: {}", cid);
+        } else {
+            info!(" Content not found for CID: {}", cid);
+        }
+
+        Ok(content)
     }
 
     /// Get domain version history
@@ -1074,6 +1112,7 @@ impl Web4Manager {
             metadata,
             initial_content,
             registration_proof,
+            manifest_cid: None, // Auto-generate
         };
 
         self.registry.register_domain(request).await
