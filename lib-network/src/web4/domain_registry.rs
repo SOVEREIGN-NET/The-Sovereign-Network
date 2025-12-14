@@ -1019,9 +1019,26 @@ impl Web4Manager {
         let registry = DomainRegistry::new_with_dht(dht_client).await?;
         let registry_arc = Arc::new(registry);
         let content_publisher = super::content_publisher::ContentPublisher::new(registry_arc.clone()).await?;
-        
+
         Ok(Self {
             registry: registry_arc,
+            content_publisher,
+        })
+    }
+
+    /// Create new Web4 manager with existing domain registry (avoids duplicates)
+    /// This is the preferred constructor when a DomainRegistry already exists
+    pub async fn new_with_registry(
+        registry: Arc<DomainRegistry>,
+        storage: std::sync::Arc<tokio::sync::RwLock<lib_storage::UnifiedStorageSystem>>,
+    ) -> Result<Self> {
+        let content_publisher = super::content_publisher::ContentPublisher::new_with_storage(
+            registry.clone(),
+            storage
+        ).await?;
+
+        Ok(Self {
+            registry,
             content_publisher,
         })
     }
