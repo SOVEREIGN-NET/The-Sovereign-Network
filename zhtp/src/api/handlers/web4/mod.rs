@@ -89,6 +89,40 @@ impl Web4Handler {
         })
     }
 
+    /// Create new Web4 API handler with existing domain registry (avoids creating duplicate)
+    /// This is the preferred constructor when a DomainRegistry already exists
+    pub async fn new_with_registry(
+        domain_registry: Arc<lib_network::DomainRegistry>,
+        storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+        identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
+        blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
+    ) -> ZhtpResult<Self> {
+        info!("Initializing Web4 API handler with existing domain registry");
+
+        // Create Web4Manager using existing registry
+        let web4_manager = lib_network::Web4Manager::new_with_registry(
+            domain_registry.clone(),
+            storage.clone()
+        ).await.map_err(|e| anyhow::anyhow!("Failed to create Web4Manager: {}", e))?;
+
+        // Create content service using the shared registry
+        let content_service = Web4ContentService::new(domain_registry);
+
+        info!("Web4 API handler initialized with shared domain registry");
+
+        // Initialize wallet-content manager for ownership tracking
+        let wallet_content_manager = lib_storage::WalletContentManager::new();
+
+        Ok(Self {
+            web4_manager: Arc::new(RwLock::new(web4_manager)),
+            content_service: Arc::new(content_service),
+            wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
+            identity_manager,
+            blockchain,
+            chunked_upload_manager: Arc::new(ChunkedUploadManager::new()),
+        })
+    }
+
     /// Get reference to the Web4Manager for sharing with other handlers
     pub fn get_web4_manager(&self) -> Arc<RwLock<Web4Manager>> {
         Arc::clone(&self.web4_manager)

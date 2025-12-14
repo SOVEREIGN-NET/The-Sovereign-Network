@@ -294,7 +294,14 @@ impl ZhtpUnifiedServer {
             DhtHandler::new_with_storage(Arc::new(mesh_router.clone()), storage.clone())
         );
         mesh_router.set_dht_handler(dht_handler.clone()).await;
-        
+
+        // Create canonical domain registry (shared by all components)
+        // MUST be created BEFORE register_api_handlers so Web4Handler can use it
+        let domain_registry = Arc::new(
+            lib_network::DomainRegistry::new_with_storage(storage.clone()).await?
+        );
+        info!(" Domain registry initialized (canonical instance)");
+
         // Register comprehensive API handlers on ZHTP router (QUIC is the only entry point)
         Self::register_api_handlers(
             &mut zhtp_router,
@@ -304,8 +311,9 @@ impl ZhtpUnifiedServer {
             economic_model.clone(),
             session_manager.clone(),
             dht_handler,
+            domain_registry.clone(),
         ).await?;
-        
+
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
         let zhtp_router_arc = Arc::new(zhtp_router);
         let quic_handler = Arc::new(QuicHandler::new(
@@ -318,12 +326,6 @@ impl ZhtpUnifiedServer {
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
         mesh_router.set_zhtp_router(zhtp_router_arc.clone()).await;
         info!(" ZHTP router registered with mesh router for UDP endpoint handling");
-
-        // Create canonical domain registry (shared by all components)
-        let domain_registry = Arc::new(
-            lib_network::DomainRegistry::new_with_storage(storage.clone()).await?
-        );
-        info!(" Domain registry initialized (canonical instance)");
 
         Ok(Self {
             quic_mesh: quic_arc,
@@ -398,6 +400,7 @@ impl ZhtpUnifiedServer {
         _economic_model: Arc<RwLock<EconomicModel>>,
         _session_manager: Arc<SessionManager>,
         dht_handler: Arc<dyn ZhtpRequestHandler>,
+        domain_registry: Arc<lib_network::DomainRegistry>,
     ) -> Result<()> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
         
@@ -500,8 +503,14 @@ impl ZhtpUnifiedServer {
         zhtp_router.register_handler("/api/v1/dht".to_string(), dht_handler);
         
         // Web4 domain and content (handle async creation first)
-        // Pass existing storage, identity manager, AND blockchain for UTXO transaction creation
-        let web4_handler = Web4Handler::new(storage.clone(), identity_manager.clone(), blockchain.clone()).await?;
+        // Pass the shared domain_registry to avoid creating duplicate registries
+        // This ensures domain registrations are visible to all handlers
+        let web4_handler = Web4Handler::new_with_registry(
+            domain_registry.clone(),
+            storage.clone(),
+            identity_manager.clone(),
+            blockchain.clone()
+        ).await?;
         let web4_manager = web4_handler.get_web4_manager();
         let wallet_content_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::WalletContentHandler::new(Arc::clone(&wallet_content_manager))
