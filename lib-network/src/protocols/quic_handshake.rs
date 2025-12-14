@@ -228,17 +228,9 @@ pub async fn handshake_as_initiator(
             "QUIC handshake: ServerHello received"
         );
 
-        // CRITICAL: Verify server's signature (mutual authentication)
-        server_hello.verify_signature(&client_hello.challenge_nonce, ctx)
-            .context("Server signature verification failed - potential MitM attack")?;
-
-        info!(
-            peer_did = %server_hello.identity.did,
-            peer_device = %server_hello.identity.device_id,
-            "QUIC handshake: server verified successfully"
-        );
-
         // Step 3: Create and send ClientFinish
+        // NOTE: ClientFinish::new() performs server signature verification internally
+        // (validates timestamp, checks nonce cache, verifies Dilithium signature)
         let keypair = KeyPair {
             public_key: identity.public_key.clone(),
             private_key: identity.private_key.clone()
@@ -247,6 +239,13 @@ pub async fn handshake_as_initiator(
 
         let client_finish = ClientFinish::new(&server_hello, &client_hello, &keypair, ctx)
             .context("Failed to create ClientFinish")?;
+
+        // Server verified! Log the peer info
+        info!(
+            peer_did = %server_hello.identity.did,
+            peer_device = %server_hello.identity.device_id,
+            "QUIC handshake: server verified successfully"
+        );
 
         let client_finish_bytes = bincode::serialize(&client_finish)
             .context("Failed to serialize ClientFinish")?;
