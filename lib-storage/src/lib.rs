@@ -200,6 +200,11 @@ impl UnifiedStorageSystem {
                 storage
             }
             None => {
+                // PERSISTENCE WARNING: In-memory only storage will lose all data on restart
+                tracing::warn!(
+                    "DHT storage persistence is NOT configured - data will be lost on restart! \
+                     Set dht_persist_path in storage_config for production use."
+                );
                 dht::storage::DhtStorage::new(
                     node_id.clone(),
                     config.storage_config.max_storage_size,

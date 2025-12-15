@@ -169,6 +169,16 @@ impl DhtStorage {
     pub async fn load_from_file(&mut self, path: &Path) -> Result<()> {
         let path_owned = path.to_path_buf();
 
+        // Clean up orphaned temp files from interrupted atomic writes
+        let tmp_path = path.with_extension("tmp");
+        if tmp_path.exists() {
+            if let Err(e) = std::fs::remove_file(&tmp_path) {
+                warn!("Failed to clean up orphaned temp file {:?}: {}", tmp_path, e);
+            } else {
+                info!("Cleaned up orphaned temp file {:?}", tmp_path);
+            }
+        }
+
         // Check existence and read file in spawn_blocking
         let bytes_opt: Option<Vec<u8>> = tokio::task::spawn_blocking(move || {
             if !path_owned.exists() {
@@ -882,9 +892,11 @@ impl DhtStorage {
     }
 
     /// Set entry expiry time
-    pub fn set_expiry(&mut self, key: &str, expiry: u64) -> Result<()> {
+    pub async fn set_expiry(&mut self, key: &str, expiry: u64) -> Result<()> {
         if let Some(entry) = self.storage.get_mut(key) {
             entry.expiry = Some(expiry);
+            // Persist expiry change to disk
+            self.maybe_persist().await?;
             Ok(())
         } else {
             Err(anyhow!("Key not found: {}", key))
@@ -905,9 +917,11 @@ impl DhtStorage {
     }
     
     /// Update replica information for a key
-    pub fn update_replicas(&mut self, key: &str, replicas: Vec<NodeId>) -> Result<()> {
+    pub async fn update_replicas(&mut self, key: &str, replicas: Vec<NodeId>) -> Result<()> {
         if let Some(entry) = self.storage.get_mut(key) {
             entry.replicas = replicas;
+            // Persist replica change to disk
+            self.maybe_persist().await?;
             Ok(())
         } else {
             Err(anyhow!("Key not found: {}", key))
@@ -1859,7 +1873,7 @@ mod tests {
 
         // Set expiry in the past
         let past_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() - 3600;
-        storage.set_expiry(&key, past_time).unwrap();
+        storage.set_expiry(&key, past_time).await.unwrap();
 
         // Try to retrieve expired value
         let retrieved = storage.get(&key).await.unwrap();
