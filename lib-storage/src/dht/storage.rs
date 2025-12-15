@@ -242,6 +242,8 @@ impl DhtStorage {
                 }
                 if self.storage.remove(&key).is_some() {
                     self.current_usage = self.current_usage.saturating_sub(total_size);
+                    // Clean up contract_index to prevent stale lookups
+                    self.remove_from_contract_index(&key);
                     evicted_count += 1;
                 }
             }
@@ -274,7 +276,21 @@ impl DhtStorage {
         }
         Ok(())
     }
-    
+
+    /// Remove a key from the contract_index
+    ///
+    /// When an entry is removed or evicted, we must clean up any references
+    /// to it in the contract_index to prevent stale lookups returning IDs
+    /// whose data has been deleted.
+    fn remove_from_contract_index(&mut self, key: &str) {
+        // Remove this key from all tag/name index entries
+        for (_tag, contract_ids) in self.contract_index.iter_mut() {
+            contract_ids.retain(|id| id != key);
+        }
+        // Clean up empty index entries
+        self.contract_index.retain(|_tag, ids| !ids.is_empty());
+    }
+
     /// Verify signature from a DHT node (Acceptance Criteria: PublicKey-based verification)
     ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.public_key()` for signature verification
@@ -774,6 +790,8 @@ impl DhtStorage {
                     let removed_entry = self.storage.remove(key).unwrap();
                     let total_size = removed_entry.value.len() as u64 + 256;
                     self.current_usage = self.current_usage.saturating_sub(total_size);
+                    // Clean up contract_index to prevent stale lookups
+                    self.remove_from_contract_index(key);
                     // Persist removal to disk so expired entry doesn't resurrect after restart
                     self.maybe_persist().await?;
                     return Ok(None);
@@ -792,6 +810,8 @@ impl DhtStorage {
             // Subtract value size + metadata overhead (256 bytes)
             let total_size = entry.value.len() as u64 + 256;
             self.current_usage = self.current_usage.saturating_sub(total_size);
+            // Clean up contract_index to prevent stale lookups
+            self.remove_from_contract_index(key);
             // Persist to disk if configured
             self.maybe_persist().await?;
             Ok(true)
@@ -879,6 +899,8 @@ impl DhtStorage {
                 // Subtract value size + metadata overhead (256 bytes)
                 let total_size = entry.value.len() as u64 + 256;
                 self.current_usage = self.current_usage.saturating_sub(total_size);
+                // Clean up contract_index to prevent stale lookups
+                self.remove_from_contract_index(&key);
                 removed_count += 1;
             }
         }
