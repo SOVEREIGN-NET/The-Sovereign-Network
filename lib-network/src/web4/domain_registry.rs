@@ -558,6 +558,7 @@ impl DomainRegistry {
         {
             let mut stats = self.stats.write().await;
             stats.total_domains = stats.total_domains.saturating_sub(1);
+            stats.active_domains = stats.active_domains.saturating_sub(1);
         }
 
         info!(" Domain {} released successfully", domain);
