@@ -474,26 +474,36 @@ impl DomainRegistry {
                 fee_paid: transfer_fee,
             };
 
-            // Update domain record
-            record.owner = to_owner.id.clone();
-            record.transfer_history.push(transfer_record);
-
-            // Update ownership proof
-            record.ownership_proof = self.create_ownership_proof(
+            // Create updated record for persistence (persist BEFORE mutating memory)
+            let new_ownership_proof = self.create_ownership_proof(
                 to_owner,
                 domain,
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()
             ).await?;
 
-            // Clone record for persistence before releasing lock
-            let record_to_persist = record.clone();
+            let mut updated_record = record.clone();
+            updated_record.owner = to_owner.id.clone();
+            updated_record.transfer_history.push(transfer_record);
+            updated_record.ownership_proof = new_ownership_proof;
+
+            // Release lock before async persist
+            drop(records);
+
+            // Persist FIRST - if this fails, memory stays unchanged (durability guarantee)
+            self.persist_domain_record(&updated_record).await?;
 
             // Update statistics
             self.update_transfer_stats(transfer_fee).await?;
 
-            // Persist the updated domain record
-            drop(records); // Release lock before async persist
-            self.persist_domain_record(&record_to_persist).await?;
+            // Only mutate memory AFTER successful persistence
+            {
+                let mut records = self.domain_records.write().await;
+                if let Some(record) = records.get_mut(domain) {
+                    record.owner = updated_record.owner;
+                    record.transfer_history = updated_record.transfer_history;
+                    record.ownership_proof = updated_record.ownership_proof;
+                }
+            }
 
             info!(" Domain {} transferred successfully", domain);
             Ok(true)
@@ -508,30 +518,34 @@ impl DomainRegistry {
 
         let domain_to_delete = domain.to_string();
 
+        // Verify ownership BEFORE any mutations
         {
-            let mut records = self.domain_records.write().await;
+            let records = self.domain_records.read().await;
 
             if let Some(record) = records.get(domain) {
                 // Verify ownership
                 if record.owner != owner.id {
                     return Err(anyhow!("Release denied: not domain owner"));
                 }
-
-                // Remove domain record from in-memory cache
-                records.remove(domain);
-
-                // Update statistics
-                {
-                    let mut stats = self.stats.write().await;
-                    stats.total_domains = stats.total_domains.saturating_sub(1);
-                }
             } else {
                 return Err(anyhow!("Domain not found: {}", domain));
             }
         }
 
-        // Delete from persistent storage (outside lock)
+        // Delete from persistent storage FIRST - if this fails, memory stays unchanged (durability guarantee)
         self.delete_persisted_domain(&domain_to_delete).await?;
+
+        // Only mutate memory AFTER successful persistence deletion
+        {
+            let mut records = self.domain_records.write().await;
+            records.remove(domain);
+        }
+
+        // Update statistics
+        {
+            let mut stats = self.stats.write().await;
+            stats.total_domains = stats.total_domains.saturating_sub(1);
+        }
 
         info!(" Domain {} released successfully", domain);
         Ok(true)
@@ -1008,15 +1022,29 @@ impl DomainRegistry {
 
         let previous_manifest_cid = record.current_manifest_cid.clone();
         let new_version = record.version + 1;
-
-        // Update record atomically
-        record.current_manifest_cid = update_request.new_manifest_cid.clone();
-        record.version = new_version;
-        record.updated_at = current_time;
-
-        // Clone record for persistence
-        let record_to_persist = record.clone();
         let new_manifest_cid = update_request.new_manifest_cid.clone();
+
+        // Create updated record for persistence (persist BEFORE mutating memory)
+        let mut updated_record = record.clone();
+        updated_record.current_manifest_cid = new_manifest_cid.clone();
+        updated_record.version = new_version;
+        updated_record.updated_at = current_time;
+
+        // Release lock before persisting
+        drop(records);
+
+        // Persist FIRST - if this fails, memory stays unchanged (durability guarantee)
+        self.persist_domain_record(&updated_record).await?;
+
+        // Only mutate memory AFTER successful persistence
+        {
+            let mut records = self.domain_records.write().await;
+            if let Some(record) = records.get_mut(&update_request.domain) {
+                record.current_manifest_cid = updated_record.current_manifest_cid.clone();
+                record.version = updated_record.version;
+                record.updated_at = updated_record.updated_at;
+            }
+        }
 
         info!(
             " Domain {} updated: v{} -> v{} (CID: {} -> {})",
@@ -1026,12 +1054,6 @@ impl DomainRegistry {
             &previous_manifest_cid[..16.min(previous_manifest_cid.len())],
             &new_manifest_cid[..16.min(new_manifest_cid.len())]
         );
-
-        // Release lock before persisting
-        drop(records);
-
-        // Persist the updated domain record
-        self.persist_domain_record(&record_to_persist).await?;
 
         Ok(DomainUpdateResponse {
             success: true,
