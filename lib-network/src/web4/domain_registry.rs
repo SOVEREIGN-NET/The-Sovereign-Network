@@ -531,28 +531,28 @@ impl DomainRegistry {
 
         let domain_to_delete = domain.to_string();
 
-        // Verify ownership BEFORE any mutations
+        // TOCTOU FIX: Hold write lock through verification AND mutation to prevent
+        // concurrent transfer/update from allowing a non-owner to delete the domain.
+        // We verify ownership, delete from persistent storage, then remove from memory
+        // all while holding the write lock.
         {
-            let records = self.domain_records.read().await;
+            let mut records = self.domain_records.write().await;
 
+            // Verify ownership while holding write lock
             if let Some(record) = records.get(domain) {
-                // Verify ownership
                 if record.owner != owner.id {
                     return Err(anyhow!("Release denied: not domain owner"));
                 }
             } else {
                 return Err(anyhow!("Domain not found: {}", domain));
             }
-        }
 
-        // Delete from persistent storage FIRST - if this fails, memory stays unchanged (durability guarantee)
-        self.delete_persisted_domain(&domain_to_delete).await?;
+            // Delete from persistent storage - if this fails, memory stays unchanged
+            self.delete_persisted_domain(&domain_to_delete).await?;
 
-        // Only mutate memory AFTER successful persistence deletion
-        {
-            let mut records = self.domain_records.write().await;
+            // Remove from memory only after successful persistence deletion
             records.remove(domain);
-        }
+        } // write lock released here
 
         // Update statistics
         {
