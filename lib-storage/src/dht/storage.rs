@@ -672,17 +672,19 @@ impl DhtStorage {
             // Update access statistics
             entry.metadata.access_count += 1;
             entry.metadata.last_access = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            
+
             // Check if entry has expired
             if let Some(expiry) = entry.expiry {
                 if SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() > expiry {
                     // Remove expired entry
                     let removed_entry = self.storage.remove(key).unwrap();
                     self.current_usage = self.current_usage.saturating_sub(removed_entry.value.len() as u64);
+                    // Persist removal to disk so expired entry doesn't resurrect after restart
+                    self.maybe_persist()?;
                     return Ok(None);
                 }
             }
-            
+
             Ok(Some(entry.value.clone()))
         } else {
             Ok(None)
