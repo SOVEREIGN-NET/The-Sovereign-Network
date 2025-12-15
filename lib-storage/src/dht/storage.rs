@@ -34,8 +34,8 @@ struct PersistedDhtStorage {
     contract_index: HashMap<String, Vec<String>>,
 }
 
-/// Atomic write helper - writes to temp file then renames
-fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// Atomic write helper - writes to temp file then renames (blocking I/O)
+fn atomic_write_sync(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().ok_or_else(|| std::io::Error::other("missing parent dir"))?;
     std::fs::create_dir_all(dir)?;
 
@@ -51,6 +51,13 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let _ = d.sync_all();
     }
     Ok(())
+}
+
+/// Async atomic write - moves blocking I/O to spawn_blocking to avoid stalling async runtime
+async fn atomic_write_async(path: PathBuf, bytes: Vec<u8>) -> std::io::Result<()> {
+    tokio::task::spawn_blocking(move || atomic_write_sync(&path, &bytes))
+        .await
+        .map_err(|e| std::io::Error::other(format!("spawn_blocking failed: {}", e)))?
 }
 
 /// DHT storage manager with networking
@@ -121,7 +128,8 @@ impl DhtStorage {
     }
 
     /// Save storage state to disk (versioned, deterministic format)
-    pub fn save_to_file(&self, path: &Path) -> Result<()> {
+    /// Uses spawn_blocking to avoid stalling async runtime with file I/O
+    pub async fn save_to_file(&self, path: &Path) -> Result<()> {
         let mut entries: Vec<(String, StorageEntry)> =
             self.storage.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         // Sort for deterministic output
@@ -135,22 +143,43 @@ impl DhtStorage {
 
         let bytes = bincode::serialize(&persisted)
             .map_err(|e| anyhow!("Failed to serialize DHT storage: {}", e))?;
-        atomic_write(path, &bytes)
+
+        let path_owned = path.to_path_buf();
+        let entry_count = self.storage.len();
+        let byte_count = bytes.len();
+
+        atomic_write_async(path_owned.clone(), bytes).await
             .map_err(|e| anyhow!("Failed to write DHT storage: {}", e))?;
 
-        info!("Saved DHT storage to {:?} ({} entries, {} bytes)", path, self.storage.len(), bytes.len());
+        info!("Saved DHT storage to {:?} ({} entries, {} bytes)", path_owned, entry_count, byte_count);
         Ok(())
     }
 
     /// Load storage state from disk
-    pub fn load_from_file(&mut self, path: &Path) -> Result<()> {
-        if !path.exists() {
-            info!("DHT storage file not found at {:?}, starting fresh", path);
-            return Ok(());
-        }
+    /// Uses spawn_blocking to avoid stalling async runtime with file I/O
+    pub async fn load_from_file(&mut self, path: &Path) -> Result<()> {
+        let path_owned = path.to_path_buf();
 
-        let bytes = std::fs::read(path)
-            .map_err(|e| anyhow!("Failed to read DHT storage file: {}", e))?;
+        // Check existence and read file in spawn_blocking
+        let bytes_opt: Option<Vec<u8>> = tokio::task::spawn_blocking(move || {
+            if !path_owned.exists() {
+                return Ok(None);
+            }
+            std::fs::read(&path_owned)
+                .map(Some)
+                .map_err(|e| anyhow!("Failed to read DHT storage file: {}", e))
+        })
+        .await
+        .map_err(|e| anyhow!("spawn_blocking failed: {}", e))??;
+
+        let bytes = match bytes_opt {
+            Some(b) => b,
+            None => {
+                info!("DHT storage file not found at {:?}, starting fresh", path);
+                return Ok(());
+            }
+        };
+
         let persisted: PersistedDhtStorage = bincode::deserialize(&bytes)
             .map_err(|e| anyhow!("Failed to deserialize DHT storage: {}", e))?;
 
@@ -199,7 +228,7 @@ impl DhtStorage {
             );
 
             // Persist the evicted state so we don't repeat this on next restart
-            self.maybe_persist()?;
+            self.maybe_persist().await?;
         }
 
         info!(
@@ -213,9 +242,10 @@ impl DhtStorage {
     }
 
     /// Persist storage if a persist path is configured
-    fn maybe_persist(&self) -> Result<()> {
+    /// Uses async I/O via spawn_blocking to avoid stalling async runtime
+    async fn maybe_persist(&self) -> Result<()> {
         if let Some(ref path) = self.persist_path {
-            self.save_to_file(path)?;
+            self.save_to_file(path).await?;
         }
         Ok(())
     }
@@ -698,7 +728,7 @@ impl DhtStorage {
         }
 
         // Persist to disk if configured
-        self.maybe_persist()?;
+        self.maybe_persist().await?;
 
         Ok(())
     }
@@ -717,7 +747,7 @@ impl DhtStorage {
                     let removed_entry = self.storage.remove(key).unwrap();
                     self.current_usage = self.current_usage.saturating_sub(removed_entry.value.len() as u64);
                     // Persist removal to disk so expired entry doesn't resurrect after restart
-                    self.maybe_persist()?;
+                    self.maybe_persist().await?;
                     return Ok(None);
                 }
             }
@@ -733,7 +763,7 @@ impl DhtStorage {
         if let Some(entry) = self.storage.remove(key) {
             self.current_usage = self.current_usage.saturating_sub(entry.value.len() as u64);
             // Persist to disk if configured
-            self.maybe_persist()?;
+            self.maybe_persist().await?;
             Ok(true)
         } else {
             Ok(false)
@@ -823,7 +853,7 @@ impl DhtStorage {
 
         // Persist if we removed anything
         if removed_count > 0 {
-            self.maybe_persist()?;
+            self.maybe_persist().await?;
         }
 
         Ok(removed_count)
@@ -1382,7 +1412,7 @@ impl DhtStorage {
                 match self.store(contract_key, serialized, None).await {
                     Ok(_) => {
                         // Index contract by tags for discovery
-                        self.index_contract_by_tags(&contract_data.contract_id, metadata);
+                        self.index_contract_by_tags(&contract_data.contract_id, metadata).await;
                         println!(" Contract {} deployed and indexed successfully", contract_data.contract_id);
                         
                         // Store contract summary for quick discovery
@@ -1529,7 +1559,7 @@ impl DhtStorage {
     }
 
     /// Index contract by its tags for faster discovery
-    fn index_contract_by_tags(&mut self, contract_id: &str, metadata: &crate::types::dht_types::ContractMetadata) {
+    async fn index_contract_by_tags(&mut self, contract_id: &str, metadata: &crate::types::dht_types::ContractMetadata) {
         // Index by each tag
         for tag in &metadata.tags {
             self.contract_index
@@ -1546,7 +1576,7 @@ impl DhtStorage {
             .push(contract_id.to_string());
 
         // Persist contract index
-        let _ = self.maybe_persist();
+        let _ = self.maybe_persist().await;
 
         println!(" Indexed contract {} with {} tags", contract_id, metadata.tags.len());
     }
@@ -1840,7 +1870,7 @@ mod tests {
         // Create new storage and load from file
         {
             let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
-            storage.load_from_file(&persist_path).unwrap();
+            storage.load_from_file(&persist_path).await.unwrap();
 
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 3);
@@ -1883,7 +1913,7 @@ mod tests {
         // Load should still succeed from main file
         {
             let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
-            storage.load_from_file(&persist_path).unwrap();
+            storage.load_from_file(&persist_path).await.unwrap();
 
             assert_eq!(storage.get("key1").await.unwrap(), Some(b"value1".to_vec()));
         }
@@ -1922,7 +1952,7 @@ mod tests {
         // Reload and verify remove was persisted
         {
             let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
-            storage.load_from_file(&persist_path).unwrap();
+            storage.load_from_file(&persist_path).await.unwrap();
 
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 1);
@@ -1934,8 +1964,8 @@ mod tests {
         let _ = std::fs::remove_file(&persist_path);
     }
 
-    #[test]
-    fn test_persistence_version_check() {
+    #[tokio::test]
+    async fn test_persistence_version_check() {
         let temp_dir = std::env::temp_dir();
         let persist_path = temp_dir.join("dht_storage_version_test.bin");
 
@@ -1954,7 +1984,7 @@ mod tests {
         // Attempt to load should fail
         let node_id = NodeId::from_bytes([1u8; 32]);
         let mut storage = DhtStorage::new(node_id, 1024 * 1024);
-        let result = storage.load_from_file(&persist_path);
+        let result = storage.load_from_file(&persist_path).await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Unsupported DHT storage version"));

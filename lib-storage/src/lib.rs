@@ -193,8 +193,8 @@ impl UnifiedStorageSystem {
                     config.storage_config.max_storage_size,
                     persist_path.clone(),
                 );
-                // Load existing data from disk
-                if let Err(e) = storage.load_from_file(persist_path) {
+                // Load existing data from disk (async to avoid blocking runtime)
+                if let Err(e) = storage.load_from_file(persist_path).await {
                     tracing::warn!("Failed to load DHT storage from {:?}: {}", persist_path, e);
                 }
                 storage
@@ -224,7 +224,7 @@ impl UnifiedStorageSystem {
                     config.storage_config.max_storage_size,
                     content_persist_path.clone(),
                 );
-                if let Err(e) = storage.load_from_file(&content_persist_path) {
+                if let Err(e) = storage.load_from_file(&content_persist_path).await {
                     tracing::warn!("Failed to load content DHT storage from {:?}: {}", content_persist_path, e);
                 }
                 storage
