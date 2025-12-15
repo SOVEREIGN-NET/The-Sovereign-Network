@@ -166,11 +166,48 @@ impl DhtStorage {
         self.contract_index = persisted.contract_index;
         self.current_usage = self.storage.values().map(|e| e.value.len() as u64).sum();
 
+        // Enforce capacity limits - evict oldest entries if over capacity
+        if self.current_usage > self.max_storage_size {
+            warn!(
+                "DHT storage loaded over capacity: {} bytes used, {} bytes max. Evicting oldest entries.",
+                self.current_usage,
+                self.max_storage_size
+            );
+
+            // Sort entries by last_access (oldest first) for eviction
+            let mut entries_by_age: Vec<(String, u64, u64)> = self.storage.iter()
+                .map(|(k, e)| (k.clone(), e.metadata.last_access, e.value.len() as u64))
+                .collect();
+            entries_by_age.sort_by_key(|(_, last_access, _)| *last_access);
+
+            // Evict oldest entries until under capacity
+            let mut evicted_count = 0;
+            for (key, _, size) in entries_by_age {
+                if self.current_usage <= self.max_storage_size {
+                    break;
+                }
+                if self.storage.remove(&key).is_some() {
+                    self.current_usage = self.current_usage.saturating_sub(size);
+                    evicted_count += 1;
+                }
+            }
+
+            warn!(
+                "Evicted {} entries during load to enforce capacity. Now at {} bytes.",
+                evicted_count,
+                self.current_usage
+            );
+
+            // Persist the evicted state so we don't repeat this on next restart
+            self.maybe_persist()?;
+        }
+
         info!(
-            "Loaded DHT storage from {:?} ({} entries, {} bytes used)",
+            "Loaded DHT storage from {:?} ({} entries, {} bytes used, {} bytes max)",
             path,
             self.storage.len(),
-            self.current_usage
+            self.current_usage,
+            self.max_storage_size
         );
         Ok(())
     }
