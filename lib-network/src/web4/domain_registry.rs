@@ -107,24 +107,24 @@ impl DomainRegistry {
 
     /// Load all persisted domain records from lib-storage into the in-memory cache
     async fn load_persisted_domains(&self) -> Result<()> {
-        let mut storage = self.storage_system.write().await;
-        let records = storage.list_domain_records().await?;
+        // LOCK SAFETY: Acquire storage lock, do async work, release before acquiring other locks
+        let records = {
+            let mut storage = self.storage_system.write().await;
+            storage.list_domain_records().await?
+        }; // storage lock released here
 
         if records.is_empty() {
             info!("No persisted domain records found in storage");
             return Ok(());
         }
 
-        let mut domain_records = self.domain_records.write().await;
-        let mut stats = self.stats.write().await;
-        let mut loaded_count = 0;
-
+        // Parse records outside of any lock
+        let mut parsed_records = Vec::new();
         for (domain, data) in records {
             match serde_json::from_slice::<DomainRecord>(&data) {
                 Ok(record) => {
                     info!(" Loaded persisted domain: {} (v{})", record.domain, record.version);
-                    domain_records.insert(domain, record);
-                    loaded_count += 1;
+                    parsed_records.push((domain, record));
                 }
                 Err(e) => {
                     warn!(" Failed to deserialize domain record: {}", e);
@@ -132,9 +132,22 @@ impl DomainRegistry {
             }
         }
 
-        // Update stats
-        stats.total_domains = loaded_count;
-        stats.active_domains = loaded_count;
+        let loaded_count = parsed_records.len() as u64;
+
+        // LOCK SAFETY: Acquire domain_records lock, do sync work only, release
+        {
+            let mut domain_records = self.domain_records.write().await;
+            for (domain, record) in parsed_records {
+                domain_records.insert(domain, record);
+            }
+        } // domain_records lock released here
+
+        // LOCK SAFETY: Acquire stats lock separately
+        {
+            let mut stats = self.stats.write().await;
+            stats.total_domains = loaded_count;
+            stats.active_domains = loaded_count;
+        } // stats lock released here
 
         info!(" Loaded {} persisted domain records from storage", loaded_count);
         Ok(())
@@ -595,103 +608,97 @@ impl DomainRegistry {
         let hash_bytes = hash_blake3(&content);
         let short_hash = hex::encode(&hash_bytes[..8]); // For logging only
 
-        info!(" Storing content for domain {} at path {} (original hash: {}..., size: {} bytes)", 
+        info!(" Storing content for domain {} at path {} (original hash: {}..., size: {} bytes)",
               domain, path, short_hash, content.len());
 
-        // Store content in DHT using UnifiedStorageSystem
-        {
+        // Prepare upload request and uploader identity OUTSIDE of lock
+        let storage_requirements = ContentStorageRequirements {
+            duration_days: 365, // 1 year storage
+            quality_requirements: lib_storage::QualityRequirements {
+                min_uptime: 0.99,
+                max_response_time: 1000,
+                min_replication: 2,
+                geographic_distribution: None,
+                required_certifications: vec![],
+            },
+            budget_constraints: lib_storage::BudgetConstraints {
+                max_total_cost: 1000,
+                max_cost_per_gb_day: 10,
+                payment_schedule: lib_storage::types::economic_types::PaymentSchedule::Daily,
+                max_price_volatility: 0.1,
+            },
+        };
+
+        // Determine MIME type from path
+        let mime_type = if path.ends_with(".css") {
+            "text/css"
+        } else if path.ends_with(".js") {
+            "application/javascript"
+        } else if path.ends_with(".json") {
+            "application/json"
+        } else if path.ends_with(".png") {
+            "image/png"
+        } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+            "image/jpeg"
+        } else {
+            "text/html"
+        }.to_string();
+
+        // Create upload request
+        let upload_request = UploadRequest {
+            content: content.clone(),
+            filename: format!("{}:{}", domain, path),
+            mime_type,
+            description: format!("Web4 content for {} at {}", domain, path),
+            tags: vec!["web4".to_string(), domain.to_string()],
+            encrypt: false, // Web4 content is public
+            compress: true,  // Compress for efficiency
+            access_control: AccessControlSettings {
+                public_read: true,
+                read_permissions: vec![],
+                write_permissions: vec![],
+                expires_at: None,
+            },
+            storage_requirements,
+        };
+
+        // Create uploader identity (use domain owner or anonymous)
+        let uploader = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::types::identity_types::IdentityType::Human,
+            Some(25), // Default age
+            Some("US".to_string()), // Default jurisdiction
+            &format!("web4_publisher_{}", domain),
+            None, // Random seed
+        ).map_err(|e| anyhow!("Failed to create uploader identity: {}", e))?;
+
+        // LOCK SAFETY: Acquire storage lock, do async work, release before acquiring other locks
+        let actual_storage_hash = {
             let mut storage = self.storage_system.write().await;
-            
-            // Create storage requirements for the content
-            let storage_requirements = ContentStorageRequirements {
-                duration_days: 365, // 1 year storage
-                quality_requirements: lib_storage::QualityRequirements {
-                    min_uptime: 0.99,
-                    max_response_time: 1000,
-                    min_replication: 2,
-                    geographic_distribution: None,
-                    required_certifications: vec![],
-                },
-                budget_constraints: lib_storage::BudgetConstraints {
-                    max_total_cost: 1000,
-                    max_cost_per_gb_day: 10,
-                    payment_schedule: lib_storage::types::economic_types::PaymentSchedule::Daily,
-                    max_price_volatility: 0.1,
-                },
-            };
-            
-            // Determine MIME type from path
-            let mime_type = if path.ends_with(".css") {
-                "text/css"
-            } else if path.ends_with(".js") {
-                "application/javascript"
-            } else if path.ends_with(".json") {
-                "application/json"
-            } else if path.ends_with(".png") {
-                "image/png"
-            } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
-                "image/jpeg"
-            } else {
-                "text/html"
-            }.to_string();
-            
-            // Create upload request
-            let upload_request = UploadRequest {
-                content: content.clone(),
-                filename: format!("{}:{}", domain, path),
-                mime_type,
-                description: format!("Web4 content for {} at {}", domain, path),
-                tags: vec!["web4".to_string(), domain.to_string()],
-                encrypt: false, // Web4 content is public
-                compress: true,  // Compress for efficiency
-                access_control: AccessControlSettings {
-                    public_read: true,
-                    read_permissions: vec![],
-                    write_permissions: vec![],
-                    expires_at: None,
-                },
-                storage_requirements,
-            };
-            
-            // Create uploader identity (use domain owner or anonymous)
-            // Use new_unified for simpler creation (generates keypair internally)
-            let uploader = lib_identity::ZhtpIdentity::new_unified(
-                lib_identity::types::identity_types::IdentityType::Human,
-                Some(25), // Default age
-                Some("US".to_string()), // Default jurisdiction
-                &format!("web4_publisher_{}", domain),
-                None, // Random seed
-            ).map_err(|e| anyhow!("Failed to create uploader identity: {}", e))?;
-            
-            // Store in DHT via UnifiedStorageSystem (NO CACHE FALLBACK - DHT ONLY)
-            let actual_storage_hash = match storage.upload_content(upload_request, uploader).await {
-                Ok(storage_hash) => {
-                    info!("  Stored in DHT successfully");
-                    info!("    Original hash: {}", short_hash);
-                    info!("    DHT storage hash: {}", hex::encode(storage_hash.as_bytes()));
-                    info!("    (Different due to compression)");
-                    storage_hash
-                }
-                Err(e) => {
+            storage.upload_content(upload_request, uploader).await
+                .map_err(|e| {
                     error!(" DHT storage FAILED (no cache fallback): {}", e);
-                    return Err(anyhow!("Failed to store content in DHT: {}", e));
-                }
-            };
-            
-            // Convert storage_hash to hex string for content_mappings
-            let storage_hash_hex = hex::encode(actual_storage_hash.as_bytes());
-            
-            // Store in cache using the ACTUAL DHT STORAGE hash (compressed content hash)
-            {
-                let mut cache = self.content_cache.write().await;
-                cache.insert(storage_hash_hex.clone(), content.clone());
-                info!(" Cached content with DHT storage hash: {}", storage_hash_hex);
-            }
-            
-            // CRITICAL: Return the ACTUAL DHT storage hash (after compression/encryption)
-            // This is the hash that can be used to retrieve the content from DHT
-            Ok(storage_hash_hex)
-        }
+                    anyhow!("Failed to store content in DHT: {}", e)
+                })?
+        }; // storage lock released here
+
+        info!("  Stored in DHT successfully");
+        info!("    Original hash: {}", short_hash);
+        info!("    DHT storage hash: {}", hex::encode(actual_storage_hash.as_bytes()));
+        info!("    (Different due to compression)");
+
+        // Convert storage_hash to hex string for content_mappings
+        let storage_hash_hex = hex::encode(actual_storage_hash.as_bytes());
+
+        // LOCK SAFETY: Acquire cache lock separately
+        {
+            let mut cache = self.content_cache.write().await;
+            cache.insert(storage_hash_hex.clone(), content);
+            info!(" Cached content with DHT storage hash: {}", storage_hash_hex);
+        } // cache lock released here
+
+        // CRITICAL: Return the ACTUAL DHT storage hash (after compression/encryption)
+        // This is the hash that can be used to retrieve the content from DHT
+        Ok(storage_hash_hex)
     }
 
     /// Store domain record to persistent storage
@@ -788,7 +795,7 @@ impl DomainRegistry {
     pub async fn get_content(&self, content_hash: &str) -> Result<Vec<u8>> {
         // CACHE DISABLED - Force DHT retrieval for testing
         info!(" TESTING MODE: Skipping cache, retrieving from DHT for content hash: {}", content_hash);
-        
+
         // Note: Cache check disabled to test DHT functionality
         // {
         //     let cache = self.content_cache.read().await;
@@ -797,20 +804,19 @@ impl DomainRegistry {
         //         return Ok(content.clone());
         //     }
         // }
-        
-        // Convert hex hash to Hash bytes (should be full 32 bytes now)
+
+        // Prepare download request OUTSIDE of lock
         let hash_bytes = hex::decode(content_hash)
             .map_err(|e| anyhow!("Invalid content hash format: {}", e))?;
-        
+
         if hash_bytes.len() != 32 {
             return Err(anyhow!("Content hash must be 32 bytes, got {}", hash_bytes.len()));
         }
-        
+
         let content_hash_obj = lib_crypto::Hash(hash_bytes.try_into()
             .map_err(|_| anyhow!("Failed to convert hash to array"))?);
-        
+
         // Create download request with anonymous requester
-        // Use new_unified for simpler creation (generates keypair internally)
         let requester = lib_identity::ZhtpIdentity::new_unified(
             lib_identity::types::identity_types::IdentityType::Human,
             Some(25), // Default age
@@ -818,30 +824,32 @@ impl DomainRegistry {
             "web4_retriever",
             None, // Random seed
         ).map_err(|e| anyhow!("Failed to create requester identity: {}", e))?;
-        
+
         let download_request = lib_storage::DownloadRequest {
             content_hash: content_hash_obj,
             requester,
             version: None,
         };
-        
-        // Attempt DHT retrieval
-        let mut storage = self.storage_system.write().await;
-        match storage.download_content(download_request).await {
-            Ok(content) => {
-                info!(" Retrieved {} bytes from DHT", content.len());
-                
-                // Store in cache for next time
-                let mut cache = self.content_cache.write().await;
-                cache.insert(content_hash.to_string(), content.clone());
-                
-                Ok(content)
-            }
-            Err(e) => {
-                error!(" Failed to retrieve content from DHT: {}", e);
-                Err(anyhow!("Content not found for hash: {} (DHT error: {})", content_hash, e))
-            }
-        }
+
+        // LOCK SAFETY: Acquire storage lock, do async work, release before acquiring other locks
+        let content = {
+            let mut storage = self.storage_system.write().await;
+            storage.download_content(download_request).await
+                .map_err(|e| {
+                    error!(" Failed to retrieve content from DHT: {}", e);
+                    anyhow!("Content not found for hash: {} (DHT error: {})", content_hash, e)
+                })?
+        }; // storage lock released here
+
+        info!(" Retrieved {} bytes from DHT", content.len());
+
+        // LOCK SAFETY: Acquire cache lock separately
+        {
+            let mut cache = self.content_cache.write().await;
+            cache.insert(content_hash.to_string(), content.clone());
+        } // cache lock released here
+
+        Ok(content)
     }
 
     /// Get content for a domain path
