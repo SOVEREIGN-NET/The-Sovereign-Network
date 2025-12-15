@@ -30,8 +30,8 @@ struct PersistedDhtStorage {
     version: u32,
     /// Entries sorted by key for deterministic serialization
     entries: Vec<(String, StorageEntry)>,
-    /// Contract index for fast discovery
-    contract_index: HashMap<String, Vec<String>>,
+    /// Contract index for fast discovery (sorted for deterministic serialization)
+    contract_index: Vec<(String, Vec<String>)>,
 }
 
 /// Atomic write helper - writes to temp file then renames (blocking I/O)
@@ -130,15 +130,24 @@ impl DhtStorage {
     /// Save storage state to disk (versioned, deterministic format)
     /// Uses spawn_blocking to avoid stalling async runtime with file I/O
     pub async fn save_to_file(&self, path: &Path) -> Result<()> {
+        // Sort entries by key for deterministic output
         let mut entries: Vec<(String, StorageEntry)> =
             self.storage.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        // Sort for deterministic output
         entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Sort contract index by key, and sort each value list for deterministic output
+        let mut contract_index: Vec<(String, Vec<String>)> =
+            self.contract_index.iter().map(|(k, v)| {
+                let mut sorted_values = v.clone();
+                sorted_values.sort();
+                (k.clone(), sorted_values)
+            }).collect();
+        contract_index.sort_by(|a, b| a.0.cmp(&b.0));
 
         let persisted = PersistedDhtStorage {
             version: DHT_STORAGE_VERSION,
             entries,
-            contract_index: self.contract_index.clone(),
+            contract_index,
         };
 
         let bytes = bincode::serialize(&persisted)
@@ -192,8 +201,13 @@ impl DhtStorage {
         }
 
         self.storage = persisted.entries.into_iter().collect();
-        self.contract_index = persisted.contract_index;
-        self.current_usage = self.storage.values().map(|e| e.value.len() as u64).sum();
+        // Convert sorted Vec back to HashMap for runtime use
+        self.contract_index = persisted.contract_index.into_iter().collect();
+        // Calculate current usage including metadata overhead (256 bytes per entry)
+        let metadata_overhead_per_entry = 256u64;
+        self.current_usage = self.storage.values()
+            .map(|e| e.value.len() as u64 + metadata_overhead_per_entry)
+            .sum();
 
         // Enforce capacity limits - evict oldest entries if over capacity
         if self.current_usage > self.max_storage_size {
@@ -204,19 +218,20 @@ impl DhtStorage {
             );
 
             // Sort entries by last_access (oldest first) for eviction
+            // Include metadata overhead in size calculation
             let mut entries_by_age: Vec<(String, u64, u64)> = self.storage.iter()
-                .map(|(k, e)| (k.clone(), e.metadata.last_access, e.value.len() as u64))
+                .map(|(k, e)| (k.clone(), e.metadata.last_access, e.value.len() as u64 + metadata_overhead_per_entry))
                 .collect();
             entries_by_age.sort_by_key(|(_, last_access, _)| *last_access);
 
             // Evict oldest entries until under capacity
             let mut evicted_count = 0;
-            for (key, _, size) in entries_by_age {
+            for (key, _, total_size) in entries_by_age {
                 if self.current_usage <= self.max_storage_size {
                     break;
                 }
                 if self.storage.remove(&key).is_some() {
-                    self.current_usage = self.current_usage.saturating_sub(size);
+                    self.current_usage = self.current_usage.saturating_sub(total_size);
                     evicted_count += 1;
                 }
             }
@@ -719,12 +734,14 @@ impl DhtStorage {
         
         // Update storage
         if let Some(old_entry) = self.storage.insert(key, entry) {
-            // If replacing existing entry, adjust usage
+            // If replacing existing entry, adjust usage (include metadata overhead)
+            let old_total = old_entry.value.len() as u64 + metadata_overhead;
             self.current_usage = self.current_usage
-                .saturating_sub(old_entry.value.len() as u64)
-                .saturating_add(value_size);
+                .saturating_sub(old_total)
+                .saturating_add(total_size);
         } else {
-            self.current_usage += value_size;
+            // New entry: add value size + metadata overhead
+            self.current_usage += total_size;
         }
 
         // Persist to disk if configured
@@ -743,9 +760,10 @@ impl DhtStorage {
             // Check if entry has expired
             if let Some(expiry) = entry.expiry {
                 if SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() > expiry {
-                    // Remove expired entry
+                    // Remove expired entry (subtract value size + metadata overhead)
                     let removed_entry = self.storage.remove(key).unwrap();
-                    self.current_usage = self.current_usage.saturating_sub(removed_entry.value.len() as u64);
+                    let total_size = removed_entry.value.len() as u64 + 256;
+                    self.current_usage = self.current_usage.saturating_sub(total_size);
                     // Persist removal to disk so expired entry doesn't resurrect after restart
                     self.maybe_persist().await?;
                     return Ok(None);
@@ -761,7 +779,9 @@ impl DhtStorage {
     /// Remove a key-value pair
     pub async fn remove(&mut self, key: &str) -> Result<bool> {
         if let Some(entry) = self.storage.remove(key) {
-            self.current_usage = self.current_usage.saturating_sub(entry.value.len() as u64);
+            // Subtract value size + metadata overhead (256 bytes)
+            let total_size = entry.value.len() as u64 + 256;
+            self.current_usage = self.current_usage.saturating_sub(total_size);
             // Persist to disk if configured
             self.maybe_persist().await?;
             Ok(true)
@@ -846,7 +866,9 @@ impl DhtStorage {
         
         for key in expired_keys {
             if let Some(entry) = self.storage.remove(&key) {
-                self.current_usage = self.current_usage.saturating_sub(entry.value.len() as u64);
+                // Subtract value size + metadata overhead (256 bytes)
+                let total_size = entry.value.len() as u64 + 256;
+                self.current_usage = self.current_usage.saturating_sub(total_size);
                 removed_count += 1;
             }
         }
@@ -1783,18 +1805,21 @@ mod tests {
         // Check statistics
         let stats = storage.get_storage_stats();
         assert_eq!(stats.total_entries, 1);
-        assert_eq!(stats.total_size, 10); // "test_value" is 10 bytes
+        // "test_value" is 10 bytes + 256 bytes metadata overhead
+        assert_eq!(stats.total_size, 10 + 256);
     }
-    
+
     #[tokio::test]
     async fn test_capacity_limit() {
         let node_id = NodeId::from_bytes([1u8; 32]);
-        let mut storage = DhtStorage::new(node_id, 5); // Very small capacity
-        
+        // Very small capacity - need at least value + metadata overhead (256 bytes)
+        let mut storage = DhtStorage::new(node_id, 100);
+
         let key = "test_key".to_string();
-        let large_value = vec![0u8; 10]; // 10 bytes, exceeds capacity
-        
-        // Attempt to store large value
+        // 10 bytes value + 256 overhead = 266 bytes total, exceeds 100 byte capacity
+        let large_value = vec![0u8; 10];
+
+        // Attempt to store value that exceeds capacity with overhead
         let result = storage.store(key, large_value, None).await;
         assert!(result.is_err());
     }
@@ -1976,7 +2001,7 @@ mod tests {
         let wrong_version = PersistedDhtStorage {
             version: 999, // Wrong version
             entries: vec![],
-            contract_index: HashMap::new(),
+            contract_index: vec![],
         };
         let bytes = bincode::serialize(&wrong_version).unwrap();
         std::fs::write(&persist_path, bytes).unwrap();
