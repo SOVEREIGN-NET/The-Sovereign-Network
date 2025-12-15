@@ -98,8 +98,9 @@ pub struct MeshRouter {
     // Blockchain sync infrastructure
     pub sync_manager: Arc<lib_network::blockchain_sync::BlockchainSyncManager>,
     pub sync_coordinator: Arc<lib_network::blockchain_sync::SyncCoordinator>,
-    pub edge_sync_manager: Arc<RwLock<Option<Arc<lib_network::blockchain_sync::EdgeNodeSyncManager>>>>,
+    // Note: edge_sync_manager removed - use sync_manager.new_edge_node() instead
     pub blockchain_provider: Arc<RwLock<Option<Arc<dyn lib_network::blockchain_sync::BlockchainProvider>>>>,
+    pub is_edge_node: Arc<RwLock<bool>>, // Track if this node is in edge mode
     
     // Protocol instances for sending
     pub bluetooth_protocol: Arc<RwLock<Option<Arc<BluetoothMeshProtocol>>>>,
@@ -155,8 +156,8 @@ impl MeshRouter {
         // Create shared peer registry (Ticket #149: replaces connections HashMap)
         let connections = Arc::new(RwLock::new(lib_network::peer_registry::PeerRegistry::new()));
         
-        // Create blockchain sync manager
-        let sync_manager = Arc::new(lib_network::blockchain_sync::BlockchainSyncManager::new());
+        // Create blockchain sync manager (defaults to full node mode)
+        let sync_manager = Arc::new(lib_network::blockchain_sync::BlockchainSyncManager::new_full_node());
         
         // Create sync coordinator
         let sync_coordinator = Arc::new(lib_network::blockchain_sync::SyncCoordinator::new());
@@ -330,7 +331,8 @@ impl MeshRouter {
             encryption_sessions: Arc::new(RwLock::new(HashMap::new())),
             sync_manager,
             sync_coordinator,
-            edge_sync_manager: Arc::new(RwLock::new(None)),
+            // Note: edge_sync_manager removed - use sync_manager with EdgeNodeStrategy
+            is_edge_node: Arc::new(RwLock::new(false)), // Defaults to full node mode
             blockchain_provider: Arc::new(RwLock::new(None)),
             bluetooth_protocol: Arc::new(RwLock::new(None)),
             quic_protocol: Arc::new(RwLock::new(None)),
@@ -478,6 +480,28 @@ impl MeshRouter {
         // Delegate to the helper function
         super::helpers::bridge_bluetooth_to_dht(message_data, source_addr).await
     }
+    
+    /// Configure sync manager for edge node mode (headers + ZK proofs only)
+    pub async fn set_edge_sync_mode(&self, max_headers: usize) {
+        use tracing::info;
+        
+        // Set edge node flag
+        *self.is_edge_node.write().await = true;
+        
+        // Create new edge node sync manager
+        let new_sync_manager = Arc::new(lib_network::blockchain_sync::BlockchainSyncManager::new_edge_node(max_headers));
+        
+        // Update the QUIC message handler's sync manager
+        if let Some(quic) = self.quic_protocol.read().await.as_ref() {
+            if let Some(handler) = quic.message_handler.as_ref() {
+                let mut handler_write = handler.write().await;
+                handler_write.sync_manager = new_sync_manager.clone();
+                info!("✅ Updated QUIC message handler to use EdgeNodeStrategy (max_headers={})", max_headers);
+            }
+        }
+        
+        info!("📱 Edge node mode configured with {} headers capacity", max_headers);
+    }
 }
 
 impl Clone for MeshRouter {
@@ -493,7 +517,7 @@ impl Clone for MeshRouter {
             encryption_sessions: self.encryption_sessions.clone(),
             sync_manager: self.sync_manager.clone(),
             sync_coordinator: self.sync_coordinator.clone(),
-            edge_sync_manager: self.edge_sync_manager.clone(),
+            is_edge_node: self.is_edge_node.clone(),
             blockchain_provider: self.blockchain_provider.clone(),
             bluetooth_protocol: self.bluetooth_protocol.clone(),
             quic_protocol: self.quic_protocol.clone(),
