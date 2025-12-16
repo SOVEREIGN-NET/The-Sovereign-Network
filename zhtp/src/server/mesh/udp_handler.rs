@@ -11,7 +11,7 @@ use tracing::{info, warn, error, debug};
 use lib_crypto::PublicKey;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
 use lib_network::protocols::NetworkProtocol;
-use lib_network::dht::protocol::ZhtpRelayQuery;
+use lib_network::dht::relay::ZhtpRelayQuery;
 use lib_network::MeshConnection;
 use lib_economy::EconomicModel;
 
@@ -1089,7 +1089,7 @@ impl MeshRouter {
                                 
                                 let content_hash_bytes = lib_crypto::hash_blake3(&content);
                                 let content_hash = lib_crypto::Hash::from_bytes(&content_hash_bytes);
-                                let response_payload = lib_network::dht::protocol::ZhtpRelayResponsePayload {
+                                let response_payload = lib_network::dht::relay::ZhtpRelayResponsePayload {
                                     content: Some(content),
                                     content_type: Some("application/octet-stream".to_string()),
                                     content_hash: Some(content_hash),

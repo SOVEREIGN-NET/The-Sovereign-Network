@@ -9,13 +9,104 @@ use lib_crypto::hashing::hash_blake3;
 use lib_crypto::Hash;
 use tracing::{info, debug, warn};
 use std::time::{SystemTime, UNIX_EPOCH};
+use serde::{Serialize, Deserialize};
 
 use crate::protocols::zhtp_auth::NodeCapabilities;
-use crate::protocols::zhtp_encryption::ZhtpEncryptionManager;
-use super::protocol::{
-    ZhtpRelayQuery, ZhtpRelayResponse, ZhtpRelayQueryPayload, ZhtpRelayResponsePayload,
-    ZhtpQueryOptions, CachePreference,
-};
+use crate::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptedMessage};
+
+// ============= ZHTP Relay Protocol Type Definitions =============
+
+/// ZHTP Relay Query - Encrypted request for DHT content from peer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZhtpRelayQuery {
+    /// Request ID for tracking
+    pub request_id: String,
+    /// Domain to query
+    pub domain: String,
+    /// Path within domain
+    pub path: String,
+    /// Requester's blockchain public key (for verification)
+    pub requester_pubkey: Vec<u8>,
+    /// Encrypted query payload (encrypted with Kyber shared secret)
+    pub encrypted_payload: ZhtpEncryptedMessage,
+    /// Dilithium2 signature of (request_id + domain + path + timestamp)
+    pub signature: Vec<u8>,
+    /// Timestamp
+    pub timestamp: u64,
+}
+
+/// ZHTP Relay Response - Encrypted DHT content from peer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZhtpRelayResponse {
+    /// Request ID being responded to
+    pub request_id: String,
+    /// Content found flag
+    pub found: bool,
+    /// Content hash (if found)
+    pub content_hash: Option<Hash>,
+    /// Content MIME type (if found)
+    pub content_type: Option<String>,
+    /// Responder's blockchain public key
+    pub responder_pubkey: Vec<u8>,
+    /// Encrypted content (encrypted with Kyber shared secret)
+    pub encrypted_content: ZhtpEncryptedMessage,
+    /// Dilithium2 signature of (request_id + content_hash + timestamp)
+    pub signature: Vec<u8>,
+    /// Timestamp
+    pub timestamp: u64,
+    /// Relay node capabilities (for trust verification)
+    pub relay_capabilities: NodeCapabilities,
+}
+
+/// ZHTP Relay Query Payload (plaintext before encryption)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZhtpRelayQueryPayload {
+    /// Domain to query
+    pub domain: String,
+    /// Path within domain
+    pub path: String,
+    /// Query options
+    pub options: ZhtpQueryOptions,
+}
+
+/// ZHTP Relay Response Payload (plaintext before encryption)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZhtpRelayResponsePayload {
+    /// Content data (if found)
+    pub content: Option<Vec<u8>>,
+    /// Content MIME type
+    pub content_type: Option<String>,
+    /// Content hash
+    pub content_hash: Option<Hash>,
+    /// Error message (if not found)
+    pub error: Option<String>,
+    /// Cache TTL in seconds
+    pub ttl: u32,
+}
+
+/// Query options for ZHTP relay
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZhtpQueryOptions {
+    /// Maximum content size to return (bytes)
+    pub max_size: Option<u64>,
+    /// Accept compression
+    pub accept_compression: bool,
+    /// Cache preference
+    pub cache_preference: CachePreference,
+}
+
+/// Cache preference for relay queries
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CachePreference {
+    /// Prefer cached content (faster)
+    PreferCache,
+    /// Prefer fresh content (slower)
+    PreferFresh,
+    /// Only cached content (fail if not cached)
+    OnlyCache,
+    /// Only fresh content (bypass cache)
+    OnlyFresh,
+}
 
 /// ZHTP Relay Protocol Handler
 #[derive(Debug)]

@@ -15,10 +15,8 @@
 //! 
 //! This enables pure BLE devices to fully participate in DHT without UDP/WiFi.
 
-pub mod protocol;
 pub mod relay;
 pub mod cache;
-pub mod bootstrap;
 pub mod peer_discovery;
 pub mod monitoring;
 pub mod transport;
@@ -41,8 +39,12 @@ pub use lib_storage::types::dht_types::DhtNode;
 // Re-export our new transport layer
 pub use transport::{DhtTransport, PeerId, UdpDhtTransport, BleDhtTransport, MultiDhtTransport, PeerAddressResolver};
 
-// Re-export main types
-pub use relay::ZhtpRelayProtocol;
+// Re-export relay types
+pub use relay::{
+    ZhtpRelayProtocol, ZhtpRelayQuery, ZhtpRelayResponse, 
+    ZhtpRelayQueryPayload, ZhtpRelayResponsePayload,
+    ZhtpQueryOptions, CachePreference,
+};
 // Note: DhtCache is internal, not re-exported
 
 /// Wrapper for DHT integration with mesh networking
