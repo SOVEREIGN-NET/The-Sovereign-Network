@@ -13,14 +13,31 @@ use std::path::PathBuf;
 
 pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
     match args.action {
-        NodeAction::Start { config, port, dev, pure_mesh, network, edge_mode, edge_max_headers, .. } => {
-            println!(" Starting ZHTP orchestrator node...");
+        NodeAction::Start { config, port, dev, pure_mesh, network, edge_mode, edge_max_headers, keystore } => {
+            println!("🚀 Starting ZHTP orchestrator node...");
             if let Some(p) = port {
                 println!("Port override: {}", p);
             }
             println!("Config: {:?}", config);
             println!("Dev mode: {}", dev);
             println!("Pure mesh mode: {}", pure_mesh);
+
+            // Parse keystore path (expand ~ manually since clap doesn't do this)
+            let keystore_path = keystore.map(|ks| {
+                if ks.starts_with("~/") {
+                    if let Some(home) = dirs::home_dir() {
+                        home.join(&ks[2..])
+                    } else {
+                        PathBuf::from(ks)
+                    }
+                } else {
+                    PathBuf::from(ks)
+                }
+            });
+
+            if let Some(ref ks) = keystore_path {
+                println!("Keystore: {:?}", ks);
+            }
             
             if edge_mode {
                 println!(" Edge Mode: ENABLED (lightweight sync)");
@@ -134,21 +151,21 @@ pub async fn handle_node_command(args: NodeArgs, cli: &ZhtpCli) -> Result<()> {
                 
                 orchestrator.set_joined_existing_network(true).await?;
                 
-                // Guest mode for existing network
+                // Guest mode for existing network - use keystore for persistence
                 println!("\nℹ Starting in guest mode - blockchain will sync, then users can create identities via mobile app");
-                WalletStartupManager::quick_start_wallet().await?
+                WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path.clone()).await?
             } else {
                 println!("\nℹ No existing ZHTP network found");
-                
+
                 if is_edge_node {
                     return Err(anyhow!("Edge nodes must find an existing network"));
                 }
-                
+
                 println!("📝 Starting new genesis network...");
                 orchestrator.set_joined_existing_network(false).await?;
-                
-                // Interactive setup for genesis network
-                WalletStartupManager::handle_startup_wallet_flow().await?
+
+                // Interactive setup for genesis network - use keystore for persistence
+                WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path.clone()).await?
             };
             
             println!(" User wallet established: {}", startup_result.wallet_name);
