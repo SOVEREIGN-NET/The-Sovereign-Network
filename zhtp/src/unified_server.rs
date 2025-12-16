@@ -163,14 +163,54 @@ impl ZhtpUnifiedServer {
         false
     }
 
-    /// Create a server identity for UHP+Kyber authentication
+    /// Load server identity from keystore for UHP+Kyber authentication
     ///
-    /// Creates a deterministic identity based on the server UUID.
-    /// The identity is used for mutual authentication in QUIC handshakes.
+    /// Loads the persistent identity from ~/.zhtp/keystore/node_identity.json.
+    /// Falls back to creating a deterministic identity if keystore is unavailable.
     fn create_server_identity(server_id: Uuid) -> Result<Arc<lib_identity::ZhtpIdentity>> {
         use lib_identity::{ZhtpIdentity, IdentityType};
 
-        // Generate deterministic seed from server UUID
+        // Try to load from keystore first (consistent with WalletStartupManager)
+        let keystore_path = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+            .join(".zhtp")
+            .join("keystore")
+            .join("node_identity.json");
+
+        if keystore_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&keystore_path) {
+                // We need the private key to deserialize properly
+                let private_key_path = keystore_path.parent().unwrap().join("node_private_key.json");
+                if let Ok(key_data) = std::fs::read_to_string(&private_key_path) {
+                    if let Ok(key_store) = serde_json::from_str::<serde_json::Value>(&key_data) {
+                        // Extract private key components
+                        if let (Some(dilithium), Some(kyber), Some(seed)) = (
+                            key_store.get("dilithium_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                            key_store.get("kyber_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                            key_store.get("master_seed").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                        ) {
+                            let private_key = lib_crypto::PrivateKey {
+                                dilithium_sk: dilithium,
+                                kyber_sk: kyber,
+                                master_seed: seed,
+                            };
+
+                            if let Ok(identity) = ZhtpIdentity::from_serialized(&data, &private_key) {
+                                tracing::info!(
+                                    did = %identity.did,
+                                    "Loaded server identity from keystore"
+                                );
+                                return Ok(Arc::new(identity));
+                            }
+                        }
+                    }
+                }
+            }
+            tracing::warn!("Keystore exists but failed to load identity, creating fallback");
+        }
+
+        // Fallback: Generate deterministic seed from server UUID
+        tracing::warn!("No keystore identity found, creating deterministic server identity");
         let mut seed = [0u8; 64];
         seed[..16].copy_from_slice(server_id.as_bytes());
         seed[16..32].copy_from_slice(server_id.as_bytes());
