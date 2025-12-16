@@ -248,9 +248,14 @@ impl BlockchainComponent {
             block_difficulty,
         )?;
 
-        info!("⛏️ Mining block with PoW (difficulty: {:#x})...", block_difficulty.bits());
-        let new_block = lib_blockchain::block::creation::mine_block(block, 10_000_000)?;
-        info!(" Block mined with nonce: {}", new_block.header.nonce);
+        // Mine the block using environment-aware config
+        let mining_config = lib_blockchain::types::get_mining_config_from_env();
+        info!("⛏️ Mining block with {} profile (difficulty: {:#x}, max_iter: {})...",
+              if mining_config.allow_instant_mining { "Bootstrap" } else { "Standard" },
+              block_difficulty.bits(),
+              mining_config.max_iterations);
+        let new_block = lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
+        info!("✓ Block mined with nonce: {}", new_block.header.nonce);
 
         match blockchain.add_block_with_proof(new_block.clone()).await {
             Ok(()) => {
