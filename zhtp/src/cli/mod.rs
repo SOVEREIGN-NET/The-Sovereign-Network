@@ -117,6 +117,10 @@ pub enum NodeAction {
         /// Maximum headers to store in edge mode (default: 500 = ~100KB)
         #[arg(long, default_value = "500")]
         edge_max_headers: usize,
+        /// Path to identity keystore directory (default: ~/.zhtp/keystore)
+        /// Stores node identity and wallet for persistence across restarts.
+        #[arg(long)]
+        keystore: Option<String>,
     },
     /// Stop the orchestrator node
     Stop,
