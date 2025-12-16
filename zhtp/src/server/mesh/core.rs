@@ -151,12 +151,14 @@ pub struct MeshRouter {
 }
 
 impl MeshRouter {
-    pub fn new(server_id: Uuid, session_manager: Arc<SessionManager>) -> Self {
+    pub async fn new(server_id: Uuid, session_manager: Arc<SessionManager>) -> Result<Self> {
         // Create shared peer registry (Ticket #149: replaces connections HashMap)
         let connections = Arc::new(RwLock::new(lib_network::peer_registry::PeerRegistry::new()));
         
-        // Create blockchain sync manager
-        let sync_manager = Arc::new(lib_network::blockchain_sync::BlockchainSyncManager::new());
+        // Create blockchain sync manager with automatic persistence
+        let sync_manager = Arc::new(
+            lib_network::blockchain_sync::BlockchainSyncManager::new(None).await?
+        );
         
         // Create sync coordinator
         let sync_coordinator = Arc::new(lib_network::blockchain_sync::SyncCoordinator::new());
@@ -284,7 +286,7 @@ impl MeshRouter {
             });
         }
         
-        Self {
+        Ok(Self {
             connections,
             server_id,
             identity_manager: None,
@@ -329,7 +331,7 @@ impl MeshRouter {
 
             // MEDIUM-3 FIX: Initialize identity verification cache
             identity_verification_cache: Arc::new(IdentityVerificationCache::new()),
-        }
+        })
     }
 
     /// Expose the shared DHT storage handle for consumers that need to index data.

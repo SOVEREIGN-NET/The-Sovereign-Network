@@ -240,7 +240,7 @@ impl ZhtpUnifiedServer {
         // Initialize protocol routers
         // ❌ DELETED: http_router - QUIC is the only entry point
         let mut zhtp_router = crate::server::zhtp::ZhtpRouter::new();  // Native ZHTP router for QUIC - ONLY ROUTER NEEDED
-        let mut mesh_router = MeshRouter::new(server_id, session_manager.clone());
+        let mut mesh_router = MeshRouter::new(server_id, session_manager.clone()).await?;
         let wifi_router = WiFiRouter::new_with_peer_notification(peer_discovery_tx);
         let bluetooth_router = BluetoothRouter::new();
         let bluetooth_classic_router = BluetoothClassicRouter::new();
