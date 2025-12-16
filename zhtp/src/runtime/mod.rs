@@ -2218,30 +2218,33 @@ impl RuntimeOrchestrator {
 }
 
 /// Create or load persistent node identity
+///
+/// Uses the standard keystore path (~/.zhtp/keystore/) for identity persistence.
+/// This ensures consistency with WalletStartupManager and prevents identity loss.
 pub async fn create_or_load_node_identity(
-    environment: &crate::config::Environment,
+    _environment: &crate::config::Environment,
 ) -> Result<lib_identity::ZhtpIdentity> {
-    use crate::config::Environment;
-    
-    // Determine data path based on environment
-    let data_path = match environment {
-        Environment::Mainnet => PathBuf::from("./data/mainnet"),
-        Environment::Testnet => PathBuf::from("./data/testnet"),
-        Environment::Development => PathBuf::from("./data/dev"),
-    };
-    
-    let identity_file = data_path.join("node_identity.json");
-    
-    // Try to load existing identity
+    // Use the standard keystore path for ALL environments
+    // This matches WalletStartupManager and ensures identity persistence
+    let keystore_path = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+        .join(".zhtp")
+        .join("keystore");
+
+    let identity_file = keystore_path.join("node_identity.json");
+
+    // Try to load existing identity from keystore
     if identity_file.exists() {
         if let Ok(data) = tokio::fs::read_to_string(&identity_file).await {
             if let Ok(identity) = serde_json::from_str::<lib_identity::ZhtpIdentity>(&data) {
-                info!("✓ Loaded existing node identity");
+                info!("✓ Loaded existing node identity from keystore");
                 return Ok(identity);
+            } else {
+                warn!("⚠ Node identity file exists but failed to parse - creating new identity");
             }
         }
     }
-    
+
     // Create new identity using P1-7 architecture
     info!("Creating new node identity...");
     let node_identity = lib_identity::ZhtpIdentity::new_unified(
@@ -2251,13 +2254,13 @@ pub async fn create_or_load_node_identity(
         "zhtp-node",
         None, // Random seed
     )?;
-    
-    // Save identity
-    tokio::fs::create_dir_all(&data_path).await?;
+
+    // Save identity to keystore
+    tokio::fs::create_dir_all(&keystore_path).await?;
     let json = serde_json::to_string_pretty(&node_identity)?;
     tokio::fs::write(&identity_file, json).await?;
-    
-    info!("✓ Created and saved node identity");
+
+    info!("✓ Created and saved node identity to keystore");
     Ok(node_identity)
 }
 
