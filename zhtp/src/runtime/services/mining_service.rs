@@ -100,9 +100,10 @@ impl MiningService {
             .map(|b| b.hash())
             .unwrap_or_default();
 
-        // Use blockchain's current difficulty (set at initialization based on environment)
-        let block_difficulty = blockchain.difficulty.clone();
-        
+        // Get mining config from environment - this determines the difficulty to use
+        let mining_config = lib_blockchain::types::get_mining_config_from_env();
+        let block_difficulty = mining_config.difficulty.clone();
+
         if has_system_transactions {
             info!("Mining system transaction block with difficulty: {:#x}", block_difficulty.bits());
         } else {
@@ -117,8 +118,6 @@ impl MiningService {
             block_difficulty,
         )?;
 
-        // Mine the block using environment-aware config
-        let mining_config = lib_blockchain::types::get_mining_config_from_env();
         info!("⛏️ Mining block with {} profile (difficulty: {:#x}, max_iter: {})...",
               if mining_config.allow_instant_mining { "Bootstrap" } else { "Standard" },
               block_difficulty.bits(),
