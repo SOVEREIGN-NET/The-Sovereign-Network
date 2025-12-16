@@ -137,6 +137,11 @@ pub struct ZhtpPeerRegistry {
     reputation_scores: Arc<RwLock<HashMap<[u8; 32], f64>>>,
     
     /// Local node identity
+    /// TODO: Add methods to use this field:
+    /// - get_local_identity() to expose the identity
+    /// - create_local_peer_info() to create signed peer info for this node
+    /// - register_self() to announce this node to the DHT network
+    #[allow(dead_code)]
     identity: ZhtpIdentity,
 }
 

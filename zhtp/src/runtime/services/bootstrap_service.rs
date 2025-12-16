@@ -17,29 +17,22 @@ impl BootstrapService {
         _api_port: u16,
         environment: &crate::config::environment::Environment,
     ) -> Result<Blockchain> {
-        use lib_network::dht::bootstrap::{DHTBootstrap, DHTBootstrapEnhancements};
+        // NOTE: DHT bootstrap module removed as part of cleanup (Ticket 1.18)
+        // Use lib-network's core bootstrap functionality instead
+        use lib_network::bootstrap::discover_bootstrap_peers;
         use lib_network::peer_registry::new_shared_registry;
 
         info!(" Discovering network peers for blockchain bootstrap...");
 
-        // Create unified peer registry for discovered peers (Ticket #150)
+        // Create unified peer registry for discovered peers
         let peer_registry = new_shared_registry();
-        
-        // Create bootstrap with mDNS enhancements
-        let enhancements = DHTBootstrapEnhancements {
-            enable_mdns: true,
-            enable_peer_exchange: false, // Don't need peer exchange for bootstrap
-            mdns_timeout: Duration::from_secs(5),
-            max_mdns_peers: 10,
-        };
         
         // Load the node's persistent identity for authenticated bootstrap
         let node_identity = crate::runtime::create_or_load_node_identity(environment).await?;
-        let mut bootstrap = DHTBootstrap::new(enhancements, node_identity);
         
-        // Use enhance_bootstrap to discover peers (Ticket #150: peers added to registry)
-        let peer_count = bootstrap.enhance_bootstrap(&[], peer_registry.clone()).await
-            .unwrap_or(0);
+        // Use core bootstrap functionality to discover peers (peers added to registry)
+        let peer_count = discover_bootstrap_peers(&[], &node_identity, peer_registry.clone()).await
+            .context("Failed to discover bootstrap peers")?;
         
         if peer_count == 0 {
             return Err(anyhow::anyhow!("No network peers found"));

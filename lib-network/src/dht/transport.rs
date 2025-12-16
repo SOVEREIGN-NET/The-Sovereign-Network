@@ -12,7 +12,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use futures::future::{select_all, BoxFuture};
+use futures::future::BoxFuture;
 use futures::FutureExt;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -301,7 +301,7 @@ impl DhtTransport for MultiDhtTransport {
         }
 
         // Race all transports and return whichever delivers first
-        let mut futures: Vec<BoxFuture<'_, _>> = self
+        let futures: Vec<BoxFuture<'_, _>> = self
             .transports
             .iter()
             .map(|t| t.receive().boxed())
