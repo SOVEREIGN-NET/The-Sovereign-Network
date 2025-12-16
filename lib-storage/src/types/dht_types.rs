@@ -529,7 +529,7 @@ pub enum DhtQueryResponse {
 }
 
 /// Storage entry in DHT
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageEntry {
     /// Storage key
     pub key: String,

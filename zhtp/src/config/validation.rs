@@ -309,7 +309,20 @@ pub async fn perform_configuration_health_check(config: &NodeConfig) -> ConfigHe
         report.add_warning("High UBI amount may affect economic sustainability");
         report.add_recommendation("Consider reducing daily_ubi_amount below 1000 to maintain economic balance");
     }
-    
+
+    // Check storage persistence configuration
+    // In production environments, DHT persistence should be configured via data_directory
+    if config.environment == super::Environment::Mainnet {
+        if config.data_directory.is_empty() {
+            report.add_critical("Data directory not configured - DHT storage will not persist across restarts");
+        }
+    } else if config.environment == super::Environment::Testnet {
+        if config.data_directory.is_empty() {
+            report.add_warning("Data directory not configured - DHT storage will not persist across restarts");
+            report.add_recommendation("Set data_directory in config to enable persistence for testnet");
+        }
+    }
+
     report
 }
 

@@ -121,6 +121,9 @@ pub struct StorageConfig {
     pub enable_compression: bool,
     /// Enable encryption
     pub enable_encryption: bool,
+    /// Path for DHT storage persistence (if None, storage is in-memory only)
+    #[serde(default)]
+    pub dht_persist_path: Option<std::path::PathBuf>,
 }
 
 /// Erasure coding configuration
@@ -182,22 +185,64 @@ impl UnifiedStorageSystem {
             config.addresses.clone(),
         )?;
 
-        let dht_storage = dht::storage::DhtStorage::new(
-            node_id.clone(),
-            config.storage_config.max_storage_size,
-        );
+        // Initialize DHT storage with optional persistence
+        let mut dht_storage = match &config.storage_config.dht_persist_path {
+            Some(persist_path) => {
+                let mut storage = dht::storage::DhtStorage::new_with_persistence(
+                    node_id.clone(),
+                    config.storage_config.max_storage_size,
+                    persist_path.clone(),
+                );
+                // Load existing data from disk (async to avoid blocking runtime)
+                if let Err(e) = storage.load_from_file(persist_path).await {
+                    tracing::warn!("Failed to load DHT storage from {:?}: {}", persist_path, e);
+                }
+                storage
+            }
+            None => {
+                // PERSISTENCE WARNING: In-memory only storage will lose all data on restart
+                tracing::warn!(
+                    "DHT storage persistence is NOT configured - data will be lost on restart! \
+                     Set dht_persist_path in storage_config for production use."
+                );
+                dht::storage::DhtStorage::new(
+                    node_id.clone(),
+                    config.storage_config.max_storage_size,
+                )
+            }
+        };
 
         // Initialize economic manager
         let economic_manager = economic::manager::EconomicStorageManager::new(
             config.economic_config.clone(),
         );
 
-        // Initialize content manager
+        // Initialize content manager with same persistence config
+        let content_dht_storage = match &config.storage_config.dht_persist_path {
+            Some(persist_path) => {
+                // Use a separate file for content storage
+                let content_persist_path = persist_path.with_file_name(
+                    format!("{}_content", persist_path.file_stem().unwrap_or_default().to_string_lossy())
+                ).with_extension("bin");
+                let mut storage = dht::storage::DhtStorage::new_with_persistence(
+                    node_id.clone(),
+                    config.storage_config.max_storage_size,
+                    content_persist_path.clone(),
+                );
+                if let Err(e) = storage.load_from_file(&content_persist_path).await {
+                    tracing::warn!("Failed to load content DHT storage from {:?}: {}", content_persist_path, e);
+                }
+                storage
+            }
+            None => {
+                dht::storage::DhtStorage::new(
+                    node_id.clone(),
+                    config.storage_config.max_storage_size,
+                )
+            }
+        };
         let content_manager = content::ContentManager::new(
-            dht::storage::DhtStorage::new(
-                node_id.clone(),
-                config.storage_config.max_storage_size,
-            ),
+            content_dht_storage,
             config.economic_config.clone(),
         )?;
 
@@ -489,12 +534,58 @@ impl UnifiedStorageSystem {
 
     /// Migrate identity from blockchain to unified storage
     pub async fn migrate_identity_from_blockchain(
-        &mut self, 
+        &mut self,
         identity_id: &lib_identity::IdentityId,
         lib_identity: &lib_identity::ZhtpIdentity,
         passphrase: &str,
     ) -> Result<()> {
         self.content_manager.migrate_identity_from_blockchain(identity_id, lib_identity, passphrase).await
+    }
+
+    // ========================================================================
+    // Web4 Domain Storage Integration - Domain Records Persistence
+    // ========================================================================
+
+    /// Store a Web4 domain record in DHT storage
+    /// Uses key format: `web4/domain/{domain}`
+    pub async fn store_domain_record(&mut self, domain: &str, record_data: &[u8]) -> Result<()> {
+        let key = format!("web4/domain/{}", domain);
+        tracing::info!("Storing domain record for {} ({} bytes)", domain, record_data.len());
+        self.dht_storage.store(key, record_data.to_vec(), None).await
+    }
+
+    /// Retrieve a Web4 domain record from DHT storage
+    /// Returns None if the domain is not found
+    pub async fn get_domain_record(&mut self, domain: &str) -> Result<Option<Vec<u8>>> {
+        let key = format!("web4/domain/{}", domain);
+        self.dht_storage.get(&key).await
+    }
+
+    /// Delete a Web4 domain record from DHT storage
+    pub async fn delete_domain_record(&mut self, domain: &str) -> Result<()> {
+        let key = format!("web4/domain/{}", domain);
+        tracing::info!("Deleting domain record for {}", domain);
+        self.dht_storage.remove(&key).await?;
+        Ok(())
+    }
+
+    /// List all Web4 domain records from DHT storage
+    /// Returns a list of (domain_name, record_data) tuples
+    pub async fn list_domain_records(&mut self) -> Result<Vec<(String, Vec<u8>)>> {
+        let prefix = "web4/domain/";
+        let mut records = Vec::new();
+
+        // Get all keys with the web4/domain/ prefix
+        for key in self.dht_storage.list_keys_with_prefix(prefix).await? {
+            if let Some(data) = self.dht_storage.get(&key).await? {
+                // Extract domain name from key
+                let domain = key.strip_prefix(prefix).unwrap_or(&key).to_string();
+                records.push((domain, data));
+            }
+        }
+
+        tracing::info!("Listed {} domain records from DHT storage", records.len());
+        Ok(records)
     }
 }
 
@@ -509,6 +600,7 @@ impl Default for UnifiedStorageConfig {
                 default_tier: StorageTier::Hot,
                 enable_compression: true,
                 enable_encryption: true,
+                dht_persist_path: None, // No persistence by default
             },
             erasure_config: ErasureConfig {
                 data_shards: 4,
