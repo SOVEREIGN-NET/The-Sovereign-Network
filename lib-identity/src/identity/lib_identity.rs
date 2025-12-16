@@ -758,6 +758,16 @@ impl ZhtpIdentity {
             .ok_or_else(|| anyhow!("Missing did"))?
             .to_string();
 
+        // CRITICAL: Validate that DID matches ID to prevent identity corruption
+        let expected_did = format!("did:zhtp:{}", hex::encode(id.as_bytes()));
+        if did != expected_did {
+            return Err(anyhow!(
+                "Identity corruption detected: DID '{}' does not match ID '{}'. \
+                Expected DID: '{}'. The keystore file may be corrupted.",
+                did, hex::encode(id.as_bytes()), expected_did
+            ));
+        }
+
         let identity_type: IdentityType = serde_json::from_value(
             raw.get("identity_type")
                 .cloned()
