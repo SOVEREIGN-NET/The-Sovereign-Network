@@ -14,6 +14,7 @@ use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::protocols::NetworkProtocol;
 use crate::mesh::connection::MeshConnection;
 use crate::identity::unified_peer::UnifiedPeerId;
+use crate::blockchain_sync::BlockchainSyncManager;
 
 use crate::relays::LongRangeRelay;
 
@@ -65,7 +66,7 @@ impl MeshMessageHandler {
             revenue_pools,
             message_router: None,
             node_id: None,
-            sync_manager: Arc::new(crate::blockchain_sync::BlockchainSyncManager::new()),
+            sync_manager: Arc::new(crate::blockchain_sync::BlockchainSyncManager::default()),
             edge_sync_manager: None, // Only set for edge nodes
             blockchain_provider: Arc::new(crate::blockchain_sync::NullBlockchainProvider),
             dht_payload_sender: None,
@@ -699,11 +700,12 @@ impl MeshMessageHandler {
                             .unwrap_or(NetworkProtocol::QUIC); // Default to QUIC
                         
                         // Chunk the data based on protocol
-                        let chunks = self.chunk_blockchain_data(
+                        let chunks = BlockchainSyncManager::chunk_blockchain_data(
                             self.node_id.clone().unwrap_or_else(|| PublicKey::new(vec![0; 32])),
                             request_id,
                             blockchain_data,
-                            &protocol,
+                            Some(&protocol),
+                            None,
                         )?;
                         
                         info!("   Sending {} chunks to peer", chunks.len());
@@ -779,55 +781,11 @@ impl MeshMessageHandler {
         }
         Err(anyhow!("No connection to peer"))
     }
-    
-    /// Chunk blockchain data for protocol (NEW - Phase 3)
-    fn chunk_blockchain_data(
-        &self,
-        sender: PublicKey,
-        request_id: u64,
-        data: Vec<u8>,
-        protocol: &NetworkProtocol,
-    ) -> Result<Vec<ZhtpMeshMessage>> {
-        // Calculate chunk size based on protocol
-        let chunk_size = match protocol {
-            NetworkProtocol::BluetoothLE => 200,        // BLE 5.0 conservative
-            NetworkProtocol::BluetoothClassic => 800,   // Bluetooth Classic larger MTU
-            NetworkProtocol::WiFiDirect => 1400,        // WiFi Direct near-ethernet
-            NetworkProtocol::LoRaWAN => 50,             // LoRa very small packets
-            _ => 512,                                    // Default safe size
-        };
-        
-        // Calculate complete data hash
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(&data);
-        let complete_data_hash: [u8; 32] = hasher.finalize().into();
-        
-        // Split into chunks
-        let chunks: Vec<&[u8]> = data.chunks(chunk_size).collect();
-        let total_chunks = chunks.len() as u32;
-        
-        info!(" Chunking {} bytes into {} chunks of ~{} bytes", data.len(), total_chunks, chunk_size);
-        
-        // Create ZhtpMeshMessage for each chunk
-        let messages: Vec<ZhtpMeshMessage> = chunks.into_iter().enumerate().map(|(i, chunk)| {
-            ZhtpMeshMessage::BlockchainData {
-                sender: sender.clone(),
-                request_id,
-                chunk_index: i as u32,
-                total_chunks,
-                data: chunk.to_vec(),
-                complete_data_hash,
-            }
-        }).collect();
-        
-        Ok(messages)
-    }
 
     /// Handle incoming blockchain data chunks
     pub async fn handle_blockchain_data(
         &self,
-        _sender: &PublicKey,
+        sender: &PublicKey,
         request_id: u64,
         chunk_index: u32,
         total_chunks: u32,
@@ -837,8 +795,8 @@ impl MeshMessageHandler {
         info!(" Blockchain data chunk {}/{} received ({} bytes, request_id: {})", 
               chunk_index + 1, total_chunks, data.len(), request_id);
         
-        // Add chunk to sync manager for reassembly
-        match self.sync_manager.add_chunk(request_id, chunk_index, total_chunks, data, complete_data_hash).await {
+        // Add chunk to sync manager for reassembly (with sender for security)
+        match self.sync_manager.add_chunk(sender.clone(), request_id, chunk_index, total_chunks, data, complete_data_hash).await {
             Ok(Some(complete_data)) => {
                 info!(" All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
                 info!("   Hash: {}", hex::encode(complete_data_hash));
