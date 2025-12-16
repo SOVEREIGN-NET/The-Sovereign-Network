@@ -93,9 +93,7 @@ pub use client::ZhtpClient;
 // Re-export protocol constants for convenience
 pub use constants::*;
 
-// Mobile FFI bindings for Android (JNI) and iOS (C FFI)
-// Available for all platforms to allow compilation, but only functional on mobile
-pub mod mobile;
+// Mobile FFI bindings removed - see archive/mobile-ffi-stubs branch when needed
 
 // External dependencies for economics, API, and storage
 pub use lib_economy as economics;

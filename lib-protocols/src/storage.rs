@@ -155,6 +155,7 @@ impl StorageIntegration {
                 default_tier: lib_storage::StorageTier::Hot,
                 enable_compression: true,
                 enable_encryption: config.default_encryption,
+                dht_persist_path: None,
             },
             erasure_config: lib_storage::ErasureConfig {
                 data_shards: 4,

@@ -42,7 +42,7 @@ impl DomainRegistry {
 
     /// Create new domain registry with existing storage system (avoids creating duplicates)
     pub async fn new_with_storage(storage: std::sync::Arc<tokio::sync::RwLock<lib_storage::UnifiedStorageSystem>>) -> Result<Self> {
-        Ok(Self {
+        let registry = Self {
             domain_records: Arc::new(RwLock::new(HashMap::new())),
             dht_client: Arc::new(RwLock::new(None)), // No DHT client needed when using shared storage
             storage_system: storage,
@@ -61,15 +61,20 @@ impl DomainRegistry {
                     storage_utilization: 0.0,
                 },
             })),
-        })
+        };
+
+        // Load persisted domain records from storage
+        registry.load_persisted_domains().await?;
+
+        Ok(registry)
     }
 
     /// Create new domain registry with optional existing DHT client
     pub async fn new_with_dht(dht_client: Option<ZkDHTIntegration>) -> Result<Self> {
         let storage_config = lib_storage::UnifiedStorageConfig::default();
         let storage_system = UnifiedStorageSystem::new(storage_config).await?;
-        
-        Ok(Self {
+
+        let registry = Self {
             domain_records: Arc::new(RwLock::new(HashMap::new())),
             dht_client: Arc::new(RwLock::new(dht_client)), // Use provided DHT client if available
             storage_system: Arc::new(RwLock::new(storage_system)),
@@ -88,7 +93,85 @@ impl DomainRegistry {
                     storage_utilization: 0.0,
                 },
             })),
-        })
+        };
+
+        // Load persisted domain records from storage
+        registry.load_persisted_domains().await?;
+
+        Ok(registry)
+    }
+
+    // ========================================================================
+    // Domain Persistence - Load and save domain records to lib-storage
+    // ========================================================================
+
+    /// Load all persisted domain records from lib-storage into the in-memory cache
+    async fn load_persisted_domains(&self) -> Result<()> {
+        // LOCK SAFETY: Acquire storage lock, do async work, release before acquiring other locks
+        let records = {
+            let mut storage = self.storage_system.write().await;
+            storage.list_domain_records().await?
+        }; // storage lock released here
+
+        if records.is_empty() {
+            info!("No persisted domain records found in storage");
+            return Ok(());
+        }
+
+        // Parse records outside of any lock
+        let mut parsed_records = Vec::new();
+        for (domain, data) in records {
+            match serde_json::from_slice::<DomainRecord>(&data) {
+                Ok(record) => {
+                    info!(" Loaded persisted domain: {} (v{})", record.domain, record.version);
+                    parsed_records.push((domain, record));
+                }
+                Err(e) => {
+                    warn!(" Failed to deserialize domain record: {}", e);
+                }
+            }
+        }
+
+        let loaded_count = parsed_records.len() as u64;
+
+        // LOCK SAFETY: Acquire domain_records lock, do sync work only, release
+        {
+            let mut domain_records = self.domain_records.write().await;
+            for (domain, record) in parsed_records {
+                domain_records.insert(domain, record);
+            }
+        } // domain_records lock released here
+
+        // LOCK SAFETY: Acquire stats lock separately
+        {
+            let mut stats = self.stats.write().await;
+            stats.total_domains = loaded_count;
+            stats.active_domains = loaded_count;
+        } // stats lock released here
+
+        info!(" Loaded {} persisted domain records from storage", loaded_count);
+        Ok(())
+    }
+
+    /// Persist a domain record to lib-storage
+    async fn persist_domain_record(&self, record: &DomainRecord) -> Result<()> {
+        let data = serde_json::to_vec(record)
+            .map_err(|e| anyhow!("Failed to serialize domain record: {}", e))?;
+
+        let mut storage = self.storage_system.write().await;
+        storage.store_domain_record(&record.domain, &data).await?;
+
+        info!(" Persisted domain record: {} (v{})", record.domain, record.version);
+        Ok(())
+    }
+
+    /// Delete a domain record from lib-storage
+    async fn delete_persisted_domain(&self, domain: &str) -> Result<()> {
+        let mut storage = self.storage_system.write().await;
+        storage.delete_domain_record(domain).await?;
+
+        info!(" Deleted persisted domain record: {}", domain);
+        Ok(())
     }
 
     /// Register a new Web4 domain
@@ -169,10 +252,13 @@ impl DomainRegistry {
             transfer_history: vec![],
         };
 
-        // Store domain record
+        // Store domain record (legacy method for compatibility)
         let registration_id = self.store_domain_record(&domain_record).await?;
 
-        // Update registry
+        // Persist to lib-storage for durability
+        self.persist_domain_record(&domain_record).await?;
+
+        // Update in-memory registry cache
         {
             let mut records = self.domain_records.write().await;
             records.insert(request.domain.clone(), domain_record);
@@ -401,19 +487,36 @@ impl DomainRegistry {
                 fee_paid: transfer_fee,
             };
 
-            // Update domain record
-            record.owner = to_owner.id.clone();
-            record.transfer_history.push(transfer_record);
-
-            // Update ownership proof
-            record.ownership_proof = self.create_ownership_proof(
-                to_owner, 
-                domain, 
+            // Create updated record for persistence (persist BEFORE mutating memory)
+            let new_ownership_proof = self.create_ownership_proof(
+                to_owner,
+                domain,
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()
             ).await?;
 
+            let mut updated_record = record.clone();
+            updated_record.owner = to_owner.id.clone();
+            updated_record.transfer_history.push(transfer_record);
+            updated_record.ownership_proof = new_ownership_proof;
+
+            // Release lock before async persist
+            drop(records);
+
+            // Persist FIRST - if this fails, memory stays unchanged (durability guarantee)
+            self.persist_domain_record(&updated_record).await?;
+
             // Update statistics
             self.update_transfer_stats(transfer_fee).await?;
+
+            // Only mutate memory AFTER successful persistence
+            {
+                let mut records = self.domain_records.write().await;
+                if let Some(record) = records.get_mut(domain) {
+                    record.owner = updated_record.owner;
+                    record.transfer_history = updated_record.transfer_history;
+                    record.ownership_proof = updated_record.ownership_proof;
+                }
+            }
 
             info!(" Domain {} transferred successfully", domain);
             Ok(true)
@@ -426,28 +529,40 @@ impl DomainRegistry {
     pub async fn release_domain(&self, domain: &str, owner: &ZhtpIdentity) -> Result<bool> {
         info!("🗑️ Releasing Web4 domain: {}", domain);
 
-        let mut records = self.domain_records.write().await;
-        
-        if let Some(record) = records.get(domain) {
-            // Verify ownership
-            if record.owner != owner.id {
-                return Err(anyhow!("Release denied: not domain owner"));
+        let domain_to_delete = domain.to_string();
+
+        // TOCTOU FIX: Hold write lock through verification AND mutation to prevent
+        // concurrent transfer/update from allowing a non-owner to delete the domain.
+        // We verify ownership, delete from persistent storage, then remove from memory
+        // all while holding the write lock.
+        {
+            let mut records = self.domain_records.write().await;
+
+            // Verify ownership while holding write lock
+            if let Some(record) = records.get(domain) {
+                if record.owner != owner.id {
+                    return Err(anyhow!("Release denied: not domain owner"));
+                }
+            } else {
+                return Err(anyhow!("Domain not found: {}", domain));
             }
 
-            // Remove domain record
+            // Delete from persistent storage - if this fails, memory stays unchanged
+            self.delete_persisted_domain(&domain_to_delete).await?;
+
+            // Remove from memory only after successful persistence deletion
             records.remove(domain);
+        } // write lock released here
 
-            // Update statistics
-            {
-                let mut stats = self.stats.write().await;
-                stats.total_domains = stats.total_domains.saturating_sub(1);
-            }
-
-            info!(" Domain {} released successfully", domain);
-            Ok(true)
-        } else {
-            Err(anyhow!("Domain not found: {}", domain))
+        // Update statistics
+        {
+            let mut stats = self.stats.write().await;
+            stats.total_domains = stats.total_domains.saturating_sub(1);
+            stats.active_domains = stats.active_domains.saturating_sub(1);
         }
+
+        info!(" Domain {} released successfully", domain);
+        Ok(true)
     }
 
     /// Get Web4 system statistics
@@ -494,103 +609,97 @@ impl DomainRegistry {
         let hash_bytes = hash_blake3(&content);
         let short_hash = hex::encode(&hash_bytes[..8]); // For logging only
 
-        info!(" Storing content for domain {} at path {} (original hash: {}..., size: {} bytes)", 
+        info!(" Storing content for domain {} at path {} (original hash: {}..., size: {} bytes)",
               domain, path, short_hash, content.len());
 
-        // Store content in DHT using UnifiedStorageSystem
-        {
+        // Prepare upload request and uploader identity OUTSIDE of lock
+        let storage_requirements = ContentStorageRequirements {
+            duration_days: 365, // 1 year storage
+            quality_requirements: lib_storage::QualityRequirements {
+                min_uptime: 0.99,
+                max_response_time: 1000,
+                min_replication: 2,
+                geographic_distribution: None,
+                required_certifications: vec![],
+            },
+            budget_constraints: lib_storage::BudgetConstraints {
+                max_total_cost: 1000,
+                max_cost_per_gb_day: 10,
+                payment_schedule: lib_storage::types::economic_types::PaymentSchedule::Daily,
+                max_price_volatility: 0.1,
+            },
+        };
+
+        // Determine MIME type from path
+        let mime_type = if path.ends_with(".css") {
+            "text/css"
+        } else if path.ends_with(".js") {
+            "application/javascript"
+        } else if path.ends_with(".json") {
+            "application/json"
+        } else if path.ends_with(".png") {
+            "image/png"
+        } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+            "image/jpeg"
+        } else {
+            "text/html"
+        }.to_string();
+
+        // Create upload request
+        let upload_request = UploadRequest {
+            content: content.clone(),
+            filename: format!("{}:{}", domain, path),
+            mime_type,
+            description: format!("Web4 content for {} at {}", domain, path),
+            tags: vec!["web4".to_string(), domain.to_string()],
+            encrypt: false, // Web4 content is public
+            compress: true,  // Compress for efficiency
+            access_control: AccessControlSettings {
+                public_read: true,
+                read_permissions: vec![],
+                write_permissions: vec![],
+                expires_at: None,
+            },
+            storage_requirements,
+        };
+
+        // Create uploader identity (use domain owner or anonymous)
+        let uploader = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::types::identity_types::IdentityType::Human,
+            Some(25), // Default age
+            Some("US".to_string()), // Default jurisdiction
+            &format!("web4_publisher_{}", domain),
+            None, // Random seed
+        ).map_err(|e| anyhow!("Failed to create uploader identity: {}", e))?;
+
+        // LOCK SAFETY: Acquire storage lock, do async work, release before acquiring other locks
+        let actual_storage_hash = {
             let mut storage = self.storage_system.write().await;
-            
-            // Create storage requirements for the content
-            let storage_requirements = ContentStorageRequirements {
-                duration_days: 365, // 1 year storage
-                quality_requirements: lib_storage::QualityRequirements {
-                    min_uptime: 0.99,
-                    max_response_time: 1000,
-                    min_replication: 2,
-                    geographic_distribution: None,
-                    required_certifications: vec![],
-                },
-                budget_constraints: lib_storage::BudgetConstraints {
-                    max_total_cost: 1000,
-                    max_cost_per_gb_day: 10,
-                    payment_schedule: lib_storage::types::economic_types::PaymentSchedule::Daily,
-                    max_price_volatility: 0.1,
-                },
-            };
-            
-            // Determine MIME type from path
-            let mime_type = if path.ends_with(".css") {
-                "text/css"
-            } else if path.ends_with(".js") {
-                "application/javascript"
-            } else if path.ends_with(".json") {
-                "application/json"
-            } else if path.ends_with(".png") {
-                "image/png"
-            } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
-                "image/jpeg"
-            } else {
-                "text/html"
-            }.to_string();
-            
-            // Create upload request
-            let upload_request = UploadRequest {
-                content: content.clone(),
-                filename: format!("{}:{}", domain, path),
-                mime_type,
-                description: format!("Web4 content for {} at {}", domain, path),
-                tags: vec!["web4".to_string(), domain.to_string()],
-                encrypt: false, // Web4 content is public
-                compress: true,  // Compress for efficiency
-                access_control: AccessControlSettings {
-                    public_read: true,
-                    read_permissions: vec![],
-                    write_permissions: vec![],
-                    expires_at: None,
-                },
-                storage_requirements,
-            };
-            
-            // Create uploader identity (use domain owner or anonymous)
-            // Use new_unified for simpler creation (generates keypair internally)
-            let uploader = lib_identity::ZhtpIdentity::new_unified(
-                lib_identity::types::identity_types::IdentityType::Human,
-                Some(25), // Default age
-                Some("US".to_string()), // Default jurisdiction
-                &format!("web4_publisher_{}", domain),
-                None, // Random seed
-            ).map_err(|e| anyhow!("Failed to create uploader identity: {}", e))?;
-            
-            // Store in DHT via UnifiedStorageSystem (NO CACHE FALLBACK - DHT ONLY)
-            let actual_storage_hash = match storage.upload_content(upload_request, uploader).await {
-                Ok(storage_hash) => {
-                    info!("  Stored in DHT successfully");
-                    info!("    Original hash: {}", short_hash);
-                    info!("    DHT storage hash: {}", hex::encode(storage_hash.as_bytes()));
-                    info!("    (Different due to compression)");
-                    storage_hash
-                }
-                Err(e) => {
+            storage.upload_content(upload_request, uploader).await
+                .map_err(|e| {
                     error!(" DHT storage FAILED (no cache fallback): {}", e);
-                    return Err(anyhow!("Failed to store content in DHT: {}", e));
-                }
-            };
-            
-            // Convert storage_hash to hex string for content_mappings
-            let storage_hash_hex = hex::encode(actual_storage_hash.as_bytes());
-            
-            // Store in cache using the ACTUAL DHT STORAGE hash (compressed content hash)
-            {
-                let mut cache = self.content_cache.write().await;
-                cache.insert(storage_hash_hex.clone(), content.clone());
-                info!(" Cached content with DHT storage hash: {}", storage_hash_hex);
-            }
-            
-            // CRITICAL: Return the ACTUAL DHT storage hash (after compression/encryption)
-            // This is the hash that can be used to retrieve the content from DHT
-            Ok(storage_hash_hex)
-        }
+                    anyhow!("Failed to store content in DHT: {}", e)
+                })?
+        }; // storage lock released here
+
+        info!("  Stored in DHT successfully");
+        info!("    Original hash: {}", short_hash);
+        info!("    DHT storage hash: {}", hex::encode(actual_storage_hash.as_bytes()));
+        info!("    (Different due to compression)");
+
+        // Convert storage_hash to hex string for content_mappings
+        let storage_hash_hex = hex::encode(actual_storage_hash.as_bytes());
+
+        // LOCK SAFETY: Acquire cache lock separately
+        {
+            let mut cache = self.content_cache.write().await;
+            cache.insert(storage_hash_hex.clone(), content);
+            info!(" Cached content with DHT storage hash: {}", storage_hash_hex);
+        } // cache lock released here
+
+        // CRITICAL: Return the ACTUAL DHT storage hash (after compression/encryption)
+        // This is the hash that can be used to retrieve the content from DHT
+        Ok(storage_hash_hex)
     }
 
     /// Store domain record to persistent storage
@@ -687,7 +796,7 @@ impl DomainRegistry {
     pub async fn get_content(&self, content_hash: &str) -> Result<Vec<u8>> {
         // CACHE DISABLED - Force DHT retrieval for testing
         info!(" TESTING MODE: Skipping cache, retrieving from DHT for content hash: {}", content_hash);
-        
+
         // Note: Cache check disabled to test DHT functionality
         // {
         //     let cache = self.content_cache.read().await;
@@ -696,20 +805,19 @@ impl DomainRegistry {
         //         return Ok(content.clone());
         //     }
         // }
-        
-        // Convert hex hash to Hash bytes (should be full 32 bytes now)
+
+        // Prepare download request OUTSIDE of lock
         let hash_bytes = hex::decode(content_hash)
             .map_err(|e| anyhow!("Invalid content hash format: {}", e))?;
-        
+
         if hash_bytes.len() != 32 {
             return Err(anyhow!("Content hash must be 32 bytes, got {}", hash_bytes.len()));
         }
-        
+
         let content_hash_obj = lib_crypto::Hash(hash_bytes.try_into()
             .map_err(|_| anyhow!("Failed to convert hash to array"))?);
-        
+
         // Create download request with anonymous requester
-        // Use new_unified for simpler creation (generates keypair internally)
         let requester = lib_identity::ZhtpIdentity::new_unified(
             lib_identity::types::identity_types::IdentityType::Human,
             Some(25), // Default age
@@ -717,30 +825,32 @@ impl DomainRegistry {
             "web4_retriever",
             None, // Random seed
         ).map_err(|e| anyhow!("Failed to create requester identity: {}", e))?;
-        
+
         let download_request = lib_storage::DownloadRequest {
             content_hash: content_hash_obj,
             requester,
             version: None,
         };
-        
-        // Attempt DHT retrieval
-        let mut storage = self.storage_system.write().await;
-        match storage.download_content(download_request).await {
-            Ok(content) => {
-                info!(" Retrieved {} bytes from DHT", content.len());
-                
-                // Store in cache for next time
-                let mut cache = self.content_cache.write().await;
-                cache.insert(content_hash.to_string(), content.clone());
-                
-                Ok(content)
-            }
-            Err(e) => {
-                error!(" Failed to retrieve content from DHT: {}", e);
-                Err(anyhow!("Content not found for hash: {} (DHT error: {})", content_hash, e))
-            }
-        }
+
+        // LOCK SAFETY: Acquire storage lock, do async work, release before acquiring other locks
+        let content = {
+            let mut storage = self.storage_system.write().await;
+            storage.download_content(download_request).await
+                .map_err(|e| {
+                    error!(" Failed to retrieve content from DHT: {}", e);
+                    anyhow!("Content not found for hash: {} (DHT error: {})", content_hash, e)
+                })?
+        }; // storage lock released here
+
+        info!(" Retrieved {} bytes from DHT", content.len());
+
+        // LOCK SAFETY: Acquire cache lock separately
+        {
+            let mut cache = self.content_cache.write().await;
+            cache.insert(content_hash.to_string(), content.clone());
+        } // cache lock released here
+
+        Ok(content)
     }
 
     /// Get content for a domain path
@@ -921,11 +1031,29 @@ impl DomainRegistry {
 
         let previous_manifest_cid = record.current_manifest_cid.clone();
         let new_version = record.version + 1;
+        let new_manifest_cid = update_request.new_manifest_cid.clone();
 
-        // Update record atomically
-        record.current_manifest_cid = update_request.new_manifest_cid.clone();
-        record.version = new_version;
-        record.updated_at = current_time;
+        // Create updated record for persistence (persist BEFORE mutating memory)
+        let mut updated_record = record.clone();
+        updated_record.current_manifest_cid = new_manifest_cid.clone();
+        updated_record.version = new_version;
+        updated_record.updated_at = current_time;
+
+        // Release lock before persisting
+        drop(records);
+
+        // Persist FIRST - if this fails, memory stays unchanged (durability guarantee)
+        self.persist_domain_record(&updated_record).await?;
+
+        // Only mutate memory AFTER successful persistence
+        {
+            let mut records = self.domain_records.write().await;
+            if let Some(record) = records.get_mut(&update_request.domain) {
+                record.current_manifest_cid = updated_record.current_manifest_cid.clone();
+                record.version = updated_record.version;
+                record.updated_at = updated_record.updated_at;
+            }
+        }
 
         info!(
             " Domain {} updated: v{} -> v{} (CID: {} -> {})",
@@ -933,13 +1061,13 @@ impl DomainRegistry {
             new_version - 1,
             new_version,
             &previous_manifest_cid[..16.min(previous_manifest_cid.len())],
-            &update_request.new_manifest_cid[..16.min(update_request.new_manifest_cid.len())]
+            &new_manifest_cid[..16.min(new_manifest_cid.len())]
         );
 
         Ok(DomainUpdateResponse {
             success: true,
             new_version,
-            new_manifest_cid: update_request.new_manifest_cid,
+            new_manifest_cid,
             previous_manifest_cid,
             updated_at: current_time,
             error: None,
@@ -1121,5 +1249,257 @@ impl Web4Manager {
     /// Get domain info (public method)
     pub async fn get_domain_info(&self, domain: &str) -> Result<DomainLookupResponse> {
         self.registry.lookup_domain(domain).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lib_identity::{ZhtpIdentity, IdentityType};
+    use tempfile::TempDir;
+
+    /// Create a test storage system with persistence enabled
+    async fn create_test_storage_with_persistence(persist_path: std::path::PathBuf) -> Arc<RwLock<UnifiedStorageSystem>> {
+        let mut config = lib_storage::UnifiedStorageConfig::default();
+        config.storage_config.dht_persist_path = Some(persist_path);
+        let storage = UnifiedStorageSystem::new(config).await.unwrap();
+        Arc::new(RwLock::new(storage))
+    }
+
+    /// Create a test identity for domain operations
+    fn create_test_identity() -> ZhtpIdentity {
+        ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "test_domain_owner",
+            None,
+        ).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_domain_persistence_round_trip() {
+        let temp_dir = TempDir::new().unwrap();
+        let persist_path = temp_dir.path().join("dht_storage.bin");
+
+        // Clean up any existing file
+        let _ = std::fs::remove_file(&persist_path);
+
+        let owner = create_test_identity();
+        let domain_name = "testapp.zhtp";
+
+        // Create registry and register a domain
+        {
+            let storage = create_test_storage_with_persistence(persist_path.clone()).await;
+            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+
+            // Register domain
+            let registration_proof = ZeroKnowledgeProof::new(
+                "Plonky2".to_string(),
+                hash_blake3(b"test_proof").to_vec(),
+                owner.id.0.to_vec(),
+                owner.id.0.to_vec(),
+                None,
+            );
+
+            let request = DomainRegistrationRequest {
+                domain: domain_name.to_string(),
+                owner: owner.clone(),
+                duration_days: 365,
+                metadata: DomainMetadata {
+                    title: "Test App".to_string(),
+                    description: "A test application".to_string(),
+                    category: "test".to_string(),
+                    tags: vec!["test".to_string()],
+                    public: true,
+                    economic_settings: DomainEconomicSettings {
+                        registration_fee: 10.0,
+                        renewal_fee: 5.0,
+                        transfer_fee: 2.5,
+                        hosting_budget: 100.0,
+                    },
+                },
+                initial_content: HashMap::new(),
+                registration_proof,
+                manifest_cid: None,
+            };
+
+            let response = registry.register_domain(request).await.unwrap();
+            assert!(response.success, "Domain registration should succeed");
+
+            // Verify domain exists
+            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            assert!(lookup.found, "Domain should be found");
+        }
+
+        // Create new registry with same storage path and verify domain persists
+        {
+            let storage = create_test_storage_with_persistence(persist_path.clone()).await;
+            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+
+            // Domain should be loaded from persistence
+            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            assert!(lookup.found, "Domain should persist across registry restarts");
+            assert_eq!(lookup.record.as_ref().unwrap().domain, domain_name);
+        }
+
+        // Clean up
+        let _ = std::fs::remove_file(&persist_path);
+    }
+
+    #[tokio::test]
+    async fn test_domain_update_persists() {
+        let temp_dir = TempDir::new().unwrap();
+        let persist_path = temp_dir.path().join("dht_storage_update.bin");
+
+        let _ = std::fs::remove_file(&persist_path);
+
+        let owner = create_test_identity();
+        let domain_name = "updatetest.zhtp";
+        let initial_manifest_cid: String;
+        let updated_manifest_cid = "bafknewmanifest123456".to_string();
+
+        // Create registry, register domain, then update it
+        {
+            let storage = create_test_storage_with_persistence(persist_path.clone()).await;
+            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+
+            // Register domain
+            let registration_proof = ZeroKnowledgeProof::new(
+                "Plonky2".to_string(),
+                hash_blake3(b"test_proof").to_vec(),
+                owner.id.0.to_vec(),
+                owner.id.0.to_vec(),
+                None,
+            );
+
+            let request = DomainRegistrationRequest {
+                domain: domain_name.to_string(),
+                owner: owner.clone(),
+                duration_days: 365,
+                metadata: DomainMetadata {
+                    title: "Update Test".to_string(),
+                    description: "Testing updates".to_string(),
+                    category: "test".to_string(),
+                    tags: vec![],
+                    public: true,
+                    economic_settings: DomainEconomicSettings {
+                        registration_fee: 10.0,
+                        renewal_fee: 5.0,
+                        transfer_fee: 2.5,
+                        hosting_budget: 100.0,
+                    },
+                },
+                initial_content: HashMap::new(),
+                registration_proof,
+                manifest_cid: None,
+            };
+
+            let response = registry.register_domain(request).await.unwrap();
+            assert!(response.success);
+
+            // Get initial manifest CID
+            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            initial_manifest_cid = lookup.record.as_ref().unwrap().current_manifest_cid.clone();
+
+            // Update domain
+            let update_request = DomainUpdateRequest {
+                domain: domain_name.to_string(),
+                new_manifest_cid: updated_manifest_cid.clone(),
+                expected_previous_manifest_cid: initial_manifest_cid.clone(),
+                signature: String::new(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            };
+
+            let update_response = registry.update_domain(update_request).await.unwrap();
+            assert!(update_response.success, "Domain update should succeed");
+            assert_eq!(update_response.new_version, 2);
+        }
+
+        // Verify update persisted across restart
+        {
+            let storage = create_test_storage_with_persistence(persist_path.clone()).await;
+            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+
+            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            assert!(lookup.found);
+            let record = lookup.record.unwrap();
+            assert_eq!(record.version, 2, "Version should be updated");
+            assert_eq!(record.current_manifest_cid, updated_manifest_cid, "Manifest CID should be updated");
+        }
+
+        let _ = std::fs::remove_file(&persist_path);
+    }
+
+    #[tokio::test]
+    async fn test_domain_release_persists() {
+        let temp_dir = TempDir::new().unwrap();
+        let persist_path = temp_dir.path().join("dht_storage_release.bin");
+
+        let _ = std::fs::remove_file(&persist_path);
+
+        let owner = create_test_identity();
+        let domain_name = "releasetest.zhtp";
+
+        // Create registry and register a domain
+        {
+            let storage = create_test_storage_with_persistence(persist_path.clone()).await;
+            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+
+            let registration_proof = ZeroKnowledgeProof::new(
+                "Plonky2".to_string(),
+                hash_blake3(b"test_proof").to_vec(),
+                owner.id.0.to_vec(),
+                owner.id.0.to_vec(),
+                None,
+            );
+
+            let request = DomainRegistrationRequest {
+                domain: domain_name.to_string(),
+                owner: owner.clone(),
+                duration_days: 365,
+                metadata: DomainMetadata {
+                    title: "Release Test".to_string(),
+                    description: "Testing release".to_string(),
+                    category: "test".to_string(),
+                    tags: vec![],
+                    public: true,
+                    economic_settings: DomainEconomicSettings {
+                        registration_fee: 10.0,
+                        renewal_fee: 5.0,
+                        transfer_fee: 2.5,
+                        hosting_budget: 100.0,
+                    },
+                },
+                initial_content: HashMap::new(),
+                registration_proof,
+                manifest_cid: None,
+            };
+
+            let response = registry.register_domain(request).await.unwrap();
+            assert!(response.success);
+
+            // Release the domain
+            let release_result = registry.release_domain(domain_name, &owner).await.unwrap();
+            assert!(release_result, "Domain release should succeed");
+
+            // Verify domain no longer exists
+            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            assert!(!lookup.found, "Domain should not be found after release");
+        }
+
+        // Verify release persisted across restart
+        {
+            let storage = create_test_storage_with_persistence(persist_path.clone()).await;
+            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+
+            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            assert!(!lookup.found, "Domain should remain deleted after restart");
+        }
+
+        let _ = std::fs::remove_file(&persist_path);
     }
 }
