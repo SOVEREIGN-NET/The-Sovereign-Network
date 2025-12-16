@@ -191,3 +191,4 @@ enhanced-parsing = ["quick-xml"] # Enhanced XML parsing
 enhanced-wifi-direct = ["aes", "cmac", "quick-xml"] # Complete WiFi Direct enhancements
 hardware-scanning = []
 identity-debug = []               # Enable detailed identity verification debug logging (production: disabled)
+ble-mock = []                     # Enable BLE mock testing framework for issue #141
