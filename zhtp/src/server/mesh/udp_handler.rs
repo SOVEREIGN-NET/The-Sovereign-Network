@@ -285,11 +285,12 @@ impl MeshRouter {
                         let our_pubkey = self.get_sender_public_key().await?;
                         
                         // Chunk data for UDP protocol
-                        match lib_network::blockchain_sync::BlockchainSyncManager::chunk_blockchain_data_for_protocol(
+                        match lib_network::blockchain_sync::BlockchainSyncManager::chunk_blockchain_data(
                             our_pubkey,
                             request_id,
                             blockchain_data,
-                            &NetworkProtocol::UDP
+                            Some(&NetworkProtocol::UDP),
+                            None,
                         ) {
                             Ok(chunk_messages) => {
                                 let chunk_count = chunk_messages.len();
@@ -374,8 +375,9 @@ impl MeshRouter {
         
         let sync_type = lib_network::blockchain_sync::SyncType::FullBlockchain;
         
-        // Add chunk to sync manager
+        // Add chunk to sync manager (with sender for security)
         match self.sync_manager.add_chunk(
+            sender.clone(),
             request_id,
             chunk_index,
             total_chunks,

@@ -784,8 +784,8 @@ mod tests {
         let server_hello = b"server_hello_data";
         let client_finish = b"client_finish_data";
 
-        let hash1 = compute_uhp_transcript_hash(client_hello, server_hello, client_finish);
-        let hash2 = compute_uhp_transcript_hash(client_hello, server_hello, client_finish);
+        let hash1 = compute_uhp_transcript_hash(client_hello, server_hello, client_finish, "client");
+        let hash2 = compute_uhp_transcript_hash(client_hello, server_hello, client_finish, "client");
 
         assert_eq!(hash1, hash2, "Transcript hash should be deterministic");
     }
@@ -796,8 +796,8 @@ mod tests {
         let server_hello = b"server_hello_data";
         let client_finish = b"client_finish_data";
 
-        let hash1 = compute_uhp_transcript_hash(client_hello, server_hello, client_finish);
-        let hash2 = compute_uhp_transcript_hash(b"different", server_hello, client_finish);
+        let hash1 = compute_uhp_transcript_hash(client_hello, server_hello, client_finish, "client");
+        let hash2 = compute_uhp_transcript_hash(b"different", server_hello, client_finish, "client");
 
         assert_ne!(hash1, hash2, "Transcript hash should change with input");
     }
