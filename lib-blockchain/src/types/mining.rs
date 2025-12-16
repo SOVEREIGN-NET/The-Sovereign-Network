@@ -142,9 +142,16 @@ impl MiningConfig {
             return Err("Low iteration limit requires high difficulty bits (easy mining)");
         }
 
-        // Mainnet shouldn't allow instant mining
-        if !self.allow_instant_mining && self.max_iterations < 1_000_000 {
-            // This is fine for testnet
+        // Configs with instant mining disabled need enough iterations
+        // Testnet: 100K iterations is acceptable
+        // Mainnet: needs 1M+ iterations
+        if !self.allow_instant_mining && self.max_iterations < 100_000 {
+            return Err("Non-bootstrap configs require at least 100K max iterations");
+        }
+
+        // Instant mining should only be used with easy difficulty
+        if self.allow_instant_mining && self.difficulty.bits() < 0x20000000 {
+            return Err("Instant mining requires easy difficulty (bits >= 0x20000000)");
         }
 
         Ok(())
@@ -161,31 +168,44 @@ impl Default for MiningConfig {
 ///
 /// This is a convenience function for code that doesn't have direct access
 /// to the Environment enum. It checks:
-/// 1. ZHTP_CHAIN_ID=1 (mainnet) → ALWAYS uses Mainnet profile (guardrail)
-/// 2. ZHTP_ALLOW_BOOTSTRAP=1 → Bootstrap profile (only for dev/testnet)
-/// 3. ZHTP_CHAIN_ID → Uses chain ID to determine profile
-/// 4. Default → Bootstrap (safe for alpha)
+/// 1. ZHTP_CHAIN_ID set but malformed → Mainnet (fail-safe)
+/// 2. ZHTP_CHAIN_ID=1 (mainnet) → ALWAYS uses Mainnet profile (guardrail)
+/// 3. ZHTP_ALLOW_BOOTSTRAP=1 → Bootstrap profile (only for dev/testnet)
+/// 4. ZHTP_CHAIN_ID → Uses chain ID to determine profile
+/// 5. Default (no env vars) → Bootstrap (safe for alpha)
 ///
-/// # Security Guardrail
-/// Bootstrap mode is NEVER allowed on mainnet (chain_id=1), even if
-/// ZHTP_ALLOW_BOOTSTRAP=1 is set. This prevents accidental mainnet
-/// deployments with trivial difficulty.
+/// # Security Guardrails
+/// - Bootstrap mode is NEVER allowed on mainnet (chain_id=1), even if
+///   ZHTP_ALLOW_BOOTSTRAP=1 is set
+/// - Malformed ZHTP_CHAIN_ID values (e.g., "mainnet" instead of "1") default
+///   to Mainnet for safety, NOT Bootstrap
 pub fn get_mining_config_from_env() -> MiningConfig {
-    // GUARDRAIL: Check for mainnet FIRST - never allow bootstrap on mainnet
+    // GUARDRAIL: Check for ZHTP_CHAIN_ID first
     if let Ok(chain_id_str) = std::env::var("ZHTP_CHAIN_ID") {
-        if let Ok(chain_id) = chain_id_str.parse::<u8>() {
-            if chain_id == 0x01 {
-                // Mainnet - ALWAYS use full difficulty regardless of other settings
-                if std::env::var("ZHTP_ALLOW_BOOTSTRAP").ok().map(|v| v == "1").unwrap_or(false) {
-                    tracing::warn!("⚠️ ZHTP_ALLOW_BOOTSTRAP ignored on mainnet - security guardrail active");
+        match chain_id_str.parse::<u8>() {
+            Ok(chain_id) => {
+                if chain_id == 0x01 {
+                    // Mainnet - ALWAYS use full difficulty regardless of other settings
+                    if std::env::var("ZHTP_ALLOW_BOOTSTRAP").ok().map(|v| v == "1").unwrap_or(false) {
+                        tracing::warn!("⚠️ ZHTP_ALLOW_BOOTSTRAP ignored on mainnet - security guardrail active");
+                    }
+                    tracing::info!("🔒 Mainnet detected: Using Mainnet mining profile (full difficulty)");
+                    return MiningProfile::Mainnet.config();
                 }
-                tracing::info!("🔒 Mainnet detected: Using Mainnet mining profile (full difficulty)");
+                // Valid non-mainnet chain ID - continue to check ZHTP_ALLOW_BOOTSTRAP
+            }
+            Err(_) => {
+                // SECURITY: Malformed chain ID - fail safe to Mainnet
+                tracing::error!(
+                    "⚠️ ZHTP_CHAIN_ID='{}' is invalid (expected 1/2/3). Defaulting to MAINNET for safety!",
+                    chain_id_str
+                );
                 return MiningProfile::Mainnet.config();
             }
         }
     }
 
-    // Check for explicit bootstrap mode (only works on dev/testnet)
+    // Check for explicit bootstrap mode (only works when ZHTP_CHAIN_ID is not mainnet or not set)
     if std::env::var("ZHTP_ALLOW_BOOTSTRAP")
         .ok()
         .map(|v| v == "1")
@@ -195,7 +215,7 @@ pub fn get_mining_config_from_env() -> MiningConfig {
         return MiningProfile::Bootstrap.config();
     }
 
-    // Check for explicit chain ID
+    // Check for explicit chain ID (we already validated it parses above)
     if let Ok(chain_id_str) = std::env::var("ZHTP_CHAIN_ID") {
         if let Ok(chain_id) = chain_id_str.parse::<u8>() {
             let profile = MiningProfile::from_chain_id(chain_id);
@@ -204,8 +224,8 @@ pub fn get_mining_config_from_env() -> MiningConfig {
         }
     }
 
-    // Default to Bootstrap for alpha safety
-    tracing::info!("Using default Bootstrap mining profile");
+    // Default to Bootstrap for alpha safety (only when NO env vars are set)
+    tracing::info!("Using default Bootstrap mining profile (no ZHTP_CHAIN_ID set)");
     MiningProfile::Bootstrap.config()
 }
 
