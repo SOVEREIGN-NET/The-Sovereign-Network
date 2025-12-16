@@ -1,7 +1,7 @@
 //! ZHTP Identity implementation from the original identity.rs
 
 use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use std::collections::HashMap;
 use lib_crypto::{Hash, PublicKey, PrivateKey};
 use lib_proofs::ZeroKnowledgeProof;
@@ -9,6 +9,39 @@ use lib_proofs::ZeroKnowledgeProof;
 use crate::types::{IdentityId, IdentityType, CredentialType, IdentityProofParams, IdentityVerification, AccessLevel, NodeId};
 use crate::credentials::ZkCredential;
 use crate::credentials::IdentityAttestation;
+
+// Custom serialization for HashMap<CredentialType, ZkCredential> to use string keys
+mod credentials_serde {
+    use super::*;
+
+    pub fn serialize<S>(map: &HashMap<CredentialType, ZkCredential>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut ser_map = serializer.serialize_map(Some(map.len()))?;
+        for (k, v) in map {
+            // Serialize CredentialType as string key
+            let key_str = serde_json::to_string(k).unwrap_or_else(|_| format!("{:?}", k));
+            ser_map.serialize_entry(&key_str, v)?;
+        }
+        ser_map.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<CredentialType, ZkCredential>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let string_map: HashMap<String, ZkCredential> = HashMap::deserialize(deserializer)?;
+        let mut result = HashMap::new();
+        for (k, v) in string_map {
+            if let Ok(key) = serde_json::from_str(&k) {
+                result.insert(key, v);
+            }
+        }
+        Ok(result)
+    }
+}
 
 /// ZHTP Identity with zero-knowledge privacy and integrated quantum wallet management
 ///
@@ -60,6 +93,7 @@ pub struct ZhtpIdentity {
     /// Zero-knowledge proof of identity ownership
     pub ownership_proof: ZeroKnowledgeProof,
     /// Associated credentials
+    #[serde(with = "credentials_serde")]
     pub credentials: HashMap<CredentialType, ZkCredential>,
     /// Reputation score (0-1000)
     pub reputation: u64,
