@@ -758,13 +758,16 @@ impl ZhtpIdentity {
             .ok_or_else(|| anyhow!("Missing did"))?
             .to_string();
 
-        // CRITICAL: Validate that DID matches ID to prevent identity corruption
-        let expected_did = format!("did:zhtp:{}", hex::encode(id.as_bytes()));
-        if did != expected_did {
+        // CRITICAL: Validate that ID matches Blake3(DID) to prevent identity corruption
+        // Note: For seed-anchored identities, DID is derived from seed first,
+        // then ID = Blake3(DID). So we validate ID = Blake3(DID), not DID = did:zhtp:{ID}.
+        let expected_id_bytes = lib_crypto::hash_blake3(did.as_bytes());
+        let expected_id = Hash::from_bytes(&expected_id_bytes.to_vec());
+        if id != expected_id {
             return Err(anyhow!(
-                "Identity corruption detected: DID '{}' does not match ID '{}'. \
-                Expected DID: '{}'. The keystore file may be corrupted.",
-                did, hex::encode(id.as_bytes()), expected_did
+                "Identity corruption detected: ID '{}' does not match Blake3(DID). \
+                DID: '{}', Expected ID: '{}'. The keystore file may be corrupted.",
+                hex::encode(id.as_bytes()), did, hex::encode(expected_id.as_bytes())
             ));
         }
 
