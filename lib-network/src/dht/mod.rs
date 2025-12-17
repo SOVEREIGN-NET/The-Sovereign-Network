@@ -31,12 +31,16 @@ use std::sync::Arc;
 use lib_crypto::hashing::hash_blake3;
 use hex;
 
-// Re-export lib-storage's DHT types (the actual backend)
+// Re-export lib-storage's public DHT types
+// Note: DhtStorage is NOT accessible - it's internal to lib-storage.
+// Use lib_storage::UnifiedStorageSystem for all storage operations.
 pub use lib_storage::dht::{
-    storage::DhtStorage,
     routing::KademliaRouter,
 };
 pub use lib_storage::types::dht_types::DhtNode;
+
+// Import UnifiedStorageSystem for lib-network's internal use
+use lib_storage::UnifiedStorageSystem;
 
 // Re-export our new transport layer
 pub use transport::{DhtTransport, PeerId, UdpDhtTransport, BleDhtTransport, MultiDhtTransport, PeerAddressResolver};
@@ -46,19 +50,25 @@ pub use relay::ZhtpRelayProtocol;
 // Note: DhtCache is internal, not re-exported
 
 /// Wrapper for DHT integration with mesh networking
+/// 
+/// **Note**: This now uses UnifiedStorageSystem internally (the canonical storage API).
 pub struct ZkDHTIntegration {
-    storage: Arc<RwLock<DhtStorage>>,
+    storage: Arc<RwLock<UnifiedStorageSystem>>,
 }
 
 impl ZkDHTIntegration {
-    pub fn new() -> Self {
-        Self {
-            storage: Arc::new(RwLock::new(DhtStorage::new_default())),
-        }
+    pub async fn new() -> Result<Self> {
+        // Create default UnifiedStorageSystem
+        let config = lib_storage::UnifiedStorageConfig::default();
+        let storage = UnifiedStorageSystem::new(config).await?;
+        
+        Ok(Self {
+            storage: Arc::new(RwLock::new(storage)),
+        })
     }
 
-    /// Create an integration from an existing DhtStorage (preferred path).
-    pub fn from_storage(storage: DhtStorage) -> Self {
+    /// Create an integration from an existing UnifiedStorageSystem.
+    pub fn from_storage(storage: UnifiedStorageSystem) -> Self {
         Self { storage: Arc::new(RwLock::new(storage)) }
     }
     
@@ -149,7 +159,7 @@ impl ZkDHTIntegration {
         Ok(map)
     }
 
-    pub fn get_storage_system(&self) -> Arc<RwLock<DhtStorage>> {
+    pub fn get_storage_system(&self) -> Arc<RwLock<UnifiedStorageSystem>> {
         self.storage.clone()
     }
 
@@ -159,7 +169,8 @@ impl ZkDHTIntegration {
     }
 }
 
-/// Backward-compatible DHT client that wraps ZkDHTIntegration with shared storage.
+/// Backward-compatible DHT client that wraps ZkDHTIntegration.
+/// Now uses UnifiedStorageSystem internally.
 pub struct DHTClient {
     inner: ZkDHTIntegration,
 }
@@ -167,7 +178,7 @@ pub struct DHTClient {
 impl DHTClient {
     pub async fn new(_identity: ZhtpIdentity) -> Result<Self> {
         Ok(Self {
-            inner: ZkDHTIntegration::new(),
+            inner: ZkDHTIntegration::new().await?,
         })
     }
 
@@ -175,7 +186,7 @@ impl DHTClient {
         Self { inner }
     }
 
-    pub fn get_storage_system(&self) -> Arc<RwLock<DhtStorage>> {
+    pub fn get_storage_system(&self) -> Arc<RwLock<UnifiedStorageSystem>> {
         self.inner.get_storage_system()
     }
 

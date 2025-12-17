@@ -25,7 +25,7 @@
 pub mod node;
 pub mod routing;
 pub mod network;
-pub mod storage;
+pub(crate) mod storage; // Internal implementation - use UnifiedStorageSystem instead
 pub mod messaging;
 pub mod peer_management;
 pub mod replication;
@@ -36,7 +36,10 @@ pub mod transport; // Ticket #152: Multi-protocol transport abstraction
 pub use node::*;
 pub use routing::*;
 pub use network::*;
-pub use storage::*;
+// Storage module is NOT re-exported - use UnifiedStorageSystem from crate root
+// However, StorageStats is public since it's part of UnifiedStorageSystem's API
+pub use storage::StorageStats;
+// Internal modules can access DhtStorage via crate::dht::storage::DhtStorage
 pub use messaging::*;
 pub use peer_management::*;
 pub use replication::*;

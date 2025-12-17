@@ -63,8 +63,11 @@ async fn atomic_write_async(path: PathBuf, bytes: Vec<u8>) -> std::io::Result<()
 /// DHT storage manager with networking
 ///
 /// **MIGRATED (Ticket #148):** Now uses shared PeerRegistry for DHT peer storage
+/// 
+/// **INTERNAL USE ONLY**: This is an internal implementation detail of lib-storage.
+/// External crates must use [`UnifiedStorageSystem`](crate::UnifiedStorageSystem) instead.
 #[derive(Debug)]
-pub struct DhtStorage {
+pub(crate) struct DhtStorage {
     /// Local storage for key-value pairs
     storage: HashMap<String, StorageEntry>,
     /// Maximum storage size per node (in bytes)

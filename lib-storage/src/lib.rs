@@ -55,8 +55,11 @@ pub use types::economic_types::{
     StorageRequirements, PaymentPreferences, QualityRequirements, BudgetConstraints
 };
 
-// Re-export DHT and content management
+// Re-export DHT components (DhtStorage is NOT exported - it's internal)
+// Use UnifiedStorageSystem for all storage operations
 pub use dht::*;
+// Re-export DHT StorageStats as DhtStorageStats to avoid conflict with UnifiedStorageSystem's StorageStats
+pub use dht::storage::StorageStats as DhtStorageStats;
 pub use economic::{
     pricing::*, market::*, reputation::*, payments::*, incentives::*, 
     quality::*, penalties::*, rewards::*, manager::*
@@ -186,7 +189,7 @@ impl UnifiedStorageSystem {
         )?;
 
         // Initialize DHT storage with optional persistence
-        let mut dht_storage = match &config.storage_config.dht_persist_path {
+        let dht_storage = match &config.storage_config.dht_persist_path {
             Some(persist_path) => {
                 let mut storage = dht::storage::DhtStorage::new_with_persistence(
                     node_id.clone(),
@@ -586,6 +589,44 @@ impl UnifiedStorageSystem {
 
         tracing::info!("Listed {} domain records from DHT storage", records.len());
         Ok(records)
+    }
+
+    // ========================================================================
+    // Generic DHT Storage Operations - For Blockchain Indexing
+    // ========================================================================
+
+    /// Store arbitrary data in DHT storage with a string key
+    /// This is a low-level operation for blockchain indexing and other internal uses
+    /// Note: ttl parameter is ignored in current implementation (for API compatibility)
+    pub async fn store(&mut self, key: String, data: Vec<u8>, _ttl: Option<u64>) -> Result<()> {
+        self.dht_storage.store(key, data, None).await
+    }
+
+    /// Retrieve data from DHT storage by string key
+    /// Returns None if the key doesn't exist
+    pub async fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
+        self.dht_storage.get(key).await
+    }
+
+    /// Remove data from DHT storage by key
+    pub async fn remove(&mut self, key: &str) -> Result<()> {
+        self.dht_storage.remove(key).await?;
+        Ok(())
+    }
+
+    /// List all keys matching a prefix
+    pub async fn list_keys_with_prefix(&mut self, prefix: &str) -> Result<Vec<String>> {
+        self.dht_storage.list_keys_with_prefix(prefix).await
+    }
+
+    /// Get storage statistics (delegation to internal DhtStorage)
+    pub fn get_storage_stats(&self) -> DhtStorageStats {
+        self.dht_storage.get_storage_stats()
+    }
+
+    /// Get list of known DHT nodes (delegation to internal DhtStorage)
+    pub fn get_known_nodes(&self) -> Vec<&crate::types::dht_types::DhtNode> {
+        self.dht_storage.get_known_nodes()
     }
 }
 

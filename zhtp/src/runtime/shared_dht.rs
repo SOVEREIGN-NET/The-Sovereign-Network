@@ -31,7 +31,7 @@ pub async fn initialize_global_dht(identity: ZhtpIdentity) -> Result<()> {
     info!("Initializing global DHT client instance (singleton)");
     
     // Create the DHT client (uses lib-storage backend)
-    let mut dht_client = ZkDHTIntegration::new();
+    let mut dht_client = ZkDHTIntegration::new().await?;
     dht_client.initialize(identity).await?;
     
     // Store in global container wrapped in Arc<RwLock<_>> for mutable access

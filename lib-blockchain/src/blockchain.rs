@@ -16,7 +16,7 @@ use crate::integration::zk_integration::ZkTransactionProof;
 use crate::integration::economic_integration::{EconomicTransactionProcessor, TreasuryStats};
 use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, ConsensusStatus};
 use crate::integration::storage_integration::{BlockchainStorageManager, BlockchainStorageConfig, StorageOperationResult};
-use lib_storage::dht::storage::DhtStorage;
+use lib_storage::UnifiedStorageSystem;
 
 /// Messages for real-time blockchain synchronization
 #[derive(Debug, Clone)]
@@ -579,7 +579,7 @@ impl Blockchain {
     pub async fn add_block_with_dht_indexing(
         &mut self,
         block: Block,
-        dht_storage: std::sync::Arc<tokio::sync::Mutex<DhtStorage>>,
+        dht_storage: std::sync::Arc<tokio::sync::Mutex<UnifiedStorageSystem>>,
     ) -> Result<()> {
         self.add_block(block.clone())?;
 

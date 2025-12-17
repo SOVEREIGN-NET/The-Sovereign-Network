@@ -69,7 +69,7 @@ use lib_network::routing::message_routing::MeshMessageRouter;
 use lib_blockchain::types::Hash;
 use lib_blockchain::BlockchainBroadcastMessage;
 use lib_identity::IdentityManager;
-use lib_storage::dht::DhtStorage;
+use lib_storage::UnifiedStorageSystem;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use super::rate_limiting::ConnectionRateLimiter;
 use super::identity_verification::IdentityVerificationCache;
@@ -128,7 +128,7 @@ pub struct MeshRouter {
     pub mesh_message_router: Arc<RwLock<MeshMessageRouter>>,
     
     // DHT storage and routing
-    pub dht_storage: Arc<tokio::sync::Mutex<DhtStorage>>,
+    pub dht_storage: Arc<tokio::sync::Mutex<Option<UnifiedStorageSystem>>>,
     pub dht_handler: Arc<RwLock<Option<Arc<dyn ZhtpRequestHandler>>>>,
     /// DHT payload sender for wiring to message handlers (Ticket #154)
     pub dht_payload_sender: Arc<tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)>>,
@@ -218,9 +218,9 @@ impl MeshRouter {
             storage_info: None,
         };
         
-        // Create DHT storage synchronously (no network init yet) - 10GB max
-        let dht_storage_instance = DhtStorage::new(local_node_id.clone(), 10_000_000_000);
-        let dht_storage = Arc::new(tokio::sync::Mutex::new(dht_storage_instance));
+        // Create DHT storage placeholder - will be initialized async
+        // UnifiedStorageSystem requires async initialization, so we start with None
+        let dht_storage = Arc::new(tokio::sync::Mutex::new(None));
 
         // Create mesh message router BEFORE DHT initialization (Ticket #154)
         let mesh_message_router = Arc::new(RwLock::new(
@@ -246,40 +246,39 @@ impl MeshRouter {
         // Store the sender for later wiring to message handlers
         let dht_payload_sender = Arc::new(dht_payload_sender);
 
-        // Spawn async task to initialize DHT network with mesh routing
-        // This avoids the "cannot block_on inside runtime" panic
+        // Note: UnifiedStorageSystem handles DHT network initialization internally
+        // Custom transport injection is no longer supported through the public API
+
+        // Initialize UnifiedStorageSystem asynchronously
         {
-            let dht_storage_task = dht_storage.clone();
-            let local_node_for_task = local_node.clone();
-            let transport_for_task = mesh_dht_transport.clone();
+            let dht_storage_arc = dht_storage.clone();
+            let node_id = local_node_id.clone();
             tokio::spawn(async move {
-                // Initialize network-enabled DHT with mesh transport (Ticket #154)
-                match DhtStorage::new_with_transport(
-                    local_node_for_task,
-                    transport_for_task,
-                    10_000_000_000
-                ) {
-                    Ok(mut network_storage) => {
-                        let _ = network_storage.start_network_processing().await;
-                        let mut storage = dht_storage_task.lock().await;
-                        *storage = network_storage;
-                        debug!("DHT network storage initialized with mesh routing (Ticket #154)");
+                let storage_config = lib_storage::UnifiedStorageConfig {
+                    node_id: node_id.clone(),
+                    addresses: vec![format!("127.0.0.1:{}", 33445)],
+                    economic_config: lib_storage::EconomicManagerConfig::default(),
+                    storage_config: lib_storage::StorageConfig {
+                        max_storage_size: 10_000_000_000,
+                        default_tier: lib_storage::StorageTier::Hot,
+                        enable_compression: true,
+                        enable_encryption: true,
+                        dht_persist_path: None,
+                    },
+                    erasure_config: lib_storage::ErasureConfig {
+                        data_shards: 4,
+                        parity_shards: 2,
+                    },
+                };
+                match lib_storage::UnifiedStorageSystem::new(storage_config).await {
+                    Ok(storage_system) => {
+                        let mut storage = dht_storage_arc.lock().await;
+                        *storage = Some(storage_system);
+                        debug!("UnifiedStorageSystem initialized successfully");
                     }
                     Err(e) => {
-                        debug!("DHT network initialization failed (using local-only mode): {}", e);
+                        debug!("Failed to initialize UnifiedStorageSystem: {}", e);
                     }
-                }
-            });
-        }
-
-        // Spawn cleanup task for DHT rate limits (every 5 minutes)
-        {
-            let rate_limit_cleanup_interval = tokio::time::Duration::from_secs(300);
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(rate_limit_cleanup_interval).await;
-                    // Rate limit cleanup is handled internally by the message handler
-                    debug!("DHT rate limit cleanup cycle completed");
                 }
             });
         }
@@ -333,7 +332,7 @@ impl MeshRouter {
     }
 
     /// Expose the shared DHT storage handle for consumers that need to index data.
-    pub fn dht_storage(&self) -> Arc<tokio::sync::Mutex<DhtStorage>> {
+    pub fn dht_storage(&self) -> Arc<tokio::sync::Mutex<Option<UnifiedStorageSystem>>> {
         self.dht_storage.clone()
     }
     

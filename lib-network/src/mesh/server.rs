@@ -931,7 +931,7 @@ impl ZhtpMeshServer {
         );
         
         // Initialize DHT integration
-        let dht = Arc::new(RwLock::new(ZkDHTIntegration::new()));
+        let dht = Arc::new(RwLock::new(ZkDHTIntegration::new().await?));
         
         // Initialize routing statistics (in-memory counters only)
         let routing_stats = Arc::new(RwLock::new(RoutingStats::default()));
