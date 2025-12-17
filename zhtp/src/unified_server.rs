@@ -481,6 +481,7 @@ impl ZhtpUnifiedServer {
                 account_lockout,
                 csrf_protection,
                 recovery_phrase_manager,
+                storage.clone(),
             )
         );
         zhtp_router.register_handler("/api/v1/identity".to_string(), identity_handler);
