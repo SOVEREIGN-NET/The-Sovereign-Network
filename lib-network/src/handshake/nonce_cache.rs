@@ -182,13 +182,19 @@ impl NonceCache {
         let db = Arc::new(db);
 
         // Load or create network epoch
-        let mut epoch = Self::load_epoch(&db)?;
+        let epoch = Self::load_epoch(&db)?;
         info!("Loaded network epoch: {}", epoch.current());
 
-        // CRITICAL: Increment epoch on each startup (prevents cross-restart replay)
-        epoch.increment();
-        Self::save_epoch(&db, &epoch)?;
-        info!("Incremented network epoch to: {} (restart detected)", epoch.current());
+        // ALPHA FIX: Do NOT increment epoch on open - this was causing epoch desync
+        // between client and server because NonceCache::open() is called per-handshake.
+        // The epoch increment belongs in a singleton initialization, not per-open.
+        // TODO: Implement proper network-derived epoch (genesis hash or chain height)
+        // For alpha, epoch remains constant to allow handshakes to work.
+        //
+        // Previous code (caused handshake failures):
+        // epoch.increment();
+        // Self::save_epoch(&db, &epoch)?;
+        // info!("Incremented network epoch to: {} (restart detected)", epoch.current());
 
         // Create memory cache
         let capacity = std::num::NonZeroUsize::new(max_memory_size)
