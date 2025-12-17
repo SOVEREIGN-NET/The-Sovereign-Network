@@ -45,6 +45,7 @@ pub struct IdentityHandler {
     account_lockout: Arc<login_handlers::AccountLockout>,
     csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
     recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
+    storage_system: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
 }
 
 impl IdentityHandler {
@@ -56,6 +57,7 @@ impl IdentityHandler {
         account_lockout: Arc<login_handlers::AccountLockout>,
         csrf_protection: Arc<crate::api::middleware::CsrfProtection>,
         recovery_phrase_manager: Arc<RwLock<RecoveryPhraseManager>>,
+        storage_system: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
     ) -> Self {
         Self {
             identity_manager,
@@ -65,6 +67,7 @@ impl IdentityHandler {
             account_lockout,
             csrf_protection,
             recovery_phrase_manager,
+            storage_system,
         }
     }
 }
@@ -394,7 +397,26 @@ impl IdentityHandler {
             if let Err(e) = self.submit_wallet_to_blockchain(savings_wallet_tx).await {
                 tracing::warn!("Failed to submit savings wallet to blockchain: {}", e);
             }
-            
+
+            // Persist identity to DHT for fast lookups (derived cache, not source of truth)
+            // This enables stateless API restarts and horizontal scaling
+            match serde_json::to_vec(&citizenship_result) {
+                Ok(identity_data) => {
+                    let mut storage = self.storage_system.write().await;
+                    if let Err(e) = storage.store_identity_record(
+                        &citizenship_result.identity_id.to_string(),
+                        &identity_data
+                    ).await {
+                        tracing::warn!("Failed to persist identity to DHT (non-fatal): {}", e);
+                    } else {
+                        tracing::info!(" Identity {} persisted to DHT cache", citizenship_result.identity_id);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to serialize identity for DHT (non-fatal): {}", e);
+                }
+            }
+
             CreateIdentityResponse {
                 status: "citizen_created".to_string(),
                 identity_id: citizenship_result.identity_id.to_string(),
