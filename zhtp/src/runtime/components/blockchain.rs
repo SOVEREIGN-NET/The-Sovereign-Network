@@ -370,7 +370,7 @@ impl BlockchainComponent {
 
                                     // Auto-persist blockchain after mining
                                     blockchain_guard.increment_persist_counter();
-                                    const PERSIST_INTERVAL: u64 = 5; // Save every 5 blocks
+                                    const PERSIST_INTERVAL: u64 = 1; // Save every block
                                     if blockchain_guard.should_auto_persist(PERSIST_INTERVAL) {
                                         // Use environment-specific path
                                         let persist_path_str = env_for_persist.blockchain_data_path();
