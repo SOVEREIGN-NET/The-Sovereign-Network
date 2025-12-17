@@ -143,7 +143,7 @@ jobs:
       - name: Deploy Binary and Service
         run: |
           scp -i ~/.ssh/deploy_key ./zhtp ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }}:/opt/zhtp/zhtp.new
-          scp -i ~/.ssh/deploy_key ./deploy/zhtp.service ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }}:/tmp/zhtp.service
+          scp -i ~/.ssh/deploy_key ./deploy/zhtp-dev.service ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }}:/tmp/zhtp.service
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }} '
             cd /opt/zhtp &&
             systemctl stop zhtp 2>/dev/null || true &&
