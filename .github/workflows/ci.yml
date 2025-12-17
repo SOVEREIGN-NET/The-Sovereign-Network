@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [development]
+    branches: [development, main]
   pull_request:
-    branches: [development]
+    branches: [development, main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -56,22 +56,23 @@ jobs:
         run: cargo build --workspace --locked
 
       - name: Build Release Binary
-        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')
         run: cargo build --release -p zhtp
 
       - name: Upload Release Artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')
         uses: actions/upload-artifact@v4
         with:
           name: zhtp-binary
           path: target/release/zhtp
           retention-days: 1
 
-  deploy:
-    name: Deploy to Dev Server
+  # Deploy to production server (main branch)
+  deploy-production:
+    name: Deploy to Production Server
     needs: smoke
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout (for service file)
         uses: actions/checkout@v4
@@ -108,5 +109,50 @@ jobs:
             systemctl daemon-reload &&
             systemctl enable zhtp &&
             systemctl start zhtp &&
-            echo "Deployed and started at $(date)"
+            echo "Deployed to PRODUCTION at $(date)"
+          '
+
+  # Deploy to dev server (development branch) - uses separate secrets
+  deploy-development:
+    name: Deploy to Dev Server
+    needs: smoke
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+    steps:
+      - name: Checkout (for service file)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: deploy
+
+      - name: Download Release Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zhtp-binary
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEV_DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          for i in 1 2 3; do
+            ssh-keyscan -T 10 -H ${{ secrets.DEV_DEPLOY_HOST }} >> ~/.ssh/known_hosts && break
+            echo "ssh-keyscan attempt $i failed, retrying..."
+            sleep 2
+          done
+
+      - name: Deploy Binary and Service
+        run: |
+          scp -i ~/.ssh/deploy_key ./zhtp ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }}:/opt/zhtp/zhtp.new
+          scp -i ~/.ssh/deploy_key ./deploy/zhtp.service ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }}:/tmp/zhtp.service
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }} '
+            cd /opt/zhtp &&
+            systemctl stop zhtp 2>/dev/null || true &&
+            if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
+            mv zhtp.new zhtp &&
+            chmod +x zhtp &&
+            mv /tmp/zhtp.service /etc/systemd/system/zhtp.service &&
+            systemctl daemon-reload &&
+            systemctl enable zhtp &&
+            systemctl start zhtp &&
+            echo "Deployed to DEV at $(date)"
           '
