@@ -17,10 +17,10 @@ Persistent implementation plan. Each phase is a review checkpoint; I will pause 
   - [x] Implement `chunk.rs` and `errors.rs` per comment.
   - [ ] Ensure `lib-types` builds standalone.
 
-- [ ] Phase 3 — Wire workspace dependencies
-  - [ ] Update root `Cargo.toml` to include `lib-types` (first).
-  - [ ] Add `lib-types` dependency to `lib-network`, `lib-storage`, and other consumers.
-  - [ ] Confirm `lib-types` has no internal crate dependencies.
+- [x] Phase 3 — Wire workspace dependencies
+  - [x] Update root `Cargo.toml` to include `lib-types` (first).
+  - [x] Add `lib-types` dependency to `lib-network` and `lib-storage` (others will be added as imports migrate).
+  - [x] Confirm `lib-types` has no internal crate dependencies.
 
 - [ ] Phase 4 — Migrate NodeId/DHT/chunk uses
   - [ ] Replace imports of moved types to use `lib_types::{...}` across crates.

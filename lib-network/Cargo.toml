@@ -111,6 +111,7 @@ aes = { version = "0.8", optional = true }          # AES encryption for WPA3-SA
 cmac = { version = "0.7", optional = true }         # CMAC for authentication protocols
 
 # ZHTP package dependencies
+lib-types = { path = "../lib-types" }
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-economy = { path = "../lib-economy" }
