@@ -86,7 +86,6 @@ impl MeshMessageHandler {
     ///
     /// This connects the message handler to the MeshDhtTransport's receiver,
     /// allowing DHT payloads received over mesh to be processed by DhtStorage.
-    #[cfg(feature = "storage-integration")]
     pub fn set_dht_payload_sender(
         &mut self,
         sender: DhtPayloadSender

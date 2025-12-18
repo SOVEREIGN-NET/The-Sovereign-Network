@@ -6,14 +6,16 @@
 
 use crate::{ProtocolError, Result};
 use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
-use lib_storage::types::ContentHash;
 // use lib_blockchain::get_shared_blockchain; // Removed - use zhtp::runtime::blockchain_provider instead
 
 use serde::{Serialize, Deserialize};
 
 use crate::crypto::ZhtpCrypto;
 use crate::economics::ZhtpEconomics;
-use crate::storage::StorageIntegration;
+#[cfg(feature = "storage")]
+use crate::storage::{StorageIntegration, StorageConfig};
+#[cfg(not(feature = "storage"))]
+use crate::storage_stub::{StorageIntegration, StorageConfig};
 use crate::identity::{ProtocolIdentityService, IdentityServiceConfig};
 use std::collections::HashMap;
 
@@ -73,7 +75,7 @@ impl ZhtpIntegration {
         let crypto = ZhtpCrypto::new()?;
         let economics = ZhtpEconomics::new(crate::economics::EconomicConfig::default())?;
         
-        let storage = StorageIntegration::new(crate::storage::StorageConfig::default()).await?;
+        let storage = StorageIntegration::new(StorageConfig::default())?;
         
         // Initialize identity manager and service
         let identity_manager = lib_identity::IdentityManager::new();
@@ -264,7 +266,7 @@ impl ZhtpIntegration {
                         popularity_metrics: None,
                         economic_info: None,
                         privacy_level: 50, // Default privacy level
-                        hash: ContentHash::from_bytes(&lib_crypto::hash_blake3(&request.body)),
+                        hash: lib_crypto::hash_blake3(&request.body).to_vec(),
                         encryption_info: None,
                         compression_info: None,
                         integrity_checksum: Some(lib_crypto::hash_blake3(&request.body).to_vec()),
@@ -272,15 +274,6 @@ impl ZhtpIntegration {
                         source_attribution: None,
                         geographic_origin: None,
                         expires_at: None,
-                    };
-
-                    let storage_request = crate::storage::ZhtpStorageRequest {
-                        content: request.body.clone(),
-                        metadata: metadata.clone(),
-                        replication: Some(3),
-                        duration_days: 30,
-                        max_cost: Some(10000),
-                        preferred_regions: vec!["global".to_string()],
                     };
 
                     // Create uploader identity from request context
@@ -358,9 +351,16 @@ impl ZhtpIntegration {
                         jurisdiction: None,
                     };
 
-                    match self.storage.store_content(&request.body, metadata, uploader, request).await {
-                        Ok(content_id) => StorageResult::Stored(content_id),
-                        Err(e) => StorageResult::Error(e.to_string()),
+                    #[cfg(feature = "storage")]
+                    {
+                        match self.storage.store_content(&request.body, metadata, uploader, request).await {
+                            Ok(content_id) => StorageResult::Stored(content_id),
+                            Err(e) => StorageResult::Error(e.to_string()),
+                        }
+                    }
+                    #[cfg(not(feature = "storage"))]
+                    {
+                        StorageResult::Error("Storage integration disabled".to_string())
                     }
                 } else {
                     StorageResult::NoAction
@@ -432,10 +432,17 @@ impl ZhtpIntegration {
                             jurisdiction: None,
                         };
                         
-                        match self.storage.retrieve_content(content_id, requester, request).await {
-                            Ok(Some((content, _metadata))) => StorageResult::Retrieved(content),
-                            Ok(None) => StorageResult::NotFound,
-                            Err(e) => StorageResult::Error(e.to_string()),
+                        #[cfg(feature = "storage")]
+                        {
+                            match self.storage.retrieve_content(content_id, requester, request).await {
+                                Ok(Some((content, _metadata))) => StorageResult::Retrieved(content),
+                                Ok(None) => StorageResult::NotFound,
+                                Err(e) => StorageResult::Error(e.to_string()),
+                            }
+                        }
+                        #[cfg(not(feature = "storage"))]
+                        {
+                            StorageResult::Error("Storage integration disabled".to_string())
                         }
                     }
                     None => {
@@ -447,10 +454,17 @@ impl ZhtpIntegration {
             ZhtpMethod::Delete => {
                 // Delete content
                 let content_id = request.uri.trim_start_matches("/content/");
-                match self.storage.delete_content(content_id, request).await {
-                    Ok(true) => StorageResult::Deleted,
-                    Ok(false) => StorageResult::NotFound,
-                    Err(e) => StorageResult::Error(e.to_string()),
+                #[cfg(feature = "storage")]
+                {
+                    match self.storage.delete_content(content_id, request).await {
+                        Ok(true) => StorageResult::Deleted,
+                        Ok(false) => StorageResult::NotFound,
+                        Err(e) => StorageResult::Error(e.to_string()),
+                    }
+                }
+                #[cfg(not(feature = "storage"))]
+                {
+                    StorageResult::Error("Storage integration disabled".to_string())
                 }
             }
             _ => StorageResult::NoAction,
@@ -606,14 +620,6 @@ impl ZhtpIntegration {
                     lib_identity::AccessLevel::Restricted => {
                         return Err(ProtocolError::AccessDenied(
                             "Restricted access level cannot perform this operation".to_string()
-                        ));
-                    }
-                    lib_identity::AccessLevel::Organization => {
-                        // Organizations have standard access
-                    }
-                    lib_identity::AccessLevel::Restricted => {
-                        return Err(ProtocolError::AccessDenied(
-                            "Restricted access level cannot perform any operations".to_string()
                         ));
                     }
                 }
@@ -828,8 +834,15 @@ pub mod packages {
             crate::economics::ZhtpEconomics::new(crate::economics::EconomicConfig::default()).is_ok());
         
         // Test lib-storage health
-        health.insert("lib-storage".to_string(), 
-            crate::storage::StorageIntegration::new(crate::storage::StorageConfig::default()).await.is_ok());
+        #[cfg(feature = "storage")]
+        {
+            health.insert("lib-storage".to_string(), 
+                crate::storage::StorageIntegration::new(crate::storage::StorageConfig::default()).await.is_ok());
+        }
+        #[cfg(not(feature = "storage"))]
+        {
+            health.insert("lib-storage".to_string(), false);
+        }
         
         // Test lib-blockchain health
         #[cfg(feature = "blockchain")]

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use lib_crypto::PostQuantumSignature;
-use lib_storage::types::ContentHash;
+use crate::storage_stub::ContentHash;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_economy::Priority;
 use crate::types::ZHTP_VERSION;

@@ -64,13 +64,14 @@ use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
 use lib_network::protocols::quic_mesh::QuicMeshProtocol;
 use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptionSession};
 use lib_network::protocols::zhtp_auth::ZhtpAuthManager;
-use lib_network::dht::relay::ZhtpRelayProtocol;
+use crate::web4_stub::ZhtpRelayProtocol;
 use lib_network::routing::message_routing::MeshMessageRouter;
 use lib_blockchain::types::Hash;
 use lib_blockchain::BlockchainBroadcastMessage;
 use lib_identity::IdentityManager;
 use lib_storage::dht::DhtStorage;
 use lib_protocols::zhtp::ZhtpRequestHandler;
+use crate::web4_stub::MeshDhtTransport;
 use super::rate_limiting::ConnectionRateLimiter;
 use super::identity_verification::IdentityVerificationCache;
 
@@ -132,7 +133,7 @@ pub struct MeshRouter {
     pub dht_storage: Arc<tokio::sync::Mutex<DhtStorage>>,
     pub dht_handler: Arc<RwLock<Option<Arc<dyn ZhtpRequestHandler>>>>,
     /// DHT payload sender for wiring to message handlers (Ticket #154)
-    pub dht_payload_sender: Arc<tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)>>,
+    pub dht_payload_sender: Arc<tokio::sync::mpsc::UnboundedSender<(Vec<u8>, Vec<u8>)>>,
     
     // ZHTP API router for all endpoints
     pub zhtp_router: Arc<RwLock<Option<Arc<crate::server::zhtp::ZhtpRouter>>>>,
@@ -272,15 +273,23 @@ impl MeshRouter {
         // wired to the node's actual identity keypair after handshake completes
         let dht_keypair = Arc::new(lib_crypto::KeyPair::generate()
             .expect("Failed to generate DHT keypair"));
-        let (mesh_dht_transport, dht_payload_sender) =
-            lib_network::routing::dht_router_adapter::MeshDhtTransport::new(
+        let (mesh_dht_transport, dht_payload_sender_raw) =
+            MeshDhtTransport::new(
                 mesh_message_router.clone(),
                 dht_keypair,
             );
+        // Map PeerId into raw bytes for lib-network handler compatibility
+        let (mapped_tx, mut mapped_rx) = tokio::sync::mpsc::unbounded_channel::<(Vec<u8>, Vec<u8>)>();
+        tokio::spawn(async move {
+            while let Some((data, peer_bytes)) = mapped_rx.recv().await {
+                let peer_id = lib_storage::dht::transport::PeerId::Mesh(peer_bytes);
+                let _ = dht_payload_sender_raw.send((data, peer_id));
+            }
+        });
         let mesh_dht_transport = Arc::new(mesh_dht_transport);
 
         // Store the sender for later wiring to message handlers
-        let dht_payload_sender = Arc::new(dht_payload_sender);
+        let dht_payload_sender = Arc::new(mapped_tx);
 
         // Spawn async task to initialize DHT network with mesh routing
         // This avoids the "cannot block_on inside runtime" panic
@@ -417,7 +426,7 @@ impl MeshRouter {
     }
 
     /// Get the DHT payload sender for wiring to external message handlers
-    pub fn get_dht_payload_sender(&self) -> tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)> {
+    pub fn get_dht_payload_sender(&self) -> tokio::sync::mpsc::UnboundedSender<(Vec<u8>, Vec<u8>)> {
         (*self.dht_payload_sender).clone()
     }
     

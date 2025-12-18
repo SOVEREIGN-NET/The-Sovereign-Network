@@ -14,7 +14,7 @@ use uuid;
 
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus};
-use lib_network::ZkDHTIntegration;
+use lib_network::dht::ZkDHTIntegration;
 // Removed unused ZhtpHeaders, NetworkStatus
 use lib_identity::ZhtpIdentity;
 

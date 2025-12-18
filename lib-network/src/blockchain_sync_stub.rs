@@ -4,8 +4,16 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use lib_crypto::PublicKey;
+use crate::protocols::bluetooth::gatt::EdgeSyncMessage;
+use crate::types::mesh_message::BlockchainRequestType;
 
 pub type BlockHeader = Vec<u8>;
+
+#[derive(Clone, Copy, Debug)]
+pub enum SyncType {
+    EdgeNode,
+    FullBlockchain,
+}
 
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ChainProof {
@@ -35,6 +43,29 @@ impl BlockchainSyncManager {
         _complete_data_hash: [u8; 32],
     ) -> Result<Option<Vec<u8>>> {
         Ok(None)
+    }
+
+    pub async fn cleanup_stale_chunks(&self) -> Result<()> {
+        Ok(())
+    }
+
+    pub async fn register_authenticated_peer(&self, _peer: &PublicKey) -> Result<()> {
+        Ok(())
+    }
+
+    pub async fn create_blockchain_request(
+        &self,
+        _peer: PublicKey,
+        _maybe_type: Option<BlockchainRequestType>,
+    ) -> Result<(u64, EdgeSyncMessage)> {
+        Ok((
+            1,
+            EdgeSyncMessage::HeadersRequest {
+                request_id: 1,
+                start_height: 0,
+                count: 0,
+            },
+        ))
     }
 }
 
@@ -79,5 +110,33 @@ pub struct SyncCoordinator;
 impl SyncCoordinator {
     pub fn new() -> Self {
         Self
+    }
+
+    pub async fn register_peer_protocol(
+        &self,
+        _peer: PublicKey,
+        _protocol: crate::protocols::NetworkProtocol,
+        _sync_type: SyncType,
+    ) -> bool {
+        true
+    }
+
+    pub async fn start_sync(
+        &self,
+        _peer: PublicKey,
+        _request_id: u64,
+        _sync_type: SyncType,
+        _protocol: crate::protocols::NetworkProtocol,
+    ) {
+    }
+
+    pub async fn fail_sync(&self, _peer: &PublicKey, _request_id: u64, _sync_type: SyncType) {
+    }
+
+    pub async fn complete_sync(&self, _peer: &PublicKey, _request_id: u64, _sync_type: SyncType) {
+    }
+
+    pub async fn find_peer_by_sync_id(&self, _request_id: u64) -> Option<(PublicKey, SyncType)> {
+        None
     }
 }

@@ -110,7 +110,6 @@ pub mod testing;
 #[cfg(feature = "testing")]
 // pub mod testing;
 
-use crate::types::ZHTP_VERSION;
 
 // Protocol constants
 pub const ZDNS_VERSION: &str = "1.0";
@@ -151,7 +150,7 @@ pub use storage_stub::{StorageIntegration, StorageConfig, StorageContract};
 pub use identity::{ProtocolIdentityService, IdentityServiceConfig, IdentitySession, IdentityAuthRequest, IdentityAuthResponse};
 pub use integration::{ZhtpIntegration, IntegrationConfig, IntegrationStats};
 pub use wire::{ZhtpRequestWire, ZhtpResponseWire, read_request, write_request, read_response, write_response, WIRE_VERSION};
-use crate::zhtp::ZHTP_VERSION;
+use crate::types::ZHTP_VERSION;
 
 // Re-export ZDNS functions
 pub use zdns::{

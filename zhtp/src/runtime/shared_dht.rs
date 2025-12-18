@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{RwLock, OnceCell};
-use lib_network::ZkDHTIntegration;
+use lib_network::dht::ZkDHTIntegration;
 use lib_identity::ZhtpIdentity;
 use tracing::{info, debug};
 

@@ -58,6 +58,18 @@ impl ZkDHTIntegration {
         Ok(())
     }
 
+    pub async fn connect_to_peer(&self, _peer: &str) -> Result<()> {
+        Ok(())
+    }
+
+    pub async fn send_dht_query(&self, _peer: &str, _query: String) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    pub async fn get_dht_statistics(&self) -> Result<std::collections::HashMap<String, f64>> {
+        Ok(std::collections::HashMap::new())
+    }
+
     pub fn get_storage_system(&self) -> Arc<RwLock<()>> {
         Arc::new(RwLock::new(()))
     }
