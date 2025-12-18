@@ -6652,6 +6652,7 @@ dependencies = [
  "lib-proofs",
  "lib-protocols",
  "lib-storage",
+ "lib-types",
  "local-ip-address 0.6.6",
  "lru 0.12.5",
  "lz4_flex",

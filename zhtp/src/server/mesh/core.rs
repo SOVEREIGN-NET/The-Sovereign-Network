@@ -70,6 +70,7 @@ use lib_blockchain::types::Hash;
 use lib_blockchain::BlockchainBroadcastMessage;
 use lib_identity::IdentityManager;
 use lib_storage::dht::DhtStorage;
+use lib_types::NodeId;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use crate::web4_stub::MeshDhtTransport;
 use super::rate_limiting::ConnectionRateLimiter;
@@ -133,7 +134,7 @@ pub struct MeshRouter {
     pub dht_storage: Arc<tokio::sync::Mutex<DhtStorage>>,
     pub dht_handler: Arc<RwLock<Option<Arc<dyn ZhtpRequestHandler>>>>,
     /// DHT payload sender for wiring to message handlers (Ticket #154)
-    pub dht_payload_sender: Arc<tokio::sync::mpsc::UnboundedSender<(Vec<u8>, Vec<u8>)>>,
+    pub dht_payload_sender: Arc<tokio::sync::mpsc::UnboundedSender<(Vec<u8>, NodeId)>>,
     
     // ZHTP API router for all endpoints
     pub zhtp_router: Arc<RwLock<Option<Arc<crate::server::zhtp::ZhtpRouter>>>>,
@@ -278,11 +279,11 @@ impl MeshRouter {
                 mesh_message_router.clone(),
                 dht_keypair,
             );
-        // Map PeerId into raw bytes for lib-network handler compatibility
-        let (mapped_tx, mut mapped_rx) = tokio::sync::mpsc::unbounded_channel::<(Vec<u8>, Vec<u8>)>();
+        // Map PeerId into NodeId for lib-network handler compatibility
+        let (mapped_tx, mut mapped_rx) = tokio::sync::mpsc::unbounded_channel::<(Vec<u8>, NodeId)>();
         tokio::spawn(async move {
-            while let Some((data, peer_bytes)) = mapped_rx.recv().await {
-                let peer_id = lib_storage::dht::transport::PeerId::Mesh(peer_bytes);
+            while let Some((data, node_id)) = mapped_rx.recv().await {
+                let peer_id = lib_storage::dht::transport::PeerId::Mesh(node_id.0.to_vec());
                 let _ = dht_payload_sender_raw.send((data, peer_id));
             }
         });
@@ -426,7 +427,7 @@ impl MeshRouter {
     }
 
     /// Get the DHT payload sender for wiring to external message handlers
-    pub fn get_dht_payload_sender(&self) -> tokio::sync::mpsc::UnboundedSender<(Vec<u8>, Vec<u8>)> {
+    pub fn get_dht_payload_sender(&self) -> tokio::sync::mpsc::UnboundedSender<(Vec<u8>, NodeId)> {
         (*self.dht_payload_sender).clone()
     }
     

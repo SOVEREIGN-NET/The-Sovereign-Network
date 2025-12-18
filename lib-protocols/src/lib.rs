@@ -216,7 +216,7 @@ pub async fn initialize() -> ProtocolResult<()> {
 pub fn version_info() -> serde_json::Value {
     serde_json::json!({
         "lib_version": ZHTP_VERSION,
-        "zdns_version": ZDNS_VERSION,
+        "zdns_version": crate::types::ZDNS_VERSION,
         "features": {
             "post_quantum": true,
             "zero_knowledge": true,

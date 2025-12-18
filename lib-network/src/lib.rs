@@ -73,6 +73,8 @@ pub use network_output::{NetworkOutput, OutputQueue, global_output_queue};
 pub mod blockchain_sync {
     pub use crate::blockchain_sync_stub::*;
 }
+#[cfg(feature = "chain-integration")]
+compile_error!("chain-integration is disabled in lib-network while storage/blockchain relocation is pending (Phase 4). Use stub or move integration to zhtp.");
 // Storage/chain-dependent modules removed from lib-network
 
 // Re-export protocol constants for convenience

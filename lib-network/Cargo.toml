@@ -184,7 +184,7 @@ name = "lib_network"
 path = "src/lib.rs"
 
 [features]
-default = []                      # All lib-* dependencies are required and enabled by default
+default = []                      # Minimal default; opt into storage/chain integration via features
 windows-gatt = []                 # Windows GATT Server (BLE advertising) - always available on Windows with WinRT
 macos-corebluetooth = []          # macOS Core Bluetooth support
 linux-dbus = ["dbus", "dbus-tokio"] # Direct D-Bus BlueZ integration
@@ -194,3 +194,5 @@ enhanced-parsing = ["quick-xml"] # Enhanced XML parsing
 enhanced-wifi-direct = ["aes", "cmac", "quick-xml"] # Complete WiFi Direct enhancements
 hardware-scanning = []
 identity-debug = []               # Enable detailed identity verification debug logging (production: disabled)
+storage-integration = []
+chain-integration = []

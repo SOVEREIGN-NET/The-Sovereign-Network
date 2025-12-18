@@ -17,11 +17,9 @@ use crate::identity::unified_peer::UnifiedPeerId;
 
 use crate::relays::LongRangeRelay;
 use crate::network_output::{NetworkOutput, global_output_queue};
+use lib_types::NodeId;
 
-#[cfg(feature = "storage-integration")]
-type DhtPayload = (Vec<u8>, lib_storage::dht::transport::PeerId);
-#[cfg(not(feature = "storage-integration"))]
-type DhtPayload = (Vec<u8>, Vec<u8>);
+type DhtPayload = (Vec<u8>, NodeId);
 
 type DhtPayloadSender = tokio::sync::mpsc::UnboundedSender<DhtPayload>;
 
@@ -1158,39 +1156,26 @@ impl MeshMessageHandler {
         }
 
         // Forward to DHT transport if sender is configured
-        #[cfg(feature = "storage-integration")]
-        {
-            if let Some(sender) = &self.dht_payload_sender {
-                let peer_id = lib_storage::dht::transport::PeerId::Mesh(requester.key_id.to_vec());
+        if let Some(sender) = &self.dht_payload_sender {
+            let peer_id = NodeId(requester.key_id);
 
-                if let Err(e) = sender.send((payload.clone(), peer_id)) {
-                    warn!(
-                        "Failed to forward DHT payload to transport: {} (peer: {})",
-                        e, peer_id_hex
-                    );
-                    return Err(anyhow!("Failed to forward DHT payload: {}", e));
-                }
-
-                debug!(
-                    "Forwarded DHT payload ({} bytes) from peer {} to DhtStorage",
-                    payload.len(), peer_id_hex
+            if let Err(e) = sender.send((payload.clone(), peer_id)) {
+                warn!(
+                    "Failed to forward DHT payload to transport: {} (peer: {})",
+                    e, peer_id_hex
                 );
-            } else {
-                // No sender configured - log for debugging
-                debug!(
-                    "DHT payload received but no handler configured (peer: {}, {} bytes). \
-                     Call set_dht_payload_sender() to enable DHT message processing.",
-                    peer_id_hex, payload.len()
-                );
+                return Err(anyhow!("Failed to forward DHT payload: {}", e));
             }
-        }
 
-        #[cfg(not(feature = "storage-integration"))]
-        {
             debug!(
-                "DHT payload received ({} bytes) from peer {} but storage-integration feature is disabled",
-                payload.len(),
-                peer_id_hex
+                "Forwarded DHT payload ({} bytes) from peer {} to DHT handler",
+                payload.len(), peer_id_hex
+            );
+        } else {
+            debug!(
+                "DHT payload received but no handler configured (peer: {}, {} bytes). \
+                 Call set_dht_payload_sender() to enable DHT message processing.",
+                peer_id_hex, payload.len()
             );
         }
 
