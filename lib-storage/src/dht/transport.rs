@@ -29,6 +29,9 @@ pub enum PeerId {
     LoRaWAN(String),
     /// QUIC peer identified by socket address (uses same addressing as UDP)
     Quic(SocketAddr),
+    /// Mesh peer identified by public key (Ticket #154)
+    /// Routes DHT traffic through mesh network using public key addressing
+    Mesh(Vec<u8>), // Serialized PublicKey to avoid lib-crypto dependency
 }
 
 impl PeerId {
@@ -40,6 +43,7 @@ impl PeerId {
             PeerId::WiFiDirect(addr) => format!("wifid://{}", addr),
             PeerId::LoRaWAN(eui) => format!("lora://{}", eui),
             PeerId::Quic(addr) => format!("quic://{}", addr),
+            PeerId::Mesh(pubkey) => format!("mesh://{}", hex::encode(pubkey)),
         }
     }
 
@@ -51,6 +55,7 @@ impl PeerId {
             PeerId::WiFiDirect(_) => "wifidirect",
             PeerId::LoRaWAN(_) => "lorawan",
             PeerId::Quic(_) => "quic",
+            PeerId::Mesh(_) => "mesh",
         }
     }
 
@@ -105,6 +110,7 @@ pub trait DhtTransport: Send + Sync {
             PeerId::WiFiDirect(_) => 1400, // Similar to UDP
             PeerId::LoRaWAN(_) => 242,     // LoRaWAN SF7 max payload
             PeerId::Quic(_) => 1200,       // QUIC recommended MTU
+            PeerId::Mesh(_) => 65536,      // Mesh handles fragmentation
         }
     }
 
@@ -116,6 +122,7 @@ pub trait DhtTransport: Send + Sync {
             PeerId::WiFiDirect(_) => 20,
             PeerId::LoRaWAN(_) => 1000,
             PeerId::Quic(_) => 15, // Slightly higher than UDP due to QUIC overhead
+            PeerId::Mesh(_) => 50, // Variable based on underlying transport
         }
     }
 }

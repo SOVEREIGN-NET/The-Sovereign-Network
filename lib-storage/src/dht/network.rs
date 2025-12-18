@@ -510,7 +510,7 @@ impl DhtNetwork {
             PeerId::Udp(addr) => Ok(addr),
             PeerId::WiFiDirect(addr) => Ok(addr),
             PeerId::Quic(addr) => Ok(addr),
-            PeerId::Bluetooth(_) | PeerId::LoRaWAN(_) => {
+            PeerId::Bluetooth(_) | PeerId::LoRaWAN(_) | PeerId::Mesh(_) => {
                 // For non-IP protocols, return a placeholder
                 Ok("0.0.0.0:0".parse()?)
             }

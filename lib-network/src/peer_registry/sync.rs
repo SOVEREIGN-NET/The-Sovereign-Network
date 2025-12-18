@@ -22,14 +22,10 @@
 //!    - Batch updates committed in single transaction
 //!    - Thread-safe observer registry with Arc<RwLock<>>
 
-use crate::peer_registry::{
-    ConnectionMetrics, DhtPeerInfo, DiscoveryMethod, NodeCapabilities, PeerEntry, PeerTier,
-    UnifiedPeerId,
-};
+use crate::peer_registry::{PeerEntry, UnifiedPeerId};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
@@ -627,6 +623,7 @@ pub struct BatchOperations<'a> {
 mod tests {
     use super::*;
     use crate::peer_registry::{NodeId, PublicKey};
+    use crate::protocols::NetworkProtocol;
     
     /// Mock observer for testing
     struct TestObserver {
@@ -657,7 +654,7 @@ mod tests {
         }
     }
     
-    fn create_test_peer_entry(node_id_bytes: [u8; 32]) -> PeerEntry {
+    fn create_test_peer_entry(_node_id_bytes: [u8; 32]) -> PeerEntry {
         use crate::peer_registry::*;
         use lib_identity::ZhtpIdentity;
 
@@ -672,50 +669,50 @@ mod tests {
         let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)
             .expect("Failed to create UnifiedPeerId");
 
-        PeerEntry {
+        let connection_metrics = ConnectionMetrics {
+            signal_strength: 1.0,
+            bandwidth_capacity: 1_000_000,
+            latency_ms: 10,
+            stability_score: 1.0,
+            connected_at: 0,
+        };
+
+        let capabilities = NodeCapabilities {
+            protocols: vec![NetworkProtocol::QUIC],
+            max_bandwidth: 1_000_000,
+            available_bandwidth: 1_000_000,
+            routing_capacity: 100,
+            energy_level: Some(1.0),
+            availability_percent: 99.0,
+        };
+
+        let dht_info = DhtPeerInfo {
+            kademlia_distance: 0,
+            bucket_index: 0,
+            last_contact: 0,
+            failed_attempts: 0,
+        };
+
+        PeerEntry::new(
             peer_id,
-            endpoints: vec![],
-            active_protocols: vec![],
-            connection_metrics: ConnectionMetrics {
-                signal_strength: 1.0,
-                bandwidth_capacity: 1_000_000,
-                latency_ms: 10,
-                stability_score: 1.0,
-                connected_at: 0,
-            },
-            authenticated: true,
-            quantum_secure: true,
-            next_hop: None,
-            hop_count: 0,
-            route_quality: 1.0,
-            capabilities: NodeCapabilities {
-                protocols: vec![NetworkProtocol::QUIC],
-                max_bandwidth: 1_000_000,
-                available_bandwidth: 1_000_000,
-                routing_capacity: 100,
-                energy_level: Some(1.0),
-                availability_percent: 99.0,
-            },
-            location: None,
-            reliability_score: 1.0,
-            dht_info: Some(DhtPeerInfo {
-                kademlia_distance: 0,
-                bucket_index: 0,
-                last_contact: 0,
-                failed_attempts: 0,
-            }),
-            discovery_method: DiscoveryMethod::Bootstrap,
-            first_seen: 0,
-            last_seen: 0,
-            tier: PeerTier::Tier3,
-            trust_score: 1.0,
-            data_transferred: Arc::new(AtomicU64::new(0)),
-            tokens_earned: Arc::new(AtomicU64::new(0)),
-            traffic_routed: Arc::new(AtomicU64::new(0)),
-            data_transferred_value: 0,
-            tokens_earned_value: 0,
-            traffic_routed_value: 0,
-        }
+            vec![],
+            vec![NetworkProtocol::QUIC],
+            connection_metrics,
+            true,
+            true,
+            None,
+            0,
+            1.0,
+            capabilities,
+            None,
+            1.0,
+            Some(dht_info),
+            DiscoveryMethod::Bootstrap,
+            0,
+            0,
+            PeerTier::Tier3,
+            1.0,
+        )
     }
     
     #[tokio::test]

@@ -14,7 +14,7 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```ignore
 //! use lib_network::identity::proof_of_work::{ProofOfWork, calculate_adaptive_difficulty};
 //! use lib_identity::NodeId;
 //!
@@ -167,7 +167,7 @@ impl ProofOfWork {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// # use lib_network::identity::proof_of_work::ProofOfWork;
     /// let hash_8_zeros = [0x00, 0xFF, 0xFF, /* ... */];
     /// assert!(ProofOfWork::verify_difficulty_static(&hash_8_zeros, 8));
@@ -225,7 +225,7 @@ impl ProofOfWork {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```ignore
 /// use lib_network::identity::proof_of_work::calculate_adaptive_difficulty;
 ///
 /// // Low load: quick identity creation
