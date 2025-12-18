@@ -20,7 +20,8 @@ pub async fn index_block_in_dht(block: &Block) -> Result<()> {
             warn!("DHT indexing failed: {}", e);
         }
     } else {
-        // Storage not yet initialized, skip indexing
+        // Storage not yet initialized, skip indexing for this block
+        warn!("DHT storage not yet initialized; skipping DHT indexing request");
     }
 
     Ok(())

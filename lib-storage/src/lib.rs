@@ -710,7 +710,10 @@ impl UnifiedStorageSystem {
             );
         }
 
-        // Warning: Check quota soft limit per prefix
+        // Warning: Check quota soft limit per prefix.
+        // Note: The prefix is defined as the first path segment before '/', or the entire key
+        // if no '/' is present. Flat (non-hierarchical) keys are therefore treated as their
+        // own prefixes for quota accounting.
         let prefix = key.split('/').next().unwrap_or(&key);
         let prefix_usage = self.dht_storage.get_prefix_usage(prefix).await?;
         const SOFT_QUOTA_PER_PREFIX: u64 = 100_000_000; // 100 MB
@@ -724,12 +727,13 @@ impl UnifiedStorageSystem {
             );
         }
 
-        // Warning: TTL is not directly supported in low-level DHT operations
+        // Warning: TTL is accepted for API compatibility but not enforced at this layer.
+        // Time-based expiration is handled by the content/economic layer.
         if ttl.is_some() {
             tracing::warn!(
-                "TTL parameter is not supported for low-level DHT storage. \
-                Use content manager with storage contracts for time-based expiration. \
-                Key: '{}', requested TTL: {:?} seconds",
+                "TTL parameter is accepted but not enforced at the low-level DHT storage layer. \
+                Time-based expiration requires the content manager with storage contracts. \
+                Key: '{}', requested TTL: {:?} seconds (will be ignored at this layer)",
                 key,
                 ttl
             );

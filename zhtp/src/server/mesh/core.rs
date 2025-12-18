@@ -295,8 +295,12 @@ impl MeshRouter {
         // Store the sender for later wiring to message handlers
         let dht_payload_sender = Arc::new(dht_payload_sender);
 
-        // Note: UnifiedStorageSystem handles DHT network initialization internally
-        // Custom transport injection is no longer supported through the public API
+        // Note: UnifiedStorageSystem handles DHT network initialization internally.
+        // Custom transport injection is no longer supported through the public API.
+        // The DHT network routing is now managed internally by UnifiedStorageSystem using
+        // the addresses provided in storage_config. For mesh network integration, the
+        // storage system will automatically connect to the DHT network using the configured
+        // node_id and addresses. Mesh-specific routing is handled at the message layer.
 
         // Initialize UnifiedStorageSystem asynchronously
         {
@@ -326,7 +330,7 @@ impl MeshRouter {
                         debug!("UnifiedStorageSystem initialized successfully");
                     }
                     Err(e) => {
-                        debug!("Failed to initialize UnifiedStorageSystem: {}", e);
+                        tracing::error!("Failed to initialize UnifiedStorageSystem: {}", e);
                     }
                 }
             });
@@ -382,6 +386,40 @@ impl MeshRouter {
     }
 
     /// Expose the shared DHT storage handle for consumers that need to index data.
+    ///
+    /// # Initialization and `Option` semantics
+    ///
+    /// The returned handle is an [`Arc`] of a [`tokio::sync::Mutex`] wrapping an
+    /// [`Option<UnifiedStorageSystem>`]. The inner `Option` will be:
+    ///
+    /// * `Some(storage)` once the unified storage system has been fully initialized.
+    /// * `None` if the storage system has not yet been initialized, or if initialization
+    ///   failed and the system has not recovered.
+    ///
+    /// **This is a behavioral change from earlier versions** where the DHT storage handle
+    /// was always present and did not require an `Option` check. Callers **must**
+    /// handle the `None` case to avoid panics.
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// let storage_arc = core.dht_storage();
+    /// let mut guard = storage_arc.lock().await;
+    ///
+    /// if let Some(storage) = guard.as_mut() {
+    ///     // Safe to use `storage` here
+    ///     storage.put(key, value).await?;
+    /// } else {
+    ///     // Storage is not yet initialized; decide how to handle this:
+    ///     // * Return an error to the caller
+    ///     // * Log and skip the operation
+    ///     // * Retry later once initialization is expected to complete
+    /// }
+    /// ```
+    ///
+    /// Consider calling code paths that depend on storage only after the mesh/router
+    /// initialization phase that sets up `UnifiedStorageSystem` has completed, so that
+    /// `None` is an exceptional rather than normal state.
     pub fn dht_storage(&self) -> Arc<tokio::sync::Mutex<Option<UnifiedStorageSystem>>> {
         self.dht_storage.clone()
     }

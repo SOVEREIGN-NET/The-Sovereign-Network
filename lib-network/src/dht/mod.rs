@@ -106,6 +106,9 @@ impl ZkDHTIntegration {
     )]
     pub fn new_sync() -> Self {
         // Block on async initialization - only safe in test environments
+        // WARNING: Do NOT call this from within an existing async/Tokio runtime context,
+        // as it creates a nested runtime which will cause panics or undefined behavior.
+        // This method is ONLY for synchronous test code or non-async entry points.
         tokio::runtime::Runtime::new()
             .expect("Failed to create tokio runtime for sync DHT init")
             .block_on(async {
