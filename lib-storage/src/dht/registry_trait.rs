@@ -25,7 +25,7 @@ use async_trait::async_trait;
 /// - lib-network implements the interface
 /// - zhtp wires them together at runtime
 #[async_trait]
-pub trait DhtPeerRegistryTrait: Send + Sync {
+pub trait DhtPeerRegistryTrait: Send + Sync + std::fmt::Debug {
     /// Add or update a DHT peer
     ///
     /// Maps to lib-network::PeerRegistry::upsert() with DHT-specific metadata
