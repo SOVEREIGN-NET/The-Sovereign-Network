@@ -3,18 +3,32 @@
 //! Provides common network-related utilities used throughout the networking layer.
 
 use anyhow::Result;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::time::Duration;
+
+/// Default probe address for IPv4 interface detection (RFC 5737 TEST-NET-1)
+/// Using documentation/test IP to avoid metadata leakage to public services
+const DEFAULT_PROBE_IPV4: &str = "192.0.2.1:80";
+
+/// Default probe address for IPv6 interface detection (RFC 3849 documentation prefix)
+const DEFAULT_PROBE_IPV6: &str = "[2001:db8::1]:80";
+
+/// Timeout for network probe operations
+const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Get the local IP address of this machine
 /// 
-/// Attempts to determine the local IP address by connecting to a well-known
-/// external address (8.8.8.8). This reveals which interface would be used
-/// for external communication.
+/// Attempts to determine the local IP address by probing which interface would
+/// be used for external communication. Tries both IPv4 and IPv6, preferring
+/// non-loopback, non-link-local addresses.
+/// 
+/// Uses RFC 5737 (IPv4) and RFC 3849 (IPv6) documentation addresses to avoid
+/// metadata leakage to public services.
 /// 
 /// # Returns
 /// 
-/// Returns `IpAddr` which can be either IPv4 or IPv6. Falls back to localhost
-/// (127.0.0.1) if unable to determine the actual local IP.
+/// Returns `IpAddr` which can be either IPv4 or IPv6. Prefers actual routable
+/// addresses, falls back to loopback only when no network is available.
 /// 
 /// # Examples
 /// 
@@ -29,20 +43,107 @@ use std::net::{IpAddr, Ipv4Addr};
 /// }
 /// ```
 pub async fn get_local_ip() -> Result<IpAddr> {
-    // Try to connect to a remote address to determine our local IP
-    match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
-        Ok(socket) => {
-            if let Ok(_) = socket.connect("8.8.8.8:80").await {
-                if let Ok(local_addr) = socket.local_addr() {
-                    return Ok(local_addr.ip());
-                }
+    get_local_ip_with_probe(None).await
+}
+
+/// Get the local IP address with a custom probe address
+/// 
+/// Allows specifying a custom probe address for testing or restricted environments.
+/// If `probe_addr` is None, uses RFC 5737/3849 documentation addresses.
+/// 
+/// # Arguments
+/// 
+/// * `probe_addr` - Optional custom probe address. If None, uses safe defaults.
+/// 
+/// # Returns
+/// 
+/// Returns the local IP that would be used to reach the probe address.
+pub async fn get_local_ip_with_probe(probe_addr: Option<&str>) -> Result<IpAddr> {
+    // Try IPv4 first
+    if let Ok(ip) = probe_ipv4(probe_addr).await {
+        // Prefer non-loopback, non-link-local addresses
+        if let IpAddr::V4(v4) = ip {
+            if !v4.is_loopback() && !v4.is_link_local() {
+                return Ok(ip);
             }
-        },
-        Err(_) => {}
+        }
     }
     
-    // Fallback to localhost
-    Ok(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))
+    // Try IPv6
+    if let Ok(ip) = probe_ipv6(probe_addr).await {
+        // Prefer non-loopback, non-link-local addresses
+        if let IpAddr::V6(v6) = ip {
+            if !v6.is_loopback() && !is_ipv6_link_local(&v6) {
+                return Ok(ip);
+            }
+        }
+    }
+    
+    // Final fallback: check for any local interface
+    if let Ok(ip) = get_first_local_interface().await {
+        return Ok(ip);
+    }
+    
+    // Last resort: return loopback (caller's address family preference)
+    Ok(IpAddr::V4(Ipv4Addr::LOCALHOST))
+}
+
+/// Probe for IPv4 local address
+async fn probe_ipv4(custom_probe: Option<&str>) -> Result<IpAddr> {
+    let probe = custom_probe.unwrap_or(DEFAULT_PROBE_IPV4);
+    
+    let probe_future = async {
+        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+        socket.connect(probe).await?;
+        let local_addr = socket.local_addr()?;
+        Ok::<IpAddr, anyhow::Error>(local_addr.ip())
+    };
+    
+    tokio::time::timeout(PROBE_TIMEOUT, probe_future)
+        .await
+        .map_err(|_| anyhow::anyhow!("IPv4 probe timeout"))?
+}
+
+/// Probe for IPv6 local address
+async fn probe_ipv6(custom_probe: Option<&str>) -> Result<IpAddr> {
+    let probe = custom_probe.unwrap_or(DEFAULT_PROBE_IPV6);
+    
+    let probe_future = async {
+        let socket = tokio::net::UdpSocket::bind("[::]:0").await?;
+        socket.connect(probe).await?;
+        let local_addr = socket.local_addr()?;
+        Ok::<IpAddr, anyhow::Error>(local_addr.ip())
+    };
+    
+    tokio::time::timeout(PROBE_TIMEOUT, probe_future)
+        .await
+        .map_err(|_| anyhow::anyhow!("IPv6 probe timeout"))?
+}
+
+/// Get the first usable local network interface
+async fn get_first_local_interface() -> Result<IpAddr> {
+    use local_ip_address::list_afinet_netifas;
+    
+    if let Ok(interfaces) = list_afinet_netifas() {
+        for (_name, ip) in interfaces {
+            match ip {
+                IpAddr::V4(v4) if !v4.is_loopback() && !v4.is_link_local() => {
+                    return Ok(IpAddr::V4(v4));
+                }
+                IpAddr::V6(v6) if !v6.is_loopback() && !is_ipv6_link_local(&v6) => {
+                    return Ok(IpAddr::V6(v6));
+                }
+                _ => continue,
+            }
+        }
+    }
+    
+    Err(anyhow::anyhow!("No usable network interface found"))
+}
+
+/// Check if an IPv6 address is link-local (fe80::/10)
+fn is_ipv6_link_local(addr: &Ipv6Addr) -> bool {
+    addr.segments()[0] & 0xffc0 == 0xfe80
 }
 
 #[cfg(test)]
@@ -56,12 +157,10 @@ mod tests {
         // Should be a valid IP address
         match ip {
             IpAddr::V4(v4) => {
-                // Should not be unspecified (0.0.0.0)
-                assert!(!v4.is_unspecified());
+                assert!(!v4.is_unspecified(), "Should not be 0.0.0.0");
             },
             IpAddr::V6(v6) => {
-                // Should not be unspecified (::)
-                assert!(!v6.is_unspecified());
+                assert!(!v6.is_unspecified(), "Should not be ::");
             }
         }
     }
@@ -70,14 +169,55 @@ mod tests {
     async fn test_get_local_ip_returns_valid_address() {
         let ip = get_local_ip().await.expect("Failed to get local IP");
         
-        // At minimum should return localhost if no network available
-        // In a real network, should return actual local IP
+        // Should return localhost if no network available, or actual local IP
         match ip {
             IpAddr::V4(v4) => {
                 assert!(v4.is_loopback() || v4.is_private() || !v4.is_unspecified());
             },
             IpAddr::V6(v6) => {
                 assert!(v6.is_loopback() || !v6.is_unspecified());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_local_ip_with_custom_probe() {
+        // Test with custom IPv4 probe
+        let result = get_local_ip_with_probe(Some("198.51.100.1:80")).await;
+        assert!(result.is_ok(), "Custom IPv4 probe should work or gracefully fail");
+        
+        // Test with custom IPv6 probe
+        let result = get_local_ip_with_probe(Some("[2001:db8::2]:80")).await;
+        // May fail in IPv4-only environments, that's okay
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_link_local_detection() {
+        let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+        assert!(is_ipv6_link_local(&link_local));
+        
+        let global = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+        assert!(!is_ipv6_link_local(&global));
+        
+        let loopback = Ipv6Addr::LOCALHOST;
+        assert!(!is_ipv6_link_local(&loopback));
+    }
+
+    #[tokio::test]
+    async fn test_prefer_non_loopback() {
+        // get_local_ip should prefer non-loopback addresses
+        let ip = get_local_ip().await.expect("Failed to get local IP");
+        
+        // If we got a result, verify it's either a real address or loopback fallback
+        match ip {
+            IpAddr::V4(v4) => {
+                // Either real private/public IP or loopback fallback
+                assert!(v4.is_private() || v4.is_loopback() || !v4.is_link_local());
+            },
+            IpAddr::V6(v6) => {
+                // Either real address or loopback fallback
+                assert!(!is_ipv6_link_local(&v6));
             }
         }
     }

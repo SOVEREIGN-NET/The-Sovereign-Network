@@ -12,6 +12,7 @@ use tracing::{info, debug, warn};
 use serde::{Serialize, Deserialize};
 
 use lib_crypto::PublicKey;
+use lib_network::network_utils::get_local_ip;
 
 /// Discovery protocol types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -520,8 +521,9 @@ impl DiscoveryCoordinator {
                 }
                 
                 // Skip our own IP address (prevent self-discovery)
-                if let Ok(local_ip) = self.get_local_ip().await {
-                    if peer.starts_with(&local_ip) {
+                if let Ok(local_ip) = get_local_ip().await {
+                    let local_ip_str = local_ip.to_string();
+                    if peer.starts_with(&local_ip_str) {
                         info!("      Skipping own IP address: {}", peer);
                         continue;
                     }
@@ -664,7 +666,7 @@ impl DiscoveryCoordinator {
         use tokio::net::TcpStream;
         use futures::stream::{self, StreamExt};
         
-        let local_ip = self.get_local_ip().await?;
+        let local_ip = get_local_ip().await?.to_string();
         let base_ip = format!("{}.{}.{}", 
             local_ip.split('.').nth(0).unwrap_or("192"),
             local_ip.split('.').nth(1).unwrap_or("168"),
@@ -699,16 +701,7 @@ impl DiscoveryCoordinator {
         Ok(scan_results)
     }
     
-    /// Get local IP address
-    async fn get_local_ip(&self) -> Result<String> {
-        use local_ip_address::local_ip;
-        
-        match local_ip() {
-            Ok(ip) => Ok(ip.to_string()),
-            Err(_) => Ok("127.0.0.1".to_string()),
-        }
-    }
-    
+
     /// Check if an IP address belongs to this machine (to filter out self-discovery)
     async fn is_local_ip(ip: &std::net::IpAddr) -> bool {
         use local_ip_address::list_afinet_netifas;
