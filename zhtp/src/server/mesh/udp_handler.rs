@@ -374,8 +374,9 @@ impl MeshRouter {
         
         let sync_type = lib_network::blockchain_sync::SyncType::FullBlockchain;
         
-        // Add chunk to sync manager
+        // Add chunk to sync manager (now with sender authentication)
         match self.sync_manager.add_chunk(
+            sender,  // SECURITY: Pass sender for authentication check
             request_id,
             chunk_index,
             total_chunks,

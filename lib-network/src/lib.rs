@@ -19,7 +19,7 @@ pub use crate::mesh::statistics::MeshProtocolStats;
 pub use crate::types::*;
 pub use crate::discovery::*;
 pub use crate::relays::*;
-pub use crate::blockchain_sync::{BlockchainSyncManager, EdgeNodeSyncManager};
+pub use crate::blockchain_sync::BlockchainSyncManager;
 
 // Unified Peer Identity System (replaces separate NodeId, PeerId, PublicKey systems)
 pub use crate::identity::{UnifiedPeerId, PeerIdMapper, PeerMapperConfig};

@@ -271,11 +271,10 @@ impl Component for ProtocolsComponent {
         let blockchain_provider = Arc::new(crate::runtime::network_blockchain_provider::ZhtpBlockchainProvider::new());
         unified_server.set_blockchain_provider(blockchain_provider).await;
         
-        // Initialize edge sync manager if needed
+        // Configure sync mode based on node type
         if self.is_edge_node {
-            info!(" Initializing Edge Node sync manager...");
-            let edge_sync_manager = Arc::new(lib_network::EdgeNodeSyncManager::new(500));
-            unified_server.set_edge_sync_manager(edge_sync_manager.clone()).await;
+            info!("📱 Configuring Edge Node sync mode (headers + ZK proofs only)...");
+            unified_server.set_edge_sync_mode(500).await;
         }
         
         // Initialize auth manager
