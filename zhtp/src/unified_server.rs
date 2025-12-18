@@ -481,6 +481,7 @@ impl ZhtpUnifiedServer {
                 account_lockout,
                 csrf_protection,
                 recovery_phrase_manager,
+                storage.clone(),
             )
         );
         zhtp_router.register_handler("/api/v1/identity".to_string(), identity_handler);
@@ -769,7 +770,7 @@ impl ZhtpUnifiedServer {
         // This ensures the spawned task has access to the protocol
         let mesh_router_for_ble = self.mesh_router.clone();
         let sync_coordinator_for_ble = self.mesh_router.sync_coordinator.clone();
-        let edge_sync_manager_for_ble = self.mesh_router.edge_sync_manager.clone();
+        let is_edge_node_for_ble = self.mesh_router.is_edge_node.clone(); // Track edge vs full node mode
         let coordinator_for_ble = self.discovery_coordinator.clone();  // Phase 3: Coordinator integration
         
         tokio::spawn(async move {
@@ -798,14 +799,12 @@ impl ZhtpUnifiedServer {
                 }
                 
                 // Check if edge node or full node
-                let edge_manager_guard: tokio::sync::RwLockReadGuard<'_, Option<Arc<lib_network::blockchain_sync::EdgeNodeSyncManager>>> = edge_sync_manager_for_ble.read().await;
-                let is_edge_node = edge_manager_guard.is_some();
+                let is_edge_node = *is_edge_node_for_ble.read().await;
                 let sync_type = if is_edge_node {
                     lib_network::blockchain_sync::SyncType::EdgeNode
                 } else {
                     lib_network::blockchain_sync::SyncType::FullBlockchain
                 };
-                drop(edge_manager_guard);
                 
                 // SMART PROTOCOL SELECTION: Check if peer has TCP/QUIC address before using BLE
                 // BLE should be fallback for mobile devices, not primary sync method
@@ -1224,9 +1223,10 @@ impl ZhtpUnifiedServer {
         self.mesh_router.set_blockchain_provider(provider).await;
     }
     
-    /// Set edge sync manager (delegates to mesh router)
-    pub async fn set_edge_sync_manager(&mut self, manager: Arc<lib_network::blockchain_sync::EdgeNodeSyncManager>) {
-        self.mesh_router.set_edge_sync_manager(manager).await;
+    /// Configure sync manager for edge node mode (headers + ZK proofs only)
+    pub async fn set_edge_sync_mode(&mut self, max_headers: usize) {
+        info!("🔧 Configuring edge sync mode: max_headers={}", max_headers);
+        self.mesh_router.set_edge_sync_mode(max_headers).await;
     }
     
     /// Get server information

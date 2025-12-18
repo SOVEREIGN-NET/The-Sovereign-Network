@@ -797,6 +797,66 @@ impl UnifiedStorageSystem {
     pub fn get_known_nodes(&self) -> Vec<&crate::types::dht_types::DhtNode> {
         self.dht_storage.get_known_nodes()
     }
+
+    // ========================================================================
+    // Identity Storage Integration - DHT Cache for Fast Lookups
+    // ========================================================================
+    //
+    // IMPORTANT: DHT identity records are a DERIVED CACHE, not the source of truth.
+    // The blockchain is authoritative. DHT enables:
+    // - Stateless API restarts (reload from DHT instead of replaying chain)
+    // - Horizontal scaling of identity endpoints
+    // - Fast DID resolution without chain queries
+    //
+    // Do NOT merge DHT state back into chain logic or use DHT for consensus.
+
+    /// Store an identity record in DHT storage for fast lookups
+    /// Uses key format: `identity/{identity_id}`
+    /// Payload is versioned: { "v": 1, "data": {...} }
+    pub async fn store_identity_record(&mut self, identity_id: &str, record_data: &[u8]) -> Result<()> {
+        let key = format!("identity/{}", identity_id);
+
+        // Wrap in versioned envelope for future compatibility
+        let versioned = serde_json::json!({
+            "v": 1,
+            "data": serde_json::from_slice::<serde_json::Value>(record_data)
+                .unwrap_or_else(|_| serde_json::Value::String(hex::encode(record_data)))
+        });
+        let versioned_data = serde_json::to_vec(&versioned)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize versioned identity: {}", e))?;
+
+        tracing::info!("Storing identity record {} ({} bytes, v1)", identity_id, versioned_data.len());
+        self.dht_storage.store(key, versioned_data, None).await
+    }
+
+    /// Retrieve an identity record from DHT storage
+    /// Returns None if identity not found, unwraps versioned payload
+    pub async fn get_identity_record(&mut self, identity_id: &str) -> Result<Option<Vec<u8>>> {
+        let key = format!("identity/{}", identity_id);
+        match self.dht_storage.get(&key).await? {
+            Some(versioned_data) => {
+                // Parse versioned envelope
+                let envelope: serde_json::Value = serde_json::from_slice(&versioned_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse identity envelope: {}", e))?;
+
+                let version = envelope.get("v").and_then(|v| v.as_u64()).unwrap_or(0);
+                if version != 1 {
+                    tracing::warn!("Unknown identity record version {}, attempting to parse", version);
+                }
+
+                // Extract data field
+                if let Some(data) = envelope.get("data") {
+                    let data_bytes = serde_json::to_vec(data)
+                        .map_err(|e| anyhow::anyhow!("Failed to serialize identity data: {}", e))?;
+                    Ok(Some(data_bytes))
+                } else {
+                    // Fallback: treat entire payload as data (legacy)
+                    Ok(Some(versioned_data))
+                }
+            }
+            None => Ok(None)
+        }
+    }
 }
 
 impl Default for UnifiedStorageConfig {
