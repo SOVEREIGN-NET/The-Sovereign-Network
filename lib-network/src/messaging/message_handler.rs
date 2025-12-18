@@ -32,10 +32,8 @@ pub struct MeshMessageHandler {
     pub message_router: Option<Arc<RwLock<crate::routing::message_routing::MeshMessageRouter>>>,
     /// Node ID for this handler (Phase 2)
     pub node_id: Option<PublicKey>,
-    /// Blockchain sync manager for chunk reassembly (full nodes)
+    /// Blockchain sync manager (unified - supports both full node and edge node modes)
     pub sync_manager: Arc<crate::blockchain_sync::BlockchainSyncManager>,
-    /// Edge node sync manager (optional - only for constrained devices)
-    pub edge_sync_manager: Option<Arc<crate::blockchain_sync::EdgeNodeSyncManager>>,
     /// Blockchain provider for accessing chain data (injected by application layer)
     pub blockchain_provider: Arc<dyn crate::blockchain_sync::BlockchainProvider>,
     /// DHT payload sender for forwarding received DHT messages (Ticket #154)
@@ -54,19 +52,22 @@ impl MeshMessageHandler {
     /// Create a new MeshMessageHandler
     ///
     /// **MIGRATION (Ticket #149):** Now accepts SharedPeerRegistry instead of mesh_connections
+    /// Defaults to full node sync strategy - call `set_edge_mode()` if running as edge node
     pub fn new(
         peer_registry: crate::peer_registry::SharedPeerRegistry,
         long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
         revenue_pools: Arc<RwLock<HashMap<String, u64>>>,
     ) -> Self {
+        // Default to full node sync strategy
+        let sync_manager = Arc::new(crate::blockchain_sync::BlockchainSyncManager::new_full_node());
+
         Self {
             peer_registry,
             long_range_relays,
             revenue_pools,
             message_router: None,
             node_id: None,
-            sync_manager: Arc::new(crate::blockchain_sync::BlockchainSyncManager::new()),
-            edge_sync_manager: None, // Only set for edge nodes
+            sync_manager,
             blockchain_provider: Arc::new(crate::blockchain_sync::NullBlockchainProvider),
             dht_payload_sender: None,
             dht_rate_limits: Arc::new(RwLock::new(HashMap::new())),
@@ -83,6 +84,11 @@ impl MeshMessageHandler {
     ) {
         self.dht_payload_sender = Some(sender);
     }
+
+    /// Switch to edge node sync mode (must be called before sync operations)
+    pub fn set_edge_mode(&mut self, max_headers: usize) {
+        self.sync_manager = Arc::new(crate::blockchain_sync::BlockchainSyncManager::new_edge_node(max_headers));
+    }
     
     /// Set message router for sending responses (Phase 2)
     pub fn set_message_router(&mut self, router: Arc<RwLock<crate::routing::message_routing::MeshMessageRouter>>) {
@@ -92,11 +98,6 @@ impl MeshMessageHandler {
     /// Set node ID (Phase 2)
     pub fn set_node_id(&mut self, node_id: PublicKey) {
         self.node_id = Some(node_id);
-    }
-    
-    /// Set edge node sync manager (for constrained devices)
-    pub fn set_edge_sync_manager(&mut self, edge_sync: Arc<crate::blockchain_sync::EdgeNodeSyncManager>) {
-        self.edge_sync_manager = Some(edge_sync);
     }
     
     /// Set blockchain provider (injected by application layer)
@@ -827,33 +828,33 @@ impl MeshMessageHandler {
     /// Handle incoming blockchain data chunks
     pub async fn handle_blockchain_data(
         &self,
-        _sender: &PublicKey,
+        sender: &PublicKey,
         request_id: u64,
         chunk_index: u32,
         total_chunks: u32,
         data: Vec<u8>,
         complete_data_hash: [u8; 32],
     ) -> Result<()> {
-        info!(" Blockchain data chunk {}/{} received ({} bytes, request_id: {})", 
+        info!("📥 Blockchain data chunk {}/{} received ({} bytes, request_id: {})", 
               chunk_index + 1, total_chunks, data.len(), request_id);
         
-        // Add chunk to sync manager for reassembly
-        match self.sync_manager.add_chunk(request_id, chunk_index, total_chunks, data, complete_data_hash).await {
+        // Add chunk to sync manager for reassembly (SECURITY: with sender authentication)
+        match self.sync_manager.add_chunk(sender, request_id, chunk_index, total_chunks, data, complete_data_hash).await {
             Ok(Some(complete_data)) => {
-                info!(" All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
+                info!("✅ All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
                 info!("   Hash: {}", hex::encode(complete_data_hash));
                 
                 // TODO: Forward complete blockchain data to application layer for import
                 // This requires lib-blockchain which would create a circular dependency
                 // The unified_server handles this properly in handle_udp_mesh()
-                info!(" Blockchain chunks reassembled successfully");
+                info!("✅ Blockchain chunks reassembled successfully");
                 info!("   Application layer should import this data via blockchain.evaluate_and_merge_chain()");
             }
             Ok(None) => {
                 debug!("Chunk {}/{} buffered, waiting for more chunks", chunk_index + 1, total_chunks);
             }
             Err(e) => {
-                warn!("Failed to process blockchain chunk: {}", e);
+                warn!("⚠️ Failed to process blockchain chunk: {}", e);
                 return Err(e);
             }
         }
@@ -994,52 +995,9 @@ impl MeshMessageHandler {
               headers.len(), 
               proof_height);
         
-        // Check if we have an edge node sync manager
-        let edge_sync = match &self.edge_sync_manager {
-            Some(sync) => sync,
-            None => {
-                warn!(" Edge sync manager not configured - ignoring bootstrap proof");
-                return Ok(());
-            }
-        };
-        
-        // Deserialize the chain proof
-        use lib_proofs::{RecursiveProofAggregator, ChainRecursiveProof};
-        let chain_proof: ChainRecursiveProof = bincode::deserialize(&proof_data)
-            .map_err(|e| anyhow!("Failed to deserialize chain proof: {}", e))?;
-        
-        info!(" Chain proof: tip={}, genesis={}, txs={}", 
-              chain_proof.chain_tip_height, 
-              chain_proof.genesis_height,
-              chain_proof.total_transaction_count);
-        
-        // Verify the recursive proof (O(1) verification!)
-        let aggregator = RecursiveProofAggregator::new()?;
-        let is_valid = aggregator.verify_recursive_chain_proof(&chain_proof)?;
-        
-        if !is_valid {
-            return Err(anyhow!(" Invalid bootstrap proof from validator!"));
-        }
-        
-        info!(" Bootstrap proof VALID! Chain proven up to height {}", chain_proof.chain_tip_height);
-        
-        // Deserialize headers
-        let block_headers: Vec<lib_blockchain::block::BlockHeader> = headers.iter()
-            .map(|h| bincode::deserialize(h))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow!("Failed to deserialize headers: {}", e))?;
-        
-        // Process headers through edge node sync manager
-        edge_sync.process_bootstrap_proof(proof_data, proof_height, block_headers).await?;
-        
-        info!(" Edge node bootstrapped to height {} with {} headers", 
-              proof_height, 
-              headers.len());
-        
-        // Log storage usage
-        let storage_bytes = edge_sync.estimated_storage_bytes().await;
-        info!("💾 Edge node storage: ~{} KB", storage_bytes / 1024);
-        
+        // Note: Bootstrap proof handling would need EdgeNodeStrategy-specific API
+        // For now, this is a no-op as the strategy pattern handles sync differently
+        warn!(" Bootstrap proof handling not yet implemented for unified sync manager");
         Ok(())
     }
 
@@ -1119,39 +1077,9 @@ impl MeshMessageHandler {
               headers.len(), 
               start_height);
         
-        // Check if we have an edge node sync manager
-        let edge_sync = match &self.edge_sync_manager {
-            Some(sync) => sync,
-            None => {
-                warn!(" Edge sync manager not configured - ignoring headers");
-                return Ok(());
-            }
-        };
-        
-        // Deserialize headers
-        let block_headers: Vec<lib_blockchain::block::BlockHeader> = headers.iter()
-            .map(|h| bincode::deserialize(h))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow!("Failed to deserialize headers: {}", e))?;
-        
-        // Process headers through edge node state
-        edge_sync.process_headers(block_headers).await?;
-        
-        let current_height = edge_sync.current_height().await;
-        info!(" Edge node synced {} headers, now at height {}", 
-              headers.len(), 
-              current_height);
-        
-        // Check if we need more headers (if blockchain provider is available)
-        if self.blockchain_provider.is_available().await {
-            if let Ok(network_height) = self.blockchain_provider.get_current_height().await {
-                if network_height.saturating_sub(current_height) > 100 {
-                    info!(" Still {} blocks behind, may need more headers", 
-                          network_height - current_height);
-                }
-            }
-        }
-        
+        // Note: Headers-only sync would need EdgeNodeStrategy-specific API
+        // For now, this is a no-op as the strategy pattern handles sync differently
+        warn!(" Headers-only sync not yet implemented for unified sync manager");
         Ok(())
     }
 
