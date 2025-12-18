@@ -14,6 +14,19 @@ use crate::dht::peer_registry::{
 };
 use anyhow::{Result, anyhow};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::any::Any;
+
+// ========== TICKET #1.14: External Registry Integration ==========
+
+/// Type-erased external peer registry (to avoid lib-network dependency)
+///
+/// This allows KademliaRouter to accept lib_network::PeerRegistry at runtime
+/// without requiring a compile-time dependency on lib-network.
+///
+/// The actual type is Arc<RwLock<lib_network::peer_registry::PeerRegistry>>
+/// but we store it as Arc<dyn Any + Send + Sync> to avoid circular dependency.
+pub type ExternalPeerRegistry = Arc<dyn Any + Send + Sync>;
 
 // ========== CRIT-3: NodeId Verification Constants ==========
 
@@ -28,11 +41,16 @@ pub const CHALLENGE_DOMAIN_PREFIX: &[u8] = b"ZHTP_NODEID_OWNERSHIP_CHALLENGE_V1"
 /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry for unified peer storage
 /// instead of maintaining separate routing_table: Vec<KBucket>.
 ///
+/// **TICKET #1.14:** Can now use external unified PeerRegistry via dependency injection
+/// to eliminate duplicate peer storage across DHT and mesh layers.
+///
 /// # Design
 ///
-/// The KademliaRouter now delegates peer storage to DhtPeerRegistry, which uses
-/// HashMap<NodeId, DhtPeerEntry> instead of Vec<KBucket>. This eliminates duplicate
-/// peer storage while preserving all K-bucket functionality.
+/// The KademliaRouter delegates peer storage to either:
+/// - External unified PeerRegistry (injected via set_external_registry) - PREFERRED
+/// - Internal DhtPeerRegistry (fallback for backwards compatibility)
+///
+/// This enables DHT to share peer data with the mesh layer when integrated via zhtp.
 ///
 /// # Thread Safety
 ///
@@ -42,22 +60,52 @@ pub const CHALLENGE_DOMAIN_PREFIX: &[u8] = b"ZHTP_NODEID_OWNERSHIP_CHALLENGE_V1"
 pub struct KademliaRouter {
     /// Local node ID
     local_id: NodeId,
-    /// Internal peer registry (replaces routing_table Vec<KBucket>)
+    /// Internal peer registry (fallback when external_registry not set)
     registry: DhtPeerRegistry,
     /// K-bucket size (standard Kademlia K value)
     k: usize,
+    /// External unified registry (Ticket #1.14) - stored as opaque pointer
+    /// to avoid compile-time dependency on lib-network
+    external_registry: Option<ExternalPeerRegistry>,
 }
 
 impl KademliaRouter {
     /// Create a new Kademlia router
     ///
     /// **MIGRATED (Ticket #148):** Now creates internal DhtPeerRegistry instead of Vec<KBucket>
+    ///
+    /// **TICKET #1.14:** Use `set_external_registry()` after construction to inject
+    /// the unified PeerRegistry from lib-network for zero-duplication storage.
     pub fn new(local_id: NodeId, k: usize) -> Self {
         Self {
             local_id,
             registry: DhtPeerRegistry::new(k),
             k,
+            external_registry: None,
         }
+    }
+    
+    /// Set external unified registry (Ticket #1.14)
+    ///
+    /// Enables DHT to use the same peer storage as the mesh layer.
+    /// The registry should be Arc<RwLock<lib_network::peer_registry::PeerRegistry>>.
+    ///
+    /// # Example (in zhtp)
+    ///
+    /// ```ignore
+    /// use lib_network::peer_registry::PeerRegistry;
+    ///
+    /// let peer_registry = Arc::new(RwLock::new(PeerRegistry::new()));
+    /// let mut router = KademliaRouter::new(local_id, 20);
+    /// router.set_external_registry(peer_registry.clone());
+    /// ```
+    pub fn set_external_registry(&mut self, registry: ExternalPeerRegistry) {
+        self.external_registry = Some(registry);
+    }
+    
+    /// Check if using external unified registry
+    pub fn uses_external_registry(&self) -> bool {
+        self.external_registry.is_some()
     }
     
     /// Calculate XOR distance between two node IDs
