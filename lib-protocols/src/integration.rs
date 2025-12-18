@@ -460,12 +460,13 @@ impl ZhtpIntegration {
     }
 
     /// Process blockchain integration
+    #[cfg(feature = "blockchain")]
     async fn process_blockchain_integration(&mut self, request: &ZhtpRequest) -> Result<()> {
         // integration with lib-blockchain package
         use lib_blockchain::Blockchain;
         
         // Initialize blockchain if not already done
-        let blockchain = Blockchain::new()
+        let _blockchain = Blockchain::new()
             .map_err(|e| ProtocolError::InternalError(format!("Failed to initialize blockchain: {}", e)))?;
         
         // Calculate economic assessment for transaction amount
@@ -543,7 +544,6 @@ impl ZhtpIntegration {
             .map_err(|e| ProtocolError::InternalError(format!("Failed to add transaction to mempool: {}", e)))?;
         
         // Trigger block mining if mempool has enough transactions
-        // Demo blockchain processing - simplified since we don't have access to internal fields
         let _demo_transaction_count = 5; // Simulate 5 pending transactions
         if _demo_transaction_count >= 5 {
             let _pending_transactions = mempool.get_transactions_for_block(100, 1024000);
@@ -558,6 +558,12 @@ impl ZhtpIntegration {
         tracing::info!("Blockchain transaction recorded: {} -> {}, amount: {}, DAO fee: {}", 
                       sender_hash, recipient_hash, economics_assessment.total_fee, economics_assessment.dao_fee);
         
+        Ok(())
+    }
+
+    #[cfg(not(feature = "blockchain"))]
+    async fn process_blockchain_integration(&mut self, _request: &ZhtpRequest) -> Result<()> {
+        tracing::info!("Blockchain integration skipped (blockchain feature disabled)");
         Ok(())
     }
 
@@ -749,6 +755,7 @@ pub mod packages {
     use super::*;
 
     /// Initialize integration with lib-blockchain package
+    #[cfg(feature = "blockchain")]
     pub async fn init_blockchain_integration() -> Result<()> {
         // Initialize blockchain directly without package integration module
         use lib_blockchain::Blockchain;
@@ -758,6 +765,11 @@ pub mod packages {
             .map_err(|e| ProtocolError::InternalError(format!("Failed to initialize blockchain: {}", e)))?;
         
         tracing::info!("lib-blockchain integration initialized successfully");
+        Ok(())
+    }
+    #[cfg(not(feature = "blockchain"))]
+    pub async fn init_blockchain_integration() -> Result<()> {
+        tracing::info!("lib-blockchain integration skipped (blockchain feature disabled)");
         Ok(())
     }
 
@@ -820,10 +832,17 @@ pub mod packages {
             crate::storage::StorageIntegration::new(crate::storage::StorageConfig::default()).await.is_ok());
         
         // Test lib-blockchain health
-        health.insert("lib-blockchain".to_string(), {
-            use lib_blockchain::Blockchain;
-            Blockchain::new().is_ok()
-        });
+        #[cfg(feature = "blockchain")]
+        {
+            health.insert("lib-blockchain".to_string(), {
+                use lib_blockchain::Blockchain;
+                Blockchain::new().is_ok()
+            });
+        }
+        #[cfg(not(feature = "blockchain"))]
+        {
+            health.insert("lib-blockchain".to_string(), false);
+        }
         
         // Test lib-identity health
         health.insert("lib-identity".to_string(), {

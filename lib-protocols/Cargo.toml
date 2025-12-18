@@ -53,10 +53,8 @@ getrandom = "0.2"
 # Internal ZHTP packages
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
-lib-blockchain = { path = "../lib-blockchain" }
 lib-identity = { path = "../lib-identity" }
 lib-economy = { path = "../lib-economy" }
-lib-storage = { path = "../lib-storage" }
 lib-consensus = { path = "../lib-consensus" }
 
 [dev-dependencies]
@@ -65,12 +63,14 @@ criterion = "0.5"
 proptest = "1.0"
 
 [features]
-default = ["full"]
-full = ["zhtp", "zdns", "api", "testing"]
+default = ["zhtp", "zdns", "api", "testing"]
+full = ["zhtp", "zdns", "api", "testing", "blockchain", "storage"]
 zhtp = []
 zdns = []
 api = []
 testing = []
+blockchain = []
+storage = []
 
 [package.metadata.docs.rs]
 all-features = true

@@ -97,7 +97,10 @@ pub mod zdns;
 pub mod identity;
 pub mod crypto;
 pub mod economics;
+#[cfg(feature = "storage")]
 pub mod storage;
+#[cfg(not(feature = "storage"))]
+pub mod storage_stub;
 pub mod integration;
 pub mod wire;
 
@@ -107,8 +110,9 @@ pub mod testing;
 #[cfg(feature = "testing")]
 // pub mod testing;
 
+use crate::types::ZHTP_VERSION;
+
 // Protocol constants
-pub const ZHTP_VERSION: &str = "1.0";
 pub const ZDNS_VERSION: &str = "1.0";
 
 // Re-export commonly used types
@@ -140,10 +144,14 @@ pub use validation::{
 // Re-export integration modules
 pub use crypto::{ZhtpCrypto, CryptoConfig};
 pub use economics::{ZhtpEconomics, EconomicConfig, EconomicAssessment, EconomicStats};
+#[cfg(feature = "storage")]
 pub use storage::{StorageIntegration, StorageConfig, StorageContract, StorageStats};
+#[cfg(not(feature = "storage"))]
+pub use storage_stub::{StorageIntegration, StorageConfig, StorageContract};
 pub use identity::{ProtocolIdentityService, IdentityServiceConfig, IdentitySession, IdentityAuthRequest, IdentityAuthResponse};
 pub use integration::{ZhtpIntegration, IntegrationConfig, IntegrationStats};
 pub use wire::{ZhtpRequestWire, ZhtpResponseWire, read_request, write_request, read_response, write_response, WIRE_VERSION};
+use crate::zhtp::ZHTP_VERSION;
 
 // Re-export ZDNS functions
 pub use zdns::{

@@ -115,10 +115,8 @@ lib-types = { path = "../lib-types" }
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-economy = { path = "../lib-economy" }
-lib-protocols = { path = "../lib-protocols" }
+lib-protocols = { path = "../lib-protocols", default-features = false }
 lib-identity = { path = "../lib-identity" }
-lib-storage = { path = "../lib-storage" }
-lib-blockchain = { path = "../lib-blockchain" }
 lib-consensus = { path = "../lib-consensus" }
 nix = { version = "0.30.1", features = ["socket"] }
 
@@ -165,9 +163,6 @@ lib-protocols = { path = "../lib-protocols" }
 
 # Identity system integration
 lib-identity = { path = "../lib-identity" }
-
-# NOTE: lib-storage dependency added for DHT integration
-lib-storage = { path = "../lib-storage" }
 
 # Mobile FFI bindings
 [target.'cfg(target_os = "android")'.dependencies]

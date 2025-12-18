@@ -5,8 +5,10 @@
 use anyhow::{Result, anyhow};
 use tracing::{info, debug, warn};
 use serde::{Serialize, Deserialize};
-use lib_blockchain::block::BlockHeader;
 use std::collections::HashMap;
+
+// Placeholder until blockchain integration is relocated.
+type BlockHeader = Vec<u8>;
 
 /// GATT operation types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
