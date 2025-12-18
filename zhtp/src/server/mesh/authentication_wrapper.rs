@@ -170,7 +170,7 @@ impl MeshRouter {
                     // Ticket #149: Use peer_registry upsert instead of connections.insert
                     // connections is already a write guard, use it directly
                     let peer_entry = lib_network::peer_registry::PeerEntry::new(
-                        peer_key,
+                        peer_key.clone(),
                         vec![lib_network::peer_registry::PeerEndpoint {
                             address: String::new(), // TODO: Add actual address
                             protocol: connection.protocol.clone(),
@@ -216,11 +216,17 @@ impl MeshRouter {
                         lib_network::peer_registry::PeerTier::Tier3,
                         0.8,
                     );
-                    connections.upsert(peer_entry).expect("Failed to upsert peer");
+                    connections.upsert(peer_entry).await.expect("Failed to upsert peer");
                     // No need to drop(connections) as it will be dropped automatically
                     
                     info!("✅ Peer {} added to mesh network in {:?} state ({} total peers)",
                         handshake.node_id, final_state, connections.all_peers().count());
+                    
+                    // SECURITY: Register authenticated peer for blockchain sync
+                    if authenticated {
+                        self.sync_manager.register_authenticated_peer(&peer_pubkey).await;
+                        info!("🔐 Peer {} registered for secure blockchain sync", handshake.node_id);
+                    }
                 }
 
                 // Establish QUIC connection if available (after peer is in connections)
@@ -247,7 +253,7 @@ impl MeshRouter {
                                     if let Some(endpoint) = updated_entry.endpoints.first_mut() {
                                         endpoint.protocol = lib_network::protocols::NetworkProtocol::QUIC;
                                     }
-                                    registry.upsert(updated_entry).expect("Failed to update peer");
+                                    registry.upsert(updated_entry).await.expect("Failed to update peer");
                                 }
                             }
                         }

@@ -55,6 +55,8 @@ md5 = "0.7"
 bincode = "1.3"
 blake3 = "1.5"
 rpassword = "7.3"  # Secure password input
+dirs = "5.0"  # Home directory detection for keystore
+atty = "0.2"  # TTY detection for interactive TOFU prompts
 lz4_flex = "0.11"  # LZ4 compression for DHT content decompression
 once_cell = "1.19"  # Global singleton for bootstrap peers
 zeroize = "1.7"  # Secure memory zeroization for passwords
@@ -72,8 +74,15 @@ async-trait = "0.1"
 warp = "0.3"
 reqwest = { version = "0.11", features = ["json"] }
 axum = { version = "0.7", features = ["json", "tokio"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "limit", "timeout"] }
+
+# TLS support for HTTPS gateway
+rustls = { version = "0.23", features = ["ring"] }
+rustls-pemfile = "2.1"
+tokio-rustls = "0.26"
+rcgen = "0.13"  # Self-signed certificate generation
 
 # Additional utilities for integration
 parking_lot = "0.12"
@@ -93,18 +102,7 @@ features = [
     "Networking_Proximity"
 ]
 
-# Android-specific dependencies (for JNI mobile library)
-[target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
-log = "0.4"
-android_logger = "0.13"  # Android logcat integration
-ctor = "0.2"  # Constructor/destructor attributes
-
-# iOS-specific dependencies (for C FFI mobile library)
-[target.'cfg(target_os = "ios")'.dependencies]
-log = "0.4"
-oslog = "0.2"  # iOS unified logging system
-ctor = "0.2"  # Constructor/destructor attributes
+# Mobile dependencies removed - see archive/mobile-ffi-stubs branch when needed
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -136,10 +134,7 @@ validator = ["full-blockchain", "lib-proofs/production"]  # Full validator node
 relay = ["basic-blockchain", "lib-proofs/std"]  # Relay node (verify only, no proving)
 edge = ["minimal-blockchain"]  # Edge node (routing only)
 
-# Mobile profiles
-mobile = ["minimal-blockchain"]  # Base mobile configuration (minimal features)
-android = ["mobile"]  # Android mobile app
-ios = ["mobile"]  # iOS mobile app
+# Mobile profiles removed - see archive/mobile-ffi-stubs branch when needed
 
 # Raspberry Pi optimized profile - minimal features for low-memory compilation
 rpi = ["basic-blockchain", "relay"]  # Raspberry Pi optimized build (no WASM runtime)
@@ -185,20 +180,4 @@ incremental = true
 debug = true
 split-debuginfo = "unpacked"
 
-[profile.mobile]
-# Mobile optimized: small binary size, reasonable performance
-inherits = "release"
-opt-level = "z"         # Optimize aggressively for size
-lto = "fat"             # Full LTO for smaller binary
-codegen-units = 1       # Single codegen unit for best LTO
-strip = true            # Strip all symbols
-panic = "abort"         # Abort on panic (no unwinding)
-overflow-checks = false
-
-[profile.android]
-# Android release profile
-inherits = "mobile"
-
-[profile.ios]
-# iOS release profile
-inherits = "mobile"
+# Mobile profiles (android, ios) removed - see archive/mobile-ffi-stubs branch when needed

@@ -19,7 +19,7 @@ pub use crate::mesh::statistics::MeshProtocolStats;
 pub use crate::types::*;
 pub use crate::discovery::*;
 pub use crate::relays::*;
-pub use crate::blockchain_sync::{BlockchainSyncManager, EdgeNodeSyncManager};
+pub use crate::blockchain_sync::BlockchainSyncManager;
 
 // Unified Peer Identity System (replaces separate NodeId, PeerId, PublicKey systems)
 pub use crate::identity::{UnifiedPeerId, PeerIdMapper, PeerMapperConfig};
@@ -53,7 +53,17 @@ pub use crate::dht::{initialize_dht_client, ZkDHTIntegration, DHTNetworkStatus, 
 pub mod network_utils;
 
 // Web4 domain registry and content publishing
-pub use crate::web4::{Web4Manager, DomainRegistry, ContentPublisher, initialize_web4_system, initialize_web4_system_with_storage};
+pub use crate::web4::{
+    Web4Manager, DomainRegistry, ContentPublisher,
+    Web4ContentService, Web4ContentDefaults, DomainContentConfig, ContentResult,
+    ContentMode, Web4Capability,
+    initialize_web4_system, initialize_web4_system_with_storage,
+};
+
+// ZDNS (Zero-Knowledge Domain Name System) resolver with caching
+pub use crate::zdns::{ZdnsResolver, ZdnsConfig, ZdnsError, Web4Record};
+// ZDNS DNS transport layer (UDP/TCP server on port 53)
+pub use crate::zdns::{ZdnsTransportServer, ZdnsServerConfig, TransportStats, DnsPacket, DNS_PORT};
 
 // Core modules
 pub mod types;
@@ -74,15 +84,19 @@ pub mod zk_integration;
 pub mod testing;
 pub mod platform;
 pub mod dht; // Native binary DHT protocol with lib-storage backend
+pub mod transport;
 pub mod web4; // Web4 domain registry and content publishing
+pub mod zdns; // ZDNS resolver with LRU caching
 pub mod blockchain_sync; // Blockchain synchronization over mesh protocols
+pub mod client; // QUIC client for control-plane operations
+
+// Re-export ZhtpClient for convenience
+pub use client::ZhtpClient;
 
 // Re-export protocol constants for convenience
 pub use constants::*;
 
-// Mobile FFI bindings for Android (JNI) and iOS (C FFI)
-// Available for all platforms to allow compilation, but only functional on mobile
-pub mod mobile;
+// Mobile FFI bindings removed - see archive/mobile-ffi-stubs branch when needed
 
 // External dependencies for economics, API, and storage
 pub use lib_economy as economics;

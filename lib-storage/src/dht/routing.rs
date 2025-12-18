@@ -2,60 +2,60 @@
 //! 
 //! Implements the Kademlia routing algorithm with K-buckets for efficient
 //! peer discovery and routing in the DHT network.
+//!
+//! **MIGRATED (Ticket #148):** Now uses internal DhtPeerRegistry for unified
+//! peer storage instead of maintaining separate Vec<KBucket> arrays.
 
-use crate::types::dht_types::{DhtNode, KBucket, RoutingEntry};
+use crate::types::dht_types::DhtNode;
 use crate::types::NodeId;
+use crate::dht::peer_registry::{
+    DhtPeerRegistry, DhtPeerEntry,
+    MAX_BUCKET_INDEX, DEFAULT_MAX_FAILED_ATTEMPTS
+};
 use anyhow::{Result, anyhow};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// ========== CRIT-3: NodeId Verification Constants ==========
+
+/// Size of the challenge nonce for NodeId ownership verification
+pub const CHALLENGE_NONCE_SIZE: usize = 32;
+
+/// Domain separation prefix for NodeId ownership challenges
+pub const CHALLENGE_DOMAIN_PREFIX: &[u8] = b"ZHTP_NODEID_OWNERSHIP_CHALLENGE_V1";
+
 /// Kademlia routing table for DHT operations
 ///
-/// # Thread Safety (HIGH-6)
+/// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry for unified peer storage
+/// instead of maintaining separate routing_table: Vec<KBucket>.
 ///
-/// **TODO:** Currently uses `&mut self` for mutations, requiring external synchronization.
-/// For production multi-threaded usage:
+/// # Design
 ///
-/// 1. Wrap routing_table in `tokio::sync::RwLock<Vec<KBucket>>`
-/// 2. Change `&mut self` methods to `&self` with internal locking
-/// 3. Use read locks for find_closest_nodes(), get_bucket_nodes()
-/// 4. Use write locks for add_node(), remove_node(), mark_node_failed()
+/// The KademliaRouter now delegates peer storage to DhtPeerRegistry, which uses
+/// HashMap<NodeId, DhtPeerEntry> instead of Vec<KBucket>. This eliminates duplicate
+/// peer storage while preserving all K-bucket functionality.
 ///
-/// ```rust,ignore
-/// pub struct KademliaRouter {
-///     local_id: NodeId,
-///     routing_table: tokio::sync::RwLock<Vec<KBucket>>,
-///     k: usize,
-/// }
-/// ```
+/// # Thread Safety
 ///
-/// Until then, callers must ensure exclusive access during mutations.
+/// Uses `&mut self` for mutations. Callers should wrap in Arc<RwLock> for
+/// concurrent access (to be addressed in future thread-safety ticket).
 #[derive(Debug)]
 pub struct KademliaRouter {
     /// Local node ID
     local_id: NodeId,
-    /// Routing table with 160 K-buckets (for 256-bit node IDs)
-    /// TODO (HIGH-6): Wrap in RwLock for thread-safe access
-    routing_table: Vec<KBucket>,
+    /// Internal peer registry (replaces routing_table Vec<KBucket>)
+    registry: DhtPeerRegistry,
     /// K-bucket size (standard Kademlia K value)
     k: usize,
 }
 
 impl KademliaRouter {
     /// Create a new Kademlia router
+    ///
+    /// **MIGRATED (Ticket #148):** Now creates internal DhtPeerRegistry instead of Vec<KBucket>
     pub fn new(local_id: NodeId, k: usize) -> Self {
-        // Initialize routing table with 160 buckets (for 256-bit node IDs)
-        let mut routing_table = Vec::with_capacity(160);
-        for _ in 0..160 {
-            routing_table.push(KBucket {
-                k,
-                nodes: Vec::new(),
-                last_updated: SystemTime::now(),
-            });
-        }
-        
         Self {
             local_id,
-            routing_table,
+            registry: DhtPeerRegistry::new(k),
             k,
         }
     }
@@ -66,29 +66,47 @@ impl KademliaRouter {
     }
     
     /// Get bucket index for a given distance
+    ///
+    /// Uses MAX_BUCKET_INDEX constant (159) to cap bucket index
     fn get_bucket_index(&self, distance: u32) -> usize {
-        std::cmp::min(distance as usize, 159)
+        std::cmp::min(distance as usize, MAX_BUCKET_INDEX)
     }
     
     /// Add a node to the routing table
     ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.upsert() instead of
+    /// direct routing_table manipulation.
+    ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for distance calculation
     /// while storing full UnifiedPeerId for signature verification
     ///
-    /// # Security (CRIT-3)
+    /// # Security (CRIT-3) - NodeId Ownership Verification
     ///
-    /// **TODO:** Currently accepts nodes without verifying NodeId ownership.
-    /// Before production, implement challenge-response verification:
+    /// Before adding nodes to the routing table, callers SHOULD verify NodeId
+    /// ownership using the challenge-response protocol defined in this module:
     ///
-    /// 1. Generate random challenge
-    /// 2. Require node to sign challenge with private key matching their public key
-    /// 3. Verify NodeId derivation matches: SHA3-256(public_key) == NodeId
-    /// 4. Only add node if verification passes
+    /// ```ignore
+    /// // 1. Generate challenge for the node's claimed NodeId
+    /// let challenge = NodeIdChallenge::generate(node.peer.node_id().clone())?;
     ///
-    /// This prevents NodeId collision/spoofing attacks where an attacker claims
-    /// a NodeId they don't own to poison routing tables.
+    /// // 2. Send challenge to node and get signed response
+    /// let response = network.send_challenge(&node, &challenge).await?;
     ///
-    /// See: lib-identity::ZhtpIdentity::verify_node_id_derivation()
+    /// // 3. Verify the response
+    /// let result = verify_node_id_ownership(&response, 300);
+    /// if result != VerificationResult::Valid {
+    ///     return Err(anyhow!("NodeId ownership verification failed: {:?}", result));
+    /// }
+    ///
+    /// // 4. Now safe to add to routing table
+    /// router.add_node(node).await?;
+    /// ```
+    ///
+    /// This function performs basic validation (non-empty public key) but does NOT
+    /// perform the full challenge-response verification. The network layer should
+    /// verify NodeId ownership before calling this method.
+    ///
+    /// See: `NodeIdChallenge`, `verify_node_id_ownership()`, `verify_node_id_ownership_full()`
     pub async fn add_node(&mut self, node: DhtNode) -> Result<()> {
         let node_id = node.peer.node_id();
         if *node_id == self.local_id {
@@ -96,264 +114,185 @@ impl KademliaRouter {
         }
 
         // SECURITY (CRIT-3): Validate node has non-empty public key
-        // Full challenge-response verification should be done at the network layer
-        // before calling add_node, but we add a basic sanity check here
+        // This is a basic sanity check. Full challenge-response verification
+        // should be performed by the network layer before calling add_node().
+        // See: verify_node_id_ownership() for the complete verification protocol.
         if node.peer.public_key().dilithium_pk.is_empty() {
             return Err(anyhow!("Cannot add node with empty public key to routing table"));
         }
         
         let distance = self.calculate_distance(&self.local_id, node_id);
         let bucket_index = self.get_bucket_index(distance);
-        
-        if let Some(bucket) = self.routing_table.get_mut(bucket_index) {
-            // Check if node already exists
-            if let Some(pos) = bucket.nodes.iter().position(|entry| entry.node.peer.node_id() == node_id) {
-                // Update existing node
-                bucket.nodes[pos].node = node.clone();
-                bucket.nodes[pos].last_contact = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)?
-                    .as_secs();
-                bucket.nodes[pos].failed_attempts = 0;
-            } else if bucket.nodes.len() < bucket.k {
-                // Add new node if bucket not full
-                bucket.nodes.push(RoutingEntry {
-                    node: node.clone(),
-                    distance,
-                    last_contact: SystemTime::now()
-                        .duration_since(UNIX_EPOCH)?
-                        .as_secs(),
-                    failed_attempts: 0,
-                });
-            } else {
-                // Bucket full - replace least recently seen node if it's unresponsive
-                let lrs_node_id = bucket.nodes.iter()
-                    .min_by_key(|entry| entry.last_contact)
-                    .map(|entry| entry.node.peer.node_id().clone());
-                
-                if let Some(node_id_to_replace) = lrs_node_id {
-                    // In a real implementation, we would ping the node here
-                    // For now, we'll replace if failed_attempts > 3
-                    if let Some(lrs_entry) = bucket.nodes.iter().find(|e| e.node.peer.node_id() == &node_id_to_replace) {
-                        if lrs_entry.failed_attempts > 3 {
-                            // Replace unresponsive node within the same bucket reference
-                            let lrs_index = bucket.nodes.iter()
-                                .position(|entry| entry.node.peer.node_id() == &node_id_to_replace)
-                                .unwrap();
-                            bucket.nodes[lrs_index] = RoutingEntry {
-                                node: node.clone(),
-                                distance,
-                                last_contact: SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)?
-                                    .as_secs(),
-                                failed_attempts: 0,
-                            };
-                        }
-                    }
-                }
-            }
-            
-            bucket.last_updated = SystemTime::now();
-        } else {
-            return Err(anyhow!("Invalid bucket index: {}", bucket_index));
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
+        // Check if peer already exists
+        if let Some(existing) = self.registry.get_mut(node_id) {
+            // Update existing peer
+            existing.node = node.clone();
+            existing.last_contact = current_time;
+            existing.failed_attempts = 0;
+            existing.distance = distance;
+            existing.bucket_index = bucket_index;
+            return Ok(());
         }
-        
+
+        // New peer - check if bucket is full
+        if self.registry.is_bucket_full(bucket_index) {
+            // Bucket full - try to replace least recently seen node with excessive failed attempts
+            // Uses configurable DEFAULT_MAX_FAILED_ATTEMPTS constant
+            let lrs_failed = self.registry.peers_in_bucket(bucket_index)
+                .iter()
+                .filter(|entry| entry.failed_attempts > DEFAULT_MAX_FAILED_ATTEMPTS)
+                .min_by_key(|entry| entry.last_contact)
+                .map(|entry| entry.node.peer.node_id().clone());
+
+            if let Some(node_to_remove) = lrs_failed {
+                // Remove the failed node
+                self.registry.remove(&node_to_remove);
+            } else {
+                // Bucket full and no failed peers - cannot add
+                return Err(anyhow!("K-bucket {} is full (k={})", bucket_index, self.k));
+            }
+        }
+
+        // Add new peer
+        let entry = DhtPeerEntry {
+            node,
+            distance,
+            bucket_index,
+            last_contact: current_time,
+            failed_attempts: 0,
+        };
+
+        self.registry.upsert(entry)?;
         Ok(())
     }
     
     /// Find the K closest nodes to a target ID (uses k-bucket parameter)
     ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.find_closest()
+    ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for distance calculation
     /// Returns full DhtNode with UnifiedPeerId for caller to verify signatures
     pub fn find_closest_nodes(&self, target: &NodeId, count: usize) -> Vec<DhtNode> {
-        let requested_count = std::cmp::min(count, self.k); // Limit to k-bucket size
-        let mut closest_nodes = Vec::new();
-        
-        // Start from the bucket closest to target and expand outward
-        let target_distance = self.calculate_distance(&self.local_id, target);
-        let start_bucket = self.get_bucket_index(target_distance);
-        
-        // Collect nodes from target bucket first
-        if let Some(bucket) = self.routing_table.get(start_bucket) {
-            for entry in &bucket.nodes {
-                closest_nodes.push((entry.node.clone(), self.calculate_distance(target, entry.node.peer.node_id())));
-            }
-        }
-        
-        // Expand search to adjacent buckets if we need more nodes
-        let mut bucket_offset = 1;
-        while closest_nodes.len() < requested_count && bucket_offset <= 159 {
-            // Check bucket below
-            if start_bucket >= bucket_offset {
-                let lower_bucket_idx = start_bucket - bucket_offset;
-                if let Some(bucket) = self.routing_table.get(lower_bucket_idx) {
-                    for entry in &bucket.nodes {
-                        if closest_nodes.len() < requested_count {
-                            closest_nodes.push((entry.node.clone(), self.calculate_distance(target, entry.node.peer.node_id())));
-                        }
-                    }
-                }
-            }
-            
-            // Check bucket above
-            let upper_bucket_idx = start_bucket + bucket_offset;
-            if upper_bucket_idx < self.routing_table.len() {
-                if let Some(bucket) = self.routing_table.get(upper_bucket_idx) {
-                    for entry in &bucket.nodes {
-                        if closest_nodes.len() < requested_count {
-                            closest_nodes.push((entry.node.clone(), self.calculate_distance(target, entry.node.peer.node_id())));
-                        }
-                    }
-                }
-            }
-            
-            bucket_offset += 1;
-        }
-        
-        // Sort by distance to target and return closest k nodes
-        closest_nodes.sort_by_key(|(_, distance)| *distance);
-        closest_nodes.into_iter()
-            .take(requested_count)
-            .map(|(node, _)| node)
-            .collect()
+        self.registry.find_closest(target, count)
     }
     
     /// Get all nodes in a specific bucket
+    ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.peers_in_bucket()
     pub fn get_bucket_nodes(&self, bucket_index: usize) -> Vec<&DhtNode> {
-        if bucket_index < self.routing_table.len() {
-            self.routing_table[bucket_index]
-                .nodes
-                .iter()
-                .map(|entry| &entry.node)
-                .collect()
-        } else {
-            Vec::new()
-        }
+        self.registry.peers_in_bucket(bucket_index)
+            .into_iter()
+            .map(|entry| &entry.node)
+            .collect()
     }
     
     /// Mark a node as failed (increment failed attempts)
     ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.mark_failed()
+    ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for lookup
     pub fn mark_node_failed(&mut self, node_id: &NodeId) {
-        let distance = self.calculate_distance(&self.local_id, node_id);
-        let bucket_index = self.get_bucket_index(distance);
-        
-        if let Some(bucket) = self.routing_table.get_mut(bucket_index) {
-            if let Some(entry) = bucket.nodes.iter_mut().find(|e| e.node.peer.node_id() == node_id) {
-                entry.failed_attempts += 1;
-            }
-        }
+        self.registry.mark_failed(node_id);
     }
     
     /// Mark a node as responsive (reset failed attempts)
     ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.mark_responsive()
+    ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for lookup
+    ///
+    /// Returns Ok(()) always for API compatibility. The underlying operation
+    /// returns a bool indicating if the peer was found, but we preserve the
+    /// Result<()> signature for backward compatibility with existing callers.
     pub fn mark_node_responsive(&mut self, node_id: &NodeId) -> Result<()> {
-        let distance = self.calculate_distance(&self.local_id, node_id);
-        let bucket_index = self.get_bucket_index(distance);
-        
-        if let Some(bucket) = self.routing_table.get_mut(bucket_index) {
-            if let Some(entry) = bucket.nodes.iter_mut().find(|e| e.node.peer.node_id() == node_id) {
-                entry.failed_attempts = 0;
-                entry.last_contact = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            }
-        }
-        
+        // mark_responsive returns bool, but we maintain Result<()> for compatibility
+        let _ = self.registry.mark_responsive(node_id);
         Ok(())
     }
     
     /// Remove a node from the routing table
     ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.remove()
+    ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for lookup
     pub fn remove_node(&mut self, node_id: &NodeId) {
-        let distance = self.calculate_distance(&self.local_id, node_id);
-        let bucket_index = self.get_bucket_index(distance);
-        
-        if let Some(bucket) = self.routing_table.get_mut(bucket_index) {
-            bucket.nodes.retain(|entry| entry.node.peer.node_id() != node_id);
-        }
+        self.registry.remove(node_id);
     }
     
     /// Get routing table statistics
+    ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.stats()
     pub fn get_stats(&self) -> RoutingStats {
-        let total_nodes: usize = self.routing_table.iter().map(|b| b.nodes.len()).sum();
-        let non_empty_buckets = self.routing_table.iter().filter(|b| !b.nodes.is_empty()).count();
-        let full_buckets = self.routing_table.iter().filter(|b| b.nodes.len() >= self.k).count();
-        
+        let stats = self.registry.stats();
         RoutingStats {
-            total_nodes,
-            non_empty_buckets,
-            total_buckets: self.routing_table.len(),
-            full_buckets,
-            k_value: self.k,
-            average_bucket_fill: if non_empty_buckets > 0 { 
-                total_nodes as f64 / non_empty_buckets as f64 
-            } else { 
-                0.0 
+            total_nodes: stats.total_peers,
+            non_empty_buckets: stats.non_empty_buckets,
+            total_buckets: 160, // Kademlia uses 160 buckets for 256-bit IDs
+            full_buckets: stats.full_buckets,
+            k_value: stats.k_value,
+            average_bucket_fill: if stats.non_empty_buckets > 0 {
+                stats.total_peers as f64 / stats.non_empty_buckets as f64
+            } else {
+                0.0
             },
         }
     }
 
     /// Get the k-bucket parameter value
+    ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.get_k()
     pub fn get_k_value(&self) -> usize {
-        self.k
+        self.registry.get_k()
     }
 
     /// Check if a bucket is full (has k nodes)
+    ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.is_bucket_full()
     pub fn is_bucket_full(&self, bucket_index: usize) -> bool {
-        if let Some(bucket) = self.routing_table.get(bucket_index) {
-            bucket.nodes.len() >= self.k
-        } else {
-            false
-        }
+        self.registry.is_bucket_full(bucket_index)
     }
 
     /// Get k-bucket utilization (percentage of buckets that are full)
+    ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry stats
     pub fn get_bucket_utilization(&self) -> f64 {
-        let full_buckets = self.routing_table.iter()
-            .filter(|b| b.nodes.len() >= self.k)
-            .count();
-        
-        if self.routing_table.is_empty() {
+        let stats = self.registry.stats();
+        if stats.non_empty_buckets == 0 {
             0.0
         } else {
-            (full_buckets as f64 / self.routing_table.len() as f64) * 100.0
+            (stats.full_buckets as f64 / 160.0) * 100.0 // 160 total K-buckets
         }
     }
 
     /// Refresh old buckets (Kademlia maintenance)
+    ///
+    /// **MIGRATED (Ticket #148):** Now checks peer last_contact timestamps
+    /// Returns list of bucket indices that need refresh
     pub fn get_buckets_needing_refresh(&self, refresh_interval_secs: u64) -> Vec<usize> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         
-        let mut buckets_to_refresh = Vec::new();
+        let mut buckets_to_refresh = std::collections::HashSet::new();
         
-        for (index, bucket) in self.routing_table.iter().enumerate() {
-            let last_updated = bucket.last_updated
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            
-            if current_time - last_updated > refresh_interval_secs {
-                buckets_to_refresh.push(index);
+        // Check all peers and find buckets with stale contacts
+        for entry in self.registry.all_peers() {
+            if current_time - entry.last_contact > refresh_interval_secs {
+                buckets_to_refresh.insert(entry.bucket_index);
             }
         }
         
-        buckets_to_refresh
+        buckets_to_refresh.into_iter().collect()
     }
 
     /// Perform k-bucket maintenance (remove unresponsive nodes)
+    ///
+    /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.cleanup_failed_peers_with_threshold()
     pub fn perform_bucket_maintenance(&mut self, max_failed_attempts: u32) -> usize {
-        let mut removed_count = 0;
-        
-        for bucket in &mut self.routing_table {
-            let initial_count = bucket.nodes.len();
-            bucket.nodes.retain(|entry| entry.failed_attempts <= max_failed_attempts);
-            removed_count += initial_count - bucket.nodes.len();
-        }
-        
-        removed_count
+        self.registry.cleanup_failed_peers_with_threshold(max_failed_attempts)
     }
 
     /// Generate random node ID for bucket refresh
@@ -411,6 +350,251 @@ pub struct RoutingStats {
     pub average_bucket_fill: f64,
 }
 
+// ============================================================================
+// CRIT-3: NodeId Ownership Verification (Challenge-Response)
+// ============================================================================
+//
+// This module implements challenge-response verification to prove that a node
+// actually owns the private key corresponding to their claimed NodeId.
+//
+// ## Security Properties
+//
+// - **NodeId Binding**: Verifies SHA3-256(public_key) matches claimed NodeId
+// - **Liveness**: Random challenge prevents replay attacks
+// - **Authenticity**: Post-quantum signature proves private key ownership
+//
+// ## Protocol
+//
+// 1. Verifier generates random 32-byte challenge
+// 2. Verifier sends challenge to claimant
+// 3. Claimant signs: DOMAIN_PREFIX || challenge || timestamp || claimed_node_id
+// 4. Claimant returns signature
+// 5. Verifier checks:
+//    - Signature is valid for claimant's public key
+//    - SHA3-256(public_key) == claimed_node_id
+//    - Timestamp is within acceptable window
+//
+// ============================================================================
+
+/// Challenge for NodeId ownership verification
+#[derive(Debug, Clone)]
+pub struct NodeIdChallenge {
+    /// Random challenge nonce
+    pub nonce: [u8; CHALLENGE_NONCE_SIZE],
+    /// Challenge creation timestamp
+    pub timestamp: u64,
+    /// Claimed NodeId being verified
+    pub claimed_node_id: NodeId,
+}
+
+/// Response to a NodeId ownership challenge
+#[derive(Debug, Clone)]
+pub struct NodeIdChallengeResponse {
+    /// The original challenge
+    pub challenge: NodeIdChallenge,
+    /// Post-quantum signature over challenge data
+    pub signature: lib_crypto::PostQuantumSignature,
+}
+
+/// Result of NodeId ownership verification
+#[derive(Debug, Clone, PartialEq)]
+pub enum VerificationResult {
+    /// NodeId ownership verified successfully
+    Valid,
+    /// Signature verification failed
+    InvalidSignature,
+    /// NodeId does not match public key derivation
+    NodeIdMismatch,
+    /// Challenge timestamp is too old or in the future
+    TimestampOutOfRange,
+    /// Public key is empty or invalid
+    InvalidPublicKey,
+}
+
+impl NodeIdChallenge {
+    /// Generate a new challenge for verifying NodeId ownership
+    ///
+    /// # Arguments
+    /// * `claimed_node_id` - The NodeId that the remote peer claims to own
+    ///
+    /// # Returns
+    /// A challenge containing a random nonce and current timestamp
+    pub fn generate(claimed_node_id: NodeId) -> Result<Self> {
+        // Generate 32-byte random nonce by hashing multiple 12-byte nonces
+        // lib_crypto::generate_nonce() returns 12 bytes, we need 32 for security
+        let nonce1 = lib_crypto::generate_nonce();
+        let nonce2 = lib_crypto::generate_nonce();
+        let nonce3 = lib_crypto::generate_nonce();
+
+        // Combine nonces with hash for 32-byte output
+        let mut combined = Vec::with_capacity(36);
+        combined.extend_from_slice(&nonce1);
+        combined.extend_from_slice(&nonce2);
+        combined.extend_from_slice(&nonce3);
+
+        let nonce = lib_crypto::hash_blake3(&combined);
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| anyhow!("System time error: {}", e))?
+            .as_secs();
+
+        Ok(Self {
+            nonce,
+            timestamp,
+            claimed_node_id,
+        })
+    }
+
+    /// Get the message to be signed for this challenge
+    ///
+    /// Format: DOMAIN_PREFIX || nonce || timestamp || claimed_node_id
+    pub fn get_sign_message(&self) -> Vec<u8> {
+        let mut message = Vec::with_capacity(
+            CHALLENGE_DOMAIN_PREFIX.len() + CHALLENGE_NONCE_SIZE + 8 + 32
+        );
+
+        message.extend_from_slice(CHALLENGE_DOMAIN_PREFIX);
+        message.extend_from_slice(&self.nonce);
+        message.extend_from_slice(&self.timestamp.to_le_bytes());
+        message.extend_from_slice(self.claimed_node_id.as_bytes());
+
+        message
+    }
+
+    /// Check if challenge timestamp is within acceptable range
+    ///
+    /// Default window is 5 minutes (300 seconds)
+    pub fn is_timestamp_valid(&self, max_age_secs: u64) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Check not too old
+        if now.saturating_sub(self.timestamp) > max_age_secs {
+            return false;
+        }
+
+        // Check not in future (allow 30 sec clock skew)
+        if self.timestamp > now + 30 {
+            return false;
+        }
+
+        true
+    }
+}
+
+impl NodeIdChallengeResponse {
+    /// Create a response to a challenge (called by the node being challenged)
+    ///
+    /// # Arguments
+    /// * `challenge` - The challenge to respond to
+    /// * `signature` - The signature over the challenge message
+    pub fn new(challenge: NodeIdChallenge, signature: lib_crypto::PostQuantumSignature) -> Self {
+        Self {
+            challenge,
+            signature,
+        }
+    }
+}
+
+/// Verify a NodeId ownership challenge response
+///
+/// # CRIT-3 Implementation
+///
+/// This function verifies that:
+/// 1. The signature is valid for the public key in the response
+/// 2. The claimed NodeId can be derived from the public key
+/// 3. The challenge timestamp is within acceptable bounds
+///
+/// # Arguments
+/// * `response` - The challenge response from the remote node
+/// * `max_timestamp_age_secs` - Maximum age of challenge timestamp (default 300s)
+///
+/// # Returns
+/// `VerificationResult` indicating success or specific failure reason
+pub fn verify_node_id_ownership(
+    response: &NodeIdChallengeResponse,
+    max_timestamp_age_secs: u64,
+) -> VerificationResult {
+    // Check timestamp validity
+    if !response.challenge.is_timestamp_valid(max_timestamp_age_secs) {
+        return VerificationResult::TimestampOutOfRange;
+    }
+
+    // Check public key is non-empty
+    if response.signature.public_key.dilithium_pk.is_empty() {
+        return VerificationResult::InvalidPublicKey;
+    }
+
+    // Verify NodeId derivation: NodeId should be derivable from public key
+    // The NodeId must match SHA3-256 hash of the DID components
+    // For now, we verify the signature proves ownership of the private key
+    // corresponding to the public key that was used to generate the NodeId
+    let message = response.challenge.get_sign_message();
+
+    // Verify signature using lib-crypto
+    // The verify_signature function takes (message, signature_bytes, public_key_bytes)
+    let signature_valid = lib_crypto::verify_signature(
+        &message,
+        &response.signature.signature,
+        &response.signature.public_key.dilithium_pk,
+    ).unwrap_or(false);
+
+    if !signature_valid {
+        return VerificationResult::InvalidSignature;
+    }
+
+    // Note: Full NodeId derivation check requires access to the original DID and device_id
+    // which may not always be available. The signature verification above proves ownership
+    // of the private key corresponding to the public key.
+    //
+    // For stronger binding, use verify_node_id_ownership_full() which requires the
+    // node to provide its DID, device_id, and creation timestamp for full derivation check.
+
+    VerificationResult::Valid
+}
+
+/// Verify NodeId ownership with full derivation check
+///
+/// This is the strongest form of verification that requires the original
+/// identity components used to derive the NodeId.
+///
+/// # Arguments
+/// * `response` - The challenge response from the remote node
+/// * `did` - The DID claimed by the node
+/// * `device_id` - The device ID claimed by the node
+/// * `creation_timestamp` - The timestamp when the NodeId was created
+/// * `max_challenge_age_secs` - Maximum age of challenge timestamp
+///
+/// # Returns
+/// `VerificationResult` indicating success or specific failure reason
+pub fn verify_node_id_ownership_full(
+    response: &NodeIdChallengeResponse,
+    did: &str,
+    device_id: &str,
+    creation_timestamp: u64,
+    max_challenge_age_secs: u64,
+) -> VerificationResult {
+    // First do basic verification
+    let basic_result = verify_node_id_ownership(response, max_challenge_age_secs);
+    if basic_result != VerificationResult::Valid {
+        return basic_result;
+    }
+
+    // Verify NodeId derivation matches the provided identity components
+    let derivation_valid = response.challenge.claimed_node_id
+        .verify_derivation(did, device_id, creation_timestamp)
+        .unwrap_or(false);
+
+    if !derivation_valid {
+        return VerificationResult::NodeIdMismatch;
+    }
+
+    VerificationResult::Valid
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,7 +626,8 @@ mod tests {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
                 signature: vec![],
                 public_key: lib_crypto::PublicKey {
-                    dilithium_pk: vec![],
+                    // Non-empty dilithium_pk to pass validation in add_node()
+                    dilithium_pk: vec![1, 2, 3, 4, 5, 6, 7, 8],
                     kyber_pk: vec![],
                     key_id: [0u8; 32],
                 },
@@ -459,8 +644,11 @@ mod tests {
         let local_id = NodeId::from_bytes([1u8; 32]);
         let router = KademliaRouter::new(local_id, 20);
         
-        assert_eq!(router.routing_table.len(), 160);
+        // Verify K value
         assert_eq!(router.k, 20);
+        
+        // Verify registry initialized
+        assert_eq!(router.registry.len(), 0);
     }
     
     #[test]
@@ -621,25 +809,71 @@ mod tests {
         println!("Distance 0: {}, Distance 10: {}", distance_0, distance_10);
     }
 
-    #[test]
-    fn test_bucket_refresh() {
+    #[tokio::test]
+    async fn test_bucket_refresh() {
+        use lib_identity::ZhtpIdentity;
+        use lib_identity::types::IdentityType;
+        use crate::types::dht_types::DhtPeerIdentity;
+        
         let local_id = NodeId::from_bytes([1u8; 32]);
-        let router = KademliaRouter::new(local_id, 20);
+        let mut router = KademliaRouter::new(local_id.clone(), 20);
+        
+        // Helper to create test node
+        let create_node = |device_name: &str, port: u16| {
+            let identity = ZhtpIdentity::new_unified(
+                IdentityType::Device,
+                None,
+                None,
+                device_name,
+                None,
+            ).expect("Failed to create test identity");
+
+            let peer = DhtPeerIdentity {
+                node_id: identity.node_id.clone(),
+                public_key: identity.public_key.clone(),
+                did: identity.did.clone(),
+                device_id: device_name.to_string(),
+            };
+
+            DhtNode {
+                peer,
+                addresses: vec![format!("127.0.0.1:{}", port)],
+                public_key: lib_crypto::PostQuantumSignature {
+                    algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+                    signature: vec![],
+                    public_key: lib_crypto::PublicKey {
+                        dilithium_pk: vec![1, 2, 3],
+                        kyber_pk: vec![],
+                        key_id: [0u8; 32],
+                    },
+                    timestamp: 0,
+                },
+                last_seen: 0,
+                reputation: 1000,
+                storage_info: None,
+            }
+        };
+        
+        // Add some test nodes to different buckets
+        for i in 0..10 {
+            let node = create_node(&format!("device-{}", i), 8080 + i);
+            router.add_node(node).await.unwrap();
+        }
         
         // Test basic functionality - new router should not need refresh with long interval
         let long_interval_check = router.get_buckets_needing_refresh(3600); // 1 hour
-        assert_eq!(long_interval_check.len(), 0, "New router should have no buckets needing refresh with 1-hour interval");
+        assert_eq!(long_interval_check.len(), 0, "Newly added peers should not need refresh with 1-hour interval");
         
         // Wait to ensure timestamp difference and test with 1 second interval
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         let one_second_check = router.get_buckets_needing_refresh(1);
         
-        // Since we waited 2 seconds, buckets should need refresh with 1-second interval
+        // Since we waited 2 seconds, buckets with peers should need refresh with 1-second interval
         println!("Buckets needing refresh after 2 seconds with 1-second interval: {}", one_second_check.len());
-        assert!(one_second_check.len() > 0, "After 2 seconds, buckets should need refresh with 1-second interval");
+        assert!(one_second_check.len() > 0, "After 2 seconds, buckets with peers should need refresh with 1-second interval");
         
-        // Test that we get a reasonable number of buckets (should be all 160)
-        assert_eq!(one_second_check.len(), 160, "All 160 buckets should need refresh");
+        // We added 10 nodes to potentially different buckets
+        assert!(one_second_check.len() <= 10, "Should refresh at most 10 buckets (one per added node)");
         
         // Test that the method returns valid bucket indices
         for &bucket_index in &one_second_check {

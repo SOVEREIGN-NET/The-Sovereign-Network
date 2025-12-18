@@ -688,16 +688,24 @@ impl Blockchain {
             }
         }
 
-        // Verify proof of work - skip for consensus/system blocks with easy difficulty
-        if block.difficulty().bits() < 0x1fffffff {
+        // Verify proof of work using mining profile from environment
+        // This ensures validation uses the same difficulty as mining
+        let mining_config = crate::types::mining::get_mining_config_from_env();
+        let expected_difficulty = mining_config.difficulty.bits();
+
+        // Check if block uses production difficulty (requires full PoW verification)
+        // or development/testnet difficulty (simplified validation)
+        if block.difficulty().bits() < 0x20000000 {
+            // Production difficulty - verify full PoW
             if !block.header.meets_difficulty_target() {
                 warn!("Block does not meet difficulty target");
                 return Ok(false);
             }
         } else {
-            // For consensus blocks with easy difficulty, just check it's reasonable
-            if block.difficulty().bits() != 0x1fffffff {
-                warn!("Easy difficulty mismatch: {}", block.difficulty().bits());
+            // Development/testnet difficulty - verify it matches the expected profile difficulty
+            if block.difficulty().bits() != expected_difficulty {
+                warn!("Difficulty mismatch: block has 0x{:x}, expected 0x{:x} from mining profile",
+                      block.difficulty().bits(), expected_difficulty);
                 return Ok(false);
             }
         }

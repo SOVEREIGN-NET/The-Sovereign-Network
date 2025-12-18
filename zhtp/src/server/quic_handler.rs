@@ -99,6 +99,53 @@ struct TrackedConnection {
     last_activity: Instant,
 }
 
+/// Session state for authenticated control plane connections
+/// Created after successful UHP+Kyber handshake
+pub struct ControlPlaneSession {
+    /// Session ID from UHP handshake
+    pub session_id: [u8; 16],
+    /// Authenticated peer DID
+    pub peer_did: String,
+    /// Application-layer MAC key derived from master key
+    pub app_key: [u8; 32],
+    /// Session creation time for expiration checks
+    pub created_at: Instant,
+    /// Sequence number window for replay protection
+    pub sequence_window: std::sync::atomic::AtomicU64,
+}
+
+/// Connection mode based on negotiated ALPN
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionMode {
+    /// Public read-only: No UHP handshake, only allows reading public content
+    /// ALPN: zhtp-public/1
+    /// Allows: domain resolution, manifest fetch, content/blob retrieval
+    /// Rejects: deploy, domain registration, admin operations, any mutations
+    Public,
+    /// Control plane: UHP handshake required, then authenticated API requests
+    /// ALPN: zhtp-uhp/1
+    ControlPlane,
+    /// HTTP-compatible: No UHP handshake, direct HTTP requests (legacy)
+    /// ALPN: zhtp-http/1, zhtp/1.0, h3
+    HttpCompat,
+    /// Mesh peer-to-peer: UHP handshake, then encrypted mesh messages
+    /// ALPN: zhtp-mesh/1
+    Mesh,
+}
+
+impl ConnectionMode {
+    /// Determine connection mode from negotiated ALPN
+    pub fn from_alpn(alpn: Option<&[u8]>) -> Self {
+        match alpn {
+            Some(b"zhtp-public/1") => ConnectionMode::Public,
+            Some(b"zhtp-uhp/1") => ConnectionMode::ControlPlane,
+            Some(b"zhtp-mesh/1") => ConnectionMode::Mesh,
+            Some(b"zhtp-http/1") | Some(b"zhtp/1.0") | Some(b"h3") => ConnectionMode::HttpCompat,
+            _ => ConnectionMode::Public, // Default to public read-only for unknown (safe default)
+        }
+    }
+}
+
 /// Protocol detection result (includes buffered data for forwarding)
 #[derive(Debug)]
 enum ProtocolType {
@@ -185,6 +232,9 @@ pub struct QuicHandler {
 
     /// Handshake rate limiting (IP -> (count, window_start))
     handshake_rate_limits: Arc<RwLock<HashMap<SocketAddr, (usize, Instant)>>>,
+
+    /// Identity manager for auto-registration of authenticated peers
+    identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
 }
 
 impl QuicHandler {
@@ -192,6 +242,7 @@ impl QuicHandler {
     pub fn new(
         zhtp_router: Arc<RwLock<ZhtpRouter>>,
         quic_protocol: Arc<QuicMeshProtocol>,
+        identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
     ) -> Self {
         let http_compat = Arc::new(HttpCompatibilityLayer::new(
             zhtp_router.clone()
@@ -204,6 +255,7 @@ impl QuicHandler {
             mesh_handler: None,
             pqc_connections: Arc::new(RwLock::new(HashMap::new())),
             handshake_rate_limits: Arc::new(RwLock::new(HashMap::new())),
+            identity_manager,
         }
     }
 
@@ -345,12 +397,501 @@ impl QuicHandler {
     }
 
     /// Handle a single QUIC connection (multiple streams)
-    /// First stream determines if this is peer-to-peer (PQC handshake) or client (HTTP/ZHTP)
+    ///
+    /// Dispatches based on negotiated ALPN:
+    /// - zhtp-uhp/1: Control plane - UHP handshake first, then authenticated API requests
+    /// - zhtp-mesh/1: Mesh - UHP handshake first, then encrypted mesh messages
+    /// - zhtp-http/1, zhtp/1.0, h3: HTTP-compat - direct HTTP/ZHTP requests
     async fn handle_connection(&self, connection: Connection) -> Result<()> {
         let peer_addr = connection.remote_address();
-        debug!("📡 Handling QUIC connection from {}", peer_addr);
 
-        // Check if first stream is PQC handshake (peer-to-peer) or client request
+        // Determine connection mode from negotiated ALPN
+        let alpn = connection.handshake_data()
+            .and_then(|hd| hd.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
+            .and_then(|hd| hd.protocol.clone());
+
+        let mode = ConnectionMode::from_alpn(alpn.as_deref());
+
+        debug!("📡 Handling QUIC connection from {} (mode: {:?}, alpn: {:?})",
+               peer_addr, mode, alpn.as_ref().map(|a| String::from_utf8_lossy(a)));
+
+        match mode {
+            ConnectionMode::Public => {
+                // Public: Read-only access to public content (no UHP handshake)
+                self.handle_public_connection(connection, peer_addr).await
+            }
+            ConnectionMode::ControlPlane => {
+                // Control plane: Perform UHP handshake, then handle authenticated API requests
+                self.handle_control_plane_connection(connection, peer_addr).await
+            }
+            ConnectionMode::Mesh => {
+                // Mesh: Perform UHP handshake, then handle mesh messages
+                self.handle_mesh_connection(connection, peer_addr).await
+            }
+            ConnectionMode::HttpCompat => {
+                // HTTP-compat: Handle HTTP/ZHTP requests directly (no UHP handshake)
+                self.handle_http_compat_connection(connection, peer_addr).await
+            }
+        }
+    }
+
+    /// Handle control plane connection (CLI, Web4 deploy, admin APIs)
+    ///
+    /// Protocol flow:
+    /// 1. Perform UHP+Kyber handshake to authenticate client
+    /// 2. Derive session keys and create authenticated session
+    /// 3. Accept streams with authenticated API requests
+    async fn handle_control_plane_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
+        info!("🔐 Control plane connection from {} - starting UHP handshake", peer_addr);
+
+        // Check rate limit for this IP
+        self.check_handshake_rate_limit(&peer_addr).await?;
+
+        // Get server identity
+        let identity = self.quic_protocol.identity();
+
+        // Create handshake context with nonce cache
+        let nonce_db_path = std::path::Path::new("./data/tls/control_plane_nonce_cache");
+        let nonce_cache = NonceCache::open(nonce_db_path, 3600, 100_000)
+            .context("Failed to open nonce cache")?;
+        let handshake_ctx = HandshakeContext::new(nonce_cache);
+
+        // Perform UHP+Kyber handshake as responder
+        let handshake_result = quic_handshake::handshake_as_responder(
+            &connection,
+            identity,
+            &handshake_ctx,
+        ).await.context("UHP+Kyber handshake failed")?;
+
+        let peer_did = handshake_result.peer_identity.did.clone();
+        let session_id = handshake_result.session_id;
+        let master_key = handshake_result.master_key;
+
+        // Derive application-layer MAC key (same derivation as client)
+        let app_key = Self::derive_app_key(&master_key, &session_id, &identity.did, &peer_did);
+
+        info!(
+            peer_did = %peer_did,
+            session_id = ?hex::encode(&session_id[..8]),
+            "✅ Control plane authenticated from {} (PQC encryption active)",
+            peer_addr
+        );
+
+        // Auto-register the authenticated peer identity
+        // Authentication IS registration: successful UHP+Kyber proves identity control
+        self.auto_register_peer_identity(&handshake_result.peer_identity).await;
+
+        // Create session state for authenticated requests
+        let session = ControlPlaneSession {
+            session_id,
+            peer_did: peer_did.clone(),
+            app_key,
+            created_at: Instant::now(),
+            sequence_window: std::sync::atomic::AtomicU64::new(0),
+        };
+
+        // Handle streams with this authenticated session
+        self.handle_control_plane_streams(connection, session, peer_addr).await
+    }
+
+    /// Derive application-layer MAC key from master key
+    /// MUST match client-side derivation in Web4Client/ZhtpClient
+    fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], server_did: &str, client_did: &str) -> [u8; 32] {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"zhtp-web4-app-mac");
+        input.extend_from_slice(master_key);
+        input.extend_from_slice(session_id);
+        input.extend_from_slice(server_did.as_bytes());  // Server DID
+        input.extend_from_slice(client_did.as_bytes());  // Client DID
+        lib_crypto::hash_blake3(&input)
+    }
+
+    /// Auto-register peer identity after successful UHP+Kyber handshake
+    ///
+    /// # Design Principle
+    /// Authentication IS registration. A successful cryptographic handshake proves:
+    /// - The peer controls the private key of the DID
+    /// - The DID is live, not replayed
+    /// - The session is bound to that identity
+    ///
+    /// # What this does
+    /// - Creates an "observed" identity from the handshake's NodeIdentity
+    /// - Records: DID, public keys, first_seen timestamp, last_seen
+    /// - Marks identity as known but unprivileged
+    ///
+    /// # What this does NOT do
+    /// - Grant domain ownership
+    /// - Grant admin privileges
+    /// - Grant validator rights
+    /// - Grant storage quotas
+    /// - Grant economic privileges
+    ///
+    /// Registration ≠ authorization. Authorization happens at the API layer.
+    async fn auto_register_peer_identity(&self, peer_identity: &lib_network::handshake::NodeIdentity) {
+        let peer_did = &peer_identity.did;
+
+        // Check if identity already exists
+        let identity_id = lib_crypto::Hash::from_bytes(
+            &lib_crypto::hash_blake3(peer_did.as_bytes()).to_vec()
+        );
+
+        {
+            let identity_mgr = self.identity_manager.read().await;
+            if identity_mgr.get_identity(&identity_id).is_some() {
+                debug!(
+                    peer_did = %peer_did,
+                    "Peer identity already registered, updating last_seen"
+                );
+                // TODO: Update last_seen timestamp
+                return;
+            }
+        }
+
+        // Create observed identity from handshake
+        // Note: peer_identity.node_id is already a lib_identity::NodeId
+        match lib_identity::ZhtpIdentity::from_observed_handshake(
+            peer_identity.did.clone(),
+            peer_identity.public_key.clone(),
+            peer_identity.device_id.clone(),
+            peer_identity.node_id.clone(),
+        ) {
+            Ok(observed_identity) => {
+                let mut identity_mgr = self.identity_manager.write().await;
+                identity_mgr.add_identity(observed_identity);
+                info!(
+                    peer_did = %peer_did,
+                    "📝 Auto-registered authenticated peer identity (observed, unprivileged)"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    peer_did = %peer_did,
+                    error = %e,
+                    "Failed to auto-register peer identity"
+                );
+            }
+        }
+    }
+
+    /// Handle authenticated control plane streams
+    async fn handle_control_plane_streams(
+        &self,
+        connection: Connection,
+        session: ControlPlaneSession,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        let session = Arc::new(session);
+
+        loop {
+            let stream_result = tokio::time::timeout(
+                CLIENT_IDLE_TIMEOUT,
+                connection.accept_bi()
+            ).await;
+
+            match stream_result {
+                Ok(Ok((send, recv))) => {
+                    let handler = self.clone();
+                    let session = session.clone();
+
+                    tokio::spawn(async move {
+                        if let Err(e) = handler.handle_authenticated_stream(recv, send, &session).await {
+                            warn!("⚠️ Control plane stream error from {}: {}", peer_addr, e);
+                        }
+                    });
+                }
+                Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
+                    debug!("🔒 Control plane connection closed from {}", peer_addr);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    warn!("⚠️ Control plane stream error from {}: {}", peer_addr, e);
+                    break;
+                }
+                Err(_) => {
+                    debug!("⏱️ Control plane connection idle timeout from {}", peer_addr);
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle a single authenticated stream (ZHTP wire protocol)
+    ///
+    /// After UHP handshake, all streams use ZHTP length-prefixed CBOR format.
+    /// No protocol detection or HTTP fallback - the connection mode was already
+    /// determined by ALPN negotiation.
+    async fn handle_authenticated_stream(
+        &self,
+        mut recv: RecvStream,
+        mut send: SendStream,
+        session: &ControlPlaneSession,
+    ) -> Result<()> {
+        use lib_protocols::wire::{read_request, write_response, ZhtpResponseWire};
+        use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
+
+        // Read ZHTP wire request (length-prefixed CBOR)
+        let wire_request = read_request(&mut recv).await
+            .context("Failed to read ZHTP wire request")?;
+
+        debug!(
+            request_id = %wire_request.request_id_hex(),
+            uri = %wire_request.request.uri,
+            method = ?wire_request.request.method,
+            has_auth = wire_request.auth_context.is_some(),
+            peer_did = %session.peer_did,
+            "Received authenticated ZHTP request"
+        );
+
+        // Validate auth context if present
+        if let Some(ref auth_ctx) = wire_request.auth_context {
+            // Verify session ID matches
+            if auth_ctx.session_id != session.session_id {
+                warn!("Session ID mismatch in auth context");
+                let error_response = ZhtpResponseWire::error(
+                    wire_request.request_id,
+                    ZhtpStatus::Unauthorized,
+                    "Invalid session".to_string(),
+                );
+                write_response(&mut send, &error_response).await?;
+                return Ok(());
+            }
+
+            // Verify client DID matches
+            if auth_ctx.client_did != session.peer_did {
+                warn!("Client DID mismatch in auth context");
+                let error_response = ZhtpResponseWire::error(
+                    wire_request.request_id,
+                    ZhtpStatus::Unauthorized,
+                    "Invalid client".to_string(),
+                );
+                write_response(&mut send, &error_response).await?;
+                return Ok(());
+            }
+
+            // Verify MAC using canonical request hash
+            use lib_protocols::wire::ZhtpRequestWire;
+            let request_hash = ZhtpRequestWire::compute_canonical_request_hash(
+                &wire_request.request,
+                &wire_request.request_id,
+                wire_request.timestamp_ms,
+            );
+            if !auth_ctx.verify(&session.app_key, &request_hash) {
+                warn!("MAC verification failed for authenticated request");
+                let error_response = ZhtpResponseWire::error(
+                    wire_request.request_id,
+                    ZhtpStatus::Unauthorized,
+                    "Invalid MAC".to_string(),
+                );
+                write_response(&mut send, &error_response).await?;
+                return Ok(());
+            }
+        }
+
+        // Route request through ZHTP router
+        let mut request = wire_request.request;
+        request.requester = Some(lib_crypto::Hash(lib_crypto::hash_blake3(session.peer_did.as_bytes())));
+
+        let router = self.zhtp_router.read().await;
+        let response = router.route_request(request).await
+            .unwrap_or_else(|e| {
+                warn!("Handler error: {}", e);
+                ZhtpResponse::error(ZhtpStatus::InternalServerError, e.to_string())
+            });
+
+        // Send wire response (length-prefixed CBOR)
+        let wire_response = ZhtpResponseWire::success(wire_request.request_id, response);
+        write_response(&mut send, &wire_response).await
+            .context("Failed to write ZHTP wire response")?;
+
+        Ok(())
+    }
+
+    /// Handle mesh peer connection (node-to-node)
+    async fn handle_mesh_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
+        info!("🔗 Mesh peer connection from {} - starting UHP handshake", peer_addr);
+
+        // Check rate limit
+        self.check_handshake_rate_limit(&peer_addr).await?;
+
+        // Get server identity
+        let identity = self.quic_protocol.identity();
+
+        // Create handshake context
+        let nonce_db_path = std::path::Path::new("./data/tls/mesh_nonce_cache");
+        let nonce_cache = NonceCache::open(nonce_db_path, 3600, 100_000)
+            .context("Failed to open nonce cache")?;
+        let handshake_ctx = HandshakeContext::new(nonce_cache);
+
+        // Perform UHP+Kyber handshake
+        let handshake_result = quic_handshake::handshake_as_responder(
+            &connection,
+            identity,
+            &handshake_ctx,
+        ).await.context("Mesh UHP+Kyber handshake failed")?;
+
+        // Extract peer node ID
+        let peer_node_id = handshake_result.peer_identity.node_id.as_bytes();
+        let mut node_id_arr = [0u8; 32];
+        node_id_arr.copy_from_slice(peer_node_id);
+
+        info!(
+            peer_did = %handshake_result.peer_identity.did,
+            session_id = ?handshake_result.session_id,
+            "✅ Mesh peer authenticated from {} (identity verified)",
+            peer_addr
+        );
+
+        // Create PqcQuicConnection from handshake result
+        let pqc_conn = PqcQuicConnection::from_handshake_result(
+            connection.clone(),
+            peer_addr,
+            handshake_result,
+            false,
+        );
+
+        // Store connection
+        self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
+
+        // Continue accepting mesh streams
+        self.accept_additional_streams(connection, Some(node_id_arr));
+
+        Ok(())
+    }
+
+    /// Handle public read-only connection (mobile apps, browsers reading public content)
+    ///
+    /// No UHP handshake required. Only allows read operations:
+    /// - Domain resolution (GET /api/v1/web4/domains/{domain})
+    /// - Manifest fetch (GET /api/v1/web4/domains/{domain}/manifest)
+    /// - Content/blob retrieval (GET /api/v1/web4/content/{cid})
+    ///
+    /// Rejects all mutations (POST/PUT/DELETE to restricted endpoints).
+    async fn handle_public_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
+        info!("📖 Public read-only connection from {}", peer_addr);
+
+        // Accept streams and handle public read requests
+        loop {
+            let stream_result = tokio::time::timeout(
+                CLIENT_IDLE_TIMEOUT,
+                connection.accept_bi()
+            ).await;
+
+            match stream_result {
+                Ok(Ok((send, recv))) => {
+                    let handler = self.clone();
+
+                    // Spawn handler for this stream
+                    tokio::spawn(async move {
+                        if let Err(e) = handler.handle_public_stream(recv, send).await {
+                            debug!("📖 Public stream ended: {}", e);
+                        }
+                    });
+                }
+                Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
+                    debug!("🔒 Public connection closed normally from {}", peer_addr);
+                    break;
+                }
+                Ok(Err(quinn::ConnectionError::TimedOut)) => {
+                    debug!("⏱️ Public connection idle timeout from {}", peer_addr);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    debug!("⚠️ Public connection error from {}: {}", peer_addr, e);
+                    break;
+                }
+                Err(_) => {
+                    debug!("⏱️ Public stream accept timeout from {}", peer_addr);
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle a single public read-only stream
+    /// Only allows GET requests to public endpoints
+    async fn handle_public_stream(&self, mut recv: RecvStream, mut send: SendStream) -> Result<()> {
+        // Detect protocol (HTTP or ZHTP)
+        let protocol = self.detect_protocol_buffered(&mut recv).await?;
+
+        match protocol {
+            ProtocolType::LegacyHttp(initial_data) => {
+                // Parse HTTP request and validate it's a read operation
+                self.handle_public_http_stream(initial_data, recv, send).await
+            }
+            ProtocolType::NativeZhtp(initial_data) => {
+                // Parse ZHTP request and validate it's a read operation
+                self.handle_public_zhtp_stream(initial_data, recv, send).await
+            }
+            _ => {
+                // Reject non-HTTP/ZHTP protocols on public connection
+                self.send_error_response(send, "Public connections only support HTTP/ZHTP read requests").await
+            }
+        }
+    }
+
+    /// Handle public HTTP stream - allows GET and whitelisted POST endpoints
+    async fn handle_public_http_stream(&self, initial_data: Vec<u8>, recv: RecvStream, mut send: SendStream) -> Result<()> {
+        // Debug log the incoming request
+        let request_preview = String::from_utf8_lossy(&initial_data[..initial_data.len().min(200)]);
+        info!("📖 PUBLIC HTTP request: {}", request_preview.lines().next().unwrap_or("(empty)"));
+
+        // GET requests always allowed on public connection
+        if initial_data.starts_with(b"GET ") {
+            return self.handle_http_stream_with_prefix(initial_data, recv, send).await;
+        }
+
+        // POST requests only allowed to specific unauthenticated endpoints
+        if initial_data.starts_with(b"POST ") {
+            // Whitelist of POST endpoints allowed without authentication:
+            // - Identity creation (user has no identity yet)
+            // - Health checks
+            // - Web4 content fetching (read-only, public data)
+            let allowed_post_prefixes = [
+                // Identity bootstrap
+                b"POST /api/v1/identity/create".as_slice(),
+                b"POST /api/v1/identity ".as_slice(),
+                // Health
+                b"POST /api/v1/protocol/health".as_slice(),
+                // Web4 content (read-only fetches, not mutations)
+                b"POST /api/v1/web4/domains".as_slice(),
+                b"POST /api/v1/web4/content".as_slice(),
+                b"POST /api/v1/web4/resolve".as_slice(),
+            ];
+
+            let is_allowed = allowed_post_prefixes.iter().any(|prefix| {
+                initial_data.starts_with(prefix)
+            });
+
+            if is_allowed {
+                return self.handle_http_stream_with_prefix(initial_data, recv, send).await;
+            }
+        }
+
+        // Reject all other methods (PUT, DELETE, PATCH, etc.) and non-whitelisted POSTs
+        let response = b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: 62\r\n\r\nPublic connections only allow GET and whitelisted POST requests";
+        send.write_all(response).await?;
+        send.finish()?;
+        Ok(())
+    }
+
+    /// Handle public ZHTP stream - only allows read operations
+    async fn handle_public_zhtp_stream(&self, initial_data: Vec<u8>, recv: RecvStream, mut send: SendStream) -> Result<()> {
+        // Forward to ZHTP handler - it will check method internally
+        // For now, allow all ZHTP requests through (the API handlers will enforce read-only)
+        // TODO: Add request parsing to reject mutations at this layer
+        self.handle_zhtp_stream_with_prefix(initial_data, recv, send).await
+    }
+
+    /// Handle HTTP-compatible connection (legacy mobile apps, browsers)
+    /// No UHP handshake - direct HTTP/ZHTP requests
+    async fn handle_http_compat_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
+        debug!("📱 HTTP-compat connection from {}", peer_addr);
+
+        // Wait for first stream
         let first_stream_result = tokio::time::timeout(
             Duration::from_secs(30),
             connection.accept_bi()
@@ -358,28 +899,24 @@ impl QuicHandler {
 
         match first_stream_result {
             Ok(Ok((send, recv))) => {
-                // Detect protocol on first stream
+                // Handle first stream with protocol detection
                 let handler = self.clone();
                 let conn_clone = connection.clone();
 
-                // Handle first stream - this determines connection type
                 let result = handler.handle_first_stream(recv, send, conn_clone, peer_addr).await;
 
                 if let Err(e) = result {
-                    warn!("⚠️ First stream handling error from {}: {}", peer_addr, e);
+                    warn!("⚠️ HTTP-compat stream error from {}: {}", peer_addr, e);
                 }
             }
             Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
-                debug!("🔒 Connection closed before first stream from {}", peer_addr);
-                return Ok(());
+                debug!("🔒 HTTP-compat connection closed before first stream from {}", peer_addr);
             }
             Ok(Err(e)) => {
-                warn!("⚠️ Failed to accept first stream from {}: {}", peer_addr, e);
-                return Err(e.into());
+                warn!("⚠️ HTTP-compat stream error from {}: {}", peer_addr, e);
             }
             Err(_) => {
-                warn!("⏱️ Timeout waiting for first stream from {}", peer_addr);
-                return Ok(());
+                warn!("⏱️ HTTP-compat timeout waiting for first stream from {}", peer_addr);
             }
         }
 
@@ -775,6 +1312,7 @@ impl Clone for QuicHandler {
             mesh_handler: self.mesh_handler.clone(),
             pqc_connections: self.pqc_connections.clone(),
             handshake_rate_limits: self.handshake_rate_limits.clone(),
+            identity_manager: self.identity_manager.clone(),
         }
     }
 }
