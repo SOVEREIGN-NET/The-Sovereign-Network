@@ -827,18 +827,18 @@ impl MeshMessageHandler {
     /// Handle incoming blockchain data chunks
     pub async fn handle_blockchain_data(
         &self,
-        _sender: &PublicKey,
+        sender: &PublicKey,
         request_id: u64,
         chunk_index: u32,
         total_chunks: u32,
         data: Vec<u8>,
         complete_data_hash: [u8; 32],
     ) -> Result<()> {
-        info!(" Blockchain data chunk {}/{} received ({} bytes, request_id: {})", 
+        info!(" Blockchain data chunk {}/{} received ({} bytes, request_id: {})",
               chunk_index + 1, total_chunks, data.len(), request_id);
-        
+
         // Add chunk to sync manager for reassembly
-        match self.sync_manager.add_chunk(request_id, chunk_index, total_chunks, data, complete_data_hash).await {
+        match self.sync_manager.add_chunk(sender, request_id, chunk_index, total_chunks, data, complete_data_hash).await {
             Ok(Some(complete_data)) => {
                 info!(" All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
                 info!("   Hash: {}", hex::encode(complete_data_hash));
