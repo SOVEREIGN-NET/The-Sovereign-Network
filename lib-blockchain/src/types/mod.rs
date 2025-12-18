@@ -7,6 +7,7 @@
 pub mod transaction_type;
 pub mod hash;
 pub mod difficulty;
+pub mod mining;
 
 // Contract types (available when contracts feature is enabled)
 #[cfg(feature = "contracts")]
@@ -26,6 +27,7 @@ pub mod message_type;
 pub use transaction_type::*;
 pub use hash::*;
 pub use difficulty::*;
+pub use mining::*;
 
 // Re-export contract types when contracts feature is enabled
 #[cfg(feature = "contracts")]

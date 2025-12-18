@@ -2218,32 +2218,76 @@ impl RuntimeOrchestrator {
 }
 
 /// Create or load persistent node identity
+///
+/// Uses the standard keystore path (~/.zhtp/keystore/) for identity persistence.
+/// This ensures consistency with WalletStartupManager and prevents identity loss.
 pub async fn create_or_load_node_identity(
-    environment: &crate::config::Environment,
+    _environment: &crate::config::Environment,
 ) -> Result<lib_identity::ZhtpIdentity> {
-    use crate::config::Environment;
-    
-    // Determine data path based on environment
-    let data_path = match environment {
-        Environment::Mainnet => PathBuf::from("./data/mainnet"),
-        Environment::Testnet => PathBuf::from("./data/testnet"),
-        Environment::Development => PathBuf::from("./data/dev"),
-    };
-    
-    let identity_file = data_path.join("node_identity.json");
-    
-    // Try to load existing identity
-    if identity_file.exists() {
-        if let Ok(data) = tokio::fs::read_to_string(&identity_file).await {
-            if let Ok(identity) = serde_json::from_str::<lib_identity::ZhtpIdentity>(&data) {
-                info!("✓ Loaded existing node identity");
-                return Ok(identity);
+    // Use the standard keystore path for ALL environments
+    // This matches WalletStartupManager and ensures identity persistence
+    let keystore_path = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+        .join(".zhtp")
+        .join("keystore");
+
+    let identity_file = keystore_path.join("node_identity.json");
+
+    // Try to load existing identity from keystore (requires private key)
+    let private_key_file = keystore_path.join("node_private_key.json");
+
+    if identity_file.exists() && private_key_file.exists() {
+        if let (Ok(identity_data), Ok(key_data)) = (
+            tokio::fs::read_to_string(&identity_file).await,
+            tokio::fs::read_to_string(&private_key_file).await,
+        ) {
+            // Parse private key
+            if let Ok(key_json) = serde_json::from_str::<serde_json::Value>(&key_data) {
+                if let (Some(dilithium), Some(kyber), Some(seed)) = (
+                    key_json.get("dilithium_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                    key_json.get("kyber_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                    key_json.get("master_seed").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                ) {
+                    let private_key = lib_crypto::PrivateKey {
+                        dilithium_sk: dilithium,
+                        kyber_sk: kyber,
+                        master_seed: seed,
+                    };
+
+                    match lib_identity::ZhtpIdentity::from_serialized(&identity_data, &private_key) {
+                        Ok(identity) => {
+                            info!("✓ Loaded existing node identity from keystore: {}", identity.did);
+                            return Ok(identity);
+                        }
+                        Err(e) => {
+                            // FATAL: Do NOT overwrite - require manual recovery
+                            return Err(anyhow::anyhow!(
+                                "FATAL: Failed to load node identity from keystore: {}\n\
+                                The keystore file may be corrupted. Manual recovery required.",
+                                e
+                            ));
+                        }
+                    }
+                }
             }
+            // Private key parse failed - FATAL
+            return Err(anyhow::anyhow!(
+                "FATAL: Failed to parse node private key from keystore.\n\
+                The keystore may be corrupted. Manual recovery required."
+            ));
         }
     }
-    
+
+    // Only create new identity if keystore doesn't exist at all
+    if identity_file.exists() {
+        return Err(anyhow::anyhow!(
+            "FATAL: Node identity file exists but private key is missing.\n\
+            Cannot load identity without private key. Manual recovery required."
+        ));
+    }
+
     // Create new identity using P1-7 architecture
-    info!("Creating new node identity...");
+    info!("Creating new node identity (no existing keystore found)...");
     let node_identity = lib_identity::ZhtpIdentity::new_unified(
         lib_identity::types::IdentityType::Device,
         None, // No age for device
@@ -2251,13 +2295,13 @@ pub async fn create_or_load_node_identity(
         "zhtp-node",
         None, // Random seed
     )?;
-    
-    // Save identity
-    tokio::fs::create_dir_all(&data_path).await?;
+
+    // Save identity to keystore
+    tokio::fs::create_dir_all(&keystore_path).await?;
     let json = serde_json::to_string_pretty(&node_identity)?;
     tokio::fs::write(&identity_file, json).await?;
-    
-    info!("✓ Created and saved node identity");
+
+    info!("✓ Created and saved node identity to keystore");
     Ok(node_identity)
 }
 

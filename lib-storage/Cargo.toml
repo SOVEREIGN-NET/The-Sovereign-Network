@@ -14,9 +14,11 @@ path = "src/lib.rs"
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
+# lib-network removed - circular dependency (Ticket #148)
 
 # Production Dependencies for Storage System
 tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1" # Ticket #152/#154: For DhtTransport and DhtMessageRouter traits
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 blake3 = "1.5"
