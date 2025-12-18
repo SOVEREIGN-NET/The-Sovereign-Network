@@ -6,6 +6,8 @@
 use std::path::PathBuf;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::{info, warn};
+use lib_types::NodeId;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::fs;
 
 /// DHT integration intents emitted from mesh/core.
@@ -17,7 +19,14 @@ pub enum DhtIntegrationEvent {
         persist_path: PathBuf,
         max_bytes: u64,
     },
+    /// Register a payload sender for message handlers (data-only wiring).
+    RegisterPayloadSender {
+        sender: UnboundedSender<(Vec<u8>, NodeId)>,
+    },
 }
+
+static LATEST_DHT_SENDER: OnceLock<Arc<Mutex<Option<UnboundedSender<(Vec<u8>, NodeId)>>>>>
+    = OnceLock::new();
 
 /// Simple dispatcher that fans events out to a receiver for the integration layer.
 #[derive(Clone)]
@@ -58,6 +67,19 @@ pub async fn drain_dht_events(mut rx: UnboundedReceiver<DhtIntegrationEvent>) {
                     max_bytes
                 );
             }
+            DhtIntegrationEvent::RegisterPayloadSender { sender } => {
+                info!("DHT integration payload sender registered (data-only stub)");
+                let store = LATEST_DHT_SENDER.get_or_init(|| Arc::new(Mutex::new(None)));
+                if let Ok(mut guard) = store.lock() {
+                    *guard = Some(sender);
+                }
+            }
         }
     }
+}
+
+/// Retrieve the most recently registered DHT payload sender (if any).
+pub fn latest_dht_payload_sender() -> Option<UnboundedSender<(Vec<u8>, NodeId)>> {
+    let store = LATEST_DHT_SENDER.get_or_init(|| Arc::new(Mutex::new(None)));
+    store.lock().ok().and_then(|guard| guard.clone())
 }

@@ -74,6 +74,7 @@ use crate::integration::{
     dht_integration_channel,
     setup_mesh_dht_integration,
     DhtIntegrationDispatcher,
+    DhtIntegrationEvent,
     DhtPayloadSender,
     DhtStorageHandle,
 };
@@ -222,6 +223,9 @@ impl MeshRouter {
         // Note: Using generated keypair for DHT signing - in production this should be
         // wired to the node's actual identity keypair after handshake completes
         let dht_payload_sender = dht_handles.dht_payload_sender;
+        dht_dispatcher.dispatch(DhtIntegrationEvent::RegisterPayloadSender {
+            sender: dht_payload_sender.as_ref().clone(),
+        });
 
         // Spawn cleanup task for DHT rate limits (every 5 minutes)
         {
