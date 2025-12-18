@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use lib_crypto::PostQuantumSignature;
 use tracing::debug;
 use lib_network::identity::unified_peer::UnifiedPeerId;
+use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig, StorageConfig, EconomicManagerConfig, StorageTier, ErasureConfig};
 
 /// Rate limiting state for ZHTP getter requests (100 req/30s per identity)
 #[derive(Debug, Clone)]
@@ -69,7 +70,6 @@ use lib_network::routing::message_routing::MeshMessageRouter;
 use lib_blockchain::types::Hash;
 use lib_blockchain::BlockchainBroadcastMessage;
 use lib_identity::IdentityManager;
-use lib_storage::UnifiedStorageSystem;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use super::rate_limiting::ConnectionRateLimiter;
 use super::identity_verification::IdentityVerificationCache;
@@ -219,7 +219,7 @@ impl MeshRouter {
             storage_info: None,
         };
         
-        // Create DHT storage with persistence - 10GB max
+        // Create UnifiedStorageSystem with persistence - 10GB max
         // CRITICAL: Use persistence path so domains/content survive node restarts
         let zhtp_dir = dirs::home_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -228,31 +228,44 @@ impl MeshRouter {
 
         // Ensure storage directory exists
         if let Err(e) = std::fs::create_dir_all(&zhtp_dir) {
-            tracing::warn!("Failed to create DHT storage directory {:?}: {}", zhtp_dir, e);
+            tracing::warn!("Failed to create storage directory {:?}: {}", zhtp_dir, e);
         }
 
         let dht_persist_path = zhtp_dir.join("dht_storage.bin");
-        tracing::info!("MeshRouter DHT persistence path: {:?}", dht_persist_path);
+        tracing::info!("MeshRouter storage persistence path: {:?}", dht_persist_path);
 
-        let dht_storage_instance = DhtStorage::new_with_persistence(
-            local_node_id.clone(),
-            10_000_000_000,
-            dht_persist_path.clone()
-        );
-        let dht_storage = Arc::new(tokio::sync::Mutex::new(dht_storage_instance));
+        // Initialize UnifiedStorageSystem with persistence config
+        let storage_config = UnifiedStorageConfig {
+            node_id: local_node_id.clone(),
+            addresses: vec!["127.0.0.1:0".to_string()],
+            economic_config: EconomicManagerConfig::default(),
+            storage_config: StorageConfig {
+                max_storage_size: 10_000_000_000, // 10GB
+                default_tier: StorageTier::Hot,
+                enable_compression: false,
+                enable_encryption: false,
+                dht_persist_path: Some(dht_persist_path.clone()),
+            },
+            erasure_config: ErasureConfig {
+                data_shards: 4,
+                parity_shards: 2,
+            },
+        };
 
-        // Load existing DHT data from disk (domains, content, etc.)
+        // Start with None, will initialize async
+        let dht_storage = Arc::new(tokio::sync::Mutex::new(None));
+
+        // Initialize storage system asynchronously
         {
-            let dht_storage_load = dht_storage.clone();
-            let persist_path = dht_persist_path.clone();
+            let dht_storage_init = dht_storage.clone();
             tokio::spawn(async move {
-                let mut storage = dht_storage_load.lock().await;
-                match storage.load_from_file(&persist_path).await {
-                    Ok(()) => {
-                        tracing::info!("✅ MeshRouter DHT loaded from {:?}", persist_path);
+                match UnifiedStorageSystem::new(storage_config).await {
+                    Ok(storage_system) => {
+                        tracing::info!("✅ MeshRouter UnifiedStorageSystem initialized");
+                        *dht_storage_init.lock().await = Some(storage_system);
                     }
                     Err(e) => {
-                        tracing::warn!("MeshRouter DHT load failed (starting fresh): {}", e);
+                        tracing::error!("Failed to initialize UnifiedStorageSystem: {}", e);
                     }
                 }
             });
