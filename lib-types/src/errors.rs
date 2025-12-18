@@ -1,1 +1,5 @@
-// Placeholder; implemented in Phase 2.
+#[derive(Debug)]
+pub enum PrimitiveError {
+    InvalidFormat,
+    SizeMismatch,
+}

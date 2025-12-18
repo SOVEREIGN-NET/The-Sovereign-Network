@@ -11,10 +11,10 @@ Persistent implementation plan. Each phase is a review checkpoint; I will pause 
   - [x] Add `src/lib.rs` exposing modules: `node_id`, `dht::{mod.rs, types.rs, message.rs, transport.rs}`, `chunk.rs`, `errors.rs`; re-export per spec.
   - [x] Add `lib-types/README.md` capturing hard rules and stability contract.
 
-- [ ] Phase 2 — Move primitives into lib-types
-  - [ ] Implement `node_id.rs` exactly as specified (frozen layout, data-only).
-  - [ ] Implement DHT data/message/transport modules per comment (traits only; no logic).
-  - [ ] Implement `chunk.rs` and `errors.rs` per comment.
+- [x] Phase 2 — Move primitives into lib-types
+  - [x] Implement `node_id.rs` exactly as specified (frozen layout, data-only).
+  - [x] Implement DHT data/message/transport modules per comment (traits only; no logic).
+  - [x] Implement `chunk.rs` and `errors.rs` per comment.
   - [ ] Ensure `lib-types` builds standalone.
 
 - [ ] Phase 3 — Wire workspace dependencies
