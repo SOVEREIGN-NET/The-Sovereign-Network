@@ -841,6 +841,17 @@ impl DhtStorage {
             .collect())
     }
 
+    /// Get total storage usage for keys with a given prefix
+    /// Used for quota validation and monitoring
+    pub async fn get_prefix_usage(&self, prefix: &str) -> Result<u64> {
+        let metadata_overhead_per_entry = 256u64;
+        let usage = self.storage.iter()
+            .filter(|(k, _)| k.starts_with(prefix))
+            .map(|(_, entry)| entry.value.len() as u64 + metadata_overhead_per_entry)
+            .sum();
+        Ok(usage)
+    }
+
     /// List all stored keys with their sizes (for debugging)
     pub fn list_keys_with_info(&self) -> Vec<(String, usize)> {
         self.storage.iter()

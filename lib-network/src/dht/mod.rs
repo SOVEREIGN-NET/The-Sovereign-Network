@@ -57,6 +57,21 @@ pub struct ZkDHTIntegration {
 }
 
 impl ZkDHTIntegration {
+    /// Create a new DHT integration (async).
+    ///
+    /// **MIGRATION NOTE:**
+    /// This constructor is now async and returns `Result`. If you were previously using
+    /// a synchronous constructor, please update your code to use `await` and handle errors:
+    ///
+    /// ```ignore
+    /// // Old (no longer supported):
+    /// // let dht = ZkDHTIntegration::new();
+    ///
+    /// // New:
+    /// let dht = ZkDHTIntegration::new().await?;
+    /// ```
+    ///
+    /// For test code only, you may use `new_sync()` which panics on error.
     pub async fn new() -> Result<Self> {
         // Create default UnifiedStorageSystem
         let config = lib_storage::UnifiedStorageConfig::default();
@@ -65,6 +80,40 @@ impl ZkDHTIntegration {
         Ok(Self {
             storage: Arc::new(RwLock::new(storage)),
         })
+    }
+
+    /// Synchronous constructor that panics on initialization failure.
+    ///
+    /// **DEPRECATED:** This is provided only for backward compatibility in test code.
+    /// Production code must use the async `new()` method and properly handle errors.
+    ///
+    /// # Panics
+    /// Panics if DHT initialization fails. Use the async `new()` method for proper
+    /// error handling.
+    ///
+    /// # Migration Path
+    /// Replace:
+    /// ```ignore
+    /// let dht = ZkDHTIntegration::new_sync();
+    /// ```
+    /// With:
+    /// ```ignore
+    /// let dht = ZkDHTIntegration::new().await.expect("DHT init failed");
+    /// ```
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use async new() instead. This method panics on error and is intended only for tests."
+    )]
+    pub fn new_sync() -> Self {
+        // Block on async initialization - only safe in test environments
+        tokio::runtime::Runtime::new()
+            .expect("Failed to create tokio runtime for sync DHT init")
+            .block_on(async {
+                Self::new().await.expect(
+                    "DHT initialization failed in new_sync(). \
+                    Use async new() for proper error handling."
+                )
+            })
     }
 
     /// Create an integration from an existing UnifiedStorageSystem.
