@@ -31,6 +31,7 @@ use lib_storage::UnifiedStorageSystem;
 use lib_identity::IdentityManager;
 use lib_economy::EconomicModel;
 use lib_crypto::PublicKey;
+use crate::web4_stub::DomainRegistry;
 
 // Import our comprehensive API handlers
 use crate::api::handlers::{
@@ -107,7 +108,7 @@ pub struct ZhtpUnifiedServer {
     discovery_coordinator: Arc<crate::discovery_coordinator::DiscoveryCoordinator>,
 
     // Web4 domain registry (shared, canonical instance)
-    domain_registry: Arc<lib_network::DomainRegistry>,
+    domain_registry: Arc<DomainRegistry>,
 
     // Server state
     is_running: Arc<RwLock<bool>>,
@@ -338,7 +339,7 @@ impl ZhtpUnifiedServer {
         // Create canonical domain registry (shared by all components)
         // MUST be created BEFORE register_api_handlers so Web4Handler can use it
         let domain_registry = Arc::new(
-            lib_network::DomainRegistry::new_with_storage(storage.clone()).await?
+            DomainRegistry::new_with_storage(storage.clone()).await?
         );
         info!(" Domain registry initialized (canonical instance)");
 
@@ -412,11 +413,14 @@ impl ZhtpUnifiedServer {
         let long_range_relays = Arc::new(RwLock::new(std::collections::HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(std::collections::HashMap::new()));
         
-        let message_handler = lib_network::messaging::message_handler::MeshMessageHandler::new(
+        let mut message_handler = lib_network::messaging::message_handler::MeshMessageHandler::new(
             peer_registry,
             long_range_relays,
             revenue_pools,
         );
+
+        // If integration layer has already registered a DHT payload sender, wire it now
+        crate::integration::wire_message_handler(&mut message_handler).await;
         
         // Inject message handler into QUIC protocol
         quic_mesh.set_message_handler(Arc::new(RwLock::new(message_handler)));
@@ -440,7 +444,7 @@ impl ZhtpUnifiedServer {
         _economic_model: Arc<RwLock<EconomicModel>>,
         _session_manager: Arc<SessionManager>,
         dht_handler: Arc<dyn ZhtpRequestHandler>,
-        domain_registry: Arc<lib_network::DomainRegistry>,
+        domain_registry: Arc<DomainRegistry>,
     ) -> Result<()> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
         
@@ -840,7 +844,7 @@ impl ZhtpUnifiedServer {
                     
                     // Still register BLE as available protocol (for fallback)
                     sync_coordinator_for_ble.register_peer_protocol(
-                        &peer_pubkey,
+                        peer_pubkey.clone(),
                         lib_network::protocols::NetworkProtocol::BluetoothLE,
                         sync_type
                     ).await;
@@ -851,7 +855,7 @@ impl ZhtpUnifiedServer {
                 
                 // Check with sync coordinator if we should sync with this peer via BLE
                 let should_sync = sync_coordinator_for_ble.register_peer_protocol(
-                    &peer_pubkey,
+                    peer_pubkey.clone(),
                     lib_network::protocols::NetworkProtocol::BluetoothLE,
                     sync_type
                 ).await;
@@ -873,7 +877,7 @@ impl ZhtpUnifiedServer {
                         
                         // Record sync start with coordinator
                         sync_coordinator_for_ble.start_sync(
-                            &peer_pubkey,
+                            peer_pubkey.clone(),
                             request_id,
                             sync_type,
                             lib_network::protocols::NetworkProtocol::BluetoothLE
@@ -1237,7 +1241,7 @@ impl ZhtpUnifiedServer {
     /// Get reference to the canonical domain registry
     ///
     /// This is the single source of truth for domain resolution across all components.
-    pub fn get_domain_registry(&self) -> Arc<lib_network::DomainRegistry> {
+    pub fn get_domain_registry(&self) -> Arc<DomainRegistry> {
         Arc::clone(&self.domain_registry)
     }
     

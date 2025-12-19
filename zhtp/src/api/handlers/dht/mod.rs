@@ -14,7 +14,7 @@ use uuid;
 
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus};
-use lib_network::ZkDHTIntegration;
+use lib_network::dht::ZkDHTIntegration;
 // Removed unused ZhtpHeaders, NetworkStatus
 use lib_identity::ZhtpIdentity;
 
@@ -333,7 +333,7 @@ impl DhtHandler {
             }
         };
 
-        let mut dht = client.write().await;
+        let dht = client.write().await;
         match dht.connect_to_peer(&connect_request.peer_address).await {
             Ok(()) => {
                 let response = serde_json::json!({

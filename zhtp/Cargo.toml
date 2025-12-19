@@ -22,8 +22,9 @@ crate-type = ["rlib", "cdylib", "staticlib"]  # rlib for Rust, cdylib for Androi
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
-lib-storage = { path = "../lib-storage" }
+lib-storage = { path = "../lib-storage", features = ["network-integration"] }
 lib-network = { path = "../lib-network" }
+lib-types = { path = "../lib-types" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts"], optional = true }
 lib-consensus = { path = "../lib-consensus" }
 lib-economy = { path = "../lib-economy" }

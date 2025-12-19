@@ -10,9 +10,9 @@ use tracing::{info, warn, debug};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::components::identity::create_default_storage_config;
-use crate::server::https_gateway::{HttpsGateway, GatewayTlsConfig, TlsMode};
+use crate::server::https_gateway::{HttpsGateway, GatewayTlsConfig};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
-use lib_network::{ZdnsResolver, ZdnsConfig, ZdnsTransportServer, ZdnsServerConfig};
+use crate::web4_stub::{ZdnsResolver, ZdnsTransportServer, ZdnsServerConfig};
 
 /// Protocols component - thin wrapper for unified server
 pub struct ProtocolsComponent {
@@ -299,10 +299,7 @@ impl Component for ProtocolsComponent {
         // Initialize ZDNS resolver with caching, using the canonical domain registry
         info!(" Initializing ZDNS resolver with canonical domain registry...");
         let domain_registry = unified_server.get_domain_registry();
-        let zdns_resolver = Arc::new(ZdnsResolver::new(
-            domain_registry.clone(),
-            ZdnsConfig::default(),
-        ));
+        let zdns_resolver = Arc::new(ZdnsResolver::new());
         *self.zdns_resolver.write().await = Some(zdns_resolver.clone());
         info!(" ✓ ZDNS resolver initialized with LRU cache (size: 10000, TTL: up to 1hr)");
 
@@ -318,7 +315,7 @@ impl Component for ProtocolsComponent {
             ));
 
             // Start the transport server in a background task
-            let transport_clone = Arc::clone(&transport_server);
+            let transport_clone: Arc<ZdnsTransportServer> = Arc::clone(&transport_server);
             tokio::spawn(async move {
                 if let Err(e) = transport_clone.start().await {
                     warn!("ZDNS transport server error: {}", e);

@@ -29,7 +29,7 @@ use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use lib_network::{Web4Manager, Web4ContentService};
+use crate::web4_stub::{Web4Manager, Web4ContentService};
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use chrono;
@@ -68,7 +68,7 @@ impl Web4Handler {
     ) -> ZhtpResult<Self> {
         info!("Initializing Web4 API handler with existing storage system");
 
-        let web4_manager = lib_network::initialize_web4_system_with_storage(storage).await
+        let web4_manager = crate::web4_stub::initialize_web4_system_with_storage(storage).await
             .map_err(|e| anyhow::anyhow!("Failed to initialize Web4 system: {}", e))?;
 
         // Create content service using the registry from the manager
@@ -92,7 +92,7 @@ impl Web4Handler {
     /// Create new Web4 API handler with existing domain registry (avoids creating duplicate)
     /// This is the preferred constructor when a DomainRegistry already exists
     pub async fn new_with_registry(
-        domain_registry: Arc<lib_network::DomainRegistry>,
+        domain_registry: Arc<crate::web4_stub::DomainRegistry>,
         storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
         identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
         blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
@@ -100,7 +100,7 @@ impl Web4Handler {
         info!("Initializing Web4 API handler with existing domain registry");
 
         // Create Web4Manager using existing registry
-        let web4_manager = lib_network::Web4Manager::new_with_registry(
+        let web4_manager = crate::web4_stub::Web4Manager::new_with_registry(
             domain_registry.clone(),
             storage.clone()
         ).await.map_err(|e| anyhow::anyhow!("Failed to create Web4Manager: {}", e))?;
@@ -203,14 +203,22 @@ impl Web4Handler {
         match manager.registry.lookup_domain(&domain).await {
             Ok(lookup) if lookup.found => {
                 if let Some(record) = lookup.record {
+                    let owner = record.get("owner")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let content_available = record.get("content_mappings")
+                        .and_then(|v| v.as_object())
+                        .map(|m| !m.is_empty())
+                        .unwrap_or(false);
                     // Return contract/content information
                     // Note: Web4 domains don't have direct contract associations yet
                     let response = serde_json::json!({
                         "status": "success",
                         "domain": domain,
-                        "owner": record.owner,
+                        "owner": owner,
                         "path": path,
-                        "content_available": !record.content_mappings.is_empty(),
+                        "content_available": content_available,
                         "note": "Contract association not yet implemented"
                     });
 
@@ -259,13 +267,16 @@ impl Web4Handler {
         match manager.registry.lookup_domain(domain).await {
             Ok(lookup) if lookup.found => {
                 if let Some(record) = lookup.record {
+                    let owner = record.get("owner").and_then(|v| v.as_str()).unwrap_or_default();
+                    let registered_at = record.get("registered_at").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let expires_at = record.get("expires_at").and_then(|v| v.as_u64()).unwrap_or(0);
                     // Note: Web4 domains don't have direct contract associations yet
                     let response = serde_json::json!({
                         "status": "success",
                         "domain": domain,
-                        "owner": record.owner,
-                        "registered_at": record.registered_at,
-                        "expires_at": record.expires_at,
+                        "owner": owner,
+                        "registered_at": registered_at,
+                        "expires_at": expires_at,
                         "note": "Contract association not yet implemented"
                     });
 

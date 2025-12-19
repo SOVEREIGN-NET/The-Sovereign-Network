@@ -12,13 +12,12 @@
 
 use anyhow::{anyhow, Result, Context};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tracing::{info, debug, warn};
 use atty::Stream;
 
-use lib_network::web4::{Web4Client, TrustConfig};
+use crate::web4_stub::{Web4Client, TrustConfig};
 use lib_identity::ZhtpIdentity;
 use lib_crypto::PrivateKey;
 
@@ -412,11 +411,11 @@ async fn deploy_site(
         let cid = if content.len() > CHUNK_THRESHOLD {
             // Large file: use chunked upload
             println!("   [{}/{}] {} ({} bytes, chunked)", i + 1, file_entries.len(), path, content.len());
-            client.put_blob_chunked(content.clone(), mime_type, Some(CHUNK_SIZE)).await
+            client.put_blob_chunked(content.clone(), mime_type.to_string(), Some(CHUNK_SIZE)).await
                 .with_context(|| format!("Failed to upload {} (chunked)", path))?
         } else {
             // Small file: upload directly
-            client.put_blob(content.clone(), mime_type).await
+            client.put_blob(content.clone(), mime_type.to_string()).await
                 .with_context(|| format!("Failed to upload {}", path))?
         };
 

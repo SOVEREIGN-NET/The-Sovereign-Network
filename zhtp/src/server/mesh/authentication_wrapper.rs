@@ -16,7 +16,6 @@
 //! 4. Failed auth = peer never added (no race window)
 
 use std::net::SocketAddr;
-use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
 use anyhow::{Result, Context};
 use tracing::{debug, info, warn, error};
 use tokio::net::TcpStream;

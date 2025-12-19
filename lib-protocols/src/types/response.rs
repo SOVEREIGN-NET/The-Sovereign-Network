@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::types::{ZhtpStatus, ZhtpHeaders, ZHTP_VERSION};
 use lib_identity::IdentityId;
 use lib_proofs::ZeroKnowledgeProof;
-use lib_storage::types::ContentHash;
+use crate::storage_stub::ContentHash;
 
 /// ZHTP response with Web4 extensions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,7 +405,7 @@ impl ZhtpResponse {
 
         // Validate content hash if present
         if let Some(content_hash) = &self.headers.content_hash {
-            let calculated_hash = ContentHash::from_bytes(&lib_crypto::hash_blake3(&self.body));
+            let calculated_hash = lib_crypto::hash_blake3(&self.body).to_vec();
             if calculated_hash != *content_hash {
                 tracing::warn!("Response content hash mismatch");
                 return Ok(false);

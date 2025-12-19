@@ -24,7 +24,10 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::domain_registry::DomainRegistry;
+#[cfg(feature = "storage-integration")]
 use crate::zdns::{ZdnsResolver, Web4Record};
+#[cfg(not(feature = "storage-integration"))]
+use crate::web4_stub::{Web4Record, ZdnsResolver};
 
 /// Content serving mode for a domain
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

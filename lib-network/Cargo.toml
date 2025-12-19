@@ -111,13 +111,12 @@ aes = { version = "0.8", optional = true }          # AES encryption for WPA3-SA
 cmac = { version = "0.7", optional = true }         # CMAC for authentication protocols
 
 # ZHTP package dependencies
+lib-types = { path = "../lib-types" }
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-economy = { path = "../lib-economy" }
-lib-protocols = { path = "../lib-protocols" }
+lib-protocols = { path = "../lib-protocols", default-features = false }
 lib-identity = { path = "../lib-identity" }
-lib-storage = { path = "../lib-storage" }
-lib-blockchain = { path = "../lib-blockchain" }
 lib-consensus = { path = "../lib-consensus" }
 nix = { version = "0.30.1", features = ["socket"] }
 
@@ -165,9 +164,6 @@ lib-protocols = { path = "../lib-protocols" }
 # Identity system integration
 lib-identity = { path = "../lib-identity" }
 
-# NOTE: lib-storage dependency added for DHT integration
-lib-storage = { path = "../lib-storage" }
-
 # Mobile FFI bindings
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"                                      # Java Native Interface for Android
@@ -188,7 +184,7 @@ name = "lib_network"
 path = "src/lib.rs"
 
 [features]
-default = []                      # All lib-* dependencies are required and enabled by default
+default = []                      # Minimal default; opt into storage/chain integration via features
 windows-gatt = []                 # Windows GATT Server (BLE advertising) - always available on Windows with WinRT
 macos-corebluetooth = []          # macOS Core Bluetooth support
 linux-dbus = ["dbus", "dbus-tokio"] # Direct D-Bus BlueZ integration
@@ -198,3 +194,5 @@ enhanced-parsing = ["quick-xml"] # Enhanced XML parsing
 enhanced-wifi-direct = ["aes", "cmac", "quick-xml"] # Complete WiFi Direct enhancements
 hardware-scanning = []
 identity-debug = []               # Enable detailed identity verification debug logging (production: disabled)
+storage-integration = []
+chain-integration = []

@@ -419,7 +419,7 @@ impl MeshRouter {
         let protocol = peer_entry.active_protocols.first().cloned()
             .unwrap_or(lib_network::protocols::NetworkProtocol::QUIC);
         let should_sync = self.sync_coordinator.register_peer_protocol(
-            peer_pubkey,
+            peer_pubkey.clone(),
             protocol.clone(),
             sync_type
         ).await;
@@ -432,11 +432,17 @@ impl MeshRouter {
         let (request_id, sync_message) = self.sync_manager.create_blockchain_request(peer_pubkey.clone(), None).await?;
         
         // Send sync request to peer
-        self.send_to_peer(peer_pubkey, sync_message).await?;
+        // EdgeSyncMessage is a protocol-level message; wrap in mesh message for transport
+        let mesh_message = ZhtpMeshMessage::DhtGenericPayload {
+            requester: peer_pubkey.clone(),
+            payload: bincode::serialize(&sync_message)?,
+            signature: Vec::new(),
+        };
+        self.send_to_peer(peer_pubkey, mesh_message).await?;
         
         // Record sync start in coordinator
         self.sync_coordinator.start_sync(
-            peer_pubkey,
+            peer_pubkey.clone(),
             request_id,
             sync_type,
             protocol
@@ -468,7 +474,7 @@ impl MeshRouter {
         for (peer_pubkey, protocol) in available_peers {
             // Let coordinator decide if we should sync with this peer via this protocol
             let should_sync = self.sync_coordinator.register_peer_protocol(
-                &peer_pubkey,
+                peer_pubkey.clone(),
                 protocol.clone(),
                 lib_network::blockchain_sync::SyncType::EdgeNode
             ).await;
@@ -538,12 +544,8 @@ impl MeshRouter {
             loop {
                 interval.tick().await;
                 
-                match sync_manager.cleanup_stale_chunks().await {
-                    0 => debug!("✓ Chunk cleanup: No stale buffers found"),
-                    count => info!("🧹 Chunk cleanup: Removed {} stale buffers", count),
-                }
+                let _ = sync_manager.cleanup_stale_chunks().await;
             }
         });
     }
 }
-

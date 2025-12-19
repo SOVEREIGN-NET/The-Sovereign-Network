@@ -9,8 +9,8 @@ use tracing::{info, warn};
 use serde::{Serialize, Deserialize};
 
 use lib_identity::{ZhtpIdentity, IdentityType};
-use lib_network::ZhtpClient;
-use lib_network::web4::TrustConfig;
+use crate::web4_stub::TrustConfig;
+use crate::web4_stub::ZhtpClient;
 
 use crate::cli::{IdentityArgs, IdentityAction, ZhtpCli, format_output};
 
