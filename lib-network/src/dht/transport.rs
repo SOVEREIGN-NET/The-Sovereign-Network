@@ -10,6 +10,9 @@
 //! in lib-storage to avoid circular dependencies. This module re-exports them
 //! and provides protocol-specific implementations.
 
+// Deprecated: real DHT transport lives with storage integration. Prevent use from lib-network while relocation is pending.
+compile_error!("lib-network DHT transports are disabled; use integration layer (zhtp) instead (Phase 4 relocation).");
+
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::{select_all, BoxFuture};

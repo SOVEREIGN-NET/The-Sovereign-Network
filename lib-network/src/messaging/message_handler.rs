@@ -16,6 +16,12 @@ use crate::mesh::connection::MeshConnection;
 use crate::identity::unified_peer::UnifiedPeerId;
 
 use crate::relays::LongRangeRelay;
+use crate::network_output::{NetworkOutput, global_output_queue};
+use lib_types::NodeId;
+
+type DhtPayload = (Vec<u8>, NodeId);
+
+type DhtPayloadSender = tokio::sync::mpsc::UnboundedSender<DhtPayload>;
 
 /// Central mesh message handler
 ///
@@ -32,33 +38,62 @@ pub struct MeshMessageHandler {
     pub message_router: Option<Arc<RwLock<crate::routing::message_routing::MeshMessageRouter>>>,
     /// Node ID for this handler (Phase 2)
     pub node_id: Option<PublicKey>,
-    /// Blockchain sync manager for chunk reassembly (full nodes)
+    /// Blockchain sync manager (unified - supports both full node and edge node modes)
     pub sync_manager: Arc<crate::blockchain_sync::BlockchainSyncManager>,
-    /// Edge node sync manager (optional - only for constrained devices)
-    pub edge_sync_manager: Option<Arc<crate::blockchain_sync::EdgeNodeSyncManager>>,
     /// Blockchain provider for accessing chain data (injected by application layer)
     pub blockchain_provider: Arc<dyn crate::blockchain_sync::BlockchainProvider>,
+    /// DHT payload sender for forwarding received DHT messages (Ticket #154)
+    /// Connected to MeshDhtTransport's receiver for message injection
+    pub dht_payload_sender: Option<DhtPayloadSender>,
+    /// Rate limiter for DHT messages per peer (Ticket #154)
+    /// Key: hex-encoded peer key_id prefix, Value: (count, window_start)
+    pub dht_rate_limits: Arc<RwLock<HashMap<String, (u32, u64)>>>,
 }
+
+/// DHT rate limit configuration
+const DHT_RATE_LIMIT_MAX: u32 = 100;      // Max DHT messages per peer per window
+const DHT_RATE_LIMIT_WINDOW_SECS: u64 = 60; // Rate limit window in seconds
 
 impl MeshMessageHandler {
     /// Create a new MeshMessageHandler
     ///
     /// **MIGRATION (Ticket #149):** Now accepts SharedPeerRegistry instead of mesh_connections
+    /// Defaults to full node sync strategy - call `set_edge_mode()` if running as edge node
     pub fn new(
         peer_registry: crate::peer_registry::SharedPeerRegistry,
         long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
         revenue_pools: Arc<RwLock<HashMap<String, u64>>>,
     ) -> Self {
+        // Default to full node sync strategy
+        let sync_manager = Arc::new(crate::blockchain_sync::BlockchainSyncManager::new_full_node());
+
         Self {
             peer_registry,
             long_range_relays,
             revenue_pools,
             message_router: None,
             node_id: None,
-            sync_manager: Arc::new(crate::blockchain_sync::BlockchainSyncManager::new()),
-            edge_sync_manager: None, // Only set for edge nodes
+            sync_manager,
             blockchain_provider: Arc::new(crate::blockchain_sync::NullBlockchainProvider),
+            dht_payload_sender: None,
+            dht_rate_limits: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Set DHT payload sender for forwarding received DHT messages (Ticket #154)
+    ///
+    /// This connects the message handler to the MeshDhtTransport's receiver,
+    /// allowing DHT payloads received over mesh to be processed by DhtStorage.
+    pub fn set_dht_payload_sender(
+        &mut self,
+        sender: DhtPayloadSender
+    ) {
+        self.dht_payload_sender = Some(sender);
+    }
+
+    /// Switch to edge node sync mode (must be called before sync operations)
+    pub fn set_edge_mode(&mut self, max_headers: usize) {
+        self.sync_manager = Arc::new(crate::blockchain_sync::BlockchainSyncManager::new_edge_node(max_headers));
     }
     
     /// Set message router for sending responses (Phase 2)
@@ -69,11 +104,6 @@ impl MeshMessageHandler {
     /// Set node ID (Phase 2)
     pub fn set_node_id(&mut self, node_id: PublicKey) {
         self.node_id = Some(node_id);
-    }
-    
-    /// Set edge node sync manager (for constrained devices)
-    pub fn set_edge_sync_manager(&mut self, edge_sync: Arc<crate::blockchain_sync::EdgeNodeSyncManager>) {
-        self.edge_sync_manager = Some(edge_sync);
     }
     
     /// Set blockchain provider (injected by application layer)
@@ -187,6 +217,10 @@ impl MeshMessageHandler {
             },
             ZhtpMeshMessage::DhtPong { request_id, timestamp } => {
                 self.handle_dht_pong(request_id, timestamp).await?;
+            },
+            ZhtpMeshMessage::DhtGenericPayload { requester, payload, signature } => {
+                // Ticket #154: Handle generic DHT payload routed through mesh network
+                self.handle_dht_generic_payload(requester, payload, signature).await?;
             },
         }
         Ok(())
@@ -656,87 +690,14 @@ impl MeshMessageHandler {
     ) -> Result<()> {
         info!(" Blockchain request from peer {:?} (request_id: {}, type: {:?})", 
               hex::encode(&requester.key_id[0..8]), request_id, request_type);
-        
-        // Use the blockchain provider to get blockchain data
-        match request_type {
-            crate::types::mesh_message::BlockchainRequestType::FullChain => {
-                info!("   Sending full blockchain to peer");
-                
-                // Get full blockchain data from provider
-                match self.blockchain_provider.get_full_blockchain().await {
-                    Ok(blockchain_data) => {
-                        info!("   Retrieved blockchain data: {} bytes", blockchain_data.len());
-                        
-                        // Get protocol for chunking
-                        let protocol = self.get_protocol_for_peer(&requester).await
-                            .unwrap_or(NetworkProtocol::QUIC); // Default to QUIC
-                        
-                        // Chunk the data based on protocol
-                        let chunks = self.chunk_blockchain_data(
-                            self.node_id.clone().unwrap_or_else(|| PublicKey::new(vec![0; 32])),
-                            request_id,
-                            blockchain_data,
-                            &protocol,
-                        )?;
-                        
-                        info!("   Sending {} chunks to peer", chunks.len());
-                        
-                        // Send chunks via message router
-                        if let Some(router) = &self.message_router {
-                            if let Some(node_id) = &self.node_id {
-                                for chunk in chunks {
-                                    if let Err(e) = router.write().await.route_message(chunk, requester.clone(), node_id.clone()).await {
-                                        warn!("Failed to send blockchain chunk: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to get blockchain data: {}", e);
-                    }
-                }
-            }
-            crate::types::mesh_message::BlockchainRequestType::HeadersOnly { start_height, count } => {
-                info!("   Sending headers from height {} (count: {})", start_height, count);
-                
-                // Get headers from provider (convert u32 to u64)
-                match self.blockchain_provider.get_headers(start_height, count as u64).await {
-                    Ok(headers) => {
-                        info!("   Retrieved {} headers", headers.len());
-                        
-                        // Serialize headers to Vec<Vec<u8>>
-                        let serialized_headers: Vec<Vec<u8>> = headers
-                            .iter()
-                            .map(|h| bincode::serialize(h).unwrap_or_default())
-                            .collect();
-                        
-                        // Send headers response
-                        let response = ZhtpMeshMessage::HeadersResponse {
-                            request_id,
-                            headers: serialized_headers,
-                            start_height,
-                        };
-                        
-                        if let Some(router) = &self.message_router {
-                            if let Some(node_id) = &self.node_id {
-                                if let Err(e) = router.write().await.route_message(response, requester, node_id.clone()).await {
-                                    warn!("Failed to send headers response: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to get headers: {}", e);
-                    }
-                }
-            }
-            // Other request types not yet implemented
-            _ => {
-                warn!("Unsupported blockchain request type: {:?}", request_type);
-            }
-        }
-        
+
+        // Emit data-only output for application layer to handle.
+        global_output_queue().push(NetworkOutput::BlockchainRequest {
+            requester,
+            request_id,
+            request: request_type,
+        }).await;
+
         Ok(())
     }
     
@@ -800,33 +761,33 @@ impl MeshMessageHandler {
     /// Handle incoming blockchain data chunks
     pub async fn handle_blockchain_data(
         &self,
-        _sender: &PublicKey,
+        sender: &PublicKey,
         request_id: u64,
         chunk_index: u32,
         total_chunks: u32,
         data: Vec<u8>,
         complete_data_hash: [u8; 32],
     ) -> Result<()> {
-        info!(" Blockchain data chunk {}/{} received ({} bytes, request_id: {})", 
+        info!("📥 Blockchain data chunk {}/{} received ({} bytes, request_id: {})", 
               chunk_index + 1, total_chunks, data.len(), request_id);
         
-        // Add chunk to sync manager for reassembly
-        match self.sync_manager.add_chunk(request_id, chunk_index, total_chunks, data, complete_data_hash).await {
+        // Add chunk to sync manager for reassembly (SECURITY: with sender authentication)
+        match self.sync_manager.add_chunk(sender, request_id, chunk_index, total_chunks, data, complete_data_hash).await {
             Ok(Some(complete_data)) => {
-                info!(" All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
+                info!("✅ All blockchain chunks received and verified! Total: {} bytes", complete_data.len());
                 info!("   Hash: {}", hex::encode(complete_data_hash));
                 
                 // TODO: Forward complete blockchain data to application layer for import
                 // This requires lib-blockchain which would create a circular dependency
                 // The unified_server handles this properly in handle_udp_mesh()
-                info!(" Blockchain chunks reassembled successfully");
+                info!("✅ Blockchain chunks reassembled successfully");
                 info!("   Application layer should import this data via blockchain.evaluate_and_merge_chain()");
             }
             Ok(None) => {
                 debug!("Chunk {}/{} buffered, waiting for more chunks", chunk_index + 1, total_chunks);
             }
             Err(e) => {
-                warn!("Failed to process blockchain chunk: {}", e);
+                warn!("⚠️ Failed to process blockchain chunk: {}", e);
                 return Err(e);
             }
         }
@@ -889,60 +850,14 @@ impl MeshMessageHandler {
         info!(" Bootstrap proof request from edge node {:?} at height {}", 
               hex::encode(&requester.key_id[0..4]), 
               current_height);
-        
-        // Check if blockchain is available
-        if !self.blockchain_provider.is_available().await {
-            warn!(" Blockchain not available - cannot generate bootstrap proof");
-            return Err(anyhow!("Blockchain not available"));
-        }
-        
-        // Get current blockchain height
-        let chain_tip_height = self.blockchain_provider.get_current_height().await?;
-        info!(" Current chain height: {}, edge node at: {}", chain_tip_height, current_height);
-        
-        // Get the recursive chain proof (cached or generated)
-        let chain_proof = self.blockchain_provider.get_chain_proof(chain_tip_height).await?;
-        info!(" Got chain proof for height {}", chain_proof.chain_tip_height);
-        
-        // Get recent headers for edge node (last 500 blocks or less)
-        let headers_count = std::cmp::min(500, chain_tip_height.saturating_sub(current_height));
-        let start_height = chain_tip_height.saturating_sub(headers_count) + 1;
-        
-        let headers = self.blockchain_provider.get_headers(start_height, headers_count).await?;
-        info!(" Fetched {} headers starting from height {}", headers.len(), start_height);
-        
-        // Serialize headers
-        let serialized_headers: Vec<Vec<u8>> = headers.iter()
-            .map(|h| bincode::serialize(h))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow!("Failed to serialize headers: {}", e))?;
-        
-        // Serialize FULL ChainRecursiveProof (not just recursive_proof)
-        // CRITICAL: Edge nodes expect the complete ChainRecursiveProof structure
-        let proof_data = bincode::serialize(&chain_proof)
-            .map_err(|e| anyhow!("Failed to serialize proof: {}", e))?;
-        
-        // Send response
-        let response_message = ZhtpMeshMessage::BootstrapProofResponse {
+
+        // Emit data-only output for application layer to handle.
+        global_output_queue().push(NetworkOutput::BootstrapProofRequest {
+            requester,
             request_id,
-            proof_data,
-            proof_height: chain_proof.chain_tip_height,
-            headers: serialized_headers,
-        };
-        
-        // Send via message router if available
-        if let Some(router) = &self.message_router {
-            let router_lock = router.read().await;
-            if let Some(sender_node_id) = &self.node_id {
-                router_lock.route_message(response_message, requester, sender_node_id.clone()).await?;
-                info!(" Bootstrap proof response sent to edge node");
-            } else {
-                warn!(" Node ID not set - cannot send response");
-            }
-        } else {
-            warn!(" Message router not available - cannot send response");
-        }
-        
+            current_height,
+        }).await;
+
         Ok(())
     }
 
@@ -967,52 +882,9 @@ impl MeshMessageHandler {
               headers.len(), 
               proof_height);
         
-        // Check if we have an edge node sync manager
-        let edge_sync = match &self.edge_sync_manager {
-            Some(sync) => sync,
-            None => {
-                warn!(" Edge sync manager not configured - ignoring bootstrap proof");
-                return Ok(());
-            }
-        };
-        
-        // Deserialize the chain proof
-        use lib_proofs::{RecursiveProofAggregator, ChainRecursiveProof};
-        let chain_proof: ChainRecursiveProof = bincode::deserialize(&proof_data)
-            .map_err(|e| anyhow!("Failed to deserialize chain proof: {}", e))?;
-        
-        info!(" Chain proof: tip={}, genesis={}, txs={}", 
-              chain_proof.chain_tip_height, 
-              chain_proof.genesis_height,
-              chain_proof.total_transaction_count);
-        
-        // Verify the recursive proof (O(1) verification!)
-        let aggregator = RecursiveProofAggregator::new()?;
-        let is_valid = aggregator.verify_recursive_chain_proof(&chain_proof)?;
-        
-        if !is_valid {
-            return Err(anyhow!(" Invalid bootstrap proof from validator!"));
-        }
-        
-        info!(" Bootstrap proof VALID! Chain proven up to height {}", chain_proof.chain_tip_height);
-        
-        // Deserialize headers
-        let block_headers: Vec<lib_blockchain::block::BlockHeader> = headers.iter()
-            .map(|h| bincode::deserialize(h))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow!("Failed to deserialize headers: {}", e))?;
-        
-        // Process headers through edge node sync manager
-        edge_sync.process_bootstrap_proof(proof_data, proof_height, block_headers).await?;
-        
-        info!(" Edge node bootstrapped to height {} with {} headers", 
-              proof_height, 
-              headers.len());
-        
-        // Log storage usage
-        let storage_bytes = edge_sync.estimated_storage_bytes().await;
-        info!("💾 Edge node storage: ~{} KB", storage_bytes / 1024);
-        
+        // Note: Bootstrap proof handling would need EdgeNodeStrategy-specific API
+        // For now, this is a no-op as the strategy pattern handles sync differently
+        warn!(" Bootstrap proof handling not yet implemented for unified sync manager");
         Ok(())
     }
 
@@ -1092,39 +964,9 @@ impl MeshMessageHandler {
               headers.len(), 
               start_height);
         
-        // Check if we have an edge node sync manager
-        let edge_sync = match &self.edge_sync_manager {
-            Some(sync) => sync,
-            None => {
-                warn!(" Edge sync manager not configured - ignoring headers");
-                return Ok(());
-            }
-        };
-        
-        // Deserialize headers
-        let block_headers: Vec<lib_blockchain::block::BlockHeader> = headers.iter()
-            .map(|h| bincode::deserialize(h))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow!("Failed to deserialize headers: {}", e))?;
-        
-        // Process headers through edge node state
-        edge_sync.process_headers(block_headers).await?;
-        
-        let current_height = edge_sync.current_height().await;
-        info!(" Edge node synced {} headers, now at height {}", 
-              headers.len(), 
-              current_height);
-        
-        // Check if we need more headers (if blockchain provider is available)
-        if self.blockchain_provider.is_available().await {
-            if let Ok(network_height) = self.blockchain_provider.get_current_height().await {
-                if network_height.saturating_sub(current_height) > 100 {
-                    info!(" Still {} blocks behind, may need more headers", 
-                          network_height - current_height);
-                }
-            }
-        }
-        
+        // Note: Headers-only sync would need EdgeNodeStrategy-specific API
+        // For now, this is a no-op as the strategy pattern handles sync differently
+        warn!(" Headers-only sync not yet implemented for unified sync manager");
         Ok(())
     }
 
@@ -1206,9 +1048,137 @@ impl MeshMessageHandler {
     
     async fn handle_dht_pong(&self, request_id: u64, timestamp: u64) -> Result<()> {
         debug!("DHT Pong: request_id={}, timestamp={}", request_id, timestamp);
-        
+
         // This confirms the peer is still alive
         // Application layer should update the routing table's last_seen timestamp
+        Ok(())
+    }
+
+    /// Handle generic DHT payload routed through mesh network (Ticket #154)
+    ///
+    /// This method receives DHT messages that were serialized by lib-storage's DhtNetwork
+    /// and routed through the mesh network. It deserializes and processes the DHT message
+    /// using the storage layer's DHT protocol.
+    ///
+    /// # Architecture (Ticket #154)
+    ///
+    /// The flow is:
+    /// 1. lib-storage DhtNetwork creates DhtMessage
+    /// 2. lib-storage serializes to bytes and calls DhtTransport.send()
+    /// 3. MeshDhtTransport wraps in DhtGenericPayload and routes through mesh
+    /// 4. This handler receives the payload and forwards to DhtStorage
+    /// 5. DhtStorage processes the message via its DhtTransport.receive()
+    ///
+    /// # Rate Limiting
+    ///
+    /// DHT messages are rate-limited to prevent DoS attacks:
+    /// - Max 100 messages per peer per 60-second window
+    /// - Exceeded peers are logged and their messages dropped
+    async fn handle_dht_generic_payload(&self, requester: PublicKey, payload: Vec<u8>, signature: Vec<u8>) -> Result<()> {
+        let peer_id_hex = hex::encode(&requester.key_id[0..8.min(requester.key_id.len())]);
+
+        debug!(
+            "DHT Generic Payload: requester={}, payload_size={}, signature_size={}",
+            peer_id_hex,
+            payload.len(),
+            signature.len()
+        );
+
+        // SECURITY FIX #1: Verify message signature to prevent spoofing
+        // Construct the signed data: requester.key_id + payload
+        let mut signed_data = Vec::with_capacity(requester.key_id.len() + payload.len());
+        signed_data.extend_from_slice(&requester.key_id);
+        signed_data.extend_from_slice(&payload);
+
+        // Convert signature bytes to Signature type with the requester's public key
+        let sig = lib_crypto::Signature::from_bytes_with_key(&signature, requester.clone());
+
+        match requester.verify(&signed_data, &sig) {
+            Ok(true) => {
+                debug!(
+                    "DHT message signature verified successfully from peer {}",
+                    peer_id_hex
+                );
+            }
+            Ok(false) => {
+                warn!(
+                    "DHT message signature verification FAILED from peer {} - possible spoofing attempt",
+                    peer_id_hex
+                );
+                return Err(anyhow!("Invalid DHT message signature"));
+            }
+            Err(e) => {
+                warn!(
+                    "DHT message signature verification error from peer {}: {}",
+                    peer_id_hex, e
+                );
+                return Err(anyhow!("Signature verification error: {}", e));
+            }
+        }
+
+        // Rate limiting check (Ticket #154)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        {
+            let mut rate_limits = self.dht_rate_limits.write().await;
+            let entry = rate_limits.entry(peer_id_hex.clone()).or_insert((0, now));
+
+            // Check if window has expired
+            if now - entry.1 >= DHT_RATE_LIMIT_WINDOW_SECS {
+                // Reset window
+                *entry = (1, now);
+            } else {
+                // Increment count
+                entry.0 += 1;
+
+                // Check rate limit
+                if entry.0 > DHT_RATE_LIMIT_MAX {
+                    warn!(
+                        "DHT rate limit exceeded for peer {} ({}/{} in {}s window)",
+                        peer_id_hex, entry.0, DHT_RATE_LIMIT_MAX, DHT_RATE_LIMIT_WINDOW_SECS
+                    );
+                    return Err(anyhow!("DHT rate limit exceeded"));
+                }
+            }
+        }
+
+        // Validate payload size (max 64KB for DHT messages)
+        const MAX_DHT_PAYLOAD_SIZE: usize = 65536;
+        if payload.len() > MAX_DHT_PAYLOAD_SIZE {
+            warn!(
+                "DHT payload too large from peer {}: {} bytes (max {})",
+                peer_id_hex, payload.len(), MAX_DHT_PAYLOAD_SIZE
+            );
+            return Err(anyhow!("DHT payload exceeds maximum size"));
+        }
+
+        // Forward to DHT transport if sender is configured
+        if let Some(sender) = &self.dht_payload_sender {
+            let peer_id = NodeId(requester.key_id);
+
+            if let Err(e) = sender.send((payload.clone(), peer_id)) {
+                warn!(
+                    "Failed to forward DHT payload to transport: {} (peer: {})",
+                    e, peer_id_hex
+                );
+                return Err(anyhow!("Failed to forward DHT payload: {}", e));
+            }
+
+            debug!(
+                "Forwarded DHT payload ({} bytes) from peer {} to DHT handler",
+                payload.len(), peer_id_hex
+            );
+        } else {
+            debug!(
+                "DHT payload received but no handler configured (peer: {}, {} bytes). \
+                 Call set_dht_payload_sender() to enable DHT message processing.",
+                peer_id_hex, payload.len()
+            );
+        }
+
         Ok(())
     }
 }
@@ -1313,5 +1283,104 @@ mod tests {
         let peer_entry = registry.find_by_public_key(&reporter).unwrap();
         assert_eq!(peer_entry.connection_metrics.stability_score, 0.9);
         assert_eq!(peer_entry.connection_metrics.bandwidth_capacity, 2000000);
+    }
+    
+    /// Test DHT signature verification - valid signature
+    #[tokio::test]
+    async fn test_dht_signature_verification_valid() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        
+        let mut handler = MeshMessageHandler::new(
+            peer_registry.clone(),
+            long_range_relays,
+            revenue_pools,
+        );
+        
+        // Create a test key pair
+        let test_key = lib_crypto::KeyPair::generate().unwrap();
+        let public_key = test_key.public_key.clone();
+
+        // Create test payload
+        let payload = b"test dht payload".to_vec();
+
+        // Create signed data: key_id + payload (matching the format used in handle_dht_generic_payload)
+        let mut signed_data = Vec::with_capacity(public_key.key_id.len() + payload.len());
+        signed_data.extend_from_slice(&public_key.key_id);
+        signed_data.extend_from_slice(&payload);
+
+        // Sign the data and extract raw signature bytes
+        let sig = test_key.sign(&signed_data).unwrap();
+        let signature = sig.signature.clone(); // Raw signature bytes
+
+        // This should succeed (signature verification passes)
+        let result = handler.handle_dht_generic_payload(public_key, payload, signature).await;
+
+        // Signature verification passes, and without dht_payload_sender configured,
+        // the function gracefully returns Ok (logs debug message but doesn't error)
+        assert!(result.is_ok(), "Valid signature should pass verification: {:?}", result);
+    }
+    
+    /// Test DHT signature verification - invalid signature
+    #[tokio::test]
+    async fn test_dht_signature_verification_invalid() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        
+        let mut handler = MeshMessageHandler::new(
+            peer_registry.clone(),
+            long_range_relays,
+            revenue_pools,
+        );
+        
+        // Create test keys
+        let test_key = lib_crypto::KeyPair::generate().unwrap();
+        let wrong_key = lib_crypto::KeyPair::generate().unwrap();
+
+        // Create test payload
+        let payload = b"test dht payload".to_vec();
+
+        // Create signed data with wrong key (simulates spoofing attempt)
+        let mut signed_data = Vec::with_capacity(wrong_key.public_key.key_id.len() + payload.len());
+        signed_data.extend_from_slice(&wrong_key.public_key.key_id);
+        signed_data.extend_from_slice(&payload);
+
+        // Sign with wrong key (this signature won't match test_key.public_key)
+        let sig = wrong_key.sign(&signed_data).unwrap();
+        let signature = sig.signature.clone(); // Raw signature bytes
+
+        // This should fail signature verification
+        let result = handler.handle_dht_generic_payload(test_key.public_key, payload, signature).await;
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("signature"));
+    }
+    
+    /// Test DHT signature verification - malformed signature
+    #[tokio::test]
+    async fn test_dht_signature_verification_malformed() {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        
+        let mut handler = MeshMessageHandler::new(
+            peer_registry.clone(),
+            long_range_relays,
+            revenue_pools,
+        );
+        
+        let test_key = lib_crypto::KeyPair::generate().unwrap();
+        let payload = b"test dht payload".to_vec();
+
+        // Use invalid signature (wrong length for Dilithium signature)
+        let invalid_signature = vec![0u8; 10]; // Too short for any valid signature
+
+        // This should fail signature verification
+        let result = handler.handle_dht_generic_payload(test_key.public_key, payload, invalid_signature).await;
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("signature"));
     }
 }

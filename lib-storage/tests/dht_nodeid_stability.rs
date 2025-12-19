@@ -244,6 +244,7 @@ fn create_test_config(node_id: NodeId, port: u16) -> UnifiedStorageConfig {
             default_tier: StorageTier::Warm,
             enable_compression: false,
             enable_encryption: false,
+            dht_persist_path: None,
         },
         erasure_config: ErasureConfig {
             data_shards: 3,

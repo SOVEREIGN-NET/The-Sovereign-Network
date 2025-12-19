@@ -178,6 +178,7 @@ impl BlockchainStorageManager {
                 default_tier: config.storage_tier.clone(),
                 enable_compression: config.enable_compression,
                 enable_encryption: config.enable_encryption,
+                dht_persist_path: None, // Blockchain uses its own persistence
             },
             erasure_config: lib_storage::ErasureConfig {
                 data_shards: 6,    // Higher redundancy for blockchain data

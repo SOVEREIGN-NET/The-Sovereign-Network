@@ -233,8 +233,10 @@ impl BlockchainComponent {
             .map(|b| b.hash())
             .unwrap_or_default();
 
-        let block_difficulty = blockchain.difficulty.clone();
-        
+        // Get mining config from environment - this determines the difficulty to use
+        let mining_config = lib_blockchain::types::get_mining_config_from_env();
+        let block_difficulty = mining_config.difficulty.clone();
+
         if has_system_transactions {
             info!("Mining system transaction block with difficulty: {:#x}", block_difficulty.bits());
         } else {
@@ -248,9 +250,12 @@ impl BlockchainComponent {
             block_difficulty,
         )?;
 
-        info!("⛏️ Mining block with PoW (difficulty: {:#x})...", block_difficulty.bits());
-        let new_block = lib_blockchain::block::creation::mine_block(block, 10_000_000)?;
-        info!(" Block mined with nonce: {}", new_block.header.nonce);
+        info!("⛏️ Mining block with {} profile (difficulty: {:#x}, max_iter: {})...",
+              if mining_config.allow_instant_mining { "Bootstrap" } else { "Standard" },
+              block_difficulty.bits(),
+              mining_config.max_iterations);
+        let new_block = lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
+        info!("✓ Block mined with nonce: {}", new_block.header.nonce);
 
         match blockchain.add_block_with_proof(new_block.clone()).await {
             Ok(()) => {
@@ -282,6 +287,7 @@ impl BlockchainComponent {
         blockchain: Arc<RwLock<Option<Blockchain>>>,
         validator_manager_arc: Arc<RwLock<Option<Arc<RwLock<ValidatorManager>>>>>,
         node_identity_arc: Arc<RwLock<Option<IdentityId>>>,
+        env_for_persist: crate::config::Environment,
     ) {
         info!(" Mining loop started - waiting 2 seconds for consensus to wire...");
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -364,11 +370,11 @@ impl BlockchainComponent {
 
                                     // Auto-persist blockchain after mining
                                     blockchain_guard.increment_persist_counter();
-                                    const PERSIST_INTERVAL: u64 = 5; // Save every 5 blocks
+                                    const PERSIST_INTERVAL: u64 = 1; // Save every block
                                     if blockchain_guard.should_auto_persist(PERSIST_INTERVAL) {
-                                        // Use development environment path for now
-                                        // TODO: Pass environment from component config
-                                        let persist_path = std::path::Path::new("./data/dev/blockchain.dat");
+                                        // Use environment-specific path
+                                        let persist_path_str = env_for_persist.blockchain_data_path();
+                                        let persist_path = std::path::Path::new(&persist_path_str);
                                         match blockchain_guard.save_to_file(persist_path) {
                                             Ok(()) => {
                                                 blockchain_guard.mark_persisted();
@@ -472,14 +478,15 @@ impl Component for BlockchainComponent {
         // This ensures the mining loop always sees the latest state from Genesis/Sync
         let validator_manager_arc = self.validator_manager.clone();
         let node_identity_arc = self.node_identity.clone();
-        
+        let env_for_persist = self.environment.clone();
+
         // We pass a new empty Arc for the local fallback, effectively disabling it
         // The mining loop prefers the global provider anyway
         let dummy_local_blockchain = Arc::new(RwLock::new(None));
-        
+
         let mining_handle = tokio::spawn(async move {
             info!(" Mining task spawned, starting mining loop...");
-            Self::real_mining_loop(dummy_local_blockchain, validator_manager_arc, node_identity_arc).await;
+            Self::real_mining_loop(dummy_local_blockchain, validator_manager_arc, node_identity_arc, env_for_persist).await;
         });
         
         *self.mining_handle.write().await = Some(mining_handle);
@@ -497,9 +504,10 @@ impl Component for BlockchainComponent {
         // Persist blockchain before shutdown
         if let Ok(shared_blockchain) = crate::runtime::blockchain_provider::get_global_blockchain().await {
             let blockchain_guard = shared_blockchain.read().await;
-            let persist_path = std::path::Path::new("./data/dev/blockchain.dat");
+            let persist_path_str = self.environment.blockchain_data_path();
+            let persist_path = std::path::Path::new(&persist_path_str);
             match blockchain_guard.save_to_file(persist_path) {
-                Ok(()) => info!("💾 Blockchain persisted to disk before shutdown"),
+                Ok(()) => info!("💾 Blockchain persisted to {} before shutdown", persist_path_str),
                 Err(e) => warn!("⚠️ Failed to persist blockchain on shutdown: {}", e),
             }
         }

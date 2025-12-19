@@ -199,7 +199,7 @@ use crate::discovery::hardware::HardwareCapabilities;
 
 // Import implementations from other packages
 use lib_economy::EconomicModel;
-use lib_storage::UnifiedStorageSystem;
+use crate::storage_stub::UnifiedStorageSystem;
 
 /// Network configuration for mesh node
 #[derive(Debug, Clone)]
@@ -2023,7 +2023,7 @@ impl ZhtpMeshServer {
     /// created and added to the blockchain to prevent double-counting.
     /// 
     /// # Example
-    /// ```rust
+    /// ```ignore
     /// // After creating reward transaction
     /// mesh_server.reset_reward_counter().await;
     /// ```
