@@ -42,3 +42,4 @@ reports/
 CLAUDE.md
 LOCAL_STORAGE_PATHS.md
 DEPLOY_TOKEN_SPEC.md
+.vscode/settings.json

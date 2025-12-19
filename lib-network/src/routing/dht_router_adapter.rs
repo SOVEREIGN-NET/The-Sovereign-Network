@@ -4,6 +4,10 @@
 //! This adapter enables DHT traffic to be routed through the mesh network
 //! using public key addressing instead of raw socket addresses.
 
+// This adapter depends on lib-storage DHT; feature is blocked pending relocation to integration layer.
+#[cfg(feature = "storage-integration")]
+compile_error!("Mesh DHT adapter moved to integration layer (zhtp). Do not enable storage-integration in lib-network.");
+
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tokio::sync::RwLock;

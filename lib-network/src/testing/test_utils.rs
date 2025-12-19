@@ -3,11 +3,10 @@ use std::path::PathBuf;
 use lib_crypto::hash_blake3;
 use crate::protocols::NetworkProtocol;
 use crate::mesh::server::ZhtpMeshServer;
+use crate::storage_stub::{UnifiedStorageConfig, UnifiedStorageSystem};
 
 /// Create a test mesh server for development with implementations
 pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {
-    use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
-    
     let node_id = hash_blake3(b"test-mesh-server");
     let storage_config = UnifiedStorageConfig::default();
     let storage = UnifiedStorageSystem::new(storage_config).await?;
@@ -165,19 +164,6 @@ mod tests {
     async fn test_mesh_server_creation() {
         let server = create_test_mesh_server().await;
         assert!(server.is_ok(), "Test mesh server creation should succeed");
-    }
-    
-    #[tokio::test]
-    async fn test_storage_system() {
-        // Test with storage system
-        use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
-        
-        let config = UnifiedStorageConfig::default();
-        let mut storage = UnifiedStorageSystem::new(config).await.unwrap();
-        
-        // Basic functionality test with storage
-        let stats = storage.get_statistics().await.unwrap();
-        assert!(stats.storage_stats.total_uploads == 0); // Fresh system
     }
     
     #[tokio::test]
