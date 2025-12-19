@@ -413,11 +413,14 @@ impl ZhtpUnifiedServer {
         let long_range_relays = Arc::new(RwLock::new(std::collections::HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(std::collections::HashMap::new()));
         
-        let message_handler = lib_network::messaging::message_handler::MeshMessageHandler::new(
+        let mut message_handler = lib_network::messaging::message_handler::MeshMessageHandler::new(
             peer_registry,
             long_range_relays,
             revenue_pools,
         );
+
+        // If integration layer has already registered a DHT payload sender, wire it now
+        crate::integration::wire_message_handler(&mut message_handler).await;
         
         // Inject message handler into QUIC protocol
         quic_mesh.set_message_handler(Arc::new(RwLock::new(message_handler)));
