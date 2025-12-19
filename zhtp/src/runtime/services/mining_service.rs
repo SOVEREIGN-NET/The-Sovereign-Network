@@ -100,9 +100,10 @@ impl MiningService {
             .map(|b| b.hash())
             .unwrap_or_default();
 
-        // Use blockchain's current difficulty (set at initialization based on environment)
-        let block_difficulty = blockchain.difficulty.clone();
-        
+        // Get mining config from environment - this determines the difficulty to use
+        let mining_config = lib_blockchain::types::get_mining_config_from_env();
+        let block_difficulty = mining_config.difficulty.clone();
+
         if has_system_transactions {
             info!("Mining system transaction block with difficulty: {:#x}", block_difficulty.bits());
         } else {
@@ -117,10 +118,12 @@ impl MiningService {
             block_difficulty,
         )?;
 
-        // Mine the block (compute valid nonce through Proof-of-Work)
-        info!("⛏️ Mining block with PoW (difficulty: {:#x})...", block_difficulty.bits());
-        let new_block = lib_blockchain::block::creation::mine_block(block, 10_000_000)?;
-        info!(" Block mined with nonce: {}", new_block.header.nonce);
+        info!("⛏️ Mining block with {} profile (difficulty: {:#x}, max_iter: {})...",
+              if mining_config.allow_instant_mining { "Bootstrap" } else { "Standard" },
+              block_difficulty.bits(),
+              mining_config.max_iterations);
+        let new_block = lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
+        info!("✓ Block mined with nonce: {}", new_block.header.nonce);
 
         // Add the block to the blockchain WITH proof generation
         match blockchain.add_block_with_proof(new_block.clone()).await {

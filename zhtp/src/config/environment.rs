@@ -42,6 +42,22 @@ impl Environment {
             Environment::Development => 0x03,
         }
     }
+
+    /// Returns the mining profile for this environment
+    /// Maps Environment to MiningProfile for appropriate difficulty settings
+    pub fn mining_profile(&self) -> lib_blockchain::types::MiningProfile {
+        match self {
+            Environment::Development => lib_blockchain::types::MiningProfile::Bootstrap,
+            Environment::Testnet => lib_blockchain::types::MiningProfile::Testnet,
+            Environment::Mainnet => lib_blockchain::types::MiningProfile::Mainnet,
+        }
+    }
+
+    /// Returns the mining configuration for this environment
+    /// Convenience method that gets profile and returns its config
+    pub fn mining_config(&self) -> lib_blockchain::types::MiningConfig {
+        self.mining_profile().config()
+    }
 }
 
 /// Environment-specific configuration settings

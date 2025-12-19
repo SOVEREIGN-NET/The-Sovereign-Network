@@ -6,13 +6,285 @@
 
 use anyhow::{Result, anyhow};
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use lib_identity::{ZhtpIdentity, IdentityId};
 use lib_identity::wallets::WalletId;
 use lib_identity::types::IdentityType;
 use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
+use lib_crypto::{PrivateKey, Hash};
+use serde::{Serialize, Deserialize};
 // Core wallet functionality with mesh network integration
+
+// ════════════════════════════════════════════════════════════════════════════
+// Keystore Persistence Types and Helpers
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Explicit error types for keystore operations - no silent fallbacks
+#[derive(Debug)]
+pub enum KeystoreError {
+    /// Keystore directory does not exist (first run - safe to proceed to create)
+    NotFound(PathBuf),
+    /// Keystore exists but is corrupt (FATAL - do not proceed)
+    Corrupt(PathBuf, String),
+    /// Permission denied accessing keystore (FATAL - do not proceed)
+    PermissionDenied(PathBuf),
+    /// IO error during keystore operation (FATAL - do not proceed)
+    IoError(PathBuf, std::io::Error),
+}
+
+impl std::fmt::Display for KeystoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeystoreError::NotFound(path) => write!(f, "Keystore not found at {:?}", path),
+            KeystoreError::Corrupt(path, reason) => write!(f, "Keystore corrupt at {:?}: {}", path, reason),
+            KeystoreError::PermissionDenied(path) => write!(f, "Permission denied accessing keystore at {:?}", path),
+            KeystoreError::IoError(path, e) => write!(f, "IO error at {:?}: {}", path, e),
+        }
+    }
+}
+
+impl std::error::Error for KeystoreError {}
+
+/// Private key storage format for keystore (matches identity.rs format)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KeystorePrivateKey {
+    dilithium_sk: Vec<u8>,
+    kyber_sk: Vec<u8>,
+    master_seed: Vec<u8>,
+}
+
+/// Serializable format for WalletStartupResult persistence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedWalletData {
+    wallet_name: String,
+    wallet_address: String,
+    node_wallet_id: Vec<u8>,
+    node_identity_id: Vec<u8>,
+}
+
+/// Get the default keystore path (~/.zhtp/keystore)
+/// Uses dirs::home_dir() for proper path expansion
+fn get_default_keystore_path() -> Result<PathBuf> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow!("Could not determine home directory"))?;
+    Ok(home.join(".zhtp").join("keystore"))
+}
+
+/// Load identity and wallet from keystore (pure - no prints)
+///
+/// Returns specific error types to distinguish recoverable vs fatal errors:
+/// - NotFound: First run, caller should proceed to interactive creation
+/// - Corrupt/PermissionDenied/IoError: Fatal, caller must abort
+fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartupResult, KeystoreError> {
+    // Check if keystore directory exists
+    if !keystore_path.exists() {
+        return Err(KeystoreError::NotFound(keystore_path.to_path_buf()));
+    }
+
+    let user_identity_file = keystore_path.join("user_identity.json");
+    let node_identity_file = keystore_path.join("node_identity.json");
+    let user_private_key_file = keystore_path.join("user_private_key.json");
+    let node_private_key_file = keystore_path.join("node_private_key.json");
+    let wallet_data_file = keystore_path.join("wallet_data.json");
+
+    // Check all required files exist
+    for file in [&user_identity_file, &node_identity_file, &user_private_key_file, &node_private_key_file, &wallet_data_file] {
+        if !file.exists() {
+            return Err(KeystoreError::NotFound(keystore_path.to_path_buf()));
+        }
+    }
+
+    // Load user identity
+    let user_identity_data = std::fs::read_to_string(&user_identity_file)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                KeystoreError::PermissionDenied(user_identity_file.clone())
+            } else {
+                KeystoreError::IoError(user_identity_file.clone(), e)
+            }
+        })?;
+
+    let user_private_key_data = std::fs::read_to_string(&user_private_key_file)
+        .map_err(|e| KeystoreError::IoError(user_private_key_file.clone(), e))?;
+
+    let user_keystore_key: KeystorePrivateKey = serde_json::from_str(&user_private_key_data)
+        .map_err(|e| KeystoreError::Corrupt(user_private_key_file.clone(), e.to_string()))?;
+
+    let user_private_key = PrivateKey {
+        dilithium_sk: user_keystore_key.dilithium_sk.clone(),
+        kyber_sk: user_keystore_key.kyber_sk.clone(),
+        master_seed: user_keystore_key.master_seed.clone(),
+    };
+
+    let user_identity = ZhtpIdentity::from_serialized(&user_identity_data, &user_private_key)
+        .map_err(|e| KeystoreError::Corrupt(user_identity_file.clone(), e.to_string()))?;
+
+    // Load node identity
+    let node_identity_data = std::fs::read_to_string(&node_identity_file)
+        .map_err(|e| KeystoreError::IoError(node_identity_file.clone(), e))?;
+
+    let node_private_key_data = std::fs::read_to_string(&node_private_key_file)
+        .map_err(|e| KeystoreError::IoError(node_private_key_file.clone(), e))?;
+
+    let node_keystore_key: KeystorePrivateKey = serde_json::from_str(&node_private_key_data)
+        .map_err(|e| KeystoreError::Corrupt(node_private_key_file.clone(), e.to_string()))?;
+
+    let node_private_key = PrivateKey {
+        dilithium_sk: node_keystore_key.dilithium_sk.clone(),
+        kyber_sk: node_keystore_key.kyber_sk.clone(),
+        master_seed: node_keystore_key.master_seed.clone(),
+    };
+
+    let node_identity = ZhtpIdentity::from_serialized(&node_identity_data, &node_private_key)
+        .map_err(|e| KeystoreError::Corrupt(node_identity_file.clone(), e.to_string()))?;
+
+    // Load wallet data
+    let wallet_data_str = std::fs::read_to_string(&wallet_data_file)
+        .map_err(|e| KeystoreError::IoError(wallet_data_file.clone(), e))?;
+
+    let wallet_data: PersistedWalletData = serde_json::from_str(&wallet_data_str)
+        .map_err(|e| KeystoreError::Corrupt(wallet_data_file.clone(), e.to_string()))?;
+
+    // Reconstruct PrivateIdentityData for user
+    let user_private_data = lib_identity::identity::PrivateIdentityData::new(
+        user_keystore_key.dilithium_sk,
+        user_identity.public_key.dilithium_pk.clone(),
+        user_keystore_key.master_seed.clone().try_into().unwrap_or([0u8; 32]),
+        vec![], // Recovery phrases not stored for security
+    );
+
+    // Reconstruct PrivateIdentityData for node
+    let node_private_data = lib_identity::identity::PrivateIdentityData::new(
+        node_keystore_key.dilithium_sk,
+        node_identity.public_key.dilithium_pk.clone(),
+        node_keystore_key.master_seed.clone().try_into().unwrap_or([0u8; 32]),
+        vec![],
+    );
+
+    // Reconstruct WalletId and IdentityId (both are type aliases for Hash)
+    let wallet_id_bytes: [u8; 32] = wallet_data.node_wallet_id.try_into()
+        .map_err(|_| KeystoreError::Corrupt(wallet_data_file.clone(), "Invalid wallet_id length".to_string()))?;
+    let node_wallet_id: WalletId = Hash(wallet_id_bytes);
+
+    let identity_id_bytes: [u8; 32] = wallet_data.node_identity_id.try_into()
+        .map_err(|_| KeystoreError::Corrupt(wallet_data_file.clone(), "Invalid identity_id length".to_string()))?;
+    let node_identity_id: IdentityId = Hash(identity_id_bytes);
+
+    Ok(WalletStartupResult {
+        user_identity,
+        node_identity,
+        user_private_data,
+        node_private_data,
+        node_identity_id,
+        node_wallet_id,
+        wallet_name: wallet_data.wallet_name,
+        seed_phrase: String::new(), // Never stored - user must have backup
+        wallet_address: wallet_data.wallet_address,
+    })
+}
+
+/// Save identity and wallet to keystore (pure - no prints)
+///
+/// Always sets 0600 permissions on all files, even if they already exist.
+/// Returns specific error types for caller to handle.
+fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::result::Result<(), KeystoreError> {
+    // Create keystore directory if it doesn't exist
+    std::fs::create_dir_all(keystore_path)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                KeystoreError::PermissionDenied(keystore_path.to_path_buf())
+            } else {
+                KeystoreError::IoError(keystore_path.to_path_buf(), e)
+            }
+        })?;
+
+    let user_identity_file = keystore_path.join("user_identity.json");
+    let node_identity_file = keystore_path.join("node_identity.json");
+    let user_private_key_file = keystore_path.join("user_private_key.json");
+    let node_private_key_file = keystore_path.join("node_private_key.json");
+    let wallet_data_file = keystore_path.join("wallet_data.json");
+
+    // Extract and save user private key
+    let user_private_key = result.user_identity.private_key.as_ref()
+        .ok_or_else(|| KeystoreError::Corrupt(user_identity_file.clone(), "User identity missing private key".to_string()))?;
+
+    let user_keystore_key = KeystorePrivateKey {
+        dilithium_sk: user_private_key.dilithium_sk.clone(),
+        kyber_sk: user_private_key.kyber_sk.clone(),
+        master_seed: user_private_key.master_seed.clone(),
+    };
+
+    let user_private_key_json = serde_json::to_string_pretty(&user_keystore_key)
+        .map_err(|e| KeystoreError::Corrupt(user_private_key_file.clone(), e.to_string()))?;
+
+    write_file_with_permissions(&user_private_key_file, &user_private_key_json)?;
+
+    // Save user identity (public data)
+    let user_identity_json = serde_json::to_string_pretty(&result.user_identity)
+        .map_err(|e| KeystoreError::Corrupt(user_identity_file.clone(), e.to_string()))?;
+
+    write_file_with_permissions(&user_identity_file, &user_identity_json)?;
+
+    // Extract and save node private key
+    let node_private_key = result.node_identity.private_key.as_ref()
+        .ok_or_else(|| KeystoreError::Corrupt(node_identity_file.clone(), "Node identity missing private key".to_string()))?;
+
+    let node_keystore_key = KeystorePrivateKey {
+        dilithium_sk: node_private_key.dilithium_sk.clone(),
+        kyber_sk: node_private_key.kyber_sk.clone(),
+        master_seed: node_private_key.master_seed.clone(),
+    };
+
+    let node_private_key_json = serde_json::to_string_pretty(&node_keystore_key)
+        .map_err(|e| KeystoreError::Corrupt(node_private_key_file.clone(), e.to_string()))?;
+
+    write_file_with_permissions(&node_private_key_file, &node_private_key_json)?;
+
+    // Save node identity (public data)
+    let node_identity_json = serde_json::to_string_pretty(&result.node_identity)
+        .map_err(|e| KeystoreError::Corrupt(node_identity_file.clone(), e.to_string()))?;
+
+    write_file_with_permissions(&node_identity_file, &node_identity_json)?;
+
+    // Save wallet data
+    let wallet_data = PersistedWalletData {
+        wallet_name: result.wallet_name.clone(),
+        wallet_address: result.wallet_address.clone(),
+        node_wallet_id: result.node_wallet_id.0.to_vec(),
+        node_identity_id: result.node_identity_id.0.to_vec(),
+    };
+
+    let wallet_data_json = serde_json::to_string_pretty(&wallet_data)
+        .map_err(|e| KeystoreError::Corrupt(wallet_data_file.clone(), e.to_string()))?;
+
+    write_file_with_permissions(&wallet_data_file, &wallet_data_json)?;
+
+    Ok(())
+}
+
+/// Write file with restrictive permissions (0600)
+fn write_file_with_permissions(path: &Path, content: &str) -> std::result::Result<(), KeystoreError> {
+    std::fs::write(path, content)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                KeystoreError::PermissionDenied(path.to_path_buf())
+            } else {
+                KeystoreError::IoError(path.to_path_buf(), e)
+            }
+        })?;
+
+    // Set restrictive permissions (0600 - owner read/write only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| KeystoreError::IoError(path.to_path_buf(), e))?;
+    }
+
+    Ok(())
+}
 
 /// Node wallet startup options
 #[derive(Debug, Clone)]
@@ -42,12 +314,83 @@ pub struct WalletStartupManager;
 
 impl WalletStartupManager {
     /// Main entry point for identity-based node startup
+    ///
+    /// Flow:
+    /// 1. Try to load existing identity from keystore
+    /// 2. If not found, proceed to interactive creation
+    /// 3. Save newly created identity to keystore
+    /// 4. Fatal errors (corrupt keystore, permission denied) abort startup
     pub async fn handle_startup_wallet_flow() -> Result<WalletStartupResult> {
+        Self::handle_startup_wallet_flow_with_keystore(None).await
+    }
+
+    /// Main entry point with custom keystore path
+    pub async fn handle_startup_wallet_flow_with_keystore(keystore_override: Option<PathBuf>) -> Result<WalletStartupResult> {
+        // Determine keystore path
+        let keystore_path = match keystore_override {
+            Some(path) => path,
+            None => get_default_keystore_path()?,
+        };
+
+        // ════════════════════════════════════════════════════════════════════
+        // STEP 1: Try to load existing identity from keystore
+        // ════════════════════════════════════════════════════════════════════
+        match load_from_keystore(&keystore_path) {
+            Ok(result) => {
+                println!("\n✓ Loaded existing identity from {:?}", keystore_path);
+                println!("   User Identity: {}", result.user_identity.did);
+                println!("   Node Identity: {}", result.node_identity.did);
+                println!("   Wallet: {}", result.wallet_address);
+                return Ok(result);
+            }
+            Err(KeystoreError::NotFound(_)) => {
+                println!("\nℹ No existing identity found at {:?}", keystore_path);
+                println!("  Proceeding to identity creation...");
+                // Continue to interactive creation
+            }
+            Err(KeystoreError::Corrupt(path, reason)) => {
+                // FATAL: Corrupt keystore - do not silently create new identity
+                return Err(anyhow!(
+                    "FATAL: Keystore corrupt at {:?}: {}\n\
+                    Manual recovery required. Options:\n\
+                    1. Restore from backup\n\
+                    2. Delete {:?} and re-import from seed phrase\n\
+                    3. Delete {:?} to start fresh (WARNING: loses identity)",
+                    path, reason, keystore_path, keystore_path
+                ));
+            }
+            Err(KeystoreError::PermissionDenied(path)) => {
+                return Err(anyhow!(
+                    "FATAL: Permission denied accessing keystore at {:?}\n\
+                    Check file permissions and ownership.",
+                    path
+                ));
+            }
+            Err(KeystoreError::IoError(path, e)) => {
+                return Err(anyhow!(
+                    "FATAL: IO error reading keystore at {:?}: {}\n\
+                    Check disk space and file system health.",
+                    path, e
+                ));
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // STEP 2: No existing identity - proceed to creation
+        // ════════════════════════════════════════════════════════════════════
+
         // Check for auto-wallet mode via environment variable (for automated testing/deployment)
         if let Ok(auto_mode) = std::env::var("ZHTP_AUTO_WALLET") {
             if auto_mode == "1" || auto_mode.to_lowercase() == "true" {
                 println!("🤖 Auto-wallet mode enabled - generating wallet automatically");
-                return Self::quick_start_wallet().await;
+                let result = Self::quick_start_wallet().await?;
+
+                // Save auto-generated wallet to keystore
+                save_to_keystore(&keystore_path, &result)
+                    .map_err(|e| anyhow!("Failed to save identity to keystore: {}", e))?;
+                println!("✓ Identity saved to {:?}", keystore_path);
+
+                return Ok(result);
             }
         }
 
@@ -65,10 +408,10 @@ impl WalletStartupManager {
         println!();
 
         let choice = Self::prompt_wallet_choice()?;
-        
+
         let result = match choice {
             WalletStartupChoice::CreateNewWallet => {
-                let (user_identity, node_identity, node_wallet_id, wallet_name, seed_phrase, wallet_address, user_private_data, node_private_data) = 
+                let (user_identity, node_identity, node_wallet_id, wallet_name, seed_phrase, wallet_address, user_private_data, node_private_data) =
                     Self::create_new_wallet_interactive().await?;
                 WalletStartupResult {
                     user_identity: user_identity.clone(),
@@ -85,7 +428,7 @@ impl WalletStartupManager {
             WalletStartupChoice::ImportFromSeedPhrase => {
                 let (user_identity, node_identity, node_wallet_id, wallet_name, seed_phrase, wallet_address, user_private_data, node_private_data) =
                     Self::import_from_seed_phrase_interactive().await?;
-                
+
                 WalletStartupResult {
                     user_identity: user_identity.clone(),
                     node_identity: node_identity.clone(),
@@ -99,9 +442,9 @@ impl WalletStartupManager {
                 }
             }
             WalletStartupChoice::ImportFromMesh => {
-                let (user_identity, node_identity, node_wallet_id, wallet_name, seed_phrase, wallet_address, user_private_data, node_private_data) = 
+                let (user_identity, node_identity, node_wallet_id, wallet_name, seed_phrase, wallet_address, user_private_data, node_private_data) =
                     Self::import_from_mesh_interactive().await?;
-                
+
                 WalletStartupResult {
                     user_identity: user_identity.clone(),
                     node_identity: node_identity.clone(),
@@ -119,12 +462,20 @@ impl WalletStartupManager {
             }
         };
 
-        println!("\n Node identity established successfully!");
+        // ════════════════════════════════════════════════════════════════════
+        // STEP 3: Save newly created identity to keystore
+        // ════════════════════════════════════════════════════════════════════
+        println!("\n💾 Saving identity to keystore...");
+        save_to_keystore(&keystore_path, &result)
+            .map_err(|e| anyhow!("Failed to save identity to keystore: {}", e))?;
+        println!("✓ Identity saved to {:?}", keystore_path);
+
+        println!("\n✅ Node identity established successfully!");
         println!("   Identity ID: {}", hex::encode(&result.node_identity_id.0[..8]));
         println!("   Wallet ID: {}", hex::encode(&result.node_wallet_id.0[..8]));
         println!("   Wallet Address: {}", result.wallet_address);
-        println!("\n Node ready to connect to ZHTP network...");
-        
+        println!("\n🌐 Node ready to connect to ZHTP network...");
+
         // Return complete startup result
         Ok(result)
     }

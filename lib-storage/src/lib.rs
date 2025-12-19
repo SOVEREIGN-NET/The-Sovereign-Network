@@ -37,6 +37,8 @@ pub mod integrity;
 
 // Multi-level caching system (Phase F - NEW)
 pub mod cache;
+#[cfg(feature = "network-integration")]
+pub mod network_integration;
 
 // Storage optimization (Phase F - NEW)
 pub mod optimization;
@@ -67,6 +69,13 @@ pub use erasure::*;
 pub use proofs::{StorageProof, RetrievalProof, generate_storage_proof, generate_retrieval_proof};
 pub use integrity::{IntegrityManager, IntegrityMetadata, IntegrityStatus, ChecksumAlgorithm};
 pub use cache::{CacheManager, CacheEntry, EvictionPolicy, CacheStats};
+#[cfg(feature = "network-integration")]
+pub use network_integration::{
+    NetworkOutputHandler,
+    NoopNetworkOutputHandler,
+    process_network_outputs,
+    process_network_outputs_with,
+};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -121,6 +130,9 @@ pub struct StorageConfig {
     pub enable_compression: bool,
     /// Enable encryption
     pub enable_encryption: bool,
+    /// Path for DHT storage persistence (if None, storage is in-memory only)
+    #[serde(default)]
+    pub dht_persist_path: Option<std::path::PathBuf>,
 }
 
 /// Erasure coding configuration
@@ -182,22 +194,64 @@ impl UnifiedStorageSystem {
             config.addresses.clone(),
         )?;
 
-        let dht_storage = dht::storage::DhtStorage::new(
-            node_id.clone(),
-            config.storage_config.max_storage_size,
-        );
+        // Initialize DHT storage with optional persistence
+        let mut dht_storage = match &config.storage_config.dht_persist_path {
+            Some(persist_path) => {
+                let mut storage = dht::storage::DhtStorage::new_with_persistence(
+                    node_id.clone(),
+                    config.storage_config.max_storage_size,
+                    persist_path.clone(),
+                );
+                // Load existing data from disk (async to avoid blocking runtime)
+                if let Err(e) = storage.load_from_file(persist_path).await {
+                    tracing::warn!("Failed to load DHT storage from {:?}: {}", persist_path, e);
+                }
+                storage
+            }
+            None => {
+                // PERSISTENCE WARNING: In-memory only storage will lose all data on restart
+                tracing::warn!(
+                    "DHT storage persistence is NOT configured - data will be lost on restart! \
+                     Set dht_persist_path in storage_config for production use."
+                );
+                dht::storage::DhtStorage::new(
+                    node_id.clone(),
+                    config.storage_config.max_storage_size,
+                )
+            }
+        };
 
         // Initialize economic manager
         let economic_manager = economic::manager::EconomicStorageManager::new(
             config.economic_config.clone(),
         );
 
-        // Initialize content manager
+        // Initialize content manager with same persistence config
+        let content_dht_storage = match &config.storage_config.dht_persist_path {
+            Some(persist_path) => {
+                // Use a separate file for content storage
+                let content_persist_path = persist_path.with_file_name(
+                    format!("{}_content", persist_path.file_stem().unwrap_or_default().to_string_lossy())
+                ).with_extension("bin");
+                let mut storage = dht::storage::DhtStorage::new_with_persistence(
+                    node_id.clone(),
+                    config.storage_config.max_storage_size,
+                    content_persist_path.clone(),
+                );
+                if let Err(e) = storage.load_from_file(&content_persist_path).await {
+                    tracing::warn!("Failed to load content DHT storage from {:?}: {}", content_persist_path, e);
+                }
+                storage
+            }
+            None => {
+                dht::storage::DhtStorage::new(
+                    node_id.clone(),
+                    config.storage_config.max_storage_size,
+                )
+            }
+        };
         let content_manager = content::ContentManager::new(
-            dht::storage::DhtStorage::new(
-                node_id.clone(),
-                config.storage_config.max_storage_size,
-            ),
+            content_dht_storage,
             config.economic_config.clone(),
         )?;
 
@@ -489,12 +543,118 @@ impl UnifiedStorageSystem {
 
     /// Migrate identity from blockchain to unified storage
     pub async fn migrate_identity_from_blockchain(
-        &mut self, 
+        &mut self,
         identity_id: &lib_identity::IdentityId,
         lib_identity: &lib_identity::ZhtpIdentity,
         passphrase: &str,
     ) -> Result<()> {
         self.content_manager.migrate_identity_from_blockchain(identity_id, lib_identity, passphrase).await
+    }
+
+    // ========================================================================
+    // Web4 Domain Storage Integration - Domain Records Persistence
+    // ========================================================================
+
+    /// Store a Web4 domain record in DHT storage
+    /// Uses key format: `web4/domain/{domain}`
+    pub async fn store_domain_record(&mut self, domain: &str, record_data: &[u8]) -> Result<()> {
+        let key = format!("web4/domain/{}", domain);
+        tracing::info!("Storing domain record for {} ({} bytes)", domain, record_data.len());
+        self.dht_storage.store(key, record_data.to_vec(), None).await
+    }
+
+    /// Retrieve a Web4 domain record from DHT storage
+    /// Returns None if the domain is not found
+    pub async fn get_domain_record(&mut self, domain: &str) -> Result<Option<Vec<u8>>> {
+        let key = format!("web4/domain/{}", domain);
+        self.dht_storage.get(&key).await
+    }
+
+    /// Delete a Web4 domain record from DHT storage
+    pub async fn delete_domain_record(&mut self, domain: &str) -> Result<()> {
+        let key = format!("web4/domain/{}", domain);
+        tracing::info!("Deleting domain record for {}", domain);
+        self.dht_storage.remove(&key).await?;
+        Ok(())
+    }
+
+    /// List all Web4 domain records from DHT storage
+    /// Returns a list of (domain_name, record_data) tuples
+    pub async fn list_domain_records(&mut self) -> Result<Vec<(String, Vec<u8>)>> {
+        let prefix = "web4/domain/";
+        let mut records = Vec::new();
+
+        // Get all keys with the web4/domain/ prefix
+        for key in self.dht_storage.list_keys_with_prefix(prefix).await? {
+            if let Some(data) = self.dht_storage.get(&key).await? {
+                // Extract domain name from key
+                let domain = key.strip_prefix(prefix).unwrap_or(&key).to_string();
+                records.push((domain, data));
+            }
+        }
+
+        tracing::info!("Listed {} domain records from DHT storage", records.len());
+        Ok(records)
+    }
+
+    // ========================================================================
+    // Identity Storage Integration - DHT Cache for Fast Lookups
+    // ========================================================================
+    //
+    // IMPORTANT: DHT identity records are a DERIVED CACHE, not the source of truth.
+    // The blockchain is authoritative. DHT enables:
+    // - Stateless API restarts (reload from DHT instead of replaying chain)
+    // - Horizontal scaling of identity endpoints
+    // - Fast DID resolution without chain queries
+    //
+    // Do NOT merge DHT state back into chain logic or use DHT for consensus.
+
+    /// Store an identity record in DHT storage for fast lookups
+    /// Uses key format: `identity/{identity_id}`
+    /// Payload is versioned: { "v": 1, "data": {...} }
+    pub async fn store_identity_record(&mut self, identity_id: &str, record_data: &[u8]) -> Result<()> {
+        let key = format!("identity/{}", identity_id);
+
+        // Wrap in versioned envelope for future compatibility
+        let versioned = serde_json::json!({
+            "v": 1,
+            "data": serde_json::from_slice::<serde_json::Value>(record_data)
+                .unwrap_or_else(|_| serde_json::Value::String(hex::encode(record_data)))
+        });
+        let versioned_data = serde_json::to_vec(&versioned)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize versioned identity: {}", e))?;
+
+        tracing::info!("Storing identity record {} ({} bytes, v1)", identity_id, versioned_data.len());
+        self.dht_storage.store(key, versioned_data, None).await
+    }
+
+    /// Retrieve an identity record from DHT storage
+    /// Returns None if identity not found, unwraps versioned payload
+    pub async fn get_identity_record(&mut self, identity_id: &str) -> Result<Option<Vec<u8>>> {
+        let key = format!("identity/{}", identity_id);
+        match self.dht_storage.get(&key).await? {
+            Some(versioned_data) => {
+                // Parse versioned envelope
+                let envelope: serde_json::Value = serde_json::from_slice(&versioned_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse identity envelope: {}", e))?;
+
+                let version = envelope.get("v").and_then(|v| v.as_u64()).unwrap_or(0);
+                if version != 1 {
+                    tracing::warn!("Unknown identity record version {}, attempting to parse", version);
+                }
+
+                // Extract data field
+                if let Some(data) = envelope.get("data") {
+                    let data_bytes = serde_json::to_vec(data)
+                        .map_err(|e| anyhow::anyhow!("Failed to serialize identity data: {}", e))?;
+                    Ok(Some(data_bytes))
+                } else {
+                    // Fallback: treat entire payload as data (legacy)
+                    Ok(Some(versioned_data))
+                }
+            }
+            None => Ok(None)
+        }
     }
 }
 
@@ -509,6 +669,7 @@ impl Default for UnifiedStorageConfig {
                 default_tier: StorageTier::Hot,
                 enable_compression: true,
                 enable_encryption: true,
+                dht_persist_path: None, // No persistence by default
             },
             erasure_config: ErasureConfig {
                 data_shards: 4,

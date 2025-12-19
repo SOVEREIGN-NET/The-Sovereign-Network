@@ -308,25 +308,33 @@ pub mod utils {
             return Err(ProtocolError::EconomicError("Transaction data too short".to_string()));
         }
 
-        // Use lib-blockchain for sophisticated transaction validation
-        use lib_blockchain::{Transaction, TransactionValidator};
-        
-        // Try to parse as a blockchain transaction
-        match serde_json::from_slice::<Transaction>(transaction_data) {
-            Ok(transaction) => {
-                let validator = TransactionValidator::new();
-                match validator.validate_transaction(&transaction) {
-                    Ok(()) => Ok(()),
-                    Err(e) => Err(ProtocolError::EconomicError(
-                        format!("Blockchain validation failed: {}", e)
-                    ))
+        #[cfg(feature = "blockchain")]
+        {
+            use lib_blockchain::{Transaction, TransactionValidator};
+            
+            // Try to parse as a blockchain transaction
+            match serde_json::from_slice::<Transaction>(transaction_data) {
+                Ok(transaction) => {
+                    let validator = TransactionValidator::new();
+                    match validator.validate_transaction(&transaction) {
+                        Ok(()) => Ok(()),
+                        Err(e) => Err(ProtocolError::EconomicError(
+                            format!("Blockchain validation failed: {}", e)
+                        ))
+                    }
+                },
+                Err(_) => {
+                    // Not a valid JSON transaction, treat as raw data
+                    Ok(())
                 }
-            },
-            Err(_) => {
-                // Not a valid JSON transaction, treat as raw data
-                // Basic validation passed
-                Ok(())
             }
+        }
+        #[cfg(not(feature = "blockchain"))]
+        {
+            // Blockchain validation disabled when blockchain feature is off.
+            // TODO: integrate application-layer validator when enabled.
+            let _ = transaction_data;
+            Ok(())
         }
     }
 

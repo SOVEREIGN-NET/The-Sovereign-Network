@@ -47,36 +47,42 @@ pub struct ZhtpCli {
 pub enum ZhtpCommand {
     /// Start the ZHTP orchestrator node
     Node(NodeArgs),
-    
+
     /// Wallet operations (orchestrated)
     Wallet(WalletArgs),
-    
+
     /// DAO operations (orchestrated)
     Dao(DaoArgs),
-    
+
     /// Identity operations (orchestrated)
     Identity(IdentityArgs),
-    
+
     /// Network operations (orchestrated)
     Network(NetworkArgs),
-    
+
     /// Blockchain operations (orchestrated)
     Blockchain(BlockchainArgs),
-    
+
     /// System monitoring and status
     Monitor(MonitorArgs),
-    
+
     /// Component management
     Component(ComponentArgs),
-    
+
     /// Interactive shell
     Interactive(InteractiveArgs),
-    
+
     /// Server management
     Server(ServerArgs),
-    
+
     /// Network isolation management
     Isolation(IsolationArgs),
+
+    /// Deploy Web4 sites (React, Next.js, etc.)
+    Deploy(DeployArgs),
+
+    /// Manage trust anchors and audit logs
+    Trust(TrustArgs),
 }
 
 /// Node management commands
@@ -111,6 +117,10 @@ pub enum NodeAction {
         /// Maximum headers to store in edge mode (default: 500 = ~100KB)
         #[arg(long, default_value = "500")]
         edge_max_headers: usize,
+        /// Path to identity keystore directory (default: ~/.zhtp/keystore)
+        /// Stores node identity and wallet for persistence across restarts.
+        #[arg(long)]
+        keystore: Option<String>,
     },
     /// Stop the orchestrator node
     Stop,
@@ -376,6 +386,214 @@ pub enum IsolationAction {
     Test,
 }
 
+/// Deploy commands for Web4 sites
+#[derive(Args, Debug, Clone)]
+pub struct DeployArgs {
+    #[command(subcommand)]
+    pub action: DeployAction,
+}
+
+/// Common trust configuration flags
+#[derive(Args, Debug, Clone)]
+pub struct TrustFlags {
+    /// Pin to specific SPKI hash (hex encoded). Most secure option.
+    #[arg(long)]
+    pub pin_spki: Option<String>,
+
+    /// Expected node DID. Verified after UHP handshake.
+    #[arg(long)]
+    pub node_did: Option<String>,
+
+    /// Trust on first use. Stores fingerprint for future verification.
+    #[arg(long)]
+    pub tofu: bool,
+
+    /// Bootstrap mode - accept any certificate (INSECURE, dev only)
+    #[arg(long)]
+    pub trust_node: bool,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DeployAction {
+    /// Deploy a static site to Web4
+    Site {
+        /// Build directory containing static files
+        #[arg(value_name = "BUILD_DIR")]
+        build_dir: String,
+
+        /// Target domain (e.g., myapp.zhtp)
+        #[arg(short, long)]
+        domain: String,
+
+        /// Deployment mode: 'spa' (single page app) or 'static'
+        #[arg(short, long, default_value = "spa")]
+        mode: Option<String>,
+
+        /// Path to identity keystore directory (REQUIRED for production deploys)
+        #[arg(short, long)]
+        keystore: String,
+
+        /// Fee to pay for deployment (in ZHTP tokens)
+        #[arg(short, long)]
+        fee: Option<u64>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+
+        /// Dry run - show what would be deployed without deploying
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Check deployment status for a domain
+    Status {
+        /// Domain to check
+        domain: String,
+
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+    },
+
+    /// List all deployed domains
+    List {
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+    },
+
+    /// View deployment history for a domain
+    History {
+        /// Domain to check
+        domain: String,
+
+        /// Maximum number of versions to show
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+    },
+
+    /// Rollback domain to a previous version
+    Rollback {
+        /// Domain to rollback
+        domain: String,
+
+        /// Target version number to rollback to
+        #[arg(short, long)]
+        to_version: u64,
+
+        /// Path to identity keystore directory (REQUIRED)
+        #[arg(short, long)]
+        keystore: String,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+
+        /// Force rollback without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+/// Trust management commands
+#[derive(Args, Debug, Clone)]
+pub struct TrustArgs {
+    #[command(subcommand)]
+    pub action: TrustAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum TrustAction {
+    /// List trusted nodes (trustdb)
+    List,
+
+    /// Show audit log entries (TOFU acceptance)
+    Audit,
+
+    /// Reset trust for a node
+    Reset {
+        /// Node address (host:port)
+        node: String,
+    },
+}
+
 /// Main CLI runner
 pub async fn run_cli() -> Result<()> {
     let cli = ZhtpCli::parse();
@@ -398,6 +616,8 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Interactive(args) => commands::interactive::handle_interactive_command(args.clone(), &cli).await,
         ZhtpCommand::Server(args) => commands::server::handle_server_command(args.clone(), &cli).await,
         ZhtpCommand::Isolation(args) => commands::isolation::handle_isolation_command(args.clone(), &cli).await,
+        ZhtpCommand::Deploy(args) => commands::deploy::handle_deploy_command(args.clone(), &cli).await,
+        ZhtpCommand::Trust(args) => commands::trust::handle_trust_command(args.clone()).await,
     }
 }
 

@@ -1,5 +1,5 @@
 //! Wallet manager integration from the original identity.rs
-//! 
+//!
 //! This provides the WalletManager that was integrated into ZhtpIdentity
 
 use anyhow::{Result, anyhow};
@@ -8,6 +8,45 @@ use lib_crypto::Hash;
 use crate::types::IdentityId;
 use super::wallet_types::{WalletType, WalletId, QuantumWallet, WalletSummary};
 use super::wallet_password::{WalletPasswordManager, WalletPasswordError, WalletPasswordValidation};
+use serde::{Serializer, Deserializer};
+
+// Custom serialization for HashMap<WalletId, QuantumWallet> to use string keys (JSON requirement)
+mod wallets_serde {
+    use super::*;
+
+    pub fn serialize<S>(map: &HashMap<WalletId, QuantumWallet>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut ser_map = serializer.serialize_map(Some(map.len()))?;
+        for (k, v) in map {
+            // Use hex encoding of the Hash bytes as the string key
+            let key_str = hex::encode(&k.0);
+            ser_map.serialize_entry(&key_str, v)?;
+        }
+        ser_map.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<WalletId, QuantumWallet>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::Deserialize;
+        let string_map: HashMap<String, QuantumWallet> = HashMap::deserialize(deserializer)?;
+        let mut result = HashMap::new();
+        for (k, v) in string_map {
+            if let Ok(bytes) = hex::decode(&k) {
+                if bytes.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&bytes);
+                    result.insert(Hash(arr), v);
+                }
+            }
+        }
+        Ok(result)
+    }
+}
 
 /// Integrated wallet manager for identity-based wallet management
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -15,6 +54,7 @@ pub struct WalletManager {
     /// Owner identity ID (optional for standalone wallet manager)
     pub owner_id: Option<IdentityId>,
     /// Map of wallet ID to wallet
+    #[serde(with = "wallets_serde")]
     pub wallets: HashMap<WalletId, QuantumWallet>,
     /// Map of alias to wallet ID for quick lookup
     pub alias_map: HashMap<String, WalletId>,

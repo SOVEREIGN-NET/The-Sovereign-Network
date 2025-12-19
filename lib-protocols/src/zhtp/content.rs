@@ -12,7 +12,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use lib_storage::types::ContentHash;
 
 /// Content storage backend types
 #[derive(Debug, Clone, PartialEq)]
@@ -553,7 +552,7 @@ impl ZhtpContentManager {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        updated_metadata.metadata.hash = ContentHash::from_bytes(&lib_crypto::hash_blake3(&new_content));
+        updated_metadata.metadata.hash = lib_crypto::hash_blake3(&new_content).to_vec();
         updated_metadata.metadata.size = new_content.len() as u64;
         
         self.metadata_store.insert(content_id.to_string(), updated_metadata);
@@ -853,7 +852,7 @@ mod tests {
             popularity_metrics: None,
             economic_info: None,
             privacy_level: 100,
-            hash: lib_storage::types::ContentHash::from_bytes(&lib_crypto::hash_blake3(content)),
+            hash: lib_crypto::hash_blake3(content).to_vec(),
             encryption_info: None,
             compression_info: None,
             integrity_checksum: None,
@@ -943,7 +942,7 @@ mod tests {
             popularity_metrics: None,
             economic_info: None,
             privacy_level: 100,
-            hash: lib_storage::types::ContentHash::from_bytes(&lib_crypto::hash_blake3(&[0u8; CONTENT_SIZE])),
+            hash: lib_crypto::hash_blake3(&[0u8; CONTENT_SIZE]).to_vec(),
             encryption_info: None,
             compression_info: None,
             integrity_checksum: None,

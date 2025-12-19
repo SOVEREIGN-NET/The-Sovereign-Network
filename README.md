@@ -1,6 +1,6 @@
 # Sovereign Network - Mono Repository
 
-A complete, self-contained repository containing all the Rust code needed to build and run ZHTP (Zero-Trust Hybrid Protocol) orchestrator nodes for the Sovereign Network.
+A complete, self-contained repository containing all the Rust code needed to build and run ZHTP (Zero-Knowledge Hypertext Transafer Protocol) orchestrator nodes for the Sovereign Network.
 
 ## 📌 Repository Structure
 

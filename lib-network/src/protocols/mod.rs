@@ -10,8 +10,9 @@ pub mod lorawan;
 pub mod satellite;
 pub mod zhtp_auth;
 pub mod zhtp_encryption;
-pub mod quic_mesh;      // QUIC transport with PQC encryption
-pub mod quic_handshake; // UHP handshake adapter for QUIC with Kyber binding
+pub mod quic_mesh;           // QUIC transport with PQC encryption
+pub mod quic_handshake;      // UHP handshake adapter for QUIC with Kyber binding
+pub mod quic_api_dispatcher; // QUIC API request dispatcher for Web4 client
 
 
 // Enhanced protocol implementations with platform-specific optimizations

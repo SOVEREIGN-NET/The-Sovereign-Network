@@ -16,7 +16,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 use tracing::{debug, info, warn};
 use lib_network::protocols::bluetooth::BluetoothMeshProtocol;

@@ -333,7 +333,9 @@ mod tests {
         let registry = Arc::new(tokio::sync::RwLock::new(crate::peer_registry::PeerRegistry::new()));
         
         // Mock a peer info (this would normally come from a real connection)
-        let peer_public_key = lib_crypto::PublicKey::generate_test_key();
+        // Generate a keypair and use its public key
+        let keypair = lib_crypto::KeyPair::generate().unwrap();
+        let peer_public_key = keypair.public_key;
         let peer_node_id = NodeId::from_did_device("did:zhtp:test123", "test-device").unwrap();
         
         let peer_info = PeerInfo {
@@ -359,10 +361,12 @@ mod tests {
         
         // Add peer to registry
         add_peer_to_registry(&peer_info, registry.clone()).await.unwrap();
-        
+
         // Verify conservative trust settings
+        // Note: from_public_key_legacy creates a derived DID, not the original peer_info.did,
+        // so we look up by public key instead
         let registry_read = registry.read().await;
-        let peer_entry = registry_read.find_by_did("did:zhtp:test123");
+        let peer_entry = registry_read.find_by_public_key(&peer_info.id);
         
         assert!(peer_entry.is_some());
         let entry = peer_entry.unwrap();
@@ -547,6 +551,7 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
 /// - `node_id`: Deterministically derived from DID + device name
 /// - `did`: Decentralized identifier (did:zhtp:...)
 /// - `device_name`: Device identifier used to derive NodeId
+#[derive(Debug, Clone)]
 pub struct PeerInfo {
     pub id: PublicKey,
     pub node_id: Option<NodeId>, // Identity-derived deterministic NodeId
