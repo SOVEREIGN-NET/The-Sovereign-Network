@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug};
+use crate::types::node_address::NodeAddress;
 use lib_crypto::PublicKey;
 
 use crate::types::mesh_message::ZhtpMeshMessage;
@@ -249,7 +250,7 @@ impl MeshMessageHandler {
         let peer_entry = crate::peer_registry::PeerEntry::new(
             unified_peer.clone(),
             vec![crate::peer_registry::PeerEndpoint {
-                address: String::new(), // Address not available in PeerDiscovery
+                address: NodeAddress::Domain(String::new()), // Address not available in PeerDiscovery
                 protocol: crate::protocols::NetworkProtocol::BluetoothLE,
                 signal_strength: 0.8,
                 latency_ms: 50,
@@ -1414,7 +1415,7 @@ mod tests {
             let peer_entry = crate::peer_registry::PeerEntry::new(
                 unified_peer.clone(),
                 vec![crate::peer_registry::PeerEndpoint {
-                    address: String::new(),
+                    address: NodeAddress::BluetoothLE(String::new()),
                     protocol: crate::protocols::NetworkProtocol::BluetoothLE,
                     signal_strength: 0.5,
                     latency_ms: 100,

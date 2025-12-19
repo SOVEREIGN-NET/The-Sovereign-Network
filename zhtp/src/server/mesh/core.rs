@@ -381,7 +381,7 @@ impl MeshRouter {
     pub async fn get_peer_addresses(&self) -> Vec<String> {
         self.connections.read().await
             .all_peers()
-            .filter_map(|peer_entry| peer_entry.endpoints.first().map(|e| e.address.clone()))
+            .filter_map(|peer_entry| peer_entry.endpoints.first().map(|e| e.address.to_address_string()))
             .collect()
     }
     

@@ -172,7 +172,7 @@ impl MeshRouter {
                     let peer_entry = lib_network::peer_registry::PeerEntry::new(
                         peer_key,
                         vec![lib_network::peer_registry::PeerEndpoint {
-                            address: String::new(), // TODO: Add actual address
+                            address: lib_network::NodeAddress::Tcp(addr),
                             protocol: connection.protocol.clone(),
                             signal_strength: 0.8,
                             latency_ms: 50,

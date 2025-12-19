@@ -298,7 +298,7 @@ impl MeshRouter {
             .ok_or_else(|| anyhow::anyhow!("Peer not found in connections"))?;
         
         let peer_address = peer_entry.endpoints.first()
-            .and_then(|endpoint| Some(endpoint.address.as_str()))
+            .map(|endpoint| endpoint.address.to_address_string())
             .ok_or_else(|| anyhow::anyhow!("Peer has no address"))?;
         
         // Serialize message

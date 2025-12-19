@@ -39,7 +39,7 @@ pub use lib_storage::dht::{
 pub use lib_storage::types::dht_types::DhtNode;
 
 // Re-export our new transport layer
-pub use transport::{DhtTransport, PeerId, UdpDhtTransport, BleDhtTransport, MultiDhtTransport, PeerAddressResolver};
+pub use transport::{DhtTransport, PeerId, UdpDhtTransport, BleDhtTransport, MultiDhtTransport};
 
 // Re-export main types
 pub use relay::ZhtpRelayProtocol;

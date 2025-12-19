@@ -325,47 +325,5 @@ impl DhtTransport for MultiDhtTransport {
     }
 }
 
-/// Peer address resolver - maps between protocol-specific addresses and PeerIds
-pub struct PeerAddressResolver {
-    /// Map from public key to available peer IDs
-    peer_map: Arc<RwLock<std::collections::HashMap<String, Vec<PeerId>>>>,
-}
-
-impl PeerAddressResolver {
-    pub fn new() -> Self {
-        Self {
-            peer_map: Arc::new(RwLock::new(std::collections::HashMap::new())),
-        }
-    }
-    
-    /// Register a peer's available addresses
-    pub async fn register_peer(&self, pubkey: &str, peer_id: PeerId) {
-        let mut map = self.peer_map.write().await;
-        map.entry(pubkey.to_string())
-            .or_insert_with(Vec::new)
-            .push(peer_id);
-    }
-    
-    /// Get all peer IDs for a given public key
-    pub async fn get_peer_ids(&self, pubkey: &str) -> Vec<PeerId> {
-        self.peer_map.read().await
-            .get(pubkey)
-            .cloned()
-            .unwrap_or_default()
-    }
-    
-    /// Convert PeerId to DHT node address (for Kademlia compatibility)
-    pub fn peer_id_to_dht_address(&self, peer_id: &PeerId) -> Vec<u8> {
-        // Use a full 160-bit digest to avoid address-space collapse/collisions
-        let digest = blake3::hash(peer_id.to_address_string().as_bytes());
-        let mut addr = vec![0u8; 20];
-        addr.copy_from_slice(&digest.as_bytes()[0..20]);
-        addr
-    }
-}
-
-impl Default for PeerAddressResolver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// PeerAddressResolver has been DELETED - use AddressResolver from crate::types::node_address
+// Access via peer_registry.address_resolver() for all address resolution needs

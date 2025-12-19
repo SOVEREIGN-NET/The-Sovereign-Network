@@ -52,7 +52,7 @@ impl BootstrapService {
         let peers: Vec<String> = registry.all_peers()
             .filter_map(|peer_entry| {
                 // Get first endpoint address
-                peer_entry.endpoints.first().map(|ep| ep.address.clone())
+                peer_entry.endpoints.first().map(|ep| ep.address.to_address_string())
             })
             .collect();
         drop(registry); // Release lock before async operations
