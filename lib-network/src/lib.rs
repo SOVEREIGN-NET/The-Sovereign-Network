@@ -49,6 +49,12 @@ pub use crate::handshake::{
 // DHT client layer is deprecated; kept temporarily for compatibility
 pub use crate::dht::{initialize_dht_client, ZkDHTIntegration, DHTNetworkStatus, DHTClient};
 
+// Unified protocol encryption module
+pub use crate::encryption::{
+    ProtocolEncryption, ChaCha20Poly1305Encryption,
+    EncryptionStats, create_encryption,
+};
+
 // Web4 domain registry and content publishing
 pub use crate::web4::{Web4Manager, DomainRegistry, ContentPublisher, initialize_web4_system, initialize_web4_system_with_storage};
 
@@ -65,6 +71,7 @@ pub mod bootstrap;
 pub mod identity; // Unified peer identity system
 pub mod peer_registry; // Unified peer registry (single source of truth)
 pub mod handshake; // Unified Handshake Protocol (UHP)
+pub mod encryption; // Unified protocol encryption
 pub mod constants; // Protocol constants
 pub mod monitoring;
 pub mod zk_integration;

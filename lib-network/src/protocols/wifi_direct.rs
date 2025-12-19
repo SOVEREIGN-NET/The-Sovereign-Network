@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
+use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data};
 
 // Enhanced WiFi Direct implementations with cross-platform support
 #[cfg(all(target_os = "macos", feature = "enhanced-wifi-direct"))]
@@ -210,6 +211,8 @@ pub struct WiFiDirectConnection {
     pub data_rate: u64, // Mbps
     pub device_name: String,
     pub device_type: WiFiDirectDeviceType,
+    /// Session key for ChaCha20Poly1305 app-layer encryption (from UHP handshake)
+    pub session_key: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -863,6 +866,7 @@ impl WiFiDirectMeshProtocol {
                                 connection_time: 0,
                                 data_rate: 0,
                                 device_type: WiFiDirectDeviceType::Unknown,
+                                session_key: None, // No session key from discovery
                             };
                             
                             let _ = tx.send(connection);
@@ -1323,6 +1327,7 @@ impl WiFiDirectMeshProtocol {
             data_rate: 150,
             device_name: ssid.to_string(),
             device_type: WiFiDirectDeviceType::Router,
+            session_key: None, // Session key established after UHP handshake
         };
         
         let mut devices = self.connected_devices.write().await;
@@ -3043,8 +3048,17 @@ impl WiFiDirectMeshProtocol {
         let devices = self.connected_devices.read().await;
         
         if let Some(device) = devices.get(target_address) {
+            // Application-layer encryption using ChaCha20Poly1305
+            let encrypted_message = if let Some(session_key) = &device.session_key {
+                info!(" Encrypting message with ChaCha20Poly1305 (WPA2/3 + app-layer security)");
+                encrypt_data(message, session_key)?
+            } else {
+                warn!("⚠️  No session key for {}, sending unencrypted (WPA2/3 only)", target_address);
+                message.to_vec()
+            };
+            
             // Establish TCP/UDP connection over WiFi Direct
-            let result = self.transmit_over_wifi_direct(device, message).await;
+            let result = self.transmit_over_wifi_direct(device, &encrypted_message).await;
             
             if result.is_ok() {
                 info!("Message sent via WiFi Direct to {} ({} Mbps)", target_address, device.data_rate);

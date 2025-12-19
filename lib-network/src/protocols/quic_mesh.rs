@@ -10,12 +10,17 @@
 //! ```text
 //! ZHTP Message
 //!     ↓
-//! PQC Encryption (master_key from UHP+Kyber + ChaCha20-Poly1305)
+//! PQC Encryption (master_key from UHP+Kyber + ChaCha20-Poly1305)  ← Post-quantum security
 //!     ↓
-//! QUIC Connection (TLS 1.3 encryption + reliability)
+//! QUIC Connection (TLS 1.3 encryption + reliability)              ← Transport security
 //!     ↓
 //! UDP/IP Network
 //! ```
+//!
+//! **Note on Double Encryption**: This is defense-in-depth, NOT wasteful redundancy.
+//! - TLS 1.3: Protects against network-level attacks (MitM, passive eavesdropping)
+//! - App-layer ChaCha20+Kyber: Provides post-quantum security + cryptographic binding
+//! - Both layers serve different purposes and cannot be removed without losing security
 //!
 //! # Security Properties
 //!
