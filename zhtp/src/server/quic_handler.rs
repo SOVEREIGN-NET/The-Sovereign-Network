@@ -343,6 +343,14 @@ impl QuicHandler {
     pub fn set_mesh_handler(&mut self, handler: Arc<RwLock<MeshMessageHandler>>) {
         self.mesh_handler = Some(handler);
         info!("✅ MeshMessageHandler registered with QuicHandler");
+
+        // Wire DHT payload sender if integration already registered one (Phase 4 relocation)
+        if let Some(handler) = self.mesh_handler.as_ref().cloned() {
+            tokio::spawn(async move {
+                let mut guard = handler.write().await;
+                crate::integration::wire_message_handler(&mut guard).await;
+            });
+        }
     }
 
     /// Get reference to PQC connections for external access

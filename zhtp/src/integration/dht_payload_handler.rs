@@ -3,27 +3,17 @@
 //! Consumes payload sender registrations from the dispatcher and exposes a data-only drain hook
 //! so mesh/core no longer needs to own lib-storage wiring.
 
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::info;
 
-use lib_types::NodeId;
-
-use crate::integration::dht_dispatcher::{latest_dht_payload_sender, DhtIntegrationDispatcher, DhtIntegrationEvent};
+use crate::integration::dht_dispatcher::latest_dht_payload_sender;
 
 /// Attach a message handler to the latest registered DHT payload sender.
 pub async fn wire_message_handler(
-    dispatcher: &DhtIntegrationDispatcher,
     handler: &mut lib_network::messaging::MeshMessageHandler,
 ) {
     if let Some(sender) = latest_dht_payload_sender() {
         handler.set_dht_payload_sender(sender);
         info!("DHT payload sender wired to message handler via integration layer");
-    } else {
-        // Ask mesh/core to re-emit if needed (no-op if already registered)
-        dispatcher.dispatch(DhtIntegrationEvent::RegisterPayloadSender {
-            sender: handler.get_dht_payload_sender().unwrap_or_default(),
-        });
     }
 }
 
