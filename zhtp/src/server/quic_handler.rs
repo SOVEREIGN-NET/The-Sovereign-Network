@@ -55,7 +55,7 @@ use quinn::{Connection, Incoming, RecvStream, SendStream};
 use tokio::sync::RwLock;
 
 use lib_network::protocols::quic_mesh::{QuicMeshProtocol, PqcQuicConnection};
-use lib_network::protocols::quic_handshake::{self, QuicHandshakeResult};
+use lib_network::protocols::quic_handshake::{self};
 use lib_network::handshake::{HandshakeContext, NonceCache, ClientHello};
 use lib_network::messaging::message_handler::MeshMessageHandler;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
@@ -821,7 +821,7 @@ impl QuicHandler {
 
     /// Handle a single public read-only stream
     /// Only allows GET requests to public endpoints
-    async fn handle_public_stream(&self, mut recv: RecvStream, mut send: SendStream) -> Result<()> {
+    async fn handle_public_stream(&self, mut recv: RecvStream, send: SendStream) -> Result<()> {
         // Detect protocol (HTTP or ZHTP)
         let protocol = self.detect_protocol_buffered(&mut recv).await?;
 
@@ -887,7 +887,7 @@ impl QuicHandler {
     }
 
     /// Handle public ZHTP stream - only allows read operations
-    async fn handle_public_zhtp_stream(&self, initial_data: Vec<u8>, recv: RecvStream, mut send: SendStream) -> Result<()> {
+    async fn handle_public_zhtp_stream(&self, initial_data: Vec<u8>, recv: RecvStream, send: SendStream) -> Result<()> {
         // Forward to ZHTP handler - it will check method internally
         // For now, allow all ZHTP requests through (the API handlers will enforce read-only)
         // TODO: Add request parsing to reject mutations at this layer
@@ -935,7 +935,7 @@ impl QuicHandler {
     async fn handle_first_stream(
         &self,
         mut recv: RecvStream,
-        mut send: SendStream,
+        send: SendStream,
         connection: Connection,
         peer_addr: SocketAddr,
     ) -> Result<()> {

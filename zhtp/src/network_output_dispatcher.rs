@@ -3,7 +3,6 @@ use lib_storage::network_integration::{
     channel_handler,
     spawn_network_output_processor,
     NetworkOutputHandler,
-    process_network_outputs_with,
 };
 use lib_network::NetworkOutput;
 use lib_crypto::PublicKey;

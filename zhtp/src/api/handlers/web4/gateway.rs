@@ -21,8 +21,7 @@ use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use crate::web4_stub::{Web4ContentService, DomainRegistry, ZdnsResolver};
 use std::sync::Arc;
-use tracing::{info, warn, debug, error};
-use serde::{Serialize, Deserialize};
+use tracing::{info, warn, debug};
 
 /// Configuration for the Web4 gateway
 #[derive(Debug, Clone)]

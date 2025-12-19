@@ -14,7 +14,7 @@ use axum::{
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::web4_stub::{Web4ContentService, Web4Capability, ContentResult};
+use crate::web4_stub::Web4ContentService;
 
 use super::config::GatewayTlsConfig;
 

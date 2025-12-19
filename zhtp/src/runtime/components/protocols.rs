@@ -10,9 +10,9 @@ use tracing::{info, warn, debug};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::components::identity::create_default_storage_config;
-use crate::server::https_gateway::{HttpsGateway, GatewayTlsConfig, TlsMode};
+use crate::server::https_gateway::{HttpsGateway, GatewayTlsConfig};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
-use crate::web4_stub::{ZdnsResolver, ZdnsConfig, ZdnsTransportServer, ZdnsServerConfig};
+use crate::web4_stub::{ZdnsResolver, ZdnsTransportServer, ZdnsServerConfig};
 
 /// Protocols component - thin wrapper for unified server
 pub struct ProtocolsComponent {

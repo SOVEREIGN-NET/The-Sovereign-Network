@@ -67,6 +67,25 @@ impl BlockchainSyncManager {
             },
         ))
     }
+
+    /// Stub: chunk data for protocol-appropriate sizes (no-op, returns empty)
+    pub fn chunk_blockchain_data_for_protocol(
+        _sender: PublicKey,
+        _request_id: u64,
+        _data: Vec<u8>,
+        _protocol: &crate::protocols::NetworkProtocol,
+    ) -> Result<Vec<crate::types::mesh_message::ZhtpMeshMessage>> {
+        Ok(Vec::new())
+    }
+
+    /// Stub: chunk data with default size (no-op, returns empty)
+    pub fn chunk_blockchain_data(
+        _sender: PublicKey,
+        _request_id: u64,
+        _data: Vec<u8>,
+    ) -> Result<Vec<crate::types::mesh_message::ZhtpMeshMessage>> {
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]

@@ -10,9 +10,7 @@ use uuid::Uuid;
 use anyhow::Result;
 use lib_crypto::PublicKey;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::net::SocketAddr;
 use tracing::debug;
-use lib_network::identity::unified_peer::UnifiedPeerId;
 
 /// Rate limiting state for ZHTP getter requests (100 req/30s per identity)
 #[derive(Debug, Clone)]
@@ -58,7 +56,6 @@ impl ZhtpRateLimitState {
         true // Within limit
     }
 }
-use lib_network::MeshConnection;
 use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
 use lib_network::protocols::quic_mesh::QuicMeshProtocol;
 use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptionSession};

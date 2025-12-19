@@ -31,7 +31,7 @@ use lib_storage::UnifiedStorageSystem;
 use lib_identity::IdentityManager;
 use lib_economy::EconomicModel;
 use lib_crypto::PublicKey;
-use crate::web4_stub::{DomainRegistry, Web4Manager};
+use crate::web4_stub::DomainRegistry;
 
 // Import our comprehensive API handlers
 use crate::api::handlers::{

@@ -12,7 +12,6 @@
 
 use anyhow::{anyhow, Result, Context};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tracing::{info, debug, warn};

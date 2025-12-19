@@ -795,7 +795,7 @@ impl Web4Handler {
         info!(" Verified owner identity: {}", owner_did);
 
         // Register domain with Web4Manager using manifest CID
-        let mut manager = self.web4_manager.write().await;
+        let manager = self.web4_manager.write().await;
         info!("🔍 register_domain_from_manifest: DomainRegistry ptr: {:p}", &*manager.registry as *const _);
 
         // Create domain metadata

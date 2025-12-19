@@ -333,7 +333,7 @@ impl DhtHandler {
             }
         };
 
-        let mut dht = client.write().await;
+        let dht = client.write().await;
         match dht.connect_to_peer(&connect_request.peer_address).await {
             Ok(()) => {
                 let response = serde_json::json!({

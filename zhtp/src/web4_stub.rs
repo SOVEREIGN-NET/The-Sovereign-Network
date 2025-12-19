@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
-use lib_crypto::{KeyPair, PublicKey};
+use lib_crypto::KeyPair;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::ZhtpIdentity;
 use lib_storage::dht::transport::{DhtTransport, PeerId};
