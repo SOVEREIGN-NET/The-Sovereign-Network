@@ -48,7 +48,11 @@ pub enum NetworkProtocol {
     QUIC,
 }
 
-/// Protocol capabilities describing technical characteristics
+/// Protocol capabilities describing both performance characteristics and security posture
+/// 
+/// Includes traditional metrics (MTU, throughput, latency, range, power) and
+/// security properties (authentication schemes, encryption ciphers, PQC support,
+/// replay protection, identity binding, forward secrecy).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolCapabilities {
     /// Maximum Transmission Unit in bytes
@@ -63,7 +67,15 @@ pub struct ProtocolCapabilities {
     pub power_profile: PowerProfile,
     /// Whether the protocol supports reliable delivery
     pub reliable: bool,
-    /// Whether the protocol requires internet connectivity
+    /// Whether the protocol requires internet connectivity to function
+    ///
+    /// Semantics:
+    /// - `true`: The protocol fundamentally depends on internet connectivity and cannot
+    ///   operate in a purely local/offline environment (e.g., satellite backhaul or
+    ///   cloud-routed services).
+    /// - `false`: The protocol can operate without internet connectivity. This includes
+    ///   strictly local protocols and hybrid protocols that support both local and
+    ///   internet-connected operation (e.g., QUIC or TCP used on a local network).
     pub requires_internet: bool,
     
     // ============ Security Capabilities (PR #393 Review) ============
@@ -109,15 +121,19 @@ pub enum AuthScheme {
     MutualHandshake,
     /// Certificate-based authentication
     Certificate,
-    /// Post-quantum resistant mutual auth
+    /// Post-quantum resistant mutual authentication using a PQC signature scheme.
+    ///
+    /// The concrete post-quantum algorithm is implementation-defined and selected by
+    /// the underlying transport/handshake layer (for example, an ML-DSA (Dilithium)
+    /// or SLH-DSA (SPHINCS+) signature scheme), rather than being fixed by this enum.
     PostQuantumMutual,
 }
 
 /// Encryption cipher suite
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CipherSuite {
-    /// No encryption (integrity only or none)
-    None,
+    /// No encryption (plaintext transport; integrity-only or fully unprotected)
+    Plaintext,
     /// AES-256-GCM
     Aes256Gcm,
     /// ChaCha20-Poly1305
