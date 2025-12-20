@@ -476,7 +476,7 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
         max_throughput: 10_000_000, // 10 MB/s
         max_message_size: 1024 * 1024, // 1 MB
         encryption_methods: vec!["chacha20-poly1305".to_string()],
-        pqc_support: true, // Enable PQC for quantum resistance
+        pqc_capability: crate::handshake::PqcCapability::HybridEd25519Dilithium5, // Hybrid mode for quantum resistance
         dht_capable: true,
         relay_capable: false,
         storage_capacity: 0,
