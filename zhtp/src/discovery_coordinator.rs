@@ -665,14 +665,22 @@ impl DiscoveryCoordinator {
     async fn scan_local_subnet(&self) -> Result<Vec<String>> {
         use tokio::net::TcpStream;
         use futures::stream::{self, StreamExt};
-        
-        let local_ip = get_local_ip().await?.to_string();
-        let base_ip = format!("{}.{}.{}", 
-            local_ip.split('.').nth(0).unwrap_or("192"),
-            local_ip.split('.').nth(1).unwrap_or("168"),
-            local_ip.split('.').nth(2).unwrap_or("1")
-        );
-        
+        use std::net::IpAddr;
+
+        let local_ip = get_local_ip().await?;
+
+        // Only scan IPv4 subnets - IPv6 requires different discovery approach
+        let base_ip = match local_ip {
+            IpAddr::V4(v4) => {
+                let octets = v4.octets();
+                format!("{}.{}.{}", octets[0], octets[1], octets[2])
+            },
+            IpAddr::V6(_) => {
+                info!("      IPv6 local address detected, skipping subnet scan (use mDNS/DHT instead)");
+                return Ok(Vec::new());
+            }
+        };
+
         info!("      Scanning subnet: {}.0/24", base_ip);
         let ports = vec![9333, 33444];
         
