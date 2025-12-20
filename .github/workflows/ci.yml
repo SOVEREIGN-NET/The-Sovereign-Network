@@ -92,21 +92,27 @@ jobs:
           name: zhtp-binary
 
       - name: Setup SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           for i in 1 2 3; do
-            ssh-keyscan -T 10 -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts && break
+            ssh-keyscan -T 10 -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts && break
             echo "ssh-keyscan attempt $i failed, retrying..."
             sleep 2
           done
 
       - name: Deploy Binary and Service
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          scp -i ~/.ssh/deploy_key ./zhtp ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/zhtp/zhtp.new
-          scp -i ~/.ssh/deploy_key ./deploy/zhtp.service ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/zhtp.service
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+          scp -i ~/.ssh/deploy_key ./zhtp "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/zhtp/zhtp.new"
+          scp -i ~/.ssh/deploy_key ./deploy/zhtp.service "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/zhtp.service"
+          ssh -i ~/.ssh/deploy_key "${DEPLOY_USER}@${DEPLOY_HOST}" '
             cd /opt/zhtp &&
             systemctl stop zhtp 2>/dev/null || true &&
             if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
@@ -138,12 +144,16 @@ jobs:
           name: zhtp-binary
 
       - name: Setup SSH
+        env:
+          SSH_KEY: ${{ secrets.DEV_DEPLOY_SSH_KEY }}
+          DEV_HOST_1: ${{ secrets.DEV_DEPLOY_HOST }}
+          DEV_HOST_2: ${{ secrets.DEV_DEPLOY_HOST_2 }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.DEV_DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           # Scan both dev servers
-          for host in "${{ secrets.DEV_DEPLOY_HOST }}" "${{ secrets.DEV_DEPLOY_HOST_2 }}"; do
+          for host in "$DEV_HOST_1" "$DEV_HOST_2"; do
             for i in 1 2 3; do
               ssh-keyscan -T 10 -H "$host" >> ~/.ssh/known_hosts && break
               echo "ssh-keyscan attempt $i for $host failed, retrying..."
@@ -152,10 +162,13 @@ jobs:
           done
 
       - name: Deploy to Dev Server 1
+        env:
+          DEV_HOST: ${{ secrets.DEV_DEPLOY_HOST }}
+          DEV_USER: ${{ secrets.DEV_DEPLOY_USER }}
         run: |
-          scp -i ~/.ssh/deploy_key ./zhtp ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }}:/opt/zhtp/zhtp.new
-          scp -i ~/.ssh/deploy_key ./deploy/zhtp.service ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }}:/tmp/zhtp.service
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }} '
+          scp -i ~/.ssh/deploy_key ./zhtp "${DEV_USER}@${DEV_HOST}:/opt/zhtp/zhtp.new"
+          scp -i ~/.ssh/deploy_key ./deploy/zhtp.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
+          ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
             cd /opt/zhtp &&
             systemctl stop zhtp 2>/dev/null || true &&
             if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
@@ -169,10 +182,13 @@ jobs:
           '
 
       - name: Deploy to Dev Server 2
+        env:
+          DEV_HOST: ${{ secrets.DEV_DEPLOY_HOST_2 }}
+          DEV_USER: ${{ secrets.DEV_DEPLOY_USER }}
         run: |
-          scp -i ~/.ssh/deploy_key ./zhtp ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST_2 }}:/opt/zhtp/zhtp.new
-          scp -i ~/.ssh/deploy_key ./deploy/zhtp.service ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST_2 }}:/tmp/zhtp.service
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST_2 }} '
+          scp -i ~/.ssh/deploy_key ./zhtp "${DEV_USER}@${DEV_HOST}:/opt/zhtp/zhtp.new"
+          scp -i ~/.ssh/deploy_key ./deploy/zhtp.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
+          ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
             cd /opt/zhtp &&
             systemctl stop zhtp 2>/dev/null || true &&
             if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
