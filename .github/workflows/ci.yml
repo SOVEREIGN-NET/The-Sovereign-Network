@@ -63,11 +63,11 @@ jobs:
         run: cargo build --workspace --locked
 
       - name: Build Release Binary
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development')
         run: cargo build --release -p zhtp
 
       - name: Upload Release Artifact
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development')
         uses: actions/upload-artifact@v4
         with:
           name: zhtp-binary
@@ -120,11 +120,12 @@ jobs:
           '
 
   # Deploy to dev server (development branch) - uses separate secrets
+  # Runs on: push to development OR manual trigger on development
   deploy-development:
     name: Deploy to Dev Server
     needs: smoke
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/development'
     steps:
       - name: Checkout (for service file)
         uses: actions/checkout@v4
