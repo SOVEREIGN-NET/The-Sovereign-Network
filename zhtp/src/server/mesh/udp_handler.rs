@@ -374,8 +374,9 @@ impl MeshRouter {
         
         let sync_type = lib_network::blockchain_sync::SyncType::FullBlockchain;
         
-        // Add chunk to sync manager
+        // Add chunk to sync manager (now with sender authentication)
         match self.sync_manager.add_chunk(
+            sender,  // SECURITY: Pass sender for authentication check
             request_id,
             chunk_index,
             total_chunks,
@@ -837,17 +838,7 @@ impl MeshRouter {
         info!("📦 DHT Store request: key={} bytes, value={} bytes, ttl={}s", 
               key.len(), value.len(), ttl);
         
-        let key_str = hex::encode(key);
-        let success = match self.dht_storage.lock().await.store(key_str.clone(), value.to_vec(), None).await {
-            Ok(()) => {
-                debug!("✅ DHT value stored: key={}", &key_str[0..key_str.len().min(16)]);
-                true
-            }
-            Err(e) => {
-                warn!("⚠️ DHT store failed: {}", e);
-                false
-            }
-        };
+        let success = crate::integration::store_dht_value(&self.dht_storage, key, value).await;
         
         let stored_count = if success { 1 } else { 0 };
         
@@ -873,21 +864,7 @@ impl MeshRouter {
     ) -> Result<()> {
         info!("🔍 DHT FindValue request: key={} bytes, max_hops={}", key.len(), max_hops);
         
-        let key_str = hex::encode(key);
-        let (found, value) = match self.dht_storage.lock().await.get(&key_str).await {
-            Ok(Some(dht_value)) => {
-                debug!("✅ DHT value found locally: key={}", &key_str[0..key_str.len().min(16)]);
-                (true, Some(dht_value))
-            }
-            Ok(None) => {
-                debug!("⚠️ DHT value not found locally");
-                (false, None)
-            }
-            Err(e) => {
-                warn!("DHT get failed: {}", e);
-                (false, None)
-            }
-        };
+        let (found, value) = crate::integration::fetch_dht_value(&self.dht_storage, key).await.unwrap_or((false, None));
         
         let closer_nodes: Vec<lib_crypto::PublicKey> = Vec::new();
         

@@ -12,7 +12,7 @@ use chrono;
 
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus};
-use lib_network::Web4Manager;
+use crate::web4_stub::Web4Manager;
 use crate::runtime::blockchain_provider::get_global_blockchain;
 
 /// DNS resolution request
@@ -120,13 +120,13 @@ impl DnsHandler {
                 Ok(domain_info) if domain_info.found => {
                     info!(" Domain {} found in Web4 registry", domain);
                     
-                    let owner_display = domain_info.owner_info.as_ref()
-                        .and_then(|o| o.alias.clone())
-                        .or_else(|| domain_info.owner_info.as_ref().map(|o| o.identity_hash.clone()[..16].to_string()))
-                        .unwrap_or_else(|| "unknown".to_string());
+                    let owner_display = domain_info.record.as_ref()
+                        .and_then(|r| r.get("owner").and_then(|v| v.as_str()))
+                        .unwrap_or("unknown")
+                        .to_string();
                     
-                    let registered_at = domain_info.owner_info.as_ref()
-                        .map(|o| o.registered_at)
+                    let registered_at = domain_info.record.as_ref()
+                        .and_then(|r| r.get("registered_at").and_then(|v| v.as_u64()))
                         .unwrap_or(0);
                     
                     info!("   Owner: {}", owner_display);

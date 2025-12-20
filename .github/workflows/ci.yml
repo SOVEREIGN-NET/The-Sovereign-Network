@@ -5,6 +5,13 @@ on:
     branches: [development, main]
   pull_request:
     branches: [development, main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy after build'
+        required: false
+        default: 'true'
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always

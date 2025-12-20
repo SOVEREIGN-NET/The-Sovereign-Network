@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use lib_storage::types::ContentHash;
+use crate::storage_stub::ContentHash;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::IdentityId;
 use crate::types::{AccessPolicy, EconomicAssessment, StorageRequirements};
@@ -284,7 +284,7 @@ impl ServerContent {
             .duration_since(UNIX_EPOCH)?
             .as_secs();
 
-        let hash = ContentHash::from_bytes(&lib_crypto::hash_blake3(&data));
+        let hash = lib_crypto::hash_blake3(&data).to_vec();
         
         let metadata = ContentMetadata {
             content_type,
@@ -340,7 +340,7 @@ impl ServerContent {
         metadata: ContentMetadata,
         access_policy: AccessPolicy,
     ) -> anyhow::Result<Self> {
-        let hash = ContentHash::from_bytes(&lib_crypto::hash_blake3(&data));
+        let hash = lib_crypto::hash_blake3(&data).to_vec();
         let validity_proof = ZeroKnowledgeProof::default();
 
         Ok(Self {
@@ -366,7 +366,7 @@ impl ServerContent {
         metadata: ContentMetadata,
         access_control: AccessPolicy,
     ) -> anyhow::Result<Self> {
-        let hash = ContentHash::from_bytes(&lib_crypto::hash_blake3(&data));
+        let hash = lib_crypto::hash_blake3(&data).to_vec();
         let validity_proof = ZeroKnowledgeProof::default();
 
         Ok(Self {
@@ -436,14 +436,14 @@ impl ServerContent {
 
     /// Verify content integrity
     pub fn verify_integrity(&self) -> anyhow::Result<bool> {
-        let calculated_hash = ContentHash::from_bytes(&lib_crypto::hash_blake3(&self.data));
+        let calculated_hash = lib_crypto::hash_blake3(&self.data).to_vec();
         Ok(calculated_hash == self.hash)
     }
 
     /// Update content data
     pub fn update_data(&mut self, new_data: Vec<u8>) -> anyhow::Result<()> {
         self.data = new_data;
-        self.hash = ContentHash::from_bytes(&lib_crypto::hash_blake3(&self.data));
+        self.hash = lib_crypto::hash_blake3(&self.data).to_vec();
         self.metadata.size = self.data.len() as u64;
         self.metadata.last_modified = SystemTime::now()
             .duration_since(UNIX_EPOCH)?
