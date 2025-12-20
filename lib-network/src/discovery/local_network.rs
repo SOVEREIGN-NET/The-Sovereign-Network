@@ -10,6 +10,7 @@ use tokio::time::{Duration, interval};
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
+use crate::network_utils::get_local_ip;
 
 /// Multicast address for ZHTP local discovery (224.0.0.251 is mDNS standard)
 const ZHTP_MULTICAST_ADDR: &str = "224.0.1.75"; // Custom ZHTP multicast address
@@ -388,24 +389,6 @@ async fn attempt_connect_to_discovered_peer(announcement: &NodeAnnouncement, our
             debug!("Could not connect to peer {} (may not be ready yet): {}", peer_addr, e);
         }
     }
-}
-
-/// Get the local IP address of this machine
-async fn get_local_ip() -> Result<IpAddr> {
-    // Try to connect to a remote address to determine our local IP
-    match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
-        Ok(socket) => {
-            if let Ok(_) = socket.connect("8.8.8.8:80").await {
-                if let Ok(local_addr) = socket.local_addr() {
-                    return Ok(local_addr.ip());
-                }
-            }
-        },
-        Err(_) => {}
-    }
-    
-    // Fallback to localhost
-    Ok(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))
 }
 
 /// Discover ZHTP nodes on local network immediately
