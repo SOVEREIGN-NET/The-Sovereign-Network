@@ -44,6 +44,9 @@ pub mod protocol_detection;
 pub mod quic_handler;
 pub mod zhtp;  // Native ZHTP protocol over QUIC
 
+// HTTPS Gateway for browser-based Web4 access (Phase 4: TLS Strategy)
+pub mod https_gateway;
+
 // Layer modules (Phases 2-5)
 pub mod http;
 pub mod monitoring;
@@ -67,3 +70,6 @@ pub use mesh::core::MeshRouter;
 
 pub use protocols::{WiFiRouter, BluetoothRouter, BluetoothClassicRouter, ClassicProtocol};
 // ❌ REMOVED: BootstrapRouter - Use lib-network::bootstrap instead
+
+// HTTPS Gateway exports
+pub use https_gateway::{HttpsGateway, GatewayTlsConfig, TlsMode};

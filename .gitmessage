@@ -1,0 +1,14 @@
+# Commit Message Guidelines
+#
+# 1. Technical description only (no branding)
+# 2. Use imperative mood: Fix bug not Fixed bug
+# 3. First line: 50-72 characters max
+# 4. Body: Explain what and why (not how)
+#
+# Example:
+# FIX: Prevent buffer overflow in DHT message handling
+#
+# Validate message size before processing to prevent DoS attacks.
+# Ensures payloads don't exceed 64KB limit.
+# Related to issue #123
+

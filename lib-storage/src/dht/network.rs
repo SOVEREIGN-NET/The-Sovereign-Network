@@ -1,18 +1,24 @@
 //! DHT Network Operations
 //! 
-//! Handles UDP-based communication for DHT operations including message sending,
-//! receiving, and connection management.
+//! **TICKET #152:** Multi-protocol DHT transport abstraction
+//! 
+//! Handles communication for DHT operations over multiple protocols (UDP, BLE, QUIC, WiFi Direct)
+//! using the DhtTransport abstraction from lib-network.
 
 use crate::types::dht_types::{DhtMessage, DhtNode, DhtMessageType, DhtQueryResponse};
-use crate::dht::transport::{MultiDhtTransport, UdpDhtTransport};
 use crate::types::NodeId;
 use anyhow::{Result, anyhow};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, warn};
 use serde::{Serialize, Deserialize};
+
+// Import transport abstraction (Ticket #152)
+// Trait defined in lib-storage to avoid circular dependency with lib-network
+use crate::dht::transport::{DhtTransport, PeerId};
 
 /// Network envelope for DHT messages with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,8 +74,8 @@ pub enum MessagePriority {
 ///
 /// Until signing is implemented, DHT messages are vulnerable to spoofing.
 pub struct DhtNetwork {
-    /// Transport abstraction (defaults to UDP)
-    transport: MultiDhtTransport,
+    /// **TICKET #152:** Multi-protocol transport abstraction
+    transport: Arc<dyn DhtTransport>,
     /// Local node information
     local_node: DhtNode,
     /// Message timeout duration
@@ -83,7 +89,7 @@ pub struct DhtNetwork {
 impl std::fmt::Debug for DhtNetwork {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DhtNetwork")
-            .field("transport", &"multi")
+            .field("transport", &"Arc<dyn DhtTransport>")
             .field("local_node", &self.local_node)
             .field("timeout_duration", &self.timeout_duration)
             .field("sequence_counter", &self.sequence_counter.load(Ordering::SeqCst))
@@ -92,17 +98,38 @@ impl std::fmt::Debug for DhtNetwork {
 }
 
 impl DhtNetwork {
-    /// Create a new DHT network manager
-    pub fn new(local_node: DhtNode, bind_addr: SocketAddr) -> Result<Self> {
-        let udp = UdpDhtTransport::bind(bind_addr)?;
-        let transport = MultiDhtTransport::with_primary(Box::new(udp));
-
+    /// Create a new DHT network manager with multi-protocol transport
+    /// 
+    /// **TICKET #152:** Now accepts DhtTransport instead of hardcoded UDP socket
+    pub fn new(local_node: DhtNode, transport: Arc<dyn DhtTransport>) -> Result<Self> {
         Ok(Self {
             transport,
             local_node,
             timeout_duration: Duration::from_secs(5),
             sequence_counter: AtomicU64::new(0),
         })
+    }
+    
+    /// Create DHT network with specific bind address (legacy compatibility)
+    /// Creates a UDP transport for the given address
+    ///
+    /// **TICKET #152:** Now uses UdpDhtTransport from lib-storage (not lib-network)
+    /// to avoid circular dependency
+    pub fn new_udp(local_node: DhtNode, bind_addr: SocketAddr) -> Result<Self> {
+        use crate::dht::transport::UdpDhtTransport;
+
+        // Create tokio UDP socket
+        let socket = std::net::UdpSocket::bind(bind_addr)?;
+        socket.set_nonblocking(true)?;
+        let tokio_socket = tokio::net::UdpSocket::from_std(socket)?;
+
+        // Create UDP transport
+        let transport = Arc::new(UdpDhtTransport::new(
+            Arc::new(tokio_socket),
+            bind_addr,
+        ));
+
+        Self::new(local_node, transport)
     }
 
     /// Generate a cryptographically secure random nonce
@@ -145,93 +172,64 @@ impl DhtNetwork {
     fn next_sequence(&self) -> u64 {
         self.sequence_counter.fetch_add(1, Ordering::SeqCst)
     }
-
-    pub fn build_store_message(&self, target: &DhtNode, key: String, value: Vec<u8>) -> DhtMessage {
-        DhtMessage {
-            message_id: generate_message_id(),
-            message_type: DhtMessageType::Store,
-            sender_id: self.local_node.peer.node_id().clone(),
-            target_id: Some(target.peer.node_id().clone()),
-            key: Some(key),
-            value: Some(value),
-            nodes: None,
-            contract_data: None,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            nonce: Self::generate_nonce(),
-            sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
-        }
-    }
-
-    pub fn build_find_value_message(&self, target: &DhtNode, key: String) -> DhtMessage {
-        DhtMessage {
-            message_id: generate_message_id(),
-            message_type: DhtMessageType::FindValue,
-            sender_id: self.local_node.peer.node_id().clone(),
-            target_id: Some(target.peer.node_id().clone()),
-            key: Some(key),
-            value: None,
-            nodes: None,
-            contract_data: None,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            nonce: Self::generate_nonce(),
-            sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
-        }
-    }
     
     /// Send a DHT message to a target node
+    /// 
+    /// **TICKET #152:** Now uses DhtTransport abstraction for multi-protocol support
     pub async fn send_message(&self, target: &DhtNode, message: DhtMessage) -> Result<()> {
         // Serialize message
         let message_bytes = bincode::serialize(&message)?;
         
-        // Get target address
+        // Get target address and create PeerId
         let target_addr = target.addresses.first()
-            .ok_or_else(|| anyhow!("No address available for target node"))?
-            .parse::<SocketAddr>()?;
+            .ok_or_else(|| anyhow!("No address available for target node"))?;
         
-        // Send message
-        self.transport.send(target_addr, &message_bytes)?;
+        // Parse address to PeerId (default to UDP for socket addresses)
+        let peer_id = if let Ok(socket_addr) = target_addr.parse::<SocketAddr>() {
+            PeerId::Udp(socket_addr)
+        } else if target_addr.starts_with("gatt://") {
+            PeerId::Bluetooth(target_addr.trim_start_matches("gatt://").to_string())
+        } else if target_addr.starts_with("wifid://") {
+            let addr = target_addr.trim_start_matches("wifid://").parse()?;
+            PeerId::WiFiDirect(addr)
+        } else if target_addr.starts_with("quic://") {
+            let addr = target_addr.trim_start_matches("quic://").parse()?;
+            PeerId::Quic(addr)
+        } else if target_addr.starts_with("lora://") {
+            PeerId::LoRaWAN(target_addr.trim_start_matches("lora://").to_string())
+        } else {
+            return Err(anyhow!("Unknown address format: {}", target_addr));
+        };
+        
+        // Send via transport abstraction
+        self.transport.send(&message_bytes, &peer_id).await?;
         
         Ok(())
     }
     
     /// Receive and parse DHT message with freshness validation
     ///
+    /// **TICKET #152:** Now uses DhtTransport abstraction for multi-protocol support
+    ///
     /// # Security
     ///
     /// - Validates message timestamp (rejects > 5 min old)
     /// - Validates nonce is non-zero
     /// - Caller should verify signature and check nonce against seen-nonce cache
-    pub async fn receive_message(&self) -> Result<(DhtMessage, SocketAddr)> {
-        let mut buffer = vec![0u8; 65536]; // 64KB buffer
-
-        let (size, sender_addr) = timeout(self.timeout_duration, async {
-            loop {
-                match self.transport.recv(&mut buffer) {
-                    Ok(result) => return Ok(result),
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        tokio::time::sleep(Duration::from_millis(1)).await;
-                        continue;
-                    }
-                    Err(e) => return Err(anyhow!("UDP receive error: {}", e)),
-                }
-            }
-        }).await??;
+    pub async fn receive_message(&self) -> Result<(DhtMessage, PeerId)> {
+        // Receive from transport abstraction
+        let (message_bytes, peer_id) = timeout(
+            self.timeout_duration,
+            self.transport.receive()
+        ).await??;
 
         // Deserialize message
-        let message: DhtMessage = bincode::deserialize(&buffer[..size])?;
+        let message: DhtMessage = bincode::deserialize(&message_bytes)?;
 
         // SECURITY: Validate message freshness and replay protection fields
         if let Err(e) = message.validate_freshness() {
             warn!(
-                sender = %sender_addr,
+                sender = %peer_id,
                 msg_type = ?message.message_type,
                 error = %e,
                 "Rejecting stale or invalid DHT message"
@@ -240,13 +238,14 @@ impl DhtNetwork {
         }
 
         debug!(
-            sender = %sender_addr,
+            sender = %peer_id,
             msg_type = ?message.message_type,
             seq = message.sequence_number,
+            protocol = peer_id.protocol(),
             "Received valid DHT message"
         );
 
-        Ok((message, sender_addr))
+        Ok((message, peer_id))
     }
     
     /// Send PING message to check node liveness
@@ -338,7 +337,20 @@ impl DhtNetwork {
     ///
     /// - Includes nonce and sequence_number for replay protection
     pub async fn find_value(&self, target: &DhtNode, key: String) -> Result<DhtQueryResponse> {
-        let find_value_message = self.build_find_value_message(target, key.clone());
+        let find_value_message = DhtMessage {
+            message_id: generate_message_id(),
+            message_type: DhtMessageType::FindValue,
+            sender_id: self.local_node.peer.node_id().clone(),
+            target_id: Some(target.peer.node_id().clone()),
+            key: Some(key.clone()),
+            value: None,
+            nodes: None,
+            contract_data: None,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            nonce: Self::generate_nonce(),
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
+        };
 
         self.send_message(target, find_value_message).await?;
 
@@ -369,7 +381,20 @@ impl DhtNetwork {
     ///
     /// - Includes nonce and sequence_number for replay protection
     pub async fn store(&self, target: &DhtNode, key: String, value: Vec<u8>) -> Result<bool> {
-        let store_message = self.build_store_message(target, key, value);
+        let store_message = DhtMessage {
+            message_id: generate_message_id(),
+            message_type: DhtMessageType::Store,
+            sender_id: self.local_node.peer.node_id().clone(),
+            target_id: Some(target.peer.node_id().clone()),
+            key: Some(key),
+            value: Some(value),
+            nodes: None,
+            contract_data: None,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            nonce: Self::generate_nonce(),
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
+        };
 
         self.send_message(target, store_message).await?;
 
@@ -396,7 +421,7 @@ impl DhtNetwork {
     ///
     /// - Response messages include nonce and sequence_number for replay protection
     /// - Incoming message freshness is already validated by receive_message()
-    pub async fn handle_incoming_message(&self, message: DhtMessage, _sender_addr: SocketAddr) -> Result<Option<DhtMessage>> {
+    pub async fn handle_incoming_message(&self, message: DhtMessage, _sender: PeerId) -> Result<Option<DhtMessage>> {
         match message.message_type {
             DhtMessageType::Ping => {
                 Ok(Some(DhtMessage {
@@ -480,9 +505,16 @@ impl DhtNetwork {
     
     /// Get local socket address
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        self.transport
-            .local_addr()
-            .ok_or_else(|| anyhow!("No primary transport configured for DHT network"))
+        // Extract address from transport's local peer ID
+        match self.transport.local_peer_id() {
+            PeerId::Udp(addr) => Ok(addr),
+            PeerId::WiFiDirect(addr) => Ok(addr),
+            PeerId::Quic(addr) => Ok(addr),
+            PeerId::Bluetooth(_) | PeerId::LoRaWAN(_) | PeerId::Mesh(_) => {
+                // For non-IP protocols, return a placeholder
+                Ok("0.0.0.0:0".parse()?)
+            }
+        }
     }
 }
 
@@ -554,7 +586,7 @@ mod tests {
         };
         
         let bind_addr = "127.0.0.1:0".parse().unwrap(); // Use any available port
-        let network = DhtNetwork::new(test_node, bind_addr);
+        let network = DhtNetwork::new_udp(test_node, bind_addr);
 
         assert!(network.is_ok());
         if let Ok(net) = network {
@@ -574,7 +606,7 @@ mod tests {
         };
         
         let bind_addr = "127.0.0.1:0".parse().unwrap();
-        let network = DhtNetwork::new(test_node, bind_addr).expect("Failed to create network");
+        let network = DhtNetwork::new_udp(test_node, bind_addr).expect("Failed to create network");
         
         // Test PING message handling
         let ping_message = DhtMessage {
@@ -592,8 +624,8 @@ mod tests {
             signature: None,
         };
         
-        let sender_addr = "127.0.0.1:12345".parse().unwrap();
-        let response = network.handle_incoming_message(ping_message, sender_addr).await.unwrap();
+        let sender = PeerId::Udp("127.0.0.1:12345".parse().unwrap());
+        let response = network.handle_incoming_message(ping_message, sender).await.unwrap();
 
         assert!(response.is_some());
         if let Some(pong) = response {
@@ -734,7 +766,7 @@ mod tests {
         };
 
         let bind_addr = "127.0.0.1:0".parse().unwrap();
-        let network = DhtNetwork::new(test_node, bind_addr).expect("Failed to create network");
+        let network = DhtNetwork::new_udp(test_node, bind_addr).expect("Failed to create network");
 
         let seq1 = network.next_sequence();
         let seq2 = network.next_sequence();

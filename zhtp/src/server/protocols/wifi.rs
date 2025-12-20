@@ -20,7 +20,7 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 use tracing::{debug, info, warn};
 use lib_network::protocols::wifi_direct::WiFiDirectMeshProtocol;
-use lib_network::protocols::wifi_direct_handshake::{handshake_as_initiator, handshake_as_responder};
+use lib_network::protocols::wifi_direct_handshake::handshake_as_responder;
 use lib_network::handshake::{HandshakeContext, NonceCache};
 use lib_identity::IdentityManager;
 use std::path::PathBuf;

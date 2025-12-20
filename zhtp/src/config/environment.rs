@@ -42,6 +42,22 @@ impl Environment {
             Environment::Development => 0x03,
         }
     }
+
+    /// Returns the mining profile for this environment
+    /// Maps Environment to MiningProfile for appropriate difficulty settings
+    pub fn mining_profile(&self) -> lib_blockchain::types::MiningProfile {
+        match self {
+            Environment::Development => lib_blockchain::types::MiningProfile::Bootstrap,
+            Environment::Testnet => lib_blockchain::types::MiningProfile::Testnet,
+            Environment::Mainnet => lib_blockchain::types::MiningProfile::Mainnet,
+        }
+    }
+
+    /// Returns the mining configuration for this environment
+    /// Convenience method that gets profile and returns its config
+    pub fn mining_config(&self) -> lib_blockchain::types::MiningConfig {
+        self.mining_profile().config()
+    }
 }
 
 /// Environment-specific configuration settings
@@ -275,8 +291,8 @@ impl Environment {
                 network_settings: NetworkSettings {
                     network_id: "lib-testnet".to_string(),
                     bootstrap_peers: vec![
-                        "127.0.0.1:9333".to_string(),
-                        "192.168.1.245:9333".to_string(),
+                        "77.42.74.80:9334".to_string(),
+                        "91.98.113.188:9334".to_string(),
                     ],
                     max_peers: 50,
                     connection_timeout_ms: 10000,

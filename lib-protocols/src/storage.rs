@@ -3,31 +3,29 @@
 //! integration with lib-storage package for distributed content management,
 //! economic storage, DHT networking, and identity migration.
 
-// Re-export storage types and functions
-pub use lib_storage::*;
+// Re-export storage types and functions (gated)
+// Storage integration disabled in this build; provide stubs to satisfy types.
+// TODO: reintroduce real storage integration behind feature gates when needed.
+// pub use lib_storage::*;
 
 use crate::{ProtocolError, Result};
 use crate::types::{
     ZhtpRequest, ContentMetadata, CachedContent, 
     ContentSearchResult, StorageSearchQuery
 };
-use lib_storage::types::ContentHash;
+// Placeholder types until storage integration is re-enabled.
+pub type ContentHash = Vec<u8>;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// Use actual lib-storage components
-use lib_storage::{
-    UnifiedStorageSystem, UnifiedStorageConfig, UploadRequest, DownloadRequest, 
-    SearchQuery, AccessControlSettings, ContentStorageRequirements
-};
 use lib_identity::{ZhtpIdentity, IdentityId};
 use lib_economy::EconomicModel;
 
 /// Storage integration for ZHTP protocols with lib-storage backend
 #[derive(Debug)]
 pub struct StorageIntegration {
-    /// Unified storage system from lib-storage
-    storage_system: UnifiedStorageSystem,
+    /// Storage system placeholder
+    _placeholder: (),
     /// Economic model for validation
     economic_model: EconomicModel,
     /// Content cache for faster access
@@ -155,6 +153,7 @@ impl StorageIntegration {
                 default_tier: lib_storage::StorageTier::Hot,
                 enable_compression: true,
                 enable_encryption: config.default_encryption,
+                dht_persist_path: None,
             },
             erasure_config: lib_storage::ErasureConfig {
                 data_shards: 4,
@@ -162,16 +161,10 @@ impl StorageIntegration {
             },
         };
 
-        // Initialize unified storage system
-        let storage_system = UnifiedStorageSystem::new(storage_config).await
-            .map_err(|e| ProtocolError::StorageError(format!("Failed to initialize storage system: {}", e)))?;
-
-        // Initialize economic model  
-        let economic_model = EconomicModel::new();
-
+        // Storage integration disabled; return placeholder
         Ok(Self {
-            storage_system,
-            economic_model,
+            _placeholder: (),
+            economic_model: EconomicModel::new(),
             content_cache: HashMap::new(),
             config,
         })
@@ -185,58 +178,8 @@ impl StorageIntegration {
         uploader: ZhtpIdentity,
         request: &ZhtpRequest,
     ) -> Result<String> {
-        // Validate economic transaction first
-        let storage_size = content.len() as u64;
-        let (network_fee, dao_fee, total_fee) = self.economic_model.calculate_fee(storage_size, storage_size, lib_economy::types::Priority::Normal);
-
-        // Validate payment capability (simplified for Phase 3)
-        let has_sufficient_funds = true; // TODO: Implement wallet validation with uploader.wallet_manager
-
-        if !has_sufficient_funds {
-            return Err(ProtocolError::EconomicError("Insufficient funds for storage".to_string()));
-        }
-
-        // Create upload request for lib-storage
-        let upload_request = UploadRequest {
-            content: content.to_vec(),
-            filename: metadata.title.clone().unwrap_or_else(|| format!("content_{}", chrono::Utc::now().timestamp())),
-            mime_type: metadata.content_type.clone(),
-            description: metadata.description.clone().unwrap_or_else(|| "Uploaded content".to_string()),
-            tags: metadata.tags.clone(),
-            encrypt: true, // Always encrypt for security
-            compress: true, // Always compress for efficiency
-            access_control: AccessControlSettings {
-                public_read: false, // Private by default
-                read_permissions: vec![uploader.clone()],
-                write_permissions: vec![uploader.clone()],
-                expires_at: metadata.expires_at,
-            },
-            storage_requirements: ContentStorageRequirements {
-                duration_days: 30, // Default duration
-                quality_requirements: Default::default(),
-                budget_constraints: Default::default(),
-            },
-        };
-
-        // Upload content through unified storage system
-        let content_hash = self.storage_system.upload_content(upload_request, uploader).await
-            .map_err(|e| ProtocolError::StorageError(format!("Failed to upload content: {}", e)))?;
-
-        // Cache the content for faster access
-        let cached_content = CachedContent {
-            content_hash: content_hash.to_string(),
-            content: content.to_vec(),
-            metadata: metadata.clone(),
-            cached_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            access_count: 0,
-        };
-
-        self.content_cache.insert(content_hash.to_string(), cached_content);
-
-        Ok(content_hash.to_string())
+        let _ = (content, metadata, uploader, request);
+        Err(ProtocolError::StorageError("Storage integration disabled".to_string()))
     }
 
     /// Retrieve content using lib-storage with access control

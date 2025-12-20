@@ -1,21 +1,36 @@
 //! Web4 API Handlers
-//! 
+//!
 //! Web4 domain registration and content publishing endpoints that integrate
-//! with the existing ZHTP server infrastructure
+//! with the existing ZHTP server infrastructure.
+//!
+//! # Content Serving
+//!
+//! The `GET /api/v1/web4/content/{domain}/{path}` endpoint serves Web4 content
+//! using the `Web4ContentService`. This is the canonical API for content retrieval.
+//!
+//! # Gateway Handler
+//!
+//! The `Web4GatewayHandler` provides Host-based routing for Web4 domains.
+//! It intercepts requests like `myapp.zhtp.localhost` and routes them to
+//! the appropriate Web4 content.
 
 pub mod domains;
 pub mod content;
+pub mod gateway;
+pub mod chunked_upload;
 
 pub use domains::*;
 pub use content::*;
+pub use gateway::*;
+pub use chunked_upload::{ChunkedUploadManager, UploadLimits, UploadStats, handle_chunked_upload};
 
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use lib_network::Web4Manager;
-use tracing::{info, error};
+use crate::web4_stub::{Web4Manager, Web4ContentService};
+use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use chrono;
 use uuid;
@@ -32,12 +47,16 @@ pub struct ErrorResponse {
 pub struct Web4Handler {
     /// Web4 system manager
     web4_manager: Arc<RwLock<Web4Manager>>,
+    /// Content service for serving Web4 content
+    content_service: Arc<Web4ContentService>,
     /// Wallet-content ownership manager
     wallet_content_manager: Arc<RwLock<lib_storage::WalletContentManager>>,
     /// Identity manager for owner DID lookups
     identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
     /// Blockchain for UTXO transaction creation
     blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
+    /// Chunked upload manager for large files
+    chunked_upload_manager: Arc<ChunkedUploadManager>,
 }
 
 impl Web4Handler {
@@ -48,20 +67,59 @@ impl Web4Handler {
         blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
     ) -> ZhtpResult<Self> {
         info!("Initializing Web4 API handler with existing storage system");
-        
-        let web4_manager = lib_network::initialize_web4_system_with_storage(storage).await
+
+        let web4_manager = crate::web4_stub::initialize_web4_system_with_storage(storage).await
             .map_err(|e| anyhow::anyhow!("Failed to initialize Web4 system: {}", e))?;
-        
-        info!(" Web4 API handler initialized successfully");
-        
+
+        // Create content service using the registry from the manager
+        let content_service = Web4ContentService::new(Arc::clone(&web4_manager.registry));
+
+        info!("Web4 API handler initialized successfully");
+
         // Initialize wallet-content manager for ownership tracking
         let wallet_content_manager = lib_storage::WalletContentManager::new();
-        
+
         Ok(Self {
             web4_manager: Arc::new(RwLock::new(web4_manager)),
+            content_service: Arc::new(content_service),
             wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
             identity_manager,
             blockchain,
+            chunked_upload_manager: Arc::new(ChunkedUploadManager::new()),
+        })
+    }
+
+    /// Create new Web4 API handler with existing domain registry (avoids creating duplicate)
+    /// This is the preferred constructor when a DomainRegistry already exists
+    pub async fn new_with_registry(
+        domain_registry: Arc<crate::web4_stub::DomainRegistry>,
+        storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+        identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
+        blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
+    ) -> ZhtpResult<Self> {
+        info!("Initializing Web4 API handler with existing domain registry");
+
+        // Create Web4Manager using existing registry
+        let web4_manager = crate::web4_stub::Web4Manager::new_with_registry(
+            domain_registry.clone(),
+            storage.clone()
+        ).await.map_err(|e| anyhow::anyhow!("Failed to create Web4Manager: {}", e))?;
+
+        // Create content service using the shared registry
+        let content_service = Web4ContentService::new(domain_registry);
+
+        info!("Web4 API handler initialized with shared domain registry");
+
+        // Initialize wallet-content manager for ownership tracking
+        let wallet_content_manager = lib_storage::WalletContentManager::new();
+
+        Ok(Self {
+            web4_manager: Arc::new(RwLock::new(web4_manager)),
+            content_service: Arc::new(content_service),
+            wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
+            identity_manager,
+            blockchain,
+            chunked_upload_manager: Arc::new(ChunkedUploadManager::new()),
         })
     }
 
@@ -145,14 +203,22 @@ impl Web4Handler {
         match manager.registry.lookup_domain(&domain).await {
             Ok(lookup) if lookup.found => {
                 if let Some(record) = lookup.record {
+                    let owner = record.get("owner")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let content_available = record.get("content_mappings")
+                        .and_then(|v| v.as_object())
+                        .map(|m| !m.is_empty())
+                        .unwrap_or(false);
                     // Return contract/content information
                     // Note: Web4 domains don't have direct contract associations yet
                     let response = serde_json::json!({
                         "status": "success",
                         "domain": domain,
-                        "owner": record.owner,
+                        "owner": owner,
                         "path": path,
-                        "content_available": !record.content_mappings.is_empty(),
+                        "content_available": content_available,
                         "note": "Contract association not yet implemented"
                     });
 
@@ -201,13 +267,16 @@ impl Web4Handler {
         match manager.registry.lookup_domain(domain).await {
             Ok(lookup) if lookup.found => {
                 if let Some(record) = lookup.record {
+                    let owner = record.get("owner").and_then(|v| v.as_str()).unwrap_or_default();
+                    let registered_at = record.get("registered_at").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let expires_at = record.get("expires_at").and_then(|v| v.as_u64()).unwrap_or(0);
                     // Note: Web4 domains don't have direct contract associations yet
                     let response = serde_json::json!({
                         "status": "success",
                         "domain": domain,
-                        "owner": record.owner,
-                        "registered_at": record.registered_at,
-                        "expires_at": record.expires_at,
+                        "owner": owner,
+                        "registered_at": registered_at,
+                        "expires_at": expires_at,
                         "note": "Contract association not yet implemented"
                     });
 
@@ -241,6 +310,223 @@ impl Web4Handler {
             }
         }
     }
+
+    /// Serve Web4 content
+    /// GET /api/v1/web4/content/{domain}/{path...}
+    ///
+    /// This is the canonical content serving endpoint. It uses Web4ContentService
+    /// which handles:
+    /// - Path normalization (security-critical)
+    /// - SPA routing policy
+    /// - MIME type resolution
+    /// - Cache header generation
+    async fn serve_content(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Parse domain and path from URL
+        // URL format: /api/v1/web4/content/{domain}/{path...}
+        let content_path = request.uri
+            .strip_prefix("/api/v1/web4/content/")
+            .ok_or_else(|| anyhow::anyhow!("Invalid content URL"))?;
+
+        // Split into domain and path
+        let (domain, path) = match content_path.find('/') {
+            Some(idx) => {
+                let (d, p) = content_path.split_at(idx);
+                (d.to_string(), p.to_string()) // path includes leading /
+            }
+            None => {
+                // No path specified, serve root
+                (content_path.to_string(), "/".to_string())
+            }
+        };
+
+        debug!(
+            domain = %domain,
+            path = %path,
+            "Serving Web4 content"
+        );
+
+        // Use content service to serve the content
+        match self.content_service.serve(&domain, &path).await {
+            Ok(result) => {
+                info!(
+                    domain = %domain,
+                    path = %path,
+                    mime_type = %result.mime_type,
+                    cache_control = %result.cache_control,
+                    is_fallback = result.is_fallback,
+                    content_length = result.content.len(),
+                    "Content served successfully"
+                );
+
+                // Build response with headers
+                let mut response = ZhtpResponse::success_with_content_type(
+                    result.content,
+                    result.mime_type,
+                    None,
+                )
+                .with_cache_control(result.cache_control);
+
+                // Add ETag if present
+                if let Some(etag) = result.etag {
+                    response = response.with_etag(etag);
+                }
+
+                // Add any custom headers from the result
+                for (key, value) in result.headers {
+                    response = response.with_custom_header(key, value);
+                }
+
+                // Add fallback indicator header (useful for debugging SPA routing)
+                if result.is_fallback {
+                    response = response.with_custom_header(
+                        "X-Web4-Fallback".to_string(),
+                        "true".to_string(),
+                    );
+                }
+
+                Ok(response)
+            }
+            Err(e) => {
+                warn!(
+                    domain = %domain,
+                    path = %path,
+                    error = %e,
+                    "Content not found"
+                );
+
+                self.json_error(ZhtpStatus::NotFound, format!("Content not found: {}", e))
+            }
+        }
+    }
+
+    /// Upload or fetch a blob
+    /// POST /api/v1/web4/content/blob
+    /// Upload: raw bytes in body
+    /// Fetch: body is {"cid": "bafk..."}
+    async fn handle_blob(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Check if this is a fetch request (body is JSON with "cid" field)
+        if let Ok(fetch_req) = serde_json::from_slice::<serde_json::Value>(&request.body) {
+            if let Some(cid) = fetch_req.get("cid").and_then(|v| v.as_str()) {
+                // This is a FETCH request - retrieve blob by CID
+                return self.fetch_content_by_cid(cid).await;
+            }
+        }
+
+        // This is an UPLOAD request - store the blob
+        let content_type = request.headers.content_type
+            .clone()
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+
+        debug!(
+            content_type = %content_type,
+            size = request.body.len(),
+            "Uploading blob"
+        );
+
+        // Store blob in content-addressed storage
+        let manager = self.web4_manager.read().await;
+        let content_id = manager.registry.store_content_by_cid(request.body.clone()).await
+            .map_err(|e| anyhow::anyhow!("Failed to store blob: {}", e))?;
+
+        let response = serde_json::json!({
+            "content_id": content_id,
+            "size": request.body.len(),
+            "content_type": content_type,
+        });
+
+        info!(
+            content_id = %content_id,
+            size = request.body.len(),
+            "Blob uploaded"
+        );
+
+        Ok(ZhtpResponse::success_with_content_type(
+            serde_json::to_vec(&response)?,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Upload or fetch a manifest
+    /// POST /api/v1/web4/content/manifest
+    /// Upload: body is the manifest JSON
+    /// Fetch: body is {"cid": "bafk..."}
+    async fn handle_manifest(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Check if this is a fetch request (body contains {"cid": "..."})
+        if let Ok(fetch_req) = serde_json::from_slice::<serde_json::Value>(&request.body) {
+            if let Some(cid) = fetch_req.get("cid").and_then(|v| v.as_str()) {
+                // This is a FETCH request - retrieve manifest by CID
+                return self.fetch_content_by_cid(cid).await;
+            }
+        }
+
+        // This is an UPLOAD request - store the manifest
+        let manifest: serde_json::Value = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid manifest JSON: {}", e))?;
+
+        let files_count = manifest.get("files")
+            .and_then(|v| v.as_object())
+            .map(|o| o.len())
+            .unwrap_or(0);
+
+        debug!(
+            domain = manifest.get("domain").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            files = files_count,
+            "Uploading manifest"
+        );
+
+        // Store manifest in content-addressed storage
+        let manager = self.web4_manager.read().await;
+        let manifest_cid = manager.registry.store_content_by_cid(request.body.clone()).await
+            .map_err(|e| anyhow::anyhow!("Failed to store manifest: {}", e))?;
+
+        let response = serde_json::json!({
+            "manifest_cid": manifest_cid,
+            "domain": manifest.get("domain"),
+            "files_count": files_count,
+        });
+
+        info!(
+            manifest_cid = %manifest_cid,
+            files_count = files_count,
+            "Manifest uploaded and stored"
+        );
+
+        Ok(ZhtpResponse::success_with_content_type(
+            serde_json::to_vec(&response)?,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Fetch content by CID
+    /// GET /api/v1/web4/cid/{cid} or POST with {"cid": "..."}
+    async fn fetch_content_by_cid(&self, cid: &str) -> ZhtpResult<ZhtpResponse> {
+        info!("Fetching content by CID: {}", cid);
+
+        let manager = self.web4_manager.read().await;
+        let content = manager.registry.get_content_by_cid(cid).await
+            .map_err(|e| anyhow::anyhow!("Failed to retrieve content: {}", e))?;
+
+        match content {
+            Some(data) => {
+                info!("Content found for CID {}: {} bytes", cid, data.len());
+                // Return raw content (could be manifest JSON or blob bytes)
+                Ok(ZhtpResponse::success_with_content_type(
+                    data,
+                    "application/octet-stream".to_string(),
+                    None,
+                ))
+            }
+            None => {
+                warn!("Content not found for CID: {}", cid);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::NotFound,
+                    format!("Content not found: {}", cid),
+                ))
+            }
+        }
+    }
 }
 
 /// Implement ZHTP request handler trait to integrate with existing server
@@ -270,6 +556,23 @@ impl ZhtpRequestHandler for Web4Handler {
                 self.resolve_web4_domain(request).await
             }
 
+            // Domain versioning endpoints (must come before general domain endpoints)
+            "/api/v1/web4/domains/resolve" if request.method == lib_protocols::ZhtpMethod::Post => {
+                self.resolve_domain_manifest(request).await
+            }
+            "/api/v1/web4/domains/update" if request.method == lib_protocols::ZhtpMethod::Post => {
+                self.update_domain_version(request).await
+            }
+            path if path.starts_with("/api/v1/web4/domains/status/") && request.method == lib_protocols::ZhtpMethod::Get => {
+                self.get_domain_status(request).await
+            }
+            path if path.starts_with("/api/v1/web4/domains/history/") && request.method == lib_protocols::ZhtpMethod::Get => {
+                self.get_domain_history(request).await
+            }
+            path if path.starts_with("/api/v1/web4/domains/") && path.ends_with("/rollback") && request.method == lib_protocols::ZhtpMethod::Post => {
+                self.rollback_domain(request).await
+            }
+
             // Domain management endpoints
             path if path.starts_with("/api/v1/web4/domains/register") => {
                 self.register_domain_simple(request.body).await
@@ -284,9 +587,26 @@ impl ZhtpRequestHandler for Web4Handler {
                 self.release_domain(request).await
             }
 
+            // Chunked upload endpoints (must be before general content endpoints)
+            path if path.starts_with("/api/v1/web4/content/upload/") => {
+                // Extract owner DID from request headers or use placeholder
+                // In production, this should come from the authenticated principal via VerifiedPrincipal
+                let owner_did = request.headers.get("x-owner-did")
+                    .unwrap_or_else(|| "anonymous".to_string());
+                handle_chunked_upload(request, &self.chunked_upload_manager, &owner_did).await
+            }
+
             // Content publishing endpoints
             path if path == "/api/v1/web4/content/publish" => {
                 self.publish_content(request.body).await
+            }
+            // Blob upload/fetch endpoint
+            path if path == "/api/v1/web4/content/blob" && request.method == lib_protocols::ZhtpMethod::Post => {
+                self.handle_blob(request).await
+            }
+            // Manifest upload/fetch endpoint
+            path if path == "/api/v1/web4/content/manifest" && request.method == lib_protocols::ZhtpMethod::Post => {
+                self.handle_manifest(request).await
             }
             path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Put => {
                 self.update_content(request).await
@@ -296,6 +616,10 @@ impl ZhtpRequestHandler for Web4Handler {
             }
             path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Delete => {
                 self.delete_content(request).await
+            }
+            // Content serving endpoint (GET) - uses Web4ContentService
+            path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Get => {
+                self.serve_content(request).await
             }
 
             // Statistics endpoint

@@ -3,6 +3,7 @@
 //! Advanced peer-to-peer message delivery with intelligent routing
 
 use anyhow::{anyhow, Result};
+use bincode;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -15,27 +16,28 @@ use crate::mesh::connection::MeshConnection;
 use crate::relays::LongRangeRelay;
 use crate::protocols::NetworkProtocol;
 use crate::identity::unified_peer::UnifiedPeerId;
+use crate::transport::TransportManager;
 use lib_identity::NodeId;
+
+/// Maximum cached routes to bound memory and prevent cache abuse
+const MAX_ROUTE_CACHE_ENTRIES: usize = 1024;
 
 /// Intelligent mesh message router
 ///
-/// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId for routing table keys
+/// **MIGRATION (Ticket #149):** Now uses unified PeerRegistry instead of separate mesh_connections.
+/// This provides single source of truth for peer data shared across mesh, DHT, and routing.
+///
+/// **Previous (Ticket #146):** Updated to use UnifiedPeerId for routing table keys
 /// instead of PublicKey-only, enabling routing by NodeId or PublicKey interchangeably.
 ///
 /// # Security (HIGH-1 Fix)
 ///
-/// Secondary indexes (node_id_index, public_key_index) provide O(1) constant-time
-/// lookups, preventing timing side-channel attacks where attackers could determine
+/// PeerRegistry has built-in secondary indexes for O(1) constant-time lookups,
+/// preventing timing side-channel attacks where attackers could determine
 /// peer presence by measuring lookup latency.
 pub struct MeshMessageRouter {
-    /// Active mesh connections for routing (indexed by UnifiedPeerId)
-    pub mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
-    /// HIGH-1 FIX: Secondary index for constant-time NodeId lookups
-    /// Maps NodeId -> UnifiedPeerId for O(1) lookup instead of O(n) iteration
-    pub node_id_index: Arc<RwLock<HashMap<NodeId, UnifiedPeerId>>>,
-    /// HIGH-1 FIX: Secondary index for constant-time PublicKey lookups
-    /// Maps PublicKey -> UnifiedPeerId for O(1) lookup instead of O(n) iteration
-    pub public_key_index: Arc<RwLock<HashMap<PublicKey, UnifiedPeerId>>>,
+    /// Unified peer registry (Ticket #149: replaces mesh_connections and secondary indexes)
+    pub peer_registry: crate::peer_registry::SharedPeerRegistry,
     /// Long-range relays for extended reach
     pub long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     /// Routing table for efficient path finding
@@ -46,14 +48,8 @@ pub struct MeshMessageRouter {
     pub route_cache: Arc<RwLock<HashMap<UnifiedPeerId, CachedRoute>>>,
     /// Optional mesh server reference for reward tracking
     pub mesh_server: Option<Arc<RwLock<crate::mesh::server::ZhtpMeshServer>>>,
-    /// Bluetooth protocol handler for sending messages (Phase 2)
-    pub bluetooth_handler: Option<Arc<RwLock<crate::protocols::bluetooth::classic::BluetoothClassicProtocol>>>,
-    /// WiFi Direct protocol handler (Phase 2)
-    pub wifi_handler: Option<Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>>,
-    /// LoRa protocol handler (Phase 2)
-    pub lora_handler: Option<Arc<RwLock<crate::protocols::lorawan::LoRaWANMeshProtocol>>>,
-    /// QUIC protocol handler (Phase 2)
-    pub quic_handler: Option<Arc<RwLock<crate::protocols::quic_mesh::QuicMeshProtocol>>>,
+    /// Transport manager for enforcing secure handler selection
+    pub transport_manager: Option<TransportManager>,
 }
 
 /// Routing table for mesh network
@@ -153,6 +149,8 @@ pub struct CachedRoute {
     pub cached_at: u64,
     /// Cache validity duration in seconds
     pub validity_duration: u64,
+    /// Maximum MTU across all hops (helps enforce fragmentation)
+    pub max_mtu: u64,
 }
 
 /// Message delivery status tracking
@@ -190,20 +188,17 @@ pub enum DeliveryStage {
 impl MeshMessageRouter {
     /// Create new mesh message router
     ///
-    /// **MIGRATION (Ticket #146):** Now accepts HashMap<UnifiedPeerId, MeshConnection>
+    /// **MIGRATION (Ticket #149):** Now accepts SharedPeerRegistry instead of mesh_connections
     ///
     /// # Security (HIGH-1 Fix)
     ///
-    /// Initializes secondary indexes for O(1) constant-time lookups.
+    /// PeerRegistry provides built-in secondary indexes for O(1) constant-time lookups.
     pub fn new(
-        mesh_connections: Arc<RwLock<HashMap<UnifiedPeerId, MeshConnection>>>,
+        peer_registry: crate::peer_registry::SharedPeerRegistry,
         long_range_relays: Arc<RwLock<HashMap<String, LongRangeRelay>>>,
     ) -> Self {
         Self {
-            mesh_connections,
-            // HIGH-1 FIX: Initialize secondary indexes for constant-time lookups
-            node_id_index: Arc::new(RwLock::new(HashMap::new())),
-            public_key_index: Arc::new(RwLock::new(HashMap::new())),
+            peer_registry,
             long_range_relays,
             routing_table: Arc::new(RwLock::new(RoutingTable {
                 direct_routes: HashMap::new(),
@@ -217,52 +212,69 @@ impl MeshMessageRouter {
             delivery_tracking: Arc::new(RwLock::new(HashMap::new())),
             route_cache: Arc::new(RwLock::new(HashMap::new())),
             mesh_server: None, // Can be set later with set_mesh_server()
-            bluetooth_handler: None,
-            wifi_handler: None,
-            lora_handler: None,
-            quic_handler: None,
+            transport_manager: None,
         }
     }
 
-    /// HIGH-1 FIX: Add a peer to the secondary indexes
+    /// DEPRECATED (Ticket #149): No longer needed with PeerRegistry
     ///
-    /// Call this whenever a peer is added to mesh_connections to maintain index consistency.
-    pub async fn index_peer(&self, peer: &UnifiedPeerId) {
-        let mut node_index = self.node_id_index.write().await;
-        let mut pk_index = self.public_key_index.write().await;
-
-        node_index.insert(peer.node_id().clone(), peer.clone());
-        pk_index.insert(peer.public_key().clone(), peer.clone());
+    /// PeerRegistry automatically maintains indexes when peers are added.
+    /// This method is kept for backwards compatibility but does nothing.
+    #[deprecated(since = "0.1.0", note = "PeerRegistry handles indexing automatically. This is a no-op.")]
+    pub async fn index_peer(&self, _peer: &UnifiedPeerId) {
+        // No-op: PeerRegistry handles indexing automatically
     }
 
-    /// HIGH-1 FIX: Remove a peer from the secondary indexes
+    /// DEPRECATED (Ticket #149): No longer needed with PeerRegistry
     ///
-    /// Call this whenever a peer is removed from mesh_connections to maintain index consistency.
-    pub async fn unindex_peer(&self, peer: &UnifiedPeerId) {
-        let mut node_index = self.node_id_index.write().await;
-        let mut pk_index = self.public_key_index.write().await;
-
-        node_index.remove(peer.node_id());
-        pk_index.remove(peer.public_key());
+    /// PeerRegistry automatically maintains indexes when peers are removed.
+    /// This method is kept for backwards compatibility but does nothing.
+    #[deprecated(since = "0.1.0", note = "PeerRegistry handles indexing automatically. This is a no-op.")]
+    pub async fn unindex_peer(&self, _peer: &UnifiedPeerId) {
+        // No-op: PeerRegistry handles indexing automatically
     }
 
-    /// HIGH-1 FIX: Rebuild secondary indexes from mesh_connections
+    /// DEPRECATED (Ticket #149): No longer needed with PeerRegistry
     ///
-    /// Use this after bulk modifications to mesh_connections or for consistency recovery.
+    /// PeerRegistry automatically maintains indexes. No rebuild needed.
+    /// This method is kept for backwards compatibility but does nothing.
+    #[deprecated(since = "0.1.0", note = "PeerRegistry handles indexing automatically. This is a no-op.")]
     pub async fn rebuild_indexes(&self) {
-        let connections = self.mesh_connections.read().await;
-        let mut node_index = self.node_id_index.write().await;
-        let mut pk_index = self.public_key_index.write().await;
+        // No-op: PeerRegistry handles indexing automatically
+    }
 
-        node_index.clear();
-        pk_index.clear();
+    /// Convert PeerEntry to MeshConnection for backwards compatibility
+    ///
+    /// **Ticket #149:** Helper method to construct MeshConnection from PeerEntry data.
+    /// This allows existing routing code to continue working while migrating to PeerRegistry.
+    fn peer_entry_to_mesh_connection(entry: &crate::peer_registry::PeerEntry) -> Option<crate::mesh::connection::MeshConnection> {
+        // Get primary endpoint if available
+        let endpoint = entry.endpoints.first()?;
+        
+        Some(crate::mesh::connection::MeshConnection {
+            peer: entry.peer_id.clone(),
+            protocol: endpoint.protocol.clone(),
+            peer_address: Some(endpoint.address.clone()),
+            signal_strength: entry.connection_metrics.signal_strength,
+            bandwidth_capacity: entry.connection_metrics.bandwidth_capacity,
+            latency_ms: entry.connection_metrics.latency_ms,
+            connected_at: entry.connection_metrics.connected_at,
+            data_transferred: entry.get_data_transferred(),
+            tokens_earned: entry.get_tokens_earned(),
+            stability_score: entry.connection_metrics.stability_score,
+            zhtp_authenticated: entry.authenticated,
+            quantum_secure: entry.quantum_secure,
+            peer_dilithium_pubkey: None, // Not stored in PeerEntry
+            kyber_shared_secret: None, // Not stored in PeerEntry
+            trust_score: entry.trust_score,
+            bootstrap_mode: false, // Default
+        })
+    }
 
-        for peer in connections.keys() {
-            node_index.insert(peer.node_id().clone(), peer.clone());
-            pk_index.insert(peer.public_key().clone(), peer.clone());
-        }
-
-        info!("Rebuilt {} secondary index entries", connections.len());
+    fn transport_manager(&self) -> Result<TransportManager> {
+        self.transport_manager
+            .clone()
+            .ok_or_else(|| anyhow!("TransportManager not configured"))
     }
 
     /// **ACCEPTANCE CRITERIA (Ticket #146):** Find connection by NodeId
@@ -271,14 +283,12 @@ impl MeshMessageRouter {
     ///
     /// # Security (HIGH-1 Fix)
     ///
-    /// Uses secondary index for O(1) constant-time lookup, preventing timing side-channel attacks.
+    /// Uses PeerRegistry's built-in index for O(1) constant-time lookup, preventing timing side-channel attacks.
     pub async fn find_connection_by_node_id(&self, node_id: &NodeId) -> Option<MeshConnection> {
-        // HIGH-1 FIX: Use secondary index for O(1) lookup
-        let node_index = self.node_id_index.read().await;
-        let peer = node_index.get(node_id)?;
-
-        let connections = self.mesh_connections.read().await;
-        connections.get(peer).cloned()
+        // Ticket #149: Use PeerRegistry's built-in index
+        let registry = self.peer_registry.read().await;
+        let peer_entry = registry.find_by_node_id(node_id)?;
+        Self::peer_entry_to_mesh_connection(peer_entry)
     }
 
     /// **ACCEPTANCE CRITERIA (Ticket #146):** Find connection by PublicKey
@@ -287,14 +297,12 @@ impl MeshMessageRouter {
     ///
     /// # Security (HIGH-1 Fix)
     ///
-    /// Uses secondary index for O(1) constant-time lookup, preventing timing side-channel attacks.
+    /// Uses PeerRegistry's built-in index for O(1) constant-time lookup, preventing timing side-channel attacks.
     pub async fn find_connection_by_public_key(&self, public_key: &PublicKey) -> Option<MeshConnection> {
-        // HIGH-1 FIX: Use secondary index for O(1) lookup
-        let pk_index = self.public_key_index.read().await;
-        let peer = pk_index.get(public_key)?;
-
-        let connections = self.mesh_connections.read().await;
-        connections.get(peer).cloned()
+        // Ticket #149: Use PeerRegistry's built-in index
+        let registry = self.peer_registry.read().await;
+        let peer_entry = registry.find_by_public_key(public_key)?;
+        Self::peer_entry_to_mesh_connection(peer_entry)
     }
 
     /// **ACCEPTANCE CRITERIA (Ticket #146):** Find peer by NodeId
@@ -303,11 +311,11 @@ impl MeshMessageRouter {
     ///
     /// # Security (HIGH-1 Fix)
     ///
-    /// Uses secondary index for O(1) constant-time lookup.
+    /// Uses PeerRegistry index for O(1) constant-time lookup.
     pub async fn find_peer_by_node_id(&self, node_id: &NodeId) -> Option<UnifiedPeerId> {
-        // HIGH-1 FIX: Use secondary index for O(1) lookup
-        let node_index = self.node_id_index.read().await;
-        node_index.get(node_id).cloned()
+        // Ticket #149: Use PeerRegistry's built-in index
+        let registry = self.peer_registry.read().await;
+        registry.find_by_node_id(node_id).map(|entry| entry.peer_id.clone())
     }
 
     /// **ACCEPTANCE CRITERIA (Ticket #146):** Find peer by PublicKey
@@ -316,11 +324,11 @@ impl MeshMessageRouter {
     ///
     /// # Security (HIGH-1 Fix)
     ///
-    /// Uses secondary index for O(1) constant-time lookup.
+    /// Uses PeerRegistry index for O(1) constant-time lookup.
     pub async fn find_peer_by_public_key(&self, public_key: &PublicKey) -> Option<UnifiedPeerId> {
-        // HIGH-1 FIX: Use secondary index for O(1) lookup
-        let pk_index = self.public_key_index.read().await;
-        pk_index.get(public_key).cloned()
+        // Ticket #149: Use PeerRegistry's built-in index
+        let registry = self.peer_registry.read().await;
+        registry.find_by_public_key(public_key).map(|entry| entry.peer_id.clone())
     }
     
     /// Set mesh server reference for reward tracking
@@ -328,24 +336,9 @@ impl MeshMessageRouter {
         self.mesh_server = Some(mesh_server);
     }
     
-    /// Set Bluetooth protocol handler (Phase 2)
-    pub fn set_bluetooth_handler(&mut self, handler: Arc<RwLock<crate::protocols::bluetooth::classic::BluetoothClassicProtocol>>) {
-        self.bluetooth_handler = Some(handler);
-    }
-    
-    /// Set WiFi Direct protocol handler (Phase 2)
-    pub fn set_wifi_handler(&mut self, handler: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>) {
-        self.wifi_handler = Some(handler);
-    }
-    
-    /// Set LoRa protocol handler (Phase 2)
-    pub fn set_lora_handler(&mut self, handler: Arc<RwLock<crate::protocols::lorawan::LoRaWANMeshProtocol>>) {
-        self.lora_handler = Some(handler);
-    }
-    
-    /// Set QUIC protocol handler (Phase 2)
-    pub fn set_quic_handler(&mut self, handler: Arc<RwLock<crate::protocols::quic_mesh::QuicMeshProtocol>>) {
-        self.quic_handler = Some(handler);
+    /// Set TransportManager to enforce handler availability and no-downgrade
+    pub fn set_transport_manager(&mut self, manager: TransportManager) {
+        self.transport_manager = Some(manager);
     }
     
     /// Estimate message size in bytes
@@ -381,6 +374,10 @@ impl MeshMessageRouter {
               message_id, hex::encode(&destination.key_id[0..4]));
 
         // Create delivery tracking
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+            .as_secs();
         let delivery_status = DeliveryStatus {
             message_id,
             destination: destination.clone(),
@@ -388,14 +385,8 @@ impl MeshMessageRouter {
             route: Vec::new(),
             current_hop: 0,
             attempts: 0,
-            started_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            last_update: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            started_at: now,
+            last_update: now,
         };
 
         {
@@ -440,18 +431,28 @@ impl MeshMessageRouter {
             return Ok(cached_route.hops);
         }
         
-        // Check for direct connection
-        let connections = self.mesh_connections.read().await;
-        if connections.contains_key(destination) {
+        // Check for direct connection (Ticket #149: use peer_registry)
+        let registry = self.peer_registry.read().await;
+        if let Some(peer_entry) = registry.get(destination) {
+            // Enforce secure routing only: authenticated + quantum secure
+            if !peer_entry.authenticated || !peer_entry.quantum_secure {
+                return Err(anyhow::anyhow!(
+                    "Direct route rejected: insecure transport for peer {}",
+                    destination.to_compact_string()
+                ));
+            }
+
             info!("Direct connection available to destination");
-            let connection = connections.get(destination).unwrap();
+            let endpoint = peer_entry.endpoints.first()
+                .ok_or_else(|| anyhow::anyhow!("Peer has no endpoints"))?;
             return Ok(vec![RouteHop {
                 peer_id: destination.clone(),
-                protocol: connection.protocol.clone(),
+                protocol: endpoint.protocol.clone(),
                 relay_id: None,
-                latency_ms: connection.latency_ms,
+                latency_ms: peer_entry.connection_metrics.latency_ms,
             }]);
         }
+        drop(registry); // Release lock before calling other methods
         
         // Find multi-hop route through mesh network
         if let Ok(mesh_route) = self.find_mesh_route(destination, sender).await {
@@ -484,7 +485,8 @@ impl MeshMessageRouter {
     ) -> Result<Vec<RouteHop>> {
         debug!("Searching mesh network for route");
         
-        let connections = self.mesh_connections.read().await;
+        // Ticket #149: Use peer_registry instead of mesh_connections
+        let registry = self.peer_registry.read().await;
         let routing_table = self.routing_table.read().await;
         
         // Use Dijkstra's algorithm for optimal path finding
@@ -493,7 +495,8 @@ impl MeshMessageRouter {
         let mut unvisited: HashSet<UnifiedPeerId> = HashSet::new();
         
         // Initialize distances
-        for peer_id in connections.keys() {
+        for peer_entry in registry.all_peers() {
+            let peer_id = &peer_entry.peer_id;
             distances.insert(peer_id.clone(), f64::INFINITY);
             previous.insert(peer_id.clone(), None);
             unvisited.insert(peer_id.clone());
@@ -508,14 +511,16 @@ impl MeshMessageRouter {
                 .min_by(|a, b| {
                     let dist_a = distances.get(a).unwrap_or(&f64::INFINITY);
                     let dist_b = distances.get(b).unwrap_or(&f64::INFINITY);
-                    dist_a.partial_cmp(dist_b).unwrap()
+                    dist_a
+                        .partial_cmp(dist_b)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .cloned();
             
             if let Some(current_peer) = current {
                 if current_peer == *destination {
-                    // Found route to destination
-                    return self.construct_route_from_path(&previous, destination, &connections).await;
+                    // Found route to destination (Ticket #149: pass registry instead of connections)
+                    return self.construct_route_from_path(&previous, destination, &registry).await;
                 }
                 
                 unvisited.remove(&current_peer);
@@ -524,7 +529,7 @@ impl MeshMessageRouter {
                 if let Some(neighbors) = routing_table.topology_map.peer_connections.get(&current_peer) {
                     for neighbor in neighbors {
                         if unvisited.contains(neighbor) {
-                            let edge_weight = self.calculate_edge_weight(&current_peer, neighbor, &connections).await;
+                            let edge_weight = self.calculate_edge_weight(&current_peer, neighbor, &registry).await;
                             let alt_distance = distances.get(&current_peer).unwrap_or(&f64::INFINITY) + edge_weight;
                             
                             if alt_distance < *distances.get(neighbor).unwrap_or(&f64::INFINITY) {
@@ -544,18 +549,18 @@ impl MeshMessageRouter {
     
     /// Calculate edge weight for routing algorithm
     ///
-    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
+    /// **MIGRATION (Ticket #149):** Updated to use PeerRegistry
     async fn calculate_edge_weight(
         &self,
-        from: &UnifiedPeerId,
+        _from: &UnifiedPeerId,
         to: &UnifiedPeerId,
-        connections: &HashMap<UnifiedPeerId, MeshConnection>,
+        registry: &crate::peer_registry::PeerRegistry,
     ) -> f64 {
         // Weight based on latency, stability, and bandwidth
-        if let Some(connection) = connections.get(to) {
-            let latency_weight = connection.latency_ms as f64 / 1000.0; // Convert to seconds
-            let stability_weight = 1.0 - connection.stability_score; // Lower stability = higher weight
-            let bandwidth_weight = 1.0 / (connection.bandwidth_capacity as f64 / 1_000_000.0); // Favor higher bandwidth
+        if let Some(peer_entry) = registry.get(to) {
+            let latency_weight = peer_entry.connection_metrics.latency_ms as f64 / 1000.0; // Convert to seconds
+            let stability_weight = 1.0 - peer_entry.connection_metrics.stability_score; // Lower stability = higher weight
+            let bandwidth_weight = 1.0 / (peer_entry.connection_metrics.bandwidth_capacity as f64 / 1_000_000.0); // Favor higher bandwidth
             
             latency_weight + stability_weight + bandwidth_weight
         } else {
@@ -565,24 +570,26 @@ impl MeshMessageRouter {
     
     /// Construct route from pathfinding result
     ///
-    /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
+    /// **MIGRATION (Ticket #149):** Updated to use PeerRegistry
     async fn construct_route_from_path(
         &self,
         previous: &HashMap<UnifiedPeerId, Option<UnifiedPeerId>>,
         destination: &UnifiedPeerId,
-        connections: &HashMap<UnifiedPeerId, MeshConnection>,
+        registry: &crate::peer_registry::PeerRegistry,
     ) -> Result<Vec<RouteHop>> {
         let mut route = Vec::new();
         let mut current = destination.clone();
         
         // Trace back from destination to source
         while let Some(Some(prev)) = previous.get(&current) {
-            if let Some(connection) = connections.get(&current) {
+            if let Some(peer_entry) = registry.get(&current) {
+                let endpoint = peer_entry.endpoints.first()
+                    .ok_or_else(|| anyhow::anyhow!("Peer has no endpoints"))?;
                 route.push(RouteHop {
                     peer_id: current.clone(),
-                    protocol: connection.protocol.clone(),
+                    protocol: endpoint.protocol.clone(),
                     relay_id: None,
-                    latency_ms: connection.latency_ms,
+                    latency_ms: peer_entry.connection_metrics.latency_ms,
                 });
             }
             current = prev.clone();
@@ -680,7 +687,7 @@ impl MeshMessageRouter {
                 status.attempts += 1;
                 status.last_update = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
+                    .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                     .as_secs();
             }
         }
@@ -722,7 +729,7 @@ impl MeshMessageRouter {
                 status.stage = DeliveryStage::Delivered;
                 status.last_update = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
+                    .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                     .as_secs();
             }
         }
@@ -783,7 +790,9 @@ impl MeshMessageRouter {
         info!("Satellite uplink active - message can reach ANY location on Earth!");
         info!(" ZHTP revolutionizing global communications - no ISP needed!");
         
-        Ok(())
+        Err(anyhow::anyhow!(
+            "Satellite routing not configured: no uplink handler available"
+        ))
     }
     
     /// Route via long-range relay
@@ -803,7 +812,9 @@ impl MeshMessageRouter {
             }
         }
         
-        Ok(())
+        Err(anyhow::anyhow!(
+            "Long-range routing not configured: no relay send implementation"
+        ))
     }
     
     /// Route via mesh connection
@@ -816,12 +827,41 @@ impl MeshMessageRouter {
         debug!("Mesh routing: message {} to {:?}", 
                message_id, hex::encode(&hop.peer_id.public_key().key_id[0..4]));
         
-        let connections = self.mesh_connections.read().await;
-        if let Some(connection) = connections.get(&hop.peer_id) {
-            debug!(" Forwarding via {} (quality: {:.2})", 
-                   format!("{:?}", connection.protocol), connection.stability_score);
-        }
-        
+        // Ticket #149: Use peer_registry instead of mesh_connections
+        let registry = self.peer_registry.read().await;
+        let peer_entry = registry
+            .get(&hop.peer_id)
+            .ok_or_else(|| anyhow!("Mesh route rejected: destination not in peer registry"))?;
+
+        // Enforce secure link requirements
+        if !peer_entry.authenticated || !peer_entry.quantum_secure {
+                return Err(anyhow!(
+                    "Mesh route rejected: insecure link to peer {}",
+                    hop.peer_id.to_compact_string()
+                ));
+            }
+
+        // Pick endpoint matching the chosen protocol
+        let endpoint = peer_entry
+            .endpoints
+            .iter()
+            .find(|e| e.protocol == hop.protocol)
+            .ok_or_else(|| anyhow!("No endpoint for {:?} to {}", hop.protocol, hop.peer_id.to_compact_string()))?;
+
+        debug!(
+            " Forwarding via {:?} (quality: {:.2})",
+            endpoint.protocol, peer_entry.connection_metrics.stability_score
+        );
+
+        // Serialize message once for transports that take raw bytes
+        let message_bytes = bincode::serialize(message)
+            .map_err(|e| anyhow!("Failed to serialize mesh message: {}", e))?;
+
+        let manager = self.transport_manager()?;
+        manager
+            .send(&hop.protocol, endpoint, &hop.peer_id, message, &message_bytes)
+            .await?;
+
         Ok(())
     }
     
@@ -833,7 +873,7 @@ impl MeshMessageRouter {
         if let Some(cached) = cache.get(destination) {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs();
             
             if current_time - cached.cached_at < cached.validity_duration {
@@ -847,17 +887,30 @@ impl MeshMessageRouter {
     ///
     /// **MIGRATION (Ticket #146):** Updated to use UnifiedPeerId
     pub async fn cache_route(&self, destination: UnifiedPeerId, route: Vec<RouteHop>, quality_score: f64) {
+        // Compute max MTU across hops; fallback to min latency_ms as proxy if not available
+        let max_mtu = route.iter().map(|h| h.latency_ms as u64).max().unwrap_or(0);
         let cached_route = CachedRoute {
             hops: route,
             quality_score,
             cached_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                 .as_secs(),
             validity_duration: 300, // 5 minutes
+            max_mtu,
         };
         
         let mut cache = self.route_cache.write().await;
+        if cache.len() >= MAX_ROUTE_CACHE_ENTRIES {
+            // Evict the oldest entry to respect the bound
+            if let Some((oldest_key, _)) = cache
+                .iter()
+                .min_by_key(|(_, v)| v.cached_at)
+                .map(|(k, v)| (k.clone(), v.cached_at))
+            {
+                cache.remove(&oldest_key);
+            }
+        }
         cache.insert(destination, cached_route);
     }
     
@@ -906,9 +959,9 @@ impl MeshMessageRouter {
     pub async fn find_next_hop_for_destination(&self, destination: &UnifiedPeerId) -> Result<UnifiedPeerId> {
         debug!("Finding next hop for destination {:?}", hex::encode(&destination.public_key().key_id[0..4]));
         
-        // Check for direct connection first
-        let connections = self.mesh_connections.read().await;
-        if connections.contains_key(destination) {
+        // Check for direct connection first (Ticket #149: use peer_registry)
+        let registry = self.peer_registry.read().await;
+        if registry.get(destination).is_some() {
             info!(" Direct connection to destination available");
             return Ok(destination.clone());
         }
@@ -922,7 +975,10 @@ impl MeshMessageRouter {
         }
         
         // Calculate new route - need a sender, use any connected peer or destination
-        let sender = connections.keys().next().unwrap_or(destination).clone();
+        let sender = registry.all_peers().next()
+            .map(|p| p.peer_id.clone())
+            .unwrap_or_else(|| destination.clone());
+        drop(registry); // Release lock before calling find_optimal_route
         let full_route = self.find_optimal_route(destination, &sender).await?;
         
         if full_route.is_empty() {
@@ -997,58 +1053,33 @@ impl MeshMessageRouter {
     async fn send_to_peer(&self, peer_id: &UnifiedPeerId, envelope: &MeshMessageEnvelope) -> Result<()> {
         debug!("Sending envelope {} to peer {:?}", envelope.message_id, hex::encode(&peer_id.public_key().key_id[0..4]));
         
-        let connections = self.mesh_connections.read().await;
-        let connection = connections.get(peer_id)
+        // Ticket #149: Use peer_registry instead of mesh_connections
+        let registry = self.peer_registry.read().await;
+        let peer_entry = registry.get(peer_id)
             .ok_or_else(|| anyhow!("No connection to peer"))?;
-        
-        // Delegate to appropriate protocol handler based on connection type
-        match connection.protocol {
-            NetworkProtocol::BluetoothLE | NetworkProtocol::BluetoothClassic => {
-                // Get Bluetooth protocol handler
-                if let Some(bt_handler) = &self.bluetooth_handler {
-                    let handler = bt_handler.read().await;
-                    handler.send_mesh_envelope(peer_id.public_key(), envelope).await?;
-                    info!(" Sent via Bluetooth");
-                } else {
-                    return Err(anyhow!("Bluetooth handler not available"));
-                }
-            }
-            NetworkProtocol::WiFiDirect => {
-                // Get WiFi Direct handler
-                if let Some(ref wifi_handler) = self.wifi_handler {
-                    let handler = wifi_handler.read().await;
-                    handler.send_mesh_envelope(peer_id.public_key(), envelope).await?;
-                    info!(" Sent via WiFi Direct");
-                } else {
-                    return Err(anyhow!("WiFi Direct handler not configured"));
-                }
-            }
-            NetworkProtocol::LoRaWAN => {
-                // Get LoRa handler
-                if let Some(ref lora_handler) = self.lora_handler {
-                    let handler = lora_handler.read().await;
-                    handler.send_mesh_envelope(peer_id.public_key(), envelope).await?;
-                    info!(" Sent via LoRaWAN");
-                } else {
-                    return Err(anyhow!("LoRa handler not configured"));
-                }
-            }
-            NetworkProtocol::QUIC => {
-                // Get QUIC protocol handler
-                if let Some(ref quic_handler) = self.quic_handler {
-                    let handler = quic_handler.read().await;
-                    // Send mesh message via QUIC - extract pubkey and message from envelope
-                    handler.send_to_peer(&peer_id.public_key().as_bytes(), envelope.message.clone()).await?;
-                    info!("📡 Sent via QUIC (quantum-safe encrypted)");
-                } else {
-                    return Err(anyhow!("QUIC handler not configured"));
-                }
-            }
-            _ => {
-                return Err(anyhow!("Unsupported protocol for mesh forwarding: {:?}", connection.protocol));
-            }
+        if !peer_entry.authenticated || !peer_entry.quantum_secure {
+            return Err(anyhow!(
+                "Mesh route rejected: insecure link to peer {}",
+                peer_id.to_compact_string()
+            ));
         }
-        
+        let endpoint = peer_entry
+            .endpoints
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow!("Peer has no endpoints"))?;
+        let protocol = endpoint.protocol.clone();
+        drop(registry); // Release lock before protocol handler calls
+
+        // Enforce handler availability and transport policy through TransportManager
+        let manager = self.transport_manager()?;
+        let message_bytes = bincode::serialize(&envelope.message)
+            .map_err(|e| anyhow!("Failed to serialize envelope message: {}", e))?;
+        manager
+            .send(&protocol, &endpoint, peer_id, &envelope.message, &message_bytes)
+            .await?;
+        info!(" Sent via {:?} (TransportManager enforced)", protocol);
+
         Ok(())
     }
     
@@ -1076,7 +1107,7 @@ impl MeshMessageRouter {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_nanos() as u64;
         
         // Combine timestamp with random bits for uniqueness
@@ -1103,20 +1134,22 @@ mod tests {
     
     #[tokio::test]
     async fn test_message_router_creation() {
-        let mesh_connections = Arc::new(RwLock::new(HashMap::new()));
+        // Ticket #149: Use peer_registry instead of mesh_connections
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         
-        let router = MeshMessageRouter::new(mesh_connections, long_range_relays);
+        let router = MeshMessageRouter::new(peer_registry, long_range_relays);
         
         assert!(router.routing_table.read().await.direct_routes.is_empty());
     }
     
     #[tokio::test]
     async fn test_route_caching() {
-        let mesh_connections = Arc::new(RwLock::new(HashMap::new()));
+        // Ticket #149: Use peer_registry instead of mesh_connections
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
 
-        let router = MeshMessageRouter::new(mesh_connections, long_range_relays);
+        let router = MeshMessageRouter::new(peer_registry, long_range_relays);
         let destination_key = PublicKey::new(vec![1, 2, 3]);
         // Ticket #146: Use UnifiedPeerId for routing
         let destination = crate::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(destination_key);

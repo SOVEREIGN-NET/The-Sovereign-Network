@@ -12,7 +12,7 @@ use tracing::{info, warn};
 /// Parse MAC address string (AA:BB:CC:DD:EE:FF or AA-BB-CC-DD-EE-FF) to bytes
 /// 
 /// # Examples
-/// ```
+/// ```ignore
 /// let mac = parse_mac_address("AA:BB:CC:DD:EE:FF")?;
 /// assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
 /// ```

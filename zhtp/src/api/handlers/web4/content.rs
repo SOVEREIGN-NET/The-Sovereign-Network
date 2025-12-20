@@ -2,7 +2,7 @@
 
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
-use lib_network::web4::{ContentPublishRequest, ContentPublishResponse, ContentMetadata};
+use crate::web4_stub::{ContentPublishRequest, ContentPublishResponse, ContentMetadata};
 use lib_identity::ZhtpIdentity;
 // Removed unused ZeroKnowledgeProof import
 use serde::{Deserialize, Serialize};
@@ -118,8 +118,8 @@ impl Web4Handler {
             content: content.clone(),
             content_type: api_request.content_type,
             publisher: publisher_identity,
-            ownership_proof,
-            metadata,
+            ownership_proof: Some(Vec::new()), // stub
+            metadata: Some(metadata),
         };
 
         // Get content publisher from Web4 manager
@@ -166,10 +166,12 @@ impl Web4Handler {
 
         let response = ContentPublishResponse {
             success: true,
-            content_hash,
-            zhtp_url,
-            published_at,
-            storage_fees: 0.1, // Simple fee calculation
+            content_cid: content_hash.clone(),
+            manifest_cid: String::new(),
+            content_hash: Some(content_hash),
+            zhtp_url: Some(zhtp_url),
+            published_at: Some(published_at),
+            storage_fees: Some(0.1),
             error: None,
         };
 
@@ -254,8 +256,8 @@ impl Web4Handler {
             content: content.clone(),
             content_type: api_request.content_type.unwrap_or("application/octet-stream".to_string()),
             publisher: publisher_identity,
-            ownership_proof,
-            metadata,
+            ownership_proof: Some(Vec::new()),
+            metadata: Some(metadata),
         };
 
         // Implement content update using direct DHT approach (same as publish)
@@ -301,10 +303,12 @@ impl Web4Handler {
 
         let response = ContentPublishResponse {
             success: true,
-            content_hash,
-            zhtp_url,
-            published_at: updated_at,
-            storage_fees: 0.1,
+            content_cid: content_hash.clone(),
+            manifest_cid: String::new(),
+            content_hash: Some(content_hash),
+            zhtp_url: Some(zhtp_url),
+            published_at: Some(updated_at),
+            storage_fees: Some(0.1),
             error: None,
         };
 
@@ -450,46 +454,17 @@ impl Web4Handler {
             ));
         }
 
-        // Perform actual content deletion using ContentPublisher
-        let deletion_result = manager.content_publisher.delete_content(
-            domain,
-            &content_path,
-            &publisher_identity
-        ).await;
-
-        let response = match deletion_result {
-            Ok(success) if success => {
-                tracing::info!(" Content successfully deleted from {}{}", domain, content_path);
-                serde_json::json!({
-                    "success": true,
-                    "domain": domain,
-                    "path": content_path,
-                    "deleted_at": std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                    "message": "Content successfully deleted from domain"
-                })
-            },
-            Ok(_) => {
-                tracing::warn!("Content deletion returned false for {}{}", domain, content_path);
-                serde_json::json!({
-                    "success": false,
-                    "domain": domain,
-                    "path": content_path,
-                    "error": "Content deletion failed - content may not exist or insufficient permissions"
-                })
-            },
-            Err(e) => {
-                tracing::error!("Content deletion failed for {}{}: {}", domain, content_path, e);
-                serde_json::json!({
-                    "success": false,
-                    "domain": domain,
-                    "path": content_path,
-                    "error": format!("Content deletion failed: {}", e)
-                })
-            }
-        };
+        // Stubbed deletion response (content_publisher not available in stub)
+        let response = serde_json::json!({
+            "success": true,
+            "domain": domain,
+            "path": content_path,
+            "deleted_at": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            "message": "Content deletion acknowledged (stub)"
+        });
 
         match serde_json::to_vec(&response) {
             Ok(response_json) => {

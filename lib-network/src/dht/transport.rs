@@ -1,123 +1,28 @@
-// DHT Transport Abstraction Layer
-// Enables Kademlia DHT to work over multiple protocols (UDP, BLE, WiFi Direct, LoRaWAN)
+//! DHT Transport Implementations for lib-network
+//!
+//! **TICKET #152:** Multi-protocol DHT transport implementations
+//!
+//! This module provides advanced DHT transport implementations that build on
+//! the `DhtTransport` trait defined in lib-storage. These implementations
+//! use lib-network's protocol stacks (BLE, QUIC, WiFi Direct).
+//!
+//! **Architecture Note:** The `DhtTransport` trait and `PeerId` enum are defined
+//! in lib-storage to avoid circular dependencies. This module re-exports them
+//! and provides protocol-specific implementations.
+
+// Deprecated: real DHT transport lives with storage integration. Prevent use from lib-network while relocation is pending.
+compile_error!("lib-network DHT transports are disabled; use integration layer (zhtp) instead (Phase 4 relocation).");
 
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::future::{select_all, BoxFuture};
+use futures::FutureExt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Peer identifier for protocol-agnostic addressing
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PeerId {
-    /// UDP peer identified by socket address
-    Udp(SocketAddr),
-    /// Bluetooth peer identified by address (MAC or UUID)
-    Bluetooth(String),
-    /// WiFi Direct peer identified by IP address
-    WiFiDirect(SocketAddr),
-    /// LoRaWAN peer identified by device EUI
-    LoRaWAN(String),
-}
-
-impl PeerId {
-    /// Convert to string representation for routing
-    pub fn to_address_string(&self) -> String {
-        match self {
-            PeerId::Udp(addr) => addr.to_string(),
-            PeerId::Bluetooth(addr) => format!("gatt://{}", addr),
-            PeerId::WiFiDirect(addr) => format!("wifid://{}", addr),
-            PeerId::LoRaWAN(eui) => format!("lora://{}", eui),
-        }
-    }
-    
-    /// Get protocol type
-    pub fn protocol(&self) -> &str {
-        match self {
-            PeerId::Udp(_) => "udp",
-            PeerId::Bluetooth(_) => "bluetooth",
-            PeerId::WiFiDirect(_) => "wifidirect",
-            PeerId::LoRaWAN(_) => "lorawan",
-        }
-    }
-}
-
-/// Transport abstraction for DHT operations
-/// Allows Kademlia to work over any protocol
-#[async_trait]
-pub trait DhtTransport: Send + Sync {
-    /// Send DHT message to peer
-    async fn send(&self, data: &[u8], peer: &PeerId) -> Result<()>;
-    
-    /// Receive DHT message (returns data and sender peer ID)
-    async fn receive(&self) -> Result<(Vec<u8>, PeerId)>;
-    
-    /// Get local peer ID for this transport
-    fn local_peer_id(&self) -> PeerId;
-    
-    /// Check if peer is reachable via this transport
-    async fn can_reach(&self, peer: &PeerId) -> bool;
-    
-    /// Get maximum transmission unit for this transport
-    fn mtu(&self) -> usize {
-        match self.local_peer_id() {
-            PeerId::Udp(_) => 1400,           // UDP mesh default
-            PeerId::Bluetooth(_) => 512,      // BLE MTU minus overhead
-            PeerId::WiFiDirect(_) => 1400,    // Similar to UDP
-            PeerId::LoRaWAN(_) => 242,        // LoRaWAN SF7 max payload
-        }
-    }
-    
-    /// Get typical latency for this transport (milliseconds)
-    fn typical_latency_ms(&self) -> u32 {
-        match self.local_peer_id() {
-            PeerId::Udp(_) => 10,
-            PeerId::Bluetooth(_) => 100,
-            PeerId::WiFiDirect(_) => 20,
-            PeerId::LoRaWAN(_) => 1000,
-        }
-    }
-}
-
-/// UDP-based DHT transport (original implementation)
-pub struct UdpDhtTransport {
-    socket: Arc<tokio::net::UdpSocket>,
-    local_addr: SocketAddr,
-}
-
-impl UdpDhtTransport {
-    pub fn new(socket: Arc<tokio::net::UdpSocket>, local_addr: SocketAddr) -> Self {
-        Self { socket, local_addr }
-    }
-}
-
-#[async_trait]
-impl DhtTransport for UdpDhtTransport {
-    async fn send(&self, data: &[u8], peer: &PeerId) -> Result<()> {
-        match peer {
-            PeerId::Udp(addr) => {
-                self.socket.send_to(data, addr).await?;
-                Ok(())
-            }
-            _ => Err(anyhow::anyhow!("UDP transport can only send to UDP peers")),
-        }
-    }
-    
-    async fn receive(&self) -> Result<(Vec<u8>, PeerId)> {
-        let mut buf = vec![0u8; 65536];
-        let (len, addr) = self.socket.recv_from(&mut buf).await?;
-        buf.truncate(len);
-        Ok((buf, PeerId::Udp(addr)))
-    }
-    
-    fn local_peer_id(&self) -> PeerId {
-        PeerId::Udp(self.local_addr)
-    }
-    
-    async fn can_reach(&self, peer: &PeerId) -> bool {
-        matches!(peer, PeerId::Udp(_))
-    }
-}
+// Re-export from lib-storage (the canonical location)
+pub use lib_storage::dht::transport::{DhtTransport, PeerId, UdpDhtTransport};
 
 /// Bluetooth-based DHT transport (routes through mesh)
 pub struct BleDhtTransport {
@@ -182,6 +87,171 @@ impl DhtTransport for BleDhtTransport {
     }
 }
 
+/// QUIC-based DHT transport (**TICKET #152**)
+/// Provides reliable, multiplexed transport with built-in TLS 1.3 and post-quantum security
+pub struct QuicDhtTransport {
+    endpoint: Arc<quinn::Endpoint>,
+    local_addr: SocketAddr,
+    // Active QUIC connections to peers
+    connections: Arc<RwLock<std::collections::HashMap<SocketAddr, quinn::Connection>>>,
+    // Channel for receiving DHT messages
+    receiver: Arc<RwLock<tokio::sync::mpsc::UnboundedReceiver<(Vec<u8>, SocketAddr)>>>,
+}
+
+impl QuicDhtTransport {
+    pub fn new(
+        endpoint: Arc<quinn::Endpoint>,
+        local_addr: SocketAddr,
+    ) -> (Self, tokio::sync::mpsc::UnboundedSender<(Vec<u8>, SocketAddr)>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let transport = Self {
+            endpoint,
+            local_addr,
+            connections: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            receiver: Arc::new(RwLock::new(rx)),
+        };
+        (transport, tx)
+    }
+    
+    /// Get or establish QUIC connection to peer
+    async fn get_connection(&self, addr: &SocketAddr) -> Result<quinn::Connection> {
+        // Check if we already have a connection
+        {
+            let connections = self.connections.read().await;
+            if let Some(conn) = connections.get(addr) {
+                if !conn.close_reason().is_some() {
+                    return Ok(conn.clone());
+                }
+            }
+        }
+        
+        // Establish new connection
+        let conn = self.endpoint.connect(*addr, "dht")?.await?;
+        
+        // Store connection
+        let mut connections = self.connections.write().await;
+        connections.insert(*addr, conn.clone());
+        
+        Ok(conn)
+    }
+}
+
+#[async_trait]
+impl DhtTransport for QuicDhtTransport {
+    async fn send(&self, data: &[u8], peer: &PeerId) -> Result<()> {
+        match peer {
+            PeerId::Quic(addr) => {
+                // Get or establish QUIC connection
+                let conn = self.get_connection(addr).await?;
+                
+                // Open unidirectional stream and send data
+                let mut send_stream = conn.open_uni().await?;
+                send_stream.write_all(data).await?;
+                send_stream.finish()?;
+                
+                Ok(())
+            }
+            _ => Err(anyhow::anyhow!("QUIC transport can only send to QUIC-addressed peers")),
+        }
+    }
+    
+    async fn receive(&self) -> Result<(Vec<u8>, PeerId)> {
+        let mut receiver = self.receiver.write().await;
+        if let Some((data, addr)) = receiver.recv().await {
+            Ok((data, PeerId::Quic(addr)))
+        } else {
+            Err(anyhow::anyhow!("QUIC transport receiver closed"))
+        }
+    }
+    
+    fn local_peer_id(&self) -> PeerId {
+        PeerId::Quic(self.local_addr)
+    }
+    
+    async fn can_reach(&self, peer: &PeerId) -> bool {
+        matches!(peer, PeerId::Quic(_))
+    }
+    
+    fn mtu(&self) -> usize {
+        1200 // QUIC recommended MTU for reliable delivery
+    }
+    
+    fn typical_latency_ms(&self) -> u32 {
+        15 // Slightly higher than UDP due to QUIC overhead, but with reliability
+    }
+}
+
+/// WiFi Direct DHT transport (**TICKET #152**)
+/// Provides peer-to-peer transport over WiFi Direct connections
+pub struct WiFiDirectDhtTransport {
+    wifi_direct_protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>,
+    local_addr: SocketAddr,
+    // Channel for receiving DHT messages from WiFi Direct
+    receiver: Arc<RwLock<tokio::sync::mpsc::UnboundedReceiver<(Vec<u8>, SocketAddr)>>>,
+}
+
+impl WiFiDirectDhtTransport {
+    pub fn new(
+        wifi_direct_protocol: Arc<RwLock<crate::protocols::wifi_direct::WiFiDirectMeshProtocol>>,
+        local_addr: SocketAddr,
+    ) -> (Self, tokio::sync::mpsc::UnboundedSender<(Vec<u8>, SocketAddr)>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let transport = Self {
+            wifi_direct_protocol,
+            local_addr,
+            receiver: Arc::new(RwLock::new(rx)),
+        };
+        (transport, tx)
+    }
+}
+
+#[async_trait]
+impl DhtTransport for WiFiDirectDhtTransport {
+    async fn send(&self, data: &[u8], peer: &PeerId) -> Result<()> {
+        match peer {
+            PeerId::WiFiDirect(addr) => {
+                let protocol = self.wifi_direct_protocol.read().await;
+                // Send via WiFi Direct mesh protocol
+                protocol.send_mesh_message(&addr.to_string(), data).await?;
+                Ok(())
+            }
+            _ => Err(anyhow::anyhow!("WiFi Direct transport can only send to WiFi Direct peers")),
+        }
+    }
+    
+    async fn receive(&self) -> Result<(Vec<u8>, PeerId)> {
+        let mut receiver = self.receiver.write().await;
+        if let Some((data, addr)) = receiver.recv().await {
+            Ok((data, PeerId::WiFiDirect(addr)))
+        } else {
+            Err(anyhow::anyhow!("WiFi Direct transport receiver closed"))
+        }
+    }
+    
+    fn local_peer_id(&self) -> PeerId {
+        PeerId::WiFiDirect(self.local_addr)
+    }
+    
+    async fn can_reach(&self, peer: &PeerId) -> bool {
+        if let PeerId::WiFiDirect(addr) = peer {
+            let protocol = self.wifi_direct_protocol.read().await;
+            // Check if peer is in connected devices
+            let connected = protocol.connected_devices.read().await;
+            connected.contains_key(&addr.to_string())
+        } else {
+            false
+        }
+    }
+    
+    fn mtu(&self) -> usize {
+        1400 // Similar to UDP, WiFi Direct has good MTU
+    }
+    
+    fn typical_latency_ms(&self) -> u32 {
+        20 // Low latency for local P2P connections
+    }
+}
+
 /// Multi-protocol DHT transport (tries multiple protocols)
 /// Optimizes by using fastest/closest transport available
 pub struct MultiDhtTransport {
@@ -227,13 +297,21 @@ impl DhtTransport for MultiDhtTransport {
     }
     
     async fn receive(&self) -> Result<(Vec<u8>, PeerId)> {
-        // Use tokio::select! to receive from any transport
-        // For now, just receive from first available transport
-        if let Some(transport) = self.transports.first() {
-            transport.receive().await
-        } else {
-            Err(anyhow::anyhow!("No transports available"))
+        use futures::future::select_all;
+
+        if self.transports.is_empty() {
+            return Err(anyhow::anyhow!("No transports available"));
         }
+
+        // Race all transports and return whichever delivers first
+        let mut futures: Vec<BoxFuture<'_, _>> = self
+            .transports
+            .iter()
+            .map(|t| t.receive().boxed())
+            .collect();
+
+        let (res, _, _) = select_all(futures).await;
+        res
     }
     
     fn local_peer_id(&self) -> PeerId {
@@ -281,17 +359,10 @@ impl PeerAddressResolver {
     
     /// Convert PeerId to DHT node address (for Kademlia compatibility)
     pub fn peer_id_to_dht_address(&self, peer_id: &PeerId) -> Vec<u8> {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        
-        // Hash the peer ID to create a stable 20-byte Kademlia address
-        let mut hasher = DefaultHasher::new();
-        peer_id.to_address_string().hash(&mut hasher);
-        let hash = hasher.finish();
-        
-        // Extend to 20 bytes (Kademlia standard)
+        // Use a full 160-bit digest to avoid address-space collapse/collisions
+        let digest = blake3::hash(peer_id.to_address_string().as_bytes());
         let mut addr = vec![0u8; 20];
-        addr[0..8].copy_from_slice(&hash.to_be_bytes());
+        addr.copy_from_slice(&digest.as_bytes()[0..20]);
         addr
     }
 }

@@ -31,6 +31,7 @@ use lib_storage::UnifiedStorageSystem;
 use lib_identity::IdentityManager;
 use lib_economy::EconomicModel;
 use lib_crypto::PublicKey;
+use crate::web4_stub::DomainRegistry;
 
 // Import our comprehensive API handlers
 use crate::api::handlers::{
@@ -102,10 +103,13 @@ pub struct ZhtpUnifiedServer {
     
     // Session management
     session_manager: Arc<SessionManager>,
-    
+
     // Discovery coordinator (Phase 3 fix)
     discovery_coordinator: Arc<crate::discovery_coordinator::DiscoveryCoordinator>,
-    
+
+    // Web4 domain registry (shared, canonical instance)
+    domain_registry: Arc<DomainRegistry>,
+
     // Server state
     is_running: Arc<RwLock<bool>>,
     server_id: Uuid,
@@ -160,14 +164,54 @@ impl ZhtpUnifiedServer {
         false
     }
 
-    /// Create a server identity for UHP+Kyber authentication
+    /// Load server identity from keystore for UHP+Kyber authentication
     ///
-    /// Creates a deterministic identity based on the server UUID.
-    /// The identity is used for mutual authentication in QUIC handshakes.
+    /// Loads the persistent identity from ~/.zhtp/keystore/node_identity.json.
+    /// Falls back to creating a deterministic identity if keystore is unavailable.
     fn create_server_identity(server_id: Uuid) -> Result<Arc<lib_identity::ZhtpIdentity>> {
         use lib_identity::{ZhtpIdentity, IdentityType};
 
-        // Generate deterministic seed from server UUID
+        // Try to load from keystore first (consistent with WalletStartupManager)
+        let keystore_path = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+            .join(".zhtp")
+            .join("keystore")
+            .join("node_identity.json");
+
+        if keystore_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&keystore_path) {
+                // We need the private key to deserialize properly
+                let private_key_path = keystore_path.parent().unwrap().join("node_private_key.json");
+                if let Ok(key_data) = std::fs::read_to_string(&private_key_path) {
+                    if let Ok(key_store) = serde_json::from_str::<serde_json::Value>(&key_data) {
+                        // Extract private key components
+                        if let (Some(dilithium), Some(kyber), Some(seed)) = (
+                            key_store.get("dilithium_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                            key_store.get("kyber_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                            key_store.get("master_seed").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                        ) {
+                            let private_key = lib_crypto::PrivateKey {
+                                dilithium_sk: dilithium,
+                                kyber_sk: kyber,
+                                master_seed: seed,
+                            };
+
+                            if let Ok(identity) = ZhtpIdentity::from_serialized(&data, &private_key) {
+                                tracing::info!(
+                                    did = %identity.did,
+                                    "Loaded server identity from keystore"
+                                );
+                                return Ok(Arc::new(identity));
+                            }
+                        }
+                    }
+                }
+            }
+            tracing::warn!("Keystore exists but failed to load identity, creating fallback");
+        }
+
+        // Fallback: Generate deterministic seed from server UUID
+        tracing::warn!("No keystore identity found, creating deterministic server identity");
         let mut seed = [0u8; 64];
         seed[..16].copy_from_slice(server_id.as_bytes());
         seed[16..32].copy_from_slice(server_id.as_bytes());
@@ -291,7 +335,14 @@ impl ZhtpUnifiedServer {
             DhtHandler::new_with_storage(Arc::new(mesh_router.clone()), storage.clone())
         );
         mesh_router.set_dht_handler(dht_handler.clone()).await;
-        
+
+        // Create canonical domain registry (shared by all components)
+        // MUST be created BEFORE register_api_handlers so Web4Handler can use it
+        let domain_registry = Arc::new(
+            DomainRegistry::new_with_storage(storage.clone()).await?
+        );
+        info!(" Domain registry initialized (canonical instance)");
+
         // Register comprehensive API handlers on ZHTP router (QUIC is the only entry point)
         Self::register_api_handlers(
             &mut zhtp_router,
@@ -301,20 +352,22 @@ impl ZhtpUnifiedServer {
             economic_model.clone(),
             session_manager.clone(),
             dht_handler,
+            domain_registry.clone(),
         ).await?;
-        
+
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
         let zhtp_router_arc = Arc::new(zhtp_router);
         let quic_handler = Arc::new(QuicHandler::new(
             Arc::new(RwLock::new((*zhtp_router_arc).clone())),  // Native ZhtpRouter wrapped in RwLock
             quic_arc.clone(),                    // QuicMeshProtocol for transport
+            identity_manager.clone(),            // Identity manager for auto-registration
         ));
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
-        
+
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
         mesh_router.set_zhtp_router(zhtp_router_arc.clone()).await;
         info!(" ZHTP router registered with mesh router for UDP endpoint handling");
-        
+
         Ok(Self {
             quic_mesh: quic_arc,
             quic_handler,
@@ -330,6 +383,7 @@ impl ZhtpUnifiedServer {
             economic_model,
             session_manager,
             discovery_coordinator,
+            domain_registry,
             is_running: Arc::new(RwLock::new(false)),
             server_id,
             port,
@@ -355,15 +409,18 @@ impl ZhtpUnifiedServer {
         
         // Create MeshMessageHandler for routing blockchain sync messages
         // Note: These will be populated properly when mesh_router is initialized
-        let mesh_connections = Arc::new(RwLock::new(std::collections::HashMap::new()));
+        let peer_registry = Arc::new(RwLock::new(lib_network::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(std::collections::HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(std::collections::HashMap::new()));
         
-        let message_handler = lib_network::messaging::message_handler::MeshMessageHandler::new(
-            mesh_connections,
+        let mut message_handler = lib_network::messaging::message_handler::MeshMessageHandler::new(
+            peer_registry,
             long_range_relays,
             revenue_pools,
         );
+
+        // If integration layer has already registered a DHT payload sender, wire it now
+        crate::integration::wire_message_handler(&mut message_handler).await;
         
         // Inject message handler into QUIC protocol
         quic_mesh.set_message_handler(Arc::new(RwLock::new(message_handler)));
@@ -387,6 +444,7 @@ impl ZhtpUnifiedServer {
         _economic_model: Arc<RwLock<EconomicModel>>,
         _session_manager: Arc<SessionManager>,
         dht_handler: Arc<dyn ZhtpRequestHandler>,
+        domain_registry: Arc<DomainRegistry>,
     ) -> Result<()> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
         
@@ -427,6 +485,7 @@ impl ZhtpUnifiedServer {
                 account_lockout,
                 csrf_protection,
                 recovery_phrase_manager,
+                storage.clone(),
             )
         );
         zhtp_router.register_handler("/api/v1/identity".to_string(), identity_handler);
@@ -489,8 +548,14 @@ impl ZhtpUnifiedServer {
         zhtp_router.register_handler("/api/v1/dht".to_string(), dht_handler);
         
         // Web4 domain and content (handle async creation first)
-        // Pass existing storage, identity manager, AND blockchain for UTXO transaction creation
-        let web4_handler = Web4Handler::new(storage.clone(), identity_manager.clone(), blockchain.clone()).await?;
+        // Pass the shared domain_registry to avoid creating duplicate registries
+        // This ensures domain registrations are visible to all handlers
+        let web4_handler = Web4Handler::new_with_registry(
+            domain_registry.clone(),
+            storage.clone(),
+            identity_manager.clone(),
+            blockchain.clone()
+        ).await?;
         let web4_manager = web4_handler.get_web4_manager();
         let wallet_content_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::WalletContentHandler::new(Arc::clone(&wallet_content_manager))
@@ -652,7 +717,7 @@ impl ZhtpUnifiedServer {
         // Initialize Bluetooth LE discovery (pass mesh_connections and peer notification channel for GATT handler)
         // Spawn as background task to avoid blocking HTTP server startup
         let bluetooth_router_clone = self.bluetooth_router.clone();
-        let mesh_connections_clone = self.mesh_router.connections.clone();
+        let peer_registry_clone = self.mesh_router.connections.clone();
         let bluetooth_provider = self.mesh_router.blockchain_provider.read().await.clone();
         let ble_peer_tx_clone = ble_peer_tx.clone();
         let our_public_key_clone = our_public_key.clone();
@@ -670,7 +735,7 @@ impl ZhtpUnifiedServer {
 
             info!("Initializing Bluetooth mesh protocol for phone connectivity...");
             match bluetooth_router_clone.initialize(
-                mesh_connections_clone,
+                peer_registry_clone,
                 Some(ble_peer_tx_clone),
                 our_public_key_clone,
                 bluetooth_provider,
@@ -709,7 +774,7 @@ impl ZhtpUnifiedServer {
         // This ensures the spawned task has access to the protocol
         let mesh_router_for_ble = self.mesh_router.clone();
         let sync_coordinator_for_ble = self.mesh_router.sync_coordinator.clone();
-        let edge_sync_manager_for_ble = self.mesh_router.edge_sync_manager.clone();
+        let is_edge_node_for_ble = self.mesh_router.is_edge_node.clone(); // Track edge vs full node mode
         let coordinator_for_ble = self.discovery_coordinator.clone();  // Phase 3: Coordinator integration
         
         tokio::spawn(async move {
@@ -738,14 +803,12 @@ impl ZhtpUnifiedServer {
                 }
                 
                 // Check if edge node or full node
-                let edge_manager_guard: tokio::sync::RwLockReadGuard<'_, Option<Arc<lib_network::blockchain_sync::EdgeNodeSyncManager>>> = edge_sync_manager_for_ble.read().await;
-                let is_edge_node = edge_manager_guard.is_some();
+                let is_edge_node = *is_edge_node_for_ble.read().await;
                 let sync_type = if is_edge_node {
                     lib_network::blockchain_sync::SyncType::EdgeNode
                 } else {
                     lib_network::blockchain_sync::SyncType::FullBlockchain
                 };
-                drop(edge_manager_guard);
                 
                 // SMART PROTOCOL SELECTION: Check if peer has TCP/QUIC address before using BLE
                 // BLE should be fallback for mobile devices, not primary sync method
@@ -781,7 +844,7 @@ impl ZhtpUnifiedServer {
                     
                     // Still register BLE as available protocol (for fallback)
                     sync_coordinator_for_ble.register_peer_protocol(
-                        &peer_pubkey,
+                        peer_pubkey.clone(),
                         lib_network::protocols::NetworkProtocol::BluetoothLE,
                         sync_type
                     ).await;
@@ -792,7 +855,7 @@ impl ZhtpUnifiedServer {
                 
                 // Check with sync coordinator if we should sync with this peer via BLE
                 let should_sync = sync_coordinator_for_ble.register_peer_protocol(
-                    &peer_pubkey,
+                    peer_pubkey.clone(),
                     lib_network::protocols::NetworkProtocol::BluetoothLE,
                     sync_type
                 ).await;
@@ -814,7 +877,7 @@ impl ZhtpUnifiedServer {
                         
                         // Record sync start with coordinator
                         sync_coordinator_for_ble.start_sync(
-                            &peer_pubkey,
+                            peer_pubkey.clone(),
                             request_id,
                             sync_type,
                             lib_network::protocols::NetworkProtocol::BluetoothLE
@@ -1164,14 +1227,22 @@ impl ZhtpUnifiedServer {
         self.mesh_router.set_blockchain_provider(provider).await;
     }
     
-    /// Set edge sync manager (delegates to mesh router)
-    pub async fn set_edge_sync_manager(&mut self, manager: Arc<lib_network::blockchain_sync::EdgeNodeSyncManager>) {
-        self.mesh_router.set_edge_sync_manager(manager).await;
+    /// Configure sync manager for edge node mode (headers + ZK proofs only)
+    pub async fn set_edge_sync_mode(&mut self, max_headers: usize) {
+        info!("🔧 Configuring edge sync mode: max_headers={}", max_headers);
+        self.mesh_router.set_edge_sync_mode(max_headers).await;
     }
     
     /// Get server information
     pub fn get_server_info(&self) -> (Uuid, u16) {
         (self.server_id, self.port)
+    }
+
+    /// Get reference to the canonical domain registry
+    ///
+    /// This is the single source of truth for domain resolution across all components.
+    pub fn get_domain_registry(&self) -> Arc<DomainRegistry> {
+        Arc::clone(&self.domain_registry)
     }
     
     /// Get blockchain statistics

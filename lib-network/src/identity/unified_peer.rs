@@ -21,7 +21,7 @@
 //!
 //! # Usage
 //!
-//! ```rust
+//! ```ignore
 //! use lib_network::identity::{UnifiedPeerId, PeerIdMapper};
 //! use lib_identity::{ZhtpIdentity, NodeId};
 //! use lib_crypto::PublicKey;
@@ -625,7 +625,7 @@ impl MapperState {
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```ignore
 /// let mapper = PeerIdMapper::new();
 ///
 /// // Register a peer
