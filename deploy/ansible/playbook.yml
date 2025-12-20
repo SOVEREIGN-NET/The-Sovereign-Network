@@ -1,0 +1,213 @@
+---
+- name: Deploy ZHTP Node
+  hosts: zhtp_dev
+  become: yes
+  vars:
+    zhtp_dir: /opt/zhtp
+    zhtp_network: testnet
+    zhtp_ports:
+      - { port: 22, proto: tcp, comment: 'SSH access' }
+      - { port: 37775, proto: udp, comment: 'ZHTP multicast discovery' }
+      - { port: 33444, proto: tcp, comment: 'ZHTP mesh networking' }
+      - { port: 9334, proto: tcp, comment: 'ZHTP API port' }
+
+  tasks:
+    # =========================================================================
+    # PACKAGE INSTALLATION - Distro-specific
+    # =========================================================================
+
+    - name: Install dependencies (Debian/Ubuntu)
+      apt:
+        name:
+          - libudev-dev
+          - libdbus-1-dev
+          - pkg-config
+          - libclang-dev
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Install dependencies (RHEL/CentOS/Fedora)
+      dnf:
+        name:
+          - systemd-devel
+          - dbus-devel
+          - pkgconfig
+          - clang-devel
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Install dependencies (Arch)
+      pacman:
+        name:
+          - systemd-libs
+          - dbus
+          - pkgconf
+          - clang
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Archlinux"
+
+    - name: Install dependencies (Alpine)
+      apk:
+        name:
+          - eudev-dev
+          - dbus-dev
+          - pkgconf
+          - clang-dev
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Alpine"
+
+    # =========================================================================
+    # DIRECTORY SETUP - Universal
+    # =========================================================================
+
+    - name: Create ZHTP directory
+      file:
+        path: "{{ zhtp_dir }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    # =========================================================================
+    # FIREWALL CONFIGURATION - Distro-specific
+    # =========================================================================
+
+    # --- UFW (Debian/Ubuntu) ---
+    - name: Configure UFW firewall rules
+      ufw:
+        rule: allow
+        port: "{{ item.port | string }}"
+        proto: "{{ item.proto }}"
+        comment: "{{ item.comment }}"
+      loop: "{{ zhtp_ports }}"
+      when: ansible_os_family == "Debian"
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+      when: ansible_os_family == "Debian"
+
+    # --- firewalld (RHEL/CentOS/Fedora) ---
+    - name: Ensure firewalld is running
+      systemd:
+        name: firewalld
+        state: started
+        enabled: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Configure firewalld rules (TCP)
+      firewalld:
+        port: "{{ item.port }}/{{ item.proto }}"
+        permanent: yes
+        immediate: yes
+        state: enabled
+      loop: "{{ zhtp_ports }}"
+      when: ansible_os_family == "RedHat"
+
+    # --- iptables (Arch/Alpine) ---
+    - name: Configure iptables rules
+      iptables:
+        chain: INPUT
+        protocol: "{{ item.proto }}"
+        destination_port: "{{ item.port }}"
+        jump: ACCEPT
+        comment: "{{ item.comment }}"
+      loop: "{{ zhtp_ports }}"
+      when: ansible_os_family in ["Archlinux", "Alpine"]
+
+    - name: Save iptables rules (Arch)
+      shell: iptables-save > /etc/iptables/iptables.rules
+      when: ansible_os_family == "Archlinux"
+      changed_when: false
+
+    # =========================================================================
+    # BINARY DEPLOYMENT - Universal
+    # =========================================================================
+
+    - name: Deploy ZHTP binary
+      copy:
+        src: "{{ playbook_dir }}/../../target/release/zhtp"
+        dest: "{{ zhtp_dir }}/zhtp"
+        mode: '0755'
+        owner: root
+        group: root
+        backup: yes
+      notify: Restart ZHTP service
+      when: deploy_binary | default(false)
+
+    # =========================================================================
+    # SERVICE CONFIGURATION - Systemd (most distros) vs OpenRC (Alpine)
+    # =========================================================================
+
+    # --- Systemd (Debian, RHEL, Arch) ---
+    - name: Deploy systemd service file
+      template:
+        src: zhtp.service.j2
+        dest: /etc/systemd/system/zhtp.service
+        mode: '0644'
+      notify:
+        - Reload systemd
+        - Restart ZHTP service
+      when: ansible_service_mgr == "systemd"
+
+    - name: Enable ZHTP service (systemd)
+      systemd:
+        name: zhtp
+        enabled: yes
+        daemon_reload: yes
+      when: ansible_service_mgr == "systemd"
+
+    - name: Ensure ZHTP service is running (systemd)
+      systemd:
+        name: zhtp
+        state: started
+      when: ansible_service_mgr == "systemd" and (start_service | default(true))
+
+    # --- OpenRC (Alpine) ---
+    - name: Deploy OpenRC service file
+      template:
+        src: zhtp.openrc.j2
+        dest: /etc/init.d/zhtp
+        mode: '0755'
+      notify: Restart ZHTP service (OpenRC)
+      when: ansible_service_mgr == "openrc"
+
+    - name: Enable ZHTP service (OpenRC)
+      service:
+        name: zhtp
+        enabled: yes
+      when: ansible_service_mgr == "openrc"
+
+    - name: Ensure ZHTP service is running (OpenRC)
+      service:
+        name: zhtp
+        state: started
+      when: ansible_service_mgr == "openrc" and (start_service | default(true))
+
+  # ===========================================================================
+  # HANDLERS
+  # ===========================================================================
+
+  handlers:
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+      when: ansible_service_mgr == "systemd"
+
+    - name: Restart ZHTP service
+      systemd:
+        name: zhtp
+        state: restarted
+      when: ansible_service_mgr == "systemd"
+
+    - name: Restart ZHTP service (OpenRC)
+      service:
+        name: zhtp
+        state: restarted
+      when: ansible_service_mgr == "openrc"

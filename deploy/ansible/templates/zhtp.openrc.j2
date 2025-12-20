@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+# ZHTP Node OpenRC service file
+
+name="zhtp"
+description="ZHTP Node"
+command="{{ zhtp_dir }}/zhtp"
+command_args="node start --network {{ zhtp_network }}"
+command_user="root"
+pidfile="/run/${RC_SVCNAME}.pid"
+command_background="yes"
+directory="{{ zhtp_dir }}"
+
+export RUST_LOG="info"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    checkpath --directory --owner root:root --mode 0755 {{ zhtp_dir }}
+}

@@ -28,6 +28,7 @@
 use super::{
     ClientHello, ServerHello, ClientFinish, HandshakeMessage, HandshakePayload,
     HandshakeContext, HandshakeResult, NodeIdentity, HandshakeCapabilities,
+    PqcHandshakeState, decapsulate_pqc, verify_pqc_offer,
 };
 use anyhow::{Result, anyhow, Context};
 use lib_identity::ZhtpIdentity;
@@ -261,7 +262,7 @@ where
     // 5. Check for replay attack (server nonce must be fresh)
     nonce_tracker.register(&server_hello.response_nonce, server_hello.timestamp)?;
 
-    // 6. Create ClientFinish with mutual authentication
+    // 6. Create ClientFinish with mutual authentication and PQC encapsulation
     let keypair = KeyPair {
         public_key: local_identity.public_key.clone(),
         private_key: local_identity
@@ -270,15 +271,16 @@ where
             .ok_or_else(|| HandshakeIoError::IdentityError("Missing private key".to_string()))?,
     };
 
-    let client_finish = ClientFinish::new(&server_hello, &client_hello, &keypair, ctx)
+    // Use new_with_pqc to get the shared secret for hybrid key derivation
+    let (client_finish, pqc_shared_secret) = ClientFinish::new_with_pqc(&server_hello, &client_hello, &keypair, ctx)
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
     // 7. Send ClientFinish
     let finish_msg = HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish));
     send_message(stream, &finish_msg).await?;
 
-    // 8. Derive session key and build result
-    let result = HandshakeResult::new(
+    // 8. Derive session key (with PQC hybrid if available)
+    let result = HandshakeResult::new_with_pqc(
         server_hello.identity.clone(),
         server_hello.negotiated.clone(),
         &client_hello.challenge_nonce,
@@ -286,6 +288,7 @@ where
         &local_identity.did,
         &server_hello.identity.did,
         client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
+        pqc_shared_secret.as_ref(),
     )
     .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
@@ -357,15 +360,21 @@ where
     // 3. Check for replay attack (client nonce must be fresh)
     nonce_tracker.register(&client_hello.challenge_nonce, client_hello.timestamp)?;
 
-    // 4. Create ServerHello with fresh server nonce
-    let server_hello = ServerHello::new(local_identity, capabilities, &client_hello)
+    // 4. Optionally verify client's PQC offer if present
+    if let Some(ref pqc_offer) = client_hello.pqc_offer {
+        verify_pqc_offer(pqc_offer)
+            .map_err(|e| HandshakeIoError::Protocol(format!("Invalid client PQC offer: {}", e)))?;
+    }
+
+    // 5. Create ServerHello with PQC state for later decapsulation
+    let (server_hello, pqc_state) = ServerHello::new_with_pqc(local_identity, capabilities, &client_hello)
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
-    // 5. Send ServerHello
+    // 6. Send ServerHello
     let hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
     send_message(stream, &hello_msg).await?;
 
-    // 6. Receive ClientFinish
+    // 7. Receive ClientFinish
     let finish_msg = recv_message(stream).await?;
     let client_finish = match finish_msg.payload {
         HandshakePayload::ClientFinish(cf) => cf,
@@ -383,13 +392,23 @@ where
         }
     };
 
-    // 7. Verify client signature on finish
+    // 8. Verify client signature on finish
     client_finish
         .verify_signature(&server_hello.response_nonce, &client_hello.identity.public_key)
         .map_err(|_| HandshakeIoError::InvalidSignature)?;
 
-    // 8. Derive session key and build result
-    let result = HandshakeResult::new(
+    // 9. Decapsulate PQC shared secret if client sent ciphertext
+    let pqc_shared_secret = match (&client_finish.pqc_ciphertext, &pqc_state) {
+        (Some(ciphertext), Some(state)) => {
+            let secret = decapsulate_pqc(ciphertext, state)
+                .map_err(|e| HandshakeIoError::Protocol(format!("PQC decapsulation failed: {}", e)))?;
+            Some(secret)
+        }
+        _ => None,
+    };
+
+    // 10. Derive session key (with PQC hybrid if available)
+    let result = HandshakeResult::new_with_pqc(
         client_hello.identity.clone(),
         server_hello.negotiated.clone(),
         &client_hello.challenge_nonce,
@@ -397,6 +416,7 @@ where
         &local_identity.did,
         &client_hello.identity.did,
         client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
+        pqc_shared_secret.as_ref(),
     )
     .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
