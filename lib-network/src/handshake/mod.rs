@@ -611,55 +611,19 @@ pub struct ClientHello {
 impl ClientHello {
     /// Create a new ClientHello message
     ///
-    /// Takes full ZhtpIdentity for signing, but only stores public NodeIdentity fields
+    /// Takes full ZhtpIdentity for signing, but only stores public NodeIdentity fields.
+    /// PQC state is discarded - use `new_with_pqc()` if you need the state.
     pub fn new(
         zhtp_identity: &ZhtpIdentity,
         capabilities: HandshakeCapabilities,
     ) -> Result<Self> {
-        let mut challenge_nonce = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut challenge_nonce);
-
-        // Get current timestamp
-        let timestamp = current_timestamp()?;
-
-        // Use current protocol version
-        let protocol_version = UHP_VERSION;
-
-        // Extract public-only identity for network transmission
-        let identity = NodeIdentity::from_zhtp_identity(zhtp_identity);
-
-        // Create keypair from ZhtpIdentity's keys for signing
-        let keypair = KeyPair {
-            public_key: zhtp_identity.public_key.clone(),
-            private_key: zhtp_identity.private_key.clone().ok_or_else(|| anyhow!("Identity missing private key"))?,
-        };
-
-        // Sign the hello message (includes timestamp and version for replay protection)
-        let data = Self::data_to_sign(&identity, &capabilities, &challenge_nonce, timestamp, protocol_version)?;
-        let signature = keypair.sign(&data)?;
-
-        // Create PQC offer if capability is enabled (state discarded - use new_with_pqc for state management)
-        let pqc_offer = if capabilities.pqc_capability.is_enabled() {
-            let (offer, _state) = create_pqc_offer(capabilities.pqc_capability.clone())?;
-            Some(offer)
-        } else {
-            None
-        };
-
-        Ok(Self {
-            identity,
-            capabilities,
-            challenge_nonce,
-            signature,
-            timestamp,
-            protocol_version,
-            pqc_offer,
-        })
+        let (hello, _pqc_state) = Self::new_with_pqc(zhtp_identity, capabilities)?;
+        Ok(hello)
     }
 
-    /// Create a new ClientHello with external PQC offer and return state
+    /// Create a new ClientHello with PQC state returned
     ///
-    /// Functional core pattern: caller manages PQC state for later decapsulation.
+    /// Functional core pattern: caller manages PQC state for later use.
     /// Returns (ClientHello, Option<PqcHandshakeState>) so caller can keep the secret key.
     pub fn new_with_pqc(
         zhtp_identity: &ZhtpIdentity,
@@ -854,63 +818,18 @@ pub struct ServerHello {
 impl ServerHello {
     /// Create a new ServerHello message
     ///
-    /// Takes full ZhtpIdentity for signing, but only stores public NodeIdentity fields
+    /// Takes full ZhtpIdentity for signing, but only stores public NodeIdentity fields.
+    /// PQC state is discarded - use `new_with_pqc()` if you need the state.
     pub fn new(
         zhtp_identity: &ZhtpIdentity,
         capabilities: HandshakeCapabilities,
         client_hello: &ClientHello,
     ) -> Result<Self> {
-        let mut response_nonce = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut response_nonce);
-
-        // Get current timestamp
-        let timestamp = current_timestamp()?;
-
-        // Use current protocol version
-        let protocol_version = UHP_VERSION;
-
-        let negotiated = capabilities.negotiate(&client_hello.capabilities);
-
-        // Extract public-only identity for network transmission
-        let identity = NodeIdentity::from_zhtp_identity(zhtp_identity);
-
-        // Create keypair from ZhtpIdentity's keys for signing
-        let keypair = KeyPair {
-            public_key: zhtp_identity.public_key.clone(),
-            private_key: zhtp_identity.private_key.clone().ok_or_else(|| anyhow!("Identity missing private key"))?,
-        };
-
-        // Sign: client's nonce + our identity + our capabilities + timestamp + version
-        let data = Self::data_to_sign(
-            &client_hello.challenge_nonce,
-            &identity,
-            &capabilities,
-            timestamp,
-            protocol_version,
-        )?;
-        let signature = keypair.sign(&data)?;
-
-        // Create PQC offer if negotiated capability is enabled (state discarded - use new_with_pqc for state management)
-        let pqc_offer = if negotiated.pqc_capability.is_enabled() {
-            let (offer, _state) = create_pqc_offer(negotiated.pqc_capability.clone())?;
-            Some(offer)
-        } else {
-            None
-        };
-
-        Ok(Self {
-            identity,
-            capabilities,
-            response_nonce,
-            signature,
-            negotiated,
-            timestamp,
-            protocol_version,
-            pqc_offer,
-        })
+        let (hello, _pqc_state) = Self::new_with_pqc(zhtp_identity, capabilities, client_hello)?;
+        Ok(hello)
     }
 
-    /// Create a new ServerHello with PQC support, returning state for later decapsulation
+    /// Create a new ServerHello with PQC state returned
     ///
     /// Functional core pattern: caller manages PQC state for later decapsulation.
     /// Returns (ServerHello, Option<PqcHandshakeState>) so caller can keep the secret key.
@@ -1065,60 +984,18 @@ impl ClientFinish {
     /// Only after server is verified does the client sign the server nonce.
     ///
     /// **FINDING 2 FIX:** Uses HandshakeContext to eliminate parameter threading.
+    /// PQC shared secret is discarded - use `new_with_pqc()` if you need it.
     pub fn new(
         server_hello: &ServerHello,
         client_hello: &ClientHello,
         keypair: &KeyPair,
         ctx: &HandshakeContext,
     ) -> Result<Self> {
-        // === MUTUAL AUTHENTICATION: Verify server before completing handshake ===
-
-        // 1. Verify server's NodeId derivation (collision attack prevention)
-        server_hello.identity.verify_node_id()
-            .map_err(|e| anyhow!("Server NodeId verification failed: {}", e))?;
-
-        // 2. Validate server's timestamp (replay attack prevention)
-        validate_timestamp(server_hello.timestamp, &ctx.timestamp_config)
-            .map_err(|e| anyhow!("Server timestamp validation failed: {}", e))?;
-
-        // 3. Verify server's signature on ServerHello (MitM + replay prevention)
-        server_hello.verify_signature(&client_hello.challenge_nonce, ctx)
-            .map_err(|e| anyhow!("Server signature verification failed: {}", e))?;
-
-        // === Server verified! Now complete handshake ===
-
-        let timestamp = current_timestamp()?;
-        let protocol_version = UHP_VERSION;
-
-        // Sign server's response nonce to complete handshake
-        let data = Self::data_to_sign(
-            &server_hello.response_nonce,
-            timestamp,
-            protocol_version,
-        )?;
-        let signature = keypair.sign(&data)?;
-
-        // If server provided a PQC offer, encapsulate shared secret (discarded - use new_with_pqc for secret)
-        let pqc_ciphertext = if let Some(ref pqc_offer) = server_hello.pqc_offer {
-            // Verify server's PQC offer signature
-            verify_pqc_offer(pqc_offer)?;
-            // Encapsulate shared secret to server's Kyber public key
-            let (ciphertext, _shared_secret) = encapsulate_pqc(pqc_offer)?;
-            Some(ciphertext)
-        } else {
-            None
-        };
-
-        Ok(Self {
-            signature,
-            timestamp,
-            protocol_version,
-            session_params: None,
-            pqc_ciphertext,
-        })
+        let (finish, _pqc_secret) = Self::new_with_pqc(server_hello, client_hello, keypair, ctx)?;
+        Ok(finish)
     }
 
-    /// Create a new ClientFinish with PQC, returning the shared secret for hybrid key derivation
+    /// Create a new ClientFinish with PQC shared secret returned
     ///
     /// Functional core pattern: returns (ClientFinish, Option<[u8; 32]>) so caller can use
     /// the PQC shared secret for hybrid session key derivation.
