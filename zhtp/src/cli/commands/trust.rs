@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Result, Context};
 use std::path::PathBuf;
 
-use lib_network::web4::{TrustDb, TrustConfig, TrustAuditEntry};
+use crate::web4_stub::{TrustDb, TrustConfig, TrustAuditEntry};
 
 use crate::cli::TrustArgs;
 
@@ -18,7 +18,7 @@ pub async fn handle_trust_command(args: TrustArgs) -> Result<()> {
 
 async fn list_trust() -> Result<()> {
     let trustdb_path = TrustConfig::default_trustdb_path()?;
-    let db = TrustDb::load_or_create(&trustdb_path)
+    let db = TrustDb::load_or_create(std::path::Path::new(&trustdb_path))
         .context("Failed to load trustdb")?;
 
     if db.anchors.is_empty() {
@@ -78,11 +78,11 @@ async fn show_audit() -> Result<()> {
 
 async fn reset_trust(node: &str) -> Result<()> {
     let trustdb_path = TrustConfig::default_trustdb_path()?;
-    let mut db = TrustDb::load_or_create(&trustdb_path)
+    let mut db = TrustDb::load_or_create(std::path::Path::new(&trustdb_path))
         .context("Failed to load trustdb")?;
 
     if db.remove(node).is_some() {
-        db.save(&trustdb_path)?;
+        db.save(std::path::Path::new(&trustdb_path))?;
         println!("Removed trust anchor for {}", node);
     } else {
         return Err(anyhow!("No trust anchor found for {}", node));

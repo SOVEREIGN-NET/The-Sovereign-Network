@@ -19,7 +19,6 @@ pub use crate::mesh::statistics::MeshProtocolStats;
 pub use crate::types::*;
 pub use crate::discovery::*;
 pub use crate::relays::*;
-pub use crate::blockchain_sync::BlockchainSyncManager;
 
 // Unified Peer Identity System (replaces separate NodeId, PeerId, PublicKey systems)
 pub use crate::identity::{UnifiedPeerId, PeerIdMapper, PeerMapperConfig};
@@ -45,23 +44,6 @@ pub use crate::handshake::{
 };
 
 
-// Native binary DHT protocol with lib-storage backend
-// DHT client layer is deprecated; kept temporarily for compatibility
-pub use crate::dht::{initialize_dht_client, ZkDHTIntegration, DHTNetworkStatus, DHTClient};
-
-// Web4 domain registry and content publishing
-pub use crate::web4::{
-    Web4Manager, DomainRegistry, ContentPublisher,
-    Web4ContentService, Web4ContentDefaults, DomainContentConfig, ContentResult,
-    ContentMode, Web4Capability,
-    initialize_web4_system, initialize_web4_system_with_storage,
-};
-
-// ZDNS (Zero-Knowledge Domain Name System) resolver with caching
-pub use crate::zdns::{ZdnsResolver, ZdnsConfig, ZdnsError, Web4Record};
-// ZDNS DNS transport layer (UDP/TCP server on port 53)
-pub use crate::zdns::{ZdnsTransportServer, ZdnsServerConfig, TransportStats, DnsPacket, DNS_PORT};
-
 // Core modules
 pub mod types;
 pub mod mesh;
@@ -80,30 +62,30 @@ pub mod monitoring;
 pub mod zk_integration;
 pub mod testing;
 pub mod platform;
-pub mod dht; // Native binary DHT protocol with lib-storage backend
 pub mod transport;
-pub mod web4; // Web4 domain registry and content publishing
-pub mod zdns; // ZDNS resolver with LRU caching
-pub mod blockchain_sync; // Blockchain synchronization over mesh protocols
-pub mod client; // QUIC client for control-plane operations
-
-// Re-export ZhtpClient for convenience
-pub use client::ZhtpClient;
+pub mod dht_stub;
+pub mod dht;
+mod blockchain_sync_stub;
+pub mod storage_stub;
+pub mod network_output;
+pub use network_output::{NetworkOutput, OutputQueue, global_output_queue};
+#[cfg(not(feature = "chain-integration"))]
+pub mod blockchain_sync {
+    pub use crate::blockchain_sync_stub::*;
+}
+#[cfg(feature = "chain-integration")]
+compile_error!("chain-integration is disabled in lib-network while storage/blockchain relocation is pending (Phase 4). Use stub or move integration to zhtp.");
+// Storage/chain-dependent modules removed from lib-network
 
 // Re-export protocol constants for convenience
 pub use constants::*;
 
 // Mobile FFI bindings removed - see archive/mobile-ffi-stubs branch when needed
 
-// External dependencies for economics, API, and storage
+// External dependencies for economics and API
 pub use lib_economy as economics;
 pub use lib_protocols as api;
-pub use lib_storage; // Direct access to storage backend
 pub use lib_identity;
-use crate::dht::serve_web4_page;
-
-// Public API convenience functions
-pub use crate::testing::test_utils::create_test_mesh_server;
 
 /// Get active peer count from the mesh network
 pub async fn get_active_peer_count() -> Result<usize> {
@@ -171,35 +153,6 @@ pub async fn get_latency_statistics() -> Result<LatencyStatistics> {
         timeout_rate: mesh_stats.timeout_rate,
         jitter: mesh_stats.jitter,
     })
-}
-
-/// Initialize complete mesh network with DHT client integration
-pub async fn initialize_mesh_with_dht(identity: lib_identity::ZhtpIdentity) -> Result<(ZhtpMeshServer, ())> {
-    info!("Initializing complete mesh network with DHT integration...");
-    
-    // Initialize mesh server
-    let mesh_server = crate::testing::test_utils::create_test_mesh_server().await?;
-    
-    // Initialize DHT client with lib-storage backend
-    let _ = initialize_dht_client(identity).await?;
-    
-    info!("Mesh network with DHT client integration ready");
-    Ok((mesh_server, ()))
-}
-
-/// Serve a Web4 page through the integrated mesh network and DHT
-pub async fn serve_web4_page_through_mesh(
-    url: &str
-) -> Result<String> {
-    info!("Serving Web4 page through integrated mesh+DHT: {}", url);
-    
-    // Parse URL to get domain and path
-    let parts: Vec<&str> = url.split('/').collect();
-    let domain = parts.get(0).unwrap_or(&"");
-    let path = if parts.len() > 1 { parts[1..].join("/") } else { String::new() };
-    
-    // Use the DHT client to serve the page through lib-storage backend
-    serve_web4_page(domain, &path).await
 }
 
 // Constants
