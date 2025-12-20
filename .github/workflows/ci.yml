@@ -167,7 +167,7 @@ jobs:
           DEV_USER: ${{ secrets.DEV_DEPLOY_USER }}
         run: |
           scp -i ~/.ssh/deploy_key ./zhtp "${DEV_USER}@${DEV_HOST}:/opt/zhtp/zhtp.new"
-          scp -i ~/.ssh/deploy_key ./deploy/zhtp.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
+          scp -i ~/.ssh/deploy_key ./deploy/zhtp-dev.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
           ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
             cd /opt/zhtp &&
             systemctl stop zhtp 2>/dev/null || true &&
@@ -187,7 +187,7 @@ jobs:
           DEV_USER: ${{ secrets.DEV_DEPLOY_USER }}
         run: |
           scp -i ~/.ssh/deploy_key ./zhtp "${DEV_USER}@${DEV_HOST}:/opt/zhtp/zhtp.new"
-          scp -i ~/.ssh/deploy_key ./deploy/zhtp.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
+          scp -i ~/.ssh/deploy_key ./deploy/zhtp-dev.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
           ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
             cd /opt/zhtp &&
             systemctl stop zhtp 2>/dev/null || true &&
