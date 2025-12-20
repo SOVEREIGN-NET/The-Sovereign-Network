@@ -51,6 +51,7 @@ pub use crate::dht::{initialize_dht_client, ZkDHTIntegration, DHTNetworkStatus, 
 
 // Network utilities
 pub mod network_utils;
+pub use crate::network_utils::{get_local_ip, get_local_ip_with_config, LocalIpConfig};
 
 // Web4 domain registry and content publishing
 pub use crate::web4::{

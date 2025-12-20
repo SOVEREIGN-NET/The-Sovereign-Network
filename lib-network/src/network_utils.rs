@@ -6,24 +6,50 @@ use anyhow::Result;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
-/// Default probe address for IPv4 interface detection (RFC 5737 TEST-NET-1)
-/// Using documentation/test IP to avoid metadata leakage to public services
-const DEFAULT_PROBE_IPV4: &str = "192.0.2.1:80";
+/// Default probe address for IPv4 interface detection (Cloudflare DNS)
+/// Uses a well-known routable address to ensure interface selection works reliably.
+/// The UDP connection test doesn't actually send data, only determines which interface
+/// would be used for routing to this destination.
+const DEFAULT_PROBE_IPV4: &str = "1.1.1.1:80";
 
-/// Default probe address for IPv6 interface detection (RFC 3849 documentation prefix)
-const DEFAULT_PROBE_IPV6: &str = "[2001:db8::1]:80";
+/// Default probe address for IPv6 interface detection (Cloudflare DNS)
+/// Uses a well-known routable IPv6 address to ensure IPv6 route selection works reliably.
+const DEFAULT_PROBE_IPV6: &str = "[2606:4700:4700::1111]:80";
 
 /// Timeout for network probe operations
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Configuration for local IP detection
+pub struct LocalIpConfig {
+    /// Custom IPv4 probe address (e.g., "1.1.1.1:80")
+    pub ipv4_probe: Option<String>,
+    /// Custom IPv6 probe address (e.g., "[2606:4700:4700::1111]:80")
+    pub ipv6_probe: Option<String>,
+    /// Timeout for probe operations
+    pub timeout: Duration,
+}
+
+impl Default for LocalIpConfig {
+    fn default() -> Self {
+        Self {
+            ipv4_probe: None,
+            ipv6_probe: None,
+            timeout: PROBE_TIMEOUT,
+        }
+    }
+}
+
 /// Get the local IP address of this machine
 /// 
 /// Attempts to determine the local IP address by probing which interface would
-/// be used for external communication. Tries both IPv4 and IPv6, preferring
-/// non-loopback, non-link-local addresses.
+/// be used for external communication. Uses UDP socket connection tests to
+/// well-known public addresses (Cloudflare DNS: 1.1.1.1 for IPv4, 2606:4700:4700::1111 for IPv6).
 /// 
-/// Uses RFC 5737 (IPv4) and RFC 3849 (IPv6) documentation addresses to avoid
-/// metadata leakage to public services.
+/// The probe uses a connectionless UDP socket and does not actually send data,
+/// it only determines which local interface would be used for routing to the destination.
+/// This minimizes metadata leakage while ensuring accurate interface detection.
+/// 
+/// Tries both IPv4 and IPv6, preferring non-loopback, non-link-local addresses.
 /// 
 /// # Returns
 /// 
@@ -43,24 +69,42 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// }
 /// ```
 pub async fn get_local_ip() -> Result<IpAddr> {
-    get_local_ip_with_probe(None).await
+    get_local_ip_with_config(&LocalIpConfig::default()).await
 }
 
-/// Get the local IP address with a custom probe address
+/// Get the local IP address with custom configuration
 /// 
-/// Allows specifying a custom probe address for testing or restricted environments.
-/// If `probe_addr` is None, uses RFC 5737/3849 documentation addresses.
+/// Allows specifying custom probe addresses and timeout for testing or restricted environments.
 /// 
 /// # Arguments
 /// 
-/// * `probe_addr` - Optional custom probe address. If None, uses safe defaults.
+/// * `config` - Configuration with optional custom IPv4/IPv6 probe addresses and timeout
 /// 
 /// # Returns
 /// 
 /// Returns the local IP that would be used to reach the probe address.
-pub async fn get_local_ip_with_probe(probe_addr: Option<&str>) -> Result<IpAddr> {
+/// 
+/// # Examples
+/// 
+/// ```no_run
+/// use lib_network::network_utils::{get_local_ip_with_config, LocalIpConfig};
+/// use std::time::Duration;
+/// 
+/// #[tokio::main]
+/// async fn main() -> anyhow::Result<()> {
+///     let config = LocalIpConfig {
+///         ipv4_probe: Some("8.8.8.8:80".to_string()),
+///         ipv6_probe: Some("[2001:4860:4860::8888]:80".to_string()),
+///         timeout: Duration::from_secs(3),
+///     };
+///     let ip = get_local_ip_with_config(&config).await?;
+///     println!("Local IP: {}", ip);
+///     Ok(())
+/// }
+/// ```
+pub async fn get_local_ip_with_config(config: &LocalIpConfig) -> Result<IpAddr> {
     // Try IPv4 first
-    if let Ok(ip) = probe_ipv4(probe_addr).await {
+    if let Ok(ip) = probe_ipv4(config).await {
         // Prefer non-loopback, non-link-local addresses
         if let IpAddr::V4(v4) = ip {
             if !v4.is_loopback() && !v4.is_link_local() {
@@ -70,7 +114,7 @@ pub async fn get_local_ip_with_probe(probe_addr: Option<&str>) -> Result<IpAddr>
     }
     
     // Try IPv6
-    if let Ok(ip) = probe_ipv6(probe_addr).await {
+    if let Ok(ip) = probe_ipv6(config).await {
         // Prefer non-loopback, non-link-local addresses
         if let IpAddr::V6(v6) = ip {
             if !v6.is_loopback() && !is_ipv6_link_local(&v6) {
@@ -89,8 +133,8 @@ pub async fn get_local_ip_with_probe(probe_addr: Option<&str>) -> Result<IpAddr>
 }
 
 /// Probe for IPv4 local address
-async fn probe_ipv4(custom_probe: Option<&str>) -> Result<IpAddr> {
-    let probe = custom_probe.unwrap_or(DEFAULT_PROBE_IPV4);
+async fn probe_ipv4(config: &LocalIpConfig) -> Result<IpAddr> {
+    let probe = config.ipv4_probe.as_deref().unwrap_or(DEFAULT_PROBE_IPV4);
     
     let probe_future = async {
         let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
@@ -99,14 +143,14 @@ async fn probe_ipv4(custom_probe: Option<&str>) -> Result<IpAddr> {
         Ok::<IpAddr, anyhow::Error>(local_addr.ip())
     };
     
-    tokio::time::timeout(PROBE_TIMEOUT, probe_future)
+    tokio::time::timeout(config.timeout, probe_future)
         .await
         .map_err(|_| anyhow::anyhow!("IPv4 probe timeout"))?
 }
 
 /// Probe for IPv6 local address
-async fn probe_ipv6(custom_probe: Option<&str>) -> Result<IpAddr> {
-    let probe = custom_probe.unwrap_or(DEFAULT_PROBE_IPV6);
+async fn probe_ipv6(config: &LocalIpConfig) -> Result<IpAddr> {
+    let probe = config.ipv6_probe.as_deref().unwrap_or(DEFAULT_PROBE_IPV6);
     
     let probe_future = async {
         let socket = tokio::net::UdpSocket::bind("[::]:0").await?;
@@ -115,7 +159,7 @@ async fn probe_ipv6(custom_probe: Option<&str>) -> Result<IpAddr> {
         Ok::<IpAddr, anyhow::Error>(local_addr.ip())
     };
     
-    tokio::time::timeout(PROBE_TIMEOUT, probe_future)
+    tokio::time::timeout(config.timeout, probe_future)
         .await
         .map_err(|_| anyhow::anyhow!("IPv6 probe timeout"))?
 }
@@ -182,12 +226,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_local_ip_with_custom_probe() {
-        // Test with custom IPv4 probe
-        let result = get_local_ip_with_probe(Some("198.51.100.1:80")).await;
+        // Test with custom IPv4 probe (Google DNS)
+        let config = LocalIpConfig {
+            ipv4_probe: Some("8.8.8.8:80".to_string()),
+            ipv6_probe: None,
+            timeout: Duration::from_secs(2),
+        };
+        let result = get_local_ip_with_config(&config).await;
         assert!(result.is_ok(), "Custom IPv4 probe should work or gracefully fail");
         
-        // Test with custom IPv6 probe
-        let result = get_local_ip_with_probe(Some("[2001:db8::2]:80")).await;
+        // Test with custom IPv6 probe (Google DNS)
+        let config = LocalIpConfig {
+            ipv4_probe: None,
+            ipv6_probe: Some("[2001:4860:4860::8888]:80".to_string()),
+            timeout: Duration::from_secs(2),
+        };
+        let result = get_local_ip_with_config(&config).await;
         // May fail in IPv4-only environments, that's okay
         let _ = result;
     }
