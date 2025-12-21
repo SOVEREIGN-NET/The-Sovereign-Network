@@ -12,7 +12,7 @@ use tracing::{info, warn, error};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_identity::{
-    IdentityManager, GuardianConfig, GuardianStatus,
+    IdentityManager, GuardianStatus,
     SocialRecoveryManager,
 };
 use lib_crypto::{PublicKey, PostQuantumSignature, SignatureAlgorithm};

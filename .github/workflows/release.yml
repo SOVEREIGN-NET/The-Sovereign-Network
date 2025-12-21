@@ -1,0 +1,177 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    name: Build Linux Binary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libdbus-1-dev pkg-config
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Cache cargo
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-cargo-release-
+
+      - name: Build Release Binary
+        run: cargo build --release -p zhtp
+
+      - name: Package Binary
+        run: |
+          mkdir -p release
+          cp target/release/zhtp release/
+          cd release
+          tar -czvf zhtp-linux-x86_64.tar.gz zhtp
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhtp-linux-x86_64
+          path: release/zhtp-linux-x86_64.tar.gz
+
+  build-macos:
+    name: Build macOS Binary
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Cache cargo
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: macos-cargo-release-
+
+      - name: Build Release Binary (without Bluetooth)
+        run: cargo build --release -p zhtp --no-default-features --features "full-blockchain"
+
+      - name: Package Binary
+        run: |
+          mkdir -p release
+          cp target/release/zhtp release/
+          cd release
+          tar -czvf zhtp-macos-x86_64.tar.gz zhtp
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhtp-macos-x86_64
+          path: release/zhtp-macos-x86_64.tar.gz
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zhtp-linux-x86_64
+          path: artifacts
+
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zhtp-macos-x86_64
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/zhtp-linux-x86_64.tar.gz
+            artifacts/zhtp-macos-x86_64.tar.gz
+          generate_release_notes: false
+          body: |
+            ## The Sovereign Network - Alpha Release
+
+            **WARNING: This is an alpha release for testing purposes only.**
+
+            This release is NOT ready for production use. It is intended for:
+            - Early testing and feedback
+            - Development and integration work
+            - Understanding the system architecture
+
+            **Do NOT use this release for:**
+            - Storing real value
+            - Production deployments
+            - Anything requiring security guarantees
+
+            ### Downloads
+            - **Linux (x86_64)**: `zhtp-linux-x86_64.tar.gz`
+            - **macOS (x86_64)**: `zhtp-macos-x86_64.tar.gz` (without Bluetooth support)
+
+            ### Quick Start
+            ```bash
+            # Extract
+            tar -xzvf zhtp-<platform>.tar.gz
+
+            # Run
+            ./zhtp --help
+            ```
+
+            ### What's Included
+            - ZHTP node with mesh networking
+            - Identity management (DID-based)
+            - Blockchain with proof-of-work mining
+            - Domain registration (.sov domains)
+            - Website deployment to mesh network
+            - QUIC transport with post-quantum cryptography
+
+            ### Known Limitations
+            - Alpha software - expect bugs and breaking changes
+            - macOS build does not include Bluetooth support
+            - Some features are incomplete or experimental
+
+            For bug reports, please use the [bug report template](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/new?template=bug_report.md).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

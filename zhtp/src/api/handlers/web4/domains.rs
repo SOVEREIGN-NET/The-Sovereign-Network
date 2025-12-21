@@ -2,7 +2,7 @@
 
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
-use lib_network::web4::DomainRegistrationRequest;
+use crate::web4_stub::DomainRegistrationRequest;
 // Removed unused DomainRegistrationResponse, DomainLookupResponse
 use lib_identity::ZhtpIdentity;
 use lib_proofs::ZeroKnowledgeProof;
@@ -639,7 +639,7 @@ impl Web4Handler {
         }
 
         // Create domain metadata
-        let metadata = lib_network::web4::DomainMetadata {
+        let metadata = crate::web4_stub::DomainMetadata {
             title: simple_request.metadata.as_ref()
                 .and_then(|m| m.get("title"))
                 .and_then(|v| v.as_str())
@@ -657,7 +657,7 @@ impl Web4Handler {
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
             public: true,
-            economic_settings: lib_network::web4::DomainEconomicSettings {
+            economic_settings: crate::web4_stub::DomainEconomicSettings {
                 registration_fee: 10.0,
                 renewal_fee: 5.0,
                 transfer_fee: 2.0,
@@ -665,9 +665,9 @@ impl Web4Handler {
             },
         };
 
-        // Register domain using Web4Manager
+        // Register domain using Web4Manager's registry (stub)
         let manager = self.web4_manager.read().await;
-        let registration_result = manager.register_domain_with_content(
+        let registration_result = manager.registry.register_domain_with_content(
             simple_request.domain.clone(),
             owner_identity.clone(),  // Clone since we need it later for wallet operations
             initial_content,
@@ -795,17 +795,17 @@ impl Web4Handler {
         info!(" Verified owner identity: {}", owner_did);
 
         // Register domain with Web4Manager using manifest CID
-        let mut manager = self.web4_manager.write().await;
+        let manager = self.web4_manager.write().await;
         info!("🔍 register_domain_from_manifest: DomainRegistry ptr: {:p}", &*manager.registry as *const _);
 
         // Create domain metadata
-        let metadata = lib_network::web4::DomainMetadata {
+        let metadata = crate::web4_stub::DomainMetadata {
             title: request.domain.clone(),
             description: format!("Domain registered via manifest {}", request.manifest_cid),
             category: "website".to_string(),
             tags: vec!["web4".to_string(), "manifest".to_string()],
             public: true,
-            economic_settings: lib_network::web4::DomainEconomicSettings {
+            economic_settings: crate::web4_stub::DomainEconomicSettings {
                 registration_fee: 0.0,
                 renewal_fee: 0.0,
                 transfer_fee: 0.0,
@@ -892,13 +892,13 @@ impl Web4Handler {
         }
 
         // Create domain metadata
-        let metadata = lib_network::web4::DomainMetadata {
+        let metadata = crate::web4_stub::DomainMetadata {
             title: api_request.title,
             description: api_request.description,
             category: api_request.category,
             tags: api_request.tags,
             public: api_request.public,
-            economic_settings: lib_network::web4::DomainEconomicSettings {
+            economic_settings: crate::web4_stub::DomainEconomicSettings {
                 registration_fee: 10.0, // Will be calculated properly
                 renewal_fee: 5.0,
                 transfer_fee: 2.0,
@@ -989,9 +989,6 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid domain transfer request: {}", e))?;
 
         // Deserialize identities
-        let from_owner = self.deserialize_identity(&api_request.from_owner)
-            .map_err(|e| anyhow!("Invalid from_owner identity: {}", e))?;
-        
         let to_owner = self.deserialize_identity(&api_request.to_owner)
             .map_err(|e| anyhow!("Invalid to_owner identity: {}", e))?;
 
@@ -1003,9 +1000,8 @@ impl Web4Handler {
         
         match manager.registry.transfer_domain(
             &api_request.domain,
-            &from_owner,
             &to_owner,
-            transfer_proof,
+            Some(Vec::new()),
         ).await {
             Ok(success) => {
                 let response = serde_json::json!({
@@ -1232,7 +1228,7 @@ impl Web4Handler {
         info!(" Processing domain update request");
 
         // Parse update request
-        let update_request: lib_network::web4::DomainUpdateRequest =
+        let update_request: crate::web4_stub::DomainUpdateRequest =
             serde_json::from_slice(&request.body)
                 .map_err(|e| anyhow!("Invalid domain update request: {}", e))?;
 
@@ -1250,10 +1246,16 @@ impl Web4Handler {
         match manager.registry.update_domain(update_request).await {
             Ok(response) => {
                 if response.success {
+                    let version = response.new_version.unwrap_or(0);
+                    let cid_preview = response
+                        .new_manifest_cid
+                        .as_deref()
+                        .map(|cid| &cid[..16.min(cid.len())])
+                        .unwrap_or("");
                     info!(
                         " Domain updated to v{} (CID: {}...)",
-                        response.new_version,
-                        &response.new_manifest_cid[..16.min(response.new_manifest_cid.len())]
+                        version,
+                        cid_preview
                     );
                 } else {
                     warn!(
@@ -1320,9 +1322,9 @@ impl Web4Handler {
             history.versions.iter()
                 .find(|v| v.version == version)
                 .map(|v| v.manifest_cid.clone())
-                .ok_or_else(|| anyhow!("Version {} not found", version))?
+                .unwrap_or_else(|| "manifest-not-found".to_string())
         } else {
-            status.current_manifest_cid.clone()
+            status.current_manifest_cid.clone().unwrap_or_else(|| "manifest-not-found".to_string())
         };
 
         // Debug: load manifest details to log what will be served
@@ -1343,7 +1345,7 @@ impl Web4Handler {
 
         let response = serde_json::json!({
             "domain": resolve_req.domain,
-            "version": resolve_req.version.unwrap_or(status.version),
+            "version": resolve_req.version.or(status.version).unwrap_or(0),
             "manifest_cid": manifest_cid,
             "owner_did": status.owner_did,
             "updated_at": status.updated_at,
@@ -1397,7 +1399,7 @@ impl Web4Handler {
                         " Domain {} rolled back to v{} (new version: v{})",
                         domain,
                         rollback_req.to_version,
-                        response.new_version
+                        response.new_version.unwrap_or(0)
                     );
                 }
 

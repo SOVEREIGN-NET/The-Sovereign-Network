@@ -6,6 +6,9 @@ pub mod service_container;
 pub mod event_bus;
 pub mod component_manager;
 pub mod dependency_injection;
+pub mod dht_dispatcher;
+pub mod dht_integration;
+pub mod dht_payload_handler;
 
 use anyhow::{Result, Context};
 use std::future::Future;
@@ -17,6 +20,9 @@ pub use service_container::*;
 pub use event_bus::*;
 pub use component_manager::*;
 pub use dependency_injection::*;
+pub use dht_dispatcher::*;
+pub use dht_integration::*;
+pub use dht_payload_handler::*;
 
 use crate::runtime::{ComponentId, Component};
 

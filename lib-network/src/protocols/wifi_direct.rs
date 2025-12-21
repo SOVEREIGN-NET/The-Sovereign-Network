@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
+use crate::network_utils::get_local_ip;
 
 // Enhanced WiFi Direct implementations with cross-platform support
 #[cfg(all(target_os = "macos", feature = "enhanced-wifi-direct"))]
@@ -2497,8 +2498,8 @@ impl WiFiDirectMeshProtocol {
         // Use mdns-sd library to register service
         if let Some(daemon) = &self.mdns_daemon {
             // Get local IP address for service registration
-            let local_ip = match get_local_ip_for_mdns().await {
-                Ok(ip) => ip,
+            let local_ip = match get_local_ip().await {
+                Ok(ip) => ip.to_string(),
                 Err(e) => {
                     warn!("Could not determine local IP for mDNS: {}", e);
                     "0.0.0.0".to_string()
@@ -2628,8 +2629,8 @@ impl WiFiDirectMeshProtocol {
                                     info!("   Port: {}, IPs: {:?}", port, addresses);
                                     
                                     // Get our own IP to filter out self-discovery
-                                    let own_ip = match get_local_ip_for_mdns().await {
-                                        Ok(ip) => ip,
+                                    let own_ip = match get_local_ip().await {
+                                        Ok(ip) => ip.to_string(),
                                         Err(_) => String::new()
                                     };
                                     
@@ -3461,32 +3462,7 @@ impl WiFiDirectMeshProtocol {
     }
 }
 
-/// Get local IP address for mDNS service registration
-async fn get_local_ip_for_mdns() -> Result<String> {
-    use std::net::IpAddr;
-    
-    // Try to get first non-loopback local IP
-    match local_ip_address::local_ip() {
-        Ok(IpAddr::V4(ip)) => Ok(ip.to_string()),
-        Ok(IpAddr::V6(ip)) => Ok(ip.to_string()),
-        Err(_) => {
-            // Fallback: try to find any network interface
-            if let Ok(interfaces) = local_ip_address::list_afinet_netifas() {
-                for (name, ip) in interfaces {
-                    if !name.to_lowercase().contains("loopback") {
-                        if let IpAddr::V4(ipv4) = ip {
-                            if !ipv4.is_loopback() {
-                                return Ok(ipv4.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            // Last resort: use localhost (mDNS daemon will handle it)
-            Ok("127.0.0.1".to_string())
-        }
-    }
-}
+
 
 /// WiFi Direct mesh status information
 #[derive(Debug, Clone)]

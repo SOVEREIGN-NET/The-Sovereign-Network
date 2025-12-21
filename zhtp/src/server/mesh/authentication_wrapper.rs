@@ -16,7 +16,6 @@
 //! 4. Failed auth = peer never added (no race window)
 
 use std::net::SocketAddr;
-use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
 use anyhow::{Result, Context};
 use tracing::{debug, info, warn, error};
 use tokio::net::TcpStream;
@@ -170,7 +169,7 @@ impl MeshRouter {
                     // Ticket #149: Use peer_registry upsert instead of connections.insert
                     // connections is already a write guard, use it directly
                     let peer_entry = lib_network::peer_registry::PeerEntry::new(
-                        peer_key,
+                        peer_key.clone(),
                         vec![lib_network::peer_registry::PeerEndpoint {
                             address: lib_network::NodeAddress::Tcp(addr),
                             protocol: connection.protocol.clone(),
@@ -221,6 +220,12 @@ impl MeshRouter {
                     
                     info!("✅ Peer {} added to mesh network in {:?} state ({} total peers)",
                         handshake.node_id, final_state, connections.all_peers().count());
+                    
+                    // SECURITY: Register authenticated peer for blockchain sync
+                    if authenticated {
+                        self.sync_manager.register_authenticated_peer(&peer_pubkey).await;
+                        info!("🔐 Peer {} registered for secure blockchain sync", handshake.node_id);
+                    }
                 }
 
                 // Establish QUIC connection if available (after peer is in connections)

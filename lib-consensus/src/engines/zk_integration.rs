@@ -7,6 +7,8 @@ use lib_proofs::{ZkProofSystem, ZkProof, ZkTransactionProof};
 use crate::types::{ConsensusProposal, ConsensusProof, ConsensusVote};
 use crate::ConsensusError;
 
+const VOTE_DOMAIN_TAG: &[u8] = b"ZHTP/CONSENSUS/VOTE/v1\0";
+
 /// ZK integration for consensus system
 pub struct ZkConsensusIntegration {
     /// ZK proof system
@@ -283,7 +285,8 @@ impl ZkConsensusIntegration {
         Ok(false)
     }
     
-    /// Enhanced vote validation with ZK privacy
+    /// Enhanced vote validation with ZK privacy (dev/test only)
+    #[cfg(any(test, feature = "dev-insecure"))]
     pub async fn validate_vote_zk(&self, vote: &ConsensusVote) -> Result<bool> {
         // Verify voter signature using post-quantum cryptography
         let vote_data = self.serialize_vote_for_zk_verification(vote)?;
@@ -312,10 +315,19 @@ impl ZkConsensusIntegration {
         
         Ok(true)
     }
+
+    /// Enhanced vote validation with ZK privacy (disabled in production)
+    #[cfg(not(any(test, feature = "dev-insecure")))]
+    pub async fn validate_vote_zk(&self, _vote: &ConsensusVote) -> Result<bool> {
+        Err(anyhow::anyhow!(
+            "validate_vote_zk is dev-only; use production vote verification paths"
+        ))
+    }
     
     /// Serialize vote data for ZK verification
     fn serialize_vote_for_zk_verification(&self, vote: &ConsensusVote) -> Result<Vec<u8>> {
         let mut data = Vec::new();
+        data.extend_from_slice(VOTE_DOMAIN_TAG);
         data.extend_from_slice(vote.id.as_bytes());
         data.extend_from_slice(vote.voter.as_bytes());
         data.extend_from_slice(vote.proposal_id.as_bytes());
