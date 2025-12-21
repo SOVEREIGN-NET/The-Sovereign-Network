@@ -706,29 +706,14 @@ const LORAWAN_LATENCY_MS: u32 = 5000; // 5 seconds typical
 const LORAWAN_RANGE_METERS: u32 = 15000; // 15 km typical
 
 impl LoRaWANMeshProtocol {
-    /// MAC key for session validation (derived from node_id)
+    /// MAC key for session validation (uses shared helper)
     fn get_mac_key(&self) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(b"LORAWAN_SESSION_MAC");
-        hasher.update(&self.node_id);
-        let result = hasher.finalize();
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&result);
-        key
+        super::derive_protocol_mac_key("LORAWAN", &self.node_id)
     }
 
-    /// Derive session encryption key from peer DevAddr and node_id
+    /// Derive session encryption key (uses shared helper)
     fn derive_session_key(&self, peer_dev_addr: u32) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(b"LORAWAN_SESSION_KEY");
-        hasher.update(&self.node_id);
-        hasher.update(&peer_dev_addr.to_le_bytes());
-        let result = hasher.finalize();
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&result);
-        key
+        super::derive_protocol_session_key("LORAWAN", &self.node_id, &peer_dev_addr.to_le_bytes())
     }
 
     /// Fragment message if it exceeds LoRaWAN MTU (Functional Core)
@@ -842,19 +827,13 @@ impl Protocol for LoRaWANMeshProtocol {
             _ => return Err(anyhow!("Invalid peer address type")),
         };
 
-        // Functional Core: Generate new session key with ratcheting
-        let new_key = {
-            use sha2::{Sha256, Digest};
-            let mut hasher = Sha256::new();
-            hasher.update(b"LORAWAN_REKEY");
-            hasher.update(&self.node_id);
-            hasher.update(&peer_dev_addr.to_le_bytes());
-            hasher.update(&session.lifecycle().message_count().to_le_bytes());
-            let result = hasher.finalize();
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&result);
-            key
-        };
+        // Functional Core: Generate new session key with ratcheting (uses shared helper)
+        let new_key = super::derive_protocol_rekey(
+            "LORAWAN",
+            &self.node_id,
+            &peer_dev_addr.to_le_bytes(),
+            session.lifecycle().message_count()
+        );
 
         // Imperative Shell: Update session state
         session.session_keys_mut().set_encryption_key(new_key)?;

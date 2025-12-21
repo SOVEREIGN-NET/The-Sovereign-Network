@@ -3538,29 +3538,14 @@ const WIFI_DIRECT_LATENCY_MS: u32 = 10;
 const WIFI_DIRECT_RANGE_METERS: u32 = 200;
 
 impl WiFiDirectMeshProtocol {
-    /// MAC key for session validation (derived from node_id)
+    /// MAC key for session validation (uses shared helper)
     fn get_mac_key(&self) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(b"WIFI_DIRECT_SESSION_MAC");
-        hasher.update(&self.node_id);
-        let result = hasher.finalize();
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&result);
-        key
+        super::derive_protocol_mac_key("WIFI_DIRECT", &self.node_id)
     }
 
-    /// Derive session encryption key from peer MAC and node_id
+    /// Derive session encryption key (uses shared helper)
     fn derive_session_key(&self, peer_mac: &str) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(b"WIFI_DIRECT_SESSION_KEY");
-        hasher.update(&self.node_id);
-        hasher.update(peer_mac.as_bytes());
-        let result = hasher.finalize();
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&result);
-        key
+        super::derive_protocol_session_key("WIFI_DIRECT", &self.node_id, peer_mac.as_bytes())
     }
 }
 
@@ -3660,19 +3645,13 @@ impl Protocol for WiFiDirectMeshProtocol {
             _ => return Err(anyhow!("Invalid peer address type")),
         };
 
-        // Functional Core: Generate new session key with ratcheting
-        let new_key = {
-            use sha2::{Sha256, Digest};
-            let mut hasher = Sha256::new();
-            hasher.update(b"WIFI_DIRECT_REKEY");
-            hasher.update(&self.node_id);
-            hasher.update(peer_mac.as_bytes());
-            hasher.update(&session.lifecycle().message_count().to_le_bytes());
-            let result = hasher.finalize();
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&result);
-            key
-        };
+        // Functional Core: Generate new session key with ratcheting (uses shared helper)
+        let new_key = super::derive_protocol_rekey(
+            "WIFI_DIRECT",
+            &self.node_id,
+            peer_mac.as_bytes(),
+            session.lifecycle().message_count()
+        );
 
         // Imperative Shell: Update session state
         session.session_keys_mut().set_encryption_key(new_key)?;

@@ -299,30 +299,16 @@ const SATELLITE_THROUGHPUT_MBPS: f64 = 100.0;
 const SATELLITE_LATENCY_MS: u32 = 600; // ~600ms for LEO
 
 impl SatelliteMeshProtocol {
-    /// MAC key for session validation (derived from node_id)
+    /// MAC key for session validation (uses shared helper)
     fn get_mac_key(&self) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(b"SATELLITE_SESSION_MAC");
-        hasher.update(&self.node_id);
-        let result = hasher.finalize();
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&result);
-        key
+        super::derive_protocol_mac_key("SATELLITE", &self.node_id)
     }
 
-    /// Derive session encryption key from terminal_id and node_id
+    /// Derive session encryption key (uses shared helper with terminal_id)
     fn derive_session_key(&self, peer_terminal_id: &str) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(b"SATELLITE_SESSION_KEY");
-        hasher.update(&self.node_id);
-        hasher.update(&self.terminal_id.as_bytes());
-        hasher.update(peer_terminal_id.as_bytes());
-        let result = hasher.finalize();
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&result);
-        key
+        let mut combined_peer_id = self.terminal_id.as_bytes().to_vec();
+        combined_peer_id.extend_from_slice(peer_terminal_id.as_bytes());
+        super::derive_protocol_session_key("SATELLITE", &self.node_id, &combined_peer_id)
     }
 }
 
@@ -421,20 +407,15 @@ impl Protocol for SatelliteMeshProtocol {
             _ => return Err(anyhow!("Invalid peer address type")),
         };
 
-        // Functional Core: Generate new session key with ratcheting
-        let new_key = {
-            use sha2::{Sha256, Digest};
-            let mut hasher = Sha256::new();
-            hasher.update(b"SATELLITE_REKEY");
-            hasher.update(&self.node_id);
-            hasher.update(&self.terminal_id.as_bytes());
-            hasher.update(peer_satellite_id.as_bytes());
-            hasher.update(&session.lifecycle().message_count().to_le_bytes());
-            let result = hasher.finalize();
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&result);
-            key
-        };
+        // Functional Core: Generate new session key with ratcheting (uses shared helper)
+        let mut combined_peer_id = self.terminal_id.as_bytes().to_vec();
+        combined_peer_id.extend_from_slice(peer_satellite_id.as_bytes());
+        let new_key = super::derive_protocol_rekey(
+            "SATELLITE",
+            &self.node_id,
+            &combined_peer_id,
+            session.lifecycle().message_count()
+        );
 
         // Imperative Shell: Update session state
         session.session_keys_mut().set_encryption_key(new_key)?;

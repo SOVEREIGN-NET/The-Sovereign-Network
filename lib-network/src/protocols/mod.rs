@@ -1363,6 +1363,61 @@ pub trait Protocol: Send + Sync {
 }
 
 // ============================================================================
+// Protocol Helper Functions (DRY utilities to reduce duplication)
+// ============================================================================
+
+/// Derive a MAC key for session validation using SHA256
+/// 
+/// This function provides a standardized way to derive MAC keys across all protocols,
+/// reducing code duplication.
+pub fn derive_protocol_mac_key(protocol_name: &str, node_id: &[u8]) -> [u8; 32] {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(protocol_name.as_bytes());
+    hasher.update(b"_SESSION_MAC");
+    hasher.update(node_id);
+    let result = hasher.finalize();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&result);
+    key
+}
+
+/// Derive a session encryption key using SHA256
+///
+/// This function provides a standardized way to derive session keys across all protocols,
+/// reducing code duplication.
+pub fn derive_protocol_session_key(protocol_name: &str, node_id: &[u8], peer_id: &[u8]) -> [u8; 32] {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(protocol_name.as_bytes());
+    hasher.update(b"_SESSION_KEY");
+    hasher.update(node_id);
+    hasher.update(peer_id);
+    let result = hasher.finalize();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&result);
+    key
+}
+
+/// Derive a rekeyed session key using SHA256 with message count
+///
+/// This function provides a standardized way to derive rekey keys across all protocols,
+/// reducing code duplication.
+pub fn derive_protocol_rekey(protocol_name: &str, node_id: &[u8], peer_id: &[u8], message_count: u64) -> [u8; 32] {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(protocol_name.as_bytes());
+    hasher.update(b"_REKEY");
+    hasher.update(node_id);
+    hasher.update(peer_id);
+    hasher.update(&message_count.to_le_bytes());
+    let result = hasher.finalize();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&result);
+    key
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

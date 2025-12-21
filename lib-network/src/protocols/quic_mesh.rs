@@ -1102,29 +1102,14 @@ const QUIC_THROUGHPUT_MBPS: f64 = 100.0;
 const QUIC_LATENCY_MS: u32 = 20;
 
 impl QuicMeshProtocol {
-    /// MAC key for session validation (derived from identity)
+    /// MAC key for session validation (uses shared helper)
     fn get_mac_key(&self) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(b"QUIC_SESSION_MAC");
-        hasher.update(&self.identity.node_id());
-        let result = hasher.finalize();
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&result);
-        key
+        super::derive_protocol_mac_key("QUIC", &self.identity.node_id())
     }
 
-    /// Derive session encryption key from QUIC connection and peer node_id
+    /// Derive session encryption key (uses shared helper)
     fn derive_session_key(&self, peer_node_id: &[u8]) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(b"QUIC_SESSION_KEY");
-        hasher.update(&self.identity.node_id());
-        hasher.update(peer_node_id);
-        let result = hasher.finalize();
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&result);
-        key
+        super::derive_protocol_session_key("QUIC", &self.identity.node_id(), peer_node_id)
     }
 }
 
@@ -1236,20 +1221,13 @@ impl Protocol for QuicMeshProtocol {
         // Extract peer node_id from session identity
         let peer_node_id = session.peer_identity().public_key();
 
-        // Functional Core: Perform new Kyber key exchange (production)
-        // For now, generate new key with ratcheting
-        let new_key = {
-            use sha2::{Sha256, Digest};
-            let mut hasher = Sha256::new();
-            hasher.update(b"QUIC_REKEY");
-            hasher.update(&self.identity.node_id());
-            hasher.update(peer_node_id);
-            hasher.update(&session.lifecycle().message_count().to_le_bytes());
-            let result = hasher.finalize();
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&result);
-            key
-        };
+        // Functional Core: Perform new Kyber key exchange (uses shared helper)
+        let new_key = super::derive_protocol_rekey(
+            "QUIC",
+            &self.identity.node_id(),
+            peer_node_id,
+            session.lifecycle().message_count()
+        );
 
         // Imperative Shell: Update session state
         session.session_keys_mut().set_encryption_key(new_key)?;
