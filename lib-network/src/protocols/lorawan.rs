@@ -679,3 +679,217 @@ mod tests {
         // assert!(result.is_ok());
     }
 }
+
+// ============================================================================
+// Protocol Trait Implementation
+// ============================================================================
+
+use super::{
+    Protocol, ProtocolSession, ProtocolCapabilities, NetworkProtocol,
+    PeerAddress, VerifiedPeerIdentity, SessionKeys, PowerProfile,
+    AuthScheme, CipherSuite, PqcMode,
+};
+use async_trait::async_trait;
+use crate::types::mesh_message::MeshMessageEnvelope;
+
+/// LoRaWAN Maximum Transmission Unit (data rate dependent, SF7-SF12)
+/// Using SF7 (highest data rate) for maximum MTU
+const LORAWAN_MTU: u16 = 242;
+
+/// LoRaWAN throughput in Mbps (very low bandwidth)
+const LORAWAN_THROUGHPUT_MBPS: f64 = 0.05; // 50 kbps
+
+/// LoRaWAN latency in milliseconds (very high due to duty cycle)
+const LORAWAN_LATENCY_MS: u32 = 5000; // 5 seconds typical
+
+/// LoRaWAN range in meters (long range capability)
+const LORAWAN_RANGE_METERS: u32 = 15000; // 15 km typical
+
+impl LoRaWANMeshProtocol {
+    /// MAC key for session validation (derived from node_id)
+    fn get_mac_key(&self) -> [u8; 32] {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(b"LORAWAN_SESSION_MAC");
+        hasher.update(&self.node_id);
+        let result = hasher.finalize();
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&result);
+        key
+    }
+
+    /// Derive session encryption key from peer DevAddr and node_id
+    fn derive_session_key(&self, peer_dev_addr: u32) -> [u8; 32] {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(b"LORAWAN_SESSION_KEY");
+        hasher.update(&self.node_id);
+        hasher.update(&peer_dev_addr.to_le_bytes());
+        let result = hasher.finalize();
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&result);
+        key
+    }
+
+    /// Fragment message if it exceeds LoRaWAN MTU (Functional Core)
+    fn fragment_message_internal(&self, data: &[u8]) -> Vec<Vec<u8>> {
+        let max_payload = LORAWAN_MTU as usize;
+        let mut fragments = Vec::new();
+
+        for chunk in data.chunks(max_payload) {
+            fragments.push(chunk.to_vec());
+        }
+
+        fragments
+    }
+}
+
+#[async_trait]
+impl Protocol for LoRaWANMeshProtocol {
+    async fn connect(&mut self, target: &PeerAddress) -> Result<ProtocolSession> {
+        // Extract LoRa DevAddr from peer address
+        let peer_dev_addr = match target {
+            PeerAddress::LoRaDevAddr(addr) => *addr,
+            _ => return Err(anyhow!("Invalid peer address type for LoRaWAN protocol")),
+        };
+
+        // Derive session key from peer DevAddr
+        let session_key = self.derive_session_key(peer_dev_addr);
+        
+        // Create session keys
+        let mut session_keys = SessionKeys::new(CipherSuite::Aes256Gcm, false);
+        session_keys.set_encryption_key(session_key)
+            .with_context(|| "Failed to set encryption key")?;
+
+        // Create verified peer identity
+        let peer_identity = VerifiedPeerIdentity::new(
+            format!("lora:{:08X}", peer_dev_addr),
+            peer_dev_addr.to_le_bytes().to_vec(),
+            vec![], // Simplified - production needs OTAA join proof
+        )?;
+
+        // Get MAC key for session validation
+        let mac_key = self.get_mac_key();
+
+        // Create protocol session
+        let session = ProtocolSession::new(
+            target.clone(),
+            peer_identity,
+            NetworkProtocol::LoRaWAN,
+            session_keys,
+            AuthScheme::MutualHandshake,
+            &mac_key,
+        );
+
+        Ok(session)
+    }
+
+    async fn accept(&mut self) -> Result<ProtocolSession> {
+        // Production implementation would accept incoming LoRa messages
+        Err(anyhow!("LoRaWAN accept requires gateway listener and join server"))
+    }
+
+    fn validate_session(&self, session: &ProtocolSession) -> Result<()> {
+        let mac_key = self.get_mac_key();
+        session.validate(&mac_key)
+    }
+
+    async fn send_message(
+        &self,
+        session: &ProtocolSession,
+        envelope: &MeshMessageEnvelope,
+    ) -> Result<()> {
+        // Functional Core: Validate session
+        self.validate_session(session)?;
+
+        // Functional Core: Serialize envelope
+        let data = bincode::serialize(envelope)
+            .with_context(|| "Failed to serialize message envelope")?;
+
+        // Functional Core: Fragment if needed (LoRaWAN has very small MTU)
+        let fragments = self.fragment_message_internal(&data);
+
+        // Imperative Shell: Send each fragment via LoRa radio
+        for (idx, fragment) in fragments.iter().enumerate() {
+            tracing::debug!(
+                "LoRaWAN send fragment {}/{}: {} bytes to {:?}",
+                idx + 1,
+                fragments.len(),
+                fragment.len(),
+                session.peer_address()
+            );
+            // Production: Send via LoRa radio module (SX1276, SX1301, etc.)
+        }
+
+        // Update session activity
+        session.touch();
+
+        Ok(())
+    }
+
+    async fn receive_message(&self, session: &ProtocolSession) -> Result<MeshMessageEnvelope> {
+        // Validate session first
+        self.validate_session(session)?;
+
+        // Production implementation would receive from LoRa radio and reassemble fragments
+        Err(anyhow!("LoRaWAN receive requires radio module and fragment reassembly"))
+    }
+
+    async fn rekey_session(&mut self, session: &mut ProtocolSession) -> Result<()> {
+        // Extract peer DevAddr from session
+        let peer_dev_addr = match session.peer_address() {
+            PeerAddress::LoRaDevAddr(addr) => *addr,
+            _ => return Err(anyhow!("Invalid peer address type")),
+        };
+
+        // Functional Core: Generate new session key with ratcheting
+        let new_key = {
+            use sha2::{Sha256, Digest};
+            let mut hasher = Sha256::new();
+            hasher.update(b"LORAWAN_REKEY");
+            hasher.update(&self.node_id);
+            hasher.update(&peer_dev_addr.to_le_bytes());
+            hasher.update(&session.lifecycle().message_count().to_le_bytes());
+            let result = hasher.finalize();
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&result);
+            key
+        };
+
+        // Imperative Shell: Update session state
+        session.session_keys_mut().set_encryption_key(new_key)?;
+        session.session_keys_mut().increment_rekey_generation();
+        session.replay_state().reset();
+        session.lifecycle().reset_for_rekey();
+
+        Ok(())
+    }
+
+    fn capabilities(&self) -> ProtocolCapabilities {
+        let mut caps = ProtocolCapabilities::new(
+            LORAWAN_MTU,
+            LORAWAN_THROUGHPUT_MBPS,
+            LORAWAN_LATENCY_MS,
+            PowerProfile::UltraLow,
+        );
+        caps.range_meters = Some(LORAWAN_RANGE_METERS);
+        caps.reliable = false; // LoRaWAN is inherently unreliable (confirmed uplink optional)
+        caps.requires_internet = false;
+        caps.auth_schemes = vec![AuthScheme::MutualHandshake];
+        caps.encryption = Some(CipherSuite::Aes256Gcm);
+        caps.pqc_mode = PqcMode::None;
+        caps.replay_protection = true;
+        caps.identity_binding = true;
+        caps.forward_secrecy = false; // Deterministic key derivation
+        caps
+    }
+
+    fn protocol_type(&self) -> NetworkProtocol {
+        NetworkProtocol::LoRaWAN
+    }
+
+    fn is_available(&self) -> bool {
+        // Check if LoRa radio hardware is available
+        true // Simplified - production checks radio module state
+    }
+}

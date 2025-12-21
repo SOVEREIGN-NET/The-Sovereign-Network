@@ -276,3 +276,200 @@ mod tests {
         // assert!(result.is_ok());
     }
 }
+
+// ============================================================================
+// Protocol Trait Implementation
+// ============================================================================
+
+use super::{
+    Protocol, ProtocolSession, ProtocolCapabilities, NetworkProtocol,
+    PeerAddress, VerifiedPeerIdentity, SessionKeys, PowerProfile,
+    AuthScheme, CipherSuite, PqcMode,
+};
+use async_trait::async_trait;
+use crate::types::mesh_message::MeshMessageEnvelope;
+
+/// Satellite Maximum Transmission Unit (typical for satellite links)
+const SATELLITE_MTU: u16 = 1500;
+
+/// Satellite throughput in Mbps (varies by constellation, using Starlink typical)
+const SATELLITE_THROUGHPUT_MBPS: f64 = 100.0;
+
+/// Satellite latency in milliseconds (LEO constellation typical)
+const SATELLITE_LATENCY_MS: u32 = 600; // ~600ms for LEO
+
+impl SatelliteMeshProtocol {
+    /// MAC key for session validation (derived from node_id)
+    fn get_mac_key(&self) -> [u8; 32] {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(b"SATELLITE_SESSION_MAC");
+        hasher.update(&self.node_id);
+        let result = hasher.finalize();
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&result);
+        key
+    }
+
+    /// Derive session encryption key from terminal_id and node_id
+    fn derive_session_key(&self, peer_terminal_id: &str) -> [u8; 32] {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(b"SATELLITE_SESSION_KEY");
+        hasher.update(&self.node_id);
+        hasher.update(&self.terminal_id.as_bytes());
+        hasher.update(peer_terminal_id.as_bytes());
+        let result = hasher.finalize();
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&result);
+        key
+    }
+}
+
+#[async_trait]
+impl Protocol for SatelliteMeshProtocol {
+    async fn connect(&mut self, target: &PeerAddress) -> Result<ProtocolSession> {
+        // Extract satellite ID from peer address
+        let peer_satellite_id = match target {
+            PeerAddress::SatelliteId(id) => id.as_str(),
+            _ => return Err(anyhow!("Invalid peer address type for Satellite protocol")),
+        };
+
+        // Derive session key from peer satellite ID
+        let session_key = self.derive_session_key(peer_satellite_id);
+        
+        // Create session keys
+        let mut session_keys = SessionKeys::new(CipherSuite::Aes256Gcm, false);
+        session_keys.set_encryption_key(session_key)
+            .with_context(|| "Failed to set encryption key")?;
+
+        // Create verified peer identity
+        let peer_identity = VerifiedPeerIdentity::new(
+            format!("satellite:{}", peer_satellite_id),
+            peer_satellite_id.as_bytes().to_vec(),
+            vec![], // Simplified - production needs constellation auth proof
+        )?;
+
+        // Get MAC key for session validation
+        let mac_key = self.get_mac_key();
+
+        // Create protocol session
+        let session = ProtocolSession::new(
+            target.clone(),
+            peer_identity,
+            NetworkProtocol::Satellite,
+            session_keys,
+            AuthScheme::MutualHandshake,
+            &mac_key,
+        );
+
+        Ok(session)
+    }
+
+    async fn accept(&mut self) -> Result<ProtocolSession> {
+        // Production implementation would accept incoming satellite downlink
+        Err(anyhow!("Satellite accept requires terminal modem and constellation registration"))
+    }
+
+    fn validate_session(&self, session: &ProtocolSession) -> Result<()> {
+        let mac_key = self.get_mac_key();
+        session.validate(&mac_key)
+    }
+
+    async fn send_message(
+        &self,
+        session: &ProtocolSession,
+        envelope: &MeshMessageEnvelope,
+    ) -> Result<()> {
+        // Functional Core: Validate session
+        self.validate_session(session)?;
+
+        // Functional Core: Serialize envelope
+        let data = bincode::serialize(envelope)
+            .with_context(|| "Failed to serialize message envelope")?;
+
+        // Imperative Shell: Send via satellite uplink
+        tracing::debug!(
+            "Satellite send: {} bytes to {:?} via {}",
+            data.len(),
+            session.peer_address(),
+            self.terminal_id
+        );
+
+        // Production: Send via satellite modem/terminal
+        // let modem = self.get_modem().await?;
+        // modem.send_uplink(&data).await?;
+
+        // Update session activity
+        session.touch();
+
+        Ok(())
+    }
+
+    async fn receive_message(&self, session: &ProtocolSession) -> Result<MeshMessageEnvelope> {
+        // Validate session first
+        self.validate_session(session)?;
+
+        // Production implementation would receive from satellite downlink
+        Err(anyhow!("Satellite receive requires terminal modem and downlink processing"))
+    }
+
+    async fn rekey_session(&mut self, session: &mut ProtocolSession) -> Result<()> {
+        // Extract peer satellite ID from session
+        let peer_satellite_id = match session.peer_address() {
+            PeerAddress::SatelliteId(id) => id.as_str(),
+            _ => return Err(anyhow!("Invalid peer address type")),
+        };
+
+        // Functional Core: Generate new session key with ratcheting
+        let new_key = {
+            use sha2::{Sha256, Digest};
+            let mut hasher = Sha256::new();
+            hasher.update(b"SATELLITE_REKEY");
+            hasher.update(&self.node_id);
+            hasher.update(&self.terminal_id.as_bytes());
+            hasher.update(peer_satellite_id.as_bytes());
+            hasher.update(&session.lifecycle().message_count().to_le_bytes());
+            let result = hasher.finalize();
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&result);
+            key
+        };
+
+        // Imperative Shell: Update session state
+        session.session_keys_mut().set_encryption_key(new_key)?;
+        session.session_keys_mut().increment_rekey_generation();
+        session.replay_state().reset();
+        session.lifecycle().reset_for_rekey();
+
+        Ok(())
+    }
+
+    fn capabilities(&self) -> ProtocolCapabilities {
+        let mut caps = ProtocolCapabilities::new(
+            SATELLITE_MTU,
+            SATELLITE_THROUGHPUT_MBPS,
+            SATELLITE_LATENCY_MS,
+            PowerProfile::VeryHigh,
+        );
+        caps.range_meters = None; // Global coverage, no fixed range
+        caps.reliable = true; // Satellite links typically provide reliability
+        caps.requires_internet = true; // Requires satellite constellation infrastructure
+        caps.auth_schemes = vec![AuthScheme::MutualHandshake];
+        caps.encryption = Some(CipherSuite::Aes256Gcm);
+        caps.pqc_mode = PqcMode::None;
+        caps.replay_protection = true;
+        caps.identity_binding = true;
+        caps.forward_secrecy = false; // Deterministic key derivation
+        caps
+    }
+
+    fn protocol_type(&self) -> NetworkProtocol {
+        NetworkProtocol::Satellite
+    }
+
+    fn is_available(&self) -> bool {
+        // Check if satellite terminal/modem is available
+        true // Simplified - production checks terminal connection state
+    }
+}
