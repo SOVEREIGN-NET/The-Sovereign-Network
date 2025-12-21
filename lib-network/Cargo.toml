@@ -199,3 +199,4 @@ identity-debug = []               # Enable detailed identity verification debug 
 storage-integration = []
 chain-integration = []
 unsafe-bootstrap = []             # Explicit opt-in for insecure TLS verification paths
+ble-mock = []                     # Enable BLE mock testing framework (Issue #141)

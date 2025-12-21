@@ -39,6 +39,14 @@ pub mod linux_ops;
 #[cfg(feature = "enhanced-parsing")]
 pub mod enhanced;
 
+// GATT adapter with UHP framing (Issue #141)
+pub mod gatt_adapter;
+pub mod gatt_stream;
+
+// Mock BLE link for CI testing (Issue #141)
+#[cfg(any(test, feature = "ble-mock"))]
+pub mod mock;
+
 // Main BLE Mesh Protocol Implementation
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
