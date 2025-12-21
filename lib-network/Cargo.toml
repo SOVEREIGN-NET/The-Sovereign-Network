@@ -37,6 +37,7 @@ hex = "0.4"
 # Security: HKDF for proper key derivation
 hkdf = "0.12"
 sha3 = "0.10"
+hmac = "0.12"
 
 # Security: Constant-time operations
 subtle = "2.5"
