@@ -40,7 +40,7 @@ pub mod linux_ops;
 pub mod enhanced;
 
 // Main BLE Mesh Protocol Implementation
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
