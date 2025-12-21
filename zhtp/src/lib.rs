@@ -14,6 +14,8 @@ pub mod session_manager;
 pub mod security;
 pub mod discovery_coordinator;
 pub mod utils;
+pub mod network_output_dispatcher;
+pub mod web4_stub;
 
 // Re-export key types for external use
 pub use config::{NodeConfig, CliArgs, Environment, MeshMode, SecurityLevel};

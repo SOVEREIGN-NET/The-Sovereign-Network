@@ -241,15 +241,6 @@ impl MeshRouter {
         info!("⛓️ Blockchain provider configured for edge node sync");
     }
     
-    /// Set edge sync manager for BLE device support
-    pub async fn set_edge_sync_manager(
-        &self, 
-        manager: Arc<lib_network::blockchain_sync::EdgeNodeSyncManager>
-    ) {
-        *self.edge_sync_manager.write().await = Some(manager);
-        info!("📱 Edge node sync manager configured for BLE support");
-    }
-    
     /// Set mesh server for reward tracking (Phase 2.5)
     pub async fn set_mesh_server(&self, mesh_server: Arc<tokio::sync::RwLock<ZhtpMeshServer>>) {
         let mut router = self.mesh_message_router.write().await;
@@ -382,7 +373,7 @@ impl MeshRouter {
     // ✅ PHASE 3: Blockchain Sync Integration with lib-network
     // 
     // Complements existing push/broadcast functionality with pull-side sync:
-    // - EdgeNodeSyncManager: Headers-only sync with ZK bootstrap proofs
+    // - BlockchainSyncManager with EdgeNodeStrategy: Headers-only sync with ZK bootstrap proofs
     // - SyncCoordinator: Prevents duplicate syncs across transports
     // ========================================================================
     
@@ -391,15 +382,15 @@ impl MeshRouter {
     /// # Arguments
     /// * `max_headers` - Rolling window size (recommended: 500 for ~100KB storage)
     pub async fn initialize_edge_sync(&self, max_headers: usize) {
-        let sync_manager = Arc::new(lib_network::blockchain_sync::EdgeNodeSyncManager::new(max_headers));
-        *self.edge_sync_manager.write().await = Some(sync_manager);
-        info!("✅ Edge node sync manager initialized with {} header capacity", max_headers);
+        // Use unified sync manager with EdgeNodeStrategy
+        *self.is_edge_node.write().await = true;
+        info!("✅ Edge node sync mode enabled with {} header capacity (use sync_manager with EdgeNodeStrategy)", max_headers);
     }
     
-    /// Synchronize blockchain from a specific peer using EdgeNodeSyncManager
+    /// Synchronize blockchain from a specific peer
     /// 
     /// Complements broadcast (push) with pull-side sync for catching up with network.
-    /// Uses headers-only sync for bandwidth efficiency.
+    /// Uses appropriate sync strategy based on node mode (edge vs full).
     /// 
     /// # Arguments
     /// * `peer_pubkey` - Public key of peer to sync from
@@ -407,10 +398,13 @@ impl MeshRouter {
     /// # Returns
     /// * `Ok(request_id)` - ID of sync request for tracking
     pub async fn sync_blockchain_from_peer(&self, peer_pubkey: &PublicKey) -> Result<u64> {
-        // Get edge sync manager
-        let edge_sync = self.edge_sync_manager.read().await;
-        let edge_sync_mgr = edge_sync.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Edge sync manager not initialized. Call initialize_edge_sync() first."))?;
+        // Determine if we're in edge node mode
+        let is_edge = *self.is_edge_node.read().await;
+        let sync_type = if is_edge {
+            lib_network::blockchain_sync::SyncType::EdgeNode
+        } else {
+            lib_network::blockchain_sync::SyncType::FullBlockchain
+        };
 
         // Ticket #146: Convert PublicKey to UnifiedPeerId for HashMap lookup
         let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
@@ -425,26 +419,32 @@ impl MeshRouter {
         let protocol = peer_entry.active_protocols.first().cloned()
             .unwrap_or(lib_network::protocols::NetworkProtocol::QUIC);
         let should_sync = self.sync_coordinator.register_peer_protocol(
-            peer_pubkey,
+            peer_pubkey.clone(),
             protocol.clone(),
-            lib_network::blockchain_sync::SyncType::EdgeNode
+            sync_type
         ).await;
         
         if !should_sync {
             return Err(anyhow::anyhow!("Already syncing with this peer via {:?}", protocol));
         }
         
-        // Create sync request
-        let (request_id, sync_message) = edge_sync_mgr.create_sync_request(peer_pubkey.clone()).await?;
+        // Create sync request using unified sync manager
+        let (request_id, sync_message) = self.sync_manager.create_blockchain_request(peer_pubkey.clone(), None).await?;
         
         // Send sync request to peer
-        self.send_to_peer(peer_pubkey, sync_message).await?;
+        // EdgeSyncMessage is a protocol-level message; wrap in mesh message for transport
+        let mesh_message = ZhtpMeshMessage::DhtGenericPayload {
+            requester: peer_pubkey.clone(),
+            payload: bincode::serialize(&sync_message)?,
+            signature: Vec::new(),
+        };
+        self.send_to_peer(peer_pubkey, mesh_message).await?;
         
         // Record sync start in coordinator
         self.sync_coordinator.start_sync(
-            peer_pubkey,
+            peer_pubkey.clone(),
             request_id,
-            lib_network::blockchain_sync::SyncType::EdgeNode,
+            sync_type,
             protocol
         ).await;
         
@@ -474,7 +474,7 @@ impl MeshRouter {
         for (peer_pubkey, protocol) in available_peers {
             // Let coordinator decide if we should sync with this peer via this protocol
             let should_sync = self.sync_coordinator.register_peer_protocol(
-                &peer_pubkey,
+                peer_pubkey.clone(),
                 protocol.clone(),
                 lib_network::blockchain_sync::SyncType::EdgeNode
             ).await;
@@ -498,37 +498,54 @@ impl MeshRouter {
             }
         }
         
+        
         info!("📊 Multi-peer sync coordination: {} syncs initiated from {} available peers",
               initiated_syncs.len(), peer_count);
         
         Ok(initiated_syncs)
     }
     
-    /// Add address to edge node sync tracking (for UTXO monitoring)
-    pub async fn add_edge_sync_address(&self, address: Vec<u8>) -> Result<()> {
-        let edge_sync = self.edge_sync_manager.read().await;
-        let edge_sync_mgr = edge_sync.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Edge sync manager not initialized"))?;
-        
-        edge_sync_mgr.add_address(address).await;
-        Ok(())
-    }
-    
     /// Get current edge node synchronization height
     pub async fn get_edge_sync_height(&self) -> Result<u64> {
-        let edge_sync = self.edge_sync_manager.read().await;
-        let edge_sync_mgr = edge_sync.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Edge sync manager not initialized"))?;
+        // Check if we're in edge mode
+        let is_edge = *self.is_edge_node.read().await;
+        if !is_edge {
+            return Err(anyhow::anyhow!("Node is not in edge mode - use blockchain height instead"));
+        }
         
-        Ok(edge_sync_mgr.current_height().await)
+        // Return current blockchain height from provider
+        if let Some(provider) = self.blockchain_provider.read().await.as_ref() {
+            provider.get_current_height().await
+        } else {
+            Ok(0)
+        }
     }
     
     /// Check if edge node needs bootstrap proof for fast-sync
+    /// Note: With unified sync manager, bootstrap proofs are handled transparently
     pub async fn needs_bootstrap_proof(&self) -> Result<bool> {
-        let edge_sync = self.edge_sync_manager.read().await;
-        let edge_sync_mgr = edge_sync.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Edge sync manager not initialized"))?;
+        // With the unified sync manager using EdgeNodeStrategy,
+        // bootstrap proofs are handled automatically during sync
+        let is_edge = *self.is_edge_node.read().await;
+        Ok(is_edge) // Edge nodes use bootstrap proofs by default
+    }
+    
+    /// Start periodic cleanup task for stale chunk buffers
+    /// 
+    /// SECURITY: Prevents memory exhaustion from incomplete sync requests
+    /// Runs every 60 seconds to cleanup buffers older than 5 minutes
+    pub fn start_chunk_cleanup_task(&self) {
+        let sync_manager = self.sync_manager.clone();
         
-        Ok(edge_sync_mgr.needs_bootstrap_proof().await)
+        tokio::spawn(async move {
+            info!("🧹 Started blockchain chunk cleanup task (60s interval, 5min timeout)");
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            
+            loop {
+                interval.tick().await;
+                
+                let _ = sync_manager.cleanup_stale_chunks().await;
+            }
+        });
     }
 }

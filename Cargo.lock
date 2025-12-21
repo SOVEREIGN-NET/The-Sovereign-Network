@@ -2462,7 +2462,6 @@ dependencies = [
  "lib-crypto",
  "lib-economy",
  "lib-identity",
- "lib-network",
  "lib-proofs",
  "lib-storage",
  "log",
@@ -2595,15 +2594,15 @@ dependencies = [
  "governor",
  "hex",
  "hkdf",
+ "hmac",
  "jni",
- "lib-blockchain",
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
  "lib-identity",
  "lib-proofs",
  "lib-protocols",
- "lib-storage",
+ "lib-types",
  "libc",
  "local-ip-address 0.5.7",
  "log",
@@ -2675,13 +2674,11 @@ dependencies = [
  "futures",
  "getrandom 0.2.16",
  "hex",
- "lib-blockchain",
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
  "lib-identity",
  "lib-proofs",
- "lib-storage",
  "once_cell",
  "proptest",
  "rand 0.8.5",
@@ -2711,7 +2708,9 @@ dependencies = [
  "hex",
  "lib-crypto",
  "lib-identity",
+ "lib-network",
  "lib-proofs",
+ "lib-types",
  "log",
  "lz4_flex",
  "rand 0.8.5",
@@ -2724,6 +2723,15 @@ dependencies = [
  "tokio-test",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "lib-types"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "serde",
 ]
 
 [[package]]
@@ -6645,6 +6653,7 @@ dependencies = [
  "lib-proofs",
  "lib-protocols",
  "lib-storage",
+ "lib-types",
  "local-ip-address 0.6.6",
  "lru 0.12.5",
  "lz4_flex",

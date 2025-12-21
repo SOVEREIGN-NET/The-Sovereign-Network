@@ -2,8 +2,13 @@
 //! 
 //! Handles LoRaWAN long-range mesh networking for extended coverage
 
+mod gateway_auth;
+
 use anyhow::Result;
 use tracing::{info, warn};
+pub use gateway_auth::{
+    GatewayAttestation, LoRaDeviceMessage, LoRaWANGatewayAuth, LoRaWanUhpBinding,
+};
 
 /// LoRaWAN mesh protocol handler
 pub struct LoRaWANMeshProtocol {
@@ -17,6 +22,8 @@ pub struct LoRaWANMeshProtocol {
     pub app_key: [u8; 16],
     /// Discovery active flag
     pub discovery_active: bool,
+    /// Optional trust anchor for gateway-mediated auth (ARCH-D-1.9)
+    pub gateway_auth: Option<LoRaWANGatewayAuth>,
 }
 
 impl LoRaWANMeshProtocol {
@@ -38,7 +45,14 @@ impl LoRaWANMeshProtocol {
             app_eui,
             app_key,
             discovery_active: false,
+            gateway_auth: Some(LoRaWANGatewayAuth::new()?),
         })
+    }
+
+    /// Inject a custom gateway auth model (e.g., mocked for tests).
+    pub fn with_gateway_auth(mut self, auth: LoRaWANGatewayAuth) -> Self {
+        self.gateway_auth = Some(auth);
+        self
     }
     
     /// Start LoRaWAN discovery
