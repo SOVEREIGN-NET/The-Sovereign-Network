@@ -10,9 +10,26 @@ cd "$ROOT_DIR"
 
 echo "🔍 Validating dependency rules..."
 
-CORE_LIBS=("lib-types" "lib-crypto" "lib-proofs")
+workspace_libs() {
+    awk '
+        BEGIN { in_members = 0 }
+        /^members[[:space:]]*=[[:space:]]*\\[/ { in_members = 1; next }
+        in_members && /\\]/ { in_members = 0 }
+        in_members {
+            gsub(/"/, "", $0)
+            gsub(/,/, "", $0)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+            if ($0 ~ /^lib-/) print $0
+        }
+    ' Cargo.toml
+}
 
-# Forbidden dependencies for core crates (runtime/network/storage coupling)
+ALL_LIBS=($(workspace_libs))
+STRICT_LIBS=("lib-types")
+PURE_LIBS=("lib-crypto" "lib-proofs" "lib-identity")
+IO_ALLOWED_LIBS=("lib-blockchain" "lib-consensus" "lib-dht" "lib-dns" "lib-economy" "lib-network" "lib-protocols" "lib-storage")
+
+# Forbidden dependencies for strict/pure crates (runtime/network/storage coupling)
 FORBIDDEN_CORE_DEPS=(
     "tokio"
     "reqwest"
@@ -30,6 +47,25 @@ FORBIDDEN_CORE_DEPS=(
     "lib-storage"
     "lib-dht"
     "lib-dns"
+)
+
+FORBIDDEN_IO_ALLOWED_DEPS=(
+    "actix-web"
+    "axum"
+    "diesel"
+    "hyper"
+    "mongodb"
+    "mysql"
+    "postgres"
+    "redis"
+    "reqwest"
+    "rocket"
+    "rusqlite"
+    "sea-orm"
+    "sqlx"
+    "surrealdb"
+    "tokio-postgres"
+    "warp"
 )
 
 ERRORS_FOUND=0
@@ -53,7 +89,24 @@ get_dependencies() {
     ' "$cargo_toml"
 }
 
-for crate in "${CORE_LIBS[@]}"; do
+coverage_check() {
+    local lib="$1"
+    for entry in "${STRICT_LIBS[@]}" "${PURE_LIBS[@]}" "${IO_ALLOWED_LIBS[@]}"; do
+        if [ "$lib" = "$entry" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+for lib in "${ALL_LIBS[@]}"; do
+    if ! coverage_check "$lib"; then
+        echo "❌ ERROR: $lib is not assigned to a policy tier"
+        ERRORS_FOUND=$((ERRORS_FOUND + 1))
+    fi
+done
+
+for crate in "${STRICT_LIBS[@]}" "${PURE_LIBS[@]}"; do
     cargo_toml="$crate/Cargo.toml"
 
     if [ ! -f "$cargo_toml" ]; then
@@ -91,6 +144,28 @@ for crate in "${CORE_LIBS[@]}"; do
     fi
 
     echo "✅ Crate $crate dependencies are valid"
+done
+
+for crate in "${IO_ALLOWED_LIBS[@]}"; do
+    cargo_toml="$crate/Cargo.toml"
+
+    if [ ! -f "$cargo_toml" ]; then
+        echo "⚠️  Crate $crate not found, skipping..."
+        continue
+    fi
+
+    echo "📦 Checking dependencies for crate: $crate (IO-allowed policy)"
+
+    deps=$(get_dependencies "$cargo_toml")
+
+    for forbidden_dep in "${FORBIDDEN_IO_ALLOWED_DEPS[@]}"; do
+        if echo "$deps" | grep -q "^${forbidden_dep}$"; then
+            echo "❌ ERROR: IO-allowed crate $crate depends on forbidden library: $forbidden_dep"
+            ERRORS_FOUND=$((ERRORS_FOUND + 1))
+        fi
+    done
+
+    echo "✅ Crate $crate dependencies are valid (IO-allowed policy)"
 done
 
 # Check for circular dependencies using cargo tree
