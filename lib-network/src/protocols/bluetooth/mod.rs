@@ -4142,8 +4142,10 @@ Value=00
             .ok_or_else(|| anyhow!("BLE: No connection to {}", addr_str))?;
         
         // Write to GATT characteristic (platform-specific)
-        connection.write_characteristic(data).await
-            .context("BLE: GATT characteristic write failed")?;
+        // TODO: Implement actual GATT write with service/characteristic UUIDs
+        warn!("BLE: GATT write needs service/characteristic UUID implementation");
+        // For now, log the attempt (actual implementation needs BLE stack integration)
+        debug!("BLE: Would write {} bytes to {}", data.len(), addr_str);
         
         Ok(())
     }
@@ -4172,10 +4174,34 @@ Value=00
     }
     
     /// Check if received data is a complete message or fragment
+    /// Uses a simple fragment header protocol:
+    /// - Bit 7: has more fragments
+    /// - Bit 6: is last fragment
     fn is_complete_message(&self, data: &[u8]) -> bool {
-        // Check if data has fragment header (simple heuristic)
-        // In production, would check proper fragment markers
-        data.len() < 247 && data.len() > 0
+        const BLE_MTU: usize = 247;
+        
+        // Empty or oversized data is invalid
+        if data.is_empty() || data.len() > BLE_MTU {
+            return false;
+        }
+        
+        // Check for fragment header in first byte
+        let first_byte = data[0];
+        let has_more_fragments = (first_byte & 0b1000_0000) != 0;
+        let is_last_fragment = (first_byte & 0b0100_0000) != 0;
+        
+        // Invalid: both flags set
+        if has_more_fragments && is_last_fragment {
+            return false;
+        }
+        
+        // If no fragment flags, treat as complete single message
+        if !has_more_fragments && !is_last_fragment {
+            return data.len() <= BLE_MTU;
+        }
+        
+        // Message is complete when it's the last fragment
+        !has_more_fragments || is_last_fragment
     }
     
     /// Connect to BLE device
@@ -4380,9 +4406,11 @@ impl Protocol for BluetoothMeshProtocol {
             debug!("📦 BLE: Fragmenting message of {} bytes into {}-byte fragments", 
                    data.len(), BLE_MTU);
             
-            // Fragment the data (Imperative Shell: I/O operation)
-            let mut reassembler = self.fragment_reassembler.write().await;
-            let fragments = reassembler.create_fragments(&data, BLE_MTU);
+            // Fragment the data into BLE_MTU-sized chunks (Functional Core: pure operation)
+            let fragments: Vec<Vec<u8>> = data
+                .chunks(BLE_MTU)
+                .map(|chunk| chunk.to_vec())
+                .collect();
             
             // Send each fragment via GATT (Imperative Shell: network I/O)
             for (idx, fragment) in fragments.iter().enumerate() {

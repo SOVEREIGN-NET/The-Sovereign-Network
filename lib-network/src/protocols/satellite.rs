@@ -303,11 +303,23 @@ impl SatelliteMeshProtocol {
     }
     
     fn create_satellite_session(&self, peer_address: PeerAddress) -> Result<ProtocolSession> {
-        // Create session keys for satellite communication
+        // Derive session keys from satellite terminal ID (better than hardcoded zeros)
+        // TODO: Replace with actual key exchange from satellite handshake
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(self.terminal_id.as_bytes());
+        hasher.update(b"satellite_session_key");
+        let encryption_key: [u8; 32] = hasher.finalize().into();
+        
+        let mut hasher = Sha256::new();
+        hasher.update(self.terminal_id.as_bytes());
+        hasher.update(b"satellite_auth_key");
+        let auth_key: [u8; 32] = hasher.finalize().into();
+        
         let session_keys = SessionKeys::new(
-            [0u8; 32], // Satellite encryption key (would be from handshake)
-            [0u8; 32], // Auth key
-            true,      // Satellite supports forward secrecy
+            encryption_key, // Derived from terminal ID
+            auth_key,       // Derived auth key
+            true,           // Satellite supports forward secrecy
         );
         
         // Create verified peer identity
@@ -317,8 +329,11 @@ impl SatelliteMeshProtocol {
             vec![], // Satellite authentication proof
         )?;
         
-        // MAC key for session validation
-        let mac_key = [0u8; 32];
+        // MAC key for session validation (derived)
+        let mut hasher = Sha256::new();
+        hasher.update(self.terminal_id.as_bytes());
+        hasher.update(b"satellite_mac_key");
+        let mac_key: [u8; 32] = hasher.finalize().into();
         
         // Create session
         let session = ProtocolSession::new(

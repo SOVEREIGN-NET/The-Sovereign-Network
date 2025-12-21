@@ -3625,7 +3625,7 @@ impl Protocol for WiFiDirectMeshProtocol {
         let device_id = match target {
             PeerAddress::DeviceId(id) => id.as_str().to_string(),
             PeerAddress::IpSocket(addr) => addr.as_socket_addr().to_string(),
-            _ => anyhow::bail!("WiFi Direct requires device ID or IP address"),
+            _ => anyhow::bail!("WiFi Direct: Requires device ID or IP address"),
         };
         
         info!("📡 WiFi Direct: Connecting to {}", device_id);
@@ -3692,11 +3692,8 @@ impl Protocol for WiFiDirectMeshProtocol {
         debug!("📤 WiFi Direct: Sending {}-byte message to {:?}", serialized.len(), peer_addr);
         
         // Send via TCP stream over WiFi Direct connection (Imperative Shell: network I/O)
-        // Note: Actual implementation would use TCP socket to peer IP address
-        // let peer_ip = self.get_peer_ip(peer_addr).await?;
-        // let mut stream = TcpStream::connect(peer_ip).await?;
-        // stream.write_all(&serialized).await?;
-        // stream.flush().await?;
+        self.send_tcp_stream(peer_addr, &serialized).await
+            .context("WiFi Direct: TCP stream send failed")?;
         
         info!("✅ WiFi Direct: Message sent successfully to {:?}", peer_addr);
         Ok(())

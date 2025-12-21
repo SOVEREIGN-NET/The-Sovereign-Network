@@ -687,8 +687,6 @@ mod tests {
 use crate::protocols::{Protocol, ProtocolSession, ProtocolCapabilities, NetworkProtocol, PowerProfile, AuthScheme, CipherSuite, PqcMode, PeerAddress};
 use async_trait::async_trait;
 
-#[async_trait]
-
 // Functional Core: Pure function for LoRa fragmentation (follows Functional Core pattern)
 fn create_lora_fragments(data: &[u8], max_size: usize) -> Vec<Vec<u8>> {
     data.chunks(max_size)

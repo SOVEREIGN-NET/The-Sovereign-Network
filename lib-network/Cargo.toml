@@ -61,7 +61,7 @@ parking_lot = "0.12"
 blake3 = "1.5"
 
 # CRITICAL FIX C4: Persistent nonce cache with RocksDB
-rocksdb = "0.21"
+rocksdb = { version = "0.21", default-features = false, features = ["snappy"] }
 
 # X25519 for ephemeral key exchange (forward secrecy)
 x25519-dalek = "2.0"
