@@ -1099,9 +1099,22 @@ impl BluetoothClassicProtocol {
         peer_id: &PublicKey,
         envelope: &MeshMessageEnvelope,
     ) -> Result<()> {
-        // Convert PublicKey to Bluetooth address
-        // For now, we'll need to look up the address in connections
-        let target_address = self.get_address_for_peer(peer_id).await?;
+        // Look up Bluetooth address from authenticated peers
+        let connections = self.active_connections.read().await;
+        let auth_peers = self.authenticated_peers.read().await;
+        
+        let mut target_address = None;
+        for (address, verification) in auth_peers.iter() {
+            if verification.peer_pubkey == peer_id.key_id {
+                if connections.contains_key(address) {
+                    target_address = Some(address.clone());
+                    break;
+                }
+            }
+        }
+        
+        let target_address = target_address
+            .ok_or_else(|| anyhow!("No active Bluetooth connection to peer {:?}", hex::encode(&peer_id.key_id[0..8])))?;
         
         info!("📤 Sending mesh envelope {} to {:?} via RFCOMM", 
               envelope.message_id, 
@@ -1118,23 +1131,6 @@ impl BluetoothClassicProtocol {
         info!(" Mesh envelope sent successfully");
         
         Ok(())
-    }
-    
-    /// Get Bluetooth address for a peer (lookup in active connections)
-    async fn get_address_for_peer(&self, peer_id: &PublicKey) -> Result<String> {
-        let connections = self.active_connections.read().await;
-        
-        // Try to find connection by checking authenticated peers
-        let auth_peers = self.authenticated_peers.read().await;
-        for (address, verification) in auth_peers.iter() {
-            if verification.peer_pubkey == peer_id.key_id {
-                if connections.contains_key(address) {
-                    return Ok(address.clone());
-                }
-            }
-        }
-        
-        Err(anyhow!("No active connection to peer {:?}", hex::encode(&peer_id.key_id[0..8])))
     }
     
     /// Get node ID as PublicKey

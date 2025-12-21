@@ -254,7 +254,7 @@ impl MeshMessageRouter {
         Some(crate::mesh::connection::MeshConnection {
             peer: entry.peer_id.clone(),
             protocol: endpoint.protocol.clone(),
-            peer_address: Some(endpoint.address.clone()),
+            peer_address: Some(endpoint.address.to_address_string()),
             signal_strength: entry.connection_metrics.signal_strength,
             bandwidth_capacity: entry.connection_metrics.bandwidth_capacity,
             latency_ms: entry.connection_metrics.latency_ms,

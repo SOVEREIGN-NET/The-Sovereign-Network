@@ -10,6 +10,7 @@ use crate::protocols::lorawan::LoRaWANMeshProtocol;
 use crate::protocols::quic_mesh::QuicMeshProtocol;
 use crate::protocols::wifi_direct::WiFiDirectMeshProtocol;
 use crate::types::mesh_message::ZhtpMeshMessage;
+use crate::types::node_address::NodeAddress;
 
 /// Capabilities for a transport link
 #[derive(Debug, Clone)]
@@ -72,10 +73,17 @@ impl TransportManager {
                     .bluetooth
                     .as_ref()
                     .ok_or_else(|| anyhow!("Bluetooth handler not available"))?;
+                
+                // Extract Bluetooth address string from NodeAddress
+                let addr_str = match &endpoint.address {
+                    NodeAddress::BluetoothClassic(addr) | NodeAddress::BluetoothLE(addr) => addr.as_str(),
+                    _ => return Err(anyhow!("Invalid address type for Bluetooth protocol")),
+                };
+                
                 handler
                     .read()
                     .await
-                    .send_mesh_message(&endpoint.address, serialized)
+                    .send_mesh_message(addr_str, serialized)
                     .await
             }
             NetworkProtocol::WiFiDirect => {
@@ -83,10 +91,17 @@ impl TransportManager {
                     .wifi
                     .as_ref()
                     .ok_or_else(|| anyhow!("WiFi Direct handler not available"))?;
+                
+                // Extract WiFi Direct address string from NodeAddress
+                let addr_str = match &endpoint.address {
+                    NodeAddress::WiFiDirect { addr, .. } => addr.to_string(),
+                    _ => return Err(anyhow!("Invalid address type for WiFi Direct protocol")),
+                };
+                
                 handler
                     .read()
                     .await
-                    .send_mesh_message(&endpoint.address, serialized)
+                    .send_mesh_message(&addr_str, serialized)
                     .await
             }
             NetworkProtocol::LoRaWAN => {
@@ -94,10 +109,17 @@ impl TransportManager {
                     .lora
                     .as_ref()
                     .ok_or_else(|| anyhow!("LoRaWAN handler not available"))?;
+                
+                // Extract LoRaWAN address string from NodeAddress
+                let addr_str = match &endpoint.address {
+                    NodeAddress::LoRaWAN { dev_addr, .. } => dev_addr.as_str(),
+                    _ => return Err(anyhow!("Invalid address type for LoRaWAN protocol")),
+                };
+                
                 handler
                     .read()
                     .await
-                    .send_mesh_message(&endpoint.address, serialized)
+                    .send_mesh_message(addr_str, serialized)
                     .await
             }
             NetworkProtocol::QUIC => {

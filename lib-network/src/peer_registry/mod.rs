@@ -69,6 +69,7 @@ use tracing::{info, warn, debug};
 
 use crate::identity::unified_peer::UnifiedPeerId;
 use crate::protocols::NetworkProtocol;
+use crate::types::node_address::{NodeAddress, AddressEndpoint, AddressResolver};
 use lib_crypto::PublicKey;
 use lib_identity::NodeId;
 
@@ -224,6 +225,7 @@ impl Clone for RateLimiter {
 /// - **Index consistency**: Atomic updates prevent stale entries
 /// - **Audit logging**: All changes logged for security monitoring
 /// - **Rate limiting**: Per-peer and global rate limits prevent DoS attacks
+/// - **Unified addressing**: Integrated AddressResolver for all address resolution
 #[derive(Debug)]
 pub struct PeerRegistry {
     /// Primary storage: UnifiedPeerId → PeerEntry
@@ -242,6 +244,9 @@ pub struct PeerRegistry {
 
     /// Rate limiter for DoS protection
     rate_limiter: RateLimiter,
+
+    /// Unified address resolver (consolidates all address resolution logic)
+    address_resolver: AddressResolver,
 }
 
 /// Extended configuration for PeerRegistry including observer settings
@@ -436,17 +441,55 @@ impl PeerEntry {
     }
 }
 
-/// Network endpoint for a peer
+/// Network endpoint for a peer - uses unified NodeAddress
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerEndpoint {
-    /// Endpoint address (IP:port, Bluetooth address, etc.)
-    pub address: String,
-    /// Protocol for this endpoint
+    /// Unified network address (replaces string-based addressing)
+    pub address: NodeAddress,
+    /// Protocol for this endpoint (derived from address, kept for compatibility)
     pub protocol: NetworkProtocol,
     /// Signal strength/quality (0.0 - 1.0)
     pub signal_strength: f64,
     /// Latency in milliseconds
     pub latency_ms: u32,
+}
+
+impl PeerEndpoint {
+    /// Create new endpoint from NodeAddress
+    pub fn from_address(address: NodeAddress) -> Self {
+        let protocol = Self::address_to_protocol(&address);
+        Self {
+            address,
+            protocol,
+            signal_strength: 1.0,
+            latency_ms: 0,
+        }
+    }
+
+    /// Convert NodeAddress to NetworkProtocol
+    fn address_to_protocol(address: &NodeAddress) -> NetworkProtocol {
+        match address {
+            NodeAddress::Udp(_) => NetworkProtocol::UDP,
+            NodeAddress::Tcp(_) => NetworkProtocol::TCP,
+            NodeAddress::Quic(_) => NetworkProtocol::QUIC,
+            NodeAddress::BluetoothClassic(_) => NetworkProtocol::BluetoothLE,
+            NodeAddress::BluetoothLE(_) => NetworkProtocol::BluetoothLE,
+            NodeAddress::WiFiDirect { .. } => NetworkProtocol::WiFiDirect,
+            NodeAddress::LoRaWAN { .. } => NetworkProtocol::LoRaWAN,
+            NodeAddress::Mesh(_) => NetworkProtocol::WiFiDirect, // Mesh uses WiFi/BT
+            NodeAddress::Domain(_) => NetworkProtocol::TCP, // Default for resolved domains
+        }
+    }
+
+    /// Convert to AddressEndpoint for use with AddressResolver
+    pub fn to_address_endpoint(&self) -> AddressEndpoint {
+        AddressEndpoint {
+            address: self.address.clone(),
+            signal_strength: self.signal_strength,
+            latency_ms: self.latency_ms,
+            last_seen: None,
+        }
+    }
 }
 
 /// Connection quality metrics
@@ -551,6 +594,7 @@ impl PeerRegistry {
             config,
             observers: sync::ObserverRegistry::new(),
             rate_limiter,
+            address_resolver: AddressResolver::new(),
         }
     }
     
@@ -764,16 +808,19 @@ impl PeerRegistry {
             sync::PeerRegistryEvent::PeerUpdated {
                 peer_id,
                 old_entry: old_entry.unwrap(),
-                new_entry: entry,
+                new_entry: entry.clone(),
             }
         } else {
             sync::PeerRegistryEvent::PeerAdded {
-                peer_id,
-                entry,
+                peer_id: peer_id.clone(),
+                entry: entry.clone(),
             }
         };
         
         self.observers.dispatch(event).await?;
+
+        // Sync addresses to the unified address resolver
+        self.sync_peer_addresses_to_resolver(&entry).await;
 
         Ok(())
     }
@@ -1080,6 +1127,88 @@ impl PeerRegistry {
             untrusted_count: self.peers_by_tier(PeerTier::Untrusted).count(),
             authenticated_count: self.authenticated_peers().count(),
         }
+    }
+
+    // ========== UNIFIED ADDRESS RESOLUTION METHODS ==========
+    //
+    // These methods integrate the unified AddressResolver with the PeerRegistry
+    // Consolidates address resolution from PeerAddressResolver, get_address_for_peer, ZDNS, etc.
+
+    /// Get all addresses for a peer by UnifiedPeerId
+    pub async fn get_peer_addresses(&self, peer_id: &UnifiedPeerId) -> Vec<AddressEndpoint> {
+        let pubkey_hex = hex::encode(peer_id.public_key().as_bytes());
+        self.address_resolver.get_addresses(&pubkey_hex).await
+    }
+
+    /// Get addresses for a peer filtered by protocol
+    pub async fn get_peer_addresses_by_protocol(&self, peer_id: &UnifiedPeerId, protocol: &str) -> Vec<AddressEndpoint> {
+        let pubkey_hex = hex::encode(peer_id.public_key().as_bytes());
+        self.address_resolver.get_addresses_by_protocol(&pubkey_hex, protocol).await
+    }
+
+    /// Get the best address for reaching a peer (highest quality)
+    pub async fn get_best_peer_address(&self, peer_id: &UnifiedPeerId) -> Option<AddressEndpoint> {
+        let pubkey_hex = hex::encode(peer_id.public_key().as_bytes());
+        self.address_resolver.get_best_address(&pubkey_hex).await
+    }
+
+    /// Register addresses for a peer when upserting
+    async fn sync_peer_addresses_to_resolver(&self, entry: &PeerEntry) {
+        let pubkey_hex = hex::encode(entry.peer_id.public_key().as_bytes());
+        
+        // Convert PeerEndpoints to AddressEndpoints
+        let endpoints: Vec<AddressEndpoint> = entry
+            .endpoints
+            .iter()
+            .map(|ep| ep.to_address_endpoint())
+            .collect();
+
+        // Register all endpoints with the resolver
+        self.address_resolver.register_addresses(&pubkey_hex, endpoints).await;
+    }
+
+    /// Update address metrics (signal strength, latency)
+    pub async fn update_address_metrics(
+        &mut self,
+        peer_id: &UnifiedPeerId,
+        address: &NodeAddress,
+        signal_strength: f64,
+        latency_ms: u32,
+    ) -> Result<()> {
+        let pubkey_hex = hex::encode(peer_id.public_key().as_bytes());
+        
+        // Update in address resolver
+        self.address_resolver
+            .update_metrics(&pubkey_hex, address, signal_strength, latency_ms)
+            .await;
+
+        // Also update in peer entry if it exists
+        if let Some(entry) = self.peers.get_mut(peer_id) {
+            for endpoint in &mut entry.endpoints {
+                if &endpoint.address == address {
+                    endpoint.signal_strength = signal_strength;
+                    endpoint.latency_ms = latency_ms;
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Resolve a domain name to addresses (ZDNS integration)
+    pub async fn resolve_domain(&self, domain: &str) -> Option<Vec<NodeAddress>> {
+        self.address_resolver.get_cached_domain(domain).await
+    }
+
+    /// Cache domain resolution result
+    pub async fn cache_domain_resolution(&self, domain: &str, addresses: Vec<NodeAddress>) {
+        self.address_resolver.cache_domain(domain, addresses).await;
+    }
+
+    /// Get direct access to the address resolver
+    pub fn address_resolver(&self) -> &AddressResolver {
+        &self.address_resolver
     }
 
     // ========== TOCTOU-SAFE ATOMIC UPDATE METHODS ==========
