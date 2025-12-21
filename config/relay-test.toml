@@ -1,0 +1,6 @@
+# Test configuration for Relay node type
+node_type = "relay"
+
+[network]
+mesh_port = 33446
+listen_address = "0.0.0.0"

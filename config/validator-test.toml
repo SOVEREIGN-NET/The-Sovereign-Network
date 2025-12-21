@@ -1,0 +1,10 @@
+# Test configuration for Validator node type
+node_type = "validator"
+
+[network]
+mesh_port = 33445
+listen_address = "0.0.0.0"
+
+[blockchain]
+enable_mining = true
+enable_validation = true
