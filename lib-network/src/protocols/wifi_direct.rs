@@ -3753,14 +3753,6 @@ impl Protocol for WiFiDirectMeshProtocol {
             forward_secrecy: true,
         }
     }
-            encryption: Some(CipherSuite::ChaCha20Poly1305),
-            pqc_mode: PqcMode::Hybrid,
-            replay_protection: true,
-            identity_binding: true,
-            integrity_only: false,
-            forward_secrecy: true,
-        }
-    }
 
     fn protocol_type(&self) -> NetworkProtocol {
         NetworkProtocol::WiFiDirect
