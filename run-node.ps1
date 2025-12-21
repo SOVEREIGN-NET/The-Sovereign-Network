@@ -9,7 +9,7 @@ Write-Host "🚀 Starting ZHTP Orchestrator Node..." -ForegroundColor Cyan
 Write-Host "📋 Config: $ConfigFile" -ForegroundColor Yellow
 Write-Host ""
 
-if (-not (Test-Path "target\release\zhtp-orchestrator.exe")) {
+if (-not (Test-Path "target\release\zhtp.exe")) {
     Write-Host "❌ Binary not found. Building first..." -ForegroundColor Red
     .\build.ps1
     if ($LASTEXITCODE -ne 0) {
@@ -18,4 +18,4 @@ if (-not (Test-Path "target\release\zhtp-orchestrator.exe")) {
 }
 
 Write-Host "▶️  Launching node..." -ForegroundColor Green
-& ".\target\release\zhtp-orchestrator.exe" --config $ConfigFile
+& ".\target\release\zhtp.exe" node start --config $ConfigFile
