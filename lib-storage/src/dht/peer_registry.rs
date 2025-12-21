@@ -906,6 +906,9 @@ impl DhtPeerRegistryTrait for DhtPeerRegistry {
     }
     
     async fn is_dht_bucket_full(&self, bucket_index: usize, k: usize) -> Result<bool> {
+        if bucket_index >= NUM_K_BUCKETS {
+            return Err(anyhow!("Invalid bucket index {}: must be 0-{}", bucket_index, MAX_BUCKET_INDEX));
+        }
         Ok(self.bucket_index[bucket_index].len() >= k)
     }
     

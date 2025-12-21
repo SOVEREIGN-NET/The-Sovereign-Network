@@ -31,39 +31,39 @@ pub const CHALLENGE_DOMAIN_PREFIX: &[u8] = b"ZHTP_NODEID_OWNERSHIP_CHALLENGE_V1"
 /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry for unified peer storage
 /// instead of maintaining separate routing_table: Vec<KBucket>.
 ///
-/// **TICKET #1.14 COMPLETE:** External unified registry integration via trait.
+/// **TICKET #1.14:** External unified registry integration via trait.
 ///
-/// # Production Usage (Unified Registry - No Duplicate Storage)
+/// # Usage Patterns
 ///
-/// In production (zhtp), DO NOT use KademliaRouter methods directly. Instead:
-/// 1. Create `Arc<RwLock<dyn DhtPeerRegistryTrait>>` (typically lib-network::PeerRegistry)
-/// 2. Pass to both MeshCore AND DHT components
-/// 3. Call trait methods directly: `registry.write().await.add_dht_peer()`, etc.
-/// 4. This eliminates duplicate peer storage - DHT and mesh use same registry
+/// ## Standalone Mode (Default)
+/// Uses internal DhtPeerRegistry. Suitable for testing or isolated DHT usage.
 ///
-/// # Backward Compatibility (Internal Registry)
+/// ## External Registry Mode
+/// Use `set_external_registry()` to inject a shared `Arc<RwLock<dyn DhtPeerRegistryTrait>>`.
+/// The zhtp layer can create a registry and share it across components.
 ///
-/// KademliaRouter retains internal DhtPeerRegistry for standalone/legacy use.
-/// Methods use internal registry. This is NOT the production pattern.
-///
-/// # Example (Production - Unified Registry)
+/// # Example
 ///
 /// ```ignore
-/// use lib_network::peer_registry::PeerRegistry;
-/// use lib_storage::dht::registry_trait::DhtPeerRegistryTrait;
+/// use lib_storage::dht::{DhtPeerRegistry, DhtPeerRegistryTrait, KademliaRouter};
+/// use std::sync::Arc;
+/// use tokio::sync::RwLock;
 ///
-/// // Single registry for both DHT and mesh
-/// let registry: Arc<RwLock<dyn DhtPeerRegistryTrait>> = 
-///     Arc::new(RwLock::new(PeerRegistry::new()));
+/// // Create shared registry
+/// let registry: Arc<RwLock<dyn DhtPeerRegistryTrait>> =
+///     Arc::new(RwLock::new(DhtPeerRegistry::new(20)));
 ///
-/// // Use directly for DHT operations (not through KademliaRouter)
+/// // Inject into router
+/// let mut router = KademliaRouter::new(local_id, 20);
+/// router.set_external_registry(registry.clone());
+///
+/// // Use registry directly for DHT operations
 /// registry.write().await.add_dht_peer(&node, bucket_idx, distance).await?;
-/// let closest = registry.read().await.find_closest_dht_peers(&target, 20).await?;
 /// ```
 ///
 /// # Thread Safety
 ///
-/// Uses `&mut self` for mutations. Internal registry only.
+/// Uses `&mut self` for mutations. Wrap in Arc<RwLock> for concurrent access.
 #[derive(Debug)]
 pub struct KademliaRouter {
     /// Local node ID
@@ -96,34 +96,20 @@ impl KademliaRouter {
         }
     }
     
-    /// Set external unified registry reference (Ticket #1.14 COMPLETE)
+    /// Set external unified registry reference (Ticket #1.14)
     ///
-    /// **IMPORTANT:** This stores a reference for bookkeeping only. Production code
-    /// should call trait methods directly on the registry, NOT through KademliaRouter:
+    /// Allows injecting a shared registry that implements `DhtPeerRegistryTrait`.
+    /// This enables sharing peer storage across multiple components.
     ///
-    /// ```ignore
-    /// // DO THIS (production):
-    /// registry.write().await.add_dht_peer(&node, bucket_idx, distance).await?;
-    ///
-    /// // NOT THIS (uses internal registry):
-    /// router.add_node(node).await?;
-    /// ```
-    ///
-    /// # Example (zhtp integration)
+    /// # Example
     ///
     /// ```ignore
-    /// use lib_network::peer_registry::PeerRegistry;
-    /// use lib_storage::dht::registry_trait::DhtPeerRegistryTrait;
+    /// use lib_storage::dht::{DhtPeerRegistry, DhtPeerRegistryTrait};
     ///
-    /// let registry: Arc<RwLock<dyn DhtPeerRegistryTrait>> = 
-    ///     Arc::new(RwLock::new(PeerRegistry::new()));
+    /// let registry: Arc<RwLock<dyn DhtPeerRegistryTrait>> =
+    ///     Arc::new(RwLock::new(DhtPeerRegistry::new(20)));
     ///
-    /// // Store reference in router (optional, for compatibility)
-    /// let mut router = KademliaRouter::new(local_id, 20);
     /// router.set_external_registry(registry.clone());
-    ///
-    /// // Use registry directly (required for unified storage):
-    /// registry.write().await.add_dht_peer(&node, bucket_idx, distance).await?;
     /// ```
     pub fn set_external_registry(&mut self, registry: Arc<RwLock<dyn DhtPeerRegistryTrait>>) {
         self.external_registry = Some(registry);
