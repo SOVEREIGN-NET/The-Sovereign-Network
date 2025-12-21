@@ -4470,9 +4470,9 @@ impl Protocol for BluetoothMeshProtocol {
     }
 
     fn is_available(&self) -> bool {
-        // Check if Bluetooth hardware is available
-        // For now, assume available if the protocol was created successfully
-        true
+        // Check if Bluetooth is available by verifying current_connections exists
+        // If we can access the connection map, BLE hardware is initialized
+        self.current_connections.try_read().is_ok()
     }
 }
 

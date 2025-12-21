@@ -3767,8 +3767,8 @@ impl Protocol for WiFiDirectMeshProtocol {
     }
 
     fn is_available(&self) -> bool {
-        // Check if WiFi Direct is enabled
-        // For now, return true if the protocol was created
-        true
+        // Check if WiFi Direct is enabled (starts disabled by default for security)
+        // This is a synchronous check of the enabled flag
+        self.enabled.try_read().map(|e| *e).unwrap_or(false)
     }
 }

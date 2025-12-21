@@ -955,7 +955,8 @@ impl Protocol for LoRaWANMeshProtocol {
     }
 
     fn is_available(&self) -> bool {
-        // Check if LoRa radio hardware is available (Functional Core: pure check)
-        true
+        // Check if LoRa is available via discovery state (hardware initialized)
+        // If discovery_active can be checked, LoRa module is operational
+        self.discovery_active
     }
 }

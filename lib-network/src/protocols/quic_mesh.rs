@@ -1363,7 +1363,8 @@ impl Protocol for QuicMeshProtocol {
     }
 
     fn is_available(&self) -> bool {
-        // QUIC is available if the endpoint is bound
-        true
+        // QUIC is available if the endpoint is bound and not closed
+        // Check by verifying we can access the local address
+        self.endpoint.local_addr().is_ok()
     }
 }

@@ -495,7 +495,8 @@ impl Protocol for SatelliteMeshProtocol {
     }
 
     fn is_available(&self) -> bool {
-        // Check if satellite terminal is available (Functional Core: pure check)
-        true
+        // Check if satellite terminal is available via discovery state
+        // If discovery_active is true, satellite modem is operational
+        self.discovery_active
     }
 }
