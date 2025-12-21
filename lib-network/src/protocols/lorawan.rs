@@ -796,7 +796,7 @@ impl Protocol for LoRaWANMeshProtocol {
         
         // Perform OTAA join (Imperative Shell: network I/O)
         self.perform_otaa_join(dev_addr).await
-            .context!("LoRaWAN: OTAA join failed")?;
+            .context("LoRaWAN: OTAA join failed")?;
         
         // Create session after successful join
         let peer_address = PeerAddress::lora(dev_addr);
