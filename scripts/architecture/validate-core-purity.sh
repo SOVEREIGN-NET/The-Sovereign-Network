@@ -10,10 +10,26 @@ cd "$ROOT_DIR"
 
 echo "🔍 Validating core crate purity..."
 
-CORE_LIBS=("lib-types" "lib-crypto" "lib-proofs")
-STRICT_LIBS=("lib-types")
+workspace_libs() {
+    awk '
+        BEGIN { in_members = 0 }
+        /^members[[:space:]]*=[[:space:]]*\\[/ { in_members = 1; next }
+        in_members && /\\]/ { in_members = 0 }
+        in_members {
+            gsub(/"/, "", $0)
+            gsub(/,/, "", $0)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+            if ($0 ~ /^lib-/) print $0
+        }
+    ' Cargo.toml
+}
 
-# Forbidden imports for core libs (networking/IO/runtime coupling)
+ALL_LIBS=($(workspace_libs))
+STRICT_LIBS=("lib-types")
+PURE_LIBS=("lib-crypto" "lib-proofs" "lib-identity")
+IO_ALLOWED_LIBS=("lib-blockchain" "lib-consensus" "lib-dht" "lib-dns" "lib-economy" "lib-network" "lib-protocols" "lib-storage")
+
+# Forbidden imports for strict/pure libs (networking/IO/runtime coupling)
 FORBIDDEN_CORE_IMPORTS=(
     "use std::fs"
     "use std::net"
@@ -100,7 +116,24 @@ check_lib_types_policy() {
     fi
 }
 
-for crate in "${CORE_LIBS[@]}"; do
+coverage_check() {
+    local lib="$1"
+    for entry in "${STRICT_LIBS[@]}" "${PURE_LIBS[@]}" "${IO_ALLOWED_LIBS[@]}"; do
+        if [ "$lib" = "$entry" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+for lib in "${ALL_LIBS[@]}"; do
+    if ! coverage_check "$lib"; then
+        echo "❌ ERROR: $lib is not assigned to a policy tier"
+        ERRORS_FOUND=$((ERRORS_FOUND + 1))
+    fi
+done
+
+for crate in "${STRICT_LIBS[@]}" "${PURE_LIBS[@]}"; do
     local_path="$crate"
     if [ ! -d "$local_path" ]; then
         echo "⚠️  Crate $crate not found, skipping..."
@@ -109,12 +142,10 @@ for crate in "${CORE_LIBS[@]}"; do
 
     echo "📦 Checking crate: $crate"
 
-    # Enforce strict lib-types policy
     if [ "$crate" = "lib-types" ]; then
         check_lib_types_policy
     fi
 
-    # Check for forbidden imports in core libs
     for forbidden in "${FORBIDDEN_CORE_IMPORTS[@]}"; do
         if grep -r "$forbidden" "$local_path/src" 2>/dev/null | grep -v "^Binary"; then
             echo "❌ ERROR: Core crate $crate imports forbidden library: $forbidden"
