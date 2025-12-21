@@ -12,8 +12,11 @@ use crate::dht::peer_registry::{
     DhtPeerRegistry, DhtPeerEntry,
     MAX_BUCKET_INDEX, DEFAULT_MAX_FAILED_ATTEMPTS
 };
+use crate::dht::registry_trait::DhtPeerRegistryTrait;
 use anyhow::{Result, anyhow};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 // ========== CRIT-3: NodeId Verification Constants ==========
 
@@ -28,36 +31,105 @@ pub const CHALLENGE_DOMAIN_PREFIX: &[u8] = b"ZHTP_NODEID_OWNERSHIP_CHALLENGE_V1"
 /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry for unified peer storage
 /// instead of maintaining separate routing_table: Vec<KBucket>.
 ///
-/// # Design
+/// **TICKET #1.14:** External unified registry integration via trait.
 ///
-/// The KademliaRouter now delegates peer storage to DhtPeerRegistry, which uses
-/// HashMap<NodeId, DhtPeerEntry> instead of Vec<KBucket>. This eliminates duplicate
-/// peer storage while preserving all K-bucket functionality.
+/// # Usage Patterns
+///
+/// ## Standalone Mode (Default)
+/// Uses internal DhtPeerRegistry. Suitable for testing or isolated DHT usage.
+///
+/// ## External Registry Mode
+/// Use `set_external_registry()` to inject a shared `Arc<RwLock<dyn DhtPeerRegistryTrait>>`.
+/// The zhtp layer can create a registry and share it across components.
+///
+/// # Example
+///
+/// ```ignore
+/// use lib_storage::dht::{DhtPeerRegistry, DhtPeerRegistryTrait, KademliaRouter};
+/// use std::sync::Arc;
+/// use tokio::sync::RwLock;
+///
+/// // Create shared registry
+/// let registry: Arc<RwLock<dyn DhtPeerRegistryTrait>> =
+///     Arc::new(RwLock::new(DhtPeerRegistry::new(20)));
+///
+/// // Inject into router
+/// let mut router = KademliaRouter::new(local_id, 20);
+/// router.set_external_registry(registry.clone());
+///
+/// // Use registry directly for DHT operations
+/// registry.write().await.add_dht_peer(&node, bucket_idx, distance).await?;
+/// ```
 ///
 /// # Thread Safety
 ///
-/// Uses `&mut self` for mutations. Callers should wrap in Arc<RwLock> for
-/// concurrent access (to be addressed in future thread-safety ticket).
+/// Uses `&mut self` for mutations. Wrap in Arc<RwLock> for concurrent access.
 #[derive(Debug)]
 pub struct KademliaRouter {
     /// Local node ID
     local_id: NodeId,
-    /// Internal peer registry (replaces routing_table Vec<KBucket>)
+    /// Internal peer registry (for standalone/legacy use only)
+    /// In production, use unified registry directly via DhtPeerRegistryTrait
     registry: DhtPeerRegistry,
     /// K-bucket size (standard Kademlia K value)
     k: usize,
+    /// External unified registry reference (Ticket #1.14)
+    /// IMPORTANT: This is stored for reference only. Production code should
+    /// use the registry directly via DhtPeerRegistryTrait, not through KademliaRouter
+    external_registry: Option<Arc<RwLock<dyn DhtPeerRegistryTrait>>>,
 }
 
 impl KademliaRouter {
     /// Create a new Kademlia router
     ///
     /// **MIGRATED (Ticket #148):** Now creates internal DhtPeerRegistry instead of Vec<KBucket>
+    ///
+    /// **TICKET #1.14:** For production with unified registry, use `set_external_registry()`
+    /// to store a reference, then access registry directly via DhtPeerRegistryTrait.
+    /// KademliaRouter methods use internal registry only (for backward compatibility).
     pub fn new(local_id: NodeId, k: usize) -> Self {
         Self {
             local_id,
             registry: DhtPeerRegistry::new(k),
             k,
+            external_registry: None,
         }
+    }
+    
+    /// Set external unified registry reference (Ticket #1.14)
+    ///
+    /// Allows injecting a shared registry that implements `DhtPeerRegistryTrait`.
+    /// This enables sharing peer storage across multiple components.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use lib_storage::dht::{DhtPeerRegistry, DhtPeerRegistryTrait};
+    ///
+    /// let registry: Arc<RwLock<dyn DhtPeerRegistryTrait>> =
+    ///     Arc::new(RwLock::new(DhtPeerRegistry::new(20)));
+    ///
+    /// router.set_external_registry(registry.clone());
+    /// ```
+    pub fn set_external_registry(&mut self, registry: Arc<RwLock<dyn DhtPeerRegistryTrait>>) {
+        self.external_registry = Some(registry);
+    }
+    
+    /// Get reference to external unified registry (if set)
+    ///
+    /// **TICKET #1.14:** Returns the unified registry reference for direct access.
+    /// Callers should use this to access the registry via DhtPeerRegistryTrait.
+    pub fn get_external_registry(&self) -> Option<Arc<RwLock<dyn DhtPeerRegistryTrait>>> {
+        self.external_registry.clone()
+    }
+    
+    /// Check if using external unified registry
+    ///
+    /// **TICKET #1.14:** Returns true if external registry reference is stored.
+    /// When true, production code should use `get_external_registry()` to access
+    /// the unified registry directly via DhtPeerRegistryTrait.
+    pub fn uses_external_registry(&self) -> bool {
+        self.external_registry.is_some()
     }
     
     /// Calculate XOR distance between two node IDs
@@ -74,6 +146,10 @@ impl KademliaRouter {
     
     /// Add a node to the routing table
     ///
+    /// **TICKET #1.14 NOTE:** This method uses internal registry only.
+    /// For production with unified registry, use trait methods directly:
+    /// `registry.write().await.add_dht_peer(&node, bucket_idx, distance).await?`
+    ///
     /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.upsert() instead of
     /// direct routing_table manipulation.
     ///
@@ -83,29 +159,7 @@ impl KademliaRouter {
     /// # Security (CRIT-3) - NodeId Ownership Verification
     ///
     /// Before adding nodes to the routing table, callers SHOULD verify NodeId
-    /// ownership using the challenge-response protocol defined in this module:
-    ///
-    /// ```ignore
-    /// // 1. Generate challenge for the node's claimed NodeId
-    /// let challenge = NodeIdChallenge::generate(node.peer.node_id().clone())?;
-    ///
-    /// // 2. Send challenge to node and get signed response
-    /// let response = network.send_challenge(&node, &challenge).await?;
-    ///
-    /// // 3. Verify the response
-    /// let result = verify_node_id_ownership(&response, 300);
-    /// if result != VerificationResult::Valid {
-    ///     return Err(anyhow!("NodeId ownership verification failed: {:?}", result));
-    /// }
-    ///
-    /// // 4. Now safe to add to routing table
-    /// router.add_node(node).await?;
-    /// ```
-    ///
-    /// This function performs basic validation (non-empty public key) but does NOT
-    /// perform the full challenge-response verification. The network layer should
-    /// verify NodeId ownership before calling this method.
-    ///
+    /// ownership using the challenge-response protocol defined in this module.
     /// See: `NodeIdChallenge`, `verify_node_id_ownership()`, `verify_node_id_ownership_full()`
     pub async fn add_node(&mut self, node: DhtNode) -> Result<()> {
         let node_id = node.peer.node_id();
@@ -169,6 +223,10 @@ impl KademliaRouter {
     }
     
     /// Find the K closest nodes to a target ID (uses k-bucket parameter)
+    ///
+    /// **TICKET #1.14 NOTE:** This method uses internal registry only.
+    /// For production with unified registry, use trait methods directly:
+    /// `registry.read().await.find_closest_dht_peers(&target, count).await?`
     ///
     /// **MIGRATED (Ticket #148):** Now uses DhtPeerRegistry.find_closest()
     ///

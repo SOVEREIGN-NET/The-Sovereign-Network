@@ -66,6 +66,16 @@ pub const DEFAULT_TLS_CERT_PATH: &str = "./data/tls/server.crt";
 /// Default path for TLS private key
 pub const DEFAULT_TLS_KEY_PATH: &str = "./data/tls/server.key";
 
+/// Trust policy for QUIC TLS verification.
+#[derive(Clone, Debug)]
+pub enum QuicTrustMode {
+    /// Strict TLS verification using native root certificates.
+    Strict,
+    /// Allow TLS verification to be skipped only for explicit allowlisted peers.
+    #[cfg(feature = "unsafe-bootstrap")]
+    BootstrapAllowlist(Vec<SocketAddr>),
+}
+
 /// QUIC mesh protocol with UHP authentication and PQC encryption layer
 pub struct QuicMeshProtocol {
     /// QUIC endpoint (handles all connections)
@@ -82,6 +92,9 @@ pub struct QuicMeshProtocol {
 
     /// Local binding address
     local_addr: SocketAddr,
+
+    /// Trust policy for TLS verification
+    trust_mode: QuicTrustMode,
 
     /// Message handler for processing received messages
     pub message_handler: Option<Arc<RwLock<MeshMessageHandler>>>,
@@ -228,6 +241,7 @@ impl QuicMeshProtocol {
             identity,
             handshake_ctx,
             local_addr: actual_addr,
+            trust_mode: QuicTrustMode::Strict,
             message_handler: None,
         })
     }
@@ -245,6 +259,11 @@ impl QuicMeshProtocol {
     /// Set the message handler for processing received messages
     pub fn set_message_handler(&mut self, handler: Arc<RwLock<MeshMessageHandler>>) {
         self.message_handler = Some(handler);
+    }
+
+    /// Set TLS trust policy for QUIC client connections
+    pub fn set_trust_mode(&mut self, trust_mode: QuicTrustMode) {
+        self.trust_mode = trust_mode;
     }
     
     /// Get the QUIC endpoint for accepting connections
@@ -267,7 +286,7 @@ impl QuicMeshProtocol {
         info!("🔐 Connecting to peer at {} via QUIC+UHP+Kyber", peer_addr);
 
         // Configure client
-        let client_config = Self::configure_client()?;
+        let client_config = Self::configure_client(&self.trust_mode, peer_addr)?;
 
         // Connect via QUIC
         let connection = self.endpoint
@@ -329,7 +348,7 @@ impl QuicMeshProtocol {
         info!("🔐 Connecting to bootstrap peer at {} (mode: {})", peer_addr, mode_str);
 
         // Configure client
-        let client_config = Self::configure_client()?;
+        let client_config = Self::configure_client(&self.trust_mode, peer_addr)?;
 
         // Connect via QUIC
         let connection = self.endpoint
@@ -695,13 +714,20 @@ impl QuicMeshProtocol {
     }
     
     /// Configure QUIC client
-    fn configure_client() -> Result<ClientConfig> {
-        // For mesh networking, we use self-signed certs and skip verification
-        // (PQC layer provides actual security)
-        let mut crypto = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
-            .with_no_client_auth();
+    fn configure_client(trust_mode: &QuicTrustMode, peer_addr: SocketAddr) -> Result<ClientConfig> {
+        let mut crypto = match trust_mode {
+            QuicTrustMode::Strict => Self::build_strict_client_config()?,
+            #[cfg(feature = "unsafe-bootstrap")]
+            QuicTrustMode::BootstrapAllowlist(allowlist) => {
+                if !allowlist.contains(&peer_addr) {
+                    return Err(anyhow!(
+                        "Peer {} is not in bootstrap allowlist for insecure TLS",
+                        peer_addr
+                    ));
+                }
+                Self::build_bootstrap_client_config()?
+            }
+        };
 
         // Configure ALPN protocols to match server (required for iOS Network.framework, Android Cronet)
         // Security note: ALPN is metadata only - actual security comes from PQC layer (Kyber + Dilithium)
@@ -722,6 +748,29 @@ impl QuicMeshProtocol {
         client_config.transport_config(Arc::new(transport_config));
 
         Ok(client_config)
+    }
+
+    fn build_strict_client_config() -> Result<rustls::ClientConfig> {
+        let mut root_store = rustls::RootCertStore::empty();
+        let native_certs = rustls_native_certs::load_native_certs()
+            .context("Failed to load native root certificates")?;
+        for cert in native_certs {
+            root_store
+                .add(cert)
+                .context("Failed to add native root certificate")?;
+        }
+
+        Ok(rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth())
+    }
+
+    #[cfg(feature = "unsafe-bootstrap")]
+    fn build_bootstrap_client_config() -> Result<rustls::ClientConfig> {
+        Ok(rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
+            .with_no_client_auth())
     }
 }
 
@@ -868,10 +917,12 @@ struct SelfSignedCert {
     key: PrivateKeyDer<'static>,
 }
 
-/// Skip TLS certificate verification (we rely on PQC layer for security)
+/// Skip TLS certificate verification (unsafe-bootstrap only)
+#[cfg(feature = "unsafe-bootstrap")]
 #[derive(Debug)]
 struct SkipServerVerification;
 
+#[cfg(feature = "unsafe-bootstrap")]
 impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,

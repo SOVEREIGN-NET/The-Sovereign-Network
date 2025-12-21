@@ -102,6 +102,7 @@ mdns-sd = "0.16"                                  # mDNS service discovery (Bonj
 quinn = "0.11"                                    # Production-ready QUIC implementation (used by Google, Cloudflare)
 rustls = { version = "0.23", default-features = false, features = ["ring"] } # TLS 1.3 library (used by quinn)
 rustls-pemfile = "2.1"                              # PEM file parsing for persistent TLS certificates
+rustls-native-certs = "0.7"                         # Native root certificates for strict TLS verification
 rcgen = "0.14.5"                                    # Certificate generation for QUIC
 x509-parser = "0.16"                                # X.509 certificate parsing for SPKI extraction
 #To enable: Install cmake and NASM, then uncomment above lines
@@ -197,3 +198,4 @@ hardware-scanning = []
 identity-debug = []               # Enable detailed identity verification debug logging (production: disabled)
 storage-integration = []
 chain-integration = []
+unsafe-bootstrap = []             # Explicit opt-in for insecure TLS verification paths

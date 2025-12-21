@@ -11,6 +11,9 @@
 //! - Native ZHTP protocol (not HTTP) designed for mesh networks
 //! - DHT client layer that uses lib-storage as the DHT implementation backend
 
+#[cfg(all(not(debug_assertions), feature = "unsafe-bootstrap"))]
+compile_error!("unsafe-bootstrap must not be enabled in release builds");
+
 // Re-exports for external use
 // Force rebuild
 pub use crate::mesh::server::ZhtpMeshServer;

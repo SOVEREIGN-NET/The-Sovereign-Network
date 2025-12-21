@@ -23,6 +23,8 @@ use crate::types::{
 use crate::validators::ValidatorManager;
 use crate::byzantine::ByzantineFaultDetector;
 
+const VOTE_DOMAIN_TAG: &[u8] = b"ZHTP/CONSENSUS/VOTE/v1\0";
+
 /// Enhanced BFT consensus engine with ZK verification
 pub struct EnhancedBftEngine {
     /// Current consensus round
@@ -300,8 +302,13 @@ impl EnhancedBftEngine {
         let vote_message = self.serialize_vote_for_verification(vote)?;
         
         // Skip validation for test signatures
+        #[cfg(any(test, feature = "dev-insecure"))]
         if vote.signature.signature == vec![1, 2, 3] {
             return Ok(());
+        }
+        #[cfg(not(any(test, feature = "dev-insecure")))]
+        if vote.signature.signature == vec![1, 2, 3] {
+            return Err(anyhow::anyhow!("Test signature is not allowed in production"));
         }
         
         // Use lib-crypto for signature verification
@@ -568,7 +575,14 @@ impl EnhancedBftEngine {
                     vote.signature.public_key = keypair.public_key.clone();
                 },
                 Err(_) => {
-                    // Keep test signature if signing fails
+                    #[cfg(any(test, feature = "dev-insecure"))]
+                    {
+                        // Keep test signature if signing fails (dev/test only)
+                    }
+                    #[cfg(not(any(test, feature = "dev-insecure")))]
+                    {
+                        return Err(anyhow::anyhow!("Failed to sign vote in production"));
+                    }
                 }
             }
         }
@@ -579,6 +593,7 @@ impl EnhancedBftEngine {
     /// Serialize vote for verification
     fn serialize_vote_for_verification(&self, vote: &ConsensusVote) -> Result<Vec<u8>> {
         let mut data = Vec::new();
+        data.extend_from_slice(VOTE_DOMAIN_TAG);
         data.extend_from_slice(vote.id.as_bytes());
         data.extend_from_slice(vote.voter.as_bytes());
         data.extend_from_slice(vote.proposal_id.as_bytes());

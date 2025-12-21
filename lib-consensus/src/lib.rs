@@ -6,6 +6,9 @@
 //! This package provides modular consensus mechanisms with integrated DAO governance,
 //! economic incentives, and post-quantum security.
 
+#[cfg(all(not(debug_assertions), feature = "dev-insecure"))]
+compile_error!("dev-insecure must not be enabled in release builds");
+
 pub mod types;
 pub mod engines;
 pub mod validators;
