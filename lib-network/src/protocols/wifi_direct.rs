@@ -3708,7 +3708,101 @@ impl Protocol for WiFiDirectMeshProtocol {
 
     fn is_available(&self) -> bool {
         // Check if WiFi Direct is enabled
-        // Production checks hardware state
-        true
+        let rt = tokio::runtime::Handle::try_current();
+        if let Ok(handle) = rt {
+            handle.block_on(async {
+                *self.enabled.read().await
+            })
+        } else {
+            false
+        }
+    }
+}
+
+// ============================================================================
+// Protocol Trait Tests  
+// ============================================================================
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_wifi_direct_protocol_capabilities() {
+        let node_id = [1u8; 32];
+        let protocol = WiFiDirectMeshProtocol::new(node_id).unwrap();
+
+        let caps = protocol.capabilities();
+        assert_eq!(caps.mtu, 1400);
+        assert_eq!(caps.throughput_mbps, 250.0);
+        assert_eq!(caps.latency_ms, 10);
+        assert_eq!(caps.range_meters, Some(200));
+        assert_eq!(caps.power_profile, PowerProfile::Medium);
+        assert!(caps.reliable);
+        assert!(!caps.requires_internet);
+        assert!(caps.replay_protection);
+        assert!(caps.identity_binding);
+    }
+
+    #[tokio::test]
+    async fn test_wifi_direct_protocol_type() {
+        let node_id = [1u8; 32];
+        let protocol = WiFiDirectMeshProtocol::new(node_id).unwrap();
+
+        assert_eq!(protocol.protocol_type(), NetworkProtocol::WiFiDirect);
+    }
+
+    #[tokio::test]
+    async fn test_wifi_direct_is_available() {
+        let node_id = [1u8; 32];
+        let protocol = WiFiDirectMeshProtocol::new(node_id).unwrap();
+
+        // Initially disabled for security
+        assert!(!protocol.is_available());
+
+        // After enabling, should be available
+        protocol.enable().await.unwrap();
+        assert!(protocol.is_available());
+
+        // After disabling, should not be available
+        protocol.disable().await.unwrap();
+        assert!(!protocol.is_available());
+    }
+
+    #[tokio::test]
+    async fn test_wifi_direct_connect_creates_session() {
+        let node_id = [1u8; 32];
+        let mut protocol = WiFiDirectMeshProtocol::new(node_id).unwrap();
+
+        let target = PeerAddress::device_id("AA:BB:CC:DD:EE:FF").unwrap();
+
+        let session = protocol.connect(&target).await.unwrap();
+        assert_eq!(session.protocol(), &NetworkProtocol::WiFiDirect);
+    }
+
+    #[tokio::test]
+    async fn test_wifi_direct_session_validation() {
+        let node_id = [1u8; 32];
+        let mut protocol = WiFiDirectMeshProtocol::new(node_id).unwrap();
+
+        let target = PeerAddress::device_id("AA:BB:CC:DD:EE:FF").unwrap();
+
+        let session = protocol.connect(&target).await.unwrap();
+        assert!(protocol.validate_session(&session).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_wifi_direct_key_derivation() {
+        let node_id1 = [1u8; 32];
+        let node_id2 = [2u8; 32];
+        let protocol1 = WiFiDirectMeshProtocol::new(node_id1).unwrap();
+        let protocol2 = WiFiDirectMeshProtocol::new(node_id2).unwrap();
+
+        let peer_mac = "AA:BB:CC:DD:EE:FF";
+        
+        // Different node_ids should derive different keys
+        let key1 = protocol1.derive_session_key(peer_mac);
+        let key2 = protocol2.derive_session_key(peer_mac);
+        assert_ne!(key1, key2);
     }
 }

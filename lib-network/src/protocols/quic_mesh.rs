@@ -1285,6 +1285,97 @@ impl Protocol for QuicMeshProtocol {
 
     fn is_available(&self) -> bool {
         // Check if QUIC endpoint is bound and operational
-        true // Simplified - production checks endpoint state
+        !self.endpoint.is_closed()
+    }
+}
+
+// ============================================================================
+// Protocol Trait Tests
+// ============================================================================
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_quic_protocol_capabilities() {
+        let identity = Arc::new(ZhtpIdentity::generate_test_identity().await.unwrap());
+        let bind_addr = "127.0.0.1:0".parse().unwrap();
+        let protocol = QuicMeshProtocol::new(identity, bind_addr).unwrap();
+
+        let caps = protocol.capabilities();
+        assert_eq!(caps.mtu, 1200);
+        assert_eq!(caps.throughput_mbps, 100.0);
+        assert_eq!(caps.latency_ms, 20);
+        assert_eq!(caps.power_profile, PowerProfile::Medium);
+        assert!(caps.reliable);
+        assert!(!caps.requires_internet);
+        assert!(caps.forward_secrecy); // Kyber provides forward secrecy
+        assert_eq!(caps.pqc_mode, PqcMode::Hybrid);
+    }
+
+    #[tokio::test]
+    async fn test_quic_protocol_type() {
+        let identity = Arc::new(ZhtpIdentity::generate_test_identity().await.unwrap());
+        let bind_addr = "127.0.0.1:0".parse().unwrap();
+        let protocol = QuicMeshProtocol::new(identity, bind_addr).unwrap();
+
+        assert_eq!(protocol.protocol_type(), NetworkProtocol::QUIC);
+    }
+
+    #[tokio::test]
+    async fn test_quic_is_available() {
+        let identity = Arc::new(ZhtpIdentity::generate_test_identity().await.unwrap());
+        let bind_addr = "127.0.0.1:0".parse().unwrap();
+        let protocol = QuicMeshProtocol::new(identity.clone(), bind_addr).unwrap();
+
+        assert!(protocol.is_available());
+
+        // After shutdown, should not be available
+        protocol.shutdown().await;
+        assert!(!protocol.is_available());
+    }
+
+    #[tokio::test]
+    async fn test_quic_connect_creates_session() {
+        let identity = Arc::new(ZhtpIdentity::generate_test_identity().await.unwrap());
+        let bind_addr = "127.0.0.1:0".parse().unwrap();
+        let mut protocol = QuicMeshProtocol::new(identity, bind_addr).unwrap();
+
+        let peer_addr = "127.0.0.1:9999".parse().unwrap();
+        let target = PeerAddress::ip_socket(peer_addr).unwrap();
+
+        let session = protocol.connect(&target).await.unwrap();
+        assert_eq!(session.protocol(), &NetworkProtocol::QUIC);
+        assert!(session.has_forward_secrecy()); // Kyber provides forward secrecy
+    }
+
+    #[tokio::test]
+    async fn test_quic_session_validation() {
+        let identity = Arc::new(ZhtpIdentity::generate_test_identity().await.unwrap());
+        let bind_addr = "127.0.0.1:0".parse().unwrap();
+        let mut protocol = QuicMeshProtocol::new(identity, bind_addr).unwrap();
+
+        let peer_addr = "127.0.0.1:9999".parse().unwrap();
+        let target = PeerAddress::ip_socket(peer_addr).unwrap();
+
+        let session = protocol.connect(&target).await.unwrap();
+        assert!(protocol.validate_session(&session).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_quic_key_derivation() {
+        let identity1 = Arc::new(ZhtpIdentity::generate_test_identity().await.unwrap());
+        let identity2 = Arc::new(ZhtpIdentity::generate_test_identity().await.unwrap());
+        let bind_addr = "127.0.0.1:0".parse().unwrap();
+        let protocol1 = QuicMeshProtocol::new(identity1, bind_addr).unwrap();
+        let protocol2 = QuicMeshProtocol::new(identity2, bind_addr).unwrap();
+
+        let peer_node_id = vec![0xAB; 32];
+        
+        // Different identities should derive different keys
+        let key1 = protocol1.derive_session_key(&peer_node_id);
+        let key2 = protocol2.derive_session_key(&peer_node_id);
+        assert_ne!(key1, key2);
     }
 }

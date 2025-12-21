@@ -890,6 +890,104 @@ impl Protocol for LoRaWANMeshProtocol {
 
     fn is_available(&self) -> bool {
         // Check if LoRa radio hardware is available
-        true // Simplified - production checks radio module state
+        #[cfg(target_os = "linux")]
+        {
+            // Check for common LoRa device paths
+            std::path::Path::new("/dev/spidev0.0").exists() ||
+            std::path::Path::new("/dev/ttyUSB0").exists() ||
+            std::path::Path::new("/dev/ttyACM0").exists()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            // LoRaWAN typically requires Linux with SPI/UART hardware
+            false
+        }
+    }
+}
+
+// ============================================================================
+// Protocol Trait Tests
+// ============================================================================
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_lorawan_protocol_capabilities() {
+        let node_id = [1u8; 32];
+        let protocol = LoRaWANMeshProtocol::new(node_id).unwrap();
+
+        let caps = protocol.capabilities();
+        assert_eq!(caps.mtu, 242);
+        assert_eq!(caps.throughput_mbps, 0.05);
+        assert_eq!(caps.latency_ms, 5000);
+        assert_eq!(caps.range_meters, Some(15000));
+        assert_eq!(caps.power_profile, PowerProfile::UltraLow);
+        assert!(!caps.reliable);
+        assert!(!caps.requires_internet);
+        assert!(caps.replay_protection);
+        assert!(caps.identity_binding);
+    }
+
+    #[tokio::test]
+    async fn test_lorawan_protocol_type() {
+        let node_id = [1u8; 32];
+        let protocol = LoRaWANMeshProtocol::new(node_id).unwrap();
+
+        assert_eq!(protocol.protocol_type(), NetworkProtocol::LoRaWAN);
+    }
+
+    #[tokio::test]
+    async fn test_lorawan_connect_creates_session() {
+        let node_id = [1u8; 32];
+        let mut protocol = LoRaWANMeshProtocol::new(node_id).unwrap();
+
+        let target = PeerAddress::lora(0x12345678);
+
+        let session = protocol.connect(&target).await.unwrap();
+        assert_eq!(session.protocol(), &NetworkProtocol::LoRaWAN);
+    }
+
+    #[tokio::test]
+    async fn test_lorawan_session_validation() {
+        let node_id = [1u8; 32];
+        let mut protocol = LoRaWANMeshProtocol::new(node_id).unwrap();
+
+        let target = PeerAddress::lora(0x12345678);
+
+        let session = protocol.connect(&target).await.unwrap();
+        assert!(protocol.validate_session(&session).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_lorawan_fragmentation() {
+        let node_id = [1u8; 32];
+        let protocol = LoRaWANMeshProtocol::new(node_id).unwrap();
+
+        // Test message larger than LoRaWAN MTU
+        let large_data = vec![0xAB; 500];
+        let fragments = protocol.fragment_message_internal(&large_data);
+        
+        // Should create 3 fragments: 242 + 242 + 16
+        assert_eq!(fragments.len(), 3);
+        assert_eq!(fragments[0].len(), 242);
+        assert_eq!(fragments[1].len(), 242);
+        assert_eq!(fragments[2].len(), 16);
+    }
+
+    #[tokio::test]
+    async fn test_lorawan_key_derivation() {
+        let node_id1 = [1u8; 32];
+        let node_id2 = [2u8; 32];
+        let protocol1 = LoRaWANMeshProtocol::new(node_id1).unwrap();
+        let protocol2 = LoRaWANMeshProtocol::new(node_id2).unwrap();
+
+        let peer_dev_addr = 0x12345678u32;
+        
+        // Different node_ids should derive different keys
+        let key1 = protocol1.derive_session_key(peer_dev_addr);
+        let key2 = protocol2.derive_session_key(peer_dev_addr);
+        assert_ne!(key1, key2);
     }
 }

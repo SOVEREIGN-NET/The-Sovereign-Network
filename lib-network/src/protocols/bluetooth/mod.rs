@@ -4394,6 +4394,135 @@ impl Protocol for BluetoothMeshProtocol {
 
     fn is_available(&self) -> bool {
         // Check if Bluetooth hardware is available
-        true // Simplified - production checks actual hardware state
+        #[cfg(target_os = "windows")]
+        {
+            // On Windows, check if we have BLE advertiser or GATT service provider
+            let rt = tokio::runtime::Handle::try_current();
+            if let Ok(handle) = rt {
+                return handle.block_on(async {
+                    let advertiser = self.ble_advertiser.read().await;
+                    let service = self.gatt_service_provider.read().await;
+                    advertiser.is_some() || service.is_some()
+                });
+            }
+            false
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // On macOS, check if Core Bluetooth manager is initialized
+            let rt = tokio::runtime::Handle::try_current();
+            if let Ok(handle) = rt {
+                return handle.block_on(async {
+                    self.core_bluetooth.read().await.is_some()
+                });
+            }
+            false
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // On Linux, check if BlueZ is available via D-Bus
+            std::path::Path::new("/sys/class/bluetooth").exists()
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        {
+            false // Unsupported platform
+        }
+    }
+}
+
+// ============================================================================
+// Protocol Trait Tests
+// ============================================================================
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+    use lib_crypto::KeyPair;
+
+    #[tokio::test]
+    async fn test_bluetooth_protocol_capabilities() {
+        let node_id = [1u8; 32];
+        let keypair = KeyPair::generate().unwrap();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+
+        let caps = protocol.capabilities();
+        assert_eq!(caps.mtu, 247);
+        assert_eq!(caps.throughput_mbps, 2.0);
+        assert_eq!(caps.latency_ms, 50);
+        assert_eq!(caps.range_meters, Some(100));
+        assert_eq!(caps.power_profile, PowerProfile::Low);
+        assert!(!caps.reliable);
+        assert!(!caps.requires_internet);
+        assert!(caps.replay_protection);
+        assert!(caps.identity_binding);
+    }
+
+    #[tokio::test]
+    async fn test_bluetooth_protocol_type() {
+        let node_id = [1u8; 32];
+        let keypair = KeyPair::generate().unwrap();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+
+        assert_eq!(protocol.protocol_type(), NetworkProtocol::BluetoothLE);
+    }
+
+    #[tokio::test]
+    async fn test_bluetooth_connect_creates_session() {
+        let node_id = [1u8; 32];
+        let keypair = KeyPair::generate().unwrap();
+        let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+
+        let peer_mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        let target = PeerAddress::bluetooth(peer_mac).unwrap();
+
+        let session = protocol.connect(&target).await.unwrap();
+        assert_eq!(session.protocol(), &NetworkProtocol::BluetoothLE);
+        assert!(session.has_forward_secrecy() == false); // Deterministic keys
+    }
+
+    #[tokio::test]
+    async fn test_bluetooth_session_validation() {
+        let node_id = [1u8; 32];
+        let keypair = KeyPair::generate().unwrap();
+        let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+
+        let peer_mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        let target = PeerAddress::bluetooth(peer_mac).unwrap();
+
+        let session = protocol.connect(&target).await.unwrap();
+        assert!(protocol.validate_session(&session).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_bluetooth_fragmentation() {
+        let node_id = [1u8; 32];
+        let keypair = KeyPair::generate().unwrap();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+
+        // Test message larger than BLE MTU
+        let large_data = vec![0xAB; 500];
+        let fragments = protocol.fragment_message_internal(&large_data);
+        
+        // Should create 3 fragments: 247 + 247 + 6
+        assert_eq!(fragments.len(), 3);
+        assert_eq!(fragments[0].len(), 247);
+        assert_eq!(fragments[1].len(), 247);
+        assert_eq!(fragments[2].len(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_bluetooth_key_derivation() {
+        let node_id1 = [1u8; 32];
+        let node_id2 = [2u8; 32];
+        let keypair = KeyPair::generate().unwrap();
+        let protocol1 = BluetoothMeshProtocol::new(node_id1, keypair.public_key.clone()).unwrap();
+        let protocol2 = BluetoothMeshProtocol::new(node_id2, keypair.public_key).unwrap();
+
+        let peer_mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        
+        // Different node_ids should derive different keys
+        let key1 = protocol1.derive_session_key(&peer_mac);
+        let key2 = protocol2.derive_session_key(&peer_mac);
+        assert_ne!(key1, key2);
     }
 }

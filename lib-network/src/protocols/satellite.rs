@@ -470,6 +470,89 @@ impl Protocol for SatelliteMeshProtocol {
 
     fn is_available(&self) -> bool {
         // Check if satellite terminal/modem is available
-        true // Simplified - production checks terminal connection state
+        // In production, this would check actual satellite modem connectivity
+        // For now, check if terminal_id is properly initialized
+        !self.terminal_id.is_empty() && self.terminal_id.starts_with("ZHTP_SAT_")
+    }
+}
+
+// ============================================================================
+// Protocol Trait Tests
+// ============================================================================
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_satellite_protocol_capabilities() {
+        let node_id = [1u8; 32];
+        let protocol = SatelliteMeshProtocol::new(node_id).unwrap();
+
+        let caps = protocol.capabilities();
+        assert_eq!(caps.mtu, 1500);
+        assert_eq!(caps.throughput_mbps, 100.0);
+        assert_eq!(caps.latency_ms, 600);
+        assert_eq!(caps.range_meters, None); // Global coverage
+        assert_eq!(caps.power_profile, PowerProfile::VeryHigh);
+        assert!(caps.reliable);
+        assert!(caps.requires_internet); // Satellite infrastructure
+        assert!(caps.replay_protection);
+        assert!(caps.identity_binding);
+    }
+
+    #[tokio::test]
+    async fn test_satellite_protocol_type() {
+        let node_id = [1u8; 32];
+        let protocol = SatelliteMeshProtocol::new(node_id).unwrap();
+
+        assert_eq!(protocol.protocol_type(), NetworkProtocol::Satellite);
+    }
+
+    #[tokio::test]
+    async fn test_satellite_is_available() {
+        let node_id = [1u8; 32];
+        let protocol = SatelliteMeshProtocol::new(node_id).unwrap();
+
+        // Should be available with properly initialized terminal_id
+        assert!(protocol.is_available());
+        assert!(protocol.terminal_id.starts_with("ZHTP_SAT_"));
+    }
+
+    #[tokio::test]
+    async fn test_satellite_connect_creates_session() {
+        let node_id = [1u8; 32];
+        let mut protocol = SatelliteMeshProtocol::new(node_id).unwrap();
+
+        let target = PeerAddress::satellite("STARLINK_TERMINAL_001").unwrap();
+
+        let session = protocol.connect(&target).await.unwrap();
+        assert_eq!(session.protocol(), &NetworkProtocol::Satellite);
+    }
+
+    #[tokio::test]
+    async fn test_satellite_session_validation() {
+        let node_id = [1u8; 32];
+        let mut protocol = SatelliteMeshProtocol::new(node_id).unwrap();
+
+        let target = PeerAddress::satellite("STARLINK_TERMINAL_001").unwrap();
+
+        let session = protocol.connect(&target).await.unwrap();
+        assert!(protocol.validate_session(&session).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_satellite_key_derivation() {
+        let node_id1 = [1u8; 32];
+        let node_id2 = [2u8; 32];
+        let protocol1 = SatelliteMeshProtocol::new(node_id1).unwrap();
+        let protocol2 = SatelliteMeshProtocol::new(node_id2).unwrap();
+
+        let peer_terminal_id = "STARLINK_TERMINAL_001";
+        
+        // Different node_ids should derive different keys
+        let key1 = protocol1.derive_session_key(peer_terminal_id);
+        let key2 = protocol2.derive_session_key(peer_terminal_id);
+        assert_ne!(key1, key2);
     }
 }
