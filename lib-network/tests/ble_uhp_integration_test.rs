@@ -40,8 +40,9 @@ async fn test_uhp_verification_rejects_unverified_peers() -> Result<()> {
     let verification_hook: VerificationHook = Arc::new(|payload| {
         payload.first() == Some(&0x01)
     });
-    
-    let mut mock_link = MockGattLink::new(247, Some(verification_hook), None);
+
+    // Verifier on peripheral side (2nd param) since central sends TO peripheral
+    let mut mock_link = MockGattLink::new(247, None, Some(verification_hook));
     
     // Test 1: Verified payload should pass
     let verified_payload = vec![0x01, 0x42, 0x43, 0x44]; // starts with 0x01
@@ -109,15 +110,16 @@ async fn test_uhp_with_different_mtu_sizes() -> Result<()> {
 
 /// Test UHP error handling and recovery
 #[tokio::test]
-#[cfg(feature = "ble-mock")]  
+#[cfg(feature = "ble-mock")]
 async fn test_uhp_error_handling() -> Result<()> {
-    // Test with verification that randomly fails
+    // Test with verification that conditionally fails
     let flaky_verifier: VerificationHook = Arc::new(|payload| {
         // Accept only payloads with even second byte
         payload.get(1).map_or(false, |&b| b % 2 == 0)
     });
-    
-    let mut mock_link = MockGattLink::new(247, Some(flaky_verifier), None);
+
+    // Verifier on peripheral side (2nd param) since central sends TO peripheral
+    let mut mock_link = MockGattLink::new(247, None, Some(flaky_verifier));
     
     // This should pass (second byte is even)
     let good_payload = vec![0xFF, 0x42, 0x01, 0x02];
