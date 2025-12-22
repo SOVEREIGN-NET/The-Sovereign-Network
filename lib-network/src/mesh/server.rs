@@ -399,7 +399,7 @@ fn filter_protocols_by_hardware(
                 }
             },
             NetworkProtocol::LoRaWAN => {
-                if hardware_caps.lorawan_available {
+                if hardware_caps.lorawan_available() {
                     info!("LoRaWAN enabled - hardware detected");
                     enabled_protocols.push(protocol.clone());
                 } else {

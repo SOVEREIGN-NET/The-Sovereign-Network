@@ -196,21 +196,72 @@ Intelligent hardware detection and network discovery for optimal protocol select
 
 ```rust
 pub struct HardwareCapabilities {
-    pub lorawan_available: bool,
+    /// LoRaWAN radio hardware (supports multiple radios)
+    pub lorawan_radios: Vec<LoRaWANHardware>,
     pub bluetooth_available: bool,
     pub wifi_direct_available: bool,
     pub hardware_details: HashMap<String, HardwareDevice>,
 }
 
-// Platform-specific detection
+// Platform-specific detection - now returns Vec of all detected radios
 #[cfg(target_os = "linux")]
-async fn detect_linux_lorawan_hardware() -> bool {
-    // Check SPI devices, USB adapters, I2C modules, GPIO HATs
+async fn detect_lorawan_hardware() -> Result<Vec<LoRaWANHardware>> {
+    // Detects ALL LoRaWAN radios:
+    // - SPI devices (SX127x, SX130x concentrators)
+    // - USB adapters (CH340, FTDI, CP210x)
+    // - I2C modules
+    // - Raspberry Pi HATs
 }
 
 #[cfg(target_os = "windows")]
-async fn detect_windows_lorawan_hardware() -> bool {
+async fn detect_lorawan_hardware() -> Result<Vec<LoRaWANHardware>> {
     // Check COM ports, Device Manager, WMI queries
+    // Returns all detected LoRaWAN devices
+}
+```
+
+**Multi-Radio LoRaWAN Architecture:**
+
+The system now supports multiple simultaneous LoRaWAN radios for:
+
+1. **Regional Compliance**: Automatically select appropriate frequency band
+   - EU868 for Europe (max 14 dBm)
+   - US915 for North America (max 30 dBm)
+   - AS923 for Asia, etc.
+
+2. **Redundancy & Failover**: Use backup radios if primary fails
+
+3. **Multi-Band Operation**: Simultaneous operation on different bands
+   - Long-range (SF12) on one radio
+   - High-speed (SF7) on another
+
+4. **Power Management**: Select radio based on power requirements
+   - Low power for battery operation
+   - High power for gateway/relay nodes
+
+**Radio Selection Strategy:**
+
+```rust
+// Detect all radios
+let caps = HardwareCapabilities::detect().await?;
+
+// Strategy 1: Geographic region compliance
+let region_band = determine_frequency_band_from_location();
+let region_radios = caps.lorawan_radios_for_band(&region_band);
+
+// Strategy 2: Power optimization
+let low_power_radio = caps.lorawan_radios.iter()
+    .filter(|r| r.max_tx_power <= 14)
+    .min_by_key(|r| r.max_tx_power);
+
+// Strategy 3: Connection type preference (SPI > USB > I2C)
+let preferred_radio = caps.lorawan_radios.iter()
+    .find(|r| r.connection_type == "SPI")
+    .or_else(|| caps.lorawan_radios.first());
+
+// Strategy 4: Multi-radio for redundancy
+for radio in &caps.lorawan_radios {
+    spawn_radio_handler(radio.clone());
 }
 ```
 
