@@ -2,8 +2,13 @@
 //! 
 //! Handles LoRaWAN long-range mesh networking for extended coverage
 
+mod gateway_auth;
+
 use anyhow::Result;
 use tracing::{info, warn};
+pub use gateway_auth::{
+    GatewayAttestation, LoRaDeviceMessage, LoRaWANGatewayAuth, LoRaWanUhpBinding,
+};
 
 /// LoRaWAN mesh protocol handler
 pub struct LoRaWANMeshProtocol {
@@ -17,6 +22,8 @@ pub struct LoRaWANMeshProtocol {
     pub app_key: [u8; 16],
     /// Discovery active flag
     pub discovery_active: bool,
+    /// Optional trust anchor for gateway-mediated auth (ARCH-D-1.9)
+    pub gateway_auth: Option<LoRaWANGatewayAuth>,
 }
 
 impl LoRaWANMeshProtocol {
@@ -38,7 +45,14 @@ impl LoRaWANMeshProtocol {
             app_eui,
             app_key,
             discovery_active: false,
+            gateway_auth: Some(LoRaWANGatewayAuth::new()?),
         })
+    }
+
+    /// Inject a custom gateway auth model (e.g., mocked for tests).
+    pub fn with_gateway_auth(mut self, auth: LoRaWANGatewayAuth) -> Self {
+        self.gateway_auth = Some(auth);
+        self
     }
     
     /// Start LoRaWAN discovery
@@ -393,25 +407,9 @@ impl LoRaWANMeshProtocol {
         
         info!("Serialized envelope: {} bytes", bytes.len());
         
-        // For LoRaWAN, we need to convert peer_id to LoRaWAN address
-        // In a full implementation, this would use DevEUI or DevAddr
-        let target_address = self.get_address_for_peer(peer_id).await?;
-        
-        // Send via existing send_mesh_message (handles fragmentation if needed)
-        self.send_mesh_message(&target_address, &bytes).await?;
-        
-        info!(" LoRaWAN mesh envelope sent successfully");
-        
-        Ok(())
-    }
-    
-    /// Get LoRaWAN address for a peer PublicKey
-    async fn get_address_for_peer(&self, peer_id: &lib_crypto::PublicKey) -> Result<String> {
-        // For LoRaWAN, we derive a DevAddr from the peer's public key
+        // Derive DevAddr from peer's public key
         // DevAddr is 32-bit (4 bytes) in LoRaWAN 1.0.x/1.1
         // Format: 7 bits NwkID + 25 bits NwkAddr
-        
-        // Use first 4 bytes of peer's key_id as DevAddr
         let dev_addr = u32::from_be_bytes([
             peer_id.key_id[0],
             peer_id.key_id[1],
@@ -419,11 +417,16 @@ impl LoRaWANMeshProtocol {
             peer_id.key_id[3],
         ]);
         
-        let address = format!("{:08X}", dev_addr);
+        let target_address = format!("{:08X}", dev_addr);
         info!("Mapped peer {:?} to LoRaWAN DevAddr: {}", 
-              hex::encode(&peer_id.key_id[0..4]), address);
+              hex::encode(&peer_id.key_id[0..4]), target_address);
         
-        Ok(address)
+        // Send via existing send_mesh_message (handles fragmentation if needed)
+        self.send_mesh_message(&target_address, &bytes).await?;
+        
+        info!(" LoRaWAN mesh envelope sent successfully");
+        
+        Ok(())
     }
     
     /// Send mesh message via LoRaWAN

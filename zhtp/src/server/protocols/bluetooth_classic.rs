@@ -15,7 +15,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 use tracing::{debug, info, warn};
 use crate::server::mesh::core::MeshRouter;
@@ -172,7 +171,7 @@ impl BluetoothClassicRouter {
                     let peer_entry = lib_network::peer_registry::PeerEntry::new(
                         peer_key,
                         vec![lib_network::peer_registry::PeerEndpoint {
-                            address: String::new(), // TODO: Add actual address
+                            address: lib_network::NodeAddress::BluetoothClassic(String::new()), // TODO: Get actual MAC address
                             protocol: connection.protocol.clone(),
                             signal_strength: 0.8,
                             latency_ms: 50,
@@ -345,7 +344,7 @@ impl BluetoothClassicRouter {
                             let peer_entry = lib_network::peer_registry::PeerEntry::new(
                                 connection.peer.clone(),
                                 vec![lib_network::peer_registry::PeerEndpoint {
-                                    address: device.address.clone(),
+                                    address: lib_network::NodeAddress::BluetoothClassic(device.address.clone()),
                                     protocol: connection.protocol.clone(),
                                     signal_strength: 0.8,
                                     latency_ms: 50,

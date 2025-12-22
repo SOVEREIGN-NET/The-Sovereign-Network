@@ -5,7 +5,7 @@ use crate::identity::ZhtpIdentity;
 use crate::integration::CrossPackageIntegration;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use tokio::time::{Duration, Instant};
+use std::time::{Duration, Instant};
 
 /// Comprehensive identity verification system
 #[derive(Debug, Clone)]

@@ -37,6 +37,8 @@ pub mod integrity;
 
 // Multi-level caching system (Phase F - NEW)
 pub mod cache;
+#[cfg(feature = "network-integration")]
+pub mod network_integration;
 
 // Storage optimization (Phase F - NEW)
 pub mod optimization;
@@ -55,88 +57,8 @@ pub use types::economic_types::{
     StorageRequirements, PaymentPreferences, QualityRequirements, BudgetConstraints
 };
 
-// Re-export DHT components
-// **MIGRATION NOTE:** DhtStorage is internal. Use UnifiedStorageSystem for storage operations.
+// Re-export DHT and content management
 pub use dht::*;
-// Re-export DHT StorageStats as DhtStorageStats to avoid conflict with UnifiedStorageSystem's StorageStats
-pub use dht::storage::StorageStats as DhtStorageStats;
-
-// ========================================================================
-// DhtStorage Compatibility Layer (for migration)
-// ========================================================================
-
-/// Compatibility layer for DhtStorage operations.
-///
-/// **DEPRECATED:** Direct access to `DhtStorage` is deprecated as of v0.2.0.
-/// Use `UnifiedStorageSystem` instead, which provides:
-/// - Integrated DHT + Economic + Content management
-/// - Proper quota and access control
-/// - Persistence and replication
-///
-/// # Migration Path
-///
-/// **Before (deprecated):**
-/// ```ignore
-/// let dht_storage = DhtStorage::new(node_id, max_size);
-/// dht_storage.store(key, value, ttl).await?;
-/// let data = dht_storage.get(&key).await?;
-/// ```
-///
-/// **After (recommended):**
-/// ```ignore
-/// let config = UnifiedStorageConfig::default();
-/// let mut storage = UnifiedStorageSystem::new(config).await?;
-/// storage.store(key, value, Some(ttl)).await?;
-/// let data = storage.get(&key).await?;
-/// ```
-///
-/// For access to storage statistics and node information:
-/// ```ignore
-/// let stats = storage.get_storage_stats();
-/// let nodes = storage.get_known_nodes();
-/// ```
-pub mod compat {
-    use super::*;
-
-    /// Get a reference to DHT storage through UnifiedStorageSystem.
-    ///
-    /// **DEPRECATED:** Use UnifiedStorageSystem methods directly.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use UnifiedStorageSystem directly. See module docs for migration guide."
-    )]
-    pub async fn access_dht_storage(storage: &UnifiedStorageSystem) -> DhtStorageStats {
-        storage.get_storage_stats()
-    }
-
-    /// Helper to create UnifiedStorageSystem with DHT-focused config.
-    ///
-    /// This provides a migration path for code that only needs basic DHT operations.
-    pub async fn create_dht_focused_storage(
-        node_id: types::NodeId,
-        max_storage_size: u64,
-        persist_path: Option<std::path::PathBuf>,
-    ) -> Result<UnifiedStorageSystem> {
-        let config = UnifiedStorageConfig {
-            node_id,
-            addresses: vec!["127.0.0.1:0".to_string()],
-            economic_config: EconomicManagerConfig::default(),
-            storage_config: StorageConfig {
-                max_storage_size,
-                default_tier: StorageTier::Hot,
-                enable_compression: false,
-                enable_encryption: false,
-                dht_persist_path: persist_path,
-            },
-            erasure_config: ErasureConfig {
-                data_shards: 4,
-                parity_shards: 2,
-            },
-        };
-
-        UnifiedStorageSystem::new(config).await
-    }
-}
 pub use economic::{
     pricing::*, market::*, reputation::*, payments::*, incentives::*, 
     quality::*, penalties::*, rewards::*, manager::*
@@ -147,6 +69,13 @@ pub use erasure::*;
 pub use proofs::{StorageProof, RetrievalProof, generate_storage_proof, generate_retrieval_proof};
 pub use integrity::{IntegrityManager, IntegrityMetadata, IntegrityStatus, ChecksumAlgorithm};
 pub use cache::{CacheManager, CacheEntry, EvictionPolicy, CacheStats};
+#[cfg(feature = "network-integration")]
+pub use network_integration::{
+    NetworkOutputHandler,
+    NoopNetworkOutputHandler,
+    process_network_outputs,
+    process_network_outputs_with,
+};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -266,7 +195,7 @@ impl UnifiedStorageSystem {
         )?;
 
         // Initialize DHT storage with optional persistence
-        let dht_storage = match &config.storage_config.dht_persist_path {
+        let mut dht_storage = match &config.storage_config.dht_persist_path {
             Some(persist_path) => {
                 let mut storage = dht::storage::DhtStorage::new_with_persistence(
                     node_id.clone(),
@@ -666,140 +595,6 @@ impl UnifiedStorageSystem {
 
         tracing::info!("Listed {} domain records from DHT storage", records.len());
         Ok(records)
-    }
-
-    // ========================================================================
-    // Generic DHT Storage Operations - For Blockchain Indexing
-    // ========================================================================
-
-    /// Store arbitrary data in DHT storage with a string key
-    ///
-    /// **WARNING:** This is a low-level operation intended for internal blockchain indexing
-    /// and system operations only. It bypasses economic/quota controls.
-    ///
-    /// **VALIDATION:**
-    /// - Maximum key size: 256 bytes
-    /// - Maximum value size: 10 MB (per-operation limit)
-    /// - TTL enforcement: Not directly supported (logged as warning)
-    /// - Quota: Soft limit of 100 MB per key prefix (logged but not enforced)
-    ///
-    /// For application storage, use `upload_content()` which includes:
-    /// - Economic contract management
-    /// - Replication policies
-    /// - Access control
-    /// - Quota enforcement
-    ///
-    /// # Arguments
-    /// * `key` - Storage key (max 256 bytes)
-    /// * `data` - Data to store (max 10 MB)
-    /// * `ttl` - Optional time-to-live in seconds
-    pub async fn store(&mut self, key: String, data: Vec<u8>, ttl: Option<u64>) -> Result<()> {
-        // Validation: Key size limit
-        if key.len() > 256 {
-            anyhow::bail!("Storage key exceeds maximum length of 256 bytes: {} bytes", key.len());
-        }
-
-        // Validation: Value size limit (10 MB per operation)
-        const MAX_VALUE_SIZE: usize = 10_000_000;
-        if data.len() > MAX_VALUE_SIZE {
-            anyhow::bail!(
-                "Storage value exceeds maximum size of {} bytes: {} bytes. \
-                Use upload_content() for large files.",
-                MAX_VALUE_SIZE,
-                data.len()
-            );
-        }
-
-        // Warning: Check quota soft limit per prefix.
-        // Note: The prefix is defined as the first path segment before '/', or the entire key
-        // if no '/' is present. Flat (non-hierarchical) keys are therefore treated as their
-        // own prefixes for quota accounting.
-        let prefix = key.split('/').next().unwrap_or(&key);
-        let prefix_usage = self.dht_storage.get_prefix_usage(prefix).await?;
-        const SOFT_QUOTA_PER_PREFIX: u64 = 100_000_000; // 100 MB
-        if prefix_usage > SOFT_QUOTA_PER_PREFIX {
-            tracing::warn!(
-                "Storage prefix '{}' exceeds soft quota of {} bytes (current: {} bytes). \
-                Consider using content manager with economic contracts.",
-                prefix,
-                SOFT_QUOTA_PER_PREFIX,
-                prefix_usage
-            );
-        }
-
-        // Warning: TTL is accepted for API compatibility but not enforced at this layer.
-        // Time-based expiration is handled by the content/economic layer.
-        if ttl.is_some() {
-            tracing::warn!(
-                "TTL parameter is accepted but not enforced at the low-level DHT storage layer. \
-                Time-based expiration requires the content manager with storage contracts. \
-                Key: '{}', requested TTL: {:?} seconds (will be ignored at this layer)",
-                key,
-                ttl
-            );
-        }
-
-        // Store without ZK proof (low-level internal operation)
-        // ZK proofs are enforced at the content/economic layer
-        let data_len = data.len();
-        self.dht_storage.store(key.clone(), data, None).await?;
-
-        // Log for audit trail
-        tracing::debug!(
-            "Stored {} bytes at key '{}' (TTL requested but not enforced: {:?})",
-            data_len,
-            key,
-            ttl
-        );
-
-        Ok(())
-    }
-
-    /// Retrieve data from DHT storage by string key
-    ///
-    /// **WARNING:** This is a low-level operation for internal use.
-    /// Application code should use `download_content()` for access-controlled retrieval.
-    ///
-    /// Returns None if the key doesn't exist.
-    pub async fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
-        self.dht_storage.get(key).await
-    }
-
-    /// Remove data from DHT storage by key
-    ///
-    /// **WARNING:** This is a low-level operation for internal use.
-    /// Removes data without checking access control or economic contracts.
-    pub async fn remove(&mut self, key: &str) -> Result<()> {
-        tracing::debug!("Removing key '{}' from DHT storage", key);
-        self.dht_storage.remove(key).await?;
-        Ok(())
-    }
-
-    /// List all keys matching a prefix
-    ///
-    /// **WARNING:** This is a low-level operation for internal use.
-    /// May return large result sets. Consider pagination for production use.
-    pub async fn list_keys_with_prefix(&mut self, prefix: &str) -> Result<Vec<String>> {
-        let keys = self.dht_storage.list_keys_with_prefix(prefix).await?;
-        if keys.len() > 1000 {
-            tracing::warn!(
-                "list_keys_with_prefix('{}') returned {} keys. \
-                Consider using pagination or more specific prefixes.",
-                prefix,
-                keys.len()
-            );
-        }
-        Ok(keys)
-    }
-
-    /// Get storage statistics (delegation to internal DhtStorage)
-    pub fn get_storage_stats(&self) -> DhtStorageStats {
-        self.dht_storage.get_storage_stats()
-    }
-
-    /// Get list of known DHT nodes (delegation to internal DhtStorage)
-    pub fn get_known_nodes(&self) -> Vec<&crate::types::dht_types::DhtNode> {
-        self.dht_storage.get_known_nodes()
     }
 
     // ========================================================================

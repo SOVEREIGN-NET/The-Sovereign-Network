@@ -39,6 +39,14 @@ pub mod linux_ops;
 #[cfg(feature = "enhanced-parsing")]
 pub mod enhanced;
 
+// GATT adapter with UHP framing (Issue #141)
+pub mod gatt_adapter;
+pub mod gatt_stream;
+
+// Mock BLE link for CI testing (Issue #141)
+#[cfg(any(test, feature = "ble-mock"))]
+pub mod mock;
+
 // Main BLE Mesh Protocol Implementation
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
@@ -52,6 +60,7 @@ use lib_crypto::PublicKey;
 
 // Import ZHTP authentication
 use crate::protocols::zhtp_auth::{ZhtpAuthManager, ZhtpAuthChallenge, ZhtpAuthResponse, NodeCapabilities, ZhtpAuthVerification};
+use crate::network_output::{NetworkOutput, global_output_queue};
 
 // Import common Bluetooth utilities from submodules
 use self::common::{
@@ -371,60 +380,13 @@ impl BluetoothMeshProtocol {
         message: &gatt::EdgeSyncMessage,
         peer_address: &str,
     ) -> Result<Option<gatt::EdgeSyncMessage>> {
-        let blockchain_provider = self.blockchain_provider.read().await;
-        let provider = blockchain_provider.as_ref()
-            .ok_or_else(|| anyhow!("Blockchain provider not configured for BLE edge sync"))?;
-        
-        match message {
-            gatt::EdgeSyncMessage::HeadersRequest { request_id, start_height, count } => {
-                info!("📥 BLE HeadersRequest from {}: height {}, count {}", 
-                    peer_address, start_height, count);
-                
-                // Get headers from blockchain
-                let headers = provider.get_headers(*start_height, *count as u64).await?;
-                info!("📤 Sending {} headers via BLE to {}", headers.len(), peer_address);
-                
-                Ok(Some(gatt::EdgeSyncMessage::HeadersResponse {
-                    request_id: *request_id,
-                    headers,
-                }))
-            }
-            
-            gatt::EdgeSyncMessage::BootstrapProofRequest { request_id, current_height } => {
-                info!("📥 BLE BootstrapProofRequest from {}: current height {}", 
-                    peer_address, current_height);
-                
-                let network_height = provider.get_current_height().await?;
-                let proof_height = network_height.saturating_sub(100); // Proof up to 100 blocks ago
-                
-                // Get ZK proof for chain up to proof_height
-                let chain_proof = provider.get_chain_proof(proof_height).await?;
-                let proof_data = bincode::serialize(&chain_proof)
-                    .map_err(|e| anyhow!("Failed to serialize chain proof: {}", e))?;
-                
-                // Get recent 100 headers after the proof
-                let headers_from = proof_height + 1;
-                let headers_count = network_height - proof_height;
-                let headers = provider.get_headers(headers_from, headers_count).await?;
-                
-                info!("📤 Sending bootstrap proof ({} bytes) + {} headers via BLE to {}", 
-                    proof_data.len(), headers.len(), peer_address);
-                
-                Ok(Some(gatt::EdgeSyncMessage::BootstrapProofResponse {
-                    request_id: *request_id,
-                    proof_data,
-                    proof_height,
-                    headers,
-                }))
-            }
-            
-            gatt::EdgeSyncMessage::HeadersResponse { .. } | 
-            gatt::EdgeSyncMessage::BootstrapProofResponse { .. } => {
-                // These are responses from a full node - edge node would process them
-                debug!("Received edge sync response (this node is likely edge node)");
-                Ok(None)
-            }
-        }
+        // Emit data-only output for application layer to handle edge sync.
+        global_output_queue().push(NetworkOutput::EdgeSyncRequest {
+            peer: peer_address.to_string(),
+            message: message.clone(),
+        }).await;
+
+        Ok(None)
     }
     
     /// Send edge sync message via BLE (with fragmentation if needed)

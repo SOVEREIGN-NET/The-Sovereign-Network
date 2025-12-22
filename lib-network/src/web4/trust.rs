@@ -258,18 +258,17 @@ impl TrustConfig {
 
     /// Get default trustdb path
     pub fn default_trustdb_path() -> Result<PathBuf> {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
+        let home = dirs::home_dir()
             .context("Could not determine home directory")?;
-        Ok(PathBuf::from(home).join(".zhtp").join("trustdb.json"))
+        Ok(home.join(".zhtp").join("trustdb.json"))
     }
 
     /// Get default audit log path (same dir as trustdb)
     pub fn default_audit_path() -> PathBuf {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(home).join(".zhtp").join("trust_audit.log")
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".zhtp")
+            .join("trust_audit.log")
     }
 }
 

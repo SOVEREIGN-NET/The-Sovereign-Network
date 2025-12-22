@@ -7,6 +7,7 @@ pub use crate::types::api_response::*;
 pub use crate::types::geographic::*;
 pub use crate::types::connection_details::*;
 pub use crate::types::network_statistics::*;
+pub use crate::types::node_address::*;
 
 pub mod relay_type;
 pub mod wifi_security;
@@ -16,3 +17,4 @@ pub mod api_response;
 pub mod geographic;
 pub mod connection_details;
 pub mod network_statistics;
+pub mod node_address;

@@ -10,11 +10,7 @@ use uuid::Uuid;
 use anyhow::Result;
 use lib_crypto::PublicKey;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::net::SocketAddr;
-use lib_crypto::PostQuantumSignature;
 use tracing::debug;
-use lib_network::identity::unified_peer::UnifiedPeerId;
-use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig, StorageConfig, EconomicManagerConfig, StorageTier, ErasureConfig};
 
 /// Rate limiting state for ZHTP getter requests (100 req/30s per identity)
 #[derive(Debug, Clone)]
@@ -60,17 +56,25 @@ impl ZhtpRateLimitState {
         true // Within limit
     }
 }
-use lib_network::MeshConnection;
 use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
 use lib_network::protocols::quic_mesh::QuicMeshProtocol;
 use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptionSession};
 use lib_network::protocols::zhtp_auth::ZhtpAuthManager;
-use lib_network::dht::relay::ZhtpRelayProtocol;
+use crate::web4_stub::ZhtpRelayProtocol;
 use lib_network::routing::message_routing::MeshMessageRouter;
 use lib_blockchain::types::Hash;
 use lib_blockchain::BlockchainBroadcastMessage;
 use lib_identity::IdentityManager;
+use lib_types::NodeId;
 use lib_protocols::zhtp::ZhtpRequestHandler;
+use crate::integration::{
+    dht_integration_channel,
+    setup_mesh_dht_integration,
+    DhtIntegrationDispatcher,
+    DhtIntegrationEvent,
+    DhtPayloadSender,
+    DhtStorageHandle,
+};
 use super::rate_limiting::ConnectionRateLimiter;
 use super::identity_verification::IdentityVerificationCache;
 
@@ -129,10 +133,12 @@ pub struct MeshRouter {
     pub mesh_message_router: Arc<RwLock<MeshMessageRouter>>,
     
     // DHT storage and routing
-    pub dht_storage: Arc<tokio::sync::Mutex<Option<UnifiedStorageSystem>>>,
+    pub dht_storage: DhtStorageHandle,
     pub dht_handler: Arc<RwLock<Option<Arc<dyn ZhtpRequestHandler>>>>,
     /// DHT payload sender for wiring to message handlers (Ticket #154)
-    pub dht_payload_sender: Arc<tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)>>,
+    pub dht_payload_sender: DhtPayloadSender,
+    /// DHT integration dispatcher (Phase 4 relocation)
+    pub dht_integration: DhtIntegrationDispatcher,
     
     // ZHTP API router for all endpoints
     pub zhtp_router: Arc<RwLock<Option<Arc<crate::server::zhtp::ZhtpRouter>>>>,
@@ -192,86 +198,6 @@ impl MeshRouter {
         
         // Clone connections for router initialization
         let connections_for_router = connections.clone();
-        
-        // Initialize DHT storage with Kademlia routing (deferred to avoid runtime nesting)
-        let local_node_id: lib_identity::NodeId = {
-            let hash_bytes = lib_crypto::hash_blake3(server_id.as_bytes());
-            lib_identity::NodeId::from_bytes(hash_bytes)
-        };
-        let local_node = lib_storage::types::dht_types::DhtNode {
-            peer: lib_storage::types::dht_types::DhtPeerIdentity {
-                node_id: local_node_id.clone(),
-                public_key: lib_crypto::PublicKey {
-                    dilithium_pk: vec![],  // Placeholder - will be populated during handshake
-                    kyber_pk: vec![],
-                    key_id: [0u8; 32],
-                },
-                did: format!("did:zhtp:{}", hex::encode(local_node_id.as_bytes())),
-                device_id: "mesh-node".to_string(),
-            },
-            addresses: vec!["0.0.0.0:0".to_string()], // Placeholder - mesh routing doesn't use fixed bind address
-            public_key: PostQuantumSignature::default(),
-            last_seen: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            reputation: 1000,
-            storage_info: None,
-        };
-        
-        // Create UnifiedStorageSystem with persistence - 10GB max
-        // CRITICAL: Use persistence path so domains/content survive node restarts
-        let zhtp_dir = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".zhtp")
-            .join("storage");
-
-        // Ensure storage directory exists
-        if let Err(e) = std::fs::create_dir_all(&zhtp_dir) {
-            tracing::warn!("Failed to create storage directory {:?}: {}", zhtp_dir, e);
-        }
-
-        let dht_persist_path = zhtp_dir.join("dht_storage.bin");
-        tracing::info!("MeshRouter storage persistence path: {:?}", dht_persist_path);
-
-        // Initialize UnifiedStorageSystem with persistence config
-        let storage_config = UnifiedStorageConfig {
-            node_id: local_node_id.clone(),
-            addresses: vec!["127.0.0.1:0".to_string()],
-            economic_config: EconomicManagerConfig::default(),
-            storage_config: StorageConfig {
-                max_storage_size: 10_000_000_000, // 10GB
-                default_tier: StorageTier::Hot,
-                enable_compression: false,
-                enable_encryption: false,
-                dht_persist_path: Some(dht_persist_path.clone()),
-            },
-            erasure_config: ErasureConfig {
-                data_shards: 4,
-                parity_shards: 2,
-            },
-        };
-
-        // Start with None, will initialize async
-        let dht_storage = Arc::new(tokio::sync::Mutex::new(None));
-
-        // Initialize storage system asynchronously
-        {
-            let dht_storage_init = dht_storage.clone();
-            tokio::spawn(async move {
-                match UnifiedStorageSystem::new(storage_config).await {
-                    Ok(storage_system) => {
-                        tracing::info!("✅ MeshRouter UnifiedStorageSystem initialized");
-                        *dht_storage_init.lock().await = Some(storage_system);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to initialize UnifiedStorageSystem: {}", e);
-                    }
-                }
-            });
-        }
-
-        // Create mesh message router BEFORE DHT initialization (Ticket #154)
         let mesh_message_router = Arc::new(RwLock::new(
             MeshMessageRouter::new(
                 connections_for_router.clone(),
@@ -279,59 +205,33 @@ impl MeshRouter {
             )
         ));
 
+        let (dht_dispatcher, dht_events_rx) = dht_integration_channel();
+        tokio::spawn(crate::integration::dht_dispatcher::drain_dht_events(dht_events_rx));
+
+        let dht_handles = setup_mesh_dht_integration(
+            server_id,
+            mesh_message_router.clone(),
+            &dht_dispatcher,
+        );
+        let dht_storage = dht_handles.dht_storage;
+
         // Create DHT mesh transport (Ticket #154: routes DHT through mesh network)
         // The dht_payload_sender is used to inject received DHT messages into the transport
         // Note: Using generated keypair for DHT signing - in production this should be
         // wired to the node's actual identity keypair after handshake completes
-        let dht_keypair = Arc::new(lib_crypto::KeyPair::generate()
-            .expect("Failed to generate DHT keypair"));
-        let (mesh_dht_transport, dht_payload_sender) =
-            lib_network::routing::dht_router_adapter::MeshDhtTransport::new(
-                mesh_message_router.clone(),
-                dht_keypair,
-            );
-        let mesh_dht_transport = Arc::new(mesh_dht_transport);
+        let dht_payload_sender = dht_handles.dht_payload_sender;
+        dht_dispatcher.dispatch(DhtIntegrationEvent::RegisterPayloadSender {
+            sender: dht_payload_sender.as_ref().clone(),
+        });
 
-        // Store the sender for later wiring to message handlers
-        let dht_payload_sender = Arc::new(dht_payload_sender);
-
-        // Note: UnifiedStorageSystem handles DHT network initialization internally.
-        // Custom transport injection is no longer supported through the public API.
-        // The DHT network routing is now managed internally by UnifiedStorageSystem using
-        // the addresses provided in storage_config. For mesh network integration, the
-        // storage system will automatically connect to the DHT network using the configured
-        // node_id and addresses. Mesh-specific routing is handled at the message layer.
-
-        // Initialize UnifiedStorageSystem asynchronously
+        // Spawn cleanup task for DHT rate limits (every 5 minutes)
         {
-            let dht_storage_arc = dht_storage.clone();
-            let node_id = local_node_id.clone();
+            let rate_limit_cleanup_interval = tokio::time::Duration::from_secs(300);
             tokio::spawn(async move {
-                let storage_config = lib_storage::UnifiedStorageConfig {
-                    node_id: node_id.clone(),
-                    addresses: vec![format!("127.0.0.1:{}", 33445)],
-                    economic_config: lib_storage::EconomicManagerConfig::default(),
-                    storage_config: lib_storage::StorageConfig {
-                        max_storage_size: 10_000_000_000,
-                        default_tier: lib_storage::StorageTier::Hot,
-                        enable_compression: true,
-                        enable_encryption: true,
-                        dht_persist_path: None,
-                    },
-                    erasure_config: lib_storage::ErasureConfig {
-                        data_shards: 4,
-                        parity_shards: 2,
-                    },
-                };
-                match lib_storage::UnifiedStorageSystem::new(storage_config).await {
-                    Ok(storage_system) => {
-                        let mut storage = dht_storage_arc.lock().await;
-                        *storage = Some(storage_system);
-                        debug!("UnifiedStorageSystem initialized successfully");
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to initialize UnifiedStorageSystem: {}", e);
-                    }
+                loop {
+                    tokio::time::sleep(rate_limit_cleanup_interval).await;
+                    // Rate limit cleanup is handled internally by the message handler
+                    debug!("DHT rate limit cleanup cycle completed");
                 }
             });
         }
@@ -369,6 +269,7 @@ impl MeshRouter {
             dht_storage,
             dht_handler: Arc::new(RwLock::new(None)),
             dht_payload_sender,
+            dht_integration: dht_dispatcher,
             zhtp_router: Arc::new(RwLock::new(None)),
             // ✅ Phase 4: Initialize network health monitoring
             network_health_monitor: Arc::new(RwLock::new(None)),
@@ -386,41 +287,7 @@ impl MeshRouter {
     }
 
     /// Expose the shared DHT storage handle for consumers that need to index data.
-    ///
-    /// # Initialization and `Option` semantics
-    ///
-    /// The returned handle is an [`Arc`] of a [`tokio::sync::Mutex`] wrapping an
-    /// [`Option<UnifiedStorageSystem>`]. The inner `Option` will be:
-    ///
-    /// * `Some(storage)` once the unified storage system has been fully initialized.
-    /// * `None` if the storage system has not yet been initialized, or if initialization
-    ///   failed and the system has not recovered.
-    ///
-    /// **This is a behavioral change from earlier versions** where the DHT storage handle
-    /// was always present and did not require an `Option` check. Callers **must**
-    /// handle the `None` case to avoid panics.
-    ///
-    /// # Usage
-    ///
-    /// ```ignore
-    /// let storage_arc = core.dht_storage();
-    /// let mut guard = storage_arc.lock().await;
-    ///
-    /// if let Some(storage) = guard.as_mut() {
-    ///     // Safe to use `storage` here
-    ///     storage.put(key, value).await?;
-    /// } else {
-    ///     // Storage is not yet initialized; decide how to handle this:
-    ///     // * Return an error to the caller
-    ///     // * Log and skip the operation
-    ///     // * Retry later once initialization is expected to complete
-    /// }
-    /// ```
-    ///
-    /// Consider calling code paths that depend on storage only after the mesh/router
-    /// initialization phase that sets up `UnifiedStorageSystem` has completed, so that
-    /// `None` is an exceptional rather than normal state.
-    pub fn dht_storage(&self) -> Arc<tokio::sync::Mutex<Option<UnifiedStorageSystem>>> {
+    pub fn dht_storage(&self) -> DhtStorageHandle {
         self.dht_storage.clone()
     }
     
@@ -433,7 +300,7 @@ impl MeshRouter {
     pub async fn get_peer_addresses(&self) -> Vec<String> {
         self.connections.read().await
             .all_peers()
-            .filter_map(|peer_entry| peer_entry.endpoints.first().map(|e| e.address.clone()))
+            .filter_map(|peer_entry| peer_entry.endpoints.first().map(|e| e.address.to_address_string()))
             .collect()
     }
     
@@ -460,14 +327,12 @@ impl MeshRouter {
         handler: &mut lib_network::messaging::MeshMessageHandler
     ) {
         use tracing::info;
-        // Clone the inner sender from the Arc
-        let sender_clone = (*self.dht_payload_sender).clone();
-        handler.set_dht_payload_sender(sender_clone);
+        crate::integration::wire_dht_payload_sender(handler, &self.dht_payload_sender);
         info!("🔗 DHT payload sender wired to message handler (Ticket #154)");
     }
 
     /// Get the DHT payload sender for wiring to external message handlers
-    pub fn get_dht_payload_sender(&self) -> tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)> {
+    pub fn get_dht_payload_sender(&self) -> tokio::sync::mpsc::UnboundedSender<(Vec<u8>, NodeId)> {
         (*self.dht_payload_sender).clone()
     }
     
@@ -588,6 +453,7 @@ impl Clone for MeshRouter {
             dht_storage: self.dht_storage.clone(),
             dht_handler: self.dht_handler.clone(),
             dht_payload_sender: self.dht_payload_sender.clone(),
+            dht_integration: self.dht_integration.clone(),
             zhtp_router: self.zhtp_router.clone(),
             // ✅ Phase 4: Clone network health monitoring
             network_health_monitor: self.network_health_monitor.clone(),

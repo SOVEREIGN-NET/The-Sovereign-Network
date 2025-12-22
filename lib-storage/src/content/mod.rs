@@ -273,7 +273,7 @@ impl ContentManager {
         }
 
         // Create economic storage request
-        let _economic_request = EconomicStorageRequest {
+        let economic_request = EconomicStorageRequest {
             content: processed_content.clone(),
             filename: request.filename.clone(),
             content_type: request.mime_type.clone(),

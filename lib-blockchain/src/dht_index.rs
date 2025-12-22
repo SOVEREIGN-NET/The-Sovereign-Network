@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::block::Block;
 use crate::integration::crypto_integration::public_key_bytes;
 use crate::transaction::Transaction;
-use lib_storage::UnifiedStorageSystem;
+use lib_storage::dht::storage::DhtStorage;
 
 /// Compact block header representation for DHT indexing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +40,7 @@ pub struct IndexedTransactionSummary {
 /// - `block_header:{height}` -> Serialized [`IndexedBlockHeader`]
 /// - `tx_idx:recipient:{recipient_hex}:{tx_id_hex}` -> Serialized [`IndexedTransactionSummary`]
 /// - `tx_idx:sender:{sender_hint}:{tx_id_hex}`     -> Serialized [`IndexedTransactionSummary`]
-pub async fn index_block(storage: &mut UnifiedStorageSystem, block: &Block) -> Result<()> {
+pub async fn index_block(storage: &mut DhtStorage, block: &Block) -> Result<()> {
     index_block_header(storage, block).await?;
     for tx in &block.transactions {
         index_transaction(storage, tx, block.height()).await?;
@@ -49,7 +49,7 @@ pub async fn index_block(storage: &mut UnifiedStorageSystem, block: &Block) -> R
 }
 
 /// Store a block header keyed by height.
-pub async fn index_block_header(storage: &mut UnifiedStorageSystem, block: &Block) -> Result<()> {
+pub async fn index_block_header(storage: &mut DhtStorage, block: &Block) -> Result<()> {
     let header = IndexedBlockHeader {
         height: block.height(),
         hash_hex: block.hash().to_hex(),
@@ -63,7 +63,7 @@ pub async fn index_block_header(storage: &mut UnifiedStorageSystem, block: &Bloc
 
 /// Store a transaction summary keyed by recipient and sender hint.
 pub async fn index_transaction(
-    storage: &mut UnifiedStorageSystem,
+    storage: &mut DhtStorage,
     tx: &Transaction,
     block_height: u64,
 ) -> Result<()> {

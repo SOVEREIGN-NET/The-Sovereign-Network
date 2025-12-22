@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug};
+use crate::types::node_address::NodeAddress;
 use lib_crypto::PublicKey;
 
 use crate::types::mesh_message::ZhtpMeshMessage;
@@ -16,6 +17,12 @@ use crate::mesh::connection::MeshConnection;
 use crate::identity::unified_peer::UnifiedPeerId;
 
 use crate::relays::LongRangeRelay;
+use crate::network_output::{NetworkOutput, global_output_queue};
+use lib_types::NodeId;
+
+type DhtPayload = (Vec<u8>, NodeId);
+
+type DhtPayloadSender = tokio::sync::mpsc::UnboundedSender<DhtPayload>;
 
 /// Central mesh message handler
 ///
@@ -38,7 +45,7 @@ pub struct MeshMessageHandler {
     pub blockchain_provider: Arc<dyn crate::blockchain_sync::BlockchainProvider>,
     /// DHT payload sender for forwarding received DHT messages (Ticket #154)
     /// Connected to MeshDhtTransport's receiver for message injection
-    pub dht_payload_sender: Option<tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)>>,
+    pub dht_payload_sender: Option<DhtPayloadSender>,
     /// Rate limiter for DHT messages per peer (Ticket #154)
     /// Key: hex-encoded peer key_id prefix, Value: (count, window_start)
     pub dht_rate_limits: Arc<RwLock<HashMap<String, (u32, u64)>>>,
@@ -80,7 +87,7 @@ impl MeshMessageHandler {
     /// allowing DHT payloads received over mesh to be processed by DhtStorage.
     pub fn set_dht_payload_sender(
         &mut self,
-        sender: tokio::sync::mpsc::UnboundedSender<(Vec<u8>, lib_storage::dht::transport::PeerId)>
+        sender: DhtPayloadSender
     ) {
         self.dht_payload_sender = Some(sender);
     }
@@ -250,7 +257,7 @@ impl MeshMessageHandler {
         let peer_entry = crate::peer_registry::PeerEntry::new(
             unified_peer.clone(),
             vec![crate::peer_registry::PeerEndpoint {
-                address: String::new(), // Address not available in PeerDiscovery
+                address: NodeAddress::Domain(String::new()), // Address not available in PeerDiscovery
                 protocol: crate::protocols::NetworkProtocol::BluetoothLE,
                 signal_strength: 0.8,
                 latency_ms: 50,
@@ -684,87 +691,14 @@ impl MeshMessageHandler {
     ) -> Result<()> {
         info!(" Blockchain request from peer {:?} (request_id: {}, type: {:?})", 
               hex::encode(&requester.key_id[0..8]), request_id, request_type);
-        
-        // Use the blockchain provider to get blockchain data
-        match request_type {
-            crate::types::mesh_message::BlockchainRequestType::FullChain => {
-                info!("   Sending full blockchain to peer");
-                
-                // Get full blockchain data from provider
-                match self.blockchain_provider.get_full_blockchain().await {
-                    Ok(blockchain_data) => {
-                        info!("   Retrieved blockchain data: {} bytes", blockchain_data.len());
-                        
-                        // Get protocol for chunking
-                        let protocol = self.get_protocol_for_peer(&requester).await
-                            .unwrap_or(NetworkProtocol::QUIC); // Default to QUIC
-                        
-                        // Chunk the data based on protocol
-                        let chunks = self.chunk_blockchain_data(
-                            self.node_id.clone().unwrap_or_else(|| PublicKey::new(vec![0; 32])),
-                            request_id,
-                            blockchain_data,
-                            &protocol,
-                        )?;
-                        
-                        info!("   Sending {} chunks to peer", chunks.len());
-                        
-                        // Send chunks via message router
-                        if let Some(router) = &self.message_router {
-                            if let Some(node_id) = &self.node_id {
-                                for chunk in chunks {
-                                    if let Err(e) = router.write().await.route_message(chunk, requester.clone(), node_id.clone()).await {
-                                        warn!("Failed to send blockchain chunk: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to get blockchain data: {}", e);
-                    }
-                }
-            }
-            crate::types::mesh_message::BlockchainRequestType::HeadersOnly { start_height, count } => {
-                info!("   Sending headers from height {} (count: {})", start_height, count);
-                
-                // Get headers from provider (convert u32 to u64)
-                match self.blockchain_provider.get_headers(start_height, count as u64).await {
-                    Ok(headers) => {
-                        info!("   Retrieved {} headers", headers.len());
-                        
-                        // Serialize headers to Vec<Vec<u8>>
-                        let serialized_headers: Vec<Vec<u8>> = headers
-                            .iter()
-                            .map(|h| bincode::serialize(h).unwrap_or_default())
-                            .collect();
-                        
-                        // Send headers response
-                        let response = ZhtpMeshMessage::HeadersResponse {
-                            request_id,
-                            headers: serialized_headers,
-                            start_height,
-                        };
-                        
-                        if let Some(router) = &self.message_router {
-                            if let Some(node_id) = &self.node_id {
-                                if let Err(e) = router.write().await.route_message(response, requester, node_id.clone()).await {
-                                    warn!("Failed to send headers response: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to get headers: {}", e);
-                    }
-                }
-            }
-            // Other request types not yet implemented
-            _ => {
-                warn!("Unsupported blockchain request type: {:?}", request_type);
-            }
-        }
-        
+
+        // Emit data-only output for application layer to handle.
+        global_output_queue().push(NetworkOutput::BlockchainRequest {
+            requester,
+            request_id,
+            request: request_type,
+        }).await;
+
         Ok(())
     }
     
@@ -917,60 +851,14 @@ impl MeshMessageHandler {
         info!(" Bootstrap proof request from edge node {:?} at height {}", 
               hex::encode(&requester.key_id[0..4]), 
               current_height);
-        
-        // Check if blockchain is available
-        if !self.blockchain_provider.is_available().await {
-            warn!(" Blockchain not available - cannot generate bootstrap proof");
-            return Err(anyhow!("Blockchain not available"));
-        }
-        
-        // Get current blockchain height
-        let chain_tip_height = self.blockchain_provider.get_current_height().await?;
-        info!(" Current chain height: {}, edge node at: {}", chain_tip_height, current_height);
-        
-        // Get the recursive chain proof (cached or generated)
-        let chain_proof = self.blockchain_provider.get_chain_proof(chain_tip_height).await?;
-        info!(" Got chain proof for height {}", chain_proof.chain_tip_height);
-        
-        // Get recent headers for edge node (last 500 blocks or less)
-        let headers_count = std::cmp::min(500, chain_tip_height.saturating_sub(current_height));
-        let start_height = chain_tip_height.saturating_sub(headers_count) + 1;
-        
-        let headers = self.blockchain_provider.get_headers(start_height, headers_count).await?;
-        info!(" Fetched {} headers starting from height {}", headers.len(), start_height);
-        
-        // Serialize headers
-        let serialized_headers: Vec<Vec<u8>> = headers.iter()
-            .map(|h| bincode::serialize(h))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow!("Failed to serialize headers: {}", e))?;
-        
-        // Serialize FULL ChainRecursiveProof (not just recursive_proof)
-        // CRITICAL: Edge nodes expect the complete ChainRecursiveProof structure
-        let proof_data = bincode::serialize(&chain_proof)
-            .map_err(|e| anyhow!("Failed to serialize proof: {}", e))?;
-        
-        // Send response
-        let response_message = ZhtpMeshMessage::BootstrapProofResponse {
+
+        // Emit data-only output for application layer to handle.
+        global_output_queue().push(NetworkOutput::BootstrapProofRequest {
+            requester,
             request_id,
-            proof_data,
-            proof_height: chain_proof.chain_tip_height,
-            headers: serialized_headers,
-        };
-        
-        // Send via message router if available
-        if let Some(router) = &self.message_router {
-            let router_lock = router.read().await;
-            if let Some(sender_node_id) = &self.node_id {
-                router_lock.route_message(response_message, requester, sender_node_id.clone()).await?;
-                info!(" Bootstrap proof response sent to edge node");
-            } else {
-                warn!(" Node ID not set - cannot send response");
-            }
-        } else {
-            warn!(" Message router not available - cannot send response");
-        }
-        
+            current_height,
+        }).await;
+
         Ok(())
     }
 
@@ -1270,7 +1158,7 @@ impl MeshMessageHandler {
 
         // Forward to DHT transport if sender is configured
         if let Some(sender) = &self.dht_payload_sender {
-            let peer_id = lib_storage::dht::transport::PeerId::Mesh(requester.key_id.to_vec());
+            let peer_id = NodeId(requester.key_id);
 
             if let Err(e) = sender.send((payload.clone(), peer_id)) {
                 warn!(
@@ -1281,11 +1169,10 @@ impl MeshMessageHandler {
             }
 
             debug!(
-                "Forwarded DHT payload ({} bytes) from peer {} to DhtStorage",
+                "Forwarded DHT payload ({} bytes) from peer {} to DHT handler",
                 payload.len(), peer_id_hex
             );
         } else {
-            // No sender configured - log for debugging
             debug!(
                 "DHT payload received but no handler configured (peer: {}, {} bytes). \
                  Call set_dht_payload_sender() to enable DHT message processing.",
@@ -1342,7 +1229,7 @@ mod tests {
             let peer_entry = crate::peer_registry::PeerEntry::new(
                 unified_peer.clone(),
                 vec![crate::peer_registry::PeerEndpoint {
-                    address: String::new(),
+                    address: NodeAddress::BluetoothLE(String::new()),
                     protocol: crate::protocols::NetworkProtocol::BluetoothLE,
                     signal_strength: 0.5,
                     latency_ms: 100,

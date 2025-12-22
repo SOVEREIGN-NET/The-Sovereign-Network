@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{RwLock, OnceCell};
-use lib_network::ZkDHTIntegration;
+use lib_network::dht::ZkDHTIntegration;
 use lib_identity::ZhtpIdentity;
 use tracing::{info, debug};
 
@@ -31,7 +31,7 @@ pub async fn initialize_global_dht(identity: ZhtpIdentity) -> Result<()> {
     info!("Initializing global DHT client instance (singleton)");
     
     // Create the DHT client (uses lib-storage backend)
-    let mut dht_client = ZkDHTIntegration::new().await?;
+    let mut dht_client = ZkDHTIntegration::new();
     dht_client.initialize(identity).await?;
     
     // Store in global container wrapped in Arc<RwLock<_>> for mutable access

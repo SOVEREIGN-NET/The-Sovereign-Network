@@ -25,26 +25,25 @@
 pub mod node;
 pub mod routing;
 pub mod network;
-pub(crate) mod storage; // Internal implementation - use UnifiedStorageSystem instead
+pub mod storage;
 pub mod messaging;
 pub mod peer_management;
 pub mod replication;
 pub mod peer_registry; // Ticket #148: Internal DHT peer registry
 pub mod transport; // Ticket #152: Multi-protocol transport abstraction
+pub mod registry_trait; // Ticket #1.14: Trait for unified registry integration
 
 // Re-export main DHT components
 pub use node::*;
 pub use routing::*;
 pub use network::*;
-// Storage module is NOT re-exported - use UnifiedStorageSystem from crate root
-// However, StorageStats is public since it's part of UnifiedStorageSystem's API
-pub use storage::StorageStats;
-// Internal modules can access DhtStorage via crate::dht::storage::DhtStorage
+pub use storage::*;
 pub use messaging::*;
 pub use peer_management::*;
 pub use replication::*;
 pub use peer_registry::*; // Ticket #148
 pub use transport::{DhtTransport, PeerId, UdpDhtTransport}; // Ticket #152
+pub use registry_trait::DhtPeerRegistryTrait; // Ticket #1.14
 
 // DHT Configuration Constants
 pub const DHT_PORT: u16 = 33442;

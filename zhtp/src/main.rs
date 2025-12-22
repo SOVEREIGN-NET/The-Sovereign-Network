@@ -23,18 +23,8 @@ use zhtp::{
     // api::{start_api_server, ApiConfig}, // TODO: Re-enable when API handlers are implemented
 };
 
-fn main() -> Result<()> {
-    // Create a custom Tokio runtime with larger stack size to handle deep async chains
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(8 * 1024 * 1024) // 8 MB stack size (default is 2 MB)
-        .build()
-        .expect("Failed to create Tokio runtime");
-    
-    runtime.block_on(async_main())
-}
-
-async fn async_main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Install rustls crypto provider before any TLS/QUIC operations
     // This MUST be done before any rustls usage to avoid panic
     let _ = rustls::crypto::ring::default_provider().install_default();

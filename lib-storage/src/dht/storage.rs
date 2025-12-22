@@ -63,11 +63,8 @@ async fn atomic_write_async(path: PathBuf, bytes: Vec<u8>) -> std::io::Result<()
 /// DHT storage manager with networking
 ///
 /// **MIGRATED (Ticket #148):** Now uses shared PeerRegistry for DHT peer storage
-/// 
-/// **INTERNAL USE ONLY**: This is an internal implementation detail of lib-storage.
-/// External crates must use [`UnifiedStorageSystem`](crate::UnifiedStorageSystem) instead.
 #[derive(Debug)]
-pub(crate) struct DhtStorage {
+pub struct DhtStorage {
     /// Local storage for key-value pairs
     storage: HashMap<String, StorageEntry>,
     /// Maximum storage size per node (in bytes)
@@ -839,28 +836,6 @@ impl DhtStorage {
             .filter(|k| k.starts_with(prefix))
             .cloned()
             .collect())
-    }
-
-    /// Get total storage usage for keys with a given prefix
-    /// Used for quota validation and monitoring
-    ///
-    /// # Arguments
-    /// * `prefix` - Key prefix to calculate usage for. Must be non-empty.
-    ///              Empty prefix returns total storage usage for all keys.
-    pub async fn get_prefix_usage(&self, prefix: &str) -> Result<u64> {
-        // Approximate per-entry overhead for non-payload data (key string, metadata
-        // structures, hashmap/node bookkeeping, etc.). This is intentionally a
-        // conservative estimate so that quota calculations slightly over-estimate
-        // usage and trigger warnings early rather than allowing over-quota usage.
-        //
-        // If the StorageEntry layout or associated metadata grows significantly,
-        // this value should be revisited and adjusted accordingly.
-        let metadata_overhead_per_entry = 256u64;
-        let usage = self.storage.iter()
-            .filter(|(k, _)| k.starts_with(prefix))
-            .map(|(_, entry)| entry.value.len() as u64 + metadata_overhead_per_entry)
-            .sum();
-        Ok(usage)
     }
 
     /// List all stored keys with their sizes (for debugging)
