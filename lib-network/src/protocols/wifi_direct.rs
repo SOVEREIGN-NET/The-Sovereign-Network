@@ -776,6 +776,7 @@ impl WiFiDirectMeshProtocol {
                         data_rate: 150,
                         device_name: format!("P2P-Device-{}", &line[15..]),
                         device_type: WiFiDirectDeviceType::Unknown,
+                        session_key: None,
                     });
                 }
             }
