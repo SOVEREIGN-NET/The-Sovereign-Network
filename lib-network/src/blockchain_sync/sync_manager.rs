@@ -32,6 +32,8 @@ pub struct BlockchainSyncManager {
     authenticated_peers: Arc<RwLock<HashMap<Vec<u8>, bool>>>,
     /// Chunk rate limiters per peer (peer_key_id -> rate_limiter)
     chunk_rate_limiters: Arc<RwLock<HashMap<Vec<u8>, ChunkRateLimiter>>>,
+    /// Per-peer active buffer count for enforcing MAX_REQUESTS_PER_PEER
+    peer_buffer_counts: Arc<RwLock<HashMap<Vec<u8>, usize>>>,
 }
 
 impl BlockchainSyncManager {
@@ -44,6 +46,7 @@ impl BlockchainSyncManager {
             next_request_id: Arc::new(RwLock::new(1)),
             authenticated_peers: Arc::new(RwLock::new(HashMap::new())),
             chunk_rate_limiters: Arc::new(RwLock::new(HashMap::new())),
+            peer_buffer_counts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -220,48 +223,79 @@ impl BlockchainSyncManager {
             }
         }
 
-        // SECURITY CHECK 3: Verify sender matches original requester
+        // SECURITY CHECK 3: Reject unsolicited chunks (HIGH severity fix)
+        // Only accept chunks for known request_ids OR existing buffers (late arrivals)
+        let mut buffers = self.received_chunks.write().await;
+        let buffer_exists = buffers.contains_key(&request_id);
         {
             let pending = self.pending_requests.read().await;
             if let Some(expected_sender) = pending.get(&request_id) {
+                // Request exists - verify sender matches
                 if expected_sender.key_id != sender.key_id {
                     error!("🚫 SECURITY: Chunk sender doesn't match requester (request_id: {})", request_id);
                     return Err(anyhow!("Chunk sender mismatch"));
                 }
-            } else {
-                warn!("⚠️ Received chunk for unknown request_id: {}", request_id);
-                // Allow this for now - might be late arrival after cleanup
+            } else if !buffer_exists {
+                // No pending request AND no existing buffer = unsolicited chunk injection attempt
+                error!("🚫 SECURITY: Unsolicited chunk rejected - no pending request for request_id: {}", request_id);
+                return Err(anyhow!("Unsolicited chunk - no pending request"));
             }
+            // else: buffer exists but request completed (late arrival) - allow to continue
         }
 
-        // SECURITY CHECK 4: Check max pending requests
-        let mut buffers = self.received_chunks.write().await;
-        if buffers.len() >= MAX_PENDING_REQUESTS && !buffers.contains_key(&request_id) {
+        // SECURITY CHECK 4: Check max pending requests (global limit)
+        if buffers.len() >= MAX_PENDING_REQUESTS && !buffer_exists {
             warn!("⚠️ SECURITY: Max pending requests limit reached ({})", MAX_PENDING_REQUESTS);
             return Err(anyhow!("Max pending requests limit reached"));
+        }
+
+        // SECURITY CHECK 5: Enforce per-peer request limit (MEDIUM severity fix)
+        let is_new_buffer = !buffer_exists;
+        if is_new_buffer {
+            let mut peer_counts = self.peer_buffer_counts.write().await;
+            let peer_count = peer_counts.entry(sender_key_id.clone()).or_insert(0);
+            if *peer_count >= MAX_REQUESTS_PER_PEER {
+                error!("🚫 SECURITY: Peer {} exceeded max requests per peer limit ({})",
+                       hex::encode(&sender_key_id[..8.min(sender_key_id.len())]), MAX_REQUESTS_PER_PEER);
+                return Err(anyhow!("Max requests per peer limit exceeded"));
+            }
+            *peer_count += 1;
         }
 
         let buffer = buffers.entry(request_id).or_insert_with(|| {
             BlockchainChunkBuffer::new(total_chunks, complete_data_hash, sender.clone())
         });
 
-        // SECURITY CHECK 5: Verify sender matches buffer requester (defense-in-depth)
+        // SECURITY CHECK 6: Verify sender matches buffer requester (defense-in-depth)
         if sender.key_id != buffer.requester.key_id {
             error!("🚫 SECURITY: Chunk sender doesn't match buffer requester (request_id: {})", request_id);
+            self.decrement_peer_buffer_count(&sender_key_id).await;
             buffers.remove(&request_id);
             return Err(anyhow!("Chunk sender mismatch with buffer"));
         }
 
-        // SECURITY CHECK 6: Buffer size limit
+        // SECURITY CHECK 7: Validate total_chunks/hash consistency (LOW severity fix)
+        if buffer.total_chunks != total_chunks {
+            error!("🚫 SECURITY: total_chunks mismatch for request_id: {} (buffer: {}, chunk: {})",
+                   request_id, buffer.total_chunks, total_chunks);
+            return Err(anyhow!("total_chunks mismatch - possible attack"));
+        }
+        if buffer.complete_data_hash != complete_data_hash {
+            error!("🚫 SECURITY: complete_data_hash mismatch for request_id: {}", request_id);
+            return Err(anyhow!("complete_data_hash mismatch - possible attack"));
+        }
+
+        // SECURITY CHECK 8: Buffer size limit
         let chunk_size = data.len();
         if buffer.total_bytes + chunk_size > MAX_CHUNK_BUFFER_SIZE {
             error!("🚫 SECURITY: Chunk buffer size limit exceeded for request_id: {} ({} + {} > {})",
                    request_id, buffer.total_bytes, chunk_size, MAX_CHUNK_BUFFER_SIZE);
+            self.decrement_peer_buffer_count(&sender_key_id).await;
             buffers.remove(&request_id);
             return Err(anyhow!("Chunk buffer size limit exceeded"));
         }
 
-        // SECURITY CHECK 7: Reject duplicate chunks
+        // SECURITY CHECK 9: Reject duplicate chunks
         if buffer.has_chunk(chunk_index) {
             warn!("⚠️ SECURITY: Duplicate chunk {} for request {} rejected", chunk_index, request_id);
             return Err(anyhow!("Duplicate chunk received"));
@@ -276,13 +310,14 @@ impl BlockchainSyncManager {
         // Check if all chunks received
         if buffer.is_complete() {
             info!("✅ All chunks received for request {}, reassembling...", request_id);
-            
+
             // Reassemble in order
             let mut complete_data = Vec::new();
             for i in 0..total_chunks {
                 if let Some(chunk) = buffer.chunks.get(&i) {
                     complete_data.extend_from_slice(chunk);
                 } else {
+                    self.decrement_peer_buffer_count(&sender_key_id).await;
                     buffers.remove(&request_id);
                     return Err(anyhow!("Missing chunk {} during reassembly", i));
                 }
@@ -292,6 +327,7 @@ impl BlockchainSyncManager {
             let computed_hash = hash_blake3(&complete_data);
 
             if computed_hash != buffer.complete_data_hash {
+                self.decrement_peer_buffer_count(&sender_key_id).await;
                 buffers.remove(&request_id);
                 error!("🚫 SECURITY: Blockchain data hash mismatch - data corrupted or tampered");
                 return Err(anyhow!("Blockchain data hash mismatch"));
@@ -299,14 +335,29 @@ impl BlockchainSyncManager {
 
             info!("✅ Blockchain data verified: {} bytes (Blake3 hash: {:02x}...)",
                 complete_data.len(), computed_hash[0]);
-            
-            // Remove from buffers
+
+            // Cleanup: Remove from buffers, pending requests, and decrement peer count
             buffers.remove(&request_id);
-            
+            drop(buffers); // Release lock before acquiring others
+
+            self.pending_requests.write().await.remove(&request_id);
+            self.decrement_peer_buffer_count(&sender_key_id).await;
+
             return Ok(Some(complete_data));
         }
 
         Ok(None)
+    }
+
+    /// Decrement peer buffer count (helper for cleanup)
+    async fn decrement_peer_buffer_count(&self, peer_key_id: &[u8]) {
+        let mut peer_counts = self.peer_buffer_counts.write().await;
+        if let Some(count) = peer_counts.get_mut(peer_key_id) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                peer_counts.remove(peer_key_id);
+            }
+        }
     }
 
     /// Register an authenticated peer (allows them to send chunks)
@@ -321,6 +372,7 @@ impl BlockchainSyncManager {
         let peer_key_id = peer.key_id.to_vec();
         self.authenticated_peers.write().await.remove(&peer_key_id);
         self.chunk_rate_limiters.write().await.remove(&peer_key_id);
+        self.peer_buffer_counts.write().await.remove(&peer_key_id);
         info!("🔓 Unregistered authenticated peer: {}", hex::encode(&peer_key_id[..8.min(peer_key_id.len())]));
     }
 
@@ -332,24 +384,40 @@ impl BlockchainSyncManager {
 
     /// Cleanup stale chunk buffers (should be called periodically)
     pub async fn cleanup_stale_chunks(&self) -> usize {
-        let mut buffers = self.received_chunks.write().await;
-        let initial_count = buffers.len();
-        
-        buffers.retain(|request_id, buffer| {
-            let elapsed = buffer.age();
-            if elapsed > CHUNK_TIMEOUT {
-                warn!("🗑️ Cleaning up stale chunk buffer for request_id: {} (age: {:?})",
-                      request_id, elapsed);
-                false
-            } else {
-                true
-            }
-        });
-        
-        let cleaned = initial_count - buffers.len();
-        if cleaned > 0 {
-            info!("🧹 Cleaned up {} stale chunk buffers", cleaned);
+        // Collect stale buffers and their peer keys first
+        let stale_entries: Vec<(u64, Vec<u8>)> = {
+            let buffers = self.received_chunks.read().await;
+            buffers.iter()
+                .filter(|(_, buffer)| buffer.age() > CHUNK_TIMEOUT)
+                .map(|(request_id, buffer)| (*request_id, buffer.requester.key_id.to_vec()))
+                .collect()
+        };
+
+        if stale_entries.is_empty() {
+            return 0;
         }
+
+        // Remove stale buffers and decrement peer counts
+        let mut buffers = self.received_chunks.write().await;
+        for (request_id, peer_key_id) in &stale_entries {
+            warn!("🗑️ Cleaning up stale chunk buffer for request_id: {}", request_id);
+            buffers.remove(request_id);
+        }
+        drop(buffers);
+
+        // Decrement peer buffer counts
+        for (_, peer_key_id) in &stale_entries {
+            self.decrement_peer_buffer_count(peer_key_id).await;
+        }
+
+        // Also clean up corresponding pending requests
+        let mut pending = self.pending_requests.write().await;
+        for (request_id, _) in &stale_entries {
+            pending.remove(request_id);
+        }
+
+        let cleaned = stale_entries.len();
+        info!("🧹 Cleaned up {} stale chunk buffers", cleaned);
         cleaned
     }
 
@@ -358,10 +426,21 @@ impl BlockchainSyncManager {
         self.pending_requests.read().await.contains_key(&request_id)
     }
 
-    /// Complete a request
+    /// Complete a request (also cleans up peer buffer count)
     pub async fn complete_request(&self, request_id: u64) {
+        // Get peer key before removing buffer
+        let peer_key_id = {
+            let buffers = self.received_chunks.read().await;
+            buffers.get(&request_id).map(|b| b.requester.key_id.to_vec())
+        };
+
         self.pending_requests.write().await.remove(&request_id);
         self.received_chunks.write().await.remove(&request_id);
+
+        if let Some(key_id) = peer_key_id {
+            self.decrement_peer_buffer_count(&key_id).await;
+        }
+
         info!("Request {} completed and cleaned up", request_id);
     }
 }
@@ -520,5 +599,94 @@ mod tests {
         let result = BlockchainSyncManager::chunk_blockchain_data(requester.clone(), 1, vec![]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    #[tokio::test]
+    async fn test_unsolicited_chunk_rejected() {
+        let sync_manager = BlockchainSyncManager::new_full_node();
+        let attacker = PublicKey::new(vec![1, 2, 3]);
+
+        // Register attacker as authenticated peer (they passed authentication)
+        sync_manager.register_authenticated_peer(&attacker).await;
+
+        // But DON'T create a request - attacker tries to inject chunks without a request
+        let fake_request_id = 9999u64;
+        let test_data = vec![0u8; 100];
+        let complete_data_hash = hash_blake3(&test_data);
+
+        // Should fail - no pending request for this request_id
+        let result = sync_manager.add_chunk(&attacker, fake_request_id, 0, 2, test_data, complete_data_hash).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsolicited chunk"));
+    }
+
+    #[tokio::test]
+    async fn test_per_peer_request_limit() {
+        let sync_manager = BlockchainSyncManager::new_full_node();
+        let peer = PublicKey::new(vec![1, 2, 3]);
+
+        sync_manager.register_authenticated_peer(&peer).await;
+
+        // Create MAX_REQUESTS_PER_PEER requests
+        for i in 0..MAX_REQUESTS_PER_PEER {
+            let (_request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.unwrap();
+
+            // Send first chunk to create buffer
+            let test_data = vec![i as u8; 100];
+            let complete_data_hash = hash_blake3(&test_data);
+            let result = sync_manager.add_chunk(&peer, (i + 1) as u64, 0, 10, test_data, complete_data_hash).await;
+            assert!(result.is_ok(), "Request {} should succeed", i);
+        }
+
+        // Next request should fail due to per-peer limit
+        let (_request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.unwrap();
+        let test_data = vec![0u8; 100];
+        let complete_data_hash = hash_blake3(&test_data);
+        let result = sync_manager.add_chunk(&peer, (MAX_REQUESTS_PER_PEER + 1) as u64, 0, 10, test_data, complete_data_hash).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Max requests per peer"));
+    }
+
+    #[tokio::test]
+    async fn test_chunk_consistency_validation() {
+        let sync_manager = BlockchainSyncManager::new_full_node();
+        let peer = PublicKey::new(vec![1, 2, 3]);
+
+        sync_manager.register_authenticated_peer(&peer).await;
+        let (request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.unwrap();
+
+        let test_data = vec![0u8; 100];
+        let correct_hash = hash_blake3(&test_data);
+
+        // First chunk with correct values
+        let result1 = sync_manager.add_chunk(&peer, request_id, 0, 5, test_data.clone(), correct_hash).await;
+        assert!(result1.is_ok());
+
+        // Second chunk with different total_chunks - should fail
+        let result2 = sync_manager.add_chunk(&peer, request_id, 1, 10, test_data.clone(), correct_hash).await;
+        assert!(result2.is_err());
+        assert!(result2.unwrap_err().to_string().contains("total_chunks mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_hash_consistency_validation() {
+        let sync_manager = BlockchainSyncManager::new_full_node();
+        let peer = PublicKey::new(vec![1, 2, 3]);
+
+        sync_manager.register_authenticated_peer(&peer).await;
+        let (request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.unwrap();
+
+        let test_data = vec![0u8; 100];
+        let correct_hash = hash_blake3(&test_data);
+        let wrong_hash = hash_blake3(&vec![1u8; 100]);
+
+        // First chunk with correct hash
+        let result1 = sync_manager.add_chunk(&peer, request_id, 0, 5, test_data.clone(), correct_hash).await;
+        assert!(result1.is_ok());
+
+        // Second chunk with different hash - should fail
+        let result2 = sync_manager.add_chunk(&peer, request_id, 1, 5, test_data, wrong_hash).await;
+        assert!(result2.is_err());
+        assert!(result2.unwrap_err().to_string().contains("complete_data_hash mismatch"));
     }
 }
