@@ -46,6 +46,11 @@ pub use crate::handshake::{
     UHP_VERSION, UHP_VERSION_STRING, MIN_SUPPORTED_VERSION,
 };
 
+// Unified protocol encryption module
+pub use crate::encryption::{
+    ProtocolEncryption, ChaCha20Poly1305Encryption,
+    EncryptionStats, create_encryption,
+};
 
 // Network utilities
 pub mod network_utils;
@@ -65,6 +70,7 @@ pub mod bootstrap;
 pub mod identity; // Unified peer identity system
 pub mod peer_registry; // Unified peer registry (single source of truth)
 pub mod handshake; // Unified Handshake Protocol (UHP)
+pub mod encryption; // Unified protocol encryption
 pub mod constants; // Protocol constants
 pub mod monitoring;
 pub mod zk_integration;
