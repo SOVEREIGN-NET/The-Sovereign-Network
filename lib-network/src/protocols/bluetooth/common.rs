@@ -120,10 +120,9 @@ pub fn get_system_bluetooth_mac() -> Result<[u8; 6]> {
 fn generate_fallback_mac() -> Result<[u8; 6]> {
     use sha2::{Sha256, Digest};
     
-    // Get system identifier
-    let system_id = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .or_else(|_| std::env::var("HOST"))
+    // Get system identifier using proper hostname API
+    let system_id = hostname::get()
+        .map(|h| h.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "UNKNOWN_HOST".to_string());
     
     // Hash to generate deterministic MAC

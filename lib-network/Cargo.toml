@@ -54,6 +54,9 @@ lru = "0.12"
 # Platform directories for secure file locations
 dirs = "5.0"
 
+# Cross-platform hostname detection
+hostname = "0.4"
+
 # CRITICAL FIX C3: Faster RwLock for atomic state updates
 parking_lot = "0.12"
 

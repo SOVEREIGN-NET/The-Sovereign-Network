@@ -10,7 +10,7 @@ use aes_gcm::{
 use argon2::{Algorithm, Argon2, Params, Version};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use tokio::time::Instant;
+use std::time::Instant;
 use anyhow::{Result, anyhow};
 use rand;
 use zeroize::Zeroize;
@@ -1262,7 +1262,7 @@ impl Default for RecoveryPhraseManager {
 mod tests {
     use super::*;
     use rand::RngCore;
-    use tokio::time::Instant;
+    use std::time::Instant;
 
     async fn generate_valid_phrase(
         manager: &mut RecoveryPhraseManager,
