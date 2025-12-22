@@ -1019,14 +1019,14 @@ impl MeshMessageRouter {
     ) -> Result<u64> {
         info!(" Routing message to {:?}", hex::encode(&destination.key_id[0..4]));
 
-        // Create envelope
+        // Create envelope with single-pass serialization (Issue #479)
         let message_id = self.generate_message_id().await;
-        let envelope = MeshMessageEnvelope::new(
+        let envelope = MeshMessageEnvelope::from_message(
             message_id,
             origin.clone(),
             destination.clone(),
             message,
-        );
+        )?;
 
         info!(" Created envelope {} (TTL: {})", message_id, envelope.ttl);
 
@@ -1072,11 +1072,11 @@ impl MeshMessageRouter {
         drop(registry); // Release lock before protocol handler calls
 
         // Enforce handler availability and transport policy through TransportManager
+        // Issue #479: Use pre-serialized payload from envelope (single-pass serialization)
         let manager = self.transport_manager()?;
-        let message_bytes = bincode::serialize(&envelope.message)
-            .map_err(|e| anyhow!("Failed to serialize envelope message: {}", e))?;
+        let message = envelope.deserialize_message()?;
         manager
-            .send(&protocol, &endpoint, peer_id, &envelope.message, &message_bytes)
+            .send(&protocol, &endpoint, peer_id, &message, &envelope.payload)
             .await?;
         info!(" Sent via {:?} (TransportManager enforced)", protocol);
 

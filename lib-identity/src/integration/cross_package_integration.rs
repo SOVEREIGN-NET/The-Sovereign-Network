@@ -4,7 +4,7 @@
 use crate::identity::ZhtpIdentity;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use tokio::time::{Duration, Instant};
+use std::time::{Duration, Instant};
 
 /// Integration layer for coordinating between ZHTP packages
 #[derive(Debug, Clone)]

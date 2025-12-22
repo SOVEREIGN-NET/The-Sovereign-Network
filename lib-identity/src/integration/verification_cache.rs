@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use tokio::time::{Duration, Instant};
+use std::time::{Duration, Instant};
 
 /// Verification cache for storing and retrieving verification results
 #[derive(Debug, Clone)]

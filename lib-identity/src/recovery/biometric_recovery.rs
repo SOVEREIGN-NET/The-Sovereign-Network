@@ -10,7 +10,7 @@ use aes_gcm::{
 use argon2::{Algorithm, Argon2, Params, Version};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use tokio::time::{Duration, Instant};
+use std::time::{Duration, Instant};
 use anyhow::{Result as AnyhowResult, anyhow};
 use rand;
 use zeroize::Zeroize;
