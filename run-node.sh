@@ -13,4 +13,4 @@ if [ ! -f "target/release/zhtp-orchestrator" ]; then
 fi
 
 echo "▶️  Launching node..."
-./target/release/zhtp-orchestrator --config "$CONFIG_FILE"
+./target/release/zhtp --config "$CONFIG_FILE"
