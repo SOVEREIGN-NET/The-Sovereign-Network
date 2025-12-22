@@ -189,7 +189,8 @@ pub enum NetworkProtocol {
 ```rust
 #[derive(Debug, Clone, Default)]
 pub struct HardwareCapabilities {
-    pub lorawan_available: bool,
+    /// LoRaWAN radio hardware available (supports multiple radios)
+    pub lorawan_radios: Vec<LoRaWANHardware>,
     pub bluetooth_available: bool,
     pub wifi_direct_available: bool,
     pub hardware_details: HashMap<String, HardwareDevice>,
@@ -204,6 +205,92 @@ impl HardwareCapabilities {
     
     /// Check if any mesh protocols are available
     pub fn has_mesh_capabilities(&self) -> bool
+    
+    /// Check if any LoRaWAN hardware is available (backward compatibility)
+    pub fn lorawan_available(&self) -> bool
+    
+    /// Get the primary LoRaWAN radio (first available)
+    pub fn primary_lorawan(&self) -> Option<&LoRaWANHardware>
+    
+    /// Get LoRaWAN radios supporting a specific frequency band
+    pub fn lorawan_radios_for_band(&self, band: &FrequencyBand) -> Vec<&LoRaWANHardware>
+}
+```
+
+**Multi-Radio Support:**
+
+The `HardwareCapabilities` struct now supports multiple LoRaWAN radios simultaneously, enabling:
+- **Redundancy**: Multiple radios for failover and load balancing
+- **Band Diversity**: Different radios for different frequency bands (EU868, US915, etc.)
+- **Region Compliance**: Automatic selection of appropriate radio for region/power limits
+- **Multi-Path Communication**: Simultaneous transmission on multiple bands
+
+**Selecting LoRaWAN Radios:**
+
+```rust
+// Get all detected LoRaWAN radios
+let radios = &capabilities.lorawan_radios;
+
+// Simple use: get primary (first) radio
+if let Some(radio) = capabilities.primary_lorawan() {
+    println!("Using radio: {} on {}", radio.device_name, radio.connection_type);
+}
+
+// Filter by frequency band for region compliance
+let eu_radios = capabilities.lorawan_radios_for_band(&FrequencyBand::EU868);
+let us_radios = capabilities.lorawan_radios_for_band(&FrequencyBand::US915);
+
+// Select by max power for range
+let high_power = radios.iter()
+    .filter(|r| r.max_tx_power >= 20)
+    .next();
+
+// Select by connection type for reliability
+let spi_radios = radios.iter()
+    .filter(|r| r.connection_type == "SPI")
+    .collect::<Vec<_>>();
+```
+
+### LoRaWANHardware
+
+```rust
+#[derive(Debug, Clone)]
+pub struct LoRaWANHardware {
+    /// Hardware device name
+    pub device_name: String,
+    /// Connection type (SPI, USB, I2C, HAT)
+    pub connection_type: String,
+    /// Device path or identifier
+    pub device_path: Option<String>,
+    /// Supported frequency bands
+    pub frequency_bands: Vec<FrequencyBand>,
+    /// Maximum transmission power (dBm)
+    pub max_tx_power: i8,
+    /// Hardware capabilities
+    pub capabilities: LoRaWANCapabilities,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FrequencyBand {
+    EU868,   // Europe 868 MHz
+    US915,   // North America 915 MHz
+    AS923,   // Asia 923 MHz
+    AU915,   // Australia 915 MHz
+    CN470,   // China 470 MHz
+    IN865,   // India 865 MHz
+    KR920,   // Korea 920 MHz
+    RU864,   // Russia 864 MHz
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LoRaWANCapabilities {
+    pub class_a: bool,  // Basic uplink/downlink
+    pub class_b: bool,  // Scheduled downlink
+    pub class_c: bool,  // Continuous listening
+    pub otaa_support: bool,  // Over-The-Air Activation
+    pub abp_support: bool,   // Activation By Personalization
+    pub max_payload_size: usize,
+    pub spreading_factors: Vec<u8>,
 }
 ```
 
