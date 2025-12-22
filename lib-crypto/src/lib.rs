@@ -32,7 +32,7 @@ pub use verification::verify_signature;
 pub use traits::{ZeroizingKey, SecureKey};
 
 // Re-export hashing functionality
-pub use hashing::hash_blake3;
+pub use hashing::{hash_blake3, hash_sha3_256};
 
 // Re-export random functionality
 pub use random::{SecureRng, generate_nonce};
