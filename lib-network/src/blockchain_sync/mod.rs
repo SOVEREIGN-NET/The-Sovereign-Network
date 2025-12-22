@@ -54,11 +54,31 @@ pub const CLASSIC_CHUNK_SIZE: usize = 1000;  // Bluetooth Classic RFCOMM (larger
 pub const WIFI_CHUNK_SIZE: usize = 1400;     // WiFi Direct (can handle more)
 pub const DEFAULT_CHUNK_SIZE: usize = 200;   // Safe fallback
 
-/// Security constraints
+/// Security constraints - Original limits
 pub const MAX_CHUNK_BUFFER_SIZE: usize = 10_000_000;  // 10MB max buffer per request
 pub const MAX_PENDING_REQUESTS: usize = 100;          // Max concurrent sync requests
 pub const CHUNK_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
 pub const MAX_CHUNKS_PER_SECOND: u32 = 100;          // Rate limit per peer
+
+/// Security constraints - Stricter limits (Issue #484)
+/// Maximum allowed chunk size (10 MB to prevent memory exhaustion per chunk)
+pub const MAX_CHUNK_SIZE: usize = 10 * 1024 * 1024;
+
+/// Maximum allowed total data size per chunking operation (10 GB)
+///
+/// This is a safety limit for a SINGLE chunking operation, not the entire blockchain.
+/// Full nodes downloading GB/TB blockchains should use incremental sync:
+/// - Request blocks in batches (e.g., BlocksAfter(height) in 10GB segments)
+/// - Edge nodes use headers-only sync (~100 KB total)
+/// - This limit prevents memory exhaustion from a single malicious request
+pub const MAX_BLOCKCHAIN_DATA_SIZE: usize = 10 * 1024 * 1024 * 1024; // 10 GB
+
+/// Maximum pending chunks per request (prevent memory exhaustion)
+/// At 10MB chunks, this allows up to 10GB of data (1000 chunks × 10MB)
+pub const MAX_CHUNKS_PER_REQUEST: u32 = 1000;
+
+/// Maximum pending requests per peer (rate limiting)
+pub const MAX_REQUESTS_PER_PEER: usize = 10;
 
 /// Get optimal chunk size for protocol
 pub fn get_chunk_size_for_protocol(protocol: &NetworkProtocol) -> usize {
