@@ -69,6 +69,9 @@ pub mod blockchain;
 // Core handshake I/O (Ticket #136)
 pub mod core;
 
+// Post-Quantum Cryptography support (Ticket #137)
+pub mod pqc;
+
 // Re-export security utilities
 pub use security::{
     TimestampConfig, SessionContext,
@@ -86,6 +89,13 @@ pub use rate_limiter::{RateLimiter, RateLimitConfig};
 pub use blockchain::{
     BlockchainHandshakeContext, BlockchainHandshakeVerifier,
     BlockchainVerificationResult, PeerTier,
+};
+
+// Re-export PQC types and functions
+pub use pqc::{
+    PqcCapability, PqcHandshakeOffer, PqcHandshakeState,
+    create_pqc_offer, verify_pqc_offer, encapsulate_pqc,
+    decapsulate_pqc, derive_hybrid_session_key,
 };
 
 // Re-export core handshake functions
@@ -365,8 +375,8 @@ pub struct HandshakeCapabilities {
     /// Supported encryption methods (ChaCha20-Poly1305, AES-GCM, etc.)
     pub encryption_methods: Vec<String>,
     
-    /// Post-quantum cryptography support
-    pub pqc_support: bool,
+    /// Post-quantum cryptography capability level (None, Kyber1024+Dilithium5, Hybrid)
+    pub pqc_capability: PqcCapability,
     
     /// DHT participation capability
     pub dht_capable: bool,
@@ -391,7 +401,7 @@ impl Default for HandshakeCapabilities {
             max_throughput: 1_000_000, // 1 MB/s default
             max_message_size: 65536,   // 64 KB default
             encryption_methods: vec!["chacha20-poly1305".to_string()],
-            pqc_support: false,
+            pqc_capability: PqcCapability::None,
             dht_capable: false,
             relay_capable: false,
             storage_capacity: 0,
@@ -409,7 +419,7 @@ impl HandshakeCapabilities {
             max_throughput: 10_000,    // 10 KB/s
             max_message_size: 512,     // 512 bytes
             encryption_methods: vec!["chacha20-poly1305".to_string()],
-            pqc_support: false,
+            pqc_capability: PqcCapability::None,
             dht_capable: false,
             relay_capable: false,
             storage_capacity: 0,
@@ -434,7 +444,7 @@ impl HandshakeCapabilities {
                 "chacha20-poly1305".to_string(),
                 "aes-256-gcm".to_string(),
             ],
-            pqc_support: true,
+            pqc_capability: PqcCapability::Kyber1024Dilithium5,
             dht_capable: true,
             relay_capable: true,
             storage_capacity: 10_737_418_240, // 10 GB
@@ -455,12 +465,18 @@ impl HandshakeCapabilities {
             .cloned()
             .collect();
         
+        // Negotiate PQC capability using the enum's negotiation logic
+        let negotiated_pqc = PqcCapability::negotiate(
+            self.pqc_capability.clone(),
+            other.pqc_capability.clone(),
+        );
+        
         NegotiatedCapabilities {
             protocol: protocols.first().cloned().unwrap_or_default(),
             max_throughput: self.max_throughput.min(other.max_throughput),
             max_message_size: self.max_message_size.min(other.max_message_size),
             encryption_method: encryption_methods.first().cloned().unwrap_or_default(),
-            pqc_enabled: self.pqc_support && other.pqc_support,
+            pqc_capability: negotiated_pqc,
             dht_enabled: self.dht_capable && other.dht_capable,
             relay_enabled: self.relay_capable && other.relay_capable,
         }
@@ -482,8 +498,8 @@ pub struct NegotiatedCapabilities {
     /// Selected encryption method
     pub encryption_method: String,
     
-    /// Whether PQC is enabled for this session
-    pub pqc_enabled: bool,
+    /// Negotiated PQC capability for this session
+    pub pqc_capability: PqcCapability,
     
     /// Whether DHT participation is enabled
     pub dht_enabled: bool,
@@ -586,48 +602,67 @@ pub struct ClientHello {
     /// Protocol version (UHP_VERSION = 1)
     /// Used for version negotiation and preventing downgrade attacks
     pub protocol_version: u8,
+
+    /// Optional PQC handshake offer (Kyber1024 public key + Dilithium5 binding)
+    /// Present when client supports post-quantum cryptography
+    pub pqc_offer: Option<PqcHandshakeOffer>,
 }
 
 impl ClientHello {
     /// Create a new ClientHello message
     ///
-    /// Takes full ZhtpIdentity for signing, but only stores public NodeIdentity fields
+    /// Takes full ZhtpIdentity for signing, but only stores public NodeIdentity fields.
+    /// PQC state is discarded - use `new_with_pqc()` if you need the state.
     pub fn new(
         zhtp_identity: &ZhtpIdentity,
         capabilities: HandshakeCapabilities,
     ) -> Result<Self> {
+        let (hello, _pqc_state) = Self::new_with_pqc(zhtp_identity, capabilities)?;
+        Ok(hello)
+    }
+
+    /// Create a new ClientHello with PQC state returned
+    ///
+    /// Functional core pattern: caller manages PQC state for later use.
+    /// Returns (ClientHello, Option<PqcHandshakeState>) so caller can keep the secret key.
+    pub fn new_with_pqc(
+        zhtp_identity: &ZhtpIdentity,
+        capabilities: HandshakeCapabilities,
+    ) -> Result<(Self, Option<PqcHandshakeState>)> {
         let mut challenge_nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut challenge_nonce);
 
-        // Get current timestamp
         let timestamp = current_timestamp()?;
-
-        // Use current protocol version
         let protocol_version = UHP_VERSION;
-
-        // Extract public-only identity for network transmission
         let identity = NodeIdentity::from_zhtp_identity(zhtp_identity);
 
-        // Create keypair from ZhtpIdentity's keys for signing
         let keypair = KeyPair {
             public_key: zhtp_identity.public_key.clone(),
             private_key: zhtp_identity.private_key.clone().ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
 
-        // Sign the hello message (includes timestamp and version for replay protection)
         let data = Self::data_to_sign(&identity, &capabilities, &challenge_nonce, timestamp, protocol_version)?;
         let signature = keypair.sign(&data)?;
 
-        Ok(Self {
+        // Create PQC offer and preserve state for caller
+        let (pqc_offer, pqc_state) = if capabilities.pqc_capability.is_enabled() {
+            let (offer, state) = create_pqc_offer(capabilities.pqc_capability.clone())?;
+            (Some(offer), Some(state))
+        } else {
+            (None, None)
+        };
+
+        Ok((Self {
             identity,
             capabilities,
             challenge_nonce,
             signature,
             timestamp,
             protocol_version,
-        })
+            pqc_offer,
+        }, pqc_state))
     }
-    
+
     /// Verify the signature on this ClientHello
     ///
     /// SECURITY: Enforces NodeId verification, timestamp validation, protocol version check,
@@ -774,38 +809,48 @@ pub struct ServerHello {
     /// Protocol version (UHP_VERSION = 1)
     /// Used for version negotiation
     pub protocol_version: u8,
+
+    /// Optional PQC handshake offer from server
+    /// Present when server supports post-quantum cryptography and client requested it
+    pub pqc_offer: Option<PqcHandshakeOffer>,
 }
 
 impl ServerHello {
     /// Create a new ServerHello message
     ///
-    /// Takes full ZhtpIdentity for signing, but only stores public NodeIdentity fields
+    /// Takes full ZhtpIdentity for signing, but only stores public NodeIdentity fields.
+    /// PQC state is discarded - use `new_with_pqc()` if you need the state.
     pub fn new(
         zhtp_identity: &ZhtpIdentity,
         capabilities: HandshakeCapabilities,
         client_hello: &ClientHello,
     ) -> Result<Self> {
+        let (hello, _pqc_state) = Self::new_with_pqc(zhtp_identity, capabilities, client_hello)?;
+        Ok(hello)
+    }
+
+    /// Create a new ServerHello with PQC state returned
+    ///
+    /// Functional core pattern: caller manages PQC state for later decapsulation.
+    /// Returns (ServerHello, Option<PqcHandshakeState>) so caller can keep the secret key.
+    pub fn new_with_pqc(
+        zhtp_identity: &ZhtpIdentity,
+        capabilities: HandshakeCapabilities,
+        client_hello: &ClientHello,
+    ) -> Result<(Self, Option<PqcHandshakeState>)> {
         let mut response_nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut response_nonce);
 
-        // Get current timestamp
         let timestamp = current_timestamp()?;
-
-        // Use current protocol version
         let protocol_version = UHP_VERSION;
-
         let negotiated = capabilities.negotiate(&client_hello.capabilities);
-
-        // Extract public-only identity for network transmission
         let identity = NodeIdentity::from_zhtp_identity(zhtp_identity);
 
-        // Create keypair from ZhtpIdentity's keys for signing
         let keypair = KeyPair {
             public_key: zhtp_identity.public_key.clone(),
             private_key: zhtp_identity.private_key.clone().ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
 
-        // Sign: client's nonce + our identity + our capabilities + timestamp + version
         let data = Self::data_to_sign(
             &client_hello.challenge_nonce,
             &identity,
@@ -815,7 +860,15 @@ impl ServerHello {
         )?;
         let signature = keypair.sign(&data)?;
 
-        Ok(Self {
+        // Create PQC offer and preserve state for caller
+        let (pqc_offer, pqc_state) = if negotiated.pqc_capability.is_enabled() {
+            let (offer, state) = create_pqc_offer(negotiated.pqc_capability.clone())?;
+            (Some(offer), Some(state))
+        } else {
+            (None, None)
+        };
+
+        Ok((Self {
             identity,
             capabilities,
             response_nonce,
@@ -823,7 +876,8 @@ impl ServerHello {
             negotiated,
             timestamp,
             protocol_version,
-        })
+            pqc_offer,
+        }, pqc_state))
     }
 
     /// Verify the server's signature
@@ -912,6 +966,10 @@ pub struct ClientFinish {
 
     /// Optional session parameters
     pub session_params: Option<Vec<u8>>,
+
+    /// Optional Kyber1024 ciphertext (encapsulated shared secret for PQC)
+    /// Present when PQC was negotiated and client encapsulates to server's PQC offer
+    pub pqc_ciphertext: Option<Vec<u8>>,
 }
 
 impl ClientFinish {
@@ -926,32 +984,41 @@ impl ClientFinish {
     /// Only after server is verified does the client sign the server nonce.
     ///
     /// **FINDING 2 FIX:** Uses HandshakeContext to eliminate parameter threading.
+    /// PQC shared secret is discarded - use `new_with_pqc()` if you need it.
     pub fn new(
         server_hello: &ServerHello,
         client_hello: &ClientHello,
         keypair: &KeyPair,
         ctx: &HandshakeContext,
     ) -> Result<Self> {
-        // === MUTUAL AUTHENTICATION: Verify server before completing handshake ===
+        let (finish, _pqc_secret) = Self::new_with_pqc(server_hello, client_hello, keypair, ctx)?;
+        Ok(finish)
+    }
 
-        // 1. Verify server's NodeId derivation (collision attack prevention)
+    /// Create a new ClientFinish with PQC shared secret returned
+    ///
+    /// Functional core pattern: returns (ClientFinish, Option<[u8; 32]>) so caller can use
+    /// the PQC shared secret for hybrid session key derivation.
+    pub fn new_with_pqc(
+        server_hello: &ServerHello,
+        client_hello: &ClientHello,
+        keypair: &KeyPair,
+        ctx: &HandshakeContext,
+    ) -> Result<(Self, Option<[u8; 32]>)> {
+        // === MUTUAL AUTHENTICATION: Verify server before completing handshake ===
         server_hello.identity.verify_node_id()
             .map_err(|e| anyhow!("Server NodeId verification failed: {}", e))?;
 
-        // 2. Validate server's timestamp (replay attack prevention)
         validate_timestamp(server_hello.timestamp, &ctx.timestamp_config)
             .map_err(|e| anyhow!("Server timestamp validation failed: {}", e))?;
 
-        // 3. Verify server's signature on ServerHello (MitM + replay prevention)
         server_hello.verify_signature(&client_hello.challenge_nonce, ctx)
             .map_err(|e| anyhow!("Server signature verification failed: {}", e))?;
 
         // === Server verified! Now complete handshake ===
-
         let timestamp = current_timestamp()?;
         let protocol_version = UHP_VERSION;
 
-        // Sign server's response nonce to complete handshake
         let data = Self::data_to_sign(
             &server_hello.response_nonce,
             timestamp,
@@ -959,12 +1026,22 @@ impl ClientFinish {
         )?;
         let signature = keypair.sign(&data)?;
 
-        Ok(Self {
+        // Encapsulate to server's PQC offer and preserve shared secret
+        let (pqc_ciphertext, pqc_shared_secret) = if let Some(ref pqc_offer) = server_hello.pqc_offer {
+            verify_pqc_offer(pqc_offer)?;
+            let (ciphertext, shared_secret) = encapsulate_pqc(pqc_offer)?;
+            (Some(ciphertext), Some(shared_secret))
+        } else {
+            (None, None)
+        };
+
+        Ok((Self {
             signature,
             timestamp,
             protocol_version,
             session_params: None,
-        })
+            pqc_ciphertext,
+        }, pqc_shared_secret))
     }
 
     /// Verify client's signature on server nonce
@@ -1111,6 +1188,9 @@ pub struct HandshakeResult {
     
     /// Timestamp when handshake completed
     pub completed_at: u64,
+    
+    /// Whether PQC hybrid mode was used
+    pub pqc_hybrid_enabled: bool,
 }
 
 impl HandshakeResult {
@@ -1122,6 +1202,7 @@ impl HandshakeResult {
     ///
     /// # Arguments
     /// * `client_hello_timestamp` - Timestamp from ClientHello message (MUST be same on both sides)
+    /// * `pqc_shared_secret` - Optional PQC shared secret for hybrid key derivation
     pub fn new(
         peer_identity: NodeIdentity,
         capabilities: NegotiatedCapabilities,
@@ -1130,6 +1211,37 @@ impl HandshakeResult {
         client_did: &str,
         server_did: &str,
         client_hello_timestamp: u64,
+    ) -> Result<Self> {
+        Self::new_with_pqc(
+            peer_identity,
+            capabilities,
+            client_nonce,
+            server_nonce,
+            client_did,
+            server_did,
+            client_hello_timestamp,
+            None,
+        )
+    }
+    
+    /// Create a new handshake result with optional PQC hybrid key derivation
+    ///
+    /// When `pqc_shared_secret` is provided, the session key is derived using
+    /// HKDF with both the classical nonces and the PQC shared secret, providing
+    /// hybrid post-quantum security.
+    ///
+    /// # Arguments
+    /// * `client_hello_timestamp` - Timestamp from ClientHello message (MUST be same on both sides)
+    /// * `pqc_shared_secret` - Optional PQC shared secret for hybrid key derivation
+    pub fn new_with_pqc(
+        peer_identity: NodeIdentity,
+        capabilities: NegotiatedCapabilities,
+        client_nonce: &[u8; 32],
+        server_nonce: &[u8; 32],
+        client_did: &str,
+        server_did: &str,
+        client_hello_timestamp: u64,
+        pqc_shared_secret: Option<&[u8; 32]>,
     ) -> Result<Self> {
         // Build session context for HKDF domain separation
         // CRITICAL: Use ClientHello timestamp (deterministic, agreed by both parties)
@@ -1141,7 +1253,15 @@ impl HandshakeResult {
         };
 
         // Derive session key using HKDF (NIST SP 800-108 compliant)
-        let session_key = derive_session_key_hkdf(client_nonce, server_nonce, &context)?;
+        let classical_key = derive_session_key_hkdf(client_nonce, server_nonce, &context)?;
+        
+        // If PQC shared secret is provided, derive hybrid key
+        let (session_key, pqc_hybrid_enabled) = if let Some(pqc_secret) = pqc_shared_secret {
+            let hybrid_key = derive_hybrid_session_key(pqc_secret, &classical_key)?;
+            (hybrid_key, true)
+        } else {
+            (classical_key, false)
+        };
 
         // Generate session ID from first 16 bytes of session key
         let mut session_id = [0u8; 16];
@@ -1153,6 +1273,7 @@ impl HandshakeResult {
             session_key,
             session_id,
             completed_at: current_timestamp()?, // Completion time (for logging only)
+            pqc_hybrid_enabled,
         })
     }
 }
@@ -1326,7 +1447,7 @@ mod tests {
             max_throughput: 10_000_000,
             max_message_size: 1_000_000,
             encryption_methods: vec!["chacha20-poly1305".to_string(), "aes-256-gcm".to_string()],
-            pqc_support: true,
+            pqc_capability: PqcCapability::Kyber1024Dilithium5,
             dht_capable: true,
             relay_capable: false,
             storage_capacity: 0,
@@ -1339,7 +1460,7 @@ mod tests {
             max_throughput: 50_000_000,
             max_message_size: 5_000_000,
             encryption_methods: vec!["chacha20-poly1305".to_string()],
-            pqc_support: true,
+            pqc_capability: PqcCapability::Kyber1024Dilithium5,
             dht_capable: false,
             relay_capable: true,
             storage_capacity: 1_000_000_000,
@@ -1361,8 +1482,8 @@ mod tests {
         // Should pick first common encryption
         assert_eq!(negotiated.encryption_method, "chacha20-poly1305");
         
-        // Should enable PQC (both support it)
-        assert!(negotiated.pqc_enabled);
+        // Should negotiate PQC to Kyber1024+Dilithium5 (both support it)
+        assert_eq!(negotiated.pqc_capability, PqcCapability::Kyber1024Dilithium5);
         
         // Should disable DHT (server doesn't support)
         assert!(!negotiated.dht_enabled);
@@ -1452,7 +1573,7 @@ mod tests {
         assert_eq!(minimal.protocols, vec!["ble".to_string()]);
         assert_eq!(minimal.max_throughput, 10_000);
         assert_eq!(minimal.max_message_size, 512);
-        assert!(!minimal.pqc_support);
+        assert_eq!(minimal.pqc_capability, PqcCapability::None);
         assert!(!minimal.dht_capable);
     }
     
@@ -1463,9 +1584,39 @@ mod tests {
         assert!(full.protocols.len() >= 5);
         assert!(full.max_throughput >= 100_000_000);
         assert!(full.max_message_size >= 10_000_000);
-        assert!(full.pqc_support);
+        assert_eq!(full.pqc_capability, PqcCapability::Kyber1024Dilithium5);
         assert!(full.dht_capable);
         assert!(full.relay_capable);
+    }
+
+    #[test]
+    fn test_pqc_capability_negotiation() {
+        use PqcCapability::*;
+        
+        // Both have full PQC -> full PQC
+        let full1 = HandshakeCapabilities {
+            pqc_capability: Kyber1024Dilithium5,
+            ..HandshakeCapabilities::default()
+        };
+        let full2 = HandshakeCapabilities {
+            pqc_capability: Kyber1024Dilithium5,
+            ..HandshakeCapabilities::default()
+        };
+        let neg = full1.negotiate(&full2);
+        assert_eq!(neg.pqc_capability, Kyber1024Dilithium5);
+        
+        // Full + Hybrid -> Hybrid (fallback)
+        let hybrid = HandshakeCapabilities {
+            pqc_capability: HybridEd25519Dilithium5,
+            ..HandshakeCapabilities::default()
+        };
+        let neg = full1.negotiate(&hybrid);
+        assert_eq!(neg.pqc_capability, HybridEd25519Dilithium5);
+        
+        // Hybrid + None -> None (no common support)
+        let none = HandshakeCapabilities::default();
+        let neg = hybrid.negotiate(&none);
+        assert_eq!(neg.pqc_capability, None);
     }
 
     // ============================================================================

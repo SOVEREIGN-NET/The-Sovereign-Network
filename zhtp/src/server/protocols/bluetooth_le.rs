@@ -16,7 +16,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 use tracing::{debug, info, warn};
 use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
@@ -161,7 +160,7 @@ impl BluetoothRouter {
                             let peer_entry = lib_network::peer_registry::PeerEntry::new(
                                 peer_key,
                                 vec![lib_network::peer_registry::PeerEndpoint {
-                                    address: gatt_address.clone(),
+                                    address: lib_network::NodeAddress::BluetoothLE(gatt_address.clone()),
                                     protocol: connection.protocol.clone(),
                                     signal_strength: 0.8,
                                     latency_ms: 50,
@@ -453,7 +452,7 @@ impl BluetoothRouter {
                     let peer_entry = lib_network::peer_registry::PeerEntry::new(
                         peer_key,
                         vec![lib_network::peer_registry::PeerEndpoint {
-                            address: String::new(), // TODO: Add actual address
+                            address: lib_network::NodeAddress::BluetoothLE(String::new()), // TODO: Get actual BLE address
                             protocol: connection.protocol.clone(),
                             signal_strength: 0.8,
                             latency_ms: 50,

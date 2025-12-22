@@ -11,11 +11,14 @@ use tracing::{info, error, warn};
 use lib_crypto::hash_blake3;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::ZhtpIdentity;
+#[cfg(feature = "storage-integration")]
 use lib_storage::{UnifiedStorageSystem, UploadRequest, AccessControlSettings, ContentStorageRequirements};
 
 use crate::dht::ZkDHTIntegration;
 use super::types::*;
+#[cfg(feature = "storage-integration")]
 use super::content_publisher::ContentPublisher;
+#[cfg(feature = "chain-integration")]
 use lib_blockchain;
 
 /// Web4 domain registry manager

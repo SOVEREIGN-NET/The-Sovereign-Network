@@ -858,3 +858,62 @@ mod tests {
         assert_eq!(DEFAULT_RATE_LIMIT_PER_MINUTE, 100);
     }
 }
+
+// ========== TRAIT IMPLEMENTATION (Ticket #1.14) ==========
+
+use crate::dht::DhtPeerRegistryTrait;
+use async_trait::async_trait;
+
+#[async_trait]
+impl DhtPeerRegistryTrait for DhtPeerRegistry {
+    async fn add_dht_peer(&mut self, node: &DhtNode, bucket_index: usize, distance: u32) -> Result<()> {
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+            
+        let entry = DhtPeerEntry {
+            node: node.clone(),
+            distance,
+            bucket_index,
+            last_contact: current_time,
+            failed_attempts: 0,
+        };
+        
+        self.upsert(entry)?;
+        Ok(())
+    }
+    
+    async fn find_closest_dht_peers(&self, target: &NodeId, count: usize) -> Result<Vec<DhtNode>> {
+        Ok(self.find_closest(target, count))
+    }
+    
+    async fn get_dht_bucket_peers(&self, bucket_index: usize) -> Result<Vec<DhtNode>> {
+        Ok(self.peers_in_bucket(bucket_index)
+            .into_iter()
+            .map(|entry| entry.node.clone())
+            .collect())
+    }
+    
+    async fn mark_dht_peer_failed(&mut self, node_id: &NodeId) -> Result<()> {
+        self.mark_failed(node_id);
+        Ok(())
+    }
+    
+    async fn mark_dht_peer_responsive(&mut self, node_id: &NodeId) -> Result<()> {
+        self.mark_responsive(node_id);
+        Ok(())
+    }
+    
+    async fn is_dht_bucket_full(&self, bucket_index: usize, k: usize) -> Result<bool> {
+        if bucket_index >= NUM_K_BUCKETS {
+            return Err(anyhow!("Invalid bucket index {}: must be 0-{}", bucket_index, MAX_BUCKET_INDEX));
+        }
+        Ok(self.bucket_index[bucket_index].len() >= k)
+    }
+    
+    async fn remove_dht_peer(&mut self, node_id: &NodeId) -> Result<()> {
+        self.remove(node_id);
+        Ok(())
+    }
+}

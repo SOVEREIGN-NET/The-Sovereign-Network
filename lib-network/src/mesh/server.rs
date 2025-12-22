@@ -199,7 +199,7 @@ use crate::discovery::hardware::HardwareCapabilities;
 
 // Import implementations from other packages
 use lib_economy::EconomicModel;
-use lib_storage::UnifiedStorageSystem;
+use crate::storage_stub::UnifiedStorageSystem;
 
 /// Network configuration for mesh node
 #[derive(Debug, Clone)]

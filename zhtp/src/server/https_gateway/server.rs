@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::BufReader;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
@@ -22,14 +21,13 @@ use axum::{
     Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::sync::{RwLock, watch};
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn, error, debug};
 
-use lib_network::{DomainRegistry, Web4ContentService, ZdnsResolver, ZdnsConfig};
+use crate::web4_stub::{DomainRegistry, Web4ContentService, ZdnsResolver};
 
 use super::config::{GatewayTlsConfig, TlsMode};
 use super::handlers::{gateway_handler, redirect_handler, health_handler, info_handler, GatewayState};

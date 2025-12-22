@@ -3,9 +3,10 @@
 //! Intelligently selects optimal peers based on proximity, performance, and network conditions
 
 use anyhow::Result;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr};
 use std::collections::HashMap;
 use tracing::{info, debug};
+use crate::network_utils::get_local_ip;
 
 /// Peer quality metrics for routing decisions
 #[derive(Debug, Clone)]
@@ -121,11 +122,17 @@ pub async fn categorize_peers_by_topology(
     let mut categorized: HashMap<PeerType, Vec<SocketAddr>> = HashMap::new();
     
     let local_ip = get_local_ip().await?;
-    let local_subnet = get_subnet_base(&local_ip);
+    
+    // For IPv4 local address, use subnet-based categorization
+    let local_ipv4_subnet = match local_ip {
+        IpAddr::V4(v4) => Some(get_subnet_base(&v4)),
+        IpAddr::V6(_) => None, // IPv6 requires different categorization strategy
+    };
     
     for peer in peers {
-        let peer_type = match peer {
-            SocketAddr::V4(v4_addr) => {
+        let peer_type = match (peer, &local_ip, local_ipv4_subnet) {
+            // IPv4 peer with IPv4 local address - use subnet matching
+            (SocketAddr::V4(v4_addr), IpAddr::V4(_), Some(local_subnet)) => {
                 let peer_subnet = get_subnet_base(v4_addr.ip());
                 
                 if peer_subnet == local_subnet {
@@ -136,7 +143,18 @@ pub async fn categorize_peers_by_topology(
                     PeerType::Internet
                 }
             },
-            SocketAddr::V6(_) => PeerType::Internet, // IPv6 treated as internet
+            // IPv6 peer with IPv6 local address - use prefix matching
+            (SocketAddr::V6(v6_addr), IpAddr::V6(local_v6), _) => {
+                if is_same_ipv6_subnet(local_v6, v6_addr.ip()) {
+                    PeerType::LocalSubnet
+                } else if v6_addr.ip().is_unicast_link_local() {
+                    PeerType::WiFiDirect // Link-local IPv6
+                } else {
+                    PeerType::Internet
+                }
+            },
+            // Mixed address families or IPv4 peer with IPv6 local - default to Internet
+            _ => PeerType::Internet,
         };
         
         categorized.entry(peer_type).or_insert_with(Vec::new).push(*peer);
@@ -148,6 +166,19 @@ pub async fn categorize_peers_by_topology(
     }
     
     Ok(categorized)
+}
+
+/// Check if two IPv6 addresses are on the same /64 subnet
+/// Most IPv6 networks use /64 prefixes for local subnets
+fn is_same_ipv6_subnet(local: &Ipv6Addr, peer: &Ipv6Addr) -> bool {
+    let local_segments = local.segments();
+    let peer_segments = peer.segments();
+    
+    // Compare first 4 segments (64 bits) for /64 subnet match
+    local_segments[0] == peer_segments[0]
+        && local_segments[1] == peer_segments[1]
+        && local_segments[2] == peer_segments[2]
+        && local_segments[3] == peer_segments[3]
 }
 
 /// Check if IP address is in private ranges
@@ -176,21 +207,6 @@ fn is_private_ip(ip: &std::net::Ipv4Addr) -> bool {
 fn get_subnet_base(ip: &std::net::Ipv4Addr) -> (u8, u8, u8) {
     let octets = ip.octets();
     (octets[0], octets[1], octets[2])
-}
-
-/// Get the local IP address (duplicate of network_monitor function)
-async fn get_local_ip() -> Result<std::net::Ipv4Addr> {
-    // Connect to a well-known address to determine our local IP
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect("8.8.8.8:80")?;
-    
-    match socket.local_addr()? {
-        std::net::SocketAddr::V4(addr) => Ok(*addr.ip()),
-        std::net::SocketAddr::V6(_) => {
-            // Fallback for IPv6 environments
-            Ok(std::net::Ipv4Addr::new(192, 168, 1, 100)) // Common default
-        }
-    }
 }
 
 /// Measure peer performance metrics
