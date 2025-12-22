@@ -13,6 +13,7 @@ use lib_crypto::{
     verification::verify_signature,
     keypair::generation::KeyPair,
     hashing::hash_blake3,
+    Hash,
 };
 use lib_identity::IdentityId;
 
@@ -22,6 +23,8 @@ use crate::types::{
 };
 use crate::validators::ValidatorManager;
 use crate::byzantine::ByzantineFaultDetector;
+
+const VOTE_DOMAIN_TAG: &[u8] = b"ZHTP/CONSENSUS/VOTE/v1\0";
 
 /// Enhanced BFT consensus engine with ZK verification
 pub struct EnhancedBftEngine {
@@ -300,8 +303,13 @@ impl EnhancedBftEngine {
         let vote_message = self.serialize_vote_for_verification(vote)?;
         
         // Skip validation for test signatures
+        #[cfg(any(test, feature = "dev-insecure"))]
         if vote.signature.signature == vec![1, 2, 3] {
             return Ok(());
+        }
+        #[cfg(not(any(test, feature = "dev-insecure")))]
+        if vote.signature.signature == vec![1, 2, 3] {
+            return Err(anyhow::anyhow!("Test signature is not allowed in production"));
         }
         
         // Use lib-crypto for signature verification
@@ -537,7 +545,53 @@ impl EnhancedBftEngine {
         
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         
-        // Create vote
+        // SECURITY: Production requires keypair; test/dev allows placeholder
+        let vote = if let Some(kp) = self.validator_keypair.as_ref() {
+            self.sign_vote(vote_id, voter, proposal_id, vote_type, timestamp, kp)?
+        } else {
+            #[cfg(any(test, feature = "dev-insecure"))]
+            {
+                tracing::warn!("Using test signature for vote - NOT FOR PRODUCTION");
+                ConsensusVote {
+                    id: vote_id,
+                    voter,
+                    proposal_id,
+                    vote_type,
+                    height: self.current_round.height,
+                    round: self.current_round.round,
+                    timestamp,
+                    signature: lib_crypto::PostQuantumSignature {
+                        signature: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                        public_key: lib_crypto::PublicKey {
+                            dilithium_pk: vec![0; 32],
+                            kyber_pk: vec![0; 32],
+                            key_id: [0; 32],
+                        },
+                        algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+                        timestamp,
+                    },
+                }
+            }
+            #[cfg(not(any(test, feature = "dev-insecure")))]
+            return Err(anyhow::anyhow!(
+                "Validator keypair not configured. Cannot create valid votes without signing key. \
+                 Configure validator identity before participating in consensus."
+            ));
+        };
+
+        Ok(vote)
+    }
+
+    /// Sign a vote with the given keypair
+    fn sign_vote(
+        &self,
+        vote_id: Hash,
+        voter: IdentityId,
+        proposal_id: Hash,
+        vote_type: VoteType,
+        timestamp: u64,
+        keypair: &lib_crypto::KeyPair,
+    ) -> Result<ConsensusVote> {
         let mut vote = ConsensusVote {
             id: vote_id,
             voter,
@@ -547,38 +601,25 @@ impl EnhancedBftEngine {
             round: self.current_round.round,
             timestamp,
             signature: lib_crypto::PostQuantumSignature {
-                signature: vec![1, 2, 3], // Test signature
-                public_key: lib_crypto::PublicKey {
-                    dilithium_pk: vec![1; 32],
-                    kyber_pk: vec![2; 32],
-                    key_id: [4; 32],
-                },
+                signature: vec![],
+                public_key: keypair.public_key.clone(),
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
                 timestamp,
             },
         };
-        
-        // Sign vote if we have a keypair
-        if let Some(keypair) = &self.validator_keypair {
-            let vote_message = self.serialize_vote_for_verification(&vote)?;
-            
-            match lib_crypto::utils::compatibility::sign_message(keypair, &vote_message) {
-                Ok(signature) => {
-                    vote.signature.signature = signature.signature;
-                    vote.signature.public_key = keypair.public_key.clone();
-                },
-                Err(_) => {
-                    // Keep test signature if signing fails
-                }
-            }
-        }
-        
+
+        let vote_message = self.serialize_vote_for_verification(&vote)?;
+        let signature = lib_crypto::utils::compatibility::sign_message(keypair, &vote_message)
+            .map_err(|e| anyhow::anyhow!("Failed to sign vote: {}", e))?;
+
+        vote.signature.signature = signature.signature;
         Ok(vote)
     }
-    
+
     /// Serialize vote for verification
     fn serialize_vote_for_verification(&self, vote: &ConsensusVote) -> Result<Vec<u8>> {
         let mut data = Vec::new();
+        data.extend_from_slice(VOTE_DOMAIN_TAG);
         data.extend_from_slice(vote.id.as_bytes());
         data.extend_from_slice(vote.voter.as_bytes());
         data.extend_from_slice(vote.proposal_id.as_bytes());

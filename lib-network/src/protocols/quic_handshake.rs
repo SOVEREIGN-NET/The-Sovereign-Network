@@ -62,7 +62,7 @@ use lib_crypto::kdf::hkdf::hkdf_sha3;
 use lib_crypto::post_quantum::kyber::{kyber512_keypair, kyber512_encapsulate, kyber512_decapsulate};
 use crate::handshake::{
     ClientHello, ServerHello, ClientFinish, HandshakeContext, HandshakeResult,
-    HandshakeCapabilities, NodeIdentity,
+    HandshakeCapabilities, NodeIdentity, PqcCapability,
 };
 use quinn::Connection;
 use tokio::time::{timeout, Duration};
@@ -759,7 +759,7 @@ fn create_quic_capabilities() -> HandshakeCapabilities {
             "chacha20-poly1305".to_string(),
             "aes-256-gcm".to_string(),
         ],
-        pqc_support: true, // We're doing Kyber
+        pqc_capability: PqcCapability::Kyber1024Dilithium5, // Full PQC support
         dht_capable: true,
         relay_capable: true,
         storage_capacity: 0, // Negotiated separately
@@ -830,7 +830,7 @@ mod tests {
         let caps = create_quic_capabilities();
 
         assert!(caps.protocols.contains(&"quic".to_string()));
-        assert!(caps.pqc_support);
+        assert!(caps.pqc_capability.is_enabled());
         assert!(caps.custom_features.contains(&"quic-pqc-v1".to_string()));
     }
 

@@ -128,18 +128,20 @@ mod tests {
     #[test]
     fn test_kyber1024_kem() -> Result<()> {
         let (pk, sk) = kyber1024_keypair();
-        
-        // Encapsulate
-        let (ciphertext, shared_secret1) = kyber1024_encapsulate(&pk)?;
-        
-        // Decapsulate
+
+        // Both sides must use the same kdf_info
         let kdf_info = b"ZHTP-KEM-v1.0";
+
+        // Encapsulate
+        let (ciphertext, shared_secret1) = kyber1024_encapsulate(&pk, kdf_info)?;
+
+        // Decapsulate
         let shared_secret2 = kyber1024_decapsulate(&ciphertext, &sk, kdf_info)?;
-        
+
         // Should match
         assert_eq!(shared_secret1, shared_secret2);
         assert_eq!(shared_secret1.len(), 32);
-        
+
         Ok(())
     }
 }

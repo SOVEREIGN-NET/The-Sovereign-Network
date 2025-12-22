@@ -1951,6 +1951,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hostname"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-link",
+]
+
+[[package]]
 name = "http"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2594,6 +2605,8 @@ dependencies = [
  "governor",
  "hex",
  "hkdf",
+ "hmac",
+ "hostname",
  "jni",
  "lib-consensus",
  "lib-crypto",
@@ -2619,6 +2632,7 @@ dependencies = [
  "regex",
  "rocksdb",
  "rustls",
+ "rustls-native-certs 0.7.3",
  "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
@@ -4282,6 +4296,19 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5bfb394eeed242e909609f56089eecfe5fda225042e8b171791b9c95f5931e5"
+dependencies = [
+ "openssl-probe",
+ "rustls-pemfile 2.2.0",
+ "rustls-pki-types",
+ "schannel",
+ "security-framework 2.11.1",
+]
+
+[[package]]
+name = "rustls-native-certs"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9980d917ebb0c0536119ba501e90834767bffc3d60641457fd84a1f3fd337923"
@@ -4332,7 +4359,7 @@ dependencies = [
  "log",
  "once_cell",
  "rustls",
- "rustls-native-certs",
+ "rustls-native-certs 0.8.2",
  "rustls-platform-verifier-android",
  "rustls-webpki",
  "security-framework 3.5.1",

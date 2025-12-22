@@ -1,5 +1,5 @@
 //! WiFi Direct Mesh Protocol Implementation
-//! 
+//!
 //! Handles WiFi Direct mesh networking for medium-range peer connections
 
 use anyhow::Result;
@@ -10,6 +10,7 @@ use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data};
+use crate::network_utils::get_local_ip;
 
 // Enhanced WiFi Direct implementations with cross-platform support
 #[cfg(all(target_os = "macos", feature = "enhanced-wifi-direct"))]
@@ -2502,8 +2503,8 @@ impl WiFiDirectMeshProtocol {
         // Use mdns-sd library to register service
         if let Some(daemon) = &self.mdns_daemon {
             // Get local IP address for service registration
-            let local_ip = match get_local_ip_for_mdns().await {
-                Ok(ip) => ip,
+            let local_ip = match get_local_ip().await {
+                Ok(ip) => ip.to_string(),
                 Err(e) => {
                     warn!("Could not determine local IP for mDNS: {}", e);
                     "0.0.0.0".to_string()
@@ -2633,8 +2634,8 @@ impl WiFiDirectMeshProtocol {
                                     info!("   Port: {}, IPs: {:?}", port, addresses);
                                     
                                     // Get our own IP to filter out self-discovery
-                                    let own_ip = match get_local_ip_for_mdns().await {
-                                        Ok(ip) => ip,
+                                    let own_ip = match get_local_ip().await {
+                                        Ok(ip) => ip.to_string(),
                                         Err(_) => String::new()
                                     };
                                     
@@ -3007,9 +3008,21 @@ impl WiFiDirectMeshProtocol {
         
         info!("Serialized envelope: {} bytes", bytes.len());
         
-        // Look up peer address by matching connected devices
-        // For WiFi Direct, we use MAC address as the key
-        let target_address = self.get_address_for_peer(peer_id).await?;
+        // Look up peer address from connected devices
+        let devices = self.connected_devices.read().await;
+        
+        if devices.is_empty() {
+            return Err(anyhow::anyhow!("No WiFi Direct devices connected"));
+        }
+        
+        // For now, use first available device
+        // TODO: Use AddressResolver via PeerRegistry for proper PublicKey -> MAC mapping
+        let target_address = devices.iter().next()
+            .map(|(address, _device)| {
+                info!("Using WiFi Direct device: {} for peer {:?}", address, hex::encode(&peer_id.key_id[0..4]));
+                address.clone()
+            })
+            .ok_or_else(|| anyhow::anyhow!("No active WiFi Direct connection to peer {:?}", hex::encode(&peer_id.key_id[0..8])))?;
         
         // Send via existing send_mesh_message
         self.send_mesh_message(&target_address, &bytes).await?;
@@ -3017,28 +3030,6 @@ impl WiFiDirectMeshProtocol {
         info!(" WiFi Direct mesh envelope sent successfully");
         
         Ok(())
-    }
-    
-    /// Get WiFi Direct address (MAC) for a peer PublicKey
-    async fn get_address_for_peer(&self, peer_id: &lib_crypto::PublicKey) -> Result<String> {
-        let devices = self.connected_devices.read().await;
-        
-        // In a full implementation, we'd maintain a mapping of PublicKey -> MAC address
-        // For now, we check if there's a single connected device or use the first one
-        // This should be enhanced with proper peer tracking
-        
-        if devices.is_empty() {
-            return Err(anyhow::anyhow!("No WiFi Direct devices connected"));
-        }
-        
-        // Try to find the device - for now use first available
-        // TODO: Maintain proper PublicKey -> MAC address mapping
-        if let Some((address, _device)) = devices.iter().next() {
-            info!("Using WiFi Direct device: {} for peer {:?}", address, hex::encode(&peer_id.key_id[0..4]));
-            return Ok(address.clone());
-        }
-        
-        Err(anyhow::anyhow!("No active WiFi Direct connection to peer {:?}", hex::encode(&peer_id.key_id[0..8])))
     }
     
     /// Send mesh message via WiFi Direct
@@ -3485,32 +3476,7 @@ impl WiFiDirectMeshProtocol {
     }
 }
 
-/// Get local IP address for mDNS service registration
-async fn get_local_ip_for_mdns() -> Result<String> {
-    use std::net::IpAddr;
-    
-    // Try to get first non-loopback local IP
-    match local_ip_address::local_ip() {
-        Ok(IpAddr::V4(ip)) => Ok(ip.to_string()),
-        Ok(IpAddr::V6(ip)) => Ok(ip.to_string()),
-        Err(_) => {
-            // Fallback: try to find any network interface
-            if let Ok(interfaces) = local_ip_address::list_afinet_netifas() {
-                for (name, ip) in interfaces {
-                    if !name.to_lowercase().contains("loopback") {
-                        if let IpAddr::V4(ipv4) = ip {
-                            if !ipv4.is_loopback() {
-                                return Ok(ipv4.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            // Last resort: use localhost (mDNS daemon will handle it)
-            Ok("127.0.0.1".to_string())
-        }
-    }
-}
+
 
 /// WiFi Direct mesh status information
 #[derive(Debug, Clone)]

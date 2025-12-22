@@ -1,6 +1,7 @@
 //! Peer discovery implementation for bootstrap
 
 use anyhow::{Result, anyhow};
+use crate::types::node_address::NodeAddress;
 use lib_crypto::PublicKey;
 use lib_identity::{NodeId, ZhtpIdentity};
 use std::collections::HashMap;
@@ -186,7 +187,7 @@ async fn add_peer_to_registry(
         .addresses
         .iter()
         .map(|(protocol, address)| PeerEndpoint {
-            address: address.clone(),
+            address: NodeAddress::Domain(address.clone()),
             protocol: protocol.clone(),
             signal_strength: 1.0, // Bootstrap peers assumed to have good connectivity
             latency_ms: 50, // Default reasonable latency for bootstrap
@@ -476,7 +477,7 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
         max_throughput: 10_000_000, // 10 MB/s
         max_message_size: 1024 * 1024, // 1 MB
         encryption_methods: vec!["chacha20-poly1305".to_string()],
-        pqc_support: true, // Enable PQC for quantum resistance
+        pqc_capability: crate::handshake::PqcCapability::HybridEd25519Dilithium5, // Hybrid mode for quantum resistance
         dht_capable: true,
         relay_capable: false,
         storage_capacity: 0,
