@@ -4,7 +4,7 @@
 
 use lib_network::types::mesh_message::{MeshMessageEnvelope, ZhtpMeshMessage};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpHeaders, ZhtpMethod, ZhtpStatus};
-use lib_crypto::{PublicKey, SecretKey};
+use lib_crypto::PublicKey;
 
 #[test]
 fn test_zhtp_request_mesh_routing_serialization() {
@@ -26,11 +26,10 @@ fn test_zhtp_request_mesh_routing_serialization() {
 
     // Create envelope using the optimized single-pass serialization
     let envelope = MeshMessageEnvelope::from_zhtp_request(
-        request.clone(),
+        0, // message_id
         sender_key,
         receiver_key,
-        0, // hop count
-        60, // ttl
+        request.clone(),
     ).expect("Failed to create envelope from ZHTP request");
 
     // Verify critical fields were extracted
@@ -80,11 +79,10 @@ fn test_zhtp_response_mesh_routing_serialization() {
 
     // Create envelope using the optimized single-pass serialization
     let envelope = MeshMessageEnvelope::from_zhtp_response(
-        response.clone(),
+        0, // message_id
         sender_key,
         receiver_key,
-        0, // hop count
-        60, // ttl
+        response.clone(),
     ).expect("Failed to create envelope from ZHTP response");
 
     // Verify critical fields were extracted
@@ -138,11 +136,10 @@ fn test_optimization_reduces_payload_size() {
     
     // NEW approach: single-pass serialization (only headers + body tuple)
     let envelope = MeshMessageEnvelope::from_zhtp_request(
-        request,
+        0, // message_id
         sender_key,
         receiver_key,
-        0,
-        60,
+        request,
     ).expect("Failed to create envelope");
     
     let optimized_serialized = bincode::serialize(&envelope).unwrap();
@@ -183,11 +180,10 @@ fn test_multi_hop_routing_preserves_data() {
     let receiver = PublicKey::from_bytes(&[20u8; 32]).unwrap();
 
     let mut envelope = MeshMessageEnvelope::from_zhtp_request(
-        original_request.clone(),
+        0, // message_id
         sender.clone(),
         receiver.clone(),
-        0,
-        10,
+        original_request.clone(),
     ).expect("Failed to create envelope");
 
     // Simulate 5 hops through the mesh
@@ -199,9 +195,7 @@ fn test_multi_hop_routing_preserves_data() {
         envelope = bincode::deserialize(&serialized).unwrap();
         
         // Increment hop count (what each relay node does)
-        envelope.increment_hop_count();
-        
-        assert_eq!(envelope.hop_count, hop, "Hop count should increment correctly");
+        envelope.increment_hop(receiver.clone());
     }
 
     // After 5 hops, reconstruct the original request

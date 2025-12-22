@@ -1116,7 +1116,7 @@ mod tests {
         use lib_crypto::Hash;
         use lib_proofs::ZeroKnowledgeProof;
         
-        // Verify single-pass serialization:the payload only contains (headers, body), not full request        
+        // Verify single-pass serialization: the payload only contains (headers, body), not full request        
         let mut headers = ZhtpHeaders::new();
         headers.set("Host", "test.zhtp".to_string());
         headers.set("Authorization", "Bearer token123".to_string());
