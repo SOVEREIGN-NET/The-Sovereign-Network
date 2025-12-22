@@ -48,10 +48,7 @@ impl NodeType {
             "full" | "fullnode" | "full-node" => NodeType::FullNode,
             _ => {
                 // Default to FullNode for unknown types
-                tracing::warn!(
-                    "Unknown node type '{}', defaulting to FullNode", 
-                    config_str
-                );
+                // Note: Unknown type in config, defaulting to FullNode
                 NodeType::FullNode
             }
         }
