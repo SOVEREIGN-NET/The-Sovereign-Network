@@ -89,7 +89,7 @@ impl BluetoothMeshProtocol {
 
     /// Create secure tracked device from raw MAC (internal use only)
     #[allow(dead_code)]
-    fn create_secure_tracked_device(
+    pub fn create_secure_tracked_device(
         &self,
         raw_mac: &[u8; 6],
         device_name: Option<String>,
@@ -135,7 +135,7 @@ impl BluetoothMeshProtocol {
 
     /// Resolve device address to D-Bus path using ephemeral address
     #[allow(dead_code)]
-    async fn resolve_device_address(&self, identifier: &str) -> Result<String> {
+    pub async fn resolve_device_address(&self, identifier: &str) -> Result<String> {
         if let Some(device) = self.get_tracked_device(identifier).await {
             let ephemeral_parts: Vec<&str> = device.ephemeral_address.split(':').collect();
             let dbus_path = if ephemeral_parts.len() >= 6 {
