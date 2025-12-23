@@ -471,7 +471,7 @@ impl QuicHandler {
             &handshake_ctx,
         ).await.context("UHP+Kyber handshake failed")?;
 
-        let peer_did = handshake_result.peer_identity.did.clone();
+        let peer_did = handshake_result.verified_peer.identity.did.clone();
         let session_id = handshake_result.session_id;
         let master_key = handshake_result.master_key;
 
@@ -487,7 +487,7 @@ impl QuicHandler {
 
         // Auto-register the authenticated peer identity
         // Authentication IS registration: successful UHP+Kyber proves identity control
-        self.auto_register_peer_identity(&handshake_result.peer_identity).await;
+        self.auto_register_peer_identity(&handshake_result.verified_peer.identity).await;
 
         // Create session state for authenticated requests
         let session = ControlPlaneSession {
@@ -740,22 +740,24 @@ impl QuicHandler {
         ).await.context("Mesh UHP+Kyber handshake failed")?;
 
         // Extract peer node ID
-        let peer_node_id = handshake_result.peer_identity.node_id.as_bytes();
+        let peer_node_id = handshake_result.verified_peer.identity.node_id.as_bytes();
         let mut node_id_arr = [0u8; 32];
         node_id_arr.copy_from_slice(peer_node_id);
 
         info!(
-            peer_did = %handshake_result.peer_identity.did,
+            peer_did = %handshake_result.verified_peer.identity.did,
             session_id = ?handshake_result.session_id,
             "✅ Mesh peer authenticated from {} (identity verified)",
             peer_addr
         );
 
         // Create PqcQuicConnection from handshake result
-        let pqc_conn = PqcQuicConnection::from_handshake_result(
+        let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection.clone(),
             peer_addr,
-            handshake_result,
+            handshake_result.verified_peer,
+            handshake_result.master_key,
+            handshake_result.session_id,
             false,
         );
 
@@ -1098,22 +1100,24 @@ impl QuicHandler {
         ).await.context("UHP+Kyber handshake failed")?;
 
         // Extract peer node ID
-        let peer_node_id = handshake_result.peer_identity.node_id.as_bytes();
+        let peer_node_id = handshake_result.verified_peer.identity.node_id.as_bytes();
         let mut node_id_arr = [0u8; 32];
         node_id_arr.copy_from_slice(peer_node_id);
 
         info!(
-            peer_did = %handshake_result.peer_identity.did,
+            peer_did = %handshake_result.verified_peer.identity.did,
             session_id = ?handshake_result.session_id,
             "✅ UHP+Kyber handshake complete with {} (identity verified)",
             peer_addr
         );
 
         // Create PqcQuicConnection from handshake result
-        let pqc_conn = PqcQuicConnection::from_handshake_result(
+        let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection.clone(),
             peer_addr,
-            handshake_result,
+            handshake_result.verified_peer,
+            handshake_result.master_key,
+            handshake_result.session_id,
             false,
         );
 
