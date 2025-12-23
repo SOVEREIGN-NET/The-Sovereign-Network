@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(data[0], 0x02);
         assert_eq!(data[1], 0x01);
         assert_eq!(data[2], 0x06);
-        assert!(data.windows(8).any(|w| w == b"ZHTP-MESH"));
+        assert!(data.windows(9).any(|w| w == b"ZHTP-MESH"));
     }
 
     #[test]

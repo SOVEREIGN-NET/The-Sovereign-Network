@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn test_parse_macos_gatt_data() {
         let proto = protocol();
-        let json = r#"{\"device\":\"AA\",\"char\":\"BB\",\"value\":[1,2,3]}"#;
+        let json = r#"{"device":"AA","char":"BB","value":[1,2,3]}"#;
         let data = proto.parse_macos_gatt_data(json, "AA", "BB").unwrap();
         assert_eq!(data.unwrap(), vec![1, 2, 3]);
     }
