@@ -28,6 +28,10 @@ PROBLEMS_STATUS_REPORT.md
 PUSH_INSTRUCTIONS.md
 now/
 
+# RocksDB cache directories (runtime data)
+nonce_cache_wifi
+nonce_cache_*/
+
 # Local notes (not committed)
 LOCAL_NOTES.md
 SECURITY_REPORT.md
