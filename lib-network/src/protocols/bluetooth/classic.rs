@@ -109,6 +109,7 @@ pub struct LinuxBluetoothDevice {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 pub struct MacOSBluetoothDevice {
     address: String,
     device_id: String,
@@ -140,6 +141,7 @@ struct LinuxRfcommSocket {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 struct MacOSRfcommSocket {
     channel_id: u8,
     device_address: String,
@@ -1226,7 +1228,7 @@ impl BluetoothClassicProtocol {
         
         // Find active connection with socket FD
         let connections = self.active_connections.read().await;
-        let connection = connections.get(address)
+        let _connection = connections.get(address)
             .ok_or_else(|| anyhow!("No active connection to {}", address))?;
         
         // In a full implementation, we would store the socket FD in the connection
@@ -1331,8 +1333,6 @@ impl BluetoothClassicProtocol {
         info!(" Stored RFCOMM stream for {}", device_address);
         
         // Return a clone (the stream is now stored in active_streams)
-        let stream_clone = stream_arc.read().await;
-        
         // Note: We can't directly clone RfcommStream, so we need a different approach
         // For now, return an error directing users to use send_mesh_message instead
         Err(anyhow!("Stream stored successfully. Use send_mesh_message() to transmit data to {}", device_address))
@@ -2405,6 +2405,7 @@ impl BluetoothClassicProtocol {
             let router_guard = router.read().await;
 
             // Convert destination PublicKey to UnifiedPeerId for routing (Ticket #146)
+            #[allow(deprecated)]
             let dest_unified = UnifiedPeerId::from_public_key_legacy(envelope.destination.clone());
             match router_guard.find_next_hop_for_destination(&dest_unified).await {
                 Ok(next_hop) => {
@@ -2833,4 +2834,3 @@ mod examples {
         // This is a documentation example, not meant to run in tests
     }
 }
-

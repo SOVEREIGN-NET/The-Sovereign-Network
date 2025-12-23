@@ -98,3 +98,22 @@ pub fn client_http_alpns() -> Vec<Vec<u8>> {
 ///
 /// Previously bootstrap used 10 MB (too large, DoS risk) while core used 1 MB.
 pub const MAX_HANDSHAKE_MESSAGE_SIZE: usize = 1024 * 1024; // 1 MB
+
+// =============================================================================
+// Bluetooth LE Constants
+// =============================================================================
+
+/// BLE mesh service UUID (ZHTP mesh service).
+pub const BLE_MESH_SERVICE_UUID: &str = "6ba7b810-9dad-11d1-80b4-00c04fd430ca";
+
+/// BLE ZK authentication characteristic UUID.
+pub const BLE_ZK_AUTH_CHAR_UUID: &str = "6ba7b811-9dad-11d1-80b4-00c04fd430ca";
+
+/// BLE quantum routing characteristic UUID.
+pub const BLE_QUANTUM_ROUTING_CHAR_UUID: &str = "6ba7b812-9dad-11d1-80b4-00c04fd430ca";
+
+/// BLE mesh data characteristic UUID.
+pub const BLE_MESH_DATA_CHAR_UUID: &str = "6ba7b813-9dad-11d1-80b4-00c04fd430ca";
+
+/// BLE mesh coordination characteristic UUID.
+pub const BLE_MESH_COORD_CHAR_UUID: &str = "6ba7b814-9dad-11d1-80b4-00c04fd430ca";
