@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::anyhow;
-use futures::{future::BoxFuture, FutureExt};
+use futures::future::BoxFuture;
 use rand::random;
 use std::io;
 use tokio::{
@@ -16,6 +16,9 @@ use tokio::{
 };
 
 use crate::protocols::bluetooth::gatt::{fragment_large_message, FragmentReassembler};
+
+#[cfg(test)]
+use futures::FutureExt;
 
 type SendFn =
     std::sync::Arc<dyn Fn(Vec<u8>) -> BoxFuture<'static, io::Result<()>> + Send + Sync>;
