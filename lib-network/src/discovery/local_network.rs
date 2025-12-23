@@ -293,17 +293,33 @@ async fn listen_for_announcements(
                             debug!("Ignoring our own multicast announcement (node_id={})", our_node_id);
                             continue;
                         }
-                        
+
+                        // SECURITY: Validate source IP matches announced local_ip
+                        // Rejects spoofed multicast packets trying to force arbitrary QUIC connects (SSRF/scanning)
+                        let source_ip = addr.ip();
+                        if announcement.local_ip != source_ip {
+                            warn!("SECURITY: Rejecting announcement with spoofed IP - source: {}, announced: {}",
+                                source_ip, announcement.local_ip);
+                            continue;
+                        }
+
+                        // SECURITY: Validate QUIC port is in expected range (only 9334 is valid for QUIC-only nodes)
+                        if announcement.quic_port != 9334 {
+                            warn!("SECURITY: Rejecting announcement with unexpected QUIC port {} (expected 9334)",
+                                announcement.quic_port);
+                            continue;
+                        }
+
                         discovery_count += 1;
                         info!(" PEER DISCOVERED #{}: Node {} at {}",
                             discovery_count,
                             announcement.node_id,
                             announcement.local_ip
                         );
-                        info!("   Mesh port: {}, QUIC port: {}", announcement.mesh_port, announcement.quic_port);
+                        info!("   Mesh port: {}, QUIC port: {} (source validated)", announcement.mesh_port, announcement.quic_port);
                         info!("   Protocols: {:?}", announcement.protocols);
                         info!("   Attempting QUIC connection...");
-                        
+
                         // Notify coordinator if callback provided (Phase 3 integration)
                         if let Some(ref callback) = peer_discovered_callback {
                             // Pass QUIC port in address for QUIC-enabled peers
@@ -436,9 +452,19 @@ async fn attempt_connect_to_discovered_peer(announcement: &NodeAnnouncement, our
 }
 
 /// Create a minimal QUIC endpoint for peer discovery
-/// Uses default insecure configuration (actual security handled by UHP+Kyber handshake)
+///
+/// # Security Model
+/// NOTE: This QUIC connection is NOT used for trusted communication. Security is provided by:
+/// 1. Source IP validation (multicast source matches announced local_ip)
+/// 2. Port validation (only port 9334 accepted)
+/// 3. UHP+Kyber handshake that authenticates peer identity (runs AFTER QUIC connection)
+///
+/// The QUIC connection itself is ephemeral, used only to send/receive the handshake message.
+/// Real peer authentication happens in the subsequent UHP+Kyber exchange.
+/// Any TLS errors on the discovery connection are logged but don't block peer discovery.
 async fn create_discovery_quic_endpoint() -> Result<quinn::Endpoint> {
     // Create client-only QUIC endpoint (bind to any available port)
+    // Uses default client configuration
     let endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)
         .map_err(|e| anyhow::anyhow!("Failed to create QUIC client endpoint: {}", e))?;
 
