@@ -6,6 +6,8 @@ use anyhow::{Result, anyhow};
 use tracing::{info, debug, warn};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use crate::mtu::{BLE_MIN_MTU, BLE_MAX_MTU};
+use crate::fragmentation::{fragment_message, FragmentReassembler as CentralizedReassembler, Fragment};
 
 // Placeholder until blockchain integration is relocated.
 type BlockHeader = Vec<u8>;
@@ -59,112 +61,82 @@ pub fn validate_write_size(data: &[u8], mtu: u16) -> Result<()> {
 }
 
 /// Fragment data for GATT transmission
+/// 
+/// **DEPRECATED**: Use crate::fragmentation::fragment_message for new code.
+/// This wrapper maintains backward compatibility.
 pub fn fragment_data(data: &[u8], mtu: u16) -> Vec<Vec<u8>> {
     let max_chunk_size = (mtu as usize).saturating_sub(3);
     
+    // Simple chunking without headers (backward compatible)
     data.chunks(max_chunk_size)
         .map(|chunk| chunk.to_vec())
         .collect()
 }
 
 /// Fragment a large message for BLE transmission (with sequencing)
-/// Returns Vec of fragments, each containing: [fragment_id:1][total_fragments:1][sequence:1][data...]
+/// 
+/// **REFACTORED**: Now uses centralized fragmentation with standardized 8-byte headers.
+/// Returns Vec of wire-format fragments ready for GATT transmission.
 pub fn fragment_large_message(message_id: u64, data: &[u8], mtu: u16) -> Vec<Vec<u8>> {
-    const HEADER_SIZE: usize = 11; // message_id(8) + total_fragments(2) + sequence(1)
-    let max_data_per_fragment = (mtu as usize).saturating_sub(3 + HEADER_SIZE);
+    // ATT overhead is 3 bytes, leave room for our 8-byte header
+    let chunk_size = (mtu as usize).saturating_sub(3 + 8).max(20);
     
-    let chunks: Vec<&[u8]> = data.chunks(max_data_per_fragment).collect();
-    let total_fragments = chunks.len() as u16;
+    // Use centralized fragmentation (produces 8-byte headers)
+    let fragments = fragment_message(data, chunk_size);
     
-    chunks.into_iter().enumerate().map(|(index, chunk)| {
-        let mut fragment = Vec::with_capacity(HEADER_SIZE + chunk.len());
-        fragment.extend_from_slice(&message_id.to_le_bytes());
-        fragment.extend_from_slice(&total_fragments.to_le_bytes());
-        fragment.push(index as u8);
-        fragment.extend_from_slice(chunk);
-        fragment
-    }).collect()
+    // Convert to wire format
+    fragments.into_iter()
+        .map(|f| f.to_bytes())
+        .collect()
 }
 
 /// Fragment reassembler for multi-part BLE messages
+/// 
+/// **REFACTORED**: Now delegates to centralized FragmentReassembler.
+/// Maintains backward compatibility with existing code.
 #[derive(Debug)]
 pub struct FragmentReassembler {
-    fragments: HashMap<u64, HashMap<u8, Vec<u8>>>,  // message_id -> (fragment_index -> data)
-    total_fragments: HashMap<u64, u16>,              // message_id -> total count
+    inner: CentralizedReassembler,
 }
 
 impl FragmentReassembler {
     pub fn new() -> Self {
         Self {
-            fragments: HashMap::new(),
-            total_fragments: HashMap::new(),
+            inner: CentralizedReassembler::new(),
         }
     }
     
     /// Add a fragment and return complete message if all fragments received
+    /// 
+    /// **UPDATED**: Now uses centralized fragmentation (8-byte headers)
     pub fn add_fragment(&mut self, fragment: Vec<u8>) -> Result<Option<Vec<u8>>> {
-        if fragment.len() < 11 {
-            return Err(anyhow!("Fragment too small: {} bytes", fragment.len()));
+        // Parse fragment using centralized format
+        let parsed = Fragment::from_bytes(&fragment)?;
+        
+        // Delegate to centralized reassembler
+        let result = self.inner.add_fragment(parsed)?;
+        
+        if let Some(ref data) = result {
+            info!("✅ Reassembled message from {} fragments ({} bytes)", 
+                self.inner.pending_count(), data.len());
         }
         
-        let message_id = u64::from_le_bytes(fragment[0..8].try_into()?);
-        let total_fragments = u16::from_le_bytes(fragment[8..10].try_into()?);
-        let fragment_index = fragment[10];
-        let data = fragment[11..].to_vec();
-        
-        // Store total fragments count
-        self.total_fragments.insert(message_id, total_fragments);
-        
-        // Store this fragment
-        self.fragments.entry(message_id)
-            .or_insert_with(HashMap::new)
-            .insert(fragment_index, data);
-        
-        // Check if all fragments received
-        let received_count = self.fragments.get(&message_id).map(|f| f.len()).unwrap_or(0);
-        if received_count == total_fragments as usize {
-            // Reassemble in order
-            let mut complete_data = Vec::new();
-            for i in 0..total_fragments {
-                if let Some(fragment_data) = self.fragments.get(&message_id).and_then(|f| f.get(&(i as u8))) {
-                    complete_data.extend_from_slice(fragment_data);
-                } else {
-                    return Err(anyhow!("Missing fragment {} for message {}", i, message_id));
-                }
-            }
-            
-            // Clean up
-            self.fragments.remove(&message_id);
-            self.total_fragments.remove(&message_id);
-            
-            info!(" Reassembled message {} from {} fragments ({} bytes)", 
-                message_id, total_fragments, complete_data.len());
-            
-            return Ok(Some(complete_data));
-        }
-        
-        debug!(" Fragment {}/{} received for message {}", 
-            received_count, total_fragments, message_id);
-        
-        Ok(None)
+        Ok(result)
     }
     
     /// Clear stale fragments older than timeout
-    pub fn cleanup_stale_fragments(&mut self, message_id: u64) {
-        self.fragments.remove(&message_id);
-        self.total_fragments.remove(&message_id);
-        warn!("🗑️ Cleaned up stale fragments for message {}", message_id);
+    pub fn cleanup_stale_fragments(&mut self, _message_id: u64) {
+        // Clear all pending (centralized reassembler doesn't track individual message cleanup)
+        self.inner.clear();
+        warn!("🗑️ Cleaned up all stale fragments");
     }
 }
 
 /// Calculate optimal MTU for connection
 pub fn calculate_optimal_mtu(requested_mtu: u16, max_mtu: u16) -> u16 {
-    // BLE spec minimum is 23, maximum is typically 512
-    const MIN_MTU: u16 = 23;
-    const MAX_BLE_MTU: u16 = 512;
-    
-    let effective_max = max_mtu.min(MAX_BLE_MTU);
-    requested_mtu.clamp(MIN_MTU, effective_max)
+    // Use centralized MTU constants
+    let effective_max = max_mtu.min(BLE_MAX_MTU as u16);
+    requested_mtu.clamp(BLE_MIN_MTU as u16, effective_max)
 }
 
 /// GATT message types for unified handling
