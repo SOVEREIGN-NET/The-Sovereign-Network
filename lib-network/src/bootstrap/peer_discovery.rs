@@ -468,7 +468,15 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
             anyhow!("Nonce cache initialization failed: {}", e)
         })?;
     
-    let ctx = crate::handshake::HandshakeContext::new(nonce_cache);
+    let binding = crate::handshake::derive_channel_binding_from_addrs(
+        stream.local_addr()?,
+        stream.peer_addr()?,
+    );
+    let ctx = crate::handshake::HandshakeContext::new(nonce_cache)
+        .with_roles(crate::handshake::HandshakeRole::Client, crate::handshake::HandshakeRole::Server)
+        .with_channel_binding(binding)
+        .with_required_capabilities(vec!["tcp".to_string()])
+        .with_channel_binding_required(true);
 
     // Set up capabilities for bootstrap handshake
     // SECURITY: PQC enabled for post-quantum security (P1-2 fix)

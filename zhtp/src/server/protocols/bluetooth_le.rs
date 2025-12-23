@@ -110,7 +110,7 @@ impl BluetoothRouter {
                         }
                         
                         // Try to parse as MeshHandshake first (initial connection)
-                        if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&data) {
+                        if let Ok(handshake) = bincode::deserialize::<lib_network::protocols::bluetooth::MeshHandshake>(&data) {
                             info!("🤝 GATT handshake from: {}", handshake.node_id);
                             
                             // Extract the real cryptographic public key from handshake
@@ -408,7 +408,7 @@ impl BluetoothRouter {
             debug!("Bluetooth data received: {} bytes", bytes_read);
             
             // Try to parse as binary mesh handshake (same as TCP!)
-            if let Ok(handshake) = bincode::deserialize::<lib_network::discovery::local_network::MeshHandshake>(&buffer[..bytes_read]) {
+            if let Ok(handshake) = bincode::deserialize::<lib_network::protocols::bluetooth::MeshHandshake>(&buffer[..bytes_read]) {
                 info!("🤝 Received Bluetooth mesh handshake from peer: {}", handshake.node_id);
                 info!("   Version: {}, Port: {}, Protocols: {:?}", 
                     handshake.version, handshake.mesh_port, handshake.protocols);

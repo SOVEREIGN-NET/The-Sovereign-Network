@@ -57,6 +57,8 @@ use tracing::{info, warn, debug};
 use sha2::{Sha256, Digest};
 use lib_proofs::plonky2::{ZkProofSystem, Plonky2Proof};
 use lib_crypto::PublicKey;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 // Import ZHTP authentication
 use crate::protocols::zhtp_auth::{ZhtpAuthManager, ZhtpAuthChallenge, ZhtpAuthResponse, NodeCapabilities, ZhtpAuthVerification};
@@ -85,6 +87,18 @@ use self::enhanced::MacOSBluetoothManager;
 // Re-export public types
 pub use self::gatt::GattMessage as GattMessageType;
 pub use self::device::BleConnection as BluetoothConnection;
+
+/// Untrusted BLE discovery envelope (does not confer identity).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshHandshake {
+    pub version: u16,
+    pub node_id: Uuid,
+    pub public_key: PublicKey,
+    pub mesh_port: u16,
+    pub protocols: Vec<String>,
+    pub discovered_via: u8,
+    pub capabilities: crate::handshake::HandshakeCapabilities,
+}
 
 /// Bluetooth LE mesh protocol handler
 pub struct BluetoothMeshProtocol {
@@ -863,7 +877,7 @@ impl BluetoothMeshProtocol {
         public_key: &lib_crypto::PublicKey,
         core_bt: &Arc<RwLock<Option<Arc<CoreBluetoothManager>>>>
     ) -> Result<()> {
-        use crate::discovery::local_network::{MeshHandshake, HandshakeCapabilities};
+        use crate::handshake::{HandshakeCapabilities, PqcCapability};
         use uuid::Uuid;
         
         // Convert 32-byte node_id to 16-byte UUID (take first 16 bytes)
@@ -877,17 +891,22 @@ impl BluetoothMeshProtocol {
             public_key: public_key.clone(),
             mesh_port: 9333,
             protocols: vec![
-                "bluetooth".to_string(),
+                "ble".to_string(),
                 "zhtp".to_string(),
                 "relay".to_string(),
             ],
             discovered_via: 1, // 1 = bluetooth
             capabilities: HandshakeCapabilities {
-                supports_bluetooth_classic: false,
-                supports_bluetooth_le: true,
-                supports_wifi_direct: false,
+                protocols: vec!["ble".to_string(), "zhtp".to_string()],
                 max_throughput: 250_000, // 250 KB/s for BLE
-                prefers_high_throughput: false,
+                max_message_size: 512,
+                encryption_methods: vec!["chacha20-poly1305".to_string()],
+                pqc_capability: PqcCapability::None,
+                dht_capable: false,
+                relay_capable: false,
+                storage_capacity: 0,
+                web4_capable: false,
+                custom_features: vec![],
             },
             // TODO: Add DID and device_name fields in next commit (MeshHandshake update)
         };
@@ -915,7 +934,7 @@ impl BluetoothMeshProtocol {
         node_id: [u8; 32],
         public_key: &lib_crypto::PublicKey
     ) -> Result<()> {
-        use crate::discovery::local_network::{MeshHandshake, HandshakeCapabilities};
+        use crate::handshake::{HandshakeCapabilities, PqcCapability};
         use uuid::Uuid;
         
         // Convert 32-byte node_id to 16-byte UUID (take first 16 bytes)
@@ -929,17 +948,22 @@ impl BluetoothMeshProtocol {
             public_key: public_key.clone(),
             mesh_port: 9333,
             protocols: vec![
-                "bluetooth".to_string(),
+                "ble".to_string(),
                 "zhtp".to_string(),
                 "relay".to_string(),
             ],
             discovered_via: 1, // 1 = bluetooth
             capabilities: HandshakeCapabilities {
-                supports_bluetooth_classic: false,
-                supports_bluetooth_le: true,
-                supports_wifi_direct: false,
+                protocols: vec!["ble".to_string(), "zhtp".to_string()],
                 max_throughput: 250_000, // 250 KB/s for BLE
-                prefers_high_throughput: false,
+                max_message_size: 512,
+                encryption_methods: vec!["chacha20-poly1305".to_string()],
+                pqc_capability: PqcCapability::None,
+                dht_capable: false,
+                relay_capable: false,
+                storage_capacity: 0,
+                web4_capable: false,
+                custom_features: vec![],
             },
             // TODO: Add DID and device_name fields in next commit (MeshHandshake update)
         };

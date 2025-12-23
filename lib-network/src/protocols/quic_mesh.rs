@@ -61,7 +61,7 @@ use lib_identity::ZhtpIdentity;
 use crate::handshake::{HandshakeContext, NonceCache, NodeIdentity, NegotiatedCapabilities};
 
 // Import new QUIC+UHP+Kyber handshake adapter
-use super::quic_handshake::{self, QuicHandshakeResult};
+use super::quic_handshake;
 
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::messaging::message_handler::MeshMessageHandler;
@@ -119,12 +119,8 @@ pub struct PqcQuicConnection {
     /// This is the ONLY encryption key - intermediate keys are zeroized
     master_key: Option<[u8; 32]>,
 
-    /// Verified peer identity from UHP handshake
-    /// Contains DID, public key, device ID, and verified NodeId
-    peer_identity: Option<NodeIdentity>,
-
-    /// Negotiated session capabilities
-    capabilities: Option<NegotiatedCapabilities>,
+    /// Verified peer identity and negotiated capabilities
+    verified_peer: crate::handshake::VerifiedPeer,
 
     /// Session ID for logging/tracking
     session_id: Option<[u8; 16]>,
@@ -309,23 +305,26 @@ impl QuicMeshProtocol {
         ).await.context("UHP+Kyber handshake failed")?;
 
         info!(
-            peer_did = %handshake_result.peer_identity.did,
-            peer_device = %handshake_result.peer_identity.device_id,
+            peer_did = %handshake_result.verified_peer.identity.did,
+            peer_device = %handshake_result.verified_peer.identity.device_id,
             session_id = ?handshake_result.session_id,
             "🔐 UHP+Kyber handshake complete with {} (quantum-safe encryption active)",
             peer_addr
         );
 
-        // Create PqcQuicConnection from handshake result
-        let pqc_conn = PqcQuicConnection::from_handshake_result(
+        // Create PqcQuicConnection from verified peer
+        let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection,
             peer_addr,
-            handshake_result,
+            handshake_result.verified_peer.clone(),
+            handshake_result.master_key,
+            handshake_result.session_id,
             false, // Not bootstrap mode
         );
 
         // Store connection using peer's node_id as key
-        let peer_key = pqc_conn.peer_identity.as_ref()
+        let peer_key = pqc_conn
+            .peer_identity()
             .ok_or_else(|| anyhow!("Peer identity not set after handshake"))?
             .node_id.as_bytes().to_vec();
 
@@ -371,7 +370,7 @@ impl QuicMeshProtocol {
         ).await.context("UHP+Kyber handshake with bootstrap peer failed")?;
 
         info!(
-            peer_did = %handshake_result.peer_identity.did,
+            peer_did = %handshake_result.verified_peer.identity.did,
             session_id = ?handshake_result.session_id,
             "🔐 Bootstrap peer verified: {} (bootstrap mode: {})",
             peer_addr,
@@ -388,15 +387,18 @@ impl QuicMeshProtocol {
         info!("   → Cannot submit transactions until full identity established");
 
         // Create PqcQuicConnection from handshake result (bootstrap mode)
-        let pqc_conn = PqcQuicConnection::from_handshake_result(
+        let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection,
             peer_addr,
-            handshake_result,
+            handshake_result.verified_peer.clone(),
+            handshake_result.master_key,
+            handshake_result.session_id,
             true, // Bootstrap mode
         );
 
         // Store connection using peer's node_id as key
-        let peer_key = pqc_conn.peer_identity.as_ref()
+        let peer_key = pqc_conn
+            .peer_identity()
             .ok_or_else(|| anyhow!("Peer identity not set after handshake"))?
             .node_id.as_bytes().to_vec();
 
@@ -483,22 +485,24 @@ impl QuicMeshProtocol {
                                     };
 
                                     info!(
-                                        peer_did = %handshake_result.peer_identity.did,
-                                        peer_device = %handshake_result.peer_identity.device_id,
+                                        peer_did = %handshake_result.verified_peer.identity.did,
+                                        peer_device = %handshake_result.verified_peer.identity.device_id,
                                         session_id = ?handshake_result.session_id,
                                         "🔐 UHP+Kyber handshake complete (server side)"
                                     );
 
-                                    // Create PqcQuicConnection from handshake result
-                                    let pqc_conn = PqcQuicConnection::from_handshake_result(
+                                    // Create PqcQuicConnection from verified peer
+                                    let pqc_conn = PqcQuicConnection::from_verified_peer(
                                         connection.clone(),
                                         peer_addr,
-                                        handshake_result.clone(),
+                                        handshake_result.verified_peer.clone(),
+                                        handshake_result.master_key,
+                                        handshake_result.session_id,
                                         false, // Determine bootstrap mode based on peer capabilities
                                     );
 
                                     // Get peer node ID for connection key
-                                    let peer_id_vec = handshake_result.peer_identity.node_id.as_bytes().to_vec();
+                                    let peer_id_vec = handshake_result.verified_peer.identity.node_id.as_bytes().to_vec();
 
                                     // Store connection
                                     conns.write().await.insert(peer_id_vec.clone(), pqc_conn);
@@ -780,22 +784,22 @@ impl QuicMeshProtocol {
 }
 
 impl PqcQuicConnection {
-    /// Create a new PqcQuicConnection from a successful UHP+Kyber handshake result
+    /// Create a new PqcQuicConnection from a verified peer and derived keys.
     ///
     /// This is the ONLY way to create an authenticated connection.
-    /// The handshake result contains the verified peer identity and master key.
-    pub fn from_handshake_result(
+    pub fn from_verified_peer(
         quic_conn: Connection,
         peer_addr: SocketAddr,
-        result: QuicHandshakeResult,
+        verified_peer: crate::handshake::VerifiedPeer,
+        master_key: [u8; 32],
+        session_id: [u8; 16],
         bootstrap_mode: bool,
     ) -> Self {
         Self {
             quic_conn,
-            master_key: Some(result.master_key),
-            peer_identity: Some(result.peer_identity),
-            capabilities: Some(result.capabilities),
-            session_id: Some(result.session_id),
+            master_key: Some(master_key),
+            verified_peer,
+            session_id: Some(session_id),
             peer_addr,
             bootstrap_mode,
         }
@@ -814,22 +818,20 @@ impl PqcQuicConnection {
     /// - Device ID
     /// - Verified NodeId = Blake3(DID || device_name)
     pub fn peer_identity(&self) -> Option<&NodeIdentity> {
-        self.peer_identity.as_ref()
+        Some(&self.verified_peer.identity)
     }
 
     /// Get peer node ID as raw bytes (convenience method)
     pub fn get_peer_node_id(&self) -> Option<[u8; 32]> {
-        self.peer_identity.as_ref().map(|id| {
-            let bytes = id.node_id.as_bytes();
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(bytes);
-            arr
-        })
+        let bytes = self.verified_peer.identity.node_id.as_bytes();
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(bytes);
+        Some(arr)
     }
 
     /// Get peer's DID
     pub fn peer_did(&self) -> Option<&str> {
-        self.peer_identity.as_ref().map(|id| id.did.as_str())
+        Some(self.verified_peer.identity.did.as_str())
     }
 
     /// Get session ID for logging/tracking
@@ -839,7 +841,7 @@ impl PqcQuicConnection {
 
     /// Get negotiated capabilities
     pub fn capabilities(&self) -> Option<&NegotiatedCapabilities> {
-        self.capabilities.as_ref()
+        Some(&self.verified_peer.capabilities)
     }
 
     /// Check if connection has valid master key (for message encryption)
@@ -905,7 +907,7 @@ impl PqcQuicConnection {
     // ========================================================================
     // The following methods have been REMOVED due to security concerns:
     //
-    // - new() - Connections must now be created via from_handshake_result()
+    // - new() - Connections must now be created via from_verified_peer()
     // - set_shared_secret() - No longer needed, master key comes from handshake
     // - set_peer_info() - No longer needed, peer identity comes from handshake
     // - set_shared_secret_internal() - REMOVED - authentication bypass

@@ -76,6 +76,7 @@ pub mod monitoring;
 pub mod zk_integration;
 pub mod testing;
 pub mod platform;
+pub mod socket_utils;
 pub mod transport;
 pub mod dht_stub;
 pub mod dht;

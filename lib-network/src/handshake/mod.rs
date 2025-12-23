@@ -72,6 +72,12 @@ pub mod core;
 // Post-Quantum Cryptography support (Ticket #137)
 pub mod pqc;
 
+// Unified message framing for all transports
+pub mod framing;
+
+// Handshake orchestration helpers (reduces duplication)
+pub mod orchestrator;
+
 // Re-export security utilities
 pub use security::{
     TimestampConfig, SessionContext,
@@ -104,17 +110,69 @@ pub use core::{
     NonceTracker, HandshakeIoError,
 };
 
+// Re-export message framing utilities
+pub use framing::{
+    send_framed, recv_framed, MAX_HANDSHAKE_MESSAGE_SIZE,
+};
+
+/// Default network identifier for handshake domain separation.
+pub const DEFAULT_HANDSHAKE_NETWORK_ID: &str = "zhtp-mainnet";
+
+/// Protocol identifier for UHP handshakes.
+pub const DEFAULT_HANDSHAKE_PROTOCOL_ID: &str = "uhp";
+
+/// Purpose string for node authentication handshakes.
+pub const DEFAULT_HANDSHAKE_PURPOSE: &str = "zhtp-node-handshake";
+
 /// UHP Protocol Version
-pub const UHP_VERSION: u8 = 1;
+pub const UHP_VERSION: u8 = 2;
 
 /// Protocol version string for compatibility
-pub const UHP_VERSION_STRING: &str = "UHP/1.0";
+pub const UHP_VERSION_STRING: &str = "UHP/2.0";
 
 /// Maximum supported protocol version (for future compatibility)
-pub const MAX_SUPPORTED_VERSION: u8 = 1;
+pub const MAX_SUPPORTED_VERSION: u8 = 2;
 
 /// Minimum supported protocol version (for backwards compatibility)
-pub const MIN_SUPPORTED_VERSION: u8 = 1;
+pub const MIN_SUPPORTED_VERSION: u8 = 2;
+
+/// Declared role for handshake participants.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HandshakeRole {
+    Client,
+    Server,
+    Router,
+    Verifier,
+}
+
+impl HandshakeRole {
+    fn as_u8(self) -> u8 {
+        match self {
+            Self::Client => 0,
+            Self::Server => 1,
+            Self::Router => 2,
+            Self::Verifier => 3,
+        }
+    }
+}
+
+/// Domain separation inputs for handshake signatures.
+#[derive(Debug, Clone)]
+pub struct HandshakeDomain {
+    pub network_id: String,
+    pub protocol_id: String,
+    pub purpose: String,
+}
+
+impl Default for HandshakeDomain {
+    fn default() -> Self {
+        Self {
+            network_id: DEFAULT_HANDSHAKE_NETWORK_ID.to_string(),
+            protocol_id: DEFAULT_HANDSHAKE_PROTOCOL_ID.to_string(),
+            purpose: DEFAULT_HANDSHAKE_PURPOSE.to_string(),
+        }
+    }
+}
 
 /// Validate protocol version is within supported range
 ///
@@ -133,6 +191,24 @@ fn validate_protocol_version(version: u8) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn append_len_prefixed(buf: &mut Vec<u8>, bytes: &[u8]) {
+    let len = bytes.len() as u32;
+    buf.extend_from_slice(&len.to_le_bytes());
+    buf.extend_from_slice(bytes);
+}
+
+pub fn derive_channel_binding_from_addrs(local: std::net::SocketAddr, peer: std::net::SocketAddr) -> Vec<u8> {
+    use lib_crypto::hash_blake3;
+
+    let mut addrs = [local.to_string(), peer.to_string()];
+    addrs.sort();
+
+    let mut material = Vec::new();
+    append_len_prefixed(&mut material, addrs[0].as_bytes());
+    append_len_prefixed(&mut material, addrs[1].as_bytes());
+    hash_blake3(&material).to_vec()
 }
 
 // ============================================================================
@@ -168,6 +244,24 @@ pub struct HandshakeContext {
 
     /// Optional rate limiter for DoS protection
     pub rate_limiter: Option<RateLimiter>,
+
+    /// Domain separation parameters
+    pub domain: HandshakeDomain,
+
+    /// Declared local role for this handshake
+    pub local_role: HandshakeRole,
+
+    /// Expected peer role for this handshake
+    pub peer_role: HandshakeRole,
+
+    /// Required capabilities that must be asserted in the handshake
+    pub required_capabilities: Vec<String>,
+
+    /// Channel binding token for this transport session
+    pub channel_binding: Vec<u8>,
+
+    /// Require channel binding to be present and verified
+    pub require_channel_binding: bool,
 }
 
 impl HandshakeContext {
@@ -178,6 +272,12 @@ impl HandshakeContext {
             timestamp_config: TimestampConfig::default(),
             observer: std::sync::Arc::new(NoOpObserver),
             rate_limiter: None,
+            domain: HandshakeDomain::default(),
+            local_role: HandshakeRole::Client,
+            peer_role: HandshakeRole::Server,
+            required_capabilities: Vec::new(),
+            channel_binding: Vec::new(),
+            require_channel_binding: true,
         }
     }
 
@@ -188,6 +288,12 @@ impl HandshakeContext {
             timestamp_config,
             observer: std::sync::Arc::new(NoOpObserver),
             rate_limiter: None,
+            domain: HandshakeDomain::default(),
+            local_role: HandshakeRole::Client,
+            peer_role: HandshakeRole::Server,
+            required_capabilities: Vec::new(),
+            channel_binding: Vec::new(),
+            require_channel_binding: true,
         }
     }
 
@@ -198,6 +304,12 @@ impl HandshakeContext {
             timestamp_config: TimestampConfig::default(),
             observer,
             rate_limiter: None,
+            domain: HandshakeDomain::default(),
+            local_role: HandshakeRole::Client,
+            peer_role: HandshakeRole::Server,
+            required_capabilities: Vec::new(),
+            channel_binding: Vec::new(),
+            require_channel_binding: true,
         }
     }
 
@@ -208,6 +320,12 @@ impl HandshakeContext {
             timestamp_config: TimestampConfig::default(),
             observer: std::sync::Arc::new(NoOpObserver),
             rate_limiter: Some(rate_limiter),
+            domain: HandshakeDomain::default(),
+            local_role: HandshakeRole::Client,
+            peer_role: HandshakeRole::Server,
+            required_capabilities: Vec::new(),
+            channel_binding: Vec::new(),
+            require_channel_binding: true,
         }
     }
 
@@ -223,6 +341,12 @@ impl HandshakeContext {
             timestamp_config,
             observer,
             rate_limiter,
+            domain: HandshakeDomain::default(),
+            local_role: HandshakeRole::Client,
+            peer_role: HandshakeRole::Server,
+            required_capabilities: Vec::new(),
+            channel_binding: Vec::new(),
+            require_channel_binding: true,
         }
     }
 
@@ -234,6 +358,12 @@ impl HandshakeContext {
             timestamp_config: TimestampConfig::default(),
             observer: std::sync::Arc::new(NoOpObserver),
             rate_limiter: None,
+            domain: HandshakeDomain::default(),
+            local_role: HandshakeRole::Client,
+            peer_role: HandshakeRole::Server,
+            required_capabilities: Vec::new(),
+            channel_binding: vec![0u8; 32],
+            require_channel_binding: true,
         }
     }
 
@@ -245,6 +375,66 @@ impl HandshakeContext {
             nonce_cache_utilization: self.nonce_cache.utilization(),
             protocol_version,
         }
+    }
+
+    pub fn with_domain(&self, domain: HandshakeDomain) -> Self {
+        let mut updated = self.clone();
+        updated.domain = domain;
+        updated
+    }
+
+    pub fn with_roles(&self, local_role: HandshakeRole, peer_role: HandshakeRole) -> Self {
+        let mut updated = self.clone();
+        updated.local_role = local_role;
+        updated.peer_role = peer_role;
+        updated
+    }
+
+    pub fn with_required_capabilities(&self, required: Vec<String>) -> Self {
+        let mut updated = self.clone();
+        updated.required_capabilities = required;
+        updated
+    }
+
+    pub fn with_channel_binding(&self, binding: Vec<u8>) -> Self {
+        let mut updated = self.clone();
+        updated.channel_binding = binding;
+        updated
+    }
+
+    pub fn with_channel_binding_required(&self, required: bool) -> Self {
+        let mut updated = self.clone();
+        updated.require_channel_binding = required;
+        updated
+    }
+
+    /// Composite builder for client-side handshake with transport configuration
+    ///
+    /// Combines common patterns: roles + channel binding + transport capability + binding required
+    /// This eliminates repeated 4-method chains across TCP, QUIC, and other transports
+    pub fn for_client_with_transport(&self, binding: Vec<u8>, transport: &str) -> Self {
+        self.with_roles(HandshakeRole::Client, HandshakeRole::Server)
+            .with_channel_binding(binding)
+            .with_required_capabilities(vec![transport.to_string()])
+            .with_channel_binding_required(true)
+    }
+
+    /// Composite builder for server-side handshake with transport configuration
+    ///
+    /// Combines common patterns: roles + channel binding + transport capability + binding required
+    /// This eliminates repeated 4-method chains across TCP, QUIC, and other transports
+    pub fn for_server_with_transport(&self, binding: Vec<u8>, transport: &str) -> Self {
+        self.with_roles(HandshakeRole::Server, HandshakeRole::Client)
+            .with_channel_binding(binding)
+            .with_required_capabilities(vec![transport.to_string()])
+            .with_channel_binding_required(true)
+    }
+
+    fn require_channel_binding(&self) -> Result<()> {
+        if self.require_channel_binding && self.channel_binding.is_empty() {
+            return Err(anyhow!("Missing channel binding for handshake"));
+        }
+        Ok(())
     }
 }
 
@@ -589,6 +779,21 @@ pub struct ClientHello {
     /// Client's capabilities
     pub capabilities: HandshakeCapabilities,
 
+    /// Network identifier for domain separation
+    pub network_id: String,
+
+    /// Protocol identifier for domain separation
+    pub protocol_id: String,
+
+    /// Purpose string for handshake domain separation
+    pub purpose: String,
+
+    /// Declared client role
+    pub role: HandshakeRole,
+
+    /// Channel binding token for this transport session
+    pub channel_binding: Vec<u8>,
+
     /// Random challenge nonce (32 bytes)
     pub challenge_nonce: [u8; 32],
 
@@ -616,8 +821,9 @@ impl ClientHello {
     pub fn new(
         zhtp_identity: &ZhtpIdentity,
         capabilities: HandshakeCapabilities,
+        ctx: &HandshakeContext,
     ) -> Result<Self> {
-        let (hello, _pqc_state) = Self::new_with_pqc(zhtp_identity, capabilities)?;
+        let (hello, _pqc_state) = Self::new_with_pqc(zhtp_identity, capabilities, ctx)?;
         Ok(hello)
     }
 
@@ -628,7 +834,9 @@ impl ClientHello {
     pub fn new_with_pqc(
         zhtp_identity: &ZhtpIdentity,
         capabilities: HandshakeCapabilities,
+        ctx: &HandshakeContext,
     ) -> Result<(Self, Option<PqcHandshakeState>)> {
+        ctx.require_channel_binding()?;
         let mut challenge_nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut challenge_nonce);
 
@@ -641,7 +849,16 @@ impl ClientHello {
             private_key: zhtp_identity.private_key.clone().ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
 
-        let data = Self::data_to_sign(&identity, &capabilities, &challenge_nonce, timestamp, protocol_version)?;
+        let data = Self::data_to_sign(
+            &identity,
+            &capabilities,
+            &ctx.domain,
+            ctx.local_role,
+            &ctx.channel_binding,
+            &challenge_nonce,
+            timestamp,
+            protocol_version,
+        )?;
         let signature = keypair.sign(&data)?;
 
         // Create PQC offer and preserve state for caller
@@ -655,6 +872,11 @@ impl ClientHello {
         Ok((Self {
             identity,
             capabilities,
+            network_id: ctx.domain.network_id.clone(),
+            protocol_id: ctx.domain.protocol_id.clone(),
+            purpose: ctx.domain.purpose.clone(),
+            role: ctx.local_role,
+            channel_binding: ctx.channel_binding.clone(),
             challenge_nonce,
             signature,
             timestamp,
@@ -677,6 +899,8 @@ impl ClientHello {
         let timer = Timer::start();
         ctx.observer.on_event(HandshakeEvent::ClientHelloVerificationStarted, None);
 
+        ctx.require_channel_binding()?;
+
         // 0. CRITICAL: Validate protocol version (VULN-004 FIX)
         if let Err(e) = validate_protocol_version(self.protocol_version) {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
@@ -689,7 +913,44 @@ impl ClientHello {
             return Err(e);
         }
 
-        // 1. CRITICAL: Verify NodeId derivation (prevent collision attacks)
+        // 1. CRITICAL: Validate domain separation fields
+        if self.network_id != ctx.domain.network_id
+            || self.protocol_id != ctx.domain.protocol_id
+            || self.purpose != ctx.domain.purpose
+        {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_event(HandshakeEvent::InvalidProtocolVersionDetected, Some(metrics.clone()));
+            ctx.observer.on_failure(
+                HandshakeEvent::ClientHelloVerificationFailed,
+                FailureReason::InvalidProtocolVersion,
+                Some(metrics),
+            );
+            return Err(anyhow!("Domain separation mismatch"));
+        }
+
+        // 2. CRITICAL: Enforce declared role
+        if self.role != ctx.peer_role {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_failure(
+                HandshakeEvent::ClientHelloVerificationFailed,
+                FailureReason::InvalidSignature,
+                Some(metrics),
+            );
+            return Err(anyhow!("Unexpected peer role"));
+        }
+
+        // 3. CRITICAL: Verify channel binding
+        if self.channel_binding != ctx.channel_binding {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_failure(
+                HandshakeEvent::ClientHelloVerificationFailed,
+                FailureReason::InvalidSignature,
+                Some(metrics),
+            );
+            return Err(anyhow!("Channel binding mismatch"));
+        }
+
+        // 4. CRITICAL: Verify NodeId derivation (prevent collision attacks)
         if let Err(e) = self.identity.verify_node_id() {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
             ctx.observer.on_event(HandshakeEvent::NodeIdVerificationFailed, Some(metrics.clone()));
@@ -701,7 +962,7 @@ impl ClientHello {
             return Err(e);
         }
 
-        // 2. CRITICAL: Validate timestamp (prevent replay attacks)
+        // 5. CRITICAL: Validate timestamp (prevent replay attacks)
         if let Err(e) = validate_timestamp(self.timestamp, &ctx.timestamp_config) {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
             ctx.observer.on_event(HandshakeEvent::InvalidTimestampDetected, Some(metrics.clone()));
@@ -713,7 +974,7 @@ impl ClientHello {
             return Err(e);
         }
 
-        // 3. CRITICAL: Check nonce cache - prevent replay attacks (VULN-001 FIX)
+        // 6. CRITICAL: Check nonce cache - prevent replay attacks (VULN-001 FIX)
         if let Err(e) = ctx.nonce_cache.check_and_store(&self.challenge_nonce, self.timestamp) {
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
             ctx.observer.on_event(HandshakeEvent::ReplayAttackDetected, Some(metrics.clone()));
@@ -725,10 +986,31 @@ impl ClientHello {
             return Err(e);
         }
 
-        // 4. Verify signature includes all critical fields
+        // 7. CRITICAL: Enforce required capabilities
+        if !ctx.required_capabilities.is_empty() {
+            let missing = ctx
+                .required_capabilities
+                .iter()
+                .filter(|cap| !self.capabilities.protocols.contains(cap))
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+                ctx.observer.on_failure(
+                    HandshakeEvent::ClientHelloVerificationFailed,
+                    FailureReason::InvalidSignature,
+                    Some(metrics),
+                );
+                return Err(anyhow!("Missing required capabilities"));
+            }
+        }
+
+        // 8. Verify signature includes all critical fields
         let data = Self::data_to_sign(
             &self.identity,
             &self.capabilities,
+            &ctx.domain,
+            self.role,
+            &self.channel_binding,
             &self.challenge_nonce,
             self.timestamp,
             self.protocol_version,
@@ -755,6 +1037,9 @@ impl ClientHello {
     fn data_to_sign(
         identity: &NodeIdentity,
         capabilities: &HandshakeCapabilities,
+        domain: &HandshakeDomain,
+        role: HandshakeRole,
+        channel_binding: &[u8],
         nonce: &[u8; 32],
         timestamp: u64,
         protocol_version: u8,
@@ -767,6 +1052,13 @@ impl ClientHello {
         // Identity and capabilities
         data.extend_from_slice(identity.node_id.as_bytes());
         data.extend_from_slice(bincode::serialize(capabilities)?.as_slice());
+
+        // Domain separation fields
+        append_len_prefixed(&mut data, domain.network_id.as_bytes());
+        append_len_prefixed(&mut data, domain.protocol_id.as_bytes());
+        append_len_prefixed(&mut data, domain.purpose.as_bytes());
+        data.push(role.as_u8());
+        append_len_prefixed(&mut data, channel_binding);
 
         // Nonce
         data.extend_from_slice(nonce);
@@ -792,6 +1084,21 @@ pub struct ServerHello {
 
     /// Server's capabilities
     pub capabilities: HandshakeCapabilities,
+
+    /// Network identifier for domain separation
+    pub network_id: String,
+
+    /// Protocol identifier for domain separation
+    pub protocol_id: String,
+
+    /// Purpose string for handshake domain separation
+    pub purpose: String,
+
+    /// Declared server role
+    pub role: HandshakeRole,
+
+    /// Channel binding token for this transport session
+    pub channel_binding: Vec<u8>,
 
     /// Response nonce for client to sign (32 bytes)
     pub response_nonce: [u8; 32],
@@ -824,8 +1131,9 @@ impl ServerHello {
         zhtp_identity: &ZhtpIdentity,
         capabilities: HandshakeCapabilities,
         client_hello: &ClientHello,
+        ctx: &HandshakeContext,
     ) -> Result<Self> {
-        let (hello, _pqc_state) = Self::new_with_pqc(zhtp_identity, capabilities, client_hello)?;
+        let (hello, _pqc_state) = Self::new_with_pqc(zhtp_identity, capabilities, client_hello, ctx)?;
         Ok(hello)
     }
 
@@ -837,7 +1145,9 @@ impl ServerHello {
         zhtp_identity: &ZhtpIdentity,
         capabilities: HandshakeCapabilities,
         client_hello: &ClientHello,
+        ctx: &HandshakeContext,
     ) -> Result<(Self, Option<PqcHandshakeState>)> {
+        ctx.require_channel_binding()?;
         let mut response_nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut response_nonce);
 
@@ -855,6 +1165,9 @@ impl ServerHello {
             &client_hello.challenge_nonce,
             &identity,
             &capabilities,
+            &ctx.domain,
+            ctx.local_role,
+            &ctx.channel_binding,
             timestamp,
             protocol_version,
         )?;
@@ -871,6 +1184,11 @@ impl ServerHello {
         Ok((Self {
             identity,
             capabilities,
+            network_id: ctx.domain.network_id.clone(),
+            protocol_id: ctx.domain.protocol_id.clone(),
+            purpose: ctx.domain.purpose.clone(),
+            role: ctx.local_role,
+            channel_binding: ctx.channel_binding.clone(),
             response_nonce,
             signature,
             negotiated,
@@ -888,23 +1206,58 @@ impl ServerHello {
     /// **VULN-001 FIX:** Uses nonce_cache for replay attack prevention.
     /// **FINDING 2 FIX:** Uses HandshakeContext to eliminate parameter threading.
     pub fn verify_signature(&self, client_nonce: &[u8; 32], ctx: &HandshakeContext) -> Result<()> {
+        ctx.require_channel_binding()?;
+
         // 0. CRITICAL: Validate protocol version (VULN-004 FIX)
         validate_protocol_version(self.protocol_version)?;
 
-        // 1. CRITICAL: Verify NodeId derivation
+        // 1. CRITICAL: Validate domain separation fields
+        if self.network_id != ctx.domain.network_id
+            || self.protocol_id != ctx.domain.protocol_id
+            || self.purpose != ctx.domain.purpose
+        {
+            return Err(anyhow!("Domain separation mismatch"));
+        }
+
+        // 2. CRITICAL: Enforce declared role
+        if self.role != ctx.peer_role {
+            return Err(anyhow!("Unexpected peer role"));
+        }
+
+        // 3. CRITICAL: Verify channel binding
+        if self.channel_binding != ctx.channel_binding {
+            return Err(anyhow!("Channel binding mismatch"));
+        }
+
+        // 4. CRITICAL: Verify NodeId derivation
         self.identity.verify_node_id()?;
 
-        // 2. CRITICAL: Validate timestamp
+        // 5. CRITICAL: Validate timestamp
         validate_timestamp(self.timestamp, &ctx.timestamp_config)?;
 
-        // 3. CRITICAL: Check nonce cache - prevent replay attacks (VULN-001 FIX)
+        // 6. CRITICAL: Check nonce cache - prevent replay attacks (VULN-001 FIX)
         ctx.nonce_cache.check_and_store(&self.response_nonce, self.timestamp)?;
 
-        // 4. Verify signature includes all critical fields
+        // 7. CRITICAL: Enforce required capabilities
+        if !ctx.required_capabilities.is_empty() {
+            let missing = ctx
+                .required_capabilities
+                .iter()
+                .filter(|cap| !self.capabilities.protocols.contains(cap))
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                return Err(anyhow!("Missing required capabilities"));
+            }
+        }
+
+        // 8. Verify signature includes all critical fields
         let data = Self::data_to_sign(
             client_nonce,
             &self.identity,
             &self.capabilities,
+            &ctx.domain,
+            self.role,
+            &self.channel_binding,
             self.timestamp,
             self.protocol_version,
         )?;
@@ -923,6 +1276,9 @@ impl ServerHello {
         client_nonce: &[u8; 32],
         identity: &NodeIdentity,
         capabilities: &HandshakeCapabilities,
+        domain: &HandshakeDomain,
+        role: HandshakeRole,
+        channel_binding: &[u8],
         timestamp: u64,
         protocol_version: u8,
     ) -> Result<Vec<u8>> {
@@ -937,6 +1293,13 @@ impl ServerHello {
         // Server identity and capabilities
         data.extend_from_slice(identity.node_id.as_bytes());
         data.extend_from_slice(bincode::serialize(capabilities)?.as_slice());
+
+        // Domain separation fields
+        append_len_prefixed(&mut data, domain.network_id.as_bytes());
+        append_len_prefixed(&mut data, domain.protocol_id.as_bytes());
+        append_len_prefixed(&mut data, domain.purpose.as_bytes());
+        data.push(role.as_u8());
+        append_len_prefixed(&mut data, channel_binding);
 
         // CRITICAL: Include timestamp
         data.extend_from_slice(&timestamp.to_le_bytes());
@@ -957,6 +1320,21 @@ impl ServerHello {
 pub struct ClientFinish {
     /// Client's signature over server's response nonce
     pub signature: Signature,
+
+    /// Network identifier for domain separation
+    pub network_id: String,
+
+    /// Protocol identifier for domain separation
+    pub protocol_id: String,
+
+    /// Purpose string for handshake domain separation
+    pub purpose: String,
+
+    /// Declared client role
+    pub role: HandshakeRole,
+
+    /// Channel binding token for this transport session
+    pub channel_binding: Vec<u8>,
 
     /// Timestamp when ClientFinish was created
     pub timestamp: u64,
@@ -1005,6 +1383,7 @@ impl ClientFinish {
         keypair: &KeyPair,
         ctx: &HandshakeContext,
     ) -> Result<(Self, Option<[u8; 32]>)> {
+        ctx.require_channel_binding()?;
         // === MUTUAL AUTHENTICATION: Verify server before completing handshake ===
         server_hello.identity.verify_node_id()
             .map_err(|e| anyhow!("Server NodeId verification failed: {}", e))?;
@@ -1021,6 +1400,9 @@ impl ClientFinish {
 
         let data = Self::data_to_sign(
             &server_hello.response_nonce,
+            &ctx.domain,
+            ctx.local_role,
+            &ctx.channel_binding,
             timestamp,
             protocol_version,
         )?;
@@ -1037,6 +1419,11 @@ impl ClientFinish {
 
         Ok((Self {
             signature,
+            network_id: ctx.domain.network_id.clone(),
+            protocol_id: ctx.domain.protocol_id.clone(),
+            purpose: ctx.domain.purpose.clone(),
+            role: ctx.local_role,
+            channel_binding: ctx.channel_binding.clone(),
             timestamp,
             protocol_version,
             session_params: None,
@@ -1053,8 +1440,62 @@ impl ClientFinish {
         validate_timestamp(self.timestamp, &TimestampConfig::default())?;
 
         // 2. Verify signature
+        let domain = HandshakeDomain {
+            network_id: self.network_id.clone(),
+            protocol_id: self.protocol_id.clone(),
+            purpose: self.purpose.clone(),
+        };
         let data = Self::data_to_sign(
             server_nonce,
+            &domain,
+            self.role,
+            &self.channel_binding,
+            self.timestamp,
+            self.protocol_version,
+        )?;
+
+        if client_pubkey.verify(&data, &self.signature)? {
+            Ok(())
+        } else {
+            Err(anyhow!("Signature verification failed"))
+        }
+    }
+
+    /// Verify client's signature on server nonce with handshake context
+    pub fn verify_signature_with_context(
+        &self,
+        server_nonce: &[u8; 32],
+        client_pubkey: &PublicKey,
+        ctx: &HandshakeContext,
+    ) -> Result<()> {
+        ctx.require_channel_binding()?;
+
+        validate_protocol_version(self.protocol_version)?;
+
+        if self.network_id != ctx.domain.network_id
+            || self.protocol_id != ctx.domain.protocol_id
+            || self.purpose != ctx.domain.purpose
+        {
+            return Err(anyhow!("Domain separation mismatch"));
+        }
+
+        if self.role != ctx.peer_role {
+            return Err(anyhow!("Unexpected peer role"));
+        }
+
+        if self.channel_binding != ctx.channel_binding {
+            return Err(anyhow!("Channel binding mismatch"));
+        }
+
+        // 1. Validate timestamp
+        validate_timestamp(self.timestamp, &TimestampConfig::default())?;
+
+        // 2. Verify signature
+        let data = Self::data_to_sign(
+            server_nonce,
+            &ctx.domain,
+            self.role,
+            &self.channel_binding,
             self.timestamp,
             self.protocol_version,
         )?;
@@ -1069,12 +1510,20 @@ impl ClientFinish {
     /// Build data to sign for ClientFinish
     fn data_to_sign(
         server_nonce: &[u8; 32],
+        domain: &HandshakeDomain,
+        role: HandshakeRole,
+        channel_binding: &[u8],
         timestamp: u64,
         protocol_version: u8,
     ) -> Result<Vec<u8>> {
         let mut data = Vec::new();
         data.push(0x03); // MessageType::ClientFinish for context binding
         data.extend_from_slice(server_nonce);
+        append_len_prefixed(&mut data, domain.network_id.as_bytes());
+        append_len_prefixed(&mut data, domain.protocol_id.as_bytes());
+        append_len_prefixed(&mut data, domain.purpose.as_bytes());
+        data.push(role.as_u8());
+        append_len_prefixed(&mut data, channel_binding);
         data.extend_from_slice(&timestamp.to_le_bytes());
         data.push(protocol_version);
         Ok(data)
@@ -1169,6 +1618,67 @@ pub struct ChallengeProof {
 // Handshake Result
 // ============================================================================
 
+/// Session metadata verified during handshake
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandshakeSessionInfo {
+    pub network_id: String,
+    pub protocol_id: String,
+    pub purpose: String,
+    pub client_role: HandshakeRole,
+    pub server_role: HandshakeRole,
+    pub channel_binding: Vec<u8>,
+}
+
+/// Verified peer identity and negotiated capabilities
+#[derive(Debug, Clone)]
+pub struct VerifiedPeer {
+    pub identity: NodeIdentity,
+    pub capabilities: NegotiatedCapabilities,
+    pub session_info: HandshakeSessionInfo,
+}
+
+impl VerifiedPeer {
+    pub fn new(
+        identity: NodeIdentity,
+        capabilities: NegotiatedCapabilities,
+        session_info: HandshakeSessionInfo,
+    ) -> Self {
+        Self {
+            identity,
+            capabilities,
+            session_info,
+        }
+    }
+}
+
+impl HandshakeSessionInfo {
+    pub fn from_messages(client_hello: &ClientHello, server_hello: &ServerHello) -> Result<Self> {
+        if client_hello.network_id != server_hello.network_id
+            || client_hello.protocol_id != server_hello.protocol_id
+            || client_hello.purpose != server_hello.purpose
+        {
+            return Err(anyhow!("Handshake domain mismatch"));
+        }
+
+        if client_hello.channel_binding != server_hello.channel_binding {
+            return Err(anyhow!("Handshake channel binding mismatch"));
+        }
+
+        if client_hello.role != HandshakeRole::Client || server_hello.role != HandshakeRole::Server {
+            return Err(anyhow!("Handshake role mismatch"));
+        }
+
+        Ok(Self {
+            network_id: client_hello.network_id.clone(),
+            protocol_id: client_hello.protocol_id.clone(),
+            purpose: client_hello.purpose.clone(),
+            client_role: client_hello.role,
+            server_role: server_hello.role,
+            channel_binding: client_hello.channel_binding.clone(),
+        })
+    }
+}
+
 /// Result of a successful handshake
 ///
 /// Contains all information needed to establish a secure session between peers.
@@ -1191,6 +1701,9 @@ pub struct HandshakeResult {
     
     /// Whether PQC hybrid mode was used
     pub pqc_hybrid_enabled: bool,
+
+    /// Verified session metadata
+    pub session_info: HandshakeSessionInfo,
 }
 
 impl HandshakeResult {
@@ -1211,6 +1724,7 @@ impl HandshakeResult {
         client_did: &str,
         server_did: &str,
         client_hello_timestamp: u64,
+        session_info: &HandshakeSessionInfo,
     ) -> Result<Self> {
         Self::new_with_pqc(
             peer_identity,
@@ -1220,6 +1734,7 @@ impl HandshakeResult {
             client_did,
             server_did,
             client_hello_timestamp,
+            session_info,
             None,
         )
     }
@@ -1241,6 +1756,7 @@ impl HandshakeResult {
         client_did: &str,
         server_did: &str,
         client_hello_timestamp: u64,
+        session_info: &HandshakeSessionInfo,
         pqc_shared_secret: Option<&[u8; 32]>,
     ) -> Result<Self> {
         // Build session context for HKDF domain separation
@@ -1250,6 +1766,12 @@ impl HandshakeResult {
             client_did: client_did.to_string(),
             server_did: server_did.to_string(),
             timestamp: client_hello_timestamp, // VULN-003 FIX: Deterministic timestamp
+            network_id: session_info.network_id.clone(),
+            protocol_id: session_info.protocol_id.clone(),
+            purpose: session_info.purpose.clone(),
+            client_role: session_info.client_role.as_u8(),
+            server_role: session_info.server_role.as_u8(),
+            channel_binding: session_info.channel_binding.clone(),
         };
 
         // Derive session key using HKDF (NIST SP 800-108 compliant)
@@ -1274,7 +1796,16 @@ impl HandshakeResult {
             session_id,
             completed_at: current_timestamp()?, // Completion time (for logging only)
             pqc_hybrid_enabled,
+            session_info: session_info.clone(),
         })
+    }
+
+    pub fn verified_peer(&self) -> VerifiedPeer {
+        VerifiedPeer::new(
+            self.peer_identity.clone(),
+            self.capabilities.clone(),
+            self.session_info.clone(),
+        )
     }
 }
 
@@ -1399,8 +1930,8 @@ mod tests {
     
     #[test]
     fn test_uhp_version_constants() {
-        assert_eq!(UHP_VERSION, 1);
-        assert_eq!(UHP_VERSION_STRING, "UHP/1.0");
+        assert_eq!(UHP_VERSION, 2);
+        assert_eq!(UHP_VERSION_STRING, "UHP/2.0");
         assert!(MIN_SUPPORTED_VERSION <= UHP_VERSION);
         assert!(UHP_VERSION <= MAX_SUPPORTED_VERSION);
     }
@@ -1504,7 +2035,9 @@ mod tests {
         
         let capabilities = HandshakeCapabilities::default();
         
-        let client_hello = ClientHello::new(&identity, capabilities)?;
+        let ctx = HandshakeContext::new_test()
+            .with_roles(HandshakeRole::Client, HandshakeRole::Server);
+        let client_hello = ClientHello::new(&identity, capabilities, &ctx)?;
         let message = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello));
         
         // Serialize
@@ -1531,14 +2064,108 @@ mod tests {
 
         let capabilities = HandshakeCapabilities::default();
 
-        let client_hello = ClientHello::new(&identity, capabilities)?;
-
-        // Create handshake context for verification
-        let ctx = HandshakeContext::new_test();
+        let base_ctx = HandshakeContext::new_test();
+        let client_ctx = base_ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
+        let server_ctx = base_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
+        let client_hello = ClientHello::new(&identity, capabilities, &client_ctx)?;
 
         // Signature should verify
-        client_hello.verify_signature(&ctx)?;
+        client_hello.verify_signature(&server_ctx)?;
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_domain_mismatch_rejected() -> Result<()> {
+        let identity = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "domain-test-device",
+            None,
+        )?;
+
+        let base_ctx = HandshakeContext::new_test()
+            .with_channel_binding(vec![9u8; 32]);
+        let client_ctx = base_ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
+        let server_ctx = base_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
+        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
+
+        let mismatched_ctx = server_ctx.with_domain(HandshakeDomain {
+            network_id: "zhtp-testnet".to_string(),
+            protocol_id: DEFAULT_HANDSHAKE_PROTOCOL_ID.to_string(),
+            purpose: DEFAULT_HANDSHAKE_PURPOSE.to_string(),
+        });
+
+        assert!(client_hello.verify_signature(&mismatched_ctx).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_role_mismatch_rejected() -> Result<()> {
+        let identity = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "role-test-device",
+            None,
+        )?;
+
+        let base_ctx = HandshakeContext::new_test()
+            .with_channel_binding(vec![7u8; 32]);
+        let client_ctx = base_ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
+        let server_ctx = base_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
+        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
+
+        let wrong_role_ctx = server_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Server);
+        assert!(client_hello.verify_signature(&wrong_role_ctx).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_channel_binding_mismatch_rejected() -> Result<()> {
+        let identity = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "binding-test-device",
+            None,
+        )?;
+
+        let base_ctx = HandshakeContext::new_test()
+            .with_channel_binding(vec![1u8; 32]);
+        let client_ctx = base_ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
+        let server_ctx = base_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
+        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
+
+        let mismatched_binding = server_ctx.with_channel_binding(vec![2u8; 32]);
+        assert!(client_hello.verify_signature(&mismatched_binding).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_required_capability_rejected() -> Result<()> {
+        let identity = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::IdentityType::Human,
+            Some(25),
+            Some("US".to_string()),
+            "cap-test-device",
+            None,
+        )?;
+
+        let base_ctx = HandshakeContext::new_test()
+            .with_channel_binding(vec![3u8; 32])
+            .with_required_capabilities(vec!["quic".to_string()]);
+        let client_ctx = base_ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
+        let server_ctx = base_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
+
+        let capabilities = HandshakeCapabilities {
+            protocols: vec!["tcp".to_string()],
+            ..HandshakeCapabilities::default()
+        };
+        let client_hello = ClientHello::new(&identity, capabilities, &client_ctx)?;
+
+        assert!(client_hello.verify_signature(&server_ctx).is_err());
         Ok(())
     }
     
@@ -1552,6 +2179,12 @@ mod tests {
             client_did: "did:zhtp:test_client".to_string(),
             server_did: "did:zhtp:test_server".to_string(),
             timestamp: 1234567890,
+            network_id: DEFAULT_HANDSHAKE_NETWORK_ID.to_string(),
+            protocol_id: DEFAULT_HANDSHAKE_PROTOCOL_ID.to_string(),
+            purpose: DEFAULT_HANDSHAKE_PURPOSE.to_string(),
+            client_role: HandshakeRole::Client.as_u8(),
+            server_role: HandshakeRole::Server.as_u8(),
+            channel_binding: vec![0u8; 32],
         };
 
         let key1 = derive_session_key_hkdf(&client_nonce, &server_nonce, &context).unwrap();
@@ -1646,18 +2279,20 @@ mod tests {
         )?;
 
         // Create handshake context (shared nonce cache)
-        let ctx = HandshakeContext::new_test();
+        let base_ctx = HandshakeContext::new_test();
+        let client_ctx = base_ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
+        let server_ctx = base_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
 
         // Step 1: Client sends ClientHello
         let client_capabilities = HandshakeCapabilities::default();
-        let client_hello = ClientHello::new(&client_identity, client_capabilities)?;
+        let client_hello = ClientHello::new(&client_identity, client_capabilities, &client_ctx)?;
 
         // Server verifies ClientHello
-        client_hello.verify_signature(&ctx)?;
+        client_hello.verify_signature(&server_ctx)?;
 
         // Step 2: Server sends ServerHello
         let server_capabilities = HandshakeCapabilities::default();
-        let server_hello = ServerHello::new(&server_identity, server_capabilities, &client_hello)?;
+        let server_hello = ServerHello::new(&server_identity, server_capabilities, &client_hello, &server_ctx)?;
 
         // Step 3: Client sends ClientFinish (includes mutual authentication of server)
         let client_keypair = KeyPair {
@@ -1665,12 +2300,18 @@ mod tests {
             private_key: client_identity.private_key.clone().unwrap(),
         };
 
-        let client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &ctx)?;
+        let client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &client_ctx)?;
 
         // Server verifies ClientFinish
-        client_finish.verify_signature(&server_hello.response_nonce, &client_hello.identity.public_key)?;
+        client_finish.verify_signature_with_context(
+            &server_hello.response_nonce,
+            &client_hello.identity.public_key,
+            &server_ctx,
+        )?;
 
         // Step 4: Both sides derive session key
+        let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)?;
+
         let client_session = HandshakeResult::new(
             server_hello.identity.clone(),
             server_hello.negotiated.clone(),
@@ -1679,6 +2320,7 @@ mod tests {
             &client_identity.did,
             &server_identity.did,
             client_hello.timestamp,
+            &session_info,
         )?;
 
         let server_session = HandshakeResult::new(
@@ -1689,6 +2331,7 @@ mod tests {
             &client_identity.did,
             &server_identity.did,
             client_hello.timestamp,
+            &session_info,
         )?;
 
         // Verify both parties derived the same session key
@@ -1703,7 +2346,8 @@ mod tests {
     #[test]
     fn test_concurrent_handshakes_with_shared_cache() -> Result<()> {
         // Create shared context
-        let ctx = HandshakeContext::new(NonceCache::new_test(60, 10000));
+        let ctx = HandshakeContext::new(NonceCache::new_test(60, 10000))
+            .with_channel_binding(vec![1u8; 32]);
 
         // Launch 50 concurrent handshakes
         let handles: Vec<_> = (0..50)
@@ -1730,17 +2374,20 @@ mod tests {
                     )?;
 
                     // Full handshake flow
-                    let client_hello = ClientHello::new(&client_identity, HandshakeCapabilities::default())?;
-                    client_hello.verify_signature(&ctx)?;
+                    let client_ctx = ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
+                    let server_ctx = ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
 
-                    let server_hello = ServerHello::new(&server_identity, HandshakeCapabilities::default(), &client_hello)?;
+                    let client_hello = ClientHello::new(&client_identity, HandshakeCapabilities::default(), &client_ctx)?;
+                    client_hello.verify_signature(&server_ctx)?;
+
+                    let server_hello = ServerHello::new(&server_identity, HandshakeCapabilities::default(), &client_hello, &server_ctx)?;
 
                     let client_keypair = KeyPair {
                         public_key: client_identity.public_key.clone(),
                         private_key: client_identity.private_key.clone().unwrap(),
                     };
 
-                    let _client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &ctx)?;
+                    let _client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &client_ctx)?;
 
                     Ok(())
                 })
@@ -1769,7 +2416,9 @@ mod tests {
     /// **FINDING 6 FIX:** Verifies nonce cache prevents replay attacks
     #[test]
     fn test_replay_attack_prevention() -> Result<()> {
-        let ctx = HandshakeContext::new_test();
+        let base_ctx = HandshakeContext::new_test();
+        let client_ctx = base_ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
+        let server_ctx = base_ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
 
         let identity = lib_identity::ZhtpIdentity::new_unified(
             lib_identity::IdentityType::Human,
@@ -1780,13 +2429,13 @@ mod tests {
         )?;
 
         // Create ClientHello
-        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default())?;
+        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default(), &client_ctx)?;
 
         // First verification should succeed
-        assert!(client_hello.verify_signature(&ctx).is_ok());
+        assert!(client_hello.verify_signature(&server_ctx).is_ok());
 
         // Second verification with same nonce should fail (replay attack detected)
-        let result = client_hello.verify_signature(&ctx);
+        let result = client_hello.verify_signature(&server_ctx);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Replay detected"));
 
