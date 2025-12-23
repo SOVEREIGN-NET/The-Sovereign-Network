@@ -92,7 +92,7 @@ All proof serialization includes version markers for forward compatibility.
 cargo build --release --workspace
 
 # Run the orchestrator
-./target/release/zhtp-orchestrator --config zhtp/configs/test-node1.toml
+./target/release/zhtp --config zhtp/configs/test-node1.toml
 ```
 
 ## 📋 Configuration
