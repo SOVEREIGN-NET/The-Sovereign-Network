@@ -198,6 +198,16 @@ println!("Found {} mesh peers", peers.len());
 ### Cryptographic Protection
 - **Dilithium2 Signatures**: Post-quantum digital signatures for all operations
 - **Kyber Encryption**: Post-quantum key exchange for secure communication
+
+## Handshake
+
+UHP/2.0 defines the trust boundary between transport and verified identity.
+See `lib-network/docs/handshake/README.md`.
+
+## Option B Plan (QUIC-Only Payloads)
+
+We are actively executing the QUIC-only transport plan.
+See `docs/option-b/README.md`.
 - **Blake3 Hashing**: High-performance content addressing
 - **Replay Protection**: Timestamp and nonce validation
 

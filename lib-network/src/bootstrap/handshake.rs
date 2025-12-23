@@ -64,9 +64,13 @@ pub use crate::handshake::{
     HandshakeContext, HandshakeResult, HandshakeCapabilities,
     ClientHello, ServerHello, ClientFinish,
     HandshakeMessage, HandshakePayload,
-    NonceCache, NegotiatedCapabilities,
+    NonceCache, NegotiatedCapabilities, HandshakeRole, HandshakeSessionInfo,
+    derive_channel_binding_from_addrs,
 };
 use lib_crypto::KeyPair;
+
+// Use orchestrator helpers to reduce duplication
+use crate::handshake::orchestrator::{extract_payload, check_for_error};
 
 // SECURITY (P1-2 FIX): Use shared constant from constants module
 // Ensures consistency across all UHP implementations (1 MB limit)
@@ -136,9 +140,12 @@ pub async fn handshake_as_initiator(
 ) -> Result<HandshakeResult> {
     // Apply timeout to entire handshake
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let binding = derive_channel_binding_from_addrs(stream.local_addr()?, stream.peer_addr()?);
+        let ctx = ctx.for_client_with_transport(binding, "tcp");
+
         // Step 1: Create and send ClientHello
         let capabilities = HandshakeCapabilities::default();
-        let client_hello = ClientHello::new(identity, capabilities)
+        let client_hello = ClientHello::new(identity, capabilities, &ctx)
             .map_err(|e| anyhow!("Failed to create ClientHello: {}", e))?;
         
         let client_hello_msg = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
@@ -154,26 +161,26 @@ pub async fn handshake_as_initiator(
         // Step 2: Receive and verify ServerHello
         let server_hello_bytes = receive_message(stream).await
             .map_err(|e| anyhow!("Failed to receive ServerHello: {}", e))?;
-        
+
         let server_hello_msg = HandshakeMessage::from_bytes(&server_hello_bytes)
             .map_err(|e| anyhow!("Failed to deserialize ServerHello: {}", e))?;
-        
-        let server_hello = match server_hello_msg.payload {
-            HandshakePayload::ServerHello(sh) => sh,
-            HandshakePayload::Error(err) => {
-                return Err(anyhow!("Server rejected handshake: {} (code: {})", err.message, err.code));
+
+        check_for_error(&server_hello_msg)?;
+        let server_hello = extract_payload(&server_hello_msg, "ServerHello", |payload| {
+            if let HandshakePayload::ServerHello(sh) = payload {
+                Some(sh.clone())
+            } else {
+                None
             }
-            _ => {
-                return Err(anyhow!("Expected ServerHello, got different message type"));
-            }
-        };
+        })
+        .map_err(|e| anyhow!("{}", e))?;
         
         tracing::debug!("Received ServerHello from {} ({} bytes)", 
             server_hello.identity.did, server_hello_bytes.len());
         
         // Verify ServerHello signature (includes mutual authentication of server)
         // This also validates NodeId, timestamp, nonce, and protocol version
-        server_hello.verify_signature(&client_hello.challenge_nonce, ctx)
+        server_hello.verify_signature(&client_hello.challenge_nonce, &ctx)
             .map_err(|e| anyhow!("ServerHello verification failed: {}", e))?;
         
         tracing::debug!("ServerHello signature verified successfully");
@@ -186,7 +193,7 @@ pub async fn handshake_as_initiator(
                 .ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
         
-        let client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, ctx)
+        let client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &ctx)
             .map_err(|e| anyhow!("Failed to create ClientFinish: {}", e))?;
         
         let client_finish_msg = HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish));
@@ -199,6 +206,9 @@ pub async fn handshake_as_initiator(
         tracing::debug!("Sent ClientFinish to server ({} bytes)", client_finish_bytes.len());
         
         // Step 4: Derive session key and build result
+        let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
+            .map_err(|e| anyhow!("Handshake session info mismatch: {}", e))?;
+
         let result = HandshakeResult::new(
             server_hello.identity.clone(),
             server_hello.negotiated.clone(),
@@ -207,6 +217,7 @@ pub async fn handshake_as_initiator(
             &identity.did,
             &server_hello.identity.did,
             client_hello.timestamp, // Use ClientHello timestamp for deterministic session key
+            &session_info,
         ).map_err(|e| anyhow!("Failed to derive session key: {}", e))?;
         
         tracing::info!("✅ Client handshake completed successfully with {}", server_hello.identity.did);
@@ -272,33 +283,38 @@ pub async fn handshake_as_responder(
 ) -> Result<HandshakeResult> {
     // Apply timeout to entire handshake
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let binding = derive_channel_binding_from_addrs(stream.local_addr()?, stream.peer_addr()?);
+        let ctx = ctx.for_server_with_transport(binding, "tcp");
+
         // Step 1: Receive and verify ClientHello
         let client_hello_bytes = receive_message(stream).await
             .map_err(|e| anyhow!("Failed to receive ClientHello: {}", e))?;
-        
+
         let client_hello_msg = HandshakeMessage::from_bytes(&client_hello_bytes)
             .map_err(|e| anyhow!("Failed to deserialize ClientHello: {}", e))?;
-        
-        let client_hello = match client_hello_msg.payload {
-            HandshakePayload::ClientHello(ch) => ch,
-            _ => {
-                return Err(anyhow!("Expected ClientHello, got different message type"));
+
+        let client_hello = extract_payload(&client_hello_msg, "ClientHello", |payload| {
+            if let HandshakePayload::ClientHello(ch) = payload {
+                Some(ch.clone())
+            } else {
+                None
             }
-        };
+        })
+        .map_err(|e| anyhow!("{}", e))?;
         
         tracing::debug!("Received ClientHello from {} ({} bytes)", 
             client_hello.identity.did, client_hello_bytes.len());
         
         // Verify ClientHello signature
         // This validates NodeId, timestamp, nonce, and protocol version
-        client_hello.verify_signature(ctx)
+        client_hello.verify_signature(&ctx)
             .map_err(|e| anyhow!("ClientHello verification failed: {}", e))?;
         
         tracing::debug!("ClientHello signature verified successfully");
         
         // Step 2: Create and send ServerHello
         let capabilities = HandshakeCapabilities::default();
-        let server_hello = ServerHello::new(identity, capabilities, &client_hello)
+        let server_hello = ServerHello::new(identity, capabilities, &client_hello, &ctx)
             .map_err(|e| anyhow!("Failed to create ServerHello: {}", e))?;
         
         let server_hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
@@ -313,29 +329,36 @@ pub async fn handshake_as_responder(
         // Step 3: Receive and verify ClientFinish
         let client_finish_bytes = receive_message(stream).await
             .map_err(|e| anyhow!("Failed to receive ClientFinish: {}", e))?;
-        
+
         let client_finish_msg = HandshakeMessage::from_bytes(&client_finish_bytes)
             .map_err(|e| anyhow!("Failed to deserialize ClientFinish: {}", e))?;
-        
-        let client_finish = match client_finish_msg.payload {
-            HandshakePayload::ClientFinish(cf) => cf,
-            HandshakePayload::Error(err) => {
-                return Err(anyhow!("Client rejected handshake: {} (code: {})", err.message, err.code));
+
+        check_for_error(&client_finish_msg)?;
+        let client_finish = extract_payload(&client_finish_msg, "ClientFinish", |payload| {
+            if let HandshakePayload::ClientFinish(cf) = payload {
+                Some(cf.clone())
+            } else {
+                None
             }
-            _ => {
-                return Err(anyhow!("Expected ClientFinish, got different message type"));
-            }
-        };
+        })
+        .map_err(|e| anyhow!("{}", e))?;
         
         tracing::debug!("Received ClientFinish from client ({} bytes)", client_finish_bytes.len());
         
         // Verify ClientFinish signature
-        client_finish.verify_signature(&server_hello.response_nonce, &client_hello.identity.public_key)
+        client_finish.verify_signature_with_context(
+            &server_hello.response_nonce,
+            &client_hello.identity.public_key,
+            &ctx,
+        )
             .map_err(|e| anyhow!("ClientFinish verification failed: {}", e))?;
         
         tracing::debug!("ClientFinish signature verified successfully");
         
         // Step 4: Derive session key and build result
+        let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
+            .map_err(|e| anyhow!("Handshake session info mismatch: {}", e))?;
+
         let result = HandshakeResult::new(
             client_hello.identity.clone(),
             server_hello.negotiated.clone(),
@@ -344,6 +367,7 @@ pub async fn handshake_as_responder(
             &client_hello.identity.did,
             &identity.did,
             client_hello.timestamp, // Use ClientHello timestamp for deterministic session key
+            &session_info,
         ).map_err(|e| anyhow!("Failed to derive session key: {}", e))?;
         
         tracing::info!("✅ Server handshake completed successfully with {}", client_hello.identity.did);
@@ -373,32 +397,10 @@ pub async fn handshake_as_responder(
 /// - `Err(...)` - Network error or message too large
 ///
 /// # Protocol Compatibility
-/// Uses big-endian (network byte order) to match core.rs HandshakeIo implementation
+/// Uses unified framing module for consistency across all UHP implementations
 async fn send_message(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
-    // Validate message size
-    if data.len() > MAX_HANDSHAKE_MESSAGE_SIZE {
-        return Err(anyhow!(
-            "Message too large: {} bytes (max: {} bytes)",
-            data.len(),
-            MAX_HANDSHAKE_MESSAGE_SIZE
-        ));
-    }
-
-    // SECURITY (P1-1 FIX): Use big-endian (network byte order) to match core.rs
-    // This ensures compatibility across different UHP implementations
-    let len = data.len() as u32;
-    stream.write_u32(len).await
-        .map_err(|e| anyhow!("Failed to write message length: {}", e))?;
-
-    // Send message payload
-    stream.write_all(data).await
-        .map_err(|e| anyhow!("Failed to write message payload: {}", e))?;
-
-    // Flush to ensure immediate delivery
-    stream.flush().await
-        .map_err(|e| anyhow!("Failed to flush stream: {}", e))?;
-
-    Ok(())
+    // Use unified framing module for consistent message serialization
+    crate::handshake::framing::send_framed(stream, data).await
 }
 
 /// Receive a message from TCP with length-prefix framing
@@ -416,32 +418,10 @@ async fn send_message(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
 /// - `Err(...)` - Network error, invalid frame, or message too large
 ///
 /// # Protocol Compatibility
-/// Uses big-endian (network byte order) to match core.rs HandshakeIo implementation
+/// Uses unified framing module for consistency across all UHP implementations
 async fn receive_message(stream: &mut TcpStream) -> Result<Vec<u8>> {
-    // SECURITY (P1-1 FIX): Use big-endian (network byte order) to match core.rs
-    // This ensures compatibility across different UHP implementations
-    let len = stream.read_u32().await
-        .map_err(|e| anyhow!("Failed to read message length: {}", e))? as usize;
-
-    // Validate message size
-    if len > MAX_HANDSHAKE_MESSAGE_SIZE {
-        return Err(anyhow!(
-            "Message too large: {} bytes (max: {} bytes)",
-            len,
-            MAX_HANDSHAKE_MESSAGE_SIZE
-        ));
-    }
-
-    if len == 0 {
-        return Err(anyhow!("Invalid message length: 0 bytes"));
-    }
-
-    // Read message payload
-    let mut data = vec![0u8; len];
-    stream.read_exact(&mut data).await
-        .map_err(|e| anyhow!("Failed to read message payload: {}", e))?;
-
-    Ok(data)
+    // Use unified framing module for consistent message deserialization
+    crate::handshake::framing::recv_framed(stream).await
 }
 
 // ============================================================================

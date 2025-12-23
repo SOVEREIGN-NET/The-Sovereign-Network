@@ -8,6 +8,8 @@ use lib_identity::{ZhtpIdentity, IdentityType, NodeId};
 use lib_network::{
     ClientHello, HandshakeCapabilities,
 };
+use lib_network::handshake::{HandshakeContext, NonceCache};
+use tempfile::TempDir;
 
 /// Helper to create test identity
 fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIdentity> {
@@ -18,6 +20,13 @@ fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIden
         device,
         seed,
     )
+}
+
+fn create_test_context() -> Result<(HandshakeContext, TempDir)> {
+    let temp_dir = TempDir::new()?;
+    let cache = NonceCache::open_default(temp_dir.path(), 300)?;
+    let ctx = HandshakeContext::new(cache).with_channel_binding(vec![0u8; 32]);
+    Ok((ctx, temp_dir))
 }
 
 #[tokio::test]
@@ -86,7 +95,8 @@ async fn test_create_handshake_data() -> Result<()> {
     
     // Create ClientHello
     let capabilities = HandshakeCapabilities::default();
-    let client_hello = ClientHello::new(&identity, capabilities)?;
+    let (ctx, _temp_dir) = create_test_context()?;
+    let client_hello = ClientHello::new(&identity, capabilities, &ctx)?;
     
     // Verify fields
     assert_eq!(client_hello.identity.did, identity.did);
@@ -106,7 +116,8 @@ async fn test_handshake_serialization() -> Result<()> {
     // Create handshake data
     let identity = create_test_identity("device1", None)?;
     let capabilities = HandshakeCapabilities::default();
-    let client_hello = ClientHello::new(&identity, capabilities)?;
+    let (ctx, _temp_dir) = create_test_context()?;
+    let client_hello = ClientHello::new(&identity, capabilities, &ctx)?;
     
     // Serialize
     let serialized = bincode::serialize(&client_hello)?;

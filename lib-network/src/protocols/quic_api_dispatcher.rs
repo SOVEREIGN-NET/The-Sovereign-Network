@@ -249,7 +249,7 @@ async fn handle_connection(
         &handshake_ctx,
     ).await.context("Handshake failed")?;
 
-    let peer_did = handshake_result.peer_identity.did.clone();
+    let peer_did = handshake_result.verified_peer.identity.did.clone();
 
     info!(
         peer_did = %peer_did,

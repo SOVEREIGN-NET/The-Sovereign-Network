@@ -46,3 +46,8 @@ DEPLOY_TOKEN_SPEC.md
 
 # Ansible deployment (local config)
 deploy/ansible/
+
+# Local documentation files
+docs/06_Financial_Projections_Tokenomics_Models*.docx
+docs/CORRECTED_SOV_TICKETS.md
+docs/SOV_TOKENOMICS_ANALYSIS.md

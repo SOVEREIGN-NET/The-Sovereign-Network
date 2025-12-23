@@ -412,7 +412,7 @@ impl CoreBluetoothManager {
                         
                         // Try to deserialize as MeshHandshake
                         if value.len() >= 20 { // Minimum handshake size
-                            match bincode::deserialize::<crate::discovery::local_network::MeshHandshake>(&value) {
+                            match bincode::deserialize::<crate::protocols::bluetooth::MeshHandshake>(&value) {
                                 Ok(handshake) => {
                                     info!("🤝 Received MeshHandshake from {}", central_id);
                                     info!("   Version: {}", handshake.version);

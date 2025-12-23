@@ -452,26 +452,14 @@ impl QuicHandler {
     async fn handle_control_plane_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
         info!("🔐 Control plane connection from {} - starting UHP handshake", peer_addr);
 
-        // Check rate limit for this IP
-        self.check_handshake_rate_limit(&peer_addr).await?;
-
-        // Get server identity
-        let identity = self.quic_protocol.identity();
-
-        // Create handshake context with nonce cache
-        let nonce_db_path = std::path::Path::new("./data/tls/control_plane_nonce_cache");
-        let nonce_cache = NonceCache::open(nonce_db_path, 3600, 100_000)
-            .context("Failed to open nonce cache")?;
-        let handshake_ctx = HandshakeContext::new(nonce_cache);
-
-        // Perform UHP+Kyber handshake as responder
-        let handshake_result = quic_handshake::handshake_as_responder(
+        // Perform UHP+Kyber handshake with common setup
+        let (identity, handshake_result) = self.perform_uhp_handshake(
             &connection,
-            identity,
-            &handshake_ctx,
-        ).await.context("UHP+Kyber handshake failed")?;
+            &peer_addr,
+            "./data/tls/control_plane_nonce_cache",
+        ).await?;
 
-        let peer_did = handshake_result.peer_identity.did.clone();
+        let peer_did = handshake_result.verified_peer.identity.did.clone();
         let session_id = handshake_result.session_id;
         let master_key = handshake_result.master_key;
 
@@ -487,7 +475,7 @@ impl QuicHandler {
 
         // Auto-register the authenticated peer identity
         // Authentication IS registration: successful UHP+Kyber proves identity control
-        self.auto_register_peer_identity(&handshake_result.peer_identity).await;
+        self.auto_register_peer_identity(&handshake_result.verified_peer.identity).await;
 
         // Create session state for authenticated requests
         let session = ControlPlaneSession {
@@ -512,6 +500,37 @@ impl QuicHandler {
         input.extend_from_slice(server_did.as_bytes());  // Server DID
         input.extend_from_slice(client_did.as_bytes());  // Client DID
         lib_crypto::hash_blake3(&input)
+    }
+
+    /// Common handshake setup for authenticated connections (control plane and mesh)
+    ///
+    /// Performs: rate limiting, identity retrieval, nonce cache setup, UHP+Kyber handshake
+    async fn perform_uhp_handshake(
+        &self,
+        connection: &Connection,
+        peer_addr: &SocketAddr,
+        nonce_cache_path: &str,
+    ) -> Result<(lib_identity::ZhtpIdentity, lib_network::protocols::quic_handshake::QuicHandshakeResult)> {
+        // Check rate limit
+        self.check_handshake_rate_limit(peer_addr).await?;
+
+        // Get server identity
+        let identity = self.quic_protocol.identity();
+
+        // Create handshake context with nonce cache
+        let nonce_db_path = std::path::Path::new(nonce_cache_path);
+        let nonce_cache = lib_network::handshake::NonceCache::open(nonce_db_path, 3600, 100_000)
+            .context("Failed to open nonce cache")?;
+        let handshake_ctx = lib_network::handshake::HandshakeContext::new(nonce_cache);
+
+        // Perform UHP+Kyber handshake as responder
+        let handshake_result = lib_network::protocols::quic_handshake::handshake_as_responder(
+            connection,
+            identity,
+            &handshake_ctx,
+        ).await.context("UHP+Kyber handshake failed")?;
+
+        Ok((identity.clone(), handshake_result))
     }
 
     /// Auto-register peer identity after successful UHP+Kyber handshake
@@ -720,42 +739,32 @@ impl QuicHandler {
     async fn handle_mesh_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
         info!("🔗 Mesh peer connection from {} - starting UHP handshake", peer_addr);
 
-        // Check rate limit
-        self.check_handshake_rate_limit(&peer_addr).await?;
-
-        // Get server identity
-        let identity = self.quic_protocol.identity();
-
-        // Create handshake context
-        let nonce_db_path = std::path::Path::new("./data/tls/mesh_nonce_cache");
-        let nonce_cache = NonceCache::open(nonce_db_path, 3600, 100_000)
-            .context("Failed to open nonce cache")?;
-        let handshake_ctx = HandshakeContext::new(nonce_cache);
-
-        // Perform UHP+Kyber handshake
-        let handshake_result = quic_handshake::handshake_as_responder(
+        // Perform UHP+Kyber handshake with common setup
+        let (_identity, handshake_result) = self.perform_uhp_handshake(
             &connection,
-            identity,
-            &handshake_ctx,
-        ).await.context("Mesh UHP+Kyber handshake failed")?;
+            &peer_addr,
+            "./data/tls/mesh_nonce_cache",
+        ).await?;
 
         // Extract peer node ID
-        let peer_node_id = handshake_result.peer_identity.node_id.as_bytes();
+        let peer_node_id = handshake_result.verified_peer.identity.node_id.as_bytes();
         let mut node_id_arr = [0u8; 32];
         node_id_arr.copy_from_slice(peer_node_id);
 
         info!(
-            peer_did = %handshake_result.peer_identity.did,
+            peer_did = %handshake_result.verified_peer.identity.did,
             session_id = ?handshake_result.session_id,
             "✅ Mesh peer authenticated from {} (identity verified)",
             peer_addr
         );
 
         // Create PqcQuicConnection from handshake result
-        let pqc_conn = PqcQuicConnection::from_handshake_result(
+        let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection.clone(),
             peer_addr,
-            handshake_result,
+            handshake_result.verified_peer,
+            handshake_result.master_key,
+            handshake_result.session_id,
             false,
         );
 
@@ -1098,22 +1107,24 @@ impl QuicHandler {
         ).await.context("UHP+Kyber handshake failed")?;
 
         // Extract peer node ID
-        let peer_node_id = handshake_result.peer_identity.node_id.as_bytes();
+        let peer_node_id = handshake_result.verified_peer.identity.node_id.as_bytes();
         let mut node_id_arr = [0u8; 32];
         node_id_arr.copy_from_slice(peer_node_id);
 
         info!(
-            peer_did = %handshake_result.peer_identity.did,
+            peer_did = %handshake_result.verified_peer.identity.did,
             session_id = ?handshake_result.session_id,
             "✅ UHP+Kyber handshake complete with {} (identity verified)",
             peer_addr
         );
 
         // Create PqcQuicConnection from handshake result
-        let pqc_conn = PqcQuicConnection::from_handshake_result(
+        let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection.clone(),
             peer_addr,
-            handshake_result,
+            handshake_result.verified_peer,
+            handshake_result.master_key,
+            handshake_result.session_id,
             false,
         );
 
