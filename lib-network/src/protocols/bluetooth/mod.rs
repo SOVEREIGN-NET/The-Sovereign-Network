@@ -984,11 +984,17 @@ impl BluetoothMeshProtocol {
         if message.len() <= ble_mtu {
             self.transmit_mesh_packet(message, target_address).await?;
         } else {
-            // Fragment message for BLE transmission
-            let chunks: Vec<&[u8]> = message.chunks(ble_mtu).collect();
-            for (i, chunk) in chunks.iter().enumerate() {
-                info!("Sending fragment {}/{} ({} bytes)", i + 1, chunks.len(), chunk.len());
-                self.transmit_mesh_packet(chunk, target_address).await?;
+            // Fragment message using centralized fragmentation
+            use crate::fragmentation::fragment_message;
+            let chunk_size = ble_mtu.saturating_sub(8); // Leave room for fragment headers
+            let fragments = fragment_message(message, chunk_size);
+            
+            info!("Fragmenting message into {} parts for BLE transmission", fragments.len());
+            
+            for (i, fragment) in fragments.iter().enumerate() {
+                let wire_bytes = fragment.to_bytes();
+                info!("Sending fragment {}/{} ({} bytes)", i + 1, fragments.len(), wire_bytes.len());
+                self.transmit_mesh_packet(&wire_bytes, target_address).await?;
                 
                 // Minimal delay for BLE flow control (1ms allows for ~250 KB/s theoretical max)
                 tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
