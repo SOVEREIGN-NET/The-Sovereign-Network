@@ -455,35 +455,30 @@ impl LoRaWANMeshProtocol {
     }
     
     async fn get_max_payload_size(&self) -> Result<usize> {
+        // Use centralized LoRaWAN MTU constant
+        use crate::mtu::LORAWAN_MAX_PAYLOAD;
+        
         // LoRaWAN payload size depends on spreading factor and region
         // EU868: SF7=242, SF8=242, SF9=115, SF10=59, SF11=59, SF12=59
         // US915: SF7=242, SF8=242, SF9=115, SF10=11
-        Ok(242) // Conservative estimate for SF7/SF8
+        Ok(LORAWAN_MAX_PAYLOAD) // Conservative estimate for SF7/SF8
     }
     
     async fn send_fragmented_message(&self, target_address: &str, message: &[u8]) -> Result<()> {
+        use crate::fragmentation::fragment_message;
+        
         let max_payload = self.get_max_payload_size().await?;
-        let header_size = 8; // Fragment header
-        let chunk_size = max_payload - header_size;
+        let chunk_size = max_payload.saturating_sub(8); // Leave room for fragment headers
         
-        let total_fragments = (message.len() + chunk_size - 1) / chunk_size;
-        info!(" Fragmenting message into {} parts", total_fragments);
+        let fragments = fragment_message(message, chunk_size);
+        info!(" Fragmenting LoRaWAN message into {} parts", fragments.len());
         
-        for (fragment_id, chunk) in message.chunks(chunk_size).enumerate() {
-            let mut fragment = Vec::new();
-            
-            // Fragment header
-            fragment.extend_from_slice(&(fragment_id as u16).to_le_bytes());
-            fragment.extend_from_slice(&(total_fragments as u16).to_le_bytes());
-            fragment.extend_from_slice(&(message.len() as u32).to_le_bytes());
-            
-            // Fragment payload
-            fragment.extend_from_slice(chunk);
-            
-            let frame = self.prepare_lorawan_frame(target_address, &fragment).await?;
+        for (i, fragment) in fragments.iter().enumerate() {
+            let wire_bytes = fragment.to_bytes();
+            let frame = self.prepare_lorawan_frame(target_address, &wire_bytes).await?;
             self.transmit_frame(&frame).await?;
             
-            info!("Fragment {}/{} transmitted", fragment_id + 1, total_fragments);
+            info!("LoRa fragment {}/{} transmitted", i + 1, fragments.len());
             
             // Delay between fragments to respect duty cycle
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;

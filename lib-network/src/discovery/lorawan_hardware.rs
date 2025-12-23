@@ -346,7 +346,7 @@ async fn test_serial_lorawan_module(port: &str, chip_type: &str) -> Result<LoRaW
                             class_a: true,
                             otaa_support: true,
                             abp_support: true,
-                            max_payload_size: 242,
+                            max_payload_size: crate::mtu::LORAWAN_MAX_PAYLOAD,
                             spreading_factors: vec![7, 8, 9, 10, 11, 12],
                             ..Default::default()
                         },
@@ -376,7 +376,7 @@ async fn detect_i2c_lorawan(address: &str) -> Result<LoRaWANHardware> {
                 class_a: true,
                 otaa_support: true,
                 abp_support: true,
-                max_payload_size: 242,
+                max_payload_size: crate::mtu::LORAWAN_MAX_PAYLOAD,
                 spreading_factors: vec![7, 8, 9, 10, 11, 12],
                 ..Default::default()
             },
@@ -414,7 +414,7 @@ async fn detect_raspberry_pi_lorawan_hat() -> Result<LoRaWANHardware> {
                                 class_c: true,
                                 otaa_support: true,
                                 abp_support: true,
-                                max_payload_size: 242,
+                                max_payload_size: crate::mtu::LORAWAN_MAX_PAYLOAD,
                                 spreading_factors: vec![7, 8, 9, 10, 11, 12],
                                 ..Default::default()
                             },
@@ -445,7 +445,7 @@ fn create_sx127x_hardware(chip_name: &str, spi_path: &str) -> LoRaWANHardware {
             class_c: true,
             otaa_support: true,
             abp_support: true,
-            max_payload_size: 242,
+            max_payload_size: crate::mtu::LORAWAN_MAX_PAYLOAD,
             spreading_factors: vec![6, 7, 8, 9, 10, 11, 12],
             ..Default::default()
         },
@@ -466,7 +466,7 @@ fn create_sx130x_hardware(chip_name: &str, spi_path: &str) -> LoRaWANHardware {
             class_c: true,
             otaa_support: true,
             abp_support: true,
-            max_payload_size: 242,
+            max_payload_size: crate::mtu::LORAWAN_MAX_PAYLOAD,
             spreading_factors: vec![7, 8, 9, 10, 11, 12],
             ..Default::default()
         },
@@ -509,7 +509,7 @@ async fn detect_windows_lorawan() -> Result<LoRaWANHardware> {
                     class_a: true,
                     otaa_support: true,
                     abp_support: true,
-                    max_payload_size: 242,
+                    max_payload_size: crate::mtu::LORAWAN_MAX_PAYLOAD,
                     spreading_factors: vec![7, 8, 9, 10],
                     ..Default::default()
                 },
@@ -559,7 +559,7 @@ async fn test_windows_com_lorawan(port_name: &str) -> Result<LoRaWANHardware> {
                             class_a: true,
                             otaa_support: true,
                             abp_support: true,
-                            max_payload_size: 242,
+                            max_payload_size: crate::mtu::LORAWAN_MAX_PAYLOAD,
                             spreading_factors: vec![7, 8, 9, 10],
                             ..Default::default()
                         },
@@ -632,7 +632,7 @@ async fn test_macos_usb_lorawan(device_path: &str) -> Result<LoRaWANHardware> {
                             class_a: true,
                             otaa_support: true,
                             abp_support: true,
-                            max_payload_size: 242,
+                            max_payload_size: crate::mtu::LORAWAN_MAX_PAYLOAD,
                             spreading_factors: vec![7, 8, 9, 10, 11, 12],
                             ..Default::default()
                         },

@@ -46,13 +46,20 @@ use anyhow::Result;
 use lib_crypto::PublicKey;
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::protocols::NetworkProtocol;
+use crate::mtu::{
+    BLE_CHUNK_SIZE, BLUETOOTH_CLASSIC_CHUNK_SIZE, WIFI_DIRECT_CHUNK_SIZE, DEFAULT_CHUNK_SIZE,
+};
 use std::time::Duration;
 
-/// Chunk sizes based on protocol capabilities
-pub const BLE_CHUNK_SIZE: usize = 200;       // Conservative for BLE GATT (247-byte MTU)
-pub const CLASSIC_CHUNK_SIZE: usize = 1000;  // Bluetooth Classic RFCOMM (larger MTU)
-pub const WIFI_CHUNK_SIZE: usize = 1400;     // WiFi Direct (can handle more)
-pub const DEFAULT_CHUNK_SIZE: usize = 200;   // Safe fallback
+/// Re-export chunk sizes for backward compatibility
+#[deprecated(since = "0.1.0", note = "Use crate::mtu::BLE_CHUNK_SIZE instead")]
+pub const BLE_CHUNK_SIZE_COMPAT: usize = BLE_CHUNK_SIZE;
+
+#[deprecated(since = "0.1.0", note = "Use crate::mtu::BLUETOOTH_CLASSIC_CHUNK_SIZE instead")]
+pub const CLASSIC_CHUNK_SIZE: usize = BLUETOOTH_CLASSIC_CHUNK_SIZE;
+
+#[deprecated(since = "0.1.0", note = "Use crate::mtu::WIFI_DIRECT_CHUNK_SIZE instead")]
+pub const WIFI_CHUNK_SIZE: usize = WIFI_DIRECT_CHUNK_SIZE;
 
 /// Security constraints - Original limits
 pub const MAX_CHUNK_BUFFER_SIZE: usize = 10_000_000;  // 10MB max buffer per request
@@ -82,11 +89,13 @@ pub const MAX_REQUESTS_PER_PEER: usize = 10;
 
 /// Get optimal chunk size for protocol
 pub fn get_chunk_size_for_protocol(protocol: &NetworkProtocol) -> usize {
+    use crate::mtu::Protocol;
+    
     match protocol {
-        NetworkProtocol::BluetoothLE => BLE_CHUNK_SIZE,
-        NetworkProtocol::BluetoothClassic => CLASSIC_CHUNK_SIZE,
-        NetworkProtocol::WiFiDirect => WIFI_CHUNK_SIZE,
-        NetworkProtocol::TCP | NetworkProtocol::UDP => WIFI_CHUNK_SIZE,
+        NetworkProtocol::BluetoothLE => Protocol::BluetoothLE.chunk_size(),
+        NetworkProtocol::BluetoothClassic => Protocol::BluetoothClassic.chunk_size(),
+        NetworkProtocol::WiFiDirect => Protocol::WiFiDirect.chunk_size(),
+        NetworkProtocol::TCP | NetworkProtocol::UDP => Protocol::Udp.chunk_size(),
         _ => DEFAULT_CHUNK_SIZE,
     }
 }

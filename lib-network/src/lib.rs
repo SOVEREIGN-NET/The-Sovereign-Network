@@ -23,6 +23,10 @@ pub use crate::types::*;
 pub use crate::discovery::*;
 pub use crate::relays::*;
 
+// MTU and Fragmentation utilities
+pub use crate::mtu::{Protocol, BLE_MIN_MTU, BLE_TYPICAL_MTU, BLE_MAX_MTU, BLE_CHUNK_SIZE};
+pub use crate::fragmentation::{fragment_message, reassemble_message, FragmentReassembler, Fragment, FragmentHeader};
+
 // Unified Peer Identity System (replaces separate NodeId, PeerId, PublicKey systems)
 pub use crate::identity::{UnifiedPeerId, PeerIdMapper, PeerMapperConfig};
 
@@ -84,6 +88,8 @@ pub mod mesh;
 pub mod messaging;
 pub mod discovery;
 pub mod relays;
+pub mod mtu; // MTU constants
+pub mod fragmentation; // Message fragmentation and reassembly
 
 pub mod routing;
 pub mod protocols;

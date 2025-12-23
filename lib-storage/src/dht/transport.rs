@@ -104,13 +104,18 @@ pub trait DhtTransport: Send + Sync {
 
     /// Get maximum transmission unit for this transport
     fn mtu(&self) -> usize {
+        // Use centralized MTU constants from lib-network
+        use lib_network::mtu::{
+            UDP_MTU, BLE_MAX_MTU, WIFI_DIRECT_MTU, LORAWAN_MAX_PAYLOAD, QUIC_MTU, MESH_MTU
+        };
+        
         match self.local_peer_id() {
-            PeerId::Udp(_) => 1400,        // UDP mesh default
-            PeerId::Bluetooth(_) => 512,   // BLE MTU minus overhead
-            PeerId::WiFiDirect(_) => 1400, // Similar to UDP
-            PeerId::LoRaWAN(_) => 242,     // LoRaWAN SF7 max payload
-            PeerId::Quic(_) => 1200,       // QUIC recommended MTU
-            PeerId::Mesh(_) => 65536,      // Mesh handles fragmentation
+            PeerId::Udp(_) => UDP_MTU,
+            PeerId::Bluetooth(_) => BLE_MAX_MTU,
+            PeerId::WiFiDirect(_) => WIFI_DIRECT_MTU,
+            PeerId::LoRaWAN(_) => LORAWAN_MAX_PAYLOAD,
+            PeerId::Quic(_) => QUIC_MTU,
+            PeerId::Mesh(_) => MESH_MTU,
         }
     }
 
