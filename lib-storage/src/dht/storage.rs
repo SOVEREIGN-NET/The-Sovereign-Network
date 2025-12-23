@@ -1322,12 +1322,12 @@ impl DhtStorage {
             if let Some(queued_msg) = self.messaging.get_next_message() {
                 match network.send_message(&queued_msg.target_node, queued_msg.message.clone()).await {
                     Ok(_) => {
-                        println!(" Sent message {} to {}", 
-                                queued_msg.message.message_id, 
+                        debug!("Sent message {} to {}",
+                                queued_msg.message.message_id,
                                 hex::encode(&queued_msg.target_node.peer.node_id().as_bytes()[..4]));
                     }
                     Err(e) => {
-                        println!("Failed to send message: {}", e);
+                        warn!("Failed to send message: {}", e);
                         self.messaging.mark_message_failed(queued_msg);
                     }
                 }
@@ -1337,10 +1337,10 @@ impl DhtStorage {
             let should_continue = match network.receive_message().await {
                 Ok((message, sender_addr)) => {
                     // Log incoming message with sender info
-                    println!("Received message {} from {}", 
-                            message.message_id, 
+                    debug!("Received message {} from {}",
+                            message.message_id,
                             sender_addr);
-                    
+
                     if let Ok(response) = self.messaging.handle_incoming(message.clone()).await {
                         if let Some(response_msg) = response {
                             // Send response back
@@ -1349,22 +1349,31 @@ impl DhtStorage {
                             }
                         }
                     }
-                    
+
                     // Put network back before handling storage message
                     self.network = Some(network);
-                    
+
                     // Handle storage-specific messages (now self is available)
                     if let Err(e) = self.handle_storage_message(message).await {
-                        eprintln!("Failed to handle storage message: {}", e);
+                        warn!("Failed to handle storage message: {}", e);
                     }
-                    
+
                     true // Continue processing
                 }
                 Err(e) => {
                     // Put network back
                     self.network = Some(network);
-                    // Log network error and continue with delay
-                    eprintln!("Network receive error: {}", e);
+
+                    // Distinguish between expected timeouts and actual errors
+                    // Timeouts are normal during idle periods, so log at debug level
+                    if e.to_string().contains("deadline has elapsed") {
+                        // Expected timeout - log at debug level
+                        debug!("Network receive timeout (no incoming messages): {}", e);
+                    } else {
+                        // Actual network error - log at warn level
+                        warn!("Network receive error: {}", e);
+                    }
+
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     true
                 }
