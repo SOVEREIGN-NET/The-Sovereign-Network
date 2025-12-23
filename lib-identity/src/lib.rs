@@ -30,6 +30,7 @@ pub mod auth;
 pub mod economics;
 pub mod integration;
 pub mod verification;
+pub mod staking;
 
 // ============================================================================
 // PUBLIC API EXPORTS
@@ -154,6 +155,16 @@ pub use auth::{
     PasswordValidation,  // ✓ Password validation results
     PasswordStrength,    // ✓ Password strength levels (Weak, Medium, Strong)
     SessionToken,        // ✓ Session tokens
+};
+
+// Staking module - Stake tiers and management
+pub use staking::{
+    StakeTier,              // ✓ Stake tier levels (None, Citizenship, DaoFounder, Validator)
+    UnifiedStakeManager,    // ✓ Stake management with tier calculation
+    StakeRecord,            // ✓ Individual stake record
+    StakeEntry,             // ✓ Individual stake entry
+    WithdrawalResult,       // ✓ Withdrawal operation result
+    WithdrawalWarning,      // ✓ Tier downgrade warning
 };
 
 // ----------------------------------------------------------------------------
