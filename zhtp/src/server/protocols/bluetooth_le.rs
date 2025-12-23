@@ -212,7 +212,7 @@ impl BluetoothRouter {
                             let ble_connection = lib_network::protocols::bluetooth::BluetoothConnection {
                                 peer_id: handshake.node_id.to_string(),
                                 address: gatt_address.clone(),
-                                mtu: 247,  // Default BLE MTU
+                                mtu: lib_network::mtu::BLE_TYPICAL_MTU as u16,  // Use centralized MTU constant
                                 rssi: -50, // Placeholder RSSI
                                 connected_at: std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)

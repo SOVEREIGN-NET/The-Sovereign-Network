@@ -952,7 +952,7 @@ impl DhtTransport for MeshDhtTransport {
     }
 
     fn mtu(&self) -> usize {
-        1200
+        lib_network::mtu::QUIC_MTU
     }
 
     fn typical_latency_ms(&self) -> u32 {

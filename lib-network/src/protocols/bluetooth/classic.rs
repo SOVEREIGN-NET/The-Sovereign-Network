@@ -1071,11 +1071,17 @@ impl BluetoothClassicProtocol {
         if message.len() <= mtu {
             self.transmit_rfcomm_packet(message, target_address).await?;
         } else {
-            // Fragment message (but with much larger chunks than BLE)
-            let chunks: Vec<&[u8]> = message.chunks(mtu).collect();
-            for (i, chunk) in chunks.iter().enumerate() {
-                info!("Sending RFCOMM fragment {}/{} ({} bytes)", i + 1, chunks.len(), chunk.len());
-                self.transmit_rfcomm_packet(chunk, target_address).await?;
+            // Fragment message using centralized fragmentation
+            use crate::fragmentation::fragment_message;
+            let chunk_size = mtu.saturating_sub(8); // Leave room for fragment headers
+            let fragments = fragment_message(message, chunk_size);
+            
+            info!("Fragmenting RFCOMM message into {} parts", fragments.len());
+            
+            for (i, fragment) in fragments.iter().enumerate() {
+                let wire_bytes = fragment.to_bytes();
+                info!("Sending RFCOMM fragment {}/{} ({} bytes)", i + 1, fragments.len(), wire_bytes.len());
+                self.transmit_rfcomm_packet(&wire_bytes, target_address).await?;
                 
                 // Minimal delay for flow control (RFCOMM handles this better than BLE)
                 tokio::time::sleep(tokio::time::Duration::from_micros(500)).await;
