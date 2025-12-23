@@ -16,6 +16,11 @@ use super::core::MeshRouter;
 
 impl MeshRouter {
     /// Set the blockchain broadcast receiver and start processing task
+    /// 
+    /// ⚠️ TICKET 2.6 TODO: Refactor this to accept Arc<Self> instead of &self
+    /// Current implementation bypasses MeshRouter routing in the spawned task because
+    /// the task needs 'static lifetime. Once refactored to take Arc<Self>, this will
+    /// use mesh_router.broadcast_to_peers() which now routes through send_with_routing().
     pub async fn set_broadcast_receiver(
         &self, 
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<lib_blockchain::BlockchainBroadcastMessage>
@@ -28,6 +33,9 @@ impl MeshRouter {
         let quic_protocol = self.quic_protocol.clone();
         let broadcast_metrics = self.broadcast_metrics.clone();
         let identity_manager = self.identity_manager.clone();
+        
+        // TODO TICKET 2.6: Once refactored to Arc<Self>, clone mesh_router here
+        // let mesh_router = Arc::clone(self);
         
         // Spawn task to process broadcast messages from blockchain
         tokio::spawn(async move {
@@ -86,6 +94,8 @@ impl MeshRouter {
                         };
                         
                         // Broadcast to all connected peers via QUIC
+                        // ⚠️ TICKET 2.6 BYPASS: Direct protocol call - will be fixed when set_broadcast_receiver
+                        // accepts Arc<Self> and can use mesh_router.broadcast_to_peers()
                         let conns = connections.read().await;
                         let mut success_count = 0;
                         
@@ -171,6 +181,8 @@ impl MeshRouter {
                         };
                         
                         // Broadcast to all connected peers
+                        // ⚠️ TICKET 2.6 BYPASS: Direct protocol call - will be fixed when set_broadcast_receiver
+                        // accepts Arc<Self> and can use mesh_router.broadcast_to_peers()
                         let conns = connections.read().await;
                         let mut success_count = 0;
                         
@@ -276,95 +288,86 @@ impl MeshRouter {
     }
     
     /// Send a mesh message to a specific peer
+    /// ✅ TICKET 2.6 FIX: Route through MeshRouter.send_with_routing() instead of direct protocol calls
+    /// This ensures all messages are logged and follow the standard routing path with identity verification
     pub async fn send_to_peer(&self, peer_id: &PublicKey, message: ZhtpMeshMessage) -> Result<()> {
-        info!("📤 Sending message directly to peer {:?}",
+        info!("📤 Routing message to peer {:?}",
               hex::encode(&peer_id.key_id[0..8.min(peer_id.key_id.len())]));
 
-        // Ticket #146: Convert PublicKey to UnifiedPeerId for HashMap lookup
-        let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_id.clone());
-
-        // Get peer's connection info (Ticket #149: Use PeerRegistry)
-        let connections = self.connections.read().await;
-        let peer_entry = connections.get(&unified_peer)
-            .ok_or_else(|| anyhow::anyhow!("Peer not found in connections"))?;
+        // Get our own public key for routing (sender identification)
+        let our_pubkey = match self.get_sender_public_key().await {
+            Ok(pk) => pk,
+            Err(e) => {
+                warn!("Failed to get sender public key: {}", e);
+                return Err(anyhow::anyhow!("Cannot route without sender identity: {}", e));
+            }
+        };
         
-        let peer_address = peer_entry.endpoints.first()
-            .map(|endpoint| endpoint.address.to_address_string())
-            .ok_or_else(|| anyhow::anyhow!("Peer has no address"))?;
-        
-        // Serialize message
+        // Serialize message for size tracking
         let serialized = bincode::serialize(&message)
             .context("Failed to serialize message")?;
         
         // Track bytes sent for performance metrics
         self.track_bytes_sent(serialized.len() as u64).await;
         
-        // Send based on protocol (Ticket #149: Use PeerRegistry)
-        // Use first protocol from active_protocols
-        if let Some(protocol) = peer_entry.active_protocols.first() {
-            match protocol {
-                NetworkProtocol::QUIC => {
-                    if let Some(quic) = self.quic_protocol.read().await.as_ref() {
-                        quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message).await
-                            .context("Failed to send QUIC message")?;
-                        info!("✅ Message sent via QUIC to peer {:?}", &peer_entry.peer_id.public_key().key_id[..8]);
-                    } else {
-                        return Err(anyhow::anyhow!("QUIC protocol not initialized"));
-                    }
-                }
-                NetworkProtocol::BluetoothLE => {
-                    warn!("Bluetooth LE protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("Bluetooth LE not supported"));
-                }
-                NetworkProtocol::BluetoothClassic => {
-                    warn!("Bluetooth Classic protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("Bluetooth Classic not supported"));
-                }
-                NetworkProtocol::WiFiDirect => {
-                    warn!("WiFi Direct protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("WiFi Direct not supported"));
-                }
-                NetworkProtocol::LoRaWAN => {
-                    warn!("LoRaWAN protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("LoRaWAN not supported"));
-                }
-                NetworkProtocol::Satellite => {
-                    warn!("Satellite protocol not supported for direct message sending");
-                    return Err(anyhow::anyhow!("Satellite not supported"));
-                }
-                _ => {
-                    warn!("Protocol {:?} not supported for direct message sending", protocol);
-                    return Err(anyhow::anyhow!("Protocol not supported"));
-                }
+        // ✅ Route through MeshRouter's routing layer instead of direct protocol calls
+        // This provides:
+        // - Identity verification
+        // - Message logging
+        // - Multi-hop routing support
+        // - Protocol-agnostic delivery
+        match self.send_with_routing(message, peer_id, &our_pubkey).await {
+            Ok(message_id) => {
+                info!("✅ Message routed successfully (ID: {}, dest: {:?})",
+                      message_id, &peer_id.key_id[..8]);
+                Ok(())
             }
-        } else {
-            return Err(anyhow::anyhow!("No active protocols found for peer"));
+            Err(e) => {
+                warn!("❌ Failed to route message to peer {:?}: {}",
+                      &peer_id.key_id[..8], e);
+                Err(e)
+            }
         }
-        
-        Ok(())
     }
     
     /// Broadcast message to all connected peers
+    /// ✅ TICKET 2.6 FIX: Route through MeshRouter.send_with_routing() for each peer
+    /// This ensures all messages are logged and follow the standard routing path
     pub async fn broadcast_to_peers(&self, message: ZhtpMeshMessage) -> Result<usize> {
         let serialized = bincode::serialize(&message)
             .context("Failed to serialize message")?;
         
+        // Get our own public key for routing (sender identification)
+        let our_pubkey = match self.get_sender_public_key().await {
+            Ok(pk) => pk,
+            Err(e) => {
+                warn!("Failed to get sender public key for broadcast: {}", e);
+                return Err(anyhow::anyhow!("Cannot broadcast without sender identity: {}", e));
+            }
+        };
+        
         let connections = self.connections.read().await;
         let mut success_count = 0;
         
-        if let Some(quic) = self.quic_protocol.read().await.as_ref() {
-            for peer_entry in connections.all_peers() {
-                // Check if peer has QUIC protocol
-                if peer_entry.active_protocols.contains(&NetworkProtocol::QUIC) {
-                    if quic.send_to_peer(&peer_entry.peer_id.public_key().key_id, message.clone()).await.is_ok() {
-                        success_count += 1;
-                    }
+        // ✅ Route each message through MeshRouter instead of direct protocol calls
+        for peer_entry in connections.all_peers() {
+            let peer_pubkey = peer_entry.peer_id.public_key();
+            
+            // Use send_with_routing for proper logging and identity verification
+            match self.send_with_routing(message.clone(), &peer_pubkey, &our_pubkey).await {
+                Ok(_message_id) => {
+                    success_count += 1;
+                }
+                Err(e) => {
+                    debug!("Failed to route broadcast to peer {:?}: {}", 
+                           &peer_pubkey.key_id[..8], e);
+                    // Continue with other peers even if one fails
                 }
             }
         }
         
         self.track_bytes_sent((serialized.len() * success_count) as u64).await;
-        info!("📤 Broadcast complete: {} peers reached", success_count);
+        info!("📤 Broadcast complete: {} peers reached (routed through MeshRouter)", success_count);
         
         Ok(success_count)
     }

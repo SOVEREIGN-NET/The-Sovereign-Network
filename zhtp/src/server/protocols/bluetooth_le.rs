@@ -277,11 +277,16 @@ impl BluetoothRouter {
                                                     start_height: *start_height,
                                                 };
                                                 
-                                                // Send response back via BLE
-                                                if let Err(e) = mesh_router_for_gatt.send_to_peer(requester, response).await {
-                                                    warn!("Failed to send HeadersResponse via GATT: {}", e);
+                                                // ✅ TICKET 2.6 FIX: Route through MeshRouter instead of direct send
+                                                // This ensures all messages are logged and follow standard routing path
+                                                if let Err(e) = mesh_router_for_gatt.send_with_routing(
+                                                    response,
+                                                    requester,
+                                                    requester, // Use requester as sender for reply routing
+                                                ).await {
+                                                    warn!("Failed to route HeadersResponse via MeshRouter: {}", e);
                                                 } else {
-                                                    info!("✅ GATT: HeadersResponse sent successfully");
+                                                    info!("✅ GATT: HeadersResponse routed successfully through MeshRouter");
                                                 }
                                             }
                                             Err(e) => {
