@@ -21,8 +21,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  .\run-node.ps1" -ForegroundColor White
     Write-Host "  or" -ForegroundColor White
     Write-Host "  .\target\release\zhtp.exe --config crates\zhtp\configs\test-node1.toml" -ForegroundColor White
-}
-else {
+} else {
     Write-Host "`n❌ Build failed!" -ForegroundColor Red
     exit 1
 }
