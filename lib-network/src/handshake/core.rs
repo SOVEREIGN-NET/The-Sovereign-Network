@@ -36,6 +36,9 @@ use lib_identity::ZhtpIdentity;
 use lib_crypto::KeyPair;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 
+// Use orchestrator helpers to reduce duplication
+use crate::handshake::orchestrator::{extract_payload, check_for_error};
+
 // SECURITY (P1-2 FIX): Use shared constant for message size limit
 use crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE;
 
@@ -138,8 +141,9 @@ impl<'a> NonceTracker<'a> {
 
 /// Send a handshake message over an async stream
 ///
+/// Uses unified framing module for consistent message serialization across all transports.
 /// Format: [4-byte length][message bytes]
-async fn send_message<S>(stream: &mut S, message: &HandshakeMessage) -> Result<(), HandshakeIoError>
+pub async fn send_message<S>(stream: &mut S, message: &HandshakeMessage) -> Result<(), HandshakeIoError>
 where
     S: AsyncWrite + Unpin,
 {
@@ -148,39 +152,24 @@ where
         .to_bytes()
         .map_err(|e| HandshakeIoError::Serialization(e.to_string()))?;
 
-    // Send length prefix (4 bytes, big-endian)
-    let len = bytes.len() as u32;
-    stream.write_u32(len).await?;
-
-    // Send message bytes
-    stream.write_all(&bytes).await?;
-    stream.flush().await?;
-
-    Ok(())
+    // Use unified framing module for length-prefixed transmission
+    crate::handshake::framing::send_framed(stream, &bytes)
+        .await
+        .map_err(|e| HandshakeIoError::Protocol(e.to_string()))
 }
 
 /// Receive a handshake message from an async stream
 ///
+/// Uses unified framing module for consistent message deserialization across all transports.
 /// Format: [4-byte length][message bytes]
-async fn recv_message<S>(stream: &mut S) -> Result<HandshakeMessage, HandshakeIoError>
+pub async fn recv_message<S>(stream: &mut S) -> Result<HandshakeMessage, HandshakeIoError>
 where
     S: AsyncRead + Unpin,
 {
-    // Read length prefix (4 bytes, big-endian)
-    let len = stream.read_u32().await?;
-
-    // SECURITY (P1-2 FIX): Use shared constant for consistent size limit across UHP
-    // Reject unreasonably large messages (>1MB)
-    if len as usize > MAX_HANDSHAKE_MESSAGE_SIZE {
-        return Err(HandshakeIoError::Protocol(format!(
-            "Message too large: {} bytes (max: {})",
-            len, MAX_HANDSHAKE_MESSAGE_SIZE
-        )));
-    }
-
-    // Read message bytes
-    let mut bytes = vec![0u8; len as usize];
-    stream.read_exact(&mut bytes).await?;
+    // Use unified framing module for length-prefixed reception
+    let bytes = crate::handshake::framing::recv_framed(stream)
+        .await
+        .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
     // Deserialize message
     HandshakeMessage::from_bytes(&bytes)
@@ -241,21 +230,14 @@ where
 
     // 3. Receive ServerHello
     let server_msg = recv_message(stream).await?;
-    let server_hello = match server_msg.payload {
-        HandshakePayload::ServerHello(sh) => sh,
-        HandshakePayload::Error(err) => {
-            return Err(HandshakeIoError::Protocol(format!(
-                "Server error: {}",
-                err.message
-            )));
+    check_for_error(&server_msg)?;
+    let server_hello = extract_payload(&server_msg, "ServerHello", |payload| {
+        if let HandshakePayload::ServerHello(sh) = payload {
+            Some(sh.clone())
+        } else {
+            None
         }
-        other => {
-            return Err(HandshakeIoError::UnexpectedMessageType {
-                expected: "ServerHello".to_string(),
-                got: format!("{:?}", other),
-            });
-        }
-    };
+    })?;
 
     // 4. Verify server signature
     server_hello
@@ -351,15 +333,13 @@ where
 
     // 1. Receive ClientHello
     let client_msg = recv_message(stream).await?;
-    let client_hello = match client_msg.payload {
-        HandshakePayload::ClientHello(ch) => ch,
-        other => {
-            return Err(HandshakeIoError::UnexpectedMessageType {
-                expected: "ClientHello".to_string(),
-                got: format!("{:?}", other),
-            });
+    let client_hello = extract_payload(&client_msg, "ClientHello", |payload| {
+        if let HandshakePayload::ClientHello(ch) = payload {
+            Some(ch.clone())
+        } else {
+            None
         }
-    };
+    })?;
 
     // 2. Verify client signature
     client_hello
@@ -385,21 +365,14 @@ where
 
     // 7. Receive ClientFinish
     let finish_msg = recv_message(stream).await?;
-    let client_finish = match finish_msg.payload {
-        HandshakePayload::ClientFinish(cf) => cf,
-        HandshakePayload::Error(err) => {
-            return Err(HandshakeIoError::Protocol(format!(
-                "Client error: {}",
-                err.message
-            )));
+    check_for_error(&finish_msg)?;
+    let client_finish = extract_payload(&finish_msg, "ClientFinish", |payload| {
+        if let HandshakePayload::ClientFinish(cf) = payload {
+            Some(cf.clone())
+        } else {
+            None
         }
-        other => {
-            return Err(HandshakeIoError::UnexpectedMessageType {
-                expected: "ClientFinish".to_string(),
-                got: format!("{:?}", other),
-            });
-        }
-    };
+    })?;
 
     // 8. Verify client signature on finish
     client_finish

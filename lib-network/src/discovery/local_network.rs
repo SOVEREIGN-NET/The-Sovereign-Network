@@ -10,6 +10,7 @@ use tokio::time::{Duration, interval};
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 use crate::network_utils::get_local_ip;
+use crate::socket_utils::enable_socket_reuse;
 
 /// Multicast address for ZHTP local discovery (224.0.0.251 is mDNS standard)
 const ZHTP_MULTICAST_ADDR: &str = "224.0.1.75"; // Custom ZHTP multicast address
@@ -112,29 +113,7 @@ async fn broadcast_announcements(node_id: Uuid, mesh_port: u16) -> Result<()> {
     // Bind to the multicast port with SO_REUSEADDR to allow multiple processes
     use socket2::{Socket, Domain, Type, Protocol};
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-    socket.set_reuse_address(true)?;
-
-    // Set SO_REUSEPORT on platforms that support it (Linux, BSD)
-    // This allows multiple sockets to bind to the same port for load balancing
-    #[cfg(all(unix, not(target_os = "solaris"), not(target_os = "illumos")))]
-    {
-        use std::os::fd::AsRawFd;
-        let fd = socket.as_raw_fd();
-        unsafe {
-            let optval: libc::c_int = 1;
-            let ret = libc::setsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_REUSEPORT,
-                &optval as *const _ as *const libc::c_void,
-                std::mem::size_of_val(&optval) as libc::socklen_t,
-            );
-            if ret != 0 {
-                // Non-fatal: SO_REUSEPORT is optional optimization
-                eprintln!("Warning: Failed to set SO_REUSEPORT: {}", std::io::Error::last_os_error());
-            }
-        }
-    }
+    enable_socket_reuse(&socket)?;
     
     // Bind to the multicast port (not ephemeral) for proper multicast routing
     socket.bind(&format!("0.0.0.0:{}", ZHTP_MULTICAST_PORT).parse::<std::net::SocketAddr>()?.into())?;
@@ -209,29 +188,7 @@ async fn listen_for_announcements(
     // This lets both the persistent listener and temporary discovery scans coexist
     use socket2::{Socket, Domain, Type, Protocol};
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-    socket.set_reuse_address(true)?;
-
-    // Set SO_REUSEPORT on platforms that support it (Linux, BSD)
-    // This allows multiple sockets to bind to the same port for load balancing
-    #[cfg(all(unix, not(target_os = "solaris"), not(target_os = "illumos")))]
-    {
-        use std::os::fd::AsRawFd;
-        let fd = socket.as_raw_fd();
-        unsafe {
-            let optval: libc::c_int = 1;
-            let ret = libc::setsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_REUSEPORT,
-                &optval as *const _ as *const libc::c_void,
-                std::mem::size_of_val(&optval) as libc::socklen_t,
-            );
-            if ret != 0 {
-                // Non-fatal: SO_REUSEPORT is optional optimization
-                eprintln!("Warning: Failed to set SO_REUSEPORT: {}", std::io::Error::last_os_error());
-            }
-        }
-    }
+    enable_socket_reuse(&socket)?;
     socket.bind(&format!("0.0.0.0:{}", ZHTP_MULTICAST_PORT).parse::<std::net::SocketAddr>()?.into())?;
     socket.set_nonblocking(true)?;
     let socket: std::net::UdpSocket = socket.into();

@@ -72,6 +72,12 @@ pub mod core;
 // Post-Quantum Cryptography support (Ticket #137)
 pub mod pqc;
 
+// Unified message framing for all transports
+pub mod framing;
+
+// Handshake orchestration helpers (reduces duplication)
+pub mod orchestrator;
+
 // Re-export security utilities
 pub use security::{
     TimestampConfig, SessionContext,
@@ -102,6 +108,11 @@ pub use pqc::{
 pub use core::{
     handshake_as_initiator, handshake_as_responder,
     NonceTracker, HandshakeIoError,
+};
+
+// Re-export message framing utilities
+pub use framing::{
+    send_framed, recv_framed, MAX_HANDSHAKE_MESSAGE_SIZE,
 };
 
 /// Default network identifier for handshake domain separation.
@@ -395,6 +406,28 @@ impl HandshakeContext {
         let mut updated = self.clone();
         updated.require_channel_binding = required;
         updated
+    }
+
+    /// Composite builder for client-side handshake with transport configuration
+    ///
+    /// Combines common patterns: roles + channel binding + transport capability + binding required
+    /// This eliminates repeated 4-method chains across TCP, QUIC, and other transports
+    pub fn for_client_with_transport(&self, binding: Vec<u8>, transport: &str) -> Self {
+        self.with_roles(HandshakeRole::Client, HandshakeRole::Server)
+            .with_channel_binding(binding)
+            .with_required_capabilities(vec![transport.to_string()])
+            .with_channel_binding_required(true)
+    }
+
+    /// Composite builder for server-side handshake with transport configuration
+    ///
+    /// Combines common patterns: roles + channel binding + transport capability + binding required
+    /// This eliminates repeated 4-method chains across TCP, QUIC, and other transports
+    pub fn for_server_with_transport(&self, binding: Vec<u8>, transport: &str) -> Self {
+        self.with_roles(HandshakeRole::Server, HandshakeRole::Client)
+            .with_channel_binding(binding)
+            .with_required_capabilities(vec![transport.to_string()])
+            .with_channel_binding_required(true)
     }
 
     fn require_channel_binding(&self) -> Result<()> {

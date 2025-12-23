@@ -69,6 +69,9 @@ pub use crate::handshake::{
 };
 use lib_crypto::KeyPair;
 
+// Use orchestrator helpers to reduce duplication
+use crate::handshake::orchestrator::{extract_payload, check_for_error};
+
 // SECURITY (P1-2 FIX): Use shared constant from constants module
 // Ensures consistency across all UHP implementations (1 MB limit)
 use crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE;
@@ -138,11 +141,7 @@ pub async fn handshake_as_initiator(
     // Apply timeout to entire handshake
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         let binding = derive_channel_binding_from_addrs(stream.local_addr()?, stream.peer_addr()?);
-        let ctx = ctx
-            .with_roles(HandshakeRole::Client, HandshakeRole::Server)
-            .with_channel_binding(binding)
-            .with_required_capabilities(vec!["tcp".to_string()])
-            .with_channel_binding_required(true);
+        let ctx = ctx.for_client_with_transport(binding, "tcp");
 
         // Step 1: Create and send ClientHello
         let capabilities = HandshakeCapabilities::default();
@@ -162,19 +161,19 @@ pub async fn handshake_as_initiator(
         // Step 2: Receive and verify ServerHello
         let server_hello_bytes = receive_message(stream).await
             .map_err(|e| anyhow!("Failed to receive ServerHello: {}", e))?;
-        
+
         let server_hello_msg = HandshakeMessage::from_bytes(&server_hello_bytes)
             .map_err(|e| anyhow!("Failed to deserialize ServerHello: {}", e))?;
-        
-        let server_hello = match server_hello_msg.payload {
-            HandshakePayload::ServerHello(sh) => sh,
-            HandshakePayload::Error(err) => {
-                return Err(anyhow!("Server rejected handshake: {} (code: {})", err.message, err.code));
+
+        check_for_error(&server_hello_msg)?;
+        let server_hello = extract_payload(&server_hello_msg, "ServerHello", |payload| {
+            if let HandshakePayload::ServerHello(sh) = payload {
+                Some(sh.clone())
+            } else {
+                None
             }
-            _ => {
-                return Err(anyhow!("Expected ServerHello, got different message type"));
-            }
-        };
+        })
+        .map_err(|e| anyhow!("{}", e))?;
         
         tracing::debug!("Received ServerHello from {} ({} bytes)", 
             server_hello.identity.did, server_hello_bytes.len());
@@ -285,25 +284,23 @@ pub async fn handshake_as_responder(
     // Apply timeout to entire handshake
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         let binding = derive_channel_binding_from_addrs(stream.local_addr()?, stream.peer_addr()?);
-        let ctx = ctx
-            .with_roles(HandshakeRole::Server, HandshakeRole::Client)
-            .with_channel_binding(binding)
-            .with_required_capabilities(vec!["tcp".to_string()])
-            .with_channel_binding_required(true);
+        let ctx = ctx.for_server_with_transport(binding, "tcp");
 
         // Step 1: Receive and verify ClientHello
         let client_hello_bytes = receive_message(stream).await
             .map_err(|e| anyhow!("Failed to receive ClientHello: {}", e))?;
-        
+
         let client_hello_msg = HandshakeMessage::from_bytes(&client_hello_bytes)
             .map_err(|e| anyhow!("Failed to deserialize ClientHello: {}", e))?;
-        
-        let client_hello = match client_hello_msg.payload {
-            HandshakePayload::ClientHello(ch) => ch,
-            _ => {
-                return Err(anyhow!("Expected ClientHello, got different message type"));
+
+        let client_hello = extract_payload(&client_hello_msg, "ClientHello", |payload| {
+            if let HandshakePayload::ClientHello(ch) = payload {
+                Some(ch.clone())
+            } else {
+                None
             }
-        };
+        })
+        .map_err(|e| anyhow!("{}", e))?;
         
         tracing::debug!("Received ClientHello from {} ({} bytes)", 
             client_hello.identity.did, client_hello_bytes.len());
@@ -332,19 +329,19 @@ pub async fn handshake_as_responder(
         // Step 3: Receive and verify ClientFinish
         let client_finish_bytes = receive_message(stream).await
             .map_err(|e| anyhow!("Failed to receive ClientFinish: {}", e))?;
-        
+
         let client_finish_msg = HandshakeMessage::from_bytes(&client_finish_bytes)
             .map_err(|e| anyhow!("Failed to deserialize ClientFinish: {}", e))?;
-        
-        let client_finish = match client_finish_msg.payload {
-            HandshakePayload::ClientFinish(cf) => cf,
-            HandshakePayload::Error(err) => {
-                return Err(anyhow!("Client rejected handshake: {} (code: {})", err.message, err.code));
+
+        check_for_error(&client_finish_msg)?;
+        let client_finish = extract_payload(&client_finish_msg, "ClientFinish", |payload| {
+            if let HandshakePayload::ClientFinish(cf) = payload {
+                Some(cf.clone())
+            } else {
+                None
             }
-            _ => {
-                return Err(anyhow!("Expected ClientFinish, got different message type"));
-            }
-        };
+        })
+        .map_err(|e| anyhow!("{}", e))?;
         
         tracing::debug!("Received ClientFinish from client ({} bytes)", client_finish_bytes.len());
         
@@ -400,32 +397,10 @@ pub async fn handshake_as_responder(
 /// - `Err(...)` - Network error or message too large
 ///
 /// # Protocol Compatibility
-/// Uses big-endian (network byte order) to match core.rs HandshakeIo implementation
+/// Uses unified framing module for consistency across all UHP implementations
 async fn send_message(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
-    // Validate message size
-    if data.len() > MAX_HANDSHAKE_MESSAGE_SIZE {
-        return Err(anyhow!(
-            "Message too large: {} bytes (max: {} bytes)",
-            data.len(),
-            MAX_HANDSHAKE_MESSAGE_SIZE
-        ));
-    }
-
-    // SECURITY (P1-1 FIX): Use big-endian (network byte order) to match core.rs
-    // This ensures compatibility across different UHP implementations
-    let len = data.len() as u32;
-    stream.write_u32(len).await
-        .map_err(|e| anyhow!("Failed to write message length: {}", e))?;
-
-    // Send message payload
-    stream.write_all(data).await
-        .map_err(|e| anyhow!("Failed to write message payload: {}", e))?;
-
-    // Flush to ensure immediate delivery
-    stream.flush().await
-        .map_err(|e| anyhow!("Failed to flush stream: {}", e))?;
-
-    Ok(())
+    // Use unified framing module for consistent message serialization
+    crate::handshake::framing::send_framed(stream, data).await
 }
 
 /// Receive a message from TCP with length-prefix framing
@@ -443,32 +418,10 @@ async fn send_message(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
 /// - `Err(...)` - Network error, invalid frame, or message too large
 ///
 /// # Protocol Compatibility
-/// Uses big-endian (network byte order) to match core.rs HandshakeIo implementation
+/// Uses unified framing module for consistency across all UHP implementations
 async fn receive_message(stream: &mut TcpStream) -> Result<Vec<u8>> {
-    // SECURITY (P1-1 FIX): Use big-endian (network byte order) to match core.rs
-    // This ensures compatibility across different UHP implementations
-    let len = stream.read_u32().await
-        .map_err(|e| anyhow!("Failed to read message length: {}", e))? as usize;
-
-    // Validate message size
-    if len > MAX_HANDSHAKE_MESSAGE_SIZE {
-        return Err(anyhow!(
-            "Message too large: {} bytes (max: {} bytes)",
-            len,
-            MAX_HANDSHAKE_MESSAGE_SIZE
-        ));
-    }
-
-    if len == 0 {
-        return Err(anyhow!("Invalid message length: 0 bytes"));
-    }
-
-    // Read message payload
-    let mut data = vec![0u8; len];
-    stream.read_exact(&mut data).await
-        .map_err(|e| anyhow!("Failed to read message payload: {}", e))?;
-
-    Ok(data)
+    // Use unified framing module for consistent message deserialization
+    crate::handshake::framing::recv_framed(stream).await
 }
 
 // ============================================================================

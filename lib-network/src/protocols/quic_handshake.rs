@@ -194,11 +194,7 @@ pub async fn handshake_as_initiator(
 ) -> Result<QuicHandshakeResult> {
     timeout(HANDSHAKE_TIMEOUT, async {
         let channel_binding = export_quic_channel_binding(conn)?;
-        let ctx = ctx
-            .with_roles(HandshakeRole::Client, HandshakeRole::Server)
-            .with_channel_binding(channel_binding)
-            .with_required_capabilities(vec!["quic".to_string()])
-            .with_channel_binding_required(true);
+        let ctx = ctx.for_client_with_transport(channel_binding, "quic");
 
         // Open dedicated bidirectional stream for handshake
         let (mut send, mut recv) = conn.open_bi().await
@@ -429,11 +425,7 @@ pub async fn handshake_as_responder(
 ) -> Result<QuicHandshakeResult> {
     timeout(HANDSHAKE_TIMEOUT, async {
         let channel_binding = export_quic_channel_binding(conn)?;
-        let ctx = ctx
-            .with_roles(HandshakeRole::Server, HandshakeRole::Client)
-            .with_channel_binding(channel_binding)
-            .with_required_capabilities(vec!["quic".to_string()])
-            .with_channel_binding_required(true);
+        let ctx = ctx.for_server_with_transport(channel_binding, "quic");
 
         // Accept dedicated bidirectional stream for handshake
         let (mut send, mut recv) = conn.accept_bi().await
@@ -730,55 +722,20 @@ fn compute_uhp_transcript_hash(
 
 /// Send a length-prefixed message over QUIC send stream
 ///
+/// Uses unified framing module for consistent message serialization.
 /// Wire format: [4-byte length (big-endian)][message bytes]
 async fn send_framed(send: &mut quinn::SendStream, data: &[u8]) -> Result<()> {
-    // Validate size
-    if data.len() > MAX_QUIC_HANDSHAKE_MSG {
-        return Err(anyhow!(
-            "Message too large: {} bytes (max: {})",
-            data.len(),
-            MAX_QUIC_HANDSHAKE_MSG
-        ));
-    }
-
-    // Send length prefix (4 bytes, big-endian / network byte order)
-    let len_bytes = (data.len() as u32).to_be_bytes();
-    send.write_all(&len_bytes).await
-        .context("Failed to write message length")?;
-
-    // Send message payload
-    send.write_all(data).await
-        .context("Failed to write message payload")?;
-
-    Ok(())
+    // Use unified framing module (supports QUIC streams via AsyncWrite trait)
+    crate::handshake::framing::send_framed(send, data).await
 }
 
 /// Receive a length-prefixed message from QUIC receive stream
 ///
+/// Uses unified framing module for consistent message deserialization.
 /// Wire format: [4-byte length (big-endian)][message bytes]
 async fn recv_framed(recv: &mut quinn::RecvStream) -> Result<Vec<u8>> {
-    // Read length prefix (4 bytes, big-endian)
-    let mut len_bytes = [0u8; 4];
-    recv.read_exact(&mut len_bytes).await
-        .context("Failed to read message length")?;
-
-    let len = u32::from_be_bytes(len_bytes) as usize;
-
-    // Validate size (DoS protection)
-    if len > MAX_QUIC_HANDSHAKE_MSG {
-        return Err(anyhow!(
-            "Message too large: {} bytes (max: {})",
-            len,
-            MAX_QUIC_HANDSHAKE_MSG
-        ));
-    }
-
-    // Read message bytes
-    let mut data = vec![0u8; len];
-    recv.read_exact(&mut data).await
-        .context("Failed to read message payload")?;
-
-    Ok(data)
+    // Use unified framing module (supports QUIC streams via AsyncRead trait)
+    crate::handshake::framing::recv_framed(recv).await
 }
 
 // ============================================================================
