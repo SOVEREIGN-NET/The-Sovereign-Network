@@ -64,7 +64,8 @@ pub use crate::handshake::{
     HandshakeContext, HandshakeResult, HandshakeCapabilities,
     ClientHello, ServerHello, ClientFinish,
     HandshakeMessage, HandshakePayload,
-    NonceCache, NegotiatedCapabilities,
+    NonceCache, NegotiatedCapabilities, HandshakeRole, HandshakeSessionInfo,
+    derive_channel_binding_from_addrs,
 };
 use lib_crypto::KeyPair;
 
@@ -136,9 +137,16 @@ pub async fn handshake_as_initiator(
 ) -> Result<HandshakeResult> {
     // Apply timeout to entire handshake
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let binding = derive_channel_binding_from_addrs(stream.local_addr()?, stream.peer_addr()?);
+        let ctx = ctx
+            .with_roles(HandshakeRole::Client, HandshakeRole::Server)
+            .with_channel_binding(binding)
+            .with_required_capabilities(vec!["tcp".to_string()])
+            .with_channel_binding_required(true);
+
         // Step 1: Create and send ClientHello
         let capabilities = HandshakeCapabilities::default();
-        let client_hello = ClientHello::new(identity, capabilities)
+        let client_hello = ClientHello::new(identity, capabilities, &ctx)
             .map_err(|e| anyhow!("Failed to create ClientHello: {}", e))?;
         
         let client_hello_msg = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
@@ -173,7 +181,7 @@ pub async fn handshake_as_initiator(
         
         // Verify ServerHello signature (includes mutual authentication of server)
         // This also validates NodeId, timestamp, nonce, and protocol version
-        server_hello.verify_signature(&client_hello.challenge_nonce, ctx)
+        server_hello.verify_signature(&client_hello.challenge_nonce, &ctx)
             .map_err(|e| anyhow!("ServerHello verification failed: {}", e))?;
         
         tracing::debug!("ServerHello signature verified successfully");
@@ -186,7 +194,7 @@ pub async fn handshake_as_initiator(
                 .ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
         
-        let client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, ctx)
+        let client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &ctx)
             .map_err(|e| anyhow!("Failed to create ClientFinish: {}", e))?;
         
         let client_finish_msg = HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish));
@@ -199,6 +207,9 @@ pub async fn handshake_as_initiator(
         tracing::debug!("Sent ClientFinish to server ({} bytes)", client_finish_bytes.len());
         
         // Step 4: Derive session key and build result
+        let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
+            .map_err(|e| anyhow!("Handshake session info mismatch: {}", e))?;
+
         let result = HandshakeResult::new(
             server_hello.identity.clone(),
             server_hello.negotiated.clone(),
@@ -207,6 +218,7 @@ pub async fn handshake_as_initiator(
             &identity.did,
             &server_hello.identity.did,
             client_hello.timestamp, // Use ClientHello timestamp for deterministic session key
+            &session_info,
         ).map_err(|e| anyhow!("Failed to derive session key: {}", e))?;
         
         tracing::info!("✅ Client handshake completed successfully with {}", server_hello.identity.did);
@@ -272,6 +284,13 @@ pub async fn handshake_as_responder(
 ) -> Result<HandshakeResult> {
     // Apply timeout to entire handshake
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let binding = derive_channel_binding_from_addrs(stream.local_addr()?, stream.peer_addr()?);
+        let ctx = ctx
+            .with_roles(HandshakeRole::Server, HandshakeRole::Client)
+            .with_channel_binding(binding)
+            .with_required_capabilities(vec!["tcp".to_string()])
+            .with_channel_binding_required(true);
+
         // Step 1: Receive and verify ClientHello
         let client_hello_bytes = receive_message(stream).await
             .map_err(|e| anyhow!("Failed to receive ClientHello: {}", e))?;
@@ -291,14 +310,14 @@ pub async fn handshake_as_responder(
         
         // Verify ClientHello signature
         // This validates NodeId, timestamp, nonce, and protocol version
-        client_hello.verify_signature(ctx)
+        client_hello.verify_signature(&ctx)
             .map_err(|e| anyhow!("ClientHello verification failed: {}", e))?;
         
         tracing::debug!("ClientHello signature verified successfully");
         
         // Step 2: Create and send ServerHello
         let capabilities = HandshakeCapabilities::default();
-        let server_hello = ServerHello::new(identity, capabilities, &client_hello)
+        let server_hello = ServerHello::new(identity, capabilities, &client_hello, &ctx)
             .map_err(|e| anyhow!("Failed to create ServerHello: {}", e))?;
         
         let server_hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
@@ -330,12 +349,19 @@ pub async fn handshake_as_responder(
         tracing::debug!("Received ClientFinish from client ({} bytes)", client_finish_bytes.len());
         
         // Verify ClientFinish signature
-        client_finish.verify_signature(&server_hello.response_nonce, &client_hello.identity.public_key)
+        client_finish.verify_signature_with_context(
+            &server_hello.response_nonce,
+            &client_hello.identity.public_key,
+            &ctx,
+        )
             .map_err(|e| anyhow!("ClientFinish verification failed: {}", e))?;
         
         tracing::debug!("ClientFinish signature verified successfully");
         
         // Step 4: Derive session key and build result
+        let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
+            .map_err(|e| anyhow!("Handshake session info mismatch: {}", e))?;
+
         let result = HandshakeResult::new(
             client_hello.identity.clone(),
             server_hello.negotiated.clone(),
@@ -344,6 +370,7 @@ pub async fn handshake_as_responder(
             &client_hello.identity.did,
             &identity.did,
             client_hello.timestamp, // Use ClientHello timestamp for deterministic session key
+            &session_info,
         ).map_err(|e| anyhow!("Failed to derive session key: {}", e))?;
         
         tracing::info!("✅ Server handshake completed successfully with {}", client_hello.identity.did);

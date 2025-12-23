@@ -281,7 +281,7 @@ impl Web4Client {
             &self.handshake_ctx,
         ).await.context("UHP+Kyber handshake failed")?;
 
-        let peer_did = handshake_result.peer_identity.did.clone();
+        let peer_did = handshake_result.verified_peer.identity.did.clone();
 
         // Verify node DID matches trust configuration
         if let Some(ref verifier) = self.trust_verifier {

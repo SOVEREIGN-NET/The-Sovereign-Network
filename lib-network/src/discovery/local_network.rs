@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use tokio::net::UdpSocket;
 use tokio::time::{Duration, interval};
-use tokio::io::AsyncWriteExt;
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 use crate::network_utils::get_local_ip;
@@ -31,29 +30,6 @@ pub struct NodeAnnouncement {
 /// Default QUIC port (9334)
 fn default_quic_port() -> u16 {
     9334
-}
-
-/// Mesh handshake sent over TCP after discovery (compact binary format)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MeshHandshake {
-    pub version: u8,
-    pub node_id: Uuid,
-    pub public_key: lib_crypto::PublicKey, // Actual cryptographic public key for peer identification
-    pub mesh_port: u16,
-    pub protocols: Vec<String>,
-    pub discovered_via: u8, // 0=multicast, 1=bluetooth, 2=wifi_direct, 3=manual
-    #[serde(default)]
-    pub capabilities: HandshakeCapabilities,
-}
-
-/// Protocol capabilities for hybrid negotiation
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct HandshakeCapabilities {
-    pub supports_bluetooth_classic: bool,  // Can upgrade to RFCOMM
-    pub supports_bluetooth_le: bool,       // BLE GATT available
-    pub supports_wifi_direct: bool,        // WiFi Direct capable
-    pub max_throughput: u32,               // Maximum bandwidth (bytes/sec)
-    pub prefers_high_throughput: bool,     // Prefer Classic over BLE
 }
 
 /// Start local network discovery service
@@ -294,6 +270,16 @@ async fn listen_for_announcements(
                             continue;
                         }
 
+                        if announcement.local_ip != addr.ip() {
+                            warn!(
+                                "Announcement IP mismatch from {}: announced {}, source {}",
+                                addr,
+                                announcement.local_ip,
+                                addr.ip()
+                            );
+                            continue;
+                        }
+
                         // SECURITY: Validate source IP matches announced local_ip
                         // Rejects spoofed multicast packets trying to force arbitrary QUIC connects (SSRF/scanning)
                         let source_ip = addr.ip();
@@ -318,7 +304,12 @@ async fn listen_for_announcements(
                         );
                         info!("   Mesh port: {}, QUIC port: {} (source validated)", announcement.mesh_port, announcement.quic_port);
                         info!("   Protocols: {:?}", announcement.protocols);
-                        info!("   Attempting QUIC connection...");
+
+                        if !announcement.protocols.iter().any(|p| p == "quic") {
+                            warn!("   Skipping peer without QUIC capability");
+                            continue;
+                        }
+                        info!("   QUIC capability asserted - passing to coordinator");
 
                         // Notify coordinator if callback provided (Phase 3 integration)
                         if let Some(ref callback) = peer_discovered_callback {
@@ -327,9 +318,7 @@ async fn listen_for_announcements(
                             callback(peer_addr, our_public_key.clone());
                             debug!("   ✓ Notified discovery coordinator (QUIC: {})", announcement.quic_port);
                         }
-
-                        // Attempt QUIC connection using the announced QUIC port
-                        attempt_connect_to_discovered_peer(&announcement, &our_public_key).await;
+                        // Discovery is hint-only; coordinator must perform verified handshake.
                     },
                     Err(e) => {
                         debug!("Invalid announcement format from {}: {}", addr, e);
@@ -342,133 +331,6 @@ async fn listen_for_announcements(
             }
         }
     }
-}
-
-/// Attempt QUIC connection to a newly discovered peer
-/// Uses QUIC (UDP port 9334) for secure, multiplexed mesh communication
-async fn attempt_connect_to_discovered_peer(announcement: &NodeAnnouncement, our_public_key: &lib_crypto::PublicKey) {
-    let peer_addr = format!("{}:{}", announcement.local_ip, announcement.quic_port);
-    info!(" Connecting to discovered ZHTP peer at {} via QUIC", peer_addr);
-
-    // Parse socket address for QUIC connection
-    let socket_addr: std::net::SocketAddr = match peer_addr.parse() {
-        Ok(addr) => addr,
-        Err(e) => {
-            warn!("Invalid peer address {}: {}", peer_addr, e);
-            return;
-        }
-    };
-
-    // Create a QUIC endpoint for discovery
-    // This uses insecure mode for initial peer discovery (proper auth happens in handshake)
-    let endpoint = match create_discovery_quic_endpoint().await {
-        Ok(ep) => ep,
-        Err(e) => {
-            warn!("Failed to create QUIC endpoint for discovery: {}", e);
-            return;
-        }
-    };
-
-    // Attempt QUIC connection to peer
-    match endpoint.connect(socket_addr, "zhtp") {
-        Ok(connecting) => {
-            match connecting.await {
-                Ok(quic_conn) => {
-                    info!(" QUIC connection established to peer {}", peer_addr);
-
-                    // Open a bidirectional stream for handshake
-                    match quic_conn.open_bi().await {
-                        Ok((mut send, mut recv)) => {
-                            // Create compact binary handshake
-                            let handshake = MeshHandshake {
-                                version: 1,
-                                node_id: announcement.node_id,
-                                public_key: our_public_key.clone(),
-                                mesh_port: announcement.mesh_port,
-                                protocols: announcement.protocols.clone(),
-                                discovered_via: 0, // 0 = local multicast discovery
-                                capabilities: HandshakeCapabilities::default(),
-                            };
-
-                            match bincode::serialize(&handshake) {
-                                Ok(handshake_bytes) => {
-                                    match send.write_all(&handshake_bytes).await {
-                                        Ok(_) => {
-                                            info!(" Binary mesh handshake sent to {} ({} bytes)",
-                                                peer_addr, handshake_bytes.len());
-
-                                            // Wait for acknowledgment from server (with timeout)
-                                            let mut ack_buf = [0u8; 8];
-                                            match tokio::time::timeout(
-                                                std::time::Duration::from_secs(5),
-                                                recv.read_exact(&mut ack_buf)
-                                            ).await {
-                                                Ok(Ok(())) => {
-                                                    info!(" Received acknowledgment from peer");
-                                                    info!(" Initial QUIC handshake complete - peer will initiate full auth");
-                                                }
-                                                Ok(Err(e)) => {
-                                                    warn!(" Error reading ack from peer: {}", e);
-                                                }
-                                                Err(_) => {
-                                                    warn!(" Timeout waiting for ack from peer");
-                                                }
-                                            }
-
-                                            // Close the stream (connection will remain open for peer's full auth)
-                                            drop(send);
-                                            debug!(" Closed initial discovery QUIC stream");
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to send handshake to {}: {}", peer_addr, e);
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("Failed to serialize handshake: {}", e);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed to open QUIC stream to {}: {}", peer_addr, e);
-                        }
-                    }
-
-                    // Close the QUIC connection after handshake
-                    quic_conn.close(quinn::VarInt::from_u32(0), b"discovery_handshake_complete");
-                }
-                Err(e) => {
-                    debug!("Could not establish QUIC connection to peer {} (may not be ready yet): {}", peer_addr, e);
-                }
-            }
-        }
-        Err(e) => {
-            warn!("Failed to initiate QUIC connection to {}: {}", peer_addr, e);
-        }
-    }
-
-    // Endpoint will be dropped and closed automatically
-    drop(endpoint);
-}
-
-/// Create a minimal QUIC endpoint for peer discovery
-///
-/// # Security Model
-/// NOTE: This QUIC connection is NOT used for trusted communication. Security is provided by:
-/// 1. Source IP validation (multicast source matches announced local_ip)
-/// 2. Port validation (only port 9334 accepted)
-/// 3. UHP+Kyber handshake that authenticates peer identity (runs AFTER QUIC connection)
-///
-/// The QUIC connection itself is ephemeral, used only to send/receive the handshake message.
-/// Real peer authentication happens in the subsequent UHP+Kyber exchange.
-/// Any TLS errors on the discovery connection are logged but don't block peer discovery.
-async fn create_discovery_quic_endpoint() -> Result<quinn::Endpoint> {
-    // Create client-only QUIC endpoint (bind to any available port)
-    // Uses default client configuration
-    let endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)
-        .map_err(|e| anyhow::anyhow!("Failed to create QUIC client endpoint: {}", e))?;
-
-    Ok(endpoint)
 }
 
 /// Discover ZHTP nodes on local network immediately
