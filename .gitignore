@@ -27,8 +27,10 @@ problems
 PROBLEMS_STATUS_REPORT.md
 PUSH_INSTRUCTIONS.md
 now/
-nonce_cache_wifi/        # RocksDB cache for WiFi nonce tracking
-nonce_cache_*/           # All nonce cache directories
+
+# RocksDB cache directories (runtime data)
+nonce_cache_wifi
+nonce_cache_*/
 
 # Local notes (not committed)
 LOCAL_NOTES.md
