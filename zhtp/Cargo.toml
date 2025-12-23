@@ -111,7 +111,7 @@ tempfile = "3.8"
 criterion = "0.5"
 
 [features]
-default = ["production", "full-blockchain", "windows-bluetooth"]  # Enable Windows Bluetooth by default
+default = ["production", "full-blockchain"]  # Platform-specific Bluetooth features must be enabled explicitly
 production = []
 development = ["tracing-subscriber/env-filter"]
 pure-mesh = []  # Pure mesh mode without TCP/IP fallback
