@@ -3518,3 +3518,109 @@ mod tests {
         assert!(result.is_ok());
     }
 }
+
+// ============================================================================
+// Protocol Trait Implementation
+// ============================================================================
+
+use async_trait::async_trait;
+use crate::protocols::{Protocol, ProtocolSession, PeerAddress, ProtocolCapabilities, PowerProfile, AuthScheme, CipherSuite, PqcMode, NetworkProtocol, CAPABILITY_VERSION};
+use crate::types::mesh_message::MeshMessageEnvelope;
+use anyhow::bail;
+
+#[async_trait]
+impl Protocol for WiFiDirectMeshProtocol {
+    async fn connect(&mut self, target: &PeerAddress) -> Result<ProtocolSession> {
+        debug!("WiFi Direct Protocol: Initiating connection to {:?}", target);
+        
+        // Extract device ID from PeerAddress
+        let _device_id = match target {
+            PeerAddress::DeviceId(dev_id) => dev_id.as_str(),
+            PeerAddress::IpSocket(validated) => {
+                // Also accept socket address for WiFi Direct
+                &validated.inner().to_string()
+            }
+            _ => bail!("WiFi Direct protocol requires DeviceId or IpSocket, got {:?}", target),
+        };
+
+        // TODO: Perform P2P negotiation and UHP handshake
+        // Should use GO negotiation, mDNS discovery, and UHP over TCP
+        bail!("WiFi Direct connect: Requires P2P negotiation and UHP handshake")
+    }
+
+    async fn accept(&mut self) -> Result<ProtocolSession> {
+        debug!("WiFi Direct Protocol: Waiting for incoming connection");
+        
+        // TODO: Accept P2P connection request and perform UHP handshake
+        bail!("WiFi Direct accept: Requires P2P group formation and UHP handshake")
+    }
+
+    fn validate_session(&self, session: &ProtocolSession) -> Result<()> {
+        // Check protocol type matches
+        if *session.protocol() != NetworkProtocol::WiFiDirect {
+            bail!("Session protocol mismatch: expected WiFiDirect, got {:?}", session.protocol());
+        }
+
+        // TODO: Validate session using protocol's MAC key
+        Ok(())
+    }
+
+    async fn send_message(
+        &self,
+        session: &ProtocolSession,
+        _envelope: &MeshMessageEnvelope,
+    ) -> Result<()> {
+        // Validate session first
+        self.validate_session(session)?;
+
+        // TODO: Encrypt and send over WiFi Direct TCP connection
+        // Use ChaCha20Poly1305 with session keys
+        bail!("WiFi Direct send_message: Requires TCP socket write with ChaCha20 encryption")
+    }
+
+    async fn receive_message(&self, session: &ProtocolSession) -> Result<MeshMessageEnvelope> {
+        // Validate session first
+        self.validate_session(session)?;
+
+        // TODO: Receive and decrypt from WiFi Direct TCP connection
+        // Validate replay protection via sequence numbers
+        bail!("WiFi Direct receive_message: Requires TCP socket read with ChaCha20 decryption")
+    }
+
+    async fn rekey_session(&mut self, session: &mut ProtocolSession) -> Result<()> {
+        debug!("WiFi Direct Protocol: Rekeying session {:?}", session.session_id());
+
+        // TODO: Perform ephemeral key exchange for forward secrecy
+        bail!("WiFi Direct rekey_session: Requires UHP ephemeral key exchange over TCP")
+    }
+
+    fn capabilities(&self) -> ProtocolCapabilities {
+        ProtocolCapabilities {
+            version: CAPABILITY_VERSION,
+            mtu: 1500, // Standard Ethernet MTU
+            throughput_mbps: 250.0, // WiFi Direct ~250 Mbps typical
+            latency_ms: 10,
+            range_meters: Some(200), // WiFi Direct range ~200m
+            power_profile: PowerProfile::High,
+            reliable: true, // TCP-based
+            requires_internet: false,
+            auth_schemes: vec![AuthScheme::MutualHandshake],
+            encryption: Some(CipherSuite::ChaCha20Poly1305),
+            pqc_mode: PqcMode::None, // Limited PQC support on WiFi Direct
+            replay_protection: true,
+            identity_binding: true,
+            integrity_only: false,
+            forward_secrecy: true,
+        }
+    }
+
+    fn protocol_type(&self) -> NetworkProtocol {
+        NetworkProtocol::WiFiDirect
+    }
+
+    fn is_available(&self) -> bool {
+        // Check if WiFi Direct is enabled
+        let enabled = self.enabled.blocking_read();
+        *enabled
+    }
+}

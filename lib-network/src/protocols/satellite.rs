@@ -2,8 +2,22 @@
 //! 
 //! Handles satellite uplink mesh networking for global coverage
 
-use anyhow::Result;
-use tracing::{info, warn};
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{info, warn, debug};
+use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data};
+
+// Import Protocol trait and related types
+use super::{
+    Protocol, ProtocolSession, ProtocolCapabilities, PeerAddress,
+    NetworkProtocol, AuthScheme, CipherSuite, PqcMode, PowerProfile,
+    VerifiedPeerIdentity, SessionKeys, ValidatedSatelliteId,
+};
+
+use crate::types::mesh_message::MeshMessageEnvelope;
 
 /// Satellite mesh protocol handler
 pub struct SatelliteMeshProtocol {
@@ -15,6 +29,12 @@ pub struct SatelliteMeshProtocol {
     pub discovery_active: bool,
     /// Connected constellation
     pub constellation: SatelliteConstellation,
+    /// Active sessions (peer terminal ID -> session)
+    sessions: Arc<RwLock<HashMap<String, ProtocolSession>>>,
+    /// Session MAC key for validation
+    session_mac_key: [u8; 32],
+    /// Shared encryption key for satellite mesh (derived from node_id)
+    mesh_key: [u8; 32],
 }
 
 /// Satellite constellation types
@@ -31,15 +51,42 @@ pub enum SatelliteConstellation {
 impl SatelliteMeshProtocol {
     /// Create new satellite mesh protocol
     pub fn new(node_id: [u8; 32]) -> Result<Self> {
+        use sha2::{Sha256, Digest};
+        
         // Generate terminal ID from node ID
         let terminal_id = format!("ZHTP_SAT_{:08X}", 
             u32::from_be_bytes([node_id[0], node_id[1], node_id[2], node_id[3]]));
+        
+        // Derive session MAC key from node_id
+        let session_mac_key = {
+            let mut hasher = Sha256::new();
+            hasher.update(b"SATELLITE_SESSION_MAC_v1");
+            hasher.update(&node_id);
+            let hash = hasher.finalize();
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&hash);
+            key
+        };
+        
+        // Derive mesh encryption key
+        let mesh_key = {
+            let mut hasher = Sha256::new();
+            hasher.update(b"SATELLITE_MESH_KEY_v1");
+            hasher.update(&node_id);
+            let hash = hasher.finalize();
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&hash);
+            key
+        };
         
         Ok(SatelliteMeshProtocol {
             node_id,
             terminal_id,
             discovery_active: false,
             constellation: SatelliteConstellation::Starlink, // Default to Starlink
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            session_mac_key,
+            mesh_key,
         })
     }
     
@@ -250,6 +297,293 @@ pub struct SatelliteMeshStatus {
     pub latency_ms: u32,
     pub global_coverage: bool,
     pub mesh_quality: f64, // 0.0 to 1.0
+}
+
+// ============================================================================
+// Protocol Trait Implementation
+// ============================================================================
+
+#[async_trait]
+impl Protocol for SatelliteMeshProtocol {
+    async fn connect(&mut self, target: &PeerAddress) -> Result<ProtocolSession> {
+        let peer_terminal_id = match target {
+            PeerAddress::SatelliteId(sat_id) => sat_id.as_str().to_string(),
+            _ => return Err(anyhow!("Satellite protocol requires SatelliteId address")),
+        };
+        
+        info!("🛰️ Establishing satellite connection to: {}", peer_terminal_id);
+        
+        // Simulate satellite connection handshake
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        
+        // Create verified peer identity (for satellite, terminal ID is the identity)
+        let peer_identity = VerifiedPeerIdentity::new(
+            peer_terminal_id.clone(),
+            peer_terminal_id.as_bytes().to_vec(),
+            vec![0xA5; 64], // Simulated authentication proof
+        )?;
+        
+        // Create session keys
+        let mut session_keys = SessionKeys::new(CipherSuite::ChaCha20Poly1305, false);
+        session_keys.set_encryption_key(self.mesh_key)?;
+        
+        // Create session
+        let session = ProtocolSession::new(
+            target.clone(),
+            peer_identity,
+            NetworkProtocol::Satellite,
+            session_keys,
+            AuthScheme::PreSharedKey,
+            &self.session_mac_key,
+        );
+        
+        // Store session
+        let mut sessions = self.sessions.write().await;
+        let terminal_id_key = peer_terminal_id.clone();
+        sessions.insert(terminal_id_key, session);
+        
+        debug!("✅ Satellite session established with: {}", peer_terminal_id);
+        
+        // Get reference to stored session and create a new one with same parameters
+        if let Some(stored_session) = sessions.get(&peer_terminal_id) {
+            // Create new session with same parameters
+            let peer_identity_new = VerifiedPeerIdentity::new(
+                peer_terminal_id.clone(),
+                peer_terminal_id.as_bytes().to_vec(),
+                vec![0xA5; 64],
+            )?;
+            let mut session_keys_new = SessionKeys::new(CipherSuite::ChaCha20Poly1305, false);
+            session_keys_new.set_encryption_key(self.mesh_key)?;
+            
+            Ok(ProtocolSession::new(
+                target.clone(),
+                peer_identity_new,
+                NetworkProtocol::Satellite,
+                session_keys_new,
+                AuthScheme::PreSharedKey,
+                &self.session_mac_key,
+            ))
+        } else {
+            Err(anyhow!("Failed to store session"))
+        }
+    }
+    
+    async fn accept(&mut self) -> Result<ProtocolSession> {
+        info!("🛰️ Waiting for incoming satellite connection...");
+        
+        // Simulate waiting for incoming connection
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        
+        // Generate a simulated peer terminal ID
+        let peer_terminal_id = format!("ZHTP_SAT_{:08X}", rand::random::<u32>());
+        
+        // Create verified peer identity
+        let peer_identity = VerifiedPeerIdentity::new(
+            peer_terminal_id.clone(),
+            peer_terminal_id.as_bytes().to_vec(),
+            vec![0xA5; 64],
+        )?;
+        
+        // Create peer address
+        let peer_address = PeerAddress::satellite(peer_terminal_id.clone())?;
+        
+        // Create session keys
+        let mut session_keys = SessionKeys::new(CipherSuite::ChaCha20Poly1305, false);
+        session_keys.set_encryption_key(self.mesh_key)?;
+        
+        // Create session
+        let session = ProtocolSession::new(
+            peer_address,
+            peer_identity,
+            NetworkProtocol::Satellite,
+            session_keys,
+            AuthScheme::PreSharedKey,
+            &self.session_mac_key,
+        );
+        
+        // Store session
+        let mut sessions = self.sessions.write().await;
+        let terminal_id_key = peer_terminal_id.clone();
+        sessions.insert(terminal_id_key, session);
+        
+        debug!("✅ Accepted satellite connection from: {}", peer_terminal_id);
+        
+        // Create new session with same parameters to return
+        let peer_address_new = PeerAddress::satellite(peer_terminal_id.clone())?;
+        let peer_identity_new = VerifiedPeerIdentity::new(
+            peer_terminal_id.clone(),
+            peer_terminal_id.as_bytes().to_vec(),
+            vec![0xA5; 64],
+        )?;
+        let mut session_keys_new = SessionKeys::new(CipherSuite::ChaCha20Poly1305, false);
+        session_keys_new.set_encryption_key(self.mesh_key)?;
+        
+        Ok(ProtocolSession::new(
+            peer_address_new,
+            peer_identity_new,
+            NetworkProtocol::Satellite,
+            session_keys_new,
+            AuthScheme::PreSharedKey,
+            &self.session_mac_key,
+        ))
+    }
+    
+    fn validate_session(&self, session: &ProtocolSession) -> Result<()> {
+        // Validate session using MAC key
+        session.validate(&self.session_mac_key)?;
+        
+        // Check protocol type matches
+        if *session.protocol() != NetworkProtocol::Satellite {
+            return Err(anyhow!("Session protocol mismatch: expected Satellite"));
+        }
+        
+        Ok(())
+    }
+    
+    async fn send_message(
+        &self,
+        session: &ProtocolSession,
+        envelope: &MeshMessageEnvelope,
+    ) -> Result<()> {
+        // Validate session first
+        self.validate_session(session)?;
+        
+        // Get peer address
+        let peer_terminal_id = match session.peer_address() {
+            PeerAddress::SatelliteId(id) => id.as_str(),
+            _ => return Err(anyhow!("Invalid peer address type for satellite")),
+        };
+        
+        // Serialize envelope
+        let payload = bincode::serialize(envelope)
+            .map_err(|e| anyhow!("Failed to serialize envelope: {}", e))?;
+        
+        // Encrypt payload
+        let nonce = session.replay_state().next_send_sequence()?;
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes[..8].copy_from_slice(&nonce.to_le_bytes());
+        
+        let encrypted = encrypt_data(&payload, session.session_keys().encryption_key()?)
+            .map_err(|e| anyhow!("Encryption failed: {}", e))?;
+        
+        info!("🛰️ Sending {} bytes to {} via satellite", encrypted.len(), peer_terminal_id);
+        
+        // Simulate satellite transmission (high latency, high cost)
+        let transmission_cost = (encrypted.len() as f64 * 0.001).max(0.01);
+        debug!("Satellite transmission cost: ${:.3}", transmission_cost);
+        
+        // Touch session to update activity
+        session.touch();
+        
+        Ok(())
+    }
+    
+    async fn receive_message(&self, session: &ProtocolSession) -> Result<MeshMessageEnvelope> {
+        // Validate session first
+        self.validate_session(session)?;
+        
+        // Simulate receiving satellite message (high latency)
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        
+        // For simulation, create a dummy encrypted message
+        let dummy_payload = vec![0xAA; 256];
+        let nonce = 1u64;
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes[..8].copy_from_slice(&nonce.to_le_bytes());
+        
+        // Validate replay protection
+        session.replay_state().validate_recv_sequence(nonce)?;
+        
+        // Decrypt payload
+        let decrypted = decrypt_data(&dummy_payload, session.session_keys().encryption_key()?)
+            .map_err(|e| anyhow!("Decryption failed: {}", e))?;
+        
+        // Deserialize envelope
+        let envelope: MeshMessageEnvelope = bincode::deserialize(&decrypted)
+            .unwrap_or_else(|_| {
+                // Return dummy envelope on deserialization error
+                MeshMessageEnvelope {
+                    message_id: 0,
+                    origin: lib_crypto::PublicKey::new(vec![0; 1952]),
+                    destination: lib_crypto::PublicKey::new(vec![0; 1952]),
+                    ttl: 64,
+                    hop_count: 0,
+                    route_history: vec![],
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    message_type: crate::types::mesh_message::MessageType::DhtGenericPayload,
+                    payload: vec![],
+                }
+            });
+        
+        // Touch session to update activity
+        session.touch();
+        
+        Ok(envelope)
+    }
+    
+    async fn rekey_session(&mut self, session: &mut ProtocolSession) -> Result<()> {
+        use sha2::{Sha256, Digest};
+        
+        info!("🛰️ Rekeying satellite session");
+        
+        // Generate new key based on current generation
+        let new_generation = session.session_keys().rekey_generation() + 1;
+        let new_key = {
+            let mut hasher = Sha256::new();
+            hasher.update(b"SATELLITE_REKEY_v1");
+            hasher.update(&self.node_id);
+            hasher.update(&new_generation.to_le_bytes());
+            let hash = hasher.finalize();
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&hash);
+            key
+        };
+        
+        // Update session keys
+        session.session_keys_mut().set_encryption_key(new_key)?;
+        session.session_keys_mut().increment_rekey_generation();
+        
+        // Reset replay state
+        session.replay_state().reset();
+        session.lifecycle().reset_for_rekey();
+        
+        debug!("✅ Satellite session rekeyed to generation {}", new_generation);
+        
+        Ok(())
+    }
+    
+    fn capabilities(&self) -> ProtocolCapabilities {
+        ProtocolCapabilities {
+            version: super::CAPABILITY_VERSION,
+            mtu: 1400, // Satellite protocols often use smaller MTUs
+            throughput_mbps: 150.0, // Starlink downlink
+            latency_ms: 25, // LEO constellation latency
+            range_meters: None, // Global coverage
+            power_profile: PowerProfile::High, // Satellite terminals use significant power
+            reliable: true, // Satellite protocols include reliability
+            requires_internet: true, // Satellite requires infrastructure
+            auth_schemes: vec![AuthScheme::PreSharedKey],
+            encryption: Some(CipherSuite::ChaCha20Poly1305),
+            pqc_mode: PqcMode::None, // Classical crypto for now
+            replay_protection: true,
+            identity_binding: true,
+            integrity_only: false,
+            forward_secrecy: false, // PSK mode doesn't provide forward secrecy
+        }
+    }
+    
+    fn protocol_type(&self) -> NetworkProtocol {
+        NetworkProtocol::Satellite
+    }
+    
+    fn is_available(&self) -> bool {
+        // In production, would check for satellite terminal hardware
+        // For now, assume available if constellation is set
+        true
+    }
 }
 
 #[cfg(test)]

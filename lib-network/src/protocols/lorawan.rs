@@ -5,7 +5,7 @@
 mod gateway_auth;
 
 use anyhow::Result;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data};
 
 pub use gateway_auth::{
@@ -690,5 +690,106 @@ mod tests {
         let _result = protocol.start_discovery().await;
         // May fail due to network join simulation
         // assert!(result.is_ok());
+    }
+}
+
+// ============================================================================
+// Protocol Trait Implementation
+// ============================================================================
+
+use async_trait::async_trait;
+use crate::protocols::{Protocol, ProtocolSession, PeerAddress, ProtocolCapabilities, PowerProfile, AuthScheme, CipherSuite, PqcMode, NetworkProtocol, CAPABILITY_VERSION};
+use crate::types::mesh_message::MeshMessageEnvelope;
+use anyhow::bail;
+
+#[async_trait]
+impl Protocol for LoRaWANMeshProtocol {
+    async fn connect(&mut self, target: &PeerAddress) -> Result<ProtocolSession> {
+        debug!("LoRaWAN Protocol: Initiating connection to {:?}", target);
+        
+        // Extract device ID from PeerAddress
+        let _device_id = match target {
+            PeerAddress::DeviceId(dev_id) => dev_id.as_str(),
+            _ => bail!("LoRaWAN protocol requires DeviceId, got {:?}", target),
+        };
+
+        // TODO: Establish LoRaWAN session with gateway attestation
+        // Should use gateway_auth for trust anchor validation
+        bail!("LoRaWAN connect: Requires gateway-mediated handshake")
+    }
+
+    async fn accept(&mut self) -> Result<ProtocolSession> {
+        debug!("LoRaWAN Protocol: Waiting for incoming connection");
+        
+        // TODO: Accept LoRaWAN join request and perform gateway attestation
+        bail!("LoRaWAN accept: Requires gateway-mediated join")
+    }
+
+    fn validate_session(&self, session: &ProtocolSession) -> Result<()> {
+        // Check protocol type matches
+        if *session.protocol() != NetworkProtocol::LoRaWAN {
+            bail!("Session protocol mismatch: expected LoRaWAN, got {:?}", session.protocol());
+        }
+
+        // TODO: Validate session using protocol's MAC key
+        Ok(())
+    }
+
+    async fn send_message(
+        &self,
+        session: &ProtocolSession,
+        _envelope: &MeshMessageEnvelope,
+    ) -> Result<()> {
+        // Validate session first
+        self.validate_session(session)?;
+
+        // TODO: Encrypt and send over LoRaWAN with low-bandwidth considerations
+        // Use ChaCha20Poly1305 and compress payload
+        bail!("LoRaWAN send_message: Requires radio transmission with compression")
+    }
+
+    async fn receive_message(&self, session: &ProtocolSession) -> Result<MeshMessageEnvelope> {
+        // Validate session first
+        self.validate_session(session)?;
+
+        // TODO: Receive and decrypt from LoRaWAN with gateway routing
+        bail!("LoRaWAN receive_message: Requires radio reception with decompression")
+    }
+
+    async fn rekey_session(&mut self, session: &mut ProtocolSession) -> Result<()> {
+        debug!("LoRaWAN Protocol: Rekeying session {:?}", session.session_id());
+
+        // TODO: Perform ephemeral key exchange via gateway
+        bail!("LoRaWAN rekey_session: Requires gateway-mediated key exchange")
+    }
+
+    fn capabilities(&self) -> ProtocolCapabilities {
+        ProtocolCapabilities {
+            version: CAPABILITY_VERSION,
+            mtu: 222, // LoRaWAN max payload for SF7BW125
+            throughput_mbps: 0.05, // ~50 kbps max
+            latency_ms: 1000, // High latency due to duty cycle
+            range_meters: Some(15000), // LoRa range ~15km
+            power_profile: PowerProfile::UltraLow,
+            reliable: false, // LoRa is best-effort
+            requires_internet: false,
+            auth_schemes: vec![AuthScheme::MutualHandshake], // Gateway-mediated via UHP
+            encryption: Some(CipherSuite::ChaCha20Poly1305),
+            pqc_mode: PqcMode::None, // Limited bandwidth for PQC
+            replay_protection: true,
+            identity_binding: true,
+            integrity_only: false,
+            forward_secrecy: false, // Limited rekeying on LoRa
+        }
+    }
+
+    fn protocol_type(&self) -> NetworkProtocol {
+        NetworkProtocol::LoRaWAN
+    }
+
+    fn is_available(&self) -> bool {
+        // Check if LoRa radio is available
+        // TODO: Query radio hardware state
+        true
     }
 }
