@@ -28,7 +28,8 @@ pub mod bluetooth;
 pub mod bluetooth_encryption; // Bluetooth encryption adapter with wire format & replay protection
 
 // Encryption adapters for various protocols
-pub mod zhtp_mesh_encryption; // ZHTP mesh encryption adapter with domain separation
+pub mod zhtp_mesh_encryption;    // ZHTP mesh encryption adapter with domain separation
+pub mod wifi_direct_encryption;  // WiFi Direct encryption adapter with fallback support
 
 // Other protocols
 pub mod wifi_direct;

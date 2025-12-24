@@ -5,10 +5,10 @@
 | Phase | Status | Details |
 |-------|--------|---------|
 | **Phase 1** | ✅ COMPLETE | Trait + FCIS applied. 19/19 tests passing (4 core + 15 shell/security). |
-| **Phase 2** | 🚀 IN PROGRESS | Protocol adapters (Bluetooth ✅ 9/9, ZHTP ✅ 12/12, WiFi Direct, QUIC, LoRaWAN) |
+| **Phase 2** | 🚀 IN PROGRESS | Protocol adapters (Bluetooth ✅ 9/9, ZHTP ✅ 12/12, WiFi Direct ✅ 17/17, QUIC, LoRaWAN) |
 | **2.1 Bluetooth** | ✅ COMPLETE | Wire format + replay protection. 9/9 tests passing. |
 | **2.2 ZHTP** | ✅ COMPLETE | Mesh encryption with domain separation. 12/12 tests passing. |
-| **2.3 WiFi Direct** | ⏳ PENDING | WiFi Direct adapter with fallback state |
+| **2.3 WiFi Direct** | ✅ COMPLETE | End-to-end + fallback state. 17/17 tests passing. |
 | **2.4 QUIC** | ⏳ PENDING | QUIC application encryption |
 | **2.5 LoRaWAN** | ⏳ PENDING | LoRaWAN adapter |
 | **Phase 3** | ⏳ PENDING | Refactor protocols to use adapters |
@@ -449,6 +449,76 @@ test result: ok. 12 passed; 0 failed
 - **Stateless**: ZHTP relies on higher-layer replay protection (mesh sequence numbers)
 - **Message-Type Aware**: Allows secure use of same key for different message kinds
 - **Simple Wrapper**: Focuses on AAD construction without adding protocol-specific features
+
+#### 2.3 WiFi Direct Adapter ✅ COMPLETE
+
+**Status**: ✅ **17/17 TESTS PASSING**
+
+**File**: `lib-network/src/protocols/wifi_direct_encryption.rs` (~480 lines)
+
+**Implementation**: FCIS architecture with enum-based state management
+
+**Core Features**:
+- **Dual-Mode Operation**: End-to-end AEAD or link-layer only fallback
+- **Transparent State**: Explicit enum shows operational mode
+- **Graceful Fallback**: No silent failures, warnings indicate mode
+- **Message-Type Aware AAD**: Different message types produce different AAD
+
+**State Management**:
+```rust
+pub enum WiFiDirectEncryptionState {
+    EndToEndAead(ChaCha20Poly1305Encryption),  // Full E2E encryption
+    LinkLayerOnly,                             // OS handles WPA2/3
+}
+```
+
+**Test Results**:
+```
+✅ test_aad_construction
+✅ test_aad_determinism
+✅ test_wifi_e2e_encrypt_decrypt
+✅ test_wifi_e2e_message_type_separation
+✅ test_wifi_e2e_tampering_detection
+✅ test_wifi_fallback_is_not_e2e
+✅ test_wifi_fallback_pass_through
+✅ test_wifi_fallback_no_processing
+✅ test_wifi_fallback_multiple_messages
+✅ test_wifi_trait_e2e_mode
+✅ test_wifi_trait_fallback_mode
+✅ test_wifi_stats_e2e
+✅ test_wifi_stats_fallback
+✅ test_wifi_e2e_large_message (1MB)
+✅ test_wifi_e2e_empty_message
+✅ test_wifi_multiple_message_types
+✅ (encryption module integration test)
+
+test result: ok. 17 passed; 0 failed
+```
+
+**Security Properties Verified**:
+- ✅ End-to-end encryption when session key available
+- ✅ Message-type separation (can't interchange message types)
+- ✅ Tampering detection (AEAD tag validation)
+- ✅ Graceful fallback to link-layer only
+- ✅ Transparent state tracking (`is_e2e_encrypted()`)
+- ✅ Large message support (1MB+)
+- ✅ ProtocolEncryption trait implementation in both modes
+
+**Key Implementation Details**:
+1. **Functional Core** (Lines 76-90):
+   - `build_aad()`: Deterministic AAD construction
+
+2. **Imperative Shell** (Lines 102-246):
+   - `WiFiDirectEncryption` struct with state enum
+   - `encrypt_message()` / `decrypt_message()`: Message-type interface
+   - State-aware `ProtocolEncryption` trait implementation
+   - Explicit logging of mode transitions
+
+3. **Design Rationale**:
+   - **Dual Mode**: Supports both secure sessions and fallback scenarios
+   - **Transparent**: No hidden behavior - state is explicit
+   - **Graceful**: Warnings indicate reduced security in fallback mode
+   - **OS Integration**: Can leverage kernel WPA2/3 when available
 
 ---
 
