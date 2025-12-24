@@ -5,9 +5,9 @@
 | Phase | Status | Details |
 |-------|--------|---------|
 | **Phase 1** | ✅ COMPLETE | Trait + FCIS applied. 19/19 tests passing (4 core + 15 shell/security). |
-| **Phase 2** | 🚀 IN PROGRESS | Protocol adapters (Bluetooth ✅ 9/9, ZHTP, WiFi Direct, QUIC, LoRaWAN) |
+| **Phase 2** | 🚀 IN PROGRESS | Protocol adapters (Bluetooth ✅ 9/9, ZHTP ✅ 12/12, WiFi Direct, QUIC, LoRaWAN) |
 | **2.1 Bluetooth** | ✅ COMPLETE | Wire format + replay protection. 9/9 tests passing. |
-| **2.2 ZHTP** | ⏳ PENDING | Mesh encryption adapter |
+| **2.2 ZHTP** | ✅ COMPLETE | Mesh encryption with domain separation. 12/12 tests passing. |
 | **2.3 WiFi Direct** | ⏳ PENDING | WiFi Direct adapter with fallback state |
 | **2.4 QUIC** | ⏳ PENDING | QUIC application encryption |
 | **2.5 LoRaWAN** | ⏳ PENDING | LoRaWAN adapter |
@@ -390,7 +390,69 @@ test result: ok. 9 passed; 0 failed
 
 ---
 
-#### 2.2 ZHTP Mesh Adapter (Simplest - Custom Protocol)
+#### 2.2 ZHTP Mesh Adapter ✅ COMPLETE
+
+**Status**: ✅ **12/12 TESTS PASSING**
+
+**File**: `lib-network/src/protocols/zhtp_mesh_encryption.rs` (~400 lines)
+
+**Implementation**: FCIS architecture with `mod core` and `mod shell`
+
+**Core Features**:
+- **Message-Type Aware AAD**: Different message types produce different AAD
+- **Session Separation**: Per-session AAD ensures different sessions can't decrypt each other
+- **Stateless Design**: No locks, no sequence tracking (higher-layer responsibility)
+- **Domain Separation**: AAD format = `zhtp-mesh\0v1\0<message_type>\0<session_id>`
+
+**Test Results**:
+```
+✅ test_aad_construction
+✅ test_aad_session_separation
+✅ test_aad_determinism
+✅ test_zhtp_encrypt_decrypt
+✅ test_zhtp_message_type_separation
+✅ test_zhtp_session_separation
+✅ test_zhtp_tampering_detection
+✅ test_zhtp_empty_message
+✅ test_zhtp_large_message (1MB)
+✅ test_zhtp_protocol_encryption_trait
+✅ test_zhtp_multiple_message_types
+✅ test_zhtp_wrong_message_type_comprehensive
+
+test result: ok. 12 passed; 0 failed
+```
+
+**Security Properties Verified**:
+- ✅ AAD determinism (same inputs → same AAD)
+- ✅ Message-type separation (different types can't be interchanged)
+- ✅ Session separation (different sessions can't decrypt each other)
+- ✅ Tampering detection (AEAD tag validation)
+- ✅ Comprehensive wrong-type rejection (9 different wrong types tested)
+- ✅ Large message support (1MB+ messages)
+
+**Key Implementation Details**:
+1. **Functional Core** (Lines 45-62):
+   - `build_aad()`: Deterministic AAD construction with separators
+
+2. **Imperative Shell** (Lines 68-157):
+   - `ZhtpMeshEncryption` struct wrapping `ChaCha20Poly1305Encryption`
+   - `encrypt_message()` / `decrypt_message()`: Message-type interface
+   - `ProtocolEncryption` trait implementation for compatibility
+
+3. **AAD Structure**:
+   - Protocol ID ensures protocol isolation
+   - Message type prevents cross-type attacks
+   - Session ID ensures per-session isolation
+   - Null separators prevent concatenation attacks
+
+**Design Rationale**:
+- **Stateless**: ZHTP relies on higher-layer replay protection (mesh sequence numbers)
+- **Message-Type Aware**: Allows secure use of same key for different message kinds
+- **Simple Wrapper**: Focuses on AAD construction without adding protocol-specific features
+
+---
+
+#### 2.2.OLD ZHTP Mesh Adapter (Simplest - Custom Protocol)
 
 **New File**: `lib-network/src/protocols/zhtp_mesh_encryption.rs`
 

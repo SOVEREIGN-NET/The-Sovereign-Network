@@ -27,6 +27,9 @@ use parking_lot::RwLock;
 pub mod bluetooth;
 pub mod bluetooth_encryption; // Bluetooth encryption adapter with wire format & replay protection
 
+// Encryption adapters for various protocols
+pub mod zhtp_mesh_encryption; // ZHTP mesh encryption adapter with domain separation
+
 // Other protocols
 pub mod wifi_direct;
 pub mod wifi_direct_handshake; // UHP handshake adapter for WiFi Direct
