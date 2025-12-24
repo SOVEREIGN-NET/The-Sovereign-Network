@@ -36,9 +36,6 @@ pub use types::{
     PeerAddress, VerifiedPeerIdentity,
     SessionId, SessionKeys, ReplayProtectionState, SessionLifecycle,
     SessionRenewalReason, ProtocolSession,
-    // Constants
-    SESSION_ID_SIZE, DEFAULT_SESSION_LIFETIME_SECS, DEFAULT_IDLE_TIMEOUT_SECS,
-    DEFAULT_MAX_MESSAGES, REPLAY_WINDOW_SIZE,
 };
 
 // ============================================================================

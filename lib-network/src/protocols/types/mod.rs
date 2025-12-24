@@ -20,6 +20,5 @@ pub use security::{AuthScheme, UnsafeAuthScheme, CipherSuite, UnsafeCipherSuite,
 pub use peer::{BluetoothMac, ValidatedSocketAddr, ValidatedDeviceId, ValidatedSatelliteId, PeerAddress, VerifiedPeerIdentity};
 pub use session::{
     SessionId, SessionKeys, ReplayProtectionState, SessionLifecycle, SessionRenewalReason,
-    ProtocolSession, SESSION_ID_SIZE, DEFAULT_SESSION_LIFETIME_SECS, DEFAULT_IDLE_TIMEOUT_SECS,
-    DEFAULT_MAX_MESSAGES, REPLAY_WINDOW_SIZE,
+    ProtocolSession,
 };
