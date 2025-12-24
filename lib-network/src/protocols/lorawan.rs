@@ -6,7 +6,7 @@ mod gateway_auth;
 
 use anyhow::Result;
 use tracing::{info, warn};
-use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data};
+use crate::protocols::lorawan_encryption::LoRaWANEncryption;
 
 pub use gateway_auth::{
     GatewayAttestation, LoRaDeviceMessage, LoRaWANGatewayAuth, LoRaWanUhpBinding,
@@ -22,6 +22,8 @@ pub struct LoRaWANMeshProtocol {
     pub app_eui: [u8; 8],
     /// Application key for encryption (32-byte for ChaCha20Poly1305)
     pub app_key: [u8; 32],
+    /// LoRaWAN encryption adapter with frame counter domain separation
+    encryption: LoRaWANEncryption,
     /// Discovery active flag
     pub discovery_active: bool,
     /// Optional trust anchor for gateway-mediated auth (ARCH-D-1.9)
@@ -34,19 +36,23 @@ impl LoRaWANMeshProtocol {
         // Generate device identifiers from node ID
         let mut device_eui = [0u8; 8];
         device_eui.copy_from_slice(&node_id[0..8]);
-        
+
         let mut app_eui = [0u8; 8];
         app_eui.copy_from_slice(&node_id[8..16]);
-        
+
         // Derive 32-byte ChaCha20Poly1305 key from node_id
         let mut app_key = [0u8; 32];
         app_key.copy_from_slice(&node_id[0..32]);
-        
+
+        // Initialize encryption adapter with app_key and device_eui
+        let encryption = LoRaWANEncryption::new(&app_key, device_eui)?;
+
         Ok(LoRaWANMeshProtocol {
             node_id,
             device_eui,
             app_eui,
             app_key,
+            encryption,
             discovery_active: false,
             gateway_auth: Some(LoRaWANGatewayAuth::new()?),
         })
@@ -533,18 +539,21 @@ impl LoRaWANMeshProtocol {
     }
     
     async fn encrypt_payload(&self, payload: &[u8], frame_counter: u16) -> Result<Vec<u8>> {
-        // SECURITY: ChaCha20Poly1305 AEAD encryption (unified across all protocols)
+        // SECURITY: ChaCha20Poly1305 AEAD encryption via LoRaWANEncryption adapter
+        // with frame counter based domain separation
+        //
         // Replaces LoRaWAN 1.0.4 AES-128-CTR for stronger security and mobile performance
-        // 
+        //
         // Benefits over standard LoRaWAN encryption:
         // - AEAD provides both confidentiality AND authenticity
+        // - Frame counter included in AAD for message sequencing
+        // - Device EUI isolation prevents cross-device decryption
         // - Faster on ARM devices (no AES hardware needed)
         // - Post-quantum ready (can be combined with Kyber KEM)
-        // - Nonce is generated internally by encrypt_data() - no replay attacks
         //
-        // Note: frame_counter is still used in LoRaWAN framing but not for nonce
-        // ChaCha20Poly1305 uses 96-bit random nonce per message
-        let encrypted = encrypt_data(payload, &self.app_key)?;
+        // AAD Format: lorawan\0v1\0<device_eui>\0<frame_counter>
+        // This ensures each message has unique cryptographic binding to its frame counter
+        let encrypted = self.encryption.encrypt_payload(payload, frame_counter)?;
         Ok(encrypted)
     }
     
