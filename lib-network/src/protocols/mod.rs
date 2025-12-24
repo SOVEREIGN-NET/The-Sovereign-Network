@@ -30,6 +30,7 @@ pub mod bluetooth_encryption; // Bluetooth encryption adapter with wire format &
 // Encryption adapters for various protocols
 pub mod zhtp_mesh_encryption;    // ZHTP mesh encryption adapter with domain separation
 pub mod wifi_direct_encryption;  // WiFi Direct encryption adapter with fallback support
+pub mod quic_encryption;         // QUIC application-level encryption adapter
 
 // Other protocols
 pub mod wifi_direct;
