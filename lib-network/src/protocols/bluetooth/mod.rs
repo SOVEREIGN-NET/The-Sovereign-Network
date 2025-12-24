@@ -4185,3 +4185,106 @@ mod tests {
         assert!(result.is_ok());
     }
 }
+
+// ============================================================================
+// Protocol Trait Implementation
+// ============================================================================
+
+use async_trait::async_trait;
+use crate::protocols::{Protocol, ProtocolSession, PeerAddress, ProtocolCapabilities, PowerProfile, AuthScheme, CipherSuite, PqcMode, NetworkProtocol, CAPABILITY_VERSION};
+use crate::types::mesh_message::MeshMessageEnvelope;
+use anyhow::bail;
+
+#[async_trait]
+impl Protocol for BluetoothMeshProtocol {
+    async fn connect(&mut self, target: &PeerAddress) -> Result<ProtocolSession> {
+        debug!("Bluetooth Protocol: Initiating connection to {:?}", target);
+        
+        // Extract Bluetooth MAC from PeerAddress
+        let _bt_mac = match target {
+            PeerAddress::Bluetooth(mac) => mac,
+            _ => bail!("Bluetooth protocol requires Bluetooth MAC address, got {:?}", target),
+        };
+
+        // TODO: Use existing connect_to_peer method and perform UHP handshake over GATT
+        // Requires extracting session state from GATT connection
+        bail!("Bluetooth connect: Requires GATT connection management and UHP framing")
+    }
+
+    async fn accept(&mut self) -> Result<ProtocolSession> {
+        debug!("Bluetooth Protocol: Waiting for incoming connection");
+        
+        // TODO: Start advertising and accept incoming GATT connection
+        // Requires monitoring current_connections for new entries
+        bail!("Bluetooth accept: Requires GATT server and advertising")
+    }
+
+    fn validate_session(&self, session: &ProtocolSession) -> Result<()> {
+        // Check protocol type matches
+        if *session.protocol() != NetworkProtocol::BluetoothLE {
+            bail!("Session protocol mismatch: expected BluetoothLE, got {:?}", session.protocol());
+        }
+
+        // TODO: Validate session using protocol's MAC key
+        Ok(())
+    }
+
+    async fn send_message(
+        &self,
+        session: &ProtocolSession,
+        _envelope: &MeshMessageEnvelope,
+    ) -> Result<()> {
+        // Validate session first
+        self.validate_session(session)?;
+
+        // TODO: Fragment, encrypt, and send over GATT
+        // Use MTU-aware fragmentation and session keys
+        bail!("Bluetooth send_message: Requires GATT write with MTU fragmentation")
+    }
+
+    async fn receive_message(&self, session: &ProtocolSession) -> Result<MeshMessageEnvelope> {
+        // Validate session first
+        self.validate_session(session)?;
+
+        // TODO: Receive, reassemble, and decrypt from GATT
+        // Use fragment_reassembler and validate replay protection
+        bail!("Bluetooth receive_message: Requires GATT read with fragment reassembly")
+    }
+
+    async fn rekey_session(&mut self, session: &mut ProtocolSession) -> Result<()> {
+        debug!("Bluetooth Protocol: Rekeying session {:?}", session.session_id());
+
+        // TODO: Perform ephemeral key exchange over GATT
+        bail!("Bluetooth rekey_session: Requires GATT-based UHP ephemeral key exchange")
+    }
+
+    fn capabilities(&self) -> ProtocolCapabilities {
+        ProtocolCapabilities {
+            version: CAPABILITY_VERSION,
+            mtu: 512, // BLE GATT MTU (negotiable up to 512 bytes)
+            throughput_mbps: 2.0, // BLE 5.0 ~2 Mbps
+            latency_ms: 100,
+            range_meters: Some(100), // BLE range ~100m
+            power_profile: PowerProfile::Low,
+            reliable: false, // BLE is best-effort
+            requires_internet: false,
+            auth_schemes: vec![AuthScheme::MutualHandshake],
+            encryption: Some(CipherSuite::ChaCha20Poly1305),
+            pqc_mode: PqcMode::None, // BLE has limited MTU for PQC
+            replay_protection: true,
+            identity_binding: true,
+            integrity_only: false,
+            forward_secrecy: true,
+        }
+    }
+
+    fn protocol_type(&self) -> NetworkProtocol {
+        NetworkProtocol::BluetoothLE
+    }
+
+    fn is_available(&self) -> bool {
+        // Check if Bluetooth hardware is available
+        // TODO: Query platform-specific adapter state
+        true
+    }
+}
