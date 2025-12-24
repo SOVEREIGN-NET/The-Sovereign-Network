@@ -25,6 +25,7 @@ use parking_lot::RwLock;
 
 // Bluetooth protocol suite (includes BLE mesh, Classic RFCOMM, platform-specific)
 pub mod bluetooth;
+pub mod bluetooth_encryption; // Bluetooth encryption adapter with wire format & replay protection
 
 // Other protocols
 pub mod wifi_direct;
