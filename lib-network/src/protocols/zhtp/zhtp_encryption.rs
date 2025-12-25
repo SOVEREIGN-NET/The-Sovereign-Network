@@ -1,17 +1,19 @@
 //! ZHTP Post-Quantum Encryption for Mesh Connections
 //!
-//! Implements Kyber512 key exchange and AES-GCM encryption for secure mesh communication.
-//! Uses lib-crypto's post-quantum cryptography and symmetric encryption.
+//! Implements Kyber512 key exchange and ChaCha20Poly1305 AEAD encryption for secure mesh communication.
+//! Uses lib-crypto's post-quantum cryptography and unified ProtocolEncryption trait.
 
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
 use lib_crypto::post_quantum::kyber::{kyber512_keypair, kyber512_encapsulate, kyber512_decapsulate};
-use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data};
+use crate::protocols::zhtp_mesh_encryption::ZhtpMeshEncryption;
 use tracing::{info, debug};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// ZHTP encryption session for a mesh connection
-#[derive(Debug, Clone)]
+///
+/// NOTE: No Clone or Debug derive because ZhtpMeshEncryption (ChaCha20Poly1305 state)
+/// cannot be safely cloned or debugged. Use Arc<Mutex<>> if sharing across threads is needed.
 pub struct ZhtpEncryptionSession {
     /// Kyber512 public key (for this node)
     pub local_kyber_public: Vec<u8>,
@@ -19,6 +21,8 @@ pub struct ZhtpEncryptionSession {
     local_kyber_secret: Vec<u8>,
     /// Shared secret derived from Kyber KEM
     shared_secret: Option<[u8; 32]>,
+    /// ZHTP mesh encryption adapter with message-type domain separation
+    encryption: Option<ZhtpMeshEncryption>,
     /// Session established timestamp
     pub session_start: u64,
     /// Total messages encrypted
@@ -67,18 +71,19 @@ pub struct ZhtpEncryptedMessage {
 impl ZhtpEncryptionSession {
     /// Create new encryption session with fresh Kyber keypair
     pub fn new() -> Result<Self> {
-        info!(" Creating new ZHTP encryption session with Kyber512");
-        
+        info!(" Creating new ZHTP encryption session with Kyber512 + ChaCha20Poly1305");
+
         // Generate Kyber512 keypair
         let (kyber_public, kyber_secret) = kyber512_keypair();
-        
-        debug!("Generated Kyber512 keypair (public: {} bytes, secret: {} bytes)", 
+
+        debug!("Generated Kyber512 keypair (public: {} bytes, secret: {} bytes)",
                kyber_public.len(), kyber_secret.len());
-        
+
         Ok(Self {
             local_kyber_public: kyber_public,
             local_kyber_secret: kyber_secret,
             shared_secret: None,
+            encryption: None,
             session_start: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -108,19 +113,27 @@ impl ZhtpEncryptionSession {
         init: &ZhtpKeyExchangeInit,
     ) -> Result<ZhtpKeyExchangeResponse> {
         info!(" Responding to Kyber key exchange for session: {}", &init.session_id[..8]);
-        
+
         // Encapsulate shared secret with peer's public key
         // NOTE: kdf_info must match the one used in complete_key_exchange by the initiator
         let kdf_info = b"ZHTP-KEM-v1.0";
         let (ciphertext, shared_secret) = kyber512_encapsulate(&init.kyber_public_key, kdf_info)?;
-        
+
         debug!("Encapsulated shared secret (ciphertext: {} bytes)", ciphertext.len());
-        
+
         // Store shared secret
         self.shared_secret = Some(shared_secret);
-        
-        info!(" Shared secret established (responder side)");
-        
+
+        // Initialize encryption adapter with shared secret and session_id
+        let mut session_id_bytes = [0u8; 16];
+        let session_bytes = init.session_id.as_bytes();
+        let copy_len = std::cmp::min(session_bytes.len(), 16);
+        session_id_bytes[..copy_len].copy_from_slice(&session_bytes[..copy_len]);
+
+        self.encryption = Some(ZhtpMeshEncryption::new(&shared_secret, session_id_bytes)?);
+
+        info!(" Shared secret established with ChaCha20Poly1305 AEAD (responder side)");
+
         Ok(ZhtpKeyExchangeResponse {
             session_id: init.session_id.clone(),
             kyber_ciphertext: ciphertext,
@@ -137,7 +150,7 @@ impl ZhtpEncryptionSession {
         response: &ZhtpKeyExchangeResponse,
     ) -> Result<()> {
         info!("🔓 Completing Kyber key exchange for session: {}", &response.session_id[..8]);
-        
+
         // Decapsulate shared secret with our secret key
         let kdf_info = b"ZHTP-KEM-v1.0";
         let shared_secret = kyber512_decapsulate(
@@ -145,12 +158,20 @@ impl ZhtpEncryptionSession {
             &self.local_kyber_secret,
             kdf_info,
         )?;
-        
+
         // Store shared secret
         self.shared_secret = Some(shared_secret);
-        
-        info!(" Shared secret established (initiator side)");
-        
+
+        // Initialize encryption adapter with shared secret and session_id
+        let mut session_id_bytes = [0u8; 16];
+        let session_bytes = response.session_id.as_bytes();
+        let copy_len = std::cmp::min(session_bytes.len(), 16);
+        session_id_bytes[..copy_len].copy_from_slice(&session_bytes[..copy_len]);
+
+        self.encryption = Some(ZhtpMeshEncryption::new(&shared_secret, session_id_bytes)?);
+
+        info!(" Shared secret established with ChaCha20Poly1305 AEAD (initiator side)");
+
         Ok(())
     }
     
@@ -159,29 +180,30 @@ impl ZhtpEncryptionSession {
         self.shared_secret
     }
     
-    /// Encrypt message with ChaCha20-Poly1305 using shared secret
+    /// Encrypt message with ChaCha20-Poly1305 AEAD via ZhtpMeshEncryption adapter
     pub fn encrypt_message(
         &mut self,
         session_id: String,
         plaintext: &[u8],
     ) -> Result<ZhtpEncryptedMessage> {
-        let shared_secret = self.shared_secret
+        let encryption = self.encryption
+            .as_ref()
             .ok_or_else(|| anyhow!("Encryption session not established"))?;
-        
-        debug!(" Encrypting message ({} bytes) with ChaCha20-Poly1305", plaintext.len());
 
-        // Encrypt with ChaCha20-Poly1305 using shared secret as key
-        // Note: encrypt_data generates and prepends nonce internally
-        let ciphertext = encrypt_data(plaintext, &shared_secret)?;
+        debug!(" Encrypting ZHTP mesh message ({} bytes) with ChaCha20-Poly1305", plaintext.len());
+
+        // Encrypt with ChaCha20-Poly1305 via adapter with message-type aware AAD
+        // Message type "mesh_payload" ensures domain separation from other ZHTP message types
+        let ciphertext = encryption.encrypt_message(plaintext, "mesh_payload")?;
 
         self.messages_encrypted += 1;
 
-        debug!(" Message encrypted (ciphertext: {} bytes)", ciphertext.len());
+        debug!(" ZHTP message encrypted (ciphertext: {} bytes)", ciphertext.len());
 
         Ok(ZhtpEncryptedMessage {
             session_id,
             ciphertext,
-            nonce: vec![], // Nonce is embedded in ciphertext by encrypt_data
+            nonce: vec![], // Nonce is embedded in wire format by adapter
             sequence: self.messages_encrypted,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -190,25 +212,26 @@ impl ZhtpEncryptionSession {
         })
     }
     
-    /// Decrypt message with ChaCha20-Poly1305 using shared secret
+    /// Decrypt message with ChaCha20-Poly1305 AEAD via ZhtpMeshEncryption adapter
     pub fn decrypt_message(
         &mut self,
         encrypted_msg: &ZhtpEncryptedMessage,
     ) -> Result<Vec<u8>> {
-        let shared_secret = self.shared_secret
+        let encryption = self.encryption
+            .as_ref()
             .ok_or_else(|| anyhow!("Encryption session not established"))?;
-        
-        debug!("🔓 Decrypting message ({} bytes) with ChaCha20-Poly1305",
+
+        debug!("🔓 Decrypting ZHTP mesh message ({} bytes) with ChaCha20-Poly1305",
                encrypted_msg.ciphertext.len());
 
-        // Decrypt with ChaCha20-Poly1305
-        // Note: decrypt_data extracts nonce from beginning of ciphertext
-        let plaintext = decrypt_data(&encrypted_msg.ciphertext, &shared_secret)?;
-        
+        // Decrypt with ChaCha20-Poly1305 via adapter
+        // Message type "mesh_payload" must match encryption, or decryption fails due to AAD mismatch
+        let plaintext = encryption.decrypt_message(&encrypted_msg.ciphertext, "mesh_payload")?;
+
         self.messages_decrypted += 1;
-        
-        debug!(" Message decrypted ({} bytes)", plaintext.len());
-        
+
+        debug!(" ZHTP message decrypted ({} bytes)", plaintext.len());
+
         Ok(plaintext)
     }
     
@@ -222,20 +245,34 @@ impl ZhtpEncryptionSession {
         (self.session_start, self.messages_encrypted, self.messages_decrypted)
     }
     
-    /// Rotate session (generate new keypair, invalidate old shared secret)
+    /// Rotate session (generate new keypair, invalidate old shared secret and encryption)
     pub fn rotate_session(&mut self) -> Result<()> {
         info!(" Rotating ZHTP encryption session");
-        
+
         // Generate new Kyber keypair
         let (kyber_public, kyber_secret) = kyber512_keypair();
-        
+
         self.local_kyber_public = kyber_public;
         self.local_kyber_secret = kyber_secret;
         self.shared_secret = None; // Invalidate old shared secret
-        
+        self.encryption = None;    // Invalidate old encryption adapter
+
         info!(" Session rotated, new key exchange required");
-        
+
         Ok(())
+    }
+}
+
+impl std::fmt::Debug for ZhtpEncryptionSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZhtpEncryptionSession")
+            .field("local_kyber_public", &format!("[{} bytes]", self.local_kyber_public.len()))
+            .field("shared_secret", &self.shared_secret.as_ref().map(|_| "<secret>"))
+            .field("encryption", &"<ChaCha20Poly1305>")
+            .field("session_start", &self.session_start)
+            .field("messages_encrypted", &self.messages_encrypted)
+            .field("messages_decrypted", &self.messages_decrypted)
+            .finish()
     }
 }
 
