@@ -8,6 +8,24 @@
 
 use lib_network::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption};
 
+// Common test utilities to reduce duplication
+mod test_helpers {
+    use lib_network::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption};
+
+    pub fn create_test_enc(protocol: &str, key_byte: u8) -> ChaCha20Poly1305Encryption {
+        ChaCha20Poly1305Encryption::new(protocol, &[key_byte; 32]).unwrap()
+    }
+
+    pub fn encrypt_and_verify(enc: &ChaCha20Poly1305Encryption, plaintext: &[u8], aad: &[u8]) -> Vec<u8> {
+        enc.encrypt(plaintext, aad).unwrap()
+    }
+
+    pub fn decrypt_should_fail(enc: &ChaCha20Poly1305Encryption, ciphertext: &[u8], aad: &[u8]) {
+        let result = enc.decrypt(ciphertext, aad);
+        assert!(result.is_err(), "Decryption should fail with wrong AAD");
+    }
+}
+
 // ============================================================================
 // Test 1: Domain Separation via AAD
 // ============================================================================
@@ -15,27 +33,19 @@ use lib_network::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption};
 /// Verify that different AAD produces different ciphertexts (domain separation)
 #[test]
 fn test_ci_domain_separation_aad() {
-    let key = [0x11u8; 32];
+    use test_helpers::*;
     let plaintext = b"Confidential data";
+    let enc = create_test_enc("test", 0x11);
 
-    let enc = ChaCha20Poly1305Encryption::new("test", &key).unwrap();
-
-    // Encrypt with protocol_id = "protocol_a"
     let aad_a = b"protocol_a||v1";
-    let ciphertext_a = enc.encrypt(plaintext, aad_a).unwrap();
+    let ciphertext_a = encrypt_and_verify(&enc, plaintext, aad_a);
 
-    // Encrypt same plaintext with protocol_id = "protocol_b"
     let aad_b = b"protocol_b||v1";
-    let ciphertext_b = enc.encrypt(plaintext, aad_b).unwrap();
+    let ciphertext_b = encrypt_and_verify(&enc, plaintext, aad_b);
 
-    // Ciphertexts MUST be different (even though nonce might theoretically collide,
-    // the AAD causes different authentication tags)
     assert_ne!(&ciphertext_a[..], &ciphertext_b[..],
         "Different AAD must produce different authentication tags");
-
-    // Decrypting with wrong AAD must fail
-    let result = enc.decrypt(&ciphertext_a, aad_b);
-    assert!(result.is_err(), "Decryption with wrong AAD must fail (authentication tag mismatch)");
+    decrypt_should_fail(&enc, &ciphertext_a, aad_b);
 }
 
 // ============================================================================
@@ -45,23 +55,16 @@ fn test_ci_domain_separation_aad() {
 /// Verify that a ciphertext encrypted for one protocol cannot be decrypted as another
 #[test]
 fn test_ci_cross_protocol_isolation() {
-    let shared_key = [0x22u8; 32];
+    use test_helpers::*;
     let plaintext = b"Sensitive mesh message";
+    let wifi_enc = create_test_enc("wifi_direct", 0x22);
+    let lorawan_enc = create_test_enc("lorawan", 0x22);
 
-    // Create two "protocol" instances (simulating WiFi Direct and LoRaWAN)
-    let wifi_enc = ChaCha20Poly1305Encryption::new("wifi_direct", &shared_key).unwrap();
-    let lorawan_enc = ChaCha20Poly1305Encryption::new("lorawan", &shared_key).unwrap();
-
-    // WiFi Direct encrypts with its AAD
     let wifi_aad = b"wifi_direct||v1||session_123";
-    let wifi_ciphertext = wifi_enc.encrypt(plaintext, wifi_aad).unwrap();
+    let wifi_ciphertext = encrypt_and_verify(&wifi_enc, plaintext, wifi_aad);
 
-    // LoRaWAN attempts to decrypt with its AAD (should fail)
     let lorawan_aad = b"lorawan||v1||device_eui_abc";
-    let result = lorawan_enc.decrypt(&wifi_ciphertext, lorawan_aad);
-
-    assert!(result.is_err(),
-        "LoRaWAN should NOT decrypt WiFi Direct's ciphertext (different AAD = different auth tag)");
+    decrypt_should_fail(&lorawan_enc, &wifi_ciphertext, lorawan_aad);
 }
 
 // ============================================================================
@@ -71,19 +74,10 @@ fn test_ci_cross_protocol_isolation() {
 /// Verify that authentication fails when AAD is modified (tampering detection)
 #[test]
 fn test_ci_aad_tampering_detection() {
-    let key = [0x33u8; 32];
-    let plaintext = b"Authenticated message";
-
-    let enc = ChaCha20Poly1305Encryption::new("security_test", &key).unwrap();
-
-    let original_aad = b"authenticated_data";
-    let ciphertext = enc.encrypt(plaintext, original_aad).unwrap();
-
-    // Attempt to decrypt with tampered AAD
-    let tampered_aad = b"tampered_data!!!";
-
-    let result = enc.decrypt(&ciphertext, tampered_aad);
-    assert!(result.is_err(), "Decryption must fail when AAD is tampered");
+    use test_helpers::*;
+    let enc = create_test_enc("security_test", 0x33);
+    let ciphertext = encrypt_and_verify(&enc, b"Authenticated message", b"authenticated_data");
+    decrypt_should_fail(&enc, &ciphertext, b"tampered_data!!!");
 }
 
 // ============================================================================
@@ -93,25 +87,16 @@ fn test_ci_aad_tampering_detection() {
 /// Verify that encryption works with immutable references (&self)
 #[test]
 fn test_ci_stateless_encryption_design() {
-    let key = [0x44u8; 32];
-    let plaintext = b"Stateless message";
-
-    let enc = ChaCha20Poly1305Encryption::new("stateless", &key).unwrap();
-
-    // Use immutable reference (simulating shared/concurrent access)
+    use test_helpers::*;
+    let enc = create_test_enc("stateless", 0x44);
     let enc_ref: &dyn ProtocolEncryption = &enc;
 
     let aad = b"test_aad";
+    let plaintext = b"Stateless message";
+    let ciphertext = enc_ref.encrypt(plaintext, aad).unwrap();
+    let decrypted = enc_ref.decrypt(&ciphertext, aad).unwrap();
 
-    // Should work with &self (not &mut self)
-    let result1 = enc_ref.encrypt(plaintext, aad);
-    assert!(result1.is_ok(), "Encryption should work with &self");
-
-    let result2 = enc_ref.decrypt(&result1.unwrap(), aad);
-    assert!(result2.is_ok(), "Decryption should work with &self");
-
-    // Multiple threads could safely share this without locks
-    assert_eq!(&result2.unwrap()[..], plaintext);
+    assert_eq!(&decrypted[..], plaintext);
 }
 
 // ============================================================================
@@ -121,27 +106,18 @@ fn test_ci_stateless_encryption_design() {
 /// Verify that statistics are updated atomically without locks
 #[test]
 fn test_ci_atomic_statistics() {
-    let key = [0x55u8; 32];
-    let enc = ChaCha20Poly1305Encryption::new("stats_test", &key).unwrap();
-
-    let aad = b"test_aad";
+    use test_helpers::*;
+    let enc = create_test_enc("stats_test", 0x55);
     let plaintext = b"Test message for statistics";
+    let ciphertext = encrypt_and_verify(&enc, plaintext, b"test_aad");
 
-    // Perform encryption
-    let ciphertext = enc.encrypt(plaintext, aad).unwrap();
-
-    // Check stats (should use atomic reads, not locks)
     let stats = enc.stats();
-    assert_eq!(stats.messages_encrypted, 1, "Encryption count should be 1");
-    // Note: bytes_encrypted includes the plaintext length (ciphertext includes nonce + tag)
-    assert!(stats.bytes_encrypted > 0, "Bytes encrypted should be recorded");
+    assert_eq!(stats.messages_encrypted, 1);
+    assert!(stats.bytes_encrypted > 0);
 
-    // Perform decryption
-    let _ = enc.decrypt(&ciphertext, aad).unwrap();
-
-    // Check updated stats
+    let _ = enc.decrypt(&ciphertext, b"test_aad").unwrap();
     let stats = enc.stats();
-    assert_eq!(stats.messages_decrypted, 1, "Decryption count should be 1");
+    assert_eq!(stats.messages_decrypted, 1);
 }
 
 // ============================================================================
@@ -151,23 +127,13 @@ fn test_ci_atomic_statistics() {
 /// Verify that decryption failures are tracked in statistics
 #[test]
 fn test_ci_failure_statistics() {
-    let key = [0x66u8; 32];
-    let enc = ChaCha20Poly1305Encryption::new("failure_test", &key).unwrap();
+    use test_helpers::*;
+    let enc = create_test_enc("failure_test", 0x66);
+    let ciphertext = encrypt_and_verify(&enc, b"Test message", b"test_aad");
 
-    let aad = b"test_aad";
-    let plaintext = b"Test message";
-
-    // Successful encryption
-    let ciphertext = enc.encrypt(plaintext, aad).unwrap();
-
-    // Attempt decryption with wrong AAD (will fail)
-    let wrong_aad = b"wrong_aad_data";
-    let _ = enc.decrypt(&ciphertext, wrong_aad);
-
-    // Check that failure is tracked
+    let _ = enc.decrypt(&ciphertext, b"wrong_aad_data");
     let stats = enc.stats();
-    assert!(stats.decryption_failures > 0,
-        "Failed decryption should be recorded in statistics");
+    assert!(stats.decryption_failures > 0);
 }
 
 // ============================================================================
@@ -177,25 +143,18 @@ fn test_ci_failure_statistics() {
 /// Verify domain separation by message type within same protocol
 #[test]
 fn test_ci_message_type_separation() {
-    let key = [0x77u8; 32];
-    let enc = ChaCha20Poly1305Encryption::new("mesh_protocol", &key).unwrap();
-
+    use test_helpers::*;
+    let enc = create_test_enc("mesh_protocol", 0x77);
     let plaintext = b"Application data";
 
-    // Different message types use different AAD
     let aad_control = b"mesh_protocol||v1||message_type:control||session:123";
     let aad_data = b"mesh_protocol||v1||message_type:data||session:123";
 
-    let ct_control = enc.encrypt(plaintext, aad_control).unwrap();
-    let ct_data = enc.encrypt(plaintext, aad_data).unwrap();
+    let ct_control = encrypt_and_verify(&enc, plaintext, aad_control);
+    let ct_data = encrypt_and_verify(&enc, plaintext, aad_data);
 
-    // Control message cannot be decrypted as data message
-    let result = enc.decrypt(&ct_control, aad_data);
-    assert!(result.is_err(), "Control message should not decrypt as data message");
-
-    // Data message cannot be decrypted as control message
-    let result = enc.decrypt(&ct_data, aad_control);
-    assert!(result.is_err(), "Data message should not decrypt as control message");
+    decrypt_should_fail(&enc, &ct_control, aad_data);
+    decrypt_should_fail(&enc, &ct_data, aad_control);
 }
 
 // ============================================================================
@@ -205,22 +164,15 @@ fn test_ci_message_type_separation() {
 /// Verify that ChaCha20Poly1305Encryption implements ProtocolEncryption correctly
 #[test]
 fn test_ci_protocol_encryption_trait() {
-    let key = [0x88u8; 32];
-    let enc = ChaCha20Poly1305Encryption::new("trait_test", &key).unwrap();
+    use test_helpers::*;
+    let enc = create_test_enc("trait_test", 0x88);
 
-    let aad = b"test_aad";
-    let plaintext = b"Trait test message";
-
-    // Verify trait methods are available
     assert_eq!(enc.protocol(), "trait_test");
 
-    // Verify encrypt/decrypt work via trait
-    let ciphertext = enc.encrypt(plaintext, aad).unwrap();
-    let decrypted = enc.decrypt(&ciphertext, aad).unwrap();
+    let ciphertext = encrypt_and_verify(&enc, b"Trait test message", b"test_aad");
+    let decrypted = enc.decrypt(&ciphertext, b"test_aad").unwrap();
+    assert_eq!(&decrypted[..], b"Trait test message");
 
-    assert_eq!(&decrypted[..], plaintext);
-
-    // Verify stats are available
     let stats = enc.stats();
     assert!(!stats.protocol.is_empty());
 }
@@ -278,24 +230,17 @@ fn test_ci_concurrent_encryption_safety() {
 /// Verify that AAD works correctly with empty plaintext
 #[test]
 fn test_ci_aad_empty_message() {
-    let key = [0xAAu8; 32];
-    let enc = ChaCha20Poly1305Encryption::new("empty_test", &key).unwrap();
-
-    let empty_plaintext = b"";
+    use test_helpers::*;
+    let enc = create_test_enc("empty_test", 0xAA);
     let aad = b"protocol||empty_message";
 
-    // Should still produce authentication tag even for empty plaintext
-    let ciphertext = enc.encrypt(empty_plaintext, aad).unwrap();
-    assert!(!ciphertext.is_empty(), "Ciphertext should include nonce and tag even for empty plaintext");
+    let ciphertext = encrypt_and_verify(&enc, b"", aad);
+    assert!(!ciphertext.is_empty());
 
-    // Decrypt with same AAD
     let decrypted = enc.decrypt(&ciphertext, aad).unwrap();
-    assert!(decrypted.is_empty(), "Decrypted empty message should be empty");
+    assert!(decrypted.is_empty());
 
-    // Decrypt with different AAD should fail
-    let wrong_aad = b"wrong_aad";
-    let result = enc.decrypt(&ciphertext, wrong_aad);
-    assert!(result.is_err(), "AAD mismatch should cause authentication failure even for empty message");
+    decrypt_should_fail(&enc, &ciphertext, b"wrong_aad");
 }
 
 // ============================================================================
@@ -305,22 +250,16 @@ fn test_ci_aad_empty_message() {
 /// Verify AAD works correctly with large messages
 #[test]
 fn test_ci_aad_large_message() {
-    let key = [0xBBu8; 32];
-    let enc = ChaCha20Poly1305Encryption::new("large_test", &key).unwrap();
-
-    // 10 MB message
+    use test_helpers::*;
+    let enc = create_test_enc("large_test", 0xBB);
     let large_plaintext = vec![0x42u8; 10 * 1024 * 1024];
     let aad = b"protocol||v1||large_mesh_message";
 
-    let ciphertext = enc.encrypt(&large_plaintext, aad).unwrap();
+    let ciphertext = encrypt_and_verify(&enc, &large_plaintext, aad);
     let decrypted = enc.decrypt(&ciphertext, aad).unwrap();
+    assert_eq!(&decrypted[..], &large_plaintext[..]);
 
-    assert_eq!(&decrypted[..], &large_plaintext[..], "Large message round-trip should succeed");
-
-    // Verify AAD protection on large message
-    let wrong_aad = b"wrong_aad_for_large_message";
-    let result = enc.decrypt(&ciphertext, wrong_aad);
-    assert!(result.is_err(), "AAD mismatch on large message should fail");
+    decrypt_should_fail(&enc, &ciphertext, b"wrong_aad_for_large_message");
 }
 
 // ============================================================================
