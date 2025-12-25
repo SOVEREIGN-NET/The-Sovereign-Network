@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
-use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data};
+use crate::protocols::wifi_direct_encryption::WiFiDirectEncryption;
 use crate::network_utils::get_local_ip;
 
 // Enhanced WiFi Direct implementations with cross-platform support
@@ -203,7 +203,7 @@ pub struct PersistentGroup {
     pub member_devices: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// WiFi Direct peer connection (note: encryption field is not Clone)
 pub struct WiFiDirectConnection {
     pub mac_address: String,
     pub ip_address: String,
@@ -214,6 +214,164 @@ pub struct WiFiDirectConnection {
     pub device_type: WiFiDirectDeviceType,
     /// Session key for ChaCha20Poly1305 app-layer encryption (from UHP handshake)
     pub session_key: Option<[u8; 32]>,
+    /// WiFi Direct encryption adapter with E2E AEAD or link-layer fallback
+    pub encryption: Option<WiFiDirectEncryption>,
+}
+
+impl std::fmt::Debug for WiFiDirectConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WiFiDirectConnection")
+            .field("mac_address", &self.mac_address)
+            .field("ip_address", &self.ip_address)
+            .field("signal_strength", &self.signal_strength)
+            .field("connection_time", &self.connection_time)
+            .field("data_rate", &self.data_rate)
+            .field("device_name", &self.device_name)
+            .field("device_type", &self.device_type)
+            .field("session_key", &self.session_key.as_ref().map(|_| "<secret>"))
+            .field("encryption", &"<ChaCha20Poly1305>")
+            .finish()
+    }
+}
+
+impl Clone for WiFiDirectConnection {
+    fn clone(&self) -> Self {
+        WiFiDirectConnection {
+            mac_address: self.mac_address.clone(),
+            ip_address: self.ip_address.clone(),
+            signal_strength: self.signal_strength,
+            connection_time: self.connection_time,
+            data_rate: self.data_rate,
+            device_name: self.device_name.clone(),
+            device_type: self.device_type.clone(),
+            session_key: self.session_key,
+            encryption: None, // Don't clone encryption state
+        }
+    }
+}
+
+impl Serialize for WiFiDirectConnection {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("WiFiDirectConnection", 8)?;
+        state.serialize_field("mac_address", &self.mac_address)?;
+        state.serialize_field("ip_address", &self.ip_address)?;
+        state.serialize_field("signal_strength", &self.signal_strength)?;
+        state.serialize_field("connection_time", &self.connection_time)?;
+        state.serialize_field("data_rate", &self.data_rate)?;
+        state.serialize_field("device_name", &self.device_name)?;
+        state.serialize_field("device_type", &self.device_type)?;
+        state.serialize_field("session_key", &self.session_key)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for WiFiDirectConnection {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field {
+            MacAddress,
+            IpAddress,
+            SignalStrength,
+            ConnectionTime,
+            DataRate,
+            DeviceName,
+            DeviceType,
+            SessionKey,
+        }
+
+        struct WiFiDirectConnectionVisitor;
+
+        impl<'de> Visitor<'de> for WiFiDirectConnectionVisitor {
+            type Value = WiFiDirectConnection;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct WiFiDirectConnection")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> std::result::Result<WiFiDirectConnection, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut mac_address = None;
+                let mut ip_address = None;
+                let mut signal_strength = None;
+                let mut connection_time = None;
+                let mut data_rate = None;
+                let mut device_name = None;
+                let mut device_type = None;
+                let mut session_key = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::MacAddress => {
+                            mac_address = Some(map.next_value()?);
+                        }
+                        Field::IpAddress => {
+                            ip_address = Some(map.next_value()?);
+                        }
+                        Field::SignalStrength => {
+                            signal_strength = Some(map.next_value()?);
+                        }
+                        Field::ConnectionTime => {
+                            connection_time = Some(map.next_value()?);
+                        }
+                        Field::DataRate => {
+                            data_rate = Some(map.next_value()?);
+                        }
+                        Field::DeviceName => {
+                            device_name = Some(map.next_value()?);
+                        }
+                        Field::DeviceType => {
+                            device_type = Some(map.next_value()?);
+                        }
+                        Field::SessionKey => {
+                            session_key = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                Ok(WiFiDirectConnection {
+                    mac_address: mac_address.ok_or_else(|| de::Error::missing_field("mac_address"))?,
+                    ip_address: ip_address.ok_or_else(|| de::Error::missing_field("ip_address"))?,
+                    signal_strength: signal_strength
+                        .ok_or_else(|| de::Error::missing_field("signal_strength"))?,
+                    connection_time: connection_time
+                        .ok_or_else(|| de::Error::missing_field("connection_time"))?,
+                    data_rate: data_rate.ok_or_else(|| de::Error::missing_field("data_rate"))?,
+                    device_name: device_name.ok_or_else(|| de::Error::missing_field("device_name"))?,
+                    device_type: device_type.ok_or_else(|| de::Error::missing_field("device_type"))?,
+                    session_key: session_key.ok_or_else(|| de::Error::missing_field("session_key"))?,
+                    encryption: None,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "WiFiDirectConnection",
+            &[
+                "mac_address",
+                "ip_address",
+                "signal_strength",
+                "connection_time",
+                "data_rate",
+                "device_name",
+                "device_type",
+                "session_key",
+            ],
+            WiFiDirectConnectionVisitor,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -676,6 +834,7 @@ impl WiFiDirectMeshProtocol {
                             data_rate: 150, // Assume 150 Mbps for P2P
                             device_name: ssid.to_string(),
                             device_type: WiFiDirectDeviceType::P2P,
+                            encryption: None,
                         });
                         
                         info!("🍎 Found P2P network: {} at {} dBm", ssid, rssi);
@@ -721,6 +880,7 @@ impl WiFiDirectMeshProtocol {
                             data_rate: 150,
                             device_name: network_name.to_string(),
                             device_type: WiFiDirectDeviceType::P2P,
+                            encryption: None,
                         });
                         
                         info!("🍎 Found known P2P network: {}", network_name);
@@ -776,6 +936,7 @@ impl WiFiDirectMeshProtocol {
                         data_rate: 150,
                         device_name: format!("P2P-Device-{}", &line[15..]),
                         device_type: WiFiDirectDeviceType::Unknown,
+                            encryption: None,
                         session_key: None,
                     });
                 }
@@ -868,6 +1029,7 @@ impl WiFiDirectMeshProtocol {
                                 connection_time: 0,
                                 data_rate: 0,
                                 device_type: WiFiDirectDeviceType::Unknown,
+                            encryption: None,
                                 session_key: None, // No session key from discovery
                             };
                             
@@ -1329,6 +1491,7 @@ impl WiFiDirectMeshProtocol {
             data_rate: 150,
             device_name: ssid.to_string(),
             device_type: WiFiDirectDeviceType::Router,
+                            encryption: None,
             session_key: None, // Session key established after UHP handshake
         };
         
@@ -3039,25 +3202,41 @@ impl WiFiDirectMeshProtocol {
         
         let devices = self.connected_devices.read().await;
         
-        if let Some(device) = devices.get(target_address) {
-            // Application-layer encryption using ChaCha20Poly1305
+        // Need mutable access to initialize encryption adapter
+        drop(devices);
+        let mut devices_mut = self.connected_devices.write().await;
+
+        if let Some(device) = devices_mut.get_mut(target_address) {
+            // Application-layer encryption using ChaCha20Poly1305 AEAD via WiFiDirectEncryption adapter
             let encrypted_message = if let Some(session_key) = &device.session_key {
-                info!(" Encrypting message with ChaCha20Poly1305 (WPA2/3 + app-layer security)");
-                encrypt_data(message, session_key)?
+                // Initialize encryption adapter if not already done
+                if device.encryption.is_none() {
+                    device.encryption = Some(WiFiDirectEncryption::new_with_session_key(session_key)?);
+                }
+
+                info!(" Encrypting message with ChaCha20Poly1305 via WiFiDirectEncryption adapter");
+
+                if let Some(ref encryption) = device.encryption {
+                    // Message type "p2p_message" provides domain separation from other message types
+                    encryption.encrypt_message(message, "p2p_message")?
+                } else {
+                    // Fallback if encryption initialization fails
+                    warn!("⚠️  Encryption adapter not available for {}, sending unencrypted", target_address);
+                    message.to_vec()
+                }
             } else {
                 warn!("⚠️  No session key for {}, sending unencrypted (WPA2/3 only)", target_address);
                 message.to_vec()
             };
-            
-            // Establish TCP/UDP connection over WiFi Direct
-            let result = self.transmit_over_wifi_direct(device, &encrypted_message).await;
-            
+
+            // Establish TCP/UDP connection over WiFi Direct (device clone needed as transmit takes reference)
+            let device_clone = device.clone(); // Clone without encryption state
+            let result = self.transmit_over_wifi_direct(&device_clone, &encrypted_message).await;
+
             if result.is_ok() {
                 info!("Message sent via WiFi Direct to {} ({} Mbps)", target_address, device.data_rate);
-                
-                // Update connection statistics
-                drop(devices);
-                let mut devices_mut = self.connected_devices.write().await;
+
+                // Update connection statistics (devices_mut already held)
                 if let Some(conn) = devices_mut.get_mut(target_address) {
                     conn.connection_time = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -3065,7 +3244,7 @@ impl WiFiDirectMeshProtocol {
                         .as_secs();
                 }
             }
-            
+
             result
         } else {
             return Err(anyhow::anyhow!("Device not connected: {}", target_address));
