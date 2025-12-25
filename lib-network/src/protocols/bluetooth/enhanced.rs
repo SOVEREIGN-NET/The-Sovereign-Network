@@ -14,6 +14,9 @@ use crate::protocols::bluetooth::device::{BleDevice, CharacteristicInfo, Bluetoo
 use crate::protocols::bluetooth::common::{parse_mac_address, format_mac_address, mac_to_dbus_path};
 use crate::protocols::bluetooth::gatt::{GattMessage, GattOperation, supports_operation, parse_characteristic_properties};
 
+// Import encryption adapter for CRITICAL AES ECB replacement
+use crate::protocols::bluetooth_encryption::BluetoothEncryption;
+
 /// Enhanced D-Bus XML parser for BlueZ GATT operations
 #[cfg(all(target_os = "linux", feature = "enhanced-parsing"))]
 pub struct BlueZGattParser {
@@ -471,100 +474,99 @@ pub struct MacOSDeviceInfo {
     pub connected: bool,
 }
 
-/// Enhanced security protocols for WiFi Direct
+/// Enhanced security protocols for WiFi Direct (Bluetooth P2P)
+///
+/// CRITICAL SECURITY NOTE: This struct previously used AES-128 ECB mode (INSECURE).
+/// Now uses ChaCha20Poly1305 AEAD via BluetoothEncryption adapter with:
+/// - Deterministic nonce derivation from (session_id, sequence, direction)
+/// - Replay protection via sequence number tracking
+/// - Wire format with version, nonce, and sequence fields
+/// - AEAD authentication tag for tampering detection
 #[cfg(feature = "enhanced-security")]
 pub struct EnhancedWiFiDirectSecurity {
-    #[cfg(feature = "aes")]
-    aes_cipher: Option<aes::Aes128>,
-    #[cfg(feature = "cmac")]
-    cmac_key: Option<Vec<u8>>,
+    /// ChaCha20Poly1305 AEAD encryption with wire format and replay protection
+    encryption: Option<BluetoothEncryption>,
 }
 
 #[cfg(feature = "enhanced-security")]
 impl EnhancedWiFiDirectSecurity {
+    /// Create new enhanced WiFi Direct security instance
+    ///
+    /// Encryption is initialized lazily in init_wpa3_sae() when a session is established
     pub fn new() -> Self {
         Self {
-            #[cfg(feature = "aes")]
-            aes_cipher: None,
-            #[cfg(feature = "cmac")]
-            cmac_key: None,
+            encryption: None,
         }
     }
     
     /// Initialize WPA3-SAE security for P2P connections
-    #[cfg(all(feature = "aes", feature = "cmac"))]
+    ///
+    /// CRITICAL SECURITY FIX: Replaces insecure AES-128 ECB + CMAC with
+    /// ChaCha20Poly1305 AEAD encryption via BluetoothEncryption adapter.
     pub fn init_wpa3_sae(&mut self, password: &str) -> Result<()> {
-        use aes::Aes128;
-        use aes::cipher::{KeyInit, BlockEncrypt, generic_array::GenericArray};
-        use cmac::{Cmac, Mac};
-        
-        info!(" Initializing WPA3-SAE security for WiFi Direct");
-        
-        // Derive AES key from password using SAE protocol simulation
-        let mut key_material = [0u8; 16];
-        let password_bytes = password.as_bytes();
-        
-        for (i, &byte) in password_bytes.iter().enumerate() {
-            key_material[i % 16] ^= byte;
-        }
-        
-        // Initialize AES cipher
-        let key = GenericArray::from_slice(&key_material);
-        self.aes_cipher = Some(Aes128::new(key));
-        
-        // Initialize CMAC key
-        self.cmac_key = Some(key_material.to_vec());
-        
-        info!(" WPA3-SAE security initialized");
+        use sha2::{Sha256, Digest};
+
+        info!("🔐 Initializing WPA3-SAE security for WiFi Direct (ChaCha20Poly1305)");
+
+        // Derive 32-byte key for ChaCha20Poly1305 from password using SHA256
+        let mut hasher = Sha256::new();
+        hasher.update(b"WPA3-SAE-KEY-DERIVATION");
+        hasher.update(password.as_bytes());
+        let key_bytes = hasher.finalize();
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&key_bytes[..]);
+
+        // Derive 16-byte session_id from password for replay protection
+        let mut hasher = Sha256::new();
+        hasher.update(b"WPA3-SAE-SESSION-ID");
+        hasher.update(password.as_bytes());
+        let session_bytes = hasher.finalize();
+        let mut session_id = [0u8; 16];
+        session_id.copy_from_slice(&session_bytes[..16]);
+
+        // Initialize BluetoothEncryption adapter with deterministic nonce
+        // and replay protection via sequence number tracking
+        self.encryption = Some(BluetoothEncryption::new(&key, session_id)?);
+
+        info!(
+            "✅ WPA3-SAE security initialized with ChaCha20Poly1305 AEAD"
+        );
         Ok(())
     }
     
-    /// Encrypt P2P message using AES
-    #[cfg(feature = "aes")]
+    /// Encrypt P2P message using ChaCha20Poly1305 AEAD with wire format
+    ///
+    /// CRITICAL SECURITY FIX: Previously used AES-128 ECB (INSECURE).
+    /// Now uses ChaCha20Poly1305 with:
+    /// - Deterministic nonce from (session_id, sequence, direction)
+    /// - Polyly1305 authentication tag (16 bytes) for tampering detection
+    /// - Wire format: Version(1) + Flags(1) + Nonce(12) + Sequence(8) + Ciphertext + Tag(16)
     pub fn encrypt_p2p_message(&self, data: &[u8]) -> Result<Vec<u8>> {
-        if let Some(ref cipher) = self.aes_cipher {
-            use aes::cipher::{BlockEncrypt, generic_array::GenericArray};
-            
-            let mut encrypted = Vec::new();
-            
-            // Process data in 16-byte blocks (AES block size)
-            for chunk in data.chunks(16) {
-                let mut block = [0u8; 16];
-                block[..chunk.len()].copy_from_slice(chunk);
-                
-                let mut block_array = GenericArray::from_mut_slice(&mut block);
-                cipher.encrypt_block(&mut block_array);
-                
-                encrypted.extend_from_slice(&block);
-            }
-            
-            info!(" Encrypted {} bytes for P2P transmission", data.len());
-            Ok(encrypted)
-        } else {
-            Err(anyhow::anyhow!("AES cipher not initialized"))
-        }
+        self.encryption
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Bluetooth encryption not initialized"))?
+            .encrypt_message(data)
+            .map_err(|e| {
+                error!("Failed to encrypt P2P message: {}", e);
+                e
+            })
     }
-    
-    /// Generate CMAC authentication tag for P2P message
-    #[cfg(feature = "cmac")]
-    pub fn generate_cmac_tag(&self, data: &[u8]) -> Result<Vec<u8>> {
-        if let Some(ref key) = self.cmac_key {
-            use cmac::{Cmac, Mac};
-            use aes::Aes128;
-            
-            type AesCmac = Cmac<Aes128>;
-            
-            let mut mac = AesCmac::new_from_slice(key)
-                .map_err(|e| anyhow::anyhow!("CMAC key error: {:?}", e))?;
-            
-            mac.update(data);
-            let result = mac.finalize();
-            let tag = result.into_bytes().to_vec();
-            
-            info!("🏷️  Generated CMAC tag for {} bytes", data.len());
-            Ok(tag)
-        } else {
-            Err(anyhow::anyhow!("CMAC key not initialized"))
-        }
+
+    /// Decrypt P2P message using ChaCha20Poly1305 AEAD with replay protection
+    ///
+    /// Validates Poly1305 authentication tag and checks for replay attacks
+    /// using per-peer sequence number tracking.
+    pub fn decrypt_p2p_message(&self, encrypted_data: &[u8]) -> Result<Vec<u8>> {
+        // Use a fixed peer_id for P2P (single remote peer per connection)
+        let peer_id = [0xFFu8; 16]; // Default P2P peer identifier
+
+        self.encryption
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Bluetooth encryption not initialized"))?
+            .decrypt_message(encrypted_data, &peer_id)
+            .map_err(|e| {
+                error!("Failed to decrypt P2P message: {}", e);
+                e
+            })
     }
 }

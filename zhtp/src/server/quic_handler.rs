@@ -766,7 +766,7 @@ impl QuicHandler {
             handshake_result.master_key,
             handshake_result.session_id,
             false,
-        );
+        )?;
 
         // Store connection
         self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
@@ -1126,7 +1126,7 @@ impl QuicHandler {
             handshake_result.master_key,
             handshake_result.session_id,
             false,
-        );
+        )?;
 
         // Store connection
         self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
