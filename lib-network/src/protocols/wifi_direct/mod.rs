@@ -26,6 +26,13 @@ pub mod enhanced_wifi_direct;
 // New modular structure
 pub mod platform;
 pub mod enhanced;
+pub mod discovery;
+pub mod group;
+pub mod wps;
+pub mod invitation;
+pub mod mesh;
+pub mod connection;
+pub mod orchestrator;
 
 // Re-exports for convenience
 pub use self::wifi_direct::*;
