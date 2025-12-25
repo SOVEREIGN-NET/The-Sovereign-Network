@@ -2,13 +2,12 @@
 //!
 //! Handles LoRaWAN long-range mesh networking for extended coverage
 
-mod gateway_auth;
-
 use anyhow::Result;
 use tracing::{info, warn};
 use crate::protocols::lorawan_encryption::LoRaWANEncryption;
 
-pub use gateway_auth::{
+// Import gateway_auth from parent module
+use super::gateway_auth::{
     GatewayAttestation, LoRaDeviceMessage, LoRaWANGatewayAuth, LoRaWanUhpBinding,
 };
 

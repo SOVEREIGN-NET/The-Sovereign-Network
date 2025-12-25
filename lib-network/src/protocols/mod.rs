@@ -39,37 +39,44 @@ pub use types::{
 };
 
 // ============================================================================
-// Protocol Implementations
+// Protocol Implementations (organized by protocol family)
 // ============================================================================
 
-// Bluetooth protocol suite (includes BLE mesh, Classic RFCOMM, platform-specific)
+// Bluetooth protocol suite (BLE mesh, Classic RFCOMM, platform-specific)
 pub mod bluetooth;
-pub mod bluetooth_encryption; // Bluetooth encryption adapter with wire format & replay protection
 
-// Encryption adapters for various protocols
-pub mod zhtp_mesh_encryption;    // ZHTP mesh encryption adapter with domain separation
-pub mod wifi_direct_encryption;  // WiFi Direct encryption adapter with fallback support
-pub mod quic_encryption;         // QUIC application-level encryption adapter
-pub mod lorawan_encryption;      // LoRaWAN encryption adapter with frame counter domain separation
-
-// Other protocols
-pub mod wifi_direct;
-pub mod wifi_direct_handshake; // UHP handshake adapter for WiFi Direct
+// LoRaWAN wide-area network protocol
 pub mod lorawan;
+
+// QUIC mesh protocol with post-quantum cryptography
+pub mod quic;
+
+// WiFi Direct peer-to-peer protocol
+pub mod wifi_direct;
+
+// ZHTP unified handshake and transport protocol
+pub mod zhtp;
+
+// Satellite long-distance mesh protocol
 pub mod satellite;
-pub mod zhtp_auth;
-pub mod zhtp_encryption;
-pub mod quic_mesh;           // QUIC transport with PQC encryption
-pub mod quic_handshake;      // UHP handshake adapter for QUIC with Kyber binding
-pub mod quic_api_dispatcher; // QUIC API request dispatcher for Web4 client
 
-// Enhanced protocol implementations with platform-specific optimizations
-// NOTE: enhanced_bluetooth functionality is in bluetooth/enhanced.rs, not a separate top-level module
-// #[cfg(feature = "enhanced-bluetooth")]
-// pub mod enhanced_bluetooth;
+// ============================================================================
+// Re-exports for backward compatibility (maintain old import paths)
+// ============================================================================
 
-#[cfg(feature = "enhanced-wifi-direct")]
-pub mod enhanced_wifi_direct;
+// Adapters at top level
+pub use bluetooth::bluetooth_encryption;
+pub use lorawan::lorawan_encryption;
+pub use quic::quic_encryption;
+pub use wifi_direct::wifi_direct_encryption;
+pub use zhtp::{zhtp_auth, zhtp_encryption, zhtp_mesh_encryption};
+
+// Protocol implementations at top level (re-exported from subfolders for backward compatibility)
+pub use quic::quic_mesh;
+pub use quic::quic_handshake;
+pub use quic::quic_api_dispatcher;
+pub use wifi_direct::wifi_direct_handshake;
+pub use wifi_direct::enhanced_wifi_direct;
 
 // ============================================================================
 // Protocol Trait (with session validation and rekeying)
