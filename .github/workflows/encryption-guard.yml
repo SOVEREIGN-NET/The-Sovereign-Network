@@ -28,7 +28,7 @@ jobs:
           VIOLATIONS=$(grep -r "lib_crypto::symmetric::chacha20::encrypt_data\|lib_crypto::symmetric::chacha20::decrypt_data\|lib_crypto::symmetric::aes" \
             lib-network/src/protocols \
             --include="*.rs" \
-            -n | grep -v test | grep -v "^\s*//")
+            -n | grep -v test | grep -v "^\s*//") || true
 
           if [ ! -z "$VIOLATIONS" ]; then
             echo "❌ VIOLATION: Direct lib_crypto calls found in protocols!"
