@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@7e77c8c899c9b16eaf76d8c649a0fbc2b2c3fec7 # stable
+        uses: dtolnay/rust-toolchain@stable
 
       # Check 1: No direct lib_crypto encryption calls in protocol implementations
       - name: 'Check 1: No direct lib_crypto calls in protocols'
