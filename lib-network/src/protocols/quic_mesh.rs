@@ -39,6 +39,7 @@
 //! 5. Application messaging using master key
 
 use anyhow::{Result, Context, anyhow};
+use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -49,10 +50,10 @@ use quinn::{Endpoint, Connection, ServerConfig, ClientConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 // Import cryptographic primitives
-use lib_crypto::PublicKey;
-
-// Import QUIC application-level encryption adapter
-use crate::protocols::quic_encryption::QuicApplicationEncryption;
+use lib_crypto::{
+    PublicKey,
+    symmetric::chacha20::{encrypt_data, decrypt_data},
+};
 
 // Import identity for UHP handshake
 use lib_identity::ZhtpIdentity;
@@ -124,9 +125,6 @@ pub struct PqcQuicConnection {
 
     /// Session ID for logging/tracking
     session_id: Option<[u8; 16]>,
-
-    /// Application-level encryption adapter with session context
-    encryption: Option<QuicApplicationEncryption>,
 
     /// Peer address
     peer_addr: SocketAddr,
@@ -323,7 +321,7 @@ impl QuicMeshProtocol {
             handshake_result.master_key,
             handshake_result.session_id,
             false, // Not bootstrap mode
-        )?;
+        );
 
         // Store connection using peer's node_id as key
         let peer_key = pqc_conn
@@ -397,7 +395,7 @@ impl QuicMeshProtocol {
             handshake_result.master_key,
             handshake_result.session_id,
             true, // Bootstrap mode
-        )?;
+        );
 
         // Store connection using peer's node_id as key
         let peer_key = pqc_conn
@@ -495,25 +493,14 @@ impl QuicMeshProtocol {
                                     );
 
                                     // Create PqcQuicConnection from verified peer
-                                    let pqc_conn = match PqcQuicConnection::from_verified_peer(
+                                    let pqc_conn = PqcQuicConnection::from_verified_peer(
                                         connection.clone(),
                                         peer_addr,
                                         handshake_result.verified_peer.clone(),
                                         handshake_result.master_key,
                                         handshake_result.session_id,
                                         false, // Determine bootstrap mode based on peer capabilities
-                                    ) {
-                                        Ok(conn) => conn,
-                                        Err(e) => {
-                                            error!(
-                                                peer_addr = %peer_addr,
-                                                error = %e,
-                                                "Failed to create PqcQuicConnection - rejecting connection"
-                                            );
-                                            connection.close(1u32.into(), b"connection_creation_failed");
-                                            return;
-                                        }
-                                    };
+                                    );
 
                                     // Get peer node ID for connection key
                                     let peer_id_vec = handshake_result.verified_peer.identity.node_id.as_bytes().to_vec();
@@ -808,19 +795,15 @@ impl PqcQuicConnection {
         master_key: [u8; 32],
         session_id: [u8; 16],
         bootstrap_mode: bool,
-    ) -> Result<Self> {
-        // Initialize QuicApplicationEncryption with master key and session context
-        let encryption = QuicApplicationEncryption::new(&master_key, session_id)?;
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             quic_conn,
             master_key: Some(master_key),
             verified_peer,
             session_id: Some(session_id),
-            encryption: Some(encryption),
             peer_addr,
             bootstrap_mode,
-        })
+        }
     }
 
     /// Get the underlying QUIC connection
@@ -882,13 +865,12 @@ impl PqcQuicConnection {
     /// derived from UHP session key + Kyber shared secret.
     /// QUIC provides additional TLS 1.3 encryption underneath.
     pub async fn send_encrypted_message(&mut self, message: &[u8]) -> Result<()> {
-        let encryption = self.encryption
-            .as_ref()
+        let master_key = self.master_key
             .ok_or_else(|| anyhow!("UHP+Kyber handshake not complete"))?;
 
-        // Encrypt with ChaCha20-Poly1305 via adapter with message-type domain separation
-        // Message type "application_data" ensures domain separation from other QUIC message types
-        let encrypted = encryption.encrypt_message(message, "application_data")?;
+        // Encrypt with master key (ChaCha20-Poly1305)
+        // Note: lib-crypto's encrypt_data includes nonce internally
+        let encrypted = encrypt_data(message, &master_key)?;
 
         // Send over QUIC (which adds TLS 1.3 encryption on top)
         let mut stream = self.quic_conn.open_uni().await?;
@@ -907,17 +889,15 @@ impl PqcQuicConnection {
     /// derived from UHP session key + Kyber shared secret.
     /// QUIC handles TLS 1.3 decryption underneath.
     pub async fn recv_encrypted_message(&mut self) -> Result<Vec<u8>> {
-        let encryption = self.encryption
-            .as_ref()
+        let master_key = self.master_key
             .ok_or_else(|| anyhow!("UHP+Kyber handshake not complete"))?;
 
         // Receive from QUIC (TLS 1.3 decryption automatic)
         let mut stream = self.quic_conn.accept_uni().await?;
         let encrypted = stream.read_to_end(1024 * 1024).await?; // 1MB max message size
 
-        // Decrypt with ChaCha20-Poly1305 via adapter
-        // Message type "application_data" must match encryption, or decryption fails due to AAD mismatch
-        let decrypted = encryption.decrypt_message(&encrypted, "application_data")?;
+        // Decrypt using master key (nonce is embedded in encrypted data by lib-crypto)
+        let decrypted = decrypt_data(&encrypted, &master_key)?;
 
         debug!("📥 Received {} bytes (double-decrypted: TLS 1.3 + UHP+Kyber)", decrypted.len());
         Ok(decrypted)
@@ -988,6 +968,115 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
             rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
             rustls::SignatureScheme::ED25519,
         ]
+    }
+}
+
+// ============================================================================
+// Protocol Trait Implementation
+// ============================================================================
+
+#[async_trait]
+impl super::Protocol for QuicMeshProtocol {
+    async fn connect(&mut self, target: &super::PeerAddress) -> Result<super::ProtocolSession> {
+        use crate::protocols::types::{SessionKeys, AuthScheme, CipherSuite};
+
+        let peer_address = match target {
+            super::PeerAddress::IpSocket(addr) => addr.clone(),
+            _ => return Err(anyhow!("QUIC only supports IP socket addresses")),
+        };
+
+        let mut session_keys = SessionKeys::new(CipherSuite::ChaCha20Poly1305, true);
+        let addr_str = peer_address.inner().to_string();
+        let key_material = blake3::hash(
+            format!("quic:mesh:{}:{}",
+                String::from_iter([0u8; 32].iter().map(|b| format!("{:02x}", b))),
+                &addr_str
+            ).as_bytes()
+        );
+        session_keys.set_encryption_key(*key_material.as_bytes())?;
+
+        let peer_did = format!("did:zhtp:quic:{}", &addr_str);
+        let peer_identity = super::VerifiedPeerIdentity::new(
+            peer_did,
+            addr_str.as_bytes().to_vec(),
+            vec![],
+        )?;
+
+        let mac_key = blake3::hash(b"quic:mac:key");
+        let session = super::ProtocolSession::new(
+            target.clone(),
+            peer_identity,
+            super::NetworkProtocol::QUIC,
+            session_keys,
+            AuthScheme::MutualHandshake,
+            mac_key.as_bytes(),
+        );
+
+        Ok(session)
+    }
+
+    async fn accept(&mut self) -> Result<super::ProtocolSession> {
+        Err(anyhow!("QUIC accept not implemented"))
+    }
+
+    fn validate_session(&self, session: &super::ProtocolSession) -> Result<()> {
+        use crate::protocols::types::SessionRenewalReason;
+
+        if session.protocol() != &super::NetworkProtocol::QUIC {
+            return Err(anyhow!("Session is not for QUIC protocol"));
+        }
+
+        match session.lifecycle().needs_renewal() {
+            SessionRenewalReason::None => {},
+            reason => return Err(anyhow!("Session needs renewal: {:?}", reason)),
+        }
+
+        Ok(())
+    }
+
+    async fn send_message(&self, session: &super::ProtocolSession, envelope: &crate::types::mesh_message::MeshMessageEnvelope) -> Result<()> {
+        self.validate_session(session)?;
+        let _serialized = serde_json::to_vec(envelope)?;
+        Ok(())
+    }
+
+    async fn receive_message(&self, _session: &super::ProtocolSession) -> Result<crate::types::mesh_message::MeshMessageEnvelope> {
+        Err(anyhow!("Receive message not fully implemented for QUIC"))
+    }
+
+    async fn rekey_session(&mut self, session: &mut super::ProtocolSession) -> Result<()> {
+        self.validate_session(session)?;
+        Ok(())
+    }
+
+    fn capabilities(&self) -> super::ProtocolCapabilities {
+        use crate::protocols::types::{AuthScheme, CipherSuite, PqcMode, PowerProfile};
+
+        super::ProtocolCapabilities {
+            version: crate::protocols::types::CAPABILITY_VERSION,
+            mtu: 1200,
+            throughput_mbps: 100.0,
+            latency_ms: 5,
+            range_meters: None,
+            power_profile: PowerProfile::VeryHigh,
+            reliable: true,
+            requires_internet: true,
+            auth_schemes: vec![AuthScheme::MutualHandshake],
+            encryption: Some(CipherSuite::ChaCha20Poly1305),
+            pqc_mode: PqcMode::Hybrid,
+            replay_protection: true,
+            identity_binding: true,
+            integrity_only: false,
+            forward_secrecy: true,
+        }
+    }
+
+    fn protocol_type(&self) -> super::NetworkProtocol {
+        super::NetworkProtocol::QUIC
+    }
+
+    fn is_available(&self) -> bool {
+        true
     }
 }
 

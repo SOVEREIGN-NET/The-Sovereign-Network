@@ -10,7 +10,6 @@
 pub mod common;
 pub mod device;
 pub mod gatt;
-pub mod bluetooth_encryption;
 
 // Bluetooth Classic RFCOMM protocol
 pub mod classic;
