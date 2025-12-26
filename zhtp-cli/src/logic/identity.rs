@@ -5,6 +5,7 @@
 
 use crate::error::{CliError, CliResult};
 use regex::Regex;
+use lib_identity::IdentityType;
 
 /// Identity key material (public view only)
 #[derive(Debug, Clone, PartialEq)]
@@ -22,6 +23,24 @@ pub struct IdentityMetadata {
     pub created_at: u64,
     pub last_used: u64,
     pub is_active: bool,
+}
+
+/// Parse identity type from string
+///
+/// Supported types: human, agent, contract, organization, device
+/// Pure function - deterministic conversion
+pub fn parse_identity_type(type_str: &str) -> CliResult<IdentityType> {
+    match type_str.to_lowercase().as_str() {
+        "human" => Ok(IdentityType::Human),
+        "agent" => Ok(IdentityType::Agent),
+        "contract" => Ok(IdentityType::Contract),
+        "organization" => Ok(IdentityType::Organization),
+        "device" => Ok(IdentityType::Device),
+        other => Err(CliError::IdentityError(format!(
+            "Unknown identity type: '{}'. Supported: human, agent, contract, organization, device",
+            other
+        ))),
+    }
 }
 
 /// Validate identity name
@@ -264,5 +283,28 @@ mod tests {
     fn test_is_identity_name_available() {
         assert!(is_identity_name_available("alice").is_ok());
         assert!(is_identity_name_available("valid_name").is_ok());
+    }
+
+    #[test]
+    fn test_parse_identity_type_valid() {
+        assert!(matches!(parse_identity_type("human"), Ok(IdentityType::Human)));
+        assert!(matches!(parse_identity_type("agent"), Ok(IdentityType::Agent)));
+        assert!(matches!(parse_identity_type("contract"), Ok(IdentityType::Contract)));
+        assert!(matches!(parse_identity_type("organization"), Ok(IdentityType::Organization)));
+        assert!(matches!(parse_identity_type("device"), Ok(IdentityType::Device)));
+    }
+
+    #[test]
+    fn test_parse_identity_type_case_insensitive() {
+        assert!(matches!(parse_identity_type("HUMAN"), Ok(IdentityType::Human)));
+        assert!(matches!(parse_identity_type("Agent"), Ok(IdentityType::Agent)));
+        assert!(matches!(parse_identity_type("CoNtRaCt"), Ok(IdentityType::Contract)));
+    }
+
+    #[test]
+    fn test_parse_identity_type_invalid() {
+        assert!(parse_identity_type("invalid").is_err());
+        assert!(parse_identity_type("").is_err());
+        assert!(parse_identity_type("robot").is_err());
     }
 }
