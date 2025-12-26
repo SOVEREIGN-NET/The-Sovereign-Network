@@ -91,6 +91,9 @@ pub enum ZhtpCommand {
     /// Server management
     Server(ServerArgs),
 
+    /// Reward system management
+    Reward(RewardArgs),
+
     /// Network isolation management
     Isolation(IsolationArgs),
 
@@ -474,6 +477,13 @@ pub struct ServerArgs {
     pub action: ServerAction,
 }
 
+/// Reward system commands
+#[derive(Args, Debug, Clone)]
+pub struct RewardArgs {
+    #[command(subcommand)]
+    pub action: RewardAction,
+}
+
 /// Network isolation commands
 #[derive(Args, Debug, Clone)]
 pub struct IsolationArgs {
@@ -518,6 +528,20 @@ pub enum ServerAction {
     /// Get server status
     Status,
     /// Get server configuration
+    Config,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum RewardAction {
+    /// Show reward orchestrator status
+    Status,
+    /// Show combined reward metrics
+    Metrics,
+    /// Show routing reward details
+    Routing,
+    /// Show storage reward details
+    Storage,
+    /// Show reward configuration
     Config,
 }
 
@@ -872,6 +896,7 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Component(args) => commands::component::handle_component_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Interactive(args) => commands::interactive::handle_interactive_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Server(args) => commands::server::handle_server_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Reward(args) => commands::rewards::handle_reward_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Isolation(args) => commands::isolation::handle_isolation_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Deploy(args) => commands::deploy::handle_deploy_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Trust(args) => commands::trust::handle_trust_command(args.clone()).await.map_err(anyhow::Error::msg),

@@ -4,7 +4,6 @@
 //! and delegates to the appropriate command handler.
 
 use zhtp_cli::run_cli;
-use clap::Parser;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

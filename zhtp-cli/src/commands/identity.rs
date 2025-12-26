@@ -7,7 +7,7 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{IdentityArgs, IdentityAction, ZhtpCli, format_output};
+use crate::argument_parsing::{IdentityArgs, IdentityAction, ZhtpCli};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
 use crate::logic;

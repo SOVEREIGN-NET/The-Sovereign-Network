@@ -8,7 +8,7 @@
 //! - **Testability**: Output trait injection for testing
 
 use crate::argument_parsing::{DiagnosticsArgs, DiagnosticsAction};
-use crate::error::{CliResult, CliError};
+use crate::error::CliResult;
 use crate::output::Output;
 
 use sysinfo::System;

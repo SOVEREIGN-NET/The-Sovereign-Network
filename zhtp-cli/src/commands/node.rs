@@ -10,7 +10,6 @@
 use crate::argument_parsing::{NodeArgs, NodeAction, ZhtpCli};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
-use crate::logic;
 
 use zhtp::config::environment::Environment;
 use zhtp::runtime::RuntimeOrchestrator;

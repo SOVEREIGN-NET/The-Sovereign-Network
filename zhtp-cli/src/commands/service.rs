@@ -10,9 +10,7 @@
 use crate::argument_parsing::ServiceAction;
 use crate::error::{CliResult, CliError};
 
-use std::path::{Path, PathBuf};
-use std::fs;
-use std::process::Command;
+use std::path::PathBuf;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable

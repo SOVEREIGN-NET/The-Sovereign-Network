@@ -11,7 +11,6 @@ use crate::argument_parsing::UpdateAction;
 use crate::error::{CliResult, CliError};
 
 use std::path::{Path, PathBuf};
-use std::fs;
 use semver::Version;
 
 // ============================================================================
