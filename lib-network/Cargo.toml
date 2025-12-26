@@ -1,6 +1,6 @@
 [package]
 name = "lib-network"
-version = "0.1.0"
+version = "1.1.0"
 edition = "2021"
 authors = ["ZHTP Development Team"]
 description = "ZHTP Mesh Protocol - Internet Replacement"
@@ -203,3 +203,4 @@ storage-integration = []
 chain-integration = []
 unsafe-bootstrap = []             # Explicit opt-in for insecure TLS verification paths
 ble-mock = []                     # Enable BLE mock testing framework (Issue #141)
+allow-net-tests = []              # Enable network integration tests (only for ZHTP_ALLOW_NET_TESTS scenarios)
