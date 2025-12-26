@@ -67,6 +67,15 @@ pub enum ZhtpCommand {
     /// System monitoring and status
     Monitor(MonitorArgs),
 
+    /// Show version and build information
+    Version(VersionArgs),
+
+    /// Generate shell completion scripts
+    Completion(CompletionArgs),
+
+    /// Configuration management
+    Config(ConfigArgs),
+
     /// Component management
     Component(ComponentArgs),
 
@@ -304,6 +313,73 @@ pub enum MonitorAction {
     Performance,
     /// Show system logs
     Logs,
+}
+
+/// Version command
+#[derive(Args, Debug, Clone)]
+pub struct VersionArgs {
+    /// Show full build information
+    #[arg(short, long)]
+    pub full: bool,
+}
+
+/// Shell completion command
+#[derive(Args, Debug, Clone)]
+pub struct CompletionArgs {
+    /// Shell to generate completions for
+    #[arg(value_parser = ["bash", "zsh", "fish", "powershell", "elvish"])]
+    pub shell: String,
+
+    /// Output file path (if not provided, prints to stdout)
+    #[arg(short, long)]
+    pub output: Option<String>,
+
+    /// Install completion for current shell (requires admin/sudo on some platforms)
+    #[arg(long)]
+    pub install: bool,
+}
+
+/// Configuration management command
+#[derive(Args, Debug, Clone)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub action: ConfigAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ConfigAction {
+    /// Display current configuration
+    Show {
+        /// Path to configuration file
+        #[arg(short, long)]
+        config: Option<String>,
+
+        /// Output format (toml, json, yaml)
+        #[arg(short, long)]
+        format: Option<String>,
+    },
+    /// Validate configuration file
+    Validate {
+        /// Path to configuration file
+        #[arg(short, long)]
+        config: Option<String>,
+    },
+    /// Edit configuration file with $EDITOR
+    Edit {
+        /// Path to configuration file
+        #[arg(short, long)]
+        config: Option<String>,
+    },
+    /// Initialize default configuration
+    Init {
+        /// Path to configuration file
+        #[arg(short, long)]
+        config: Option<String>,
+
+        /// Overwrite existing configuration
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// Component management commands
@@ -613,6 +689,9 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Network(args) => commands::network::handle_network_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Blockchain(args) => commands::blockchain::handle_blockchain_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Monitor(args) => commands::monitor::handle_monitor_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Version(args) => commands::version::handle_version_command(args.clone()).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Completion(args) => commands::completion::handle_completion_command(args.clone()).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Config(args) => commands::config::handle_config_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Component(args) => commands::component::handle_component_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Interactive(args) => commands::interactive::handle_interactive_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Server(args) => commands::server::handle_server_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),

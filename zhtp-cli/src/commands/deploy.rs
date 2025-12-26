@@ -417,7 +417,7 @@ mod tests {
             build_dir: "./dist".to_string(),
             domain: "myapp.zhtp".to_string(),
             mode: Some("spa".to_string()),
-            keystore: None,
+            keystore: "~/.zhtp/keystore".to_string(),
             fee: None,
             pin_spki: None,
             node_did: None,
