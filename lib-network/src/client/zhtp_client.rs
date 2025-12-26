@@ -4,7 +4,6 @@
 //! It handles connection establishment, UHP handshake, and request/response framing.
 
 use anyhow::{anyhow, Result, Context};
-use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,6 +22,26 @@ use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod};
 use crate::handshake::{HandshakeContext, NonceCache};
 use crate::protocols::quic_handshake;
 use crate::web4::trust::{TrustConfig, ZhtpTrustVerifier};
+
+/// Configuration for ZhtpClient initialization
+///
+/// This struct allows explicit configuration of client behavior without
+/// relying on environment variables, enabling safe operation in containerized
+/// and WASM environments.
+#[derive(Clone, Debug)]
+pub struct ZhtpClientConfig {
+    /// Allow bootstrap mode for development/testing
+    /// When true, accepts any TLS certificate (INSECURE - dev only)
+    pub allow_bootstrap: bool,
+}
+
+impl Default for ZhtpClientConfig {
+    fn default() -> Self {
+        Self {
+            allow_bootstrap: false,
+        }
+    }
+}
 
 /// Authenticated QUIC client for ZHTP control-plane operations
 ///
@@ -46,6 +65,9 @@ pub struct ZhtpClient {
 
     /// Trust verifier
     trust_verifier: Option<Arc<ZhtpTrustVerifier>>,
+
+    /// Client configuration
+    config: ZhtpClientConfig,
 }
 
 /// Connection with completed UHP+Kyber handshake
@@ -88,8 +110,12 @@ impl AuthenticatedConnection {
 }
 
 impl ZhtpClient {
-    /// Create a new ZHTP client with trust configuration
-    pub async fn new(identity: ZhtpIdentity, trust_config: TrustConfig) -> Result<Self> {
+    /// Create a new ZHTP client with trust configuration and explicit config
+    pub async fn new_with_config(
+        identity: ZhtpIdentity,
+        trust_config: TrustConfig,
+        config: ZhtpClientConfig,
+    ) -> Result<Self> {
         // Install rustls crypto provider
         let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -125,19 +151,37 @@ impl ZhtpClient {
             handshake_ctx,
             trust_config,
             trust_verifier: None,
+            config,
         })
     }
 
-    /// Create client in bootstrap mode (DEV ONLY - no TLS verification)
-    pub async fn new_bootstrap(identity: ZhtpIdentity) -> Result<Self> {
-        let allowed = env::var("ZHTP_ALLOW_BOOTSTRAP").ok().map(|v| v == "1").unwrap_or(false);
-        if !allowed {
+    /// Create a new ZHTP client with trust configuration (uses default config)
+    pub async fn new(identity: ZhtpIdentity, trust_config: TrustConfig) -> Result<Self> {
+        Self::new_with_config(identity, trust_config, ZhtpClientConfig::default()).await
+    }
+
+    /// Create client in bootstrap mode with explicit config (DEV ONLY - no TLS verification)
+    pub async fn new_bootstrap_with_config(identity: ZhtpIdentity, config: ZhtpClientConfig) -> Result<Self> {
+        if !config.allow_bootstrap {
             return Err(anyhow!(
-                "Bootstrap mode requires ZHTP_ALLOW_BOOTSTRAP=1 environment variable"
+                "Bootstrap mode requires ZhtpClientConfig::allow_bootstrap to be true"
             ));
         }
         warn!("ZHTP client in BOOTSTRAP MODE - NO TLS VERIFICATION");
-        Self::new(identity, TrustConfig::bootstrap()).await
+        Self::new_with_config(identity, TrustConfig::bootstrap(), config).await
+    }
+
+    /// Create client in bootstrap mode (DEV ONLY - no TLS verification)
+    ///
+    /// Deprecated: Use `new_bootstrap_with_config()` with explicit config instead.
+    /// This method is maintained for backwards compatibility.
+    #[deprecated(since = "1.1.0", note = "Use new_bootstrap_with_config with explicit config")]
+    pub async fn new_bootstrap(identity: ZhtpIdentity) -> Result<Self> {
+        warn!("ZHTP client in BOOTSTRAP MODE - NO TLS VERIFICATION");
+        let config = ZhtpClientConfig {
+            allow_bootstrap: true,
+        };
+        Self::new_bootstrap_with_config(identity, config).await
     }
 
     /// Create client with TOFU (Trust On First Use)
@@ -184,10 +228,9 @@ impl ZhtpClient {
         info!("Connecting to ZHTP node at {}", socket_addr);
 
         if self.trust_config.bootstrap_mode {
-            let allowed = env::var("ZHTP_ALLOW_BOOTSTRAP").ok().map(|v| v == "1").unwrap_or(false);
-            if !allowed {
+            if !self.config.allow_bootstrap {
                 return Err(anyhow!(
-                    "Bootstrap mode requires ZHTP_ALLOW_BOOTSTRAP=1"
+                    "Bootstrap mode requires ZhtpClientConfig::allow_bootstrap to be true"
                 ));
             }
             warn!("BOOTSTRAP MODE - TLS certificates not verified");
