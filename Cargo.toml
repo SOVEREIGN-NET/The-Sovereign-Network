@@ -15,6 +15,7 @@ members = [
     "lib-protocols",
     "lib-storage",
     "zhtp",
+    "zhtp-cli",
     "tests/lib-identity/test-lib-identity-imports",
 ]
 
