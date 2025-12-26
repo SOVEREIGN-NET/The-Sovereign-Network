@@ -16,29 +16,29 @@ use serde_json::Value;
 #[command(name = "zhtp-cli")]
 pub struct ZhtpCli {
     /// API server address
-    #[arg(short, long, default_value = "127.0.0.1:9333")]
+    #[arg(short, long, default_value = "127.0.0.1:9333", env = "ZHTP_SERVER")]
     pub server: String,
-    
+
     /// Enable verbose output
-    #[arg(short, long)]
+    #[arg(short, long, env = "ZHTP_VERBOSE")]
     pub verbose: bool,
-    
+
     /// Output format (json, yaml, table)
-    #[arg(short, long, default_value = "table")]
+    #[arg(short, long, default_value = "table", env = "ZHTP_FORMAT")]
     pub format: String,
-    
+
     /// Configuration file path
-    #[arg(short, long)]
+    #[arg(short, long, env = "ZHTP_CONFIG")]
     pub config: Option<String>,
-    
+
     /// API key for authentication
-    #[arg(long)]
+    #[arg(long, env = "ZHTP_API_KEY")]
     pub api_key: Option<String>,
-    
+
     /// User ID for authenticated requests
-    #[arg(long)]
+    #[arg(long, env = "ZHTP_USER_ID")]
     pub user_id: Option<String>,
-    
+
     #[command(subcommand)]
     pub command: ZhtpCommand,
 }
@@ -99,6 +99,15 @@ pub enum ZhtpCommand {
 
     /// Manage trust anchors and audit logs
     Trust(TrustArgs),
+
+    /// Generate manual pages (man pages)
+    Man(ManArgs),
+
+    /// Check for and install updates
+    Update(UpdateArgs),
+
+    /// Manage system service installation
+    Service(ServiceArgs),
 }
 
 /// Node management commands
@@ -113,29 +122,29 @@ pub enum NodeAction {
     /// Start the ZHTP orchestrator node
     Start {
         /// Configuration file
-        #[arg(short, long)]
+        #[arg(short, long, env = "ZHTP_NODE_CONFIG")]
         config: Option<String>,
         /// Port to bind to (overrides config file mesh_port if specified)
-        #[arg(short, long)]
+        #[arg(short, long, env = "ZHTP_NODE_PORT")]
         port: Option<u16>,
         /// Enable development mode
-        #[arg(long)]
+        #[arg(long, env = "ZHTP_NODE_DEV")]
         dev: bool,
         /// Enable pure mesh mode (ISP-free networking)
-        #[arg(long)]
+        #[arg(long, env = "ZHTP_NODE_PURE_MESH")]
         pure_mesh: bool,
         /// Network environment (overrides config file)
-        #[arg(short, long, value_parser = ["mainnet", "testnet", "dev"])]
+        #[arg(short, long, value_parser = ["mainnet", "testnet", "dev"], env = "ZHTP_NODE_NETWORK")]
         network: Option<String>,
         /// Enable edge node mode (lightweight sync for mobile/constrained devices)
-        #[arg(long)]
+        #[arg(long, env = "ZHTP_NODE_EDGE_MODE")]
         edge_mode: bool,
         /// Maximum headers to store in edge mode (default: 500 = ~100KB)
-        #[arg(long, default_value = "500")]
+        #[arg(long, default_value = "500", env = "ZHTP_NODE_EDGE_MAX_HEADERS")]
         edge_max_headers: usize,
         /// Path to identity keystore directory (default: ~/.zhtp/keystore)
         /// Stores node identity and wallet for persistence across restarts.
-        #[arg(long)]
+        #[arg(long, env = "ZHTP_NODE_KEYSTORE")]
         keystore: Option<String>,
     },
     /// Stop the orchestrator node
@@ -732,6 +741,111 @@ pub enum TrustAction {
     },
 }
 
+/// Man page generation
+#[derive(Args, Debug, Clone)]
+pub struct ManArgs {
+    #[command(subcommand)]
+    pub action: ManAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ManAction {
+    /// Generate man pages
+    Generate {
+        /// Output directory for man pages
+        #[arg(short, long, default_value = "./man")]
+        output: String,
+
+        /// Only generate man page for a specific command
+        #[arg(short, long)]
+        command: Option<String>,
+    },
+
+    /// Show man page for a command
+    Show {
+        /// Command name
+        command: String,
+    },
+}
+
+/// Self-update mechanism
+#[derive(Args, Debug, Clone)]
+pub struct UpdateArgs {
+    #[command(subcommand)]
+    pub action: UpdateAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum UpdateAction {
+    /// Check for available updates
+    Check,
+
+    /// Install the latest available version
+    Install {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        force: bool,
+
+        /// Backup existing binary
+        #[arg(long, default_value = "true")]
+        backup: bool,
+    },
+
+    /// Rollback to previous version
+    Rollback,
+
+    /// Show current version
+    Version,
+}
+
+/// Service installation and management
+#[derive(Args, Debug, Clone)]
+pub struct ServiceArgs {
+    #[command(subcommand)]
+    pub action: ServiceAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ServiceAction {
+    /// Install as system service
+    Install {
+        /// User to run service as (Linux)
+        #[arg(short, long, default_value = "root")]
+        user: String,
+
+        /// Enable service to start on boot
+        #[arg(short, long)]
+        enable: bool,
+    },
+
+    /// Uninstall system service
+    Uninstall {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Start the service
+    Start,
+
+    /// Stop the service
+    Stop,
+
+    /// Get service status
+    Status,
+
+    /// Show service logs
+    Logs {
+        /// Number of lines to show
+        #[arg(short, long, default_value = "50")]
+        lines: usize,
+
+        /// Follow log output
+        #[arg(short, long)]
+        follow: bool,
+    },
+}
+
 /// Main CLI runner
 pub async fn run_cli() -> Result<()> {
     let cli = ZhtpCli::parse();
@@ -761,6 +875,9 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Isolation(args) => commands::isolation::handle_isolation_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Deploy(args) => commands::deploy::handle_deploy_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Trust(args) => commands::trust::handle_trust_command(args.clone()).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Man(args) => commands::man::handle_man_command(args.clone()).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Update(args) => commands::update::handle_update_command(args.clone()).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Service(args) => commands::service::handle_service_command(args.clone()).await.map_err(anyhow::Error::msg),
     }
 }
 

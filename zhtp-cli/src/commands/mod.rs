@@ -19,6 +19,9 @@ pub mod isolation;
 pub mod rewards;
 pub mod deploy;
 pub mod trust;
+pub mod man;
+pub mod update;
+pub mod service;
 
 pub use node::handle_node_command;
 pub use wallet::handle_wallet_command;
@@ -39,3 +42,6 @@ pub use server::handle_server_command;
 pub use rewards::handle_reward_command;
 pub use deploy::handle_deploy_command;
 pub use trust::handle_trust_command;
+pub use man::handle_man_command;
+pub use update::handle_update_command;
+pub use service::handle_service_command;
