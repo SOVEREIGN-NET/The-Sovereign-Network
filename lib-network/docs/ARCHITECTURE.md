@@ -500,6 +500,94 @@ The DHT system natively supports Web4 domain resolution and content serving, ena
 - **Phase 3**: Continental mesh networks (100,000,000 nodes)
 - **Phase 4**: Global mesh internet replacement (1,000,000,000+ nodes)
 
+##  Architecture Compliance & Standards
+
+### std::env and std::process Usage Policy
+
+The lib-network crate has architecture rules restricting `std::env` and `std::process` APIs to prevent sandboxing conflicts, implicit dependencies, and deployment issues in containerized and WASM environments.
+
+**Current Compliance Status**: ✅ **100% Compliant**
+
+#### Violations Eliminated
+- ✅ `env::var("ZHTP_ALLOW_BOOTSTRAP")` → Replaced with `ZhtpClientConfig::allow_bootstrap` (dependency injection)
+- ✅ `env::var("ZHTP_ALLOW_NET_TESTS")` → Replaced with `allow-net-tests` feature flag (compile-time)
+- ✅ `std::process::id()` → Replaced with UUID generation
+- ✅ `std::env::temp_dir()` → Only used as fallback in Web4Client when no explicit cache_dir provided
+
+#### Documented Exceptions (Unavoidable)
+1. **`std::process::Command` - Hardware Discovery** (APPROVED EXCEPTION)
+   - **Location**: Protocol discovery modules (WiFi, Bluetooth, LoRaWAN, hardware detection)
+   - **Justification**: Cross-platform hardware detection requires platform-specific APIs. No Rust library provides uniform abstraction for:
+     - Bluetooth device enumeration (sdptool, bluetoothctl, system_profiler)
+     - WiFi hardware detection (airport, wpa_cli, iwlist, netsh)
+     - USB device detection (lsusb, wmic)
+     - Network interface enumeration (ip, ifconfig, ipconfig)
+   - **Protection**: All usages isolated in:
+     - Test modules (#[cfg(test)])
+     - Platform-specific code (#[cfg(target_os = "...")])
+     - Discovery/initialization phase (not in hot paths or routing logic)
+
+2. **`env!("CARGO_PKG_VERSION")` - Compile-Time Macros** (SAFE - NO CHANGES NEEDED)
+   - **Location**: web4/trust.rs
+   - **Justification**: Evaluated at compile-time, not a runtime dependency. Safe in all environments.
+
+3. **`std::env::consts` - OS/Architecture Constants** (SAFE - DOCUMENTATION ONLY)
+   - **Location**: TROUBLESHOOTING.md documentation
+   - **Justification**: Read-only compile-time constants. Safe in all environments.
+
+### Configuration Injection Strategy
+
+All environment-dependent behavior now flows through explicit configuration structs:
+
+1. **ZhtpClientConfig**
+   - Controls bootstrap mode permission
+   - Passed explicitly to constructors
+   - No env var dependencies
+
+2. **Web4ClientConfig**
+   - Controls bootstrap mode permission
+   - Configurable cache directory and session ID
+   - Uses UUID-based cache naming instead of process ID
+
+3. **Feature Flags**
+   - `allow-net-tests`: Enables network integration tests (compile-time)
+   - Replaces `ZHTP_ALLOW_NET_TESTS` environment variable
+
+### Migration Impact
+
+#### For Library Consumers
+Code using old API patterns requires updates:
+
+**Before (Environment-Dependent):**
+```rust
+std::env::set_var("ZHTP_ALLOW_BOOTSTRAP", "1");
+let client = ZhtpClient::new_bootstrap(identity).await?;
+```
+
+**After (Explicit Configuration):**
+```rust
+let config = ZhtpClientConfig {
+    allow_bootstrap: true,
+};
+let client = ZhtpClient::new_bootstrap_with_config(identity, config).await?;
+```
+
+#### Backwards Compatibility
+- `ZhtpClient::new_bootstrap()` and `Web4Client::new_bootstrap()` remain available but are **deprecated**
+- New applications should use `*_with_config()` variants
+- Deprecation warnings guide migration path
+
+#### For Tests
+Enable network tests with feature flag:
+```bash
+cargo test --features allow-net-tests
+```
+
+Instead of:
+```bash
+ZHTP_ALLOW_NET_TESTS=1 cargo test
+```
+
 ---
 
-This architecture enables the goal of replacing traditional ISPs with a decentralized, incentivized mesh network that provides free internet access while rewarding users for participation. The modular design ensures extensibility, security, and performance at global scale. ✨
+This architecture enables the goal of replacing traditional ISPs with a decentralized, incentivized mesh network that provides free internet access while rewarding users for participation. The modular design ensures extensibility, security, and performance at global scale while maintaining strict compliance with sandboxing and deployment requirements. ✨

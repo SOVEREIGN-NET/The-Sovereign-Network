@@ -445,11 +445,7 @@ mod tests {
     }
 
     fn net_tests_disabled() -> bool {
-        std::env::var("ZHTP_ALLOW_NET_TESTS")
-            .ok()
-            .as_deref()
-            .unwrap_or_default()
-            != "1"
+        !cfg!(feature = "allow-net-tests")
     }
     
     /// Test complete client-server handshake over TCP
