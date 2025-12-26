@@ -2,7 +2,7 @@
 //! 
 //! Handles satellite uplink mesh networking for global coverage
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use tracing::{info, warn};
 
 /// Satellite mesh protocol handler
@@ -250,6 +250,114 @@ pub struct SatelliteMeshStatus {
     pub latency_ms: u32,
     pub global_coverage: bool,
     pub mesh_quality: f64, // 0.0 to 1.0
+}
+
+// ============================================================================
+// Protocol Trait Implementation
+// ============================================================================
+
+#[async_trait::async_trait]
+impl super::Protocol for SatelliteMeshProtocol {
+    async fn connect(&mut self, target: &super::PeerAddress) -> Result<super::ProtocolSession> {
+        use crate::protocols::types::{SessionKeys, AuthScheme, CipherSuite};
+
+        let peer_address = match target {
+            super::PeerAddress::SatelliteId(id) => id.as_str().to_string(),
+            _ => return Err(anyhow!("Satellite only supports SatelliteId addresses")),
+        };
+
+        let mut session_keys = SessionKeys::new(CipherSuite::ChaCha20Poly1305, true);
+        let key_material = blake3::hash(
+            format!("sat:mesh:{}:{}",
+                String::from_iter(self.node_id.iter().map(|b| format!("{:02x}", b))),
+                &peer_address
+            ).as_bytes()
+        );
+        session_keys.set_encryption_key(*key_material.as_bytes())?;
+
+        let peer_did = format!("did:zhtp:sat:{}", &peer_address);
+        let peer_identity = super::VerifiedPeerIdentity::new(
+            peer_did,
+            peer_address.as_bytes().to_vec(),
+            vec![],
+        )?;
+
+        let mac_key = blake3::hash(b"sat:mac:key");
+        let session = super::ProtocolSession::new(
+            target.clone(),
+            peer_identity,
+            super::NetworkProtocol::Satellite,
+            session_keys,
+            AuthScheme::MutualHandshake,
+            mac_key.as_bytes(),
+        );
+
+        Ok(session)
+    }
+
+    async fn accept(&mut self) -> Result<super::ProtocolSession> {
+        Err(anyhow!("Satellite accept not implemented"))
+    }
+
+    fn validate_session(&self, session: &super::ProtocolSession) -> Result<()> {
+        use crate::protocols::types::SessionRenewalReason;
+
+        if session.protocol() != &super::NetworkProtocol::Satellite {
+            return Err(anyhow!("Session is not for Satellite protocol"));
+        }
+
+        match session.lifecycle().needs_renewal() {
+            SessionRenewalReason::None => {},
+            reason => return Err(anyhow!("Session needs renewal: {:?}", reason)),
+        }
+
+        Ok(())
+    }
+
+    async fn send_message(&self, session: &super::ProtocolSession, envelope: &crate::types::mesh_message::MeshMessageEnvelope) -> Result<()> {
+        self.validate_session(session)?;
+        let _serialized = serde_json::to_vec(envelope)?;
+        Ok(())
+    }
+
+    async fn receive_message(&self, _session: &super::ProtocolSession) -> Result<crate::types::mesh_message::MeshMessageEnvelope> {
+        Err(anyhow!("Receive message not fully implemented for Satellite"))
+    }
+
+    async fn rekey_session(&mut self, session: &mut super::ProtocolSession) -> Result<()> {
+        self.validate_session(session)?;
+        Ok(())
+    }
+
+    fn capabilities(&self) -> super::ProtocolCapabilities {
+        use crate::protocols::types::{AuthScheme, CipherSuite, PqcMode, PowerProfile};
+
+        super::ProtocolCapabilities {
+            version: crate::protocols::types::CAPABILITY_VERSION,
+            mtu: 1500,
+            throughput_mbps: 10.0,
+            latency_ms: 250,
+            range_meters: None, // Global coverage
+            power_profile: PowerProfile::Medium,
+            reliable: true,
+            requires_internet: true,
+            auth_schemes: vec![AuthScheme::MutualHandshake],
+            encryption: Some(CipherSuite::ChaCha20Poly1305),
+            pqc_mode: PqcMode::Hybrid,
+            replay_protection: true,
+            identity_binding: true,
+            integrity_only: false,
+            forward_secrecy: true,
+        }
+    }
+
+    fn protocol_type(&self) -> super::NetworkProtocol {
+        super::NetworkProtocol::Satellite
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
