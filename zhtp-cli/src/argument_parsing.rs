@@ -76,6 +76,12 @@ pub enum ZhtpCommand {
     /// Configuration management
     Config(ConfigArgs),
 
+    /// System diagnostics
+    Diagnostics(DiagnosticsArgs),
+
+    /// Backup and restore
+    Backup(BackupArgs),
+
     /// Component management
     Component(ComponentArgs),
 
@@ -344,6 +350,61 @@ pub struct CompletionArgs {
 pub struct ConfigArgs {
     #[command(subcommand)]
     pub action: ConfigAction,
+}
+
+/// Diagnostics command
+#[derive(Args, Debug, Clone)]
+pub struct DiagnosticsArgs {
+    #[command(subcommand)]
+    pub action: DiagnosticsAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DiagnosticsAction {
+    /// Full system and node diagnostics
+    Full,
+    /// Quick health check
+    Quick,
+    /// System resource diagnostics
+    System,
+    /// Node status and health
+    Node,
+    /// Network connectivity diagnostics
+    Network,
+}
+
+/// Backup and restore command
+#[derive(Args, Debug, Clone)]
+pub struct BackupArgs {
+    #[command(subcommand)]
+    pub action: BackupAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum BackupAction {
+    /// Create encrypted backup
+    Create {
+        /// Output file path for backup
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Include configuration files in backup
+        #[arg(long)]
+        include_config: bool,
+    },
+    /// Restore from encrypted backup
+    Restore {
+        /// Path to backup file to restore
+        #[arg(short, long)]
+        input: String,
+    },
+    /// List available backups
+    List,
+    /// Delete a backup
+    Delete {
+        /// Path to backup file to delete
+        path: String,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -692,6 +753,8 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Version(args) => commands::version::handle_version_command(args.clone()).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Completion(args) => commands::completion::handle_completion_command(args.clone()).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Config(args) => commands::config::handle_config_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Diagnostics(args) => commands::diagnostics::handle_diagnostics_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Backup(args) => commands::backup::handle_backup_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Component(args) => commands::component::handle_component_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Interactive(args) => commands::interactive::handle_interactive_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Server(args) => commands::server::handle_server_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),

@@ -37,6 +37,11 @@ pub trait Output: Send + Sync {
     fn header(&self, title: &str) -> CliResult<()> {
         self.print(&format!("\n{}\n{}", title, "=".repeat(title.len())))
     }
+
+    /// Print a subsection header
+    fn subheader(&self, title: &str) -> CliResult<()> {
+        self.print(&format!("\n{}\n{}", title, "-".repeat(title.len())))
+    }
 }
 
 /// Standard console output implementation
