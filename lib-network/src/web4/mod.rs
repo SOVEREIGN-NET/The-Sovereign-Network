@@ -17,6 +17,8 @@
 #[cfg(feature = "storage-integration")]
 compile_error!("lib-network no longer owns Web4. Use zhtp web4_stub or the relocated module (Phase 4 relocation pass).");
 
+pub mod trust;
+
 #[cfg(feature = "storage-integration")]
 pub mod domain_registry;
 #[cfg(feature = "storage-integration")]
@@ -27,8 +29,6 @@ pub mod content_service;
 pub mod types;
 #[cfg(feature = "storage-integration")]
 pub mod client;
-#[cfg(feature = "storage-integration")]
-pub mod trust;
 
 #[cfg(feature = "storage-integration")]
 pub use domain_registry::*;
@@ -40,7 +40,6 @@ pub use content_service::*;
 pub use types::*;
 #[cfg(feature = "storage-integration")]
 pub use client::Web4Client;
-#[cfg(feature = "storage-integration")]
 pub use trust::{TrustConfig, TrustDb, TrustAnchor, TrustPolicy, TrustAuditEntry, ZhtpTrustVerifier};
 
 #[cfg(feature = "storage-integration")]

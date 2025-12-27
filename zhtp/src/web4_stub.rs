@@ -287,6 +287,8 @@ impl StubManifest {
 #[derive(Debug, Clone)]
 pub struct DomainRegistry {
     pub domain_records: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+    pub content_store: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    pub history: Arc<RwLock<HashMap<String, Vec<DomainHistoryEntry>>>>,
 }
 
 impl DomainRegistry {
@@ -295,6 +297,8 @@ impl DomainRegistry {
     ) -> Result<Self> {
         Ok(Self {
             domain_records: Arc::new(RwLock::new(HashMap::new())),
+            content_store: Arc::new(RwLock::new(HashMap::new())),
+            history: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -302,13 +306,43 @@ impl DomainRegistry {
         &self,
         request: DomainRegistrationRequest,
     ) -> Result<DomainRegistrationResponse> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let record = serde_json::json!({
+            "domain": request.domain,
+            "owner": request.owner.did,
+            "registered_at": now,
+            "expires_at": now + (request.duration_days * 24 * 60 * 60),
+            "current_manifest_cid": request.manifest_cid,
+            "version": 1u64,
+        });
+
+        let mut records = self.domain_records.write().await;
+        records.insert(record["domain"].as_str().unwrap_or_default().to_string(), record.clone());
+
+        let mut history = self.history.write().await;
+        history.insert(
+            record["domain"].as_str().unwrap_or_default().to_string(),
+            vec![DomainHistoryEntry {
+                version: 1,
+                manifest_cid: record["current_manifest_cid"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                created_at: now,
+            }],
+        );
+
         Ok(DomainRegistrationResponse {
-            domain: request.domain,
+            domain: record["domain"].as_str().unwrap_or_default().to_string(),
             success: true,
             registration_id: "stub".to_string(),
             expires_at: 0,
             fees_charged: 0.0,
-            new_manifest_cid: request.manifest_cid.clone(),
+            new_manifest_cid: record["current_manifest_cid"]
+                .as_str()
+                .map(|cid| cid.to_string()),
             new_version: Some(1),
             error: None,
         })
@@ -334,19 +368,38 @@ impl DomainRegistry {
     }
 
     pub async fn lookup_domain(&self, _domain: &str) -> Result<DomainLookupResponse> {
+        let records = self.domain_records.read().await;
+        if let Some(record) = records.get(_domain) {
+            return Ok(DomainLookupResponse {
+                found: true,
+                content_mappings: HashMap::new(),
+                record: Some(record.clone()),
+            });
+        }
+
         Ok(DomainLookupResponse {
-            found: true,
+            found: false,
             content_mappings: HashMap::new(),
-            record: Some(serde_json::json!({
-                "owner": "stub-owner",
-                "registered_at": 0u64,
-                "expires_at": 0u64,
-                "content_mappings": {}
-            })),
+            record: None,
         })
     }
 
     pub async fn get_domain_status(&self, _domain: &str) -> Result<DomainStatusResponse> {
+        let records = self.domain_records.read().await;
+        if let Some(record) = records.get(_domain) {
+            return Ok(DomainStatusResponse {
+                found: true,
+                status: "active".to_string(),
+                owner_did: record.get("owner").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                updated_at: record.get("updated_at").and_then(|v| v.as_u64()),
+                current_manifest_cid: record
+                    .get("current_manifest_cid")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                version: record.get("version").and_then(|v| v.as_u64()),
+            });
+        }
+
         Ok(DomainStatusResponse {
             found: false,
             status: "stub".to_string(),
@@ -362,26 +415,138 @@ impl DomainRegistry {
         _domain: &str,
         _limit: usize,
     ) -> Result<DomainHistoryResponse> {
+        let history = self.history.read().await;
+        let versions = history
+            .get(_domain)
+            .cloned()
+            .unwrap_or_default();
+
+        let limited = if _limit == 0 || versions.len() <= _limit {
+            versions.clone()
+        } else {
+            versions[versions.len() - _limit..].to_vec()
+        };
+
         Ok(DomainHistoryResponse {
-            versions: vec![],
-            history: Vec::new(),
+            versions: limited.clone(),
+            history: limited,
         })
     }
 
+    pub async fn list_domains_by_owner(&self, owner: &str) -> Result<Vec<String>> {
+        let records = self.domain_records.read().await;
+        let mut domains = Vec::new();
+        for (domain, record) in records.iter() {
+            let record_owner = record.get("owner").and_then(|v| v.as_str());
+            if record_owner == Some(owner) {
+                domains.push(domain.clone());
+            }
+        }
+        domains.sort();
+        Ok(domains)
+    }
+
     pub async fn update_domain(&self, _req: DomainUpdateRequest) -> Result<DomainRegistrationResponse> {
-        Ok(DomainRegistrationResponse::default())
+        let mut records = self.domain_records.write().await;
+        if let Some(record) = records.get_mut(&_req.domain) {
+            let current_cid = record
+                .get("current_manifest_cid")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+
+            if current_cid != _req.expected_previous_manifest_cid {
+                return Ok(DomainRegistrationResponse {
+                    domain: _req.domain.clone(),
+                    success: false,
+                    registration_id: "update".to_string(),
+                    expires_at: 0,
+                    fees_charged: 0.0,
+                    new_manifest_cid: None,
+                    new_version: None,
+                    error: Some("Previous manifest CID does not match".to_string()),
+                });
+            }
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs();
+            let new_version = record.get("version").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
+
+            record["current_manifest_cid"] = serde_json::Value::String(_req.new_manifest_cid.clone());
+            record["version"] = serde_json::Value::Number(new_version.into());
+            record["updated_at"] = serde_json::Value::Number(now.into());
+
+            let mut history = self.history.write().await;
+            history
+                .entry(_req.domain.clone())
+                .or_default()
+                .push(DomainHistoryEntry {
+                    version: new_version,
+                    manifest_cid: _req.new_manifest_cid.clone(),
+                    created_at: now,
+                });
+
+            return Ok(DomainRegistrationResponse {
+                domain: _req.domain.clone(),
+                success: true,
+                registration_id: "update".to_string(),
+                expires_at: 0,
+                fees_charged: 0.0,
+                new_manifest_cid: Some(_req.new_manifest_cid.clone()),
+                new_version: Some(new_version),
+                error: None,
+            });
+        }
+
+        Ok(DomainRegistrationResponse {
+            domain: _req.domain.clone(),
+            success: false,
+            registration_id: "update".to_string(),
+            expires_at: 0,
+            fees_charged: 0.0,
+            new_manifest_cid: None,
+            new_version: None,
+            error: Some("Domain not found".to_string()),
+        })
     }
 
     pub async fn transfer_domain(
         &self,
         _domain: &str,
-        _new_owner: &ZhtpIdentity,
+        _from_owner: &str,
+        _new_owner: &str,
         _proof: Option<Vec<u8>>,
     ) -> Result<bool> {
-        Ok(true)
+        let mut records = self.domain_records.write().await;
+        if let Some(record) = records.get_mut(_domain) {
+            let record_owner = record.get("owner").and_then(|v| v.as_str());
+            if record_owner != Some(_from_owner) {
+                return Ok(false);
+            }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs();
+            record["owner"] = serde_json::Value::String(_new_owner.to_string());
+            record["updated_at"] = serde_json::Value::Number(now.into());
+            return Ok(true);
+        }
+        Ok(false)
     }
 
-    pub async fn release_domain(&self, _domain: &str, _owner: &ZhtpIdentity) -> Result<bool> {
+    pub async fn release_domain(&self, _domain: &str, _owner: &str) -> Result<bool> {
+        let mut records = self.domain_records.write().await;
+        if let Some(record) = records.get(_domain) {
+            let record_owner = record.get("owner").and_then(|v| v.as_str());
+            if record_owner != Some(_owner) {
+                return Ok(false);
+            }
+        } else {
+            return Ok(false);
+        }
+        records.remove(_domain);
+        let mut history = self.history.write().await;
+        history.remove(_domain);
         Ok(true)
     }
 
@@ -396,24 +561,53 @@ impl DomainRegistry {
     }
 
     pub async fn rollback_domain(&self, domain: &str, version: u64, _owner: &str) -> Result<DomainRegistrationResponse> {
+        let history = self.history.read().await;
+        let manifest_cid = history
+            .get(domain)
+            .and_then(|entries| entries.iter().find(|e| e.version == version))
+            .map(|entry| entry.manifest_cid.clone());
+        drop(history);
+
+        if let Some(cid) = manifest_cid {
+            let mut records = self.domain_records.write().await;
+            if let Some(record) = records.get_mut(domain) {
+                record["current_manifest_cid"] = serde_json::Value::String(cid.clone());
+                record["version"] = serde_json::Value::Number(version.into());
+            }
+            return Ok(DomainRegistrationResponse {
+                domain: domain.to_string(),
+                success: true,
+                registration_id: "rollback".to_string(),
+                expires_at: 0,
+                fees_charged: 0.0,
+                new_manifest_cid: Some(cid),
+                new_version: Some(version),
+                error: None,
+            });
+        }
+
         Ok(DomainRegistrationResponse {
             domain: domain.to_string(),
-            success: true,
+            success: false,
             registration_id: "rollback".to_string(),
             expires_at: 0,
             fees_charged: 0.0,
             new_manifest_cid: None,
-            new_version: Some(version),
-            error: None,
+            new_version: None,
+            error: Some("Requested version not found".to_string()),
         })
     }
 
     pub async fn store_content_by_cid(&self, _content: Vec<u8>) -> Result<String> {
-        Ok("cid".to_string())
+        let cid = hex::encode(lib_crypto::hash_blake3(&_content));
+        let mut store = self.content_store.write().await;
+        store.insert(cid.clone(), _content);
+        Ok(cid)
     }
 
     pub async fn get_content_by_cid(&self, _cid: &str) -> Result<Option<Vec<u8>>> {
-        Ok(None)
+        let store = self.content_store.read().await;
+        Ok(store.get(_cid).cloned())
     }
 
     pub async fn get_statistics(&self) -> Result<Web4Statistics> {
@@ -449,7 +643,41 @@ impl ZdnsResolver {
     pub fn new() -> Self { Self }
 
     pub fn is_valid_domain(domain: &str) -> bool {
-        !domain.trim().is_empty() && domain.contains('.')
+        if domain.is_empty() || domain.len() > 253 {
+            return false;
+        }
+        if domain.starts_with('.') || domain.ends_with('.') || domain.contains("..") {
+            return false;
+        }
+        if domain.chars().any(|c| c.is_ascii_uppercase()) {
+            return false;
+        }
+
+        let parts: Vec<&str> = domain.split('.').collect();
+        if parts.len() < 2 {
+            return false;
+        }
+        let tld = parts.last().unwrap_or(&"");
+        if *tld != "zhtp" && *tld != "sov" {
+            return false;
+        }
+
+        for label in &parts[..parts.len() - 1] {
+            if label.is_empty() || label.len() > 63 {
+                return false;
+            }
+            if label.starts_with('-') || label.ends_with('-') {
+                return false;
+            }
+            if !label
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            {
+                return false;
+            }
+        }
+
+        true
     }
 }
 

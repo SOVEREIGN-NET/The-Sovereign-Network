@@ -3,7 +3,9 @@
 //! Handles execution of ZHTP node commands and interactive operations
 
 use anyhow::{Result, Context};
+use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use zhtp::config::{CliArgs, NodeConfig};
 use zhtp::runtime::RuntimeOrchestrator;
 use tokio::sync::mpsc;
@@ -36,7 +38,6 @@ pub enum NodeCommand {
     // Identity commands
     ListIdentities,
     CreateIdentity(String),
-    UseIdentity(String),
     ExportIdentity(String),
     ImportIdentity(String, String),
     
@@ -88,7 +89,6 @@ pub async fn execute_command(
         
         NodeCommand::ListIdentities => execute_list_identities(context).await,
         NodeCommand::CreateIdentity(name) => execute_create_identity(context, &name).await,
-        NodeCommand::UseIdentity(id) => execute_use_identity(context, &id).await,
         NodeCommand::ExportIdentity(id) => execute_export_identity(context, &id).await,
         NodeCommand::ImportIdentity(file, password) => execute_import_identity(context, &file, &password).await,
         
@@ -329,30 +329,6 @@ async fn execute_create_identity(context: &CommandContext, name: &str) -> Result
     }
 }
 
-async fn execute_use_identity(context: &CommandContext, id: &str) -> Result<String> {
-    use lib_identity::{initialize_identity_system};
-    
-    if context.runtime.is_none() {
-        return Ok("Node is not running".to_string());
-    }
-    
-    match initialize_identity_system().await {
-        Ok(manager) => {
-            match manager.get_identity(id).await {
-                Ok(Some(identity)) => {
-                    // Note: In a full implementation, this would set the identity as active
-                    // in the runtime context for use in other commands
-                    println!("Identity '{}' loaded successfully", identity.name);
-                    Ok(format!("Now using identity: {} ({})", identity.name, identity.email))
-                },
-                Ok(None) => Ok(format!("Identity '{}' not found", id)),
-                Err(e) => Ok(format!("Failed to load identity: {}", e))
-            }
-        },
-        Err(e) => Ok(format!("Failed to initialize identity system: {}", e))
-    }
-}
-
 async fn execute_export_identity(context: &CommandContext, id: &str) -> Result<String> {
     use lib_identity::{initialize_identity_system};
     
@@ -431,6 +407,36 @@ async fn execute_blockchain_info(context: &CommandContext) -> Result<String> {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct PersistedWalletData {
+    wallet_address: String,
+}
+
+fn resolve_keystore_path() -> Result<PathBuf> {
+    if let Ok(path) = std::env::var("ZHTP_KEYSTORE") {
+        if !path.trim().is_empty() {
+            return Ok(PathBuf::from(path));
+        }
+    }
+
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+    Ok(home.join(".zhtp").join("keystore"))
+}
+
+fn load_wallet_address_from_keystore() -> Result<String> {
+    let keystore_path = resolve_keystore_path()?;
+    let wallet_path = keystore_path.join(zhtp::keystore_names::WALLET_DATA_FILENAME);
+    let data = std::fs::read_to_string(&wallet_path)
+        .with_context(|| format!("Failed to read wallet data from {:?}", wallet_path))?;
+    let wallet_data: PersistedWalletData = serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse wallet data from {:?}", wallet_path))?;
+    if wallet_data.wallet_address.is_empty() {
+        return Err(anyhow::anyhow!("Wallet address missing from wallet data"));
+    }
+    Ok(wallet_data.wallet_address)
+}
+
 async fn execute_get_balance(context: &CommandContext, addr: Option<&str>) -> Result<String> {
     use lib_blockchain::{get_account_balance};
     
@@ -442,9 +448,7 @@ async fn execute_get_balance(context: &CommandContext, addr: Option<&str>) -> Re
     let address = match addr {
         Some(addr) => addr.to_string(),
         None => {
-            // In a full implementation, this would get the active identity from runtime context
-            // For now, use a default identifier
-            "default_identity_address".to_string()
+            load_wallet_address_from_keystore()?
         }
     };
     
@@ -482,8 +486,7 @@ async fn execute_list_transactions(context: &CommandContext) -> Result<String> {
         return Ok("Node is not running".to_string());
     }
     
-    // In a full implementation, this would get the active identity address from runtime context
-    let address = "default_identity_address";
+    let address = load_wallet_address_from_keystore()?;
     
     match get_transaction_history(address).await {
         Ok(transactions) => {
@@ -756,15 +759,14 @@ Network:
 Identity:
   identities         List all identities
   create-id <name>   Create new identity
-  use-id <id>        Switch to identity
   export-id <id>     Export identity
   import-id <file>   Import identity
 
 Blockchain:
   blockchain         Show blockchain info
-  balance [addr]     Show balance
+  balance [addr]     Show balance (defaults to keystore identity)
   send <to> <amt>    Send transaction
-  transactions       List transactions
+  transactions       List transactions (keystore identity)
   mine               Mine a block
 
 Storage:
@@ -926,12 +928,6 @@ pub fn parse_command(input: &str) -> Result<NodeCommand> {
                 return Err(anyhow::anyhow!("Usage: create-id <name>"));
             }
             Ok(NodeCommand::CreateIdentity(parts[1].to_string()))
-        },
-        "use-id" => {
-            if parts.len() < 2 {
-                return Err(anyhow::anyhow!("Usage: use-id <identity_id>"));
-            }
-            Ok(NodeCommand::UseIdentity(parts[1].to_string()))
         },
         
         "help" => Ok(NodeCommand::Help(parts.get(1).map(|s| s.to_string()))),

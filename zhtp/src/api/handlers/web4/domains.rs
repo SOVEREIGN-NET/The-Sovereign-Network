@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, error, warn};
 use anyhow::anyhow;
 use base64::{Engine as _, engine::general_purpose};
+use crate::web4_manifest::{DeployManifest, ensure_canonical_file_list, compute_root_hash, manifest_unsigned_bytes};
 
 use super::Web4Handler;
 use std::collections::HashMap;
@@ -192,75 +193,63 @@ impl Web4Handler {
         // Verify that the request was signed by the owner's private key
         info!(" Verifying signature for authorization...");
         
-        //  DEVELOPMENT MODE: Check for test signature bypass
-        let is_test_signature = simple_request.signature == "746573745f6465765f7369676e6174757265"; // "test_dev_signature" in hex
+        // Check timestamp is recent (within 5 minutes)
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| anyhow!("System time error: {}", e))?
+            .as_secs();
         
-        if is_test_signature {
-            warn!(" DEV MODE: Bypassing signature verification (test signature detected)");
-            warn!("     SECURITY WARNING: This would fail in production!");
-            warn!("   Signature: {}", simple_request.signature);
-            info!(" Test signature accepted for development");
+        let time_diff = if current_time > simple_request.timestamp {
+            current_time - simple_request.timestamp
         } else {
-            // Production signature verification
-            
-            // Check timestamp is recent (within 5 minutes)
-            let current_time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| anyhow!("System time error: {}", e))?
-                .as_secs();
-            
-            let time_diff = if current_time > simple_request.timestamp {
-                current_time - simple_request.timestamp
-            } else {
-                simple_request.timestamp - current_time
-            };
-            
-            if time_diff > 300 { // 5 minutes = 300 seconds
-                return Err(anyhow!(
-                    "Request expired. Timestamp difference: {} seconds (max 300). Current: {}, Request: {}",
-                    time_diff, current_time, simple_request.timestamp
-                ));
-            }
-            
-            // Create the message that should have been signed
-            // Format: domain|timestamp|fee_amount
-            // The user signs with THEIR fee amount (not our calculated minimum)
-            let signed_message = format!("{}|{}|{}", 
-                simple_request.domain,
-                simple_request.timestamp,
-                user_provided_fee
-            );
-            
-            // Decode the signature from hex
-            let signature_bytes = hex::decode(&simple_request.signature)
-                .map_err(|e| anyhow!("Invalid signature hex encoding: {}", e))?;
-            
-            // DEBUG: Log verification inputs
-            info!(" DEBUG SIGNATURE VERIFICATION:");
-            info!("   Message: {}", signed_message);
-            info!("   Signature length: {} bytes", signature_bytes.len());
-            info!("   Public key length: {} bytes", owner_identity.public_key.size());
-            info!("   Expected public key length: 1312 (Dilithium2)");
-            
-            // Verify signature using owner's public key
-            let is_valid = lib_crypto::verify_signature(
-                signed_message.as_bytes(),
-                &signature_bytes,
-                &owner_identity.public_key.as_bytes()
-            ).map_err(|e| anyhow!("Signature verification error: {}", e))?;
-            
-            info!(" DEBUG: Signature verification result: {}", is_valid);
-            
-            if !is_valid {
-                error!(" AUTHORIZATION DENIED: Invalid signature for identity {}", owner_did);
-                return Err(anyhow!(
-                    "Authorization denied: Invalid signature. You must sign the request with the private key for identity {}",
-                    owner_did
-                ));
-            }
-            
-            info!(" Signature verified successfully - owner authenticated");
+            simple_request.timestamp - current_time
+        };
+        
+        if time_diff > 300 { // 5 minutes = 300 seconds
+            return Err(anyhow!(
+                "Request expired. Timestamp difference: {} seconds (max 300). Current: {}, Request: {}",
+                time_diff, current_time, simple_request.timestamp
+            ));
         }
+        
+        // Create the message that should have been signed
+        // Format: domain|timestamp|fee_amount
+        // The user signs with THEIR fee amount (not our calculated minimum)
+        let signed_message = format!("{}|{}|{}", 
+            simple_request.domain,
+            simple_request.timestamp,
+            user_provided_fee
+        );
+        
+        // Decode the signature from hex
+        let signature_bytes = hex::decode(&simple_request.signature)
+            .map_err(|e| anyhow!("Invalid signature hex encoding: {}", e))?;
+        
+        // DEBUG: Log verification inputs
+        info!(" DEBUG SIGNATURE VERIFICATION:");
+        info!("   Message: {}", signed_message);
+        info!("   Signature length: {} bytes", signature_bytes.len());
+        info!("   Public key length: {} bytes", owner_identity.public_key.size());
+        info!("   Expected public key length: 1312 (Dilithium2)");
+        
+        // Verify signature using owner's public key
+        let is_valid = lib_crypto::verify_signature(
+            signed_message.as_bytes(),
+            &signature_bytes,
+            &owner_identity.public_key.as_bytes()
+        ).map_err(|e| anyhow!("Signature verification error: {}", e))?;
+        
+        info!(" DEBUG: Signature verification result: {}", is_valid);
+        
+        if !is_valid {
+            error!(" AUTHORIZATION DENIED: Invalid signature for identity {}", owner_did);
+            return Err(anyhow!(
+                "Authorization denied: Invalid signature. You must sign the request with the private key for identity {}",
+                owner_did
+            ));
+        }
+        
+        info!(" Signature verified successfully - owner authenticated");
         // ========== END SIGNATURE VERIFICATION ==========
         
         info!(" Calculated registration fee: {} ZHTP tokens (domain length: {} chars, estimated tx size: ~5400 bytes)", 
@@ -775,6 +764,11 @@ impl Web4Handler {
         info!(" Manifest CID: {}", request.manifest_cid);
         info!(" Owner: {}", request.owner);
 
+        let manifest = self
+            .load_and_verify_manifest(&request.domain, &request.manifest_cid)
+            .await
+            .map_err(|e| anyhow!("Manifest verification failed: {}", e))?;
+
         // Derive owner identity ID from DID
         // Identity ID = Blake3(DID string) - same derivation as ZhtpIdentity::new()
         let owner_identity_id = lib_crypto::Hash::from_bytes(
@@ -793,6 +787,14 @@ impl Web4Handler {
 
         let owner_did = format!("did:zhtp:{}", hex::encode(&owner_identity.id.0));
         info!(" Verified owner identity: {}", owner_did);
+
+        if owner_identity.did != manifest.author_did {
+            return Err(anyhow!(
+                "Manifest author DID does not match owner identity ({} != {})",
+                manifest.author_did,
+                owner_identity.did
+            ));
+        }
 
         // Register domain with Web4Manager using manifest CID
         let manager = self.web4_manager.write().await;
@@ -980,6 +982,49 @@ impl Web4Handler {
         }
     }
 
+    /// List domains for an owner
+    /// GET /api/v1/web4/domains?owner={did}
+    pub async fn list_domains(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let owner = request
+            .uri
+            .splitn(2, '?')
+            .nth(1)
+            .and_then(|query| {
+                query.split('&').find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    let key = parts.next()?;
+                    let value = parts.next()?;
+                    if key == "owner" { Some(value) } else { None }
+                })
+            });
+        let owner = match owner {
+            Some(value) if !value.is_empty() => value,
+            _ => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Missing owner query parameter".to_string(),
+                ));
+            }
+        };
+
+        let manager = self.web4_manager.read().await;
+        let domains = manager
+            .registry
+            .list_domains_by_owner(owner)
+            .await
+            .map_err(|e| anyhow!("Failed to list domains: {}", e))?;
+
+        let response = serde_json::json!({ "domains": domains });
+        let response_json = serde_json::to_vec(&response)
+            .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            response_json,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
     /// Transfer domain to new owner
     pub async fn transfer_domain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!(" Processing Web4 domain transfer request");
@@ -988,19 +1033,12 @@ impl Web4Handler {
         let api_request: ApiDomainTransferRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow!("Invalid domain transfer request: {}", e))?;
 
-        // Deserialize identities
-        let to_owner = self.deserialize_identity(&api_request.to_owner)
-            .map_err(|e| anyhow!("Invalid to_owner identity: {}", e))?;
-
-        // Deserialize transfer proof
-        let transfer_proof = self.deserialize_proof(&api_request.transfer_proof)
-            .map_err(|e| anyhow!("Invalid transfer proof: {}", e))?;
-
         let manager = self.web4_manager.read().await;
         
         match manager.registry.transfer_domain(
             &api_request.domain,
-            &to_owner,
+            &api_request.from_owner,
+            &api_request.to_owner,
             Some(Vec::new()),
         ).await {
             Ok(success) => {
@@ -1044,13 +1082,9 @@ impl Web4Handler {
         let api_request: ApiDomainReleaseRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow!("Invalid domain release request: {}", e))?;
 
-        // Deserialize owner identity
-        let owner_identity = self.deserialize_identity(&api_request.owner_identity)
-            .map_err(|e| anyhow!("Invalid owner identity: {}", e))?;
-
         let manager = self.web4_manager.read().await;
         
-        match manager.registry.release_domain(&api_request.domain, &owner_identity).await {
+        match manager.registry.release_domain(&api_request.domain, &api_request.owner_identity).await {
             Ok(success) => {
                 let response = serde_json::json!({
                     "success": success,
@@ -1238,8 +1272,72 @@ impl Web4Handler {
             &update_request.expected_previous_manifest_cid[..16.min(update_request.expected_previous_manifest_cid.len())]
         );
 
-        // TODO: Verify signature matches domain owner
-        // For now, we trust the caller has authenticated
+        let manager = self.web4_manager.read().await;
+        let status = manager
+            .registry
+            .get_domain_status(&update_request.domain)
+            .await
+            .map_err(|e| anyhow!("Failed to fetch domain status: {}", e))?;
+        drop(manager);
+
+        let owner_did = status
+            .owner_did
+            .as_deref()
+            .ok_or_else(|| anyhow!("Domain owner not found"))?;
+
+        if update_request.signature.is_empty() {
+            return Err(anyhow!("Update signature missing"));
+        }
+
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| anyhow!("System time error: {}", e))?
+            .as_secs();
+        let time_diff = if current_time > update_request.timestamp {
+            current_time - update_request.timestamp
+        } else {
+            update_request.timestamp - current_time
+        };
+        if time_diff > 300 {
+            return Err(anyhow!(
+                "Update request expired. Timestamp difference: {} seconds (max 300). Current: {}, Request: {}",
+                time_diff, current_time, update_request.timestamp
+            ));
+        }
+
+        let signed_message = format!(
+            "{}|{}|{}|{}",
+            update_request.domain,
+            update_request.expected_previous_manifest_cid,
+            update_request.new_manifest_cid,
+            update_request.timestamp
+        );
+        let signature_bytes = hex::decode(&update_request.signature)
+            .map_err(|e| anyhow!("Invalid update signature hex encoding: {}", e))?;
+
+        let identity_mgr = self.identity_manager.read().await;
+        let owner_id = lib_crypto::Hash::from_bytes(
+            &lib_crypto::hash_blake3(owner_did.as_bytes()).to_vec(),
+        );
+        let owner_identity = identity_mgr
+            .get_identity(&owner_id)
+            .ok_or_else(|| anyhow!("Owner identity not found: {}", owner_did))?;
+
+        let is_valid = lib_crypto::verify_signature(
+            signed_message.as_bytes(),
+            &signature_bytes,
+            &owner_identity.public_key.as_bytes(),
+        )
+        .map_err(|e| anyhow!("Signature verification error: {}", e))?;
+
+        if !is_valid {
+            return Err(anyhow!("Invalid update signature"));
+        }
+
+        let _manifest = self
+            .load_and_verify_manifest(&update_request.domain, &update_request.new_manifest_cid)
+            .await
+            .map_err(|e| anyhow!("Manifest verification failed: {}", e))?;
 
         let manager = self.web4_manager.read().await;
 
@@ -1281,6 +1379,62 @@ impl Web4Handler {
                 ))
             }
         }
+    }
+
+    async fn load_and_verify_manifest(&self, domain: &str, manifest_cid: &str) -> anyhow::Result<DeployManifest> {
+        let manager = self.web4_manager.read().await;
+        let manifest_bytes = manager
+            .registry
+            .get_content_by_cid(manifest_cid)
+            .await
+            .map_err(|e| anyhow!("Failed to fetch manifest: {}", e))?
+            .ok_or_else(|| anyhow!("Manifest content not found for CID {}", manifest_cid))?;
+        drop(manager);
+
+        let manifest: DeployManifest = serde_json::from_slice(&manifest_bytes)
+            .map_err(|e| anyhow!("Invalid manifest JSON: {}", e))?;
+
+        if manifest.domain != domain {
+            return Err(anyhow!(
+                "Manifest domain mismatch: expected {}, got {}",
+                domain,
+                manifest.domain
+            ));
+        }
+
+        ensure_canonical_file_list(&manifest.files)?;
+        let computed_hash = compute_root_hash(&manifest.files);
+        if computed_hash != manifest.root_hash {
+            return Err(anyhow!("Manifest root hash mismatch"));
+        }
+
+        if manifest.signature.is_empty() {
+            return Err(anyhow!("Manifest signature missing"));
+        }
+
+        let unsigned_bytes = manifest_unsigned_bytes(&manifest)?;
+        let signature_bytes = general_purpose::STANDARD
+            .decode(&manifest.signature)
+            .map_err(|e| anyhow!("Invalid manifest signature encoding: {}", e))?;
+
+        let identity_mgr = self.identity_manager.read().await;
+        let author_id = lib_crypto::Hash::from_bytes(
+            &lib_crypto::hash_blake3(manifest.author_did.as_bytes()).to_vec(),
+        );
+        let author_identity = identity_mgr.get_identity(&author_id)
+            .ok_or_else(|| anyhow!("Author identity not found: {}", manifest.author_did))?;
+
+        let is_valid = lib_crypto::verify_signature(
+            &unsigned_bytes,
+            &signature_bytes,
+            &author_identity.public_key.dilithium_pk,
+        ).map_err(|e| anyhow!("Signature verification error: {}", e))?;
+
+        if !is_valid {
+            return Err(anyhow!("Invalid manifest signature"));
+        }
+
+        Ok(manifest)
     }
 
     /// Resolve domain to current manifest
