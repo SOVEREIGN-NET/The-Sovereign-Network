@@ -15,6 +15,7 @@ use lib_identity::types::IdentityType;
 use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_crypto::{PrivateKey, Hash};
 use serde::{Serialize, Deserialize};
+use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME, WALLET_DATA_FILENAME};
 // Core wallet functionality with mesh network integration
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -83,11 +84,11 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
         return Err(KeystoreError::NotFound(keystore_path.to_path_buf()));
     }
 
-    let user_identity_file = keystore_path.join("user_identity.json");
-    let node_identity_file = keystore_path.join("node_identity.json");
-    let user_private_key_file = keystore_path.join("user_private_key.json");
-    let node_private_key_file = keystore_path.join("node_private_key.json");
-    let wallet_data_file = keystore_path.join("wallet_data.json");
+    let user_identity_file = keystore_path.join(USER_IDENTITY_FILENAME);
+    let node_identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
+    let user_private_key_file = keystore_path.join(USER_PRIVATE_KEY_FILENAME);
+    let node_private_key_file = keystore_path.join(NODE_PRIVATE_KEY_FILENAME);
+    let wallet_data_file = keystore_path.join(WALLET_DATA_FILENAME);
 
     // Check all required files exist
     for file in [&user_identity_file, &node_identity_file, &user_private_key_file, &node_private_key_file, &wallet_data_file] {
@@ -200,11 +201,11 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
             }
         })?;
 
-    let user_identity_file = keystore_path.join("user_identity.json");
-    let node_identity_file = keystore_path.join("node_identity.json");
-    let user_private_key_file = keystore_path.join("user_private_key.json");
-    let node_private_key_file = keystore_path.join("node_private_key.json");
-    let wallet_data_file = keystore_path.join("wallet_data.json");
+    let user_identity_file = keystore_path.join(USER_IDENTITY_FILENAME);
+    let node_identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
+    let user_private_key_file = keystore_path.join(USER_PRIVATE_KEY_FILENAME);
+    let node_private_key_file = keystore_path.join(NODE_PRIVATE_KEY_FILENAME);
+    let wallet_data_file = keystore_path.join(WALLET_DATA_FILENAME);
 
     // Extract and save user private key
     let user_private_key = result.user_identity.private_key.as_ref()

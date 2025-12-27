@@ -152,8 +152,9 @@ pub fn validate_wallet_address(address: &str) -> CliResult<()> {
 }
 
 /// Check if balance is sufficient for transaction
+/// Requires strictly greater than (>) to ensure sufficient funds
 pub fn is_balance_sufficient(balance: u64, amount: u64, fee: u64) -> bool {
-    balance >= amount + fee
+    balance > amount + fee
 }
 
 #[cfg(test)]

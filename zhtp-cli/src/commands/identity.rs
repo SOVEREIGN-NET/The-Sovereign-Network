@@ -13,6 +13,7 @@ use crate::output::Output;
 use crate::logic;
 
 use lib_identity::ZhtpIdentity;
+use zhtp::keystore_names::NODE_IDENTITY_FILENAME;
 use std::path::PathBuf;
 
 // ============================================================================
@@ -130,7 +131,7 @@ async fn create_identity_impl(
     };
 
     // Check if identity already exists
-    let identity_file = keystore.join("identity.json");
+    let identity_file = keystore.join(NODE_IDENTITY_FILENAME);
     if identity_file.exists() {
         return Err(CliError::IdentityError(format!(
             "Identity already exists at {:?}. Use a different keystore path or delete the existing identity first.",
@@ -162,7 +163,7 @@ async fn create_identity_impl(
         CliError::IdentityError(format!("Failed to serialize identity: {}", e))
     })?;
     std::fs::write(&identity_file, identity_json).map_err(|e| {
-        CliError::IdentityError(format!("Failed to write identity.json: {}", e))
+        CliError::IdentityError(format!("Failed to write {}: {}", NODE_IDENTITY_FILENAME, e))
     })?;
 
     // Set restrictive permissions on Unix
@@ -194,7 +195,7 @@ async fn create_identity_with_type_impl(
     let keystore = get_default_keystore_path()?;
 
     // Check if identity already exists
-    let identity_file = keystore.join("identity.json");
+    let identity_file = keystore.join(NODE_IDENTITY_FILENAME);
     if identity_file.exists() {
         return Err(CliError::IdentityError(format!(
             "Identity already exists at {:?}",
@@ -225,7 +226,7 @@ async fn create_identity_with_type_impl(
         CliError::IdentityError(format!("Failed to serialize identity: {}", e))
     })?;
     std::fs::write(&identity_file, identity_json).map_err(|e| {
-        CliError::IdentityError(format!("Failed to write identity.json: {}", e))
+        CliError::IdentityError(format!("Failed to write {}: {}", NODE_IDENTITY_FILENAME, e))
     })?;
 
     #[cfg(unix)]
