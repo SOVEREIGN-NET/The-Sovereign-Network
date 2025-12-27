@@ -62,21 +62,17 @@ jobs:
       - name: Build
         run: cargo build --workspace --locked
 
-      - name: Build Release Binary
+      - name: Build Release Binaries
         if: (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development')
-        run: cargo build --release -p zhtp
+        run: cargo build --release -p zhtp -p zhtp-cli --locked
 
-      - name: Upload Release Artifact
+      - name: Upload Release Artifact (zhtp)
         if: (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development')
         uses: actions/upload-artifact@v4
         with:
           name: zhtp-binary
           path: target/release/zhtp
           retention-days: 1
-
-      - name: Build Release Binary (zhtp-cli)
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development')
-        run: cargo build --release -p zhtp-cli
 
       - name: Upload Release Artifact (zhtp-cli)
         if: (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development')
