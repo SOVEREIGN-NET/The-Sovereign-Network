@@ -10,6 +10,7 @@ use tokio::time::{Duration, Instant};
 use tracing::{info, warn, error, debug};
 
 use super::config::NodeConfig;
+use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME, WALLET_DATA_FILENAME};
 // Removed ZK coordinator - using unified lib-proofs system directly
 
 /// Information about an existing network discovered during startup
@@ -2230,10 +2231,10 @@ pub async fn create_or_load_node_identity(
         .join(".zhtp")
         .join("keystore");
 
-    let identity_file = keystore_path.join("node_identity.json");
+    let identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
 
     // Try to load existing identity from keystore (requires private key)
-    let private_key_file = keystore_path.join("node_private_key.json");
+    let private_key_file = keystore_path.join(NODE_PRIVATE_KEY_FILENAME);
 
     if identity_file.exists() && private_key_file.exists() {
         if let (Ok(identity_data), Ok(key_data)) = (
