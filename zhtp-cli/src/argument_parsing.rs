@@ -100,6 +100,9 @@ pub enum ZhtpCommand {
     /// Deploy Web4 sites (React, Next.js, etc.)
     Deploy(DeployArgs),
 
+    /// Manage Web4 domains
+    Domain(DomainArgs),
+
     /// Manage trust anchors and audit logs
     Trust(TrustArgs),
 
@@ -741,6 +744,80 @@ pub enum DeployAction {
         #[arg(short, long)]
         force: bool,
     },
+
+    /// Update an existing website deployment
+    Update {
+        /// Build directory containing updated static files
+        #[arg(value_name = "BUILD_DIR")]
+        build_dir: String,
+
+        /// Target domain (e.g., myapp.zhtp)
+        #[arg(short, long)]
+        domain: String,
+
+        /// Deployment mode: 'spa' (single page app) or 'static'
+        #[arg(short, long, default_value = "spa")]
+        mode: Option<String>,
+
+        /// Path to identity keystore directory (REQUIRED)
+        #[arg(short, long)]
+        keystore: String,
+
+        /// Fee for update (in ZHTP tokens)
+        #[arg(short, long)]
+        fee: Option<u64>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+
+        /// Dry run - show what would be updated without updating
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Delete a deployed domain and its manifest
+    Delete {
+        /// Domain to delete (e.g., myapp.zhtp)
+        #[arg(short, long)]
+        domain: String,
+
+        /// Path to identity keystore directory (REQUIRED)
+        #[arg(short, long)]
+        keystore: String,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+
+        /// Force delete without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 /// Trust management commands
@@ -762,6 +839,167 @@ pub enum TrustAction {
     Reset {
         /// Node address (host:port)
         node: String,
+    },
+}
+
+/// Domain management commands
+#[derive(Args, Debug, Clone)]
+pub struct DomainArgs {
+    #[command(subcommand)]
+    pub action: DomainAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DomainAction {
+    /// Register a new domain
+    Register {
+        /// Domain name (e.g., mysite.zhtp)
+        #[arg(short, long)]
+        domain: String,
+
+        /// Registration duration in days
+        #[arg(short, long, default_value = "365")]
+        duration: u64,
+
+        /// Domain metadata (JSON string)
+        #[arg(short, long)]
+        metadata: Option<String>,
+
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+    },
+
+    /// Check domain availability
+    Check {
+        /// Domain name to check
+        #[arg(short, long)]
+        domain: String,
+
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+    },
+
+    /// Get domain information
+    Info {
+        /// Domain name
+        #[arg(short, long)]
+        domain: String,
+
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+    },
+
+    /// Transfer domain to new owner
+    Transfer {
+        /// Domain name to transfer
+        #[arg(short, long)]
+        domain: String,
+
+        /// New owner DID
+        #[arg(short, long)]
+        new_owner: String,
+
+        /// Path to identity keystore directory (REQUIRED)
+        #[arg(short, long)]
+        keystore: String,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+    },
+
+    /// Release domain from use
+    Release {
+        /// Domain name to release
+        #[arg(short, long)]
+        domain: String,
+
+        /// Path to identity keystore directory (REQUIRED)
+        #[arg(short, long)]
+        keystore: String,
+
+        /// Pin to specific SPKI hash (hex encoded)
+        #[arg(long)]
+        pin_spki: Option<String>,
+
+        /// Expected node DID
+        #[arg(long)]
+        node_did: Option<String>,
+
+        /// Trust on first use
+        #[arg(long)]
+        tofu: bool,
+
+        /// Bootstrap mode (INSECURE, dev only)
+        #[arg(long)]
+        trust_node: bool,
+
+        /// Force release without confirmation
+        #[arg(short, long)]
+        force: bool,
     },
 }
 
@@ -899,6 +1137,7 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Reward(args) => commands::rewards::handle_reward_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Isolation(args) => commands::isolation::handle_isolation_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Deploy(args) => commands::deploy::handle_deploy_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Domain(args) => commands::domain::handle_domain_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Trust(args) => commands::trust::handle_trust_command(args.clone()).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Man(args) => commands::man::handle_man_command(args.clone()).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Update(args) => commands::update::handle_update_command(args.clone()).await.map_err(anyhow::Error::msg),

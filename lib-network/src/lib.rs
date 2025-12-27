@@ -69,6 +69,7 @@ pub mod protocols;
 pub mod bootstrap;
 pub mod identity; // Unified peer identity system
 pub mod peer_registry; // Unified peer registry (single source of truth)
+pub mod client; // Authenticated QUIC client for control-plane operations
 pub mod handshake; // Unified Handshake Protocol (UHP)
 pub mod encryption; // Unified protocol encryption
 pub mod constants; // Protocol constants
@@ -80,6 +81,7 @@ pub mod socket_utils;
 pub mod transport;
 pub mod dht_stub;
 pub mod dht;
+pub mod web4;
 mod blockchain_sync_stub;
 pub mod storage_stub;
 pub mod network_output;

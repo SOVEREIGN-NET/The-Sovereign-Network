@@ -8,12 +8,19 @@
 //! - **Testability**: Output trait injection for testing
 
 use crate::argument_parsing::{DeployArgs, DeployAction, ZhtpCli};
+use crate::commands::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore, validate_domain};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
 
-use serde::{Deserialize, Serialize};
+use base64::Engine;
+use lib_network::client::ZhtpClient;
+use lib_protocols::types::ZhtpRequest;
 use std::path::PathBuf;
 use std::str::FromStr;
+use zhtp::web4_manifest::{DeployManifest, FileEntry, DeployMode as ManifestDeployMode, canonicalize_file_entries, compute_root_hash, manifest_unsigned_bytes_from_parts, normalize_manifest_path};
+
+const MAX_FILE_SIZE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_TOTAL_SIZE_BYTES: u64 = 1024 * 1024 * 1024;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -52,29 +59,13 @@ impl DeployMode {
     }
 }
 
-/// Deployment manifest tracking all files
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeployManifest {
-    pub domain: String,
-    pub mode: String,
-    pub files: Vec<FileEntry>,
-    pub total_size: u64,
-    pub deployed_at: u64,
-}
-
-/// Single file entry in manifest
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FileEntry {
-    pub path: String,
-    pub size: u64,
-    pub mime_type: String,
-    pub hash: String,
-}
 
 /// Valid deployment operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeployOperation {
     Site,
+    Update,
+    Delete,
     Status,
     List,
     History,
@@ -86,6 +77,8 @@ impl DeployOperation {
     pub fn description(&self) -> &'static str {
         match self {
             DeployOperation::Site => "Deploy website to Web4",
+            DeployOperation::Update => "Update existing deployment",
+            DeployOperation::Delete => "Delete deployed domain",
             DeployOperation::Status => "Check deployment status",
             DeployOperation::List => "List deployments",
             DeployOperation::History => "Show deployment history",
@@ -100,30 +93,12 @@ impl DeployOperation {
 pub fn action_to_operation(action: &DeployAction) -> DeployOperation {
     match action {
         DeployAction::Site { .. } => DeployOperation::Site,
+        DeployAction::Update { .. } => DeployOperation::Update,
+        DeployAction::Delete { .. } => DeployOperation::Delete,
         DeployAction::Status { .. } => DeployOperation::Status,
         DeployAction::List { .. } => DeployOperation::List,
         DeployAction::History { .. } => DeployOperation::History,
         DeployAction::Rollback { .. } => DeployOperation::Rollback,
-    }
-}
-
-/// Validate domain format
-///
-/// Pure function - format validation only
-pub fn validate_domain(domain: &str) -> CliResult<()> {
-    if domain.is_empty() {
-        return Err(CliError::ConfigError(
-            "Domain cannot be empty".to_string(),
-        ));
-    }
-
-    if domain.ends_with(".zhtp") || domain.ends_with(".sov") {
-        Ok(())
-    } else {
-        Err(CliError::ConfigError(format!(
-            "Domain must end with .zhtp or .sov (got: {})",
-            domain
-        )))
     }
 }
 
@@ -139,6 +114,38 @@ pub fn validate_build_directory(path_str: &str) -> CliResult<PathBuf> {
 
     Ok(PathBuf::from(path_str))
 }
+
+async fn post_bytes(
+    client: &ZhtpClient,
+    path: &str,
+    body: Vec<u8>,
+    content_type: &str,
+) -> CliResult<serde_json::Value> {
+    let request = ZhtpRequest::post(
+        path.to_string(),
+        body,
+        content_type.to_string(),
+        Some(client.identity().id.clone()),
+    )
+    .map_err(|e| CliError::ConfigError(format!("Failed to build request: {}", e)))?;
+
+    let response = client
+        .request(request)
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Request failed: {}", e)))?;
+
+    if !response.status.is_success() {
+        return Err(CliError::ConfigError(format!(
+            "Request failed: {} {}",
+            response.status.code(),
+            response.status_message
+        )));
+    }
+
+    serde_json::from_slice(&response.body)
+        .map_err(|e| CliError::ConfigError(format!("Invalid JSON response: {}", e)))
+}
+
 
 // ============================================================================
 // IMPERATIVE SHELL - All side effects here (file I/O, network, output)
@@ -158,7 +165,7 @@ pub async fn handle_deploy_command(
 /// Internal implementation with dependency injection
 async fn handle_deploy_command_impl(
     args: DeployArgs,
-    _cli: &ZhtpCli,
+    cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
     let op = action_to_operation(&args.action);
@@ -171,14 +178,14 @@ async fn handle_deploy_command_impl(
             mode,
             keystore,
             fee,
-            pin_spki: _,
-            node_did: _,
-            tofu: _,
-            trust_node: _,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
             dry_run,
         } => {
             // Pure validation
-            validate_domain(&domain)?;
+            let domain = validate_domain(&domain)?;
             validate_build_directory(&build_dir)?;
             let deploy_mode: DeployMode = mode
                 .as_deref()
@@ -198,6 +205,82 @@ async fn handle_deploy_command_impl(
                 Some(keystore.as_str()),
                 fee,
                 dry_run,
+                pin_spki.as_deref(),
+                node_did.as_deref(),
+                tofu,
+                trust_node,
+                &cli.server,
+                output,
+            )
+            .await
+        }
+        DeployAction::Update {
+            build_dir,
+            domain,
+            mode,
+            keystore,
+            fee,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
+            dry_run,
+        } => {
+            // Pure validation
+            let domain = validate_domain(&domain)?;
+            validate_build_directory(&build_dir)?;
+            let deploy_mode: DeployMode = mode
+                .as_deref()
+                .unwrap_or("spa")
+                .parse()?;
+
+            output.header("Update Website Deployment")?;
+            output.print(&format!("Domain: {}", domain))?;
+            output.print(&format!("Build directory: {}", build_dir))?;
+            output.print(&format!("Mode: {}", deploy_mode.as_str()))?;
+
+            // Imperative: File I/O and deployment
+            deploy_update_impl(
+                &build_dir,
+                &domain,
+                deploy_mode,
+                Some(keystore.as_str()),
+                fee,
+                dry_run,
+                pin_spki.as_deref(),
+                node_did.as_deref(),
+                tofu,
+                trust_node,
+                &cli.server,
+                output,
+            )
+            .await
+        }
+        DeployAction::Delete {
+            domain,
+            keystore,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
+            force,
+        } => {
+            // Pure validation
+            let domain = validate_domain(&domain)?;
+
+            output.header("Delete Deployment")?;
+            output.print(&format!("Domain: {}", domain))?;
+
+            // Imperative: Network communication
+            delete_deployment_impl(
+                &domain,
+                Some(keystore.as_str()),
+                pin_spki.as_deref(),
+                node_did.as_deref(),
+                tofu,
+                trust_node,
+                &cli.server,
+                force,
                 output,
             )
             .await
@@ -205,72 +288,112 @@ async fn handle_deploy_command_impl(
         DeployAction::Status {
             domain,
             keystore,
-            pin_spki: _,
-            node_did: _,
-            tofu: _,
-            trust_node: _,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
         } => {
             // Pure validation
-            validate_domain(&domain)?;
+            let domain = validate_domain(&domain)?;
 
             output.header("Deployment Status")?;
             output.print(&format!("Domain: {}", domain))?;
 
             // Imperative: Network communication
-            check_deployment_status_impl(&domain, keystore.as_ref().map(|s| s.as_str()), output).await
+            check_deployment_status_impl(
+                &domain,
+                keystore.as_ref().map(|s| s.as_str()),
+                pin_spki.as_deref(),
+                node_did.as_deref(),
+                tofu,
+                trust_node,
+                &cli.server,
+                output,
+            )
+            .await
         }
         DeployAction::List {
             keystore,
-            pin_spki: _,
-            node_did: _,
-            tofu: _,
-            trust_node: _,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
         } => {
             output.header("Deployments")?;
 
             // Imperative: Network communication
-            list_deployments_impl(keystore.as_ref().map(|s| s.as_str()), output).await
+            list_deployments_impl(
+                keystore.as_ref().map(|s| s.as_str()),
+                pin_spki.as_deref(),
+                node_did.as_deref(),
+                tofu,
+                trust_node,
+                &cli.server,
+                output,
+            )
+            .await
         }
         DeployAction::History {
             domain,
             limit,
             keystore,
-            pin_spki: _,
-            node_did: _,
-            tofu: _,
-            trust_node: _,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
         } => {
             // Pure validation
-            validate_domain(&domain)?;
+            let domain = validate_domain(&domain)?;
 
             output.header("Deployment History")?;
             output.print(&format!("Domain: {}", domain))?;
             output.print(&format!("Limit: {}", limit))?;
 
             // Imperative: Network communication
-            show_deployment_history_impl(&domain, limit as u32, keystore.as_ref().map(|s| s.as_str()), output)
-                .await
+            show_deployment_history_impl(
+                &domain,
+                limit as u32,
+                keystore.as_ref().map(|s| s.as_str()),
+                pin_spki.as_deref(),
+                node_did.as_deref(),
+                tofu,
+                trust_node,
+                &cli.server,
+                output,
+            )
+            .await
         }
         DeployAction::Rollback {
             domain,
             to_version,
             keystore,
-            pin_spki: _,
-            node_did: _,
-            tofu: _,
-            trust_node: _,
+            pin_spki,
+            node_did,
+            tofu,
+            trust_node,
             force,
         } => {
             // Pure validation
-            validate_domain(&domain)?;
+            let domain = validate_domain(&domain)?;
 
             output.header("Rollback Deployment")?;
             output.print(&format!("Domain: {}", domain))?;
             output.print(&format!("Rolling back to version: {}", to_version))?;
 
             // Imperative: Network communication
-            rollback_deployment_impl(&domain, &to_version.to_string(), Some(keystore.as_str()), force, output)
-                .await
+            rollback_deployment_impl(
+                &domain,
+                &to_version.to_string(),
+                Some(keystore.as_str()),
+                pin_spki.as_deref(),
+                node_did.as_deref(),
+                tofu,
+                trust_node,
+                &cli.server,
+                force,
+                output,
+            )
+            .await
         }
     }
 }
@@ -279,15 +402,25 @@ async fn handle_deploy_command_impl(
 async fn deploy_site_impl(
     build_dir: &str,
     domain: &str,
-    _mode: DeployMode,
-    _keystore: Option<&str>,
-    _fee: Option<u64>,
+    mode: DeployMode,
+    keystore: Option<&str>,
+    fee: Option<u64>,
     dry_run: bool,
+    pin_spki: Option<&str>,
+    node_did: Option<&str>,
+    tofu: bool,
+    trust_node: bool,
+    server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let build_path = PathBuf::from(build_dir);
+    use std::fs;
 
-    // Check if directory exists (I/O operation)
+    let build_path = PathBuf::from(build_dir);
+    let canonical_build = build_path
+        .canonicalize()
+        .map_err(|e| CliError::ConfigError(format!("Failed to resolve build directory: {}", e)))?;
+
+    // Validate build directory
     if !build_path.exists() {
         return Err(CliError::ConfigError(format!(
             "Build directory does not exist: {}",
@@ -302,37 +435,664 @@ async fn deploy_site_impl(
         )));
     }
 
-    if dry_run {
-        output.info("DRY RUN - no files will be deployed")?;
+    output.info("Collecting files from build directory...")?;
+
+    // Collect all files from build directory
+    let mut files = Vec::new();
+    let mut total_size = 0u64;
+    for entry in walkdir::WalkDir::new(&build_path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file() && !e.file_type().is_symlink())
+    {
+        let relative_path = entry
+            .path()
+            .strip_prefix(&build_path)
+            .map_err(|e| CliError::DeploymentFailed { domain: domain.to_string(), reason: format!("Path error: {}", e) })?
+            .to_string_lossy()
+            .to_string();
+
+        let normalized_path = normalize_manifest_path(&relative_path)
+            .map_err(|e| CliError::ConfigError(format!("Invalid path {}: {}", relative_path, e)))?;
+
+        let canonical_file = entry
+            .path()
+            .canonicalize()
+            .map_err(|e| CliError::ConfigError(format!("Failed to resolve file path: {}", e)))?;
+        if !canonical_file.starts_with(&canonical_build) {
+            return Err(CliError::ConfigError(format!(
+                "File escapes build directory: {}",
+                relative_path
+            )));
+        }
+
+        let size = entry
+            .metadata()
+            .map_err(|e| CliError::ConfigError(format!("Failed to read metadata: {}", e)))?
+            .len();
+        if size > MAX_FILE_SIZE_BYTES {
+            return Err(CliError::ConfigError(format!(
+                "File exceeds size limit ({} bytes): {}",
+                MAX_FILE_SIZE_BYTES, normalized_path
+            )));
+        }
+        total_size = total_size.saturating_add(size);
+        if total_size > MAX_TOTAL_SIZE_BYTES {
+            return Err(CliError::ConfigError(format!(
+                "Total deployment size exceeds limit ({} bytes)",
+                MAX_TOTAL_SIZE_BYTES
+            )));
+        }
+
+        files.push((normalized_path, entry.path().to_path_buf(), size));
     }
 
-    output.info("Collecting files from build directory...")?;
-    output.print(&format!("Preparing deployment to {}", domain))?;
+    if files.is_empty() {
+        return Err(CliError::InvalidBuildDirectory("No files found in build directory".to_string()));
+    }
 
-    output.success("Site deployment ready!")?;
-    output.print("Use 'zhtp deploy status --domain mysite.zhtp' to check status")?;
+    output.print(&format!("Found {} files to deploy", files.len()))?;
+
+    if dry_run {
+        output.info("DRY RUN - showing what would be deployed:")?;
+        for (path, _, _) in &files {
+            output.print(&format!("  - {}", path))?;
+        }
+        output.success("Dry run complete - no files deployed")?;
+        return Ok(());
+    }
+
+    // Load keystore identity
+    let keystore_path = keystore
+        .map(|p| PathBuf::from(p))
+        .ok_or_else(|| CliError::IdentityError("Keystore path required for deployment".to_string()))?;
+
+    output.info("Loading identity from keystore...")?;
+    let loaded = load_identity_from_keystore(&keystore_path)?;
+    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
+
+    output.info("Uploading files...")?;
+
+    // Upload each file
+    let mut manifest_files = Vec::new();
+    let mut canonical_total_size = 0u64;
+    for (relative_path, file_path, size) in &files {
+        let content = fs::read(&file_path)
+            .map_err(|e| CliError::ConfigError(format!("Failed to read {}: {}", relative_path, e)))?;
+
+        let content_type = mime_guess::from_path(&file_path)
+            .first_raw()
+            .unwrap_or("application/octet-stream")
+            .to_string();
+
+        let blob_response = post_bytes(&client, "/api/v1/web4/content/blob", content, &content_type).await?;
+        let blob_hash = blob_response
+            .get("content_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| CliError::DeploymentFailed {
+                domain: domain.to_string(),
+                reason: format!("Blob response missing content_id for {}", relative_path),
+            })?
+            .to_string();
+
+        canonical_total_size = canonical_total_size.saturating_add(*size);
+        manifest_files.push(FileEntry {
+            path: relative_path.clone(),
+            size: *size,
+            mime_type: content_type,
+            hash: blob_hash,
+        });
+
+        output.print(&format!("✓ Uploaded {}", relative_path))?;
+    }
+
+    let canonical_files = canonicalize_file_entries(manifest_files)
+        .map_err(|e| CliError::ConfigError(format!("Manifest file list error: {}", e)))?;
+    let root_hash = compute_root_hash(&canonical_files);
+    let deployed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
+        .as_secs();
+
+    let manifest_bytes = manifest_unsigned_bytes_from_parts(
+        1,
+        domain.to_string(),
+        match mode {
+            DeployMode::Spa => ManifestDeployMode::Spa,
+            DeployMode::Static => ManifestDeployMode::Static,
+        },
+        canonical_files.clone(),
+        root_hash,
+        canonical_total_size,
+        deployed_at,
+        loaded.identity.did.clone(),
+    )
+    .map_err(|e| CliError::ConfigError(format!("Failed to serialize manifest: {}", e)))?;
+
+    let signature = lib_crypto::sign_message(&loaded.keypair, &manifest_bytes)
+        .map_err(|e| CliError::ConfigError(format!("Failed to sign manifest: {}", e)))?;
+    let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.signature);
+
+    let manifest = DeployManifest {
+        version: 1,
+        domain: domain.to_string(),
+        mode: match mode {
+            DeployMode::Spa => ManifestDeployMode::Spa,
+            DeployMode::Static => ManifestDeployMode::Static,
+        },
+        files: canonical_files,
+        root_hash,
+        total_size: canonical_total_size,
+        deployed_at,
+        author_did: loaded.identity.did.clone(),
+        signature: signature_b64,
+    };
+
+    output.info("Registering domain...")?;
+
+    // Upload manifest
+    let manifest_payload = serde_json::to_vec(&manifest)
+        .map_err(|e| CliError::ConfigError(format!("Failed to encode manifest: {}", e)))?;
+    let manifest_response = post_bytes(
+        &client,
+        "/api/v1/web4/content/manifest",
+        manifest_payload,
+        "application/json",
+    )
+    .await?;
+    let manifest_hash = manifest_response
+        .get("manifest_cid")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: "Manifest response missing manifest_cid".to_string(),
+        })?
+        .to_string();
+
+    // Register domain (fee is noted for future economic integration)
+    if let Some(_fee_amount) = fee {
+        output.info(&format!("Note: Registration fee of {} tokens reserved for future billing integration", _fee_amount))?;
+    }
+
+    let registration_body = serde_json::json!({
+        "domain": domain,
+        "manifest_cid": manifest_hash,
+        "owner": loaded.identity.did.clone(),
+    });
+    let response = client
+        .post_json("/api/v1/web4/domains/register", &registration_body)
+        .await
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to register domain: {}", e),
+        })?;
+    let _: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to parse registration response: {}", e),
+        })?;
+
+    output.success(&format!("✓ Site deployed successfully to {}", domain))?;
+    output.print(&format!("Manifest hash: {}", manifest_hash))?;
+    output.print(&format!(
+        "Use 'zhtp-cli deploy status {}' to check deployment status",
+        domain
+    ))?;
 
     Ok(())
 }
+
+/// Update an existing website deployment
+async fn deploy_update_impl(
+    build_dir: &str,
+    domain: &str,
+    mode: DeployMode,
+    keystore: Option<&str>,
+    fee: Option<u64>,
+    dry_run: bool,
+    pin_spki: Option<&str>,
+    node_did: Option<&str>,
+    tofu: bool,
+    trust_node: bool,
+    server: &str,
+    output: &dyn Output,
+) -> CliResult<()> {
+    use std::fs;
+
+    let build_path = PathBuf::from(build_dir);
+    let canonical_build = build_path
+        .canonicalize()
+        .map_err(|e| CliError::ConfigError(format!("Failed to resolve build directory: {}", e)))?;
+
+    // Validate build directory
+    if !build_path.exists() {
+        return Err(CliError::ConfigError(format!(
+            "Build directory does not exist: {}",
+            build_dir
+        )));
+    }
+
+    if !build_path.is_dir() {
+        return Err(CliError::ConfigError(format!(
+            "Path is not a directory: {}",
+            build_dir
+        )));
+    }
+
+    output.info("Collecting updated files from build directory...")?;
+
+    // Collect all files
+    let mut files = Vec::new();
+    let mut total_size = 0u64;
+    for entry in walkdir::WalkDir::new(&build_path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file() && !e.file_type().is_symlink())
+    {
+        let relative_path = entry
+            .path()
+            .strip_prefix(&build_path)
+            .map_err(|e| CliError::DeploymentFailed { domain: domain.to_string(), reason: format!("Path error: {}", e) })?
+            .to_string_lossy()
+            .to_string();
+
+        let normalized_path = normalize_manifest_path(&relative_path)
+            .map_err(|e| CliError::ConfigError(format!("Invalid path {}: {}", relative_path, e)))?;
+
+        let canonical_file = entry
+            .path()
+            .canonicalize()
+            .map_err(|e| CliError::ConfigError(format!("Failed to resolve file path: {}", e)))?;
+        if !canonical_file.starts_with(&canonical_build) {
+            return Err(CliError::ConfigError(format!(
+                "File escapes build directory: {}",
+                relative_path
+            )));
+        }
+
+        let size = entry
+            .metadata()
+            .map_err(|e| CliError::ConfigError(format!("Failed to read metadata: {}", e)))?
+            .len();
+        if size > MAX_FILE_SIZE_BYTES {
+            return Err(CliError::ConfigError(format!(
+                "File exceeds size limit ({} bytes): {}",
+                MAX_FILE_SIZE_BYTES, normalized_path
+            )));
+        }
+        total_size = total_size.saturating_add(size);
+        if total_size > MAX_TOTAL_SIZE_BYTES {
+            return Err(CliError::ConfigError(format!(
+                "Total deployment size exceeds limit ({} bytes)",
+                MAX_TOTAL_SIZE_BYTES
+            )));
+        }
+
+        files.push((normalized_path, entry.path().to_path_buf(), size));
+    }
+
+    if files.is_empty() {
+        return Err(CliError::InvalidBuildDirectory("No files found in build directory".to_string()));
+    }
+
+    output.print(&format!("Found {} files to update", files.len()))?;
+
+    if dry_run {
+        output.info("DRY RUN - showing what would be updated:")?;
+        for (path, _, _) in &files {
+            output.print(&format!("  - {}", path))?;
+        }
+        output.success("Dry run complete - no files updated")?;
+        return Ok(());
+    }
+
+    // Load keystore identity
+    let keystore_path = keystore
+        .map(|p| PathBuf::from(p))
+        .ok_or_else(|| CliError::IdentityError("Keystore path required for update".to_string()))?;
+
+    output.info("Loading identity from keystore...")?;
+    let loaded = load_identity_from_keystore(&keystore_path)?;
+    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
+
+    // Get current domain status to retrieve previous manifest CID
+    output.info("Retrieving current domain status...")?;
+    let status_response = client
+        .get(&format!("/api/v1/web4/domains/status/{}", domain))
+        .await
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to get domain status: {}", e),
+        })?;
+    let status: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&status_response)
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to parse domain status: {}", e),
+        })?;
+
+    let previous_cid = status
+        .get("current_manifest_cid")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: "Domain does not exist or has no manifest".to_string(),
+        })?;
+
+    output.info("Uploading updated files...")?;
+
+    let mut manifest_files = Vec::new();
+    let mut canonical_total_size = 0u64;
+    for (relative_path, file_path, size) in &files {
+        let content = fs::read(&file_path)
+            .map_err(|e| CliError::ConfigError(format!("Failed to read {}: {}", relative_path, e)))?;
+
+        let content_type = mime_guess::from_path(&file_path)
+            .first_raw()
+            .unwrap_or("application/octet-stream")
+            .to_string();
+
+        let blob_response = post_bytes(&client, "/api/v1/web4/content/blob", content, &content_type).await?;
+        let blob_hash = blob_response
+            .get("content_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| CliError::DeploymentFailed {
+                domain: domain.to_string(),
+                reason: format!("Blob response missing content_id for {}", relative_path),
+            })?
+            .to_string();
+
+        canonical_total_size = canonical_total_size.saturating_add(*size);
+        manifest_files.push(FileEntry {
+            path: relative_path.clone(),
+            size: *size,
+            mime_type: content_type,
+            hash: blob_hash,
+        });
+
+        output.print(&format!("✓ Uploaded {}", relative_path))?;
+    }
+
+    let canonical_files = canonicalize_file_entries(manifest_files)
+        .map_err(|e| CliError::ConfigError(format!("Manifest file list error: {}", e)))?;
+    let root_hash = compute_root_hash(&canonical_files);
+    let deployed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
+        .as_secs();
+
+    let manifest_bytes = manifest_unsigned_bytes_from_parts(
+        1,
+        domain.to_string(),
+        match mode {
+            DeployMode::Spa => ManifestDeployMode::Spa,
+            DeployMode::Static => ManifestDeployMode::Static,
+        },
+        canonical_files.clone(),
+        root_hash,
+        canonical_total_size,
+        deployed_at,
+        loaded.identity.did.clone(),
+    )
+    .map_err(|e| CliError::ConfigError(format!("Failed to serialize manifest: {}", e)))?;
+
+    let signature = lib_crypto::sign_message(&loaded.keypair, &manifest_bytes)
+        .map_err(|e| CliError::ConfigError(format!("Failed to sign manifest: {}", e)))?;
+    let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.signature);
+
+    let manifest = DeployManifest {
+        version: 1,
+        domain: domain.to_string(),
+        mode: match mode {
+            DeployMode::Spa => ManifestDeployMode::Spa,
+            DeployMode::Static => ManifestDeployMode::Static,
+        },
+        files: canonical_files,
+        root_hash,
+        total_size: canonical_total_size,
+        deployed_at,
+        author_did: loaded.identity.did.clone(),
+        signature: signature_b64,
+    };
+
+    let manifest_payload = serde_json::to_vec(&manifest)
+        .map_err(|e| CliError::ConfigError(format!("Failed to encode manifest: {}", e)))?;
+    let manifest_response = post_bytes(
+        &client,
+        "/api/v1/web4/content/manifest",
+        manifest_payload,
+        "application/json",
+    )
+    .await?;
+    let manifest_hash = manifest_response
+        .get("manifest_cid")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: "Manifest response missing manifest_cid".to_string(),
+        })?
+        .to_string();
+
+    if let Some(_fee_amount) = fee {
+        output.info(&format!("Note: Update fee of {} tokens reserved for future billing integration", _fee_amount))?;
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
+        .as_secs();
+    let update_message = format!("{}|{}|{}|{}", domain, previous_cid, manifest_hash, timestamp);
+    let update_signature = lib_crypto::sign_message(&loaded.keypair, update_message.as_bytes())
+        .map_err(|e| CliError::ConfigError(format!("Failed to sign update: {}", e)))?;
+
+    let update_body = serde_json::json!({
+        "domain": domain,
+        "new_manifest_cid": manifest_hash,
+        "expected_previous_manifest_cid": previous_cid,
+        "signature": hex::encode(update_signature.signature),
+        "timestamp": timestamp,
+    });
+
+    let response = client
+        .post_json("/api/v1/web4/domains/update", &update_body)
+        .await
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to update domain: {}", e),
+        })?;
+
+    let update_response: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to parse update response: {}", e),
+        })?;
+
+    let success = update_response
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !success {
+        let reason = update_response
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Update failed");
+        return Err(CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: reason.to_string(),
+        });
+    }
+
+    output.success(&format!("✓ Domain '{}' updated successfully", domain))?;
+
+    Ok(())
+}
+
+/// Delete a deployed domain and its manifest
+async fn delete_deployment_impl(
+    domain: &str,
+    keystore: Option<&str>,
+    pin_spki: Option<&str>,
+    node_did: Option<&str>,
+    tofu: bool,
+    trust_node: bool,
+    server: &str,
+    _force: bool,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let keystore_path = keystore
+        .map(|p| PathBuf::from(p))
+        .ok_or_else(|| CliError::IdentityError("Keystore path required for delete".to_string()))?;
+
+    output.info("Loading identity from keystore...")?;
+    let loaded = load_identity_from_keystore(&keystore_path)?;
+    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
+
+    output.info(&format!("Deleting domain: {}", domain))?;
+
+    let body = serde_json::json!({
+        "domain": domain,
+        "owner_identity": loaded.identity.did,
+    });
+    let response = client
+        .post_json(&format!("/api/v1/web4/domains/{}/release", domain), &body)
+        .await
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to release domain: {}", e),
+        })?;
+    let result: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to parse release response: {}", e),
+        })?;
+
+    if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+        output.success(&format!("✓ Domain {} released", domain))?;
+        output.print(&format!(
+            "Use 'zhtp-cli deploy status {}' to verify deletion status",
+            domain
+        ))?;
+        return Ok(());
+    }
+
+    Err(CliError::DeploymentFailed {
+        domain: domain.to_string(),
+        reason: "Domain release failed".to_string(),
+    })
+}
+
 
 /// Check deployment status
 async fn check_deployment_status_impl(
     domain: &str,
-    _keystore: Option<&str>,
+    keystore: Option<&str>,
+    pin_spki: Option<&str>,
+    node_did: Option<&str>,
+    tofu: bool,
+    trust_node: bool,
+    server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    output.info(&format!("Checking status for {}...", domain))?;
-    output.print("This requires a running ZHTP node.")?;
-    output.warning("Connect to ZHTP node to check deployment status.")?;
+    let keystore_path = keystore
+        .map(|p| PathBuf::from(p))
+        .ok_or_else(|| CliError::IdentityError("Keystore path required".to_string()))?;
+
+    let loaded = load_identity_from_keystore(&keystore_path)?;
+    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
+
+    let response = client
+        .get(&format!("/api/v1/web4/domains/status/{}", domain))
+        .await
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to get status: {}", e),
+        })?;
+    let status: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to parse status: {}", e),
+        })?;
+
+    let found = status
+        .get("found")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if !found {
+        output.warning(&format!("Domain '{}' not found", domain))?;
+        return Ok(());
+    }
+
+    output.success(&format!("✓ Domain '{}' is deployed", domain))?;
+
+    if let Some(owner) = status.get("owner_did").and_then(|v| v.as_str()) {
+        output.print(&format!("Owner: {}", owner))?;
+    }
+
+    if let Some(version) = status.get("version").and_then(|v| v.as_u64()) {
+        output.print(&format!("Current version: {}", version))?;
+    }
+
+    if let Some(cid) = status.get("current_manifest_cid").and_then(|v| v.as_str()) {
+        output.print(&format!("Manifest CID: {}", cid))?;
+    }
+
+    if let Some(updated) = status.get("updated_at").and_then(|v| v.as_u64()) {
+        output.print(&format!("Last updated: {}", updated))?;
+    }
 
     Ok(())
 }
 
+
 /// List all deployments
-async fn list_deployments_impl(_keystore: Option<&str>, output: &dyn Output) -> CliResult<()> {
-    output.info("Listing all deployments...")?;
-    output.print("This requires a running ZHTP node.")?;
-    output.warning("Connect to ZHTP node to list deployments.")?;
+async fn list_deployments_impl(
+    keystore: Option<&str>,
+    pin_spki: Option<&str>,
+    node_did: Option<&str>,
+    tofu: bool,
+    trust_node: bool,
+    server: &str,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let keystore_path = keystore
+        .map(|p| PathBuf::from(p))
+        .ok_or_else(|| CliError::IdentityError("Keystore path required".to_string()))?;
+
+    let loaded = load_identity_from_keystore(&keystore_path)?;
+    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
+
+    let response = client
+        .get(&format!("/api/v1/web4/domains?owner={}", loaded.identity.did))
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Failed to list domains: {}", e)))?;
+    let data: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ConfigError(format!("Failed to parse domain list: {}", e)))?;
+
+    let domains = data
+        .get("domains")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if domains.is_empty() {
+        output.info("No deployments found")?;
+        return Ok(());
+    }
+
+    output.success(&format!("✓ Found {} deployment(s)", domains.len()))?;
+    for (idx, domain) in domains.iter().enumerate() {
+        let display = domain
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| domain.to_string());
+        output.print(&format!("  {}. {}", idx + 1, display))?;
+    }
 
     Ok(())
 }
@@ -341,36 +1101,120 @@ async fn list_deployments_impl(_keystore: Option<&str>, output: &dyn Output) -> 
 async fn show_deployment_history_impl(
     domain: &str,
     limit: u32,
-    _keystore: Option<&str>,
+    keystore: Option<&str>,
+    pin_spki: Option<&str>,
+    node_did: Option<&str>,
+    tofu: bool,
+    trust_node: bool,
+    server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    output.info(&format!(
-        "Showing deployment history for {} (limit: {})...",
-        domain, limit
-    ))?;
-    output.print("This requires a running ZHTP node.")?;
-    output.warning("Connect to ZHTP node to view deployment history.")?;
+    let keystore_path = keystore
+        .map(|p| PathBuf::from(p))
+        .ok_or_else(|| CliError::IdentityError("Keystore path required".to_string()))?;
+
+    let loaded = load_identity_from_keystore(&keystore_path)?;
+    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
+
+    let path = if limit > 0 {
+        format!("/api/v1/web4/domains/history/{}?limit={}", domain, limit)
+    } else {
+        format!("/api/v1/web4/domains/history/{}", domain)
+    };
+    let response = client
+        .get(&path)
+        .await
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to get history: {}", e),
+        })?;
+    let history: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to parse history: {}", e),
+        })?;
+
+    let empty_vec = vec![];
+    let versions = history
+        .get("versions")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty_vec);
+
+    if versions.is_empty() {
+        output.info(&format!("No deployment history found for '{}'", domain))?;
+        return Ok(());
+    }
+
+    output.success(&format!("✓ Found {} version(s)", versions.len()))?;
+    for (idx, version) in versions.iter().enumerate() {
+        output.print(&format!("  Version {}", idx + 1))?;
+        if let Some(v) = version.get("version").and_then(|v| v.as_u64()) {
+            output.print(&format!("    Version: {}", v))?;
+        }
+        if let Some(cid) = version.get("manifest_cid").and_then(|v| v.as_str()) {
+            output.print(&format!("    Manifest CID: {}", cid))?;
+        }
+        if let Some(created) = version.get("created_at").and_then(|v| v.as_u64()) {
+            output.print(&format!("    Created: {}", created))?;
+        }
+    }
 
     Ok(())
 }
-
 /// Rollback deployment to a previous version
 async fn rollback_deployment_impl(
     domain: &str,
     to_version: &str,
-    _keystore: Option<&str>,
+    keystore: Option<&str>,
+    pin_spki: Option<&str>,
+    node_did: Option<&str>,
+    tofu: bool,
+    trust_node: bool,
+    server: &str,
     _force: bool,
     output: &dyn Output,
 ) -> CliResult<()> {
-    output.info(&format!(
-        "Rolling back {} to version {}...",
-        domain, to_version
-    ))?;
-    output.warning("This requires a running ZHTP node.")?;
-    output.print("Connect to ZHTP node to perform rollback.")?;
+    let keystore_path = keystore
+        .map(|p| PathBuf::from(p))
+        .ok_or_else(|| CliError::IdentityError("Keystore path required".to_string()))?;
+
+    let loaded = load_identity_from_keystore(&keystore_path)?;
+    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
+
+    // Parse version number
+    let version_num: u64 = to_version
+        .parse()
+        .map_err(|_| CliError::ConfigError(format!("Invalid version number: {}", to_version)))?;
+
+    output.info(&format!("Rolling back {} to version {}...", domain, version_num))?;
+
+    let body = serde_json::json!({
+        "to_version": version_num,
+    });
+    let response = client
+        .post_json(&format!("/api/v1/web4/domains/{}/rollback", domain), &body)
+        .await
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to rollback: {}", e),
+        })?;
+    let result: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::DeploymentFailed {
+            domain: domain.to_string(),
+            reason: format!("Failed to parse rollback response: {}", e),
+        })?;
+
+    output.success(&format!("✓ Rolled back {} to version {}", domain, version_num))?;
+
+    if let Some(new_version) = result.get("rolled_back_to").and_then(|v| v.as_u64()) {
+        output.print(&format!("New version: {}", new_version))?;
+    }
 
     Ok(())
 }
+
 
 // ============================================================================
 // TESTS - Pure logic is testable without mocks or side effects

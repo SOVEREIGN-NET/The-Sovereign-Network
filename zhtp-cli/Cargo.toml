@@ -41,6 +41,8 @@ reqwest = { version = "0.11", features = ["json"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 regex = "1.10"
+walkdir = "2.4"
+mime_guess = "2.0"
 
 # Direct lib-* dependencies for CLI operations
 lib-identity = { path = "../lib-identity" }
@@ -48,6 +50,7 @@ lib-crypto = { path = "../lib-crypto" }
 lib-economy = { path = "../lib-economy" }
 lib-network = { path = "../lib-network" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts"], optional = true }
+lib-protocols = { path = "../lib-protocols" }
 lib-proofs = { path = "../lib-proofs" }
 
 # zhtp library as a dependency (core orchestrator)
