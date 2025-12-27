@@ -314,6 +314,11 @@ Start an interactive ZHTP shell with command completion.
 - Built-in help system
 - Real-time status updates
 
+**Keystore Resolution**:
+- Set `ZHTP_KEYSTORE` to point at a specific keystore directory
+- Default: `~/.zhtp/keystore`
+- `balance` and `transactions` in the shell use the keystore wallet address when no explicit address is supplied
+
 ## Server Management
 
 ### Start API Server

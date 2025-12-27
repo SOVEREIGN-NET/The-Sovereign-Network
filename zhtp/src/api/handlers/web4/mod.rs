@@ -577,6 +577,9 @@ impl ZhtpRequestHandler for Web4Handler {
             path if path.starts_with("/api/v1/web4/domains/register") => {
                 self.register_domain_simple(request.body).await
             }
+            path if path.starts_with("/api/v1/web4/domains?") && request.method == lib_protocols::ZhtpMethod::Get => {
+                self.list_domains(request).await
+            }
             path if path.starts_with("/api/v1/web4/domains/") && request.method == lib_protocols::ZhtpMethod::Get => {
                 self.get_domain(request).await
             }
