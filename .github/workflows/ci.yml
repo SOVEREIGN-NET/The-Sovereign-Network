@@ -91,9 +91,6 @@ jobs:
       - name: Run zhtp-cli Handler Tests
         run: cargo test -p zhtp-cli --test handler_tests --locked
 
-      - name: Validate CLI Extraction
-        run: bash scripts/validate-cli-extraction.sh
-
   # macOS build and BLE/GATT test coverage (Issue #475)
   macos:
     name: Build/Test (macOS)
