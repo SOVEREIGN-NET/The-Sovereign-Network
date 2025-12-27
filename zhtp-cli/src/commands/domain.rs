@@ -97,10 +97,7 @@ async fn handle_domain_command_impl(
             duration,
             metadata,
             keystore,
-            pin_spki,
-            node_did,
-            tofu,
-            trust_node,
+            trust,
         } => {
             // Pure validation
             let domain = validate_domain(&domain)?;
@@ -115,10 +112,10 @@ async fn handle_domain_command_impl(
                 duration,
                 metadata.as_ref(),
                 keystore.as_ref().map(|s| s.as_str()),
-                pin_spki.as_deref(),
-                node_did.as_deref(),
-                tofu,
-                trust_node,
+                trust.pin_spki.as_deref(),
+                trust.node_did.as_deref(),
+                trust.tofu,
+                trust.trust_node,
                 &cli.server,
                 output,
             )
@@ -127,10 +124,7 @@ async fn handle_domain_command_impl(
         DomainAction::Check {
             domain,
             keystore,
-            pin_spki,
-            node_did,
-            tofu,
-            trust_node,
+            trust,
         } => {
             // Pure validation
             let domain = validate_domain(&domain)?;
@@ -142,10 +136,10 @@ async fn handle_domain_command_impl(
             check_domain_impl(
                 &domain,
                 keystore.as_ref().map(|s| s.as_str()),
-                pin_spki.as_deref(),
-                node_did.as_deref(),
-                tofu,
-                trust_node,
+                trust.pin_spki.as_deref(),
+                trust.node_did.as_deref(),
+                trust.tofu,
+                trust.trust_node,
                 &cli.server,
                 output,
             )
@@ -154,10 +148,7 @@ async fn handle_domain_command_impl(
         DomainAction::Info {
             domain,
             keystore,
-            pin_spki,
-            node_did,
-            tofu,
-            trust_node,
+            trust,
         } => {
             // Pure validation
             let domain = validate_domain(&domain)?;
@@ -169,10 +160,10 @@ async fn handle_domain_command_impl(
             get_domain_info_impl(
                 &domain,
                 keystore.as_ref().map(|s| s.as_str()),
-                pin_spki.as_deref(),
-                node_did.as_deref(),
-                tofu,
-                trust_node,
+                trust.pin_spki.as_deref(),
+                trust.node_did.as_deref(),
+                trust.tofu,
+                trust.trust_node,
                 &cli.server,
                 output,
             )
@@ -182,10 +173,7 @@ async fn handle_domain_command_impl(
             domain,
             new_owner,
             keystore,
-            pin_spki,
-            node_did,
-            tofu,
-            trust_node,
+            trust,
         } => {
             // Pure validation
             let domain = validate_domain(&domain)?;
@@ -199,10 +187,10 @@ async fn handle_domain_command_impl(
                 &domain,
                 &new_owner,
                 keystore.as_str(),
-                pin_spki.as_deref(),
-                node_did.as_deref(),
-                tofu,
-                trust_node,
+                trust.pin_spki.as_deref(),
+                trust.node_did.as_deref(),
+                trust.tofu,
+                trust.trust_node,
                 &cli.server,
                 output,
             )
@@ -211,11 +199,8 @@ async fn handle_domain_command_impl(
         DomainAction::Release {
             domain,
             keystore,
-            pin_spki,
-            node_did,
-            tofu,
-            trust_node,
             force,
+            trust,
         } => {
             // Pure validation
             let domain = validate_domain(&domain)?;
@@ -227,10 +212,10 @@ async fn handle_domain_command_impl(
             release_domain_impl(
                 &domain,
                 keystore.as_str(),
-                pin_spki.as_deref(),
-                node_did.as_deref(),
-                tofu,
-                trust_node,
+                trust.pin_spki.as_deref(),
+                trust.node_did.as_deref(),
+                trust.tofu,
+                trust.trust_node,
                 &cli.server,
                 force,
                 output,

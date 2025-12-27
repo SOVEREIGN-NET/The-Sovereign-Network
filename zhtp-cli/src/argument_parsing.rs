@@ -611,25 +611,12 @@ pub enum DeployAction {
         #[arg(short, long)]
         fee: Option<u64>,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
-
         /// Dry run - show what would be deployed without deploying
         #[arg(long)]
         dry_run: bool,
+
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 
     /// Check deployment status for a domain
@@ -641,21 +628,8 @@ pub enum DeployAction {
         #[arg(short, long)]
         keystore: Option<String>,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 
     /// List all deployed domains
@@ -664,21 +638,8 @@ pub enum DeployAction {
         #[arg(short, long)]
         keystore: Option<String>,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 
     /// View deployment history for a domain
@@ -694,21 +655,8 @@ pub enum DeployAction {
         #[arg(short, long)]
         keystore: Option<String>,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 
     /// Rollback domain to a previous version
@@ -724,25 +672,12 @@ pub enum DeployAction {
         #[arg(short, long)]
         keystore: String,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
-
         /// Force rollback without confirmation
         #[arg(short, long)]
         force: bool,
+
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 
     /// Update an existing website deployment
@@ -767,25 +702,12 @@ pub enum DeployAction {
         #[arg(short, long)]
         fee: Option<u64>,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
-
         /// Dry run - show what would be updated without updating
         #[arg(long)]
         dry_run: bool,
+
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 
     /// Delete a deployed domain and its manifest
@@ -798,25 +720,12 @@ pub enum DeployAction {
         #[arg(short, long)]
         keystore: String,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
-
         /// Force delete without confirmation
         #[arg(short, long)]
         force: bool,
+
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 }
 
@@ -869,21 +778,8 @@ pub enum DomainAction {
         #[arg(short, long)]
         keystore: Option<String>,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 
     /// Check domain availability
@@ -896,21 +792,8 @@ pub enum DomainAction {
         #[arg(short, long)]
         keystore: Option<String>,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 
     /// Get domain information
@@ -923,21 +806,8 @@ pub enum DomainAction {
         #[arg(short, long)]
         keystore: Option<String>,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 
     /// Transfer domain to new owner
@@ -954,21 +824,8 @@ pub enum DomainAction {
         #[arg(short, long)]
         keystore: String,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 
     /// Release domain from use
@@ -981,25 +838,12 @@ pub enum DomainAction {
         #[arg(short, long)]
         keystore: String,
 
-        /// Pin to specific SPKI hash (hex encoded)
-        #[arg(long)]
-        pin_spki: Option<String>,
-
-        /// Expected node DID
-        #[arg(long)]
-        node_did: Option<String>,
-
-        /// Trust on first use
-        #[arg(long)]
-        tofu: bool,
-
-        /// Bootstrap mode (INSECURE, dev only)
-        #[arg(long)]
-        trust_node: bool,
-
         /// Force release without confirmation
         #[arg(short, long)]
         force: bool,
+
+        #[command(flatten)]
+        trust: TrustFlags,
     },
 }
 
