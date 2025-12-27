@@ -246,6 +246,7 @@ async fn upload_files(
 async fn upload_manifest(client: &ZhtpClient, manifest: &DeployManifest) -> CliResult<String> {
     let manifest_payload = serde_json::to_vec(manifest)
         .map_err(|e| CliError::ConfigError(format!("Failed to encode manifest: {}", e)))?;
+    let local_cid = hex::encode(lib_crypto::hash_blake3(&manifest_payload));
     let manifest_response = post_bytes(
         client,
         "/api/v1/web4/content/manifest",
@@ -254,14 +255,26 @@ async fn upload_manifest(client: &ZhtpClient, manifest: &DeployManifest) -> CliR
     )
     .await?;
 
-    manifest_response
+    let server_cid = manifest_response
         .get("manifest_cid")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| CliError::DeploymentFailed {
             domain: manifest.domain.clone(),
             reason: "Manifest response missing manifest_cid".to_string(),
-        })
+        })?;
+
+    if server_cid != local_cid {
+        return Err(CliError::DeploymentFailed {
+            domain: manifest.domain.clone(),
+            reason: format!(
+                "Manifest CID mismatch: server returned {}, local hash {}",
+                server_cid, local_cid
+            ),
+        });
+    }
+
+    Ok(local_cid)
 }
 
 fn collect_files(
