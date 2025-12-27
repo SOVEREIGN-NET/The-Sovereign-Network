@@ -87,6 +87,9 @@ clap_mangen = "0.2"
 [features]
 default = []
 
+# Output format support
+yaml = ["zhtp/yaml"]
+
 # Blockchain features that pass through to zhtp
 full-blockchain = ["zhtp/full-blockchain"]
 basic-blockchain = ["zhtp/basic-blockchain"]

@@ -1,0 +1,251 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: true
+          prerelease: false
+
+  build-linux:
+    name: Build CLI (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: x86_64-unknown-linux-gnu
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libdbus-1-dev pkg-config
+
+      - name: Build Release
+        run: cargo build --release -p zhtp-cli --locked --target x86_64-unknown-linux-gnu
+
+      - name: Strip binary
+        run: strip target/x86_64-unknown-linux-gnu/release/zhtp-cli
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhtp-cli-linux-x86_64
+          path: target/x86_64-unknown-linux-gnu/release/zhtp-cli
+          retention-days: 1
+
+  build-macos:
+    name: Build CLI (macOS)
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Build Release (Intel)
+        run: cargo build --release -p zhtp-cli --locked --target x86_64-apple-darwin
+
+      - name: Build Release (Apple Silicon)
+        run: cargo build --release -p zhtp-cli --locked --target aarch64-apple-darwin
+
+      - name: Strip binaries
+        run: |
+          strip target/x86_64-apple-darwin/release/zhtp-cli
+          strip target/aarch64-apple-darwin/release/zhtp-cli
+
+      - name: Create universal binary
+        run: |
+          lipo -create \
+            target/x86_64-apple-darwin/release/zhtp-cli \
+            target/aarch64-apple-darwin/release/zhtp-cli \
+            -output target/release/zhtp-cli-macos-universal
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhtp-cli-macos-universal
+          path: target/release/zhtp-cli-macos-universal
+          retention-days: 1
+
+  build-windows:
+    name: Build CLI (Windows x86_64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: x86_64-pc-windows-msvc
+
+      - name: Build Release
+        run: cargo build --release -p zhtp-cli --locked --target x86_64-pc-windows-msvc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhtp-cli-windows-x86_64
+          path: target/x86_64-pc-windows-msvc/release/zhtp-cli.exe
+          retention-days: 1
+
+  test-linux:
+    name: Test CLI (Linux)
+    needs: build-linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libdbus-1-dev pkg-config
+
+      - name: Run tests
+        run: |
+          cargo test -p zhtp-cli --locked --test integration_tests -- --nocapture
+          cargo test -p zhtp-cli --locked --test feature_tests
+          cargo test -p zhtp-cli --locked --test handler_tests
+
+  test-macos:
+    name: Test CLI (macOS)
+    needs: build-macos
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Run tests
+        run: |
+          cargo test -p zhtp-cli --locked --test integration_tests -- --nocapture
+          cargo test -p zhtp-cli --locked --test feature_tests
+          cargo test -p zhtp-cli --locked --test handler_tests
+
+  test-windows:
+    name: Test CLI (Windows)
+    needs: build-windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Run tests
+        run: |
+          cargo test -p zhtp-cli --locked --test integration_tests -- --nocapture
+          cargo test -p zhtp-cli --locked --test feature_tests
+          cargo test -p zhtp-cli --locked --test handler_tests
+
+  package-release:
+    name: Package Release Artifacts
+    needs: [build-linux, build-macos, build-windows, test-linux, test-macos, test-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zhtp-cli-linux-x86_64
+          path: ./artifacts
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zhtp-cli-macos-universal
+          path: ./artifacts
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zhtp-cli-windows-x86_64
+          path: ./artifacts
+
+      - name: Create release checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create archives
+        run: |
+          cd artifacts
+          tar -czf zhtp-cli-linux-x86_64.tar.gz zhtp-cli
+          zip -q zhtp-cli-windows-x86_64.zip zhtp-cli.exe
+          tar -czf zhtp-cli-macos-universal.tar.gz zhtp-cli-macos-universal
+
+      - name: Upload final artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts/
+          retention-days: 30
+
+      - name: Create GitHub Release Assets
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            artifacts/zhtp-cli-linux-x86_64.tar.gz
+            artifacts/zhtp-cli-windows-x86_64.zip
+            artifacts/zhtp-cli-macos-universal.tar.gz
+            artifacts/SHA256SUMS
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

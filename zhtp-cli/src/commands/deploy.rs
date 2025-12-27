@@ -158,7 +158,7 @@ pub async fn handle_deploy_command(
 /// Internal implementation with dependency injection
 async fn handle_deploy_command_impl(
     args: DeployArgs,
-    cli: &ZhtpCli,
+    _cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
     let op = action_to_operation(&args.action);
