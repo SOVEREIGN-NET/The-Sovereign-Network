@@ -7,10 +7,6 @@ description = "ZHTP Network Node - Complete Internet Replacement and Web4 Orches
 license = "MIT"
 repository = "https://github.com/zhtp/zhtp"
 
-[[bin]]
-name = "zhtp"
-path = "src/main.rs"
-
 # Main library (for orchestrator binary and tests)
 [lib]
 name = "zhtp"
@@ -31,9 +27,8 @@ lib-economy = { path = "../lib-economy" }
 lib-protocols = { path = "../lib-protocols" }
 # Note: lib-api and lib-contracts will be added when available
 
-# Core async runtime and CLI
+# Core async runtime
 tokio = { version = "1.0", features = ["full"] }
-clap = { version = "4.0", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 quinn = "0.11"  # QUIC protocol implementation

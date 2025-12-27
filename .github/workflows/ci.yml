@@ -62,17 +62,34 @@ jobs:
       - name: Build
         run: cargo build --workspace --locked
 
-      - name: Build Release Binary
+      - name: Build Release Binaries
         if: (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development')
-        run: cargo build --release -p zhtp
+        run: cargo build --release -p zhtp -p zhtp-cli --locked
 
-      - name: Upload Release Artifact
+      - name: Upload Release Artifact (zhtp)
         if: (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development')
         uses: actions/upload-artifact@v4
         with:
           name: zhtp-binary
           path: target/release/zhtp
           retention-days: 1
+
+      - name: Upload Release Artifact (zhtp-cli)
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/development' || github.ref == 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/development')
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhtp-cli-binary
+          path: target/release/zhtp-cli
+          retention-days: 1
+
+      - name: Run zhtp-cli Integration Tests
+        run: cargo test -p zhtp-cli --test integration_tests --locked -- --nocapture
+
+      - name: Run zhtp-cli Feature Tests
+        run: cargo test -p zhtp-cli --test feature_tests --locked
+
+      - name: Run zhtp-cli Handler Tests
+        run: cargo test -p zhtp-cli --test handler_tests --locked
 
   # macOS build and BLE/GATT test coverage (Issue #475)
   macos:
@@ -104,6 +121,18 @@ jobs:
 
       - name: Test lib-network (BLE/GATT coverage)
         run: cargo test -p lib-network --locked --features ble-mock -- --nocapture
+
+      - name: Build zhtp-cli
+        run: cargo build --release -p zhtp-cli --locked
+
+      - name: Run zhtp-cli Integration Tests (macOS)
+        run: cargo test -p zhtp-cli --test integration_tests --locked -- --nocapture
+
+      - name: Run zhtp-cli Feature Tests (macOS)
+        run: cargo test -p zhtp-cli --test feature_tests --locked
+
+      - name: Run zhtp-cli Handler Tests (macOS)
+        run: cargo test -p zhtp-cli --test handler_tests --locked
 
   # Deploy to production server (main branch)
   deploy-production:

@@ -33,9 +33,12 @@ use lib_economy::EconomicModel;
 use lib_crypto::PublicKey;
 use crate::web4_stub::DomainRegistry;
 
+// Import keystore filename constants
+use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
+
 // Import our comprehensive API handlers
 use crate::api::handlers::{
-    DhtHandler, 
+    DhtHandler,
     ProtocolHandler,
     BlockchainHandler,
     IdentityHandler,
@@ -172,16 +175,16 @@ impl ZhtpUnifiedServer {
         use lib_identity::{ZhtpIdentity, IdentityType};
 
         // Try to load from keystore first (consistent with WalletStartupManager)
-        let keystore_path = dirs::home_dir()
+        let keystore_dir = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
             .join(".zhtp")
-            .join("keystore")
-            .join("node_identity.json");
+            .join("keystore");
+        let keystore_path = keystore_dir.join(NODE_IDENTITY_FILENAME);
 
         if keystore_path.exists() {
             if let Ok(data) = std::fs::read_to_string(&keystore_path) {
                 // We need the private key to deserialize properly
-                let private_key_path = keystore_path.parent().unwrap().join("node_private_key.json");
+                let private_key_path = keystore_dir.join(NODE_PRIVATE_KEY_FILENAME);
                 if let Ok(key_data) = std::fs::read_to_string(&private_key_path) {
                     if let Ok(key_store) = serde_json::from_str::<serde_json::Value>(&key_data) {
                         // Extract private key components
