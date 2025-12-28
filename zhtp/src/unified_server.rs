@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::sync::RwLock;
 // REMOVED: TCP/UDP no longer used - QUIC-only architecture
 // use tokio::net::{TcpListener, UdpSocket, TcpStream};
@@ -977,18 +978,25 @@ impl ZhtpUnifiedServer {
         
         // Get QUIC endpoint from QuicMeshProtocol for accept loop
         let endpoint = self.quic_mesh.get_endpoint();
-        
+
         *self.is_running.write().await = true;
-        
+
         // Start QUIC connection acceptance loop (PRIMARY PROTOCOL)
         let quic_handler = self.quic_handler.clone();
-        tokio::spawn(async move {
+        let accept_loop_handle = tokio::spawn(async move {
             info!("🚀 Starting QUIC accept loop on endpoint...");
             if let Err(e) = quic_handler.accept_loop(endpoint).await {
                 error!("❌ QUIC accept loop terminated: {}", e);
             }
         });
+
+        // Give accept loop a moment to start listening
+        tokio::time::sleep(Duration::from_millis(100)).await;
         info!(" ✅ QUIC handler started - Native ZHTP-over-QUIC ready");
+
+        // NOTE: accept_loop_handle will run in background. If it panics/errors,
+        // that's logged but startup continues. This is intentional - the server
+        // can still serve other protocols if QUIC fails.
         
         // Start mesh protocol handlers (background listeners only)
         self.start_bluetooth_mesh_handler().await?;

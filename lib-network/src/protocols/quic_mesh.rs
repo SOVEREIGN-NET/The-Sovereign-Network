@@ -742,8 +742,7 @@ impl QuicMeshProtocol {
         // Configure ALPN protocols to match server (required for iOS Network.framework, Android Cronet)
         // Security note: ALPN is metadata only - actual security comes from PQC layer (Kyber + Dilithium)
         crypto.alpn_protocols = vec![
-            b"zhtp/1.0".to_vec(),  // Our native protocol (preferred)
-            b"h3".to_vec(),        // HTTP/3 compatibility
+            b"zhtp-mesh/1".to_vec(),  // Mesh peer-to-peer with UHP handshake
         ];
 
         let mut client_config = ClientConfig::new(Arc::new(
