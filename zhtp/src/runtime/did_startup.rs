@@ -169,7 +169,13 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
     restored_wallet.id = wallet_id.clone();
 
     // Insert wallet into the wallet_manager
-    user_identity.wallet_manager.wallets.insert(wallet_id, restored_wallet);
+    user_identity.wallet_manager.wallets.insert(wallet_id.clone(), restored_wallet);
+    eprintln!("✓ WALLET RESTORATION: Restored {} wallet (ID: {}) into user_identity {}",
+        wallet_data.wallet_name,
+        hex::encode(&wallet_id.0[..8]),
+        hex::encode(&user_identity.id.0[..8])
+    );
+    eprintln!("  Wallet count in user_identity: {}", user_identity.wallet_manager.wallets.len());
 
     // Reconstruct PrivateIdentityData for user
     let user_private_data = lib_identity::identity::PrivateIdentityData::new(
