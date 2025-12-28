@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use lib_identity::{ZhtpIdentity, IdentityId};
-use lib_identity::wallets::WalletId;
+use lib_identity::wallets::{WalletId, QuantumWallet, WalletType};
 use lib_identity::types::IdentityType;
 use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_crypto::{PrivateKey, Hash};
@@ -157,8 +157,8 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
     );
 
     // Create minimal wallet (seed phrase not preserved for security, balance not persisted)
-    let mut restored_wallet = lib_identity::wallets::QuantumWallet::new(
-        lib_identity::WalletType::Primary,
+    let mut restored_wallet = QuantumWallet::new(
+        WalletType::Primary,
         wallet_data.wallet_name.clone(),
         None, // No alias
         Some(user_identity.id.clone()),
