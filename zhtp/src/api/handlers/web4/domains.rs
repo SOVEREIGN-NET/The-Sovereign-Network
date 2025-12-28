@@ -330,10 +330,20 @@ impl Web4Handler {
         // wallet_utxo_hash is the 32-byte identity hash used in UTXO recipients
         let wallet_utxo_hash: Vec<u8> = wallet_utxo_hash;
         
-        info!(" Scanning {} UTXOs for wallet pubkey: {}", 
-              blockchain.utxo_set.len(), 
+        info!(" Scanning {} UTXOs for wallet pubkey: {}",
+              blockchain.utxo_set.len(),
               hex::encode(&wallet_utxo_hash[..8.min(wallet_utxo_hash.len())]));
-        
+
+        // DEBUG: Show what UTXOs exist in blockchain
+        if blockchain.utxo_set.is_empty() {
+            info!("  WARNING: UTXO set is EMPTY - no UTXOs in blockchain");
+        } else {
+            info!("  First few UTXOs in blockchain:");
+            for (i, (hash, output)) in blockchain.utxo_set.iter().take(3).enumerate() {
+                info!("    UTXO {}: recipient={}", i, hex::encode(output.recipient.as_bytes()));
+            }
+        }
+
         for (utxo_hash, output) in &blockchain.utxo_set {
             // Check if this UTXO belongs to our wallet by comparing identity hashes
             if output.recipient.as_bytes() == wallet_utxo_hash.as_slice() {
