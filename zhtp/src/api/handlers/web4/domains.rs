@@ -756,23 +756,22 @@ impl Web4Handler {
             .await
             .map_err(|e| anyhow!("Manifest verification failed: {}", e))?;
 
-        // Derive owner identity ID from DID
-        // Identity ID = Blake3(DID string) - same derivation as ZhtpIdentity::new()
-        let owner_identity_id = lib_crypto::Hash::from_bytes(
-            &lib_crypto::hash_blake3(request.owner.as_bytes()).to_vec()
-        );
+        // BOUNDARY CODE: Accept DID as-is, use proper DID resolution
+        let owner_did = if request.owner.starts_with("did:zhtp:") {
+            request.owner.clone()
+        } else {
+            format!("did:zhtp:{}", request.owner)
+        };
 
-        // Look up owner identity
+        // Look up owner identity using boundary-safe DID API
         let identity_mgr = self.identity_manager.read().await;
-        let owner_identity = identity_mgr.get_identity(&owner_identity_id)
+        let owner_identity = identity_mgr.get_identity_by_did(&owner_did)
             .ok_or_else(|| anyhow!(
                 "Owner identity not found: {}. Register identity first.",
-                request.owner
+                owner_did
             ))?
             .clone();
         drop(identity_mgr);
-
-        let owner_did = format!("did:zhtp:{}", hex::encode(&owner_identity.id.0));
         info!(" Verified owner identity: {}", owner_did);
 
         if owner_identity.did != manifest.author_did {
