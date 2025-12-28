@@ -119,7 +119,7 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
         master_seed: user_keystore_key.master_seed.clone(),
     };
 
-    let user_identity = ZhtpIdentity::from_serialized(&user_identity_data, &user_private_key)
+    let mut user_identity = ZhtpIdentity::from_serialized(&user_identity_data, &user_private_key)
         .map_err(|e| KeystoreError::Corrupt(user_identity_file.clone(), e.to_string()))?;
 
     // Load node identity
@@ -147,6 +147,29 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
 
     let wallet_data: PersistedWalletData = serde_json::from_str(&wallet_data_str)
         .map_err(|e| KeystoreError::Corrupt(wallet_data_file.clone(), e.to_string()))?;
+
+    // CRITICAL: Restore wallet into user_identity's wallet_manager
+    // When identity is deserialized, wallet_manager is empty - we must repopulate it
+    // Create a basic QuantumWallet from the persisted metadata
+    let wallet_id = lib_crypto::Hash(
+        wallet_data.node_wallet_id.clone().try_into()
+            .map_err(|_| KeystoreError::Corrupt(wallet_data_file.clone(), "Invalid wallet_id length".to_string()))?
+    );
+
+    // Create minimal wallet (seed phrase not preserved for security, balance not persisted)
+    let mut restored_wallet = lib_identity::wallets::QuantumWallet::new(
+        lib_identity::WalletType::Primary,
+        wallet_data.wallet_name.clone(),
+        None, // No alias
+        Some(user_identity.id.clone()),
+        vec![0u8; 32], // Public key placeholder - not needed for domain registration
+    );
+
+    // Override the auto-generated wallet_id with the saved one
+    restored_wallet.id = wallet_id.clone();
+
+    // Insert wallet into the wallet_manager
+    user_identity.wallet_manager.wallets.insert(wallet_id, restored_wallet);
 
     // Reconstruct PrivateIdentityData for user
     let user_private_data = lib_identity::identity::PrivateIdentityData::new(
