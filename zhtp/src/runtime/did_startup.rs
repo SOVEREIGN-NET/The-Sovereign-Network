@@ -63,6 +63,12 @@ struct PersistedWalletData {
     wallet_address: String,
     node_wallet_id: Vec<u8>,
     node_identity_id: Vec<u8>,
+    #[serde(default = "default_genesis_balance")]
+    balance: u64,
+}
+
+fn default_genesis_balance() -> u64 {
+    5000 // Default genesis wallet balance
 }
 
 /// Get the default keystore path (~/.zhtp/keystore)
@@ -156,7 +162,7 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
             .map_err(|_| KeystoreError::Corrupt(wallet_data_file.clone(), "Invalid wallet_id length".to_string()))?
     );
 
-    // Create minimal wallet (seed phrase not preserved for security, balance not persisted)
+    // Create minimal wallet (seed phrase not preserved for security)
     let mut restored_wallet = QuantumWallet::new(
         WalletType::Primary,
         wallet_data.wallet_name.clone(),
@@ -168,6 +174,10 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
     // Override the auto-generated wallet_id with the saved one
     restored_wallet.id = wallet_id.clone();
 
+    // CRITICAL: Restore the wallet balance from persisted data
+    // Without this, restored wallets would have 0 balance
+    restored_wallet.balance = wallet_data.balance;
+
     // Insert wallet into the wallet_manager
     user_identity.wallet_manager.wallets.insert(wallet_id.clone(), restored_wallet);
     eprintln!("✓ WALLET RESTORATION: Restored {} wallet (ID: {}) into user_identity {}",
@@ -175,7 +185,9 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
         hex::encode(&wallet_id.0[..8]),
         hex::encode(&user_identity.id.0[..8])
     );
-    eprintln!("  Wallet count in user_identity: {}", user_identity.wallet_manager.wallets.len());
+    eprintln!("  Wallet count: {}, Balance: {} ZHTP",
+        user_identity.wallet_manager.wallets.len(),
+        wallet_data.balance);
 
     // Reconstruct PrivateIdentityData for user
     let user_private_data = lib_identity::identity::PrivateIdentityData::new(
@@ -279,11 +291,18 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
     write_file_with_permissions(&node_identity_file, &node_identity_json)?;
 
     // Save wallet data
+    // Extract primary wallet balance from user_identity
+    let primary_balance = result.user_identity.wallet_manager.wallets.values()
+        .find(|w| w.wallet_type == lib_identity::WalletType::Primary)
+        .map(|w| w.balance)
+        .unwrap_or(5000); // Default to genesis balance if not found
+
     let wallet_data = PersistedWalletData {
         wallet_name: result.wallet_name.clone(),
         wallet_address: result.wallet_address.clone(),
         node_wallet_id: result.node_wallet_id.0.to_vec(),
         node_identity_id: result.node_identity_id.0.to_vec(),
+        balance: primary_balance,
     };
 
     let wallet_data_json = serde_json::to_string_pretty(&wallet_data)
