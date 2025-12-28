@@ -243,20 +243,19 @@ impl Web4Handler {
             registration_fee_tokens, simple_request.domain.len());
 
         // Check wallet balance before payment
-        let identity_mgr = self.identity_manager.write().await;
-        
-        // Get primary wallet for the identity
-        let (wallet_dilithium_pubkey, wallet_utxo_hash, wallet_id_hex) = if let Some(check_identity) = identity_mgr.get_identity(&owner_identity_id) {
+        // Use the already-retrieved owner_identity (no need for second lookup)
+        let (wallet_dilithium_pubkey, wallet_utxo_hash, wallet_id_hex) = {
+            let check_identity = &owner_identity;
             // Find the PRIMARY wallet (not Staking wallet)
             let primary_wallet = check_identity.wallet_manager.wallets.values()
                 .find(|w| w.wallet_type == lib_identity::WalletType::Primary)
-                .ok_or_else(|| anyhow!("No PRIMARY wallet found for owner identity {}. Found {} wallets total.", 
+                .ok_or_else(|| anyhow!("No PRIMARY wallet found for owner identity {}. Found {} wallets total.",
                     owner_did, check_identity.wallet_manager.wallets.len()))?;
-            
+
             let wallet_id_hex = hex::encode(&primary_wallet.id.0);
             let wallet_id_short = hex::encode(&primary_wallet.id.0[..8]);
             let current_balance = primary_wallet.balance;
-            
+
             // DEBUG: Check blockchain wallet registry for this wallet
             let blockchain = self.blockchain.read().await;
             let in_registry = blockchain.wallet_registry.contains_key(&wallet_id_hex);
@@ -272,45 +271,39 @@ impl Web4Handler {
             info!("   Total wallet_registry entries: {}", blockchain.wallet_registry.len());
             info!("   Wallet registry keys: {:?}", blockchain.wallet_registry.keys().map(|k| &k[..16]).collect::<Vec<_>>());
             drop(blockchain);
-            
-            info!("💳 Checking wallet {} balance: {} ZHTP (need {} ZHTP)", 
+
+            info!("💳 Checking wallet {} balance: {} ZHTP (need {} ZHTP)",
                 wallet_id_short, current_balance, registration_fee_tokens);
             info!("   Full wallet ID: {}", wallet_id_hex);
-            
+
             if current_balance < registration_fee_tokens {
-                drop(identity_mgr);
                 return Err(anyhow!(
                     "Insufficient balance. Required: {} ZHTP, Available: {} ZHTP in wallet {}. \
                     HINT: Your genesis wallet should have 5000 ZHTP. Check if wallet balance sync ran at startup.",
                     registration_fee_tokens, current_balance, wallet_id_short
                 ));
             }
-            
+
             // CRITICAL: Get the FULL Dilithium2 public key from the identity (1312 bytes)
             // This must match what's stored in wallet_registry for transaction validation
             // P1-7: Get public key directly from identity
             let identity_dilithium_pubkey = check_identity.public_key.dilithium_pk.clone();
-            
+
             // For UTXO matching, use the 32-byte identity hash (what's in UTXO recipients)
             let identity_hash_for_utxo = check_identity.id.0.to_vec();
-            
+
             info!(" TRANSACTION IDENTITY DEBUG:");
             info!("   - Identity ID: {}", hex::encode(&check_identity.id.0));
             info!("   - Dilithium2 public key: {} bytes", identity_dilithium_pubkey.len());
             info!("   - Public key (first 32): {}", hex::encode(&identity_dilithium_pubkey[..32.min(identity_dilithium_pubkey.len())]));
             info!("   - Identity hash: {} bytes for UTXO matching", identity_hash_for_utxo.len());
-            
+
             (identity_dilithium_pubkey, identity_hash_for_utxo, wallet_id_hex)
-        } else {
-            drop(identity_mgr);
-            return Err(anyhow!("Identity not found"));
         };
-        
+
         let payment_purpose = format!("domain_registration:{}", simple_request.domain);
-        
+
         info!("💳 Creating UTXO payment transaction ({} ZHTP to treasury)", registration_fee_tokens);
-        
-        drop(identity_mgr); // Release lock before blockchain access
         
         // ========================================================================
         // NOTE: Wallet ownership validation now happens in transaction validation
@@ -480,23 +473,16 @@ impl Web4Handler {
         // ========================================================================
         // STEP 6: Sign the transaction hash with identity keypair
         // ========================================================================
-        let identity_mgr = self.identity_manager.read().await;
-
-        // Get identity for signing
-        let identity = identity_mgr.get_identity(&owner_identity_id)
-            .ok_or_else(|| anyhow!("Owner identity not found"))?;
-
         // Get private key from identity (P1-7: private keys stored in identity)
-        let private_key = identity.private_key.as_ref()
+        // We already have owner_identity from earlier retrieval - use it directly
+        let private_key = owner_identity.private_key.as_ref()
             .ok_or_else(|| anyhow!("Identity missing private key"))?;
 
         // Create keypair for signing
         let keypair = lib_crypto::KeyPair {
             private_key: private_key.clone(),
-            public_key: identity.public_key.clone(),
+            public_key: owner_identity.public_key.clone(),
         };
-
-        drop(identity_mgr); // Release lock before continuing
 
         // Sign the TRANSACTION HASH (not a custom message!)
         let keypair_signature = lib_crypto::sign_message(&keypair, tx_hash.as_bytes())
@@ -537,13 +523,6 @@ impl Web4Handler {
         info!("   Transaction will be included in next mined block");
         info!("   Transaction fee: {} ZHTP (covers domain registration + processing)", fee);
         info!("   Change returned to wallet: {} ZHTP", change_amount);
-        
-        // Re-acquire identity manager for subsequent operations
-        let identity_mgr = self.identity_manager.read().await;
-        let owner_identity = identity_mgr.get_identity(&owner_identity_id)
-            .ok_or_else(|| anyhow!("Failed to retrieve updated identity"))?
-            .clone();
-        drop(identity_mgr);
 
         // Prepare content mappings WITH RICH METADATA for storage
         let mut initial_content = HashMap::new();
