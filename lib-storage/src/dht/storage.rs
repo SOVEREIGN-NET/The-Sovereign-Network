@@ -18,7 +18,7 @@ use std::io::Write;
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
 use serde::{Serialize, Deserialize};
-use tracing::{debug, warn, info};
+use tracing::{debug, warn, info, error};
 
 /// Current version of DHT storage persistence format
 const DHT_STORAGE_VERSION: u32 = 1;
