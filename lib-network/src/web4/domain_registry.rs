@@ -111,13 +111,16 @@ impl DomainRegistry {
     /// Load all persisted domain records from lib-storage into the in-memory cache
     async fn load_persisted_domains(&self) -> Result<()> {
         // LOCK SAFETY: Acquire storage lock, do async work, release before acquiring other locks
+        info!("🔍 load_persisted_domains: Starting to load persisted domains from storage");
         let records = {
             let mut storage = self.storage_system.write().await;
-            storage.list_domain_records().await?
+            let result = storage.list_domain_records().await?;
+            info!("🔍 load_persisted_domains: list_domain_records returned {} records", result.len());
+            result
         }; // storage lock released here
 
         if records.is_empty() {
-            info!("No persisted domain records found in storage");
+            info!(" ⚠️  No persisted domain records found in storage");
             return Ok(());
         }
 
@@ -126,11 +129,11 @@ impl DomainRegistry {
         for (domain, data) in records {
             match serde_json::from_slice::<DomainRecord>(&data) {
                 Ok(record) => {
-                    info!(" Loaded persisted domain: {} (v{})", record.domain, record.version);
+                    info!(" ✅ Loaded persisted domain: {} (v{})", record.domain, record.version);
                     parsed_records.push((domain, record));
                 }
                 Err(e) => {
-                    warn!(" Failed to deserialize domain record: {}", e);
+                    warn!(" ❌ Failed to deserialize domain record: {}", e);
                 }
             }
         }
@@ -152,7 +155,7 @@ impl DomainRegistry {
             stats.active_domains = loaded_count;
         } // stats lock released here
 
-        info!(" Loaded {} persisted domain records from storage", loaded_count);
+        info!(" ✅ Loaded {} persisted domain records from storage into memory", loaded_count);
         Ok(())
     }
 
@@ -161,11 +164,21 @@ impl DomainRegistry {
         let data = serde_json::to_vec(record)
             .map_err(|e| anyhow!("Failed to serialize domain record: {}", e))?;
 
-        let mut storage = self.storage_system.write().await;
-        storage.store_domain_record(&record.domain, &data).await?;
+        info!("🔍 persist_domain_record: Serialized domain {} to {} bytes", record.domain, data.len());
 
-        info!(" Persisted domain record: {} (v{})", record.domain, record.version);
-        Ok(())
+        let mut storage = self.storage_system.write().await;
+        info!("🔍 persist_domain_record: Acquired storage lock, calling store_domain_record for {}", record.domain);
+
+        match storage.store_domain_record(&record.domain, &data).await {
+            Ok(()) => {
+                info!(" ✅ Persisted domain record: {} (v{}) - storage layer confirmed", record.domain, record.version);
+                Ok(())
+            }
+            Err(e) => {
+                error!(" ❌ Failed to persist domain record {}: {}", record.domain, e);
+                Err(e)
+            }
+        }
     }
 
     /// Delete a domain record from lib-storage
@@ -317,20 +330,53 @@ impl DomainRegistry {
             }
         }
         
-        drop(records); // Release lock before blockchain query
-        
-        // Domain not found locally or expired - query blockchain
-        info!(" Domain {} not found locally, querying blockchain...", domain);
+        drop(records); // Release lock before storage query
+
+        // Domain not found locally - try storage as fallback
+        info!(" Domain {} not found locally, attempting to load from storage", domain);
+        let mut storage = self.storage_system.write().await;
+        if let Ok(Some(data)) = storage.get_domain_record(domain).await {
+            drop(storage); // Release storage lock before acquiring domain_records lock
+
+            if let Ok(record) = serde_json::from_slice::<DomainRecord>(&data) {
+                info!(" Loaded domain '{}' from storage", domain);
+
+                // Cache it in memory for future lookups
+                {
+                    let mut records = self.domain_records.write().await;
+                    records.insert(domain.to_string(), record.clone());
+                }
+
+                let owner_info = PublicOwnerInfo {
+                    identity_hash: hex::encode(&record.owner.0[..16]),
+                    registered_at: record.registered_at,
+                    verified: true,
+                    alias: None,
+                };
+
+                return Ok(DomainLookupResponse {
+                    found: true,
+                    record: Some(record.clone()),
+                    content_mappings: record.content_mappings.clone(),
+                    owner_info: Some(owner_info),
+                });
+            }
+        }
+
+        drop(storage); // Release storage lock
+
+        // Domain not found locally or in storage - query blockchain (disabled for now)
+        info!(" Domain {} not found in storage, querying blockchain...", domain);
         match self.query_blockchain_for_domain(domain).await {
             Ok(Some(domain_record)) => {
                 info!(" Domain {} found on blockchain, caching locally", domain);
-                
+
                 // Cache the domain record locally for future lookups
                 {
                     let mut records = self.domain_records.write().await;
                     records.insert(domain.to_string(), domain_record.clone());
                 }
-                
+
                 let owner_info = PublicOwnerInfo {
                     identity_hash: hex::encode(&domain_record.owner.0[..16]),
                     registered_at: domain_record.registered_at,
@@ -882,7 +928,7 @@ impl DomainRegistry {
             domain, records.len(), self);
 
         if let Some(record) = records.get(domain) {
-            Ok(DomainStatusResponse {
+            return Ok(DomainStatusResponse {
                 found: true,
                 domain: record.domain.clone(),
                 version: record.version,
@@ -891,19 +937,49 @@ impl DomainRegistry {
                 updated_at: record.updated_at,
                 expires_at: record.expires_at,
                 build_hash: hex::encode(&hash_blake3(record.current_manifest_cid.as_bytes())[..16]),
-            })
-        } else {
-            Ok(DomainStatusResponse {
-                found: false,
-                domain: domain.to_string(),
-                version: 0,
-                current_manifest_cid: String::new(),
-                owner_did: String::new(),
-                updated_at: 0,
-                expires_at: 0,
-                build_hash: String::new(),
-            })
+            });
         }
+
+        drop(records); // Release lock before trying storage
+
+        // Not found in memory - try loading from storage as fallback
+        info!(" Domain '{}' not found in memory, attempting to load from storage", domain);
+        let mut storage = self.storage_system.write().await;
+        if let Ok(Some(data)) = storage.get_domain_record(domain).await {
+            drop(storage); // Release storage lock before acquiring domain_records lock
+
+            if let Ok(record) = serde_json::from_slice::<DomainRecord>(&data) {
+                info!(" Loaded domain '{}' from storage", domain);
+
+                // Cache it in memory for future lookups
+                {
+                    let mut records = self.domain_records.write().await;
+                    records.insert(domain.to_string(), record.clone());
+                }
+
+                return Ok(DomainStatusResponse {
+                    found: true,
+                    domain: record.domain.clone(),
+                    version: record.version,
+                    current_manifest_cid: record.current_manifest_cid.clone(),
+                    owner_did: format!("did:zhtp:{}", hex::encode(&record.owner.0[..16])),
+                    updated_at: record.updated_at,
+                    expires_at: record.expires_at,
+                    build_hash: hex::encode(&hash_blake3(record.current_manifest_cid.as_bytes())[..16]),
+                });
+            }
+        }
+
+        Ok(DomainStatusResponse {
+            found: false,
+            domain: domain.to_string(),
+            version: 0,
+            current_manifest_cid: String::new(),
+            owner_did: String::new(),
+            updated_at: 0,
+            expires_at: 0,
+            build_hash: String::new(),
+        })
     }
 
     // ========================================================================

@@ -272,9 +272,21 @@ impl DhtStorage {
     /// Uses async I/O via spawn_blocking to avoid stalling async runtime
     async fn maybe_persist(&self) -> Result<()> {
         if let Some(ref path) = self.persist_path {
-            self.save_to_file(path).await?;
+            debug!("DHT: maybe_persist - persisting {} entries to {:?}", self.storage.len(), path);
+            match self.save_to_file(path).await {
+                Ok(()) => {
+                    debug!("DHT: maybe_persist - ✅ persisted successfully");
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("DHT: maybe_persist - ❌ failed to persist: {}", e);
+                    Err(e)
+                }
+            }
+        } else {
+            debug!("DHT: maybe_persist - no persist_path configured, skipping persistence");
+            Ok(())
         }
-        Ok(())
     }
 
     /// Remove a key from the contract_index
