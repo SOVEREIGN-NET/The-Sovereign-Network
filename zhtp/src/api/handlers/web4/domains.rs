@@ -129,38 +129,25 @@ impl Web4Handler {
         info!(" Owner: {}", simple_request.owner);
         info!(" Content paths: {}", simple_request.content_mappings.len());
 
-        // Parse owner field - can be DID (did:zhtp:hex) or raw hex identity hash
-        let owner_identity_id = if simple_request.owner.starts_with("did:zhtp:") {
-            // Extract hex from DID format: did:zhtp:a1b2c3d4...
-            let hex_part = simple_request.owner.strip_prefix("did:zhtp:")
-                .ok_or_else(|| anyhow!("Invalid DID format"))?;
-            
-            // Decode hex to bytes
-            let id_bytes = hex::decode(hex_part)
-                .map_err(|e| anyhow!("Invalid DID hex encoding: {}", e))?;
-            
-            // Convert to IdentityId (Hash)
-            lib_crypto::Hash::from_bytes(&id_bytes)
+        // BOUNDARY CODE: Accept DID as-is, use proper DID resolution
+        // DID is the public contract - do not fabricate internal IdentityIds
+        let owner_did = if simple_request.owner.starts_with("did:zhtp:") {
+            simple_request.owner.clone()
         } else {
-            // Try as raw hex identity hash
-            let id_bytes = hex::decode(&simple_request.owner)
-                .map_err(|e| anyhow!(
-                    "Owner must be either DID format (did:zhtp:hex) or raw identity hash (hex). Error: {}", e
-                ))?;
-            lib_crypto::Hash::from_bytes(&id_bytes)
+            // Support raw hex for backward compat, but convert to DID
+            format!("did:zhtp:{}", simple_request.owner)
         };
-        
-        // Look up owner identity in identity manager
+
+        // Look up owner identity using boundary-safe DID API
+        // This is the correct layer: accept DID, use get_identity_by_did()
         let identity_mgr = self.identity_manager.read().await;
-        let owner_identity = identity_mgr.get_identity(&owner_identity_id)
+        let owner_identity = identity_mgr.get_identity_by_did(&owner_did)
             .ok_or_else(|| anyhow!(
-                "Owner identity not found. DID/Hash: {}. Please register this identity first using /api/v1/identity/create",
-                simple_request.owner
+                "Owner identity not found: {}. Please register this identity first using /api/v1/identity/create",
+                owner_did
             ))?
             .clone();
         drop(identity_mgr);
-        
-        let owner_did = format!("did:zhtp:{}", hex::encode(&owner_identity.id.0));
         info!(" Using identity: {} (Display name: {})", 
             owner_did,
             owner_identity.metadata.get("display_name").map(|s| s.as_str()).unwrap_or("no name")
