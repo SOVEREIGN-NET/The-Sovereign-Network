@@ -465,8 +465,8 @@ impl Web4Handler {
             .map_err(|e| anyhow::anyhow!("Invalid manifest JSON: {}", e))?;
 
         let files_count = manifest.get("files")
-            .and_then(|v| v.as_object())
-            .map(|o| o.len())
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
             .unwrap_or(0);
 
         debug!(
