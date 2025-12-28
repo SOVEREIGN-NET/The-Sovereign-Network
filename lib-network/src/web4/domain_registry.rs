@@ -1196,6 +1196,20 @@ impl DomainRegistry {
                     return Ok(Some(manifest.clone()));
                 }
             }
+        } else {
+            // GUARDRAIL: Detect phantom domains
+            // If domain is registered but has no manifest_history entry, that's a critical bug
+            let records = self.domain_records.read().await;
+            if records.contains_key(domain) && !cid.is_empty() {
+                error!(
+                    "PHANTOM DOMAIN DETECTED: domain '{}' is registered but has no manifest in history (requested cid: {})",
+                    domain, cid
+                );
+                return Err(anyhow!(
+                    "Phantom domain: {} has no manifest (manifest materialization failed during registration)",
+                    domain
+                ));
+            }
         }
 
         Ok(None)

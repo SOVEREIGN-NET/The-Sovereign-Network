@@ -433,9 +433,11 @@ impl IdentityManager {
         );
         
         // Generate witness data (private inputs)
+        // Derive seed from private key (removed hardcoded zero-seed per identity architecture)
+        let derived_seed = lib_crypto::hash_blake3(private_data.private_key());
         let witness_data = [
             private_data.private_key(),
-            private_data.seed().as_slice(),
+            &derived_seed.to_vec(),
             &proof_statement.as_bytes()
         ].concat();
         
@@ -500,9 +502,11 @@ impl IdentityManager {
         ].concat();
         
         // Generate quantum-resistant signature using CRYSTALS-Dilithium approach
+        // Derive seed from private key (removed hardcoded zero-seed per identity architecture)
+        let derived_seed = lib_crypto::hash_blake3(private_data.private_key());
         let signature_seed = lib_crypto::hash_blake3(&[
             private_data.private_key(),
-            private_data.seed().as_slice(),
+            &derived_seed.to_vec(),
             &message_to_sign
         ].concat());
         
@@ -614,8 +618,10 @@ impl IdentityManager {
     ) -> Result<(), PasswordError> {
         let private_data = self.private_data.get(identity_id)
             .ok_or(PasswordError::IdentityNotImported)?;
-        
-        let seed = private_data.seed();
+
+        // Derive seed from private key (removed hardcoded zero-seed per identity architecture)
+        let derived_seed = lib_crypto::hash_blake3(private_data.private_key());
+        let seed = &derived_seed.to_vec()[..32];
         self.password_manager.set_password(identity_id, password, seed)
     }
 
@@ -633,8 +639,10 @@ impl IdentityManager {
     ) -> Result<(), PasswordError> {
         let private_data = self.private_data.get(identity_id)
             .ok_or(PasswordError::IdentityNotImported)?;
-        
-        let seed = private_data.seed();
+
+        // Derive seed from private key (removed hardcoded zero-seed per identity architecture)
+        let derived_seed = lib_crypto::hash_blake3(private_data.private_key());
+        let seed = &derived_seed.to_vec()[..32];
         self.password_manager.change_password(
             identity_id,
             old_password,
@@ -652,8 +660,10 @@ impl IdentityManager {
         // Verify current password first
         let private_data = self.private_data.get(identity_id)
             .ok_or(PasswordError::IdentityNotImported)?;
-        
-        let seed = private_data.seed();
+
+        // Derive seed from private key (removed hardcoded zero-seed per identity architecture)
+        let derived_seed = lib_crypto::hash_blake3(private_data.private_key());
+        let seed = &derived_seed.to_vec()[..32];
         let validation = self.password_manager.validate_password(
             identity_id,
             current_password,
@@ -677,8 +687,10 @@ impl IdentityManager {
     ) -> Result<PasswordValidation, PasswordError> {
         let private_data = self.private_data.get(identity_id)
             .ok_or(PasswordError::IdentityNotImported)?;
-        
-        let seed = private_data.seed();
+
+        // Derive seed from private key (removed hardcoded zero-seed per identity architecture)
+        let derived_seed = lib_crypto::hash_blake3(private_data.private_key());
+        let seed = &derived_seed.to_vec()[..32];
         self.password_manager.validate_password(identity_id, password, seed)
     }
 

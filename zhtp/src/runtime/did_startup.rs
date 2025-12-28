@@ -189,19 +189,17 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
         user_identity.wallet_manager.wallets.len(),
         wallet_data.balance);
 
-    // Reconstruct PrivateIdentityData for user
+    // Reconstruct PrivateIdentityData for user (recovery data only, no seed field)
     let user_private_data = lib_identity::identity::PrivateIdentityData::new(
         user_keystore_key.dilithium_sk,
         user_identity.public_key.dilithium_pk.clone(),
-        user_keystore_key.master_seed.clone().try_into().unwrap_or([0u8; 32]),
         vec![], // Recovery phrases not stored for security
     );
 
-    // Reconstruct PrivateIdentityData for node
+    // Reconstruct PrivateIdentityData for node (recovery data only, no seed field)
     let node_private_data = lib_identity::identity::PrivateIdentityData::new(
         node_keystore_key.dilithium_sk,
         node_identity.public_key.dilithium_pk.clone(),
-        node_keystore_key.master_seed.clone().try_into().unwrap_or([0u8; 32]),
         vec![],
     );
 
@@ -1449,7 +1447,6 @@ async fn create_user_identity_with_wallet(
     let private_data = lib_identity::identity::PrivateIdentityData::new(
         private_key.dilithium_sk.clone(),
         identity.public_key.dilithium_pk.clone(),
-        [0u8; 32], // TODO: Extract actual seed from identity if available
         vec![seed_phrase.clone()],
     );
 
@@ -1484,7 +1481,6 @@ async fn create_node_device_identity(
     let private_data = lib_identity::identity::PrivateIdentityData::new(
         private_key.dilithium_sk.clone(),
         identity.public_key.dilithium_pk.clone(),
-        [0u8; 32], // TODO: Extract actual seed from identity if available
         vec![],
     );
 

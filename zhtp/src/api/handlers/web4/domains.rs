@@ -11,9 +11,11 @@ use tracing::{info, error, warn};
 use anyhow::anyhow;
 use base64::{Engine as _, engine::general_purpose};
 use crate::web4_manifest::{DeployManifest, ensure_canonical_file_list, compute_root_hash, manifest_unsigned_bytes};
+use lib_network::web4::types::{Web4Manifest, ManifestFile};
 
 use super::Web4Handler;
 use std::collections::HashMap;
+use lib_crypto;
 
 /// Domain registration request from API
 #[derive(Debug, Serialize, Deserialize)]
@@ -821,10 +823,48 @@ impl Web4Handler {
             manifest_cid: Some(request.manifest_cid.clone()), // Use the uploaded manifest CID
         };
 
+        // CRITICAL: Materialize and store Web4Manifest BEFORE domain registration
+        // This is the missing state transition that caused 0 files bug
+        // Handler owns manifest materialization responsibility
+
+        // Convert DeployManifest files to Web4Manifest files (hashes -> CIDs)
+        let mut web4_files = HashMap::new();
+        for file_entry in &manifest.files {
+            web4_files.insert(
+                file_entry.path.clone(),
+                ManifestFile {
+                    cid: file_entry.hash.clone(), // In deployment, we reference by hash first
+                    size: file_entry.size,
+                    content_type: file_entry.mime_type.clone(),
+                    hash: file_entry.hash.clone(),
+                },
+            );
+        }
+
+        let web4_manifest = Web4Manifest {
+            domain: request.domain.clone(),
+            version: 1,
+            previous_manifest: None,
+            build_hash: manifest.root_hash.iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>(),
+            files: web4_files,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            created_by: owner_did.clone(),
+            message: Some("Domain registered via Web4 deployment".to_string()),
+        };
+
+        // Store manifest ATOMICALLY with domain registration
+        manager.registry.store_manifest(web4_manifest).await
+            .map_err(|e| anyhow!("Failed to store manifest: {}", e))?;
+
         let registration_result = manager.registry.register_domain(domain_request).await
             .map_err(|e| anyhow!("Failed to register domain: {}", e))?;
 
-        info!(" Domain {} registered with manifest {}", request.domain, request.manifest_cid);
+        info!(" Domain {} registered with manifest {} (materialized)", request.domain, request.manifest_cid);
 
         let response = serde_json::json!({
             "status": "success",
