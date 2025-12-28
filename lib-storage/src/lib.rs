@@ -660,12 +660,6 @@ impl UnifiedStorageSystem {
 
 impl Default for UnifiedStorageConfig {
     fn default() -> Self {
-        let dht_persist_path = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".zhtp")
-            .join("storage")
-            .join("dht_storage.bin");
-
         Self {
             node_id: NodeId::from_bytes(rand::random::<[u8; 32]>()),
             addresses: vec!["127.0.0.1:33445".to_string()], // Bind to localhost only for local mesh operation
@@ -675,7 +669,7 @@ impl Default for UnifiedStorageConfig {
                 default_tier: StorageTier::Hot,
                 enable_compression: true,
                 enable_encryption: true,
-                dht_persist_path: Some(dht_persist_path),
+                dht_persist_path: None, // Default has no persistence - runtime initialization sets this
             },
             erasure_config: ErasureConfig {
                 data_shards: 4,
