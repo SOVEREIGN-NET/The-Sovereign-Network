@@ -25,8 +25,10 @@ struct KeystorePrivateKey {
 }
 
 pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIdentity> {
-    let identity_file = keystore_path.join(zhtp::keystore_names::NODE_IDENTITY_FILENAME);
-    let private_key_file = keystore_path.join(zhtp::keystore_names::NODE_PRIVATE_KEY_FILENAME);
+    // Load USER identity for domain/content operations (has wallets)
+    // NODE identity is for mesh networking operations only
+    let identity_file = keystore_path.join(zhtp::keystore_names::USER_IDENTITY_FILENAME);
+    let private_key_file = keystore_path.join(zhtp::keystore_names::USER_PRIVATE_KEY_FILENAME);
 
     if !identity_file.exists() {
         return Err(CliError::IdentityError(format!(
