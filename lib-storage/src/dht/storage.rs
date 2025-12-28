@@ -130,10 +130,22 @@ impl DhtStorage {
     /// Save storage state to disk (versioned, deterministic format)
     /// Uses spawn_blocking to avoid stalling async runtime with file I/O
     pub async fn save_to_file(&self, path: &Path) -> Result<()> {
+        let path_owned = path.to_path_buf();
+        let entry_count_before = self.storage.len();
+
+        eprintln!("🔍 DHT save_to_file: About to save {} entries to {:?}", entry_count_before, path_owned);
+
         // Sort entries by key for deterministic output
         let mut entries: Vec<(String, StorageEntry)> =
             self.storage.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Log specific domain entries if present
+        for (key, _) in &entries {
+            if key.contains("web4/domain") {
+                eprintln!("🔍 DHT save_to_file: Found domain key: {}", key);
+            }
+        }
 
         // Sort contract index by key, and sort each value list for deterministic output
         let mut contract_index: Vec<(String, Vec<String>)> =
@@ -153,14 +165,15 @@ impl DhtStorage {
         let bytes = bincode::serialize(&persisted)
             .map_err(|e| anyhow!("Failed to serialize DHT storage: {}", e))?;
 
-        let path_owned = path.to_path_buf();
-        let entry_count = self.storage.len();
         let byte_count = bytes.len();
+
+        eprintln!("🔍 DHT save_to_file: Serialized {} bytes, writing to {:?}", byte_count, path_owned);
 
         atomic_write_async(path_owned.clone(), bytes).await
             .map_err(|e| anyhow!("Failed to write DHT storage: {}", e))?;
 
-        info!("Saved DHT storage to {:?} ({} entries, {} bytes)", path_owned, entry_count, byte_count);
+        eprintln!("✅ DHT save_to_file: Successfully wrote to {:?}", path_owned);
+        info!("Saved DHT storage to {:?} ({} entries, {} bytes)", path_owned, entry_count_before, byte_count);
         Ok(())
     }
 

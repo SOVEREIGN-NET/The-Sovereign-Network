@@ -165,17 +165,21 @@ impl DomainRegistry {
             .map_err(|e| anyhow!("Failed to serialize domain record: {}", e))?;
 
         info!("🔍 persist_domain_record: Serialized domain {} to {} bytes", record.domain, data.len());
+        eprintln!("🔍 persist_domain_record: STDERR - Serialized domain {} to {} bytes", record.domain, data.len());
 
         let mut storage = self.storage_system.write().await;
         info!("🔍 persist_domain_record: Acquired storage lock, calling store_domain_record for {}", record.domain);
+        eprintln!("🔍 persist_domain_record: STDERR - Acquired storage lock for {}", record.domain);
 
         match storage.store_domain_record(&record.domain, &data).await {
             Ok(()) => {
                 info!(" ✅ Persisted domain record: {} (v{}) - storage layer confirmed", record.domain, record.version);
+                eprintln!(" ✅ STDERR - Persisted domain record: {} (v{})", record.domain, record.version);
                 Ok(())
             }
             Err(e) => {
                 error!(" ❌ Failed to persist domain record {}: {}", record.domain, e);
+                eprintln!(" ❌ STDERR - Failed to persist domain record {}: {}", record.domain, e);
                 Err(e)
             }
         }

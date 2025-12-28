@@ -618,23 +618,30 @@ async fn deploy_site_impl(
 
     output.info("Uploading files...")?;
     let (manifest_files, canonical_total_size) = upload_files(&client, &files, domain, output).await?;
+
+    output.print(&format!("📊 Upload complete: {} files, {} bytes total", manifest_files.len(), canonical_total_size))?;
+
     let deployed_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
         .as_secs();
 
+    output.info("Building manifest...")?;
     let manifest = build_manifest(
         domain,
         mode,
-        manifest_files,
+        manifest_files.clone(),
         canonical_total_size,
         deployed_at,
         &loaded.identity.did,
         &loaded.keypair,
     )?;
 
-    output.info("Registering domain...")?;
+    output.print(&format!("✅ Manifest built: {} files, hash computed", manifest.files.len()))?;
+
+    output.info("Uploading manifest...")?;
     let manifest_hash = upload_manifest(&client, &manifest).await?;
+    output.print(&format!("✅ Manifest uploaded with CID: {}", manifest_hash))?;
 
     if let Some(_fee_amount) = fee {
         output.info(&format!("Note: Registration fee of {} tokens reserved for future billing integration", _fee_amount))?;
