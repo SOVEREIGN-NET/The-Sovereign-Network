@@ -125,11 +125,10 @@ impl IdentityManager {
         identity.citizenship_verified = true;
         identity.dao_voting_power = 10; // Verified citizens get full voting power
         
-        // Store private data
+        // Store private data (recovery data only, no seed field per identity architecture)
         let private_data = PrivateIdentityData::new(
             private_key_bytes,
             public_key.clone(),
-            seed,
             recovery_options,
         );
         
@@ -587,11 +586,10 @@ impl IdentityManager {
         identity.access_level = AccessLevel::FullCitizen;
         identity.master_seed_phrase = Some(crate::recovery::RecoveryPhrase::from_words(phrase_words.clone())?);
         
-        // Create private data
+        // Create private data (recovery data only, no seed field per identity architecture)
         let private_data = PrivateIdentityData::new(
             private_key_bytes,
             public_key,
-            seed,
             vec![], // No additional recovery options for imported identities
         );
         
