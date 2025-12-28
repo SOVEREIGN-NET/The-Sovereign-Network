@@ -147,8 +147,16 @@ impl Web4Handler {
                 owner_did
             ))?
             .clone();
+
+        // DEBUG: Check wallet state right after retrieval
+        info!("  WALLET DEBUG (after IdentityManager retrieval):");
+        info!("    Wallet count: {}", owner_identity.wallet_manager.wallets.len());
+        for (id, w) in &owner_identity.wallet_manager.wallets {
+            info!("    - Wallet: {} (type: {:?})", hex::encode(&id.0[..8]), w.wallet_type);
+        }
+
         drop(identity_mgr);
-        info!(" Using identity: {} (Display name: {})", 
+        info!(" Using identity: {} (Display name: {})",
             owner_did,
             owner_identity.metadata.get("display_name").map(|s| s.as_str()).unwrap_or("no name")
         );
