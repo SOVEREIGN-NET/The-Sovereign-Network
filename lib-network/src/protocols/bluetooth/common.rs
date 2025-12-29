@@ -184,24 +184,6 @@ pub fn parse_uuid_to_guid(uuid_str: &str) -> Result<windows::core::GUID> {
     Ok(GUID::from_values(data1, data2, data3, data4))
 }
 
-/// Standard ZHTP Service UUIDs
-pub mod zhtp_uuids {
-    /// ZHTP Mesh Service UUID (v3 - changed last digit from c9 to ca to bypass macOS Core Bluetooth cache)
-    pub const ZHTP_MESH_SERVICE: &str = "6ba7b810-9dad-11d1-80b4-00c04fd430ca";
-    
-    /// ZK Authentication characteristic
-    pub const ZK_AUTH_CHAR: &str = "6ba7b811-9dad-11d1-80b4-00c04fd430ca";
-    
-    /// Quantum-resistant routing characteristic
-    pub const QUANTUM_ROUTING_CHAR: &str = "6ba7b812-9dad-11d1-80b4-00c04fd430ca";
-    
-    /// Mesh data transfer characteristic
-    pub const MESH_DATA_CHAR: &str = "6ba7b813-9dad-11d1-80b4-00c04fd430ca";
-    
-    /// Mesh coordination characteristic
-    pub const MESH_COORD_CHAR: &str = "6ba7b814-9dad-11d1-80b4-00c04fd430ca";
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

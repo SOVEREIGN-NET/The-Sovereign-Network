@@ -84,7 +84,8 @@ use lib_identity::ZhtpIdentity;
 use lib_crypto::KeyPair;
 use crate::handshake::{
     ClientHello, ServerHello, ClientFinish, HandshakeContext, HandshakeResult,
-    HandshakeCapabilities,
+    HandshakeCapabilities, HandshakeRole, HandshakeSessionInfo,
+    derive_channel_binding_from_addrs,
 };
 use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -166,9 +167,16 @@ pub async fn handshake_as_initiator(
 ) -> Result<HandshakeResult> {
     // Use timeout wrapper for entire handshake
     timeout(HANDSHAKE_TIMEOUT, async {
+        let binding = derive_channel_binding_from_addrs(stream.local_addr()?, stream.peer_addr()?);
+        let ctx = ctx
+            .with_roles(HandshakeRole::Client, HandshakeRole::Server)
+            .with_channel_binding(binding)
+            .with_required_capabilities(vec!["wifi-direct".to_string()])
+            .with_channel_binding_required(true);
+
         // Step 1: Create and send ClientHello
         let capabilities = create_wifi_direct_capabilities();
-        let client_hello = ClientHello::new(identity, capabilities)
+        let client_hello = ClientHello::new(identity, capabilities, &ctx)
             .context("Failed to create ClientHello")?;
         
         send_message(stream, &client_hello).await
@@ -189,7 +197,7 @@ pub async fn handshake_as_initiator(
         );
         
         // CRITICAL: Verify server's signature (mutual authentication)
-        server_hello.verify_signature(&client_hello.challenge_nonce, ctx)
+        server_hello.verify_signature(&client_hello.challenge_nonce, &ctx)
             .context("Server signature verification failed - potential MitM attack")?;
         
         tracing::info!(
@@ -205,7 +213,7 @@ pub async fn handshake_as_initiator(
                 .ok_or_else(|| anyhow::anyhow!("Identity missing private key"))?,
         };
         
-        let client_finish = ClientFinish::new(&server_hello, &client_hello, &keypair, ctx)
+        let client_finish = ClientFinish::new(&server_hello, &client_hello, &keypair, &ctx)
             .context("Failed to create ClientFinish")?;
         
         send_message(stream, &client_finish).await
@@ -214,6 +222,7 @@ pub async fn handshake_as_initiator(
         tracing::debug!("WiFi Direct: ClientFinish sent, handshake complete");
         
         // Step 4: Derive session key (deterministic using ClientHello timestamp)
+        let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)?;
         let result = HandshakeResult::new(
             server_hello.identity.clone(),
             server_hello.negotiated.clone(),
@@ -222,6 +231,7 @@ pub async fn handshake_as_initiator(
             &client_hello.identity.did,
             &server_hello.identity.did,
             client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
+            &session_info,
         ).context("Failed to derive session key")?;
         
         tracing::info!(
@@ -294,6 +304,13 @@ pub async fn handshake_as_responder(
 ) -> Result<HandshakeResult> {
     // Use timeout wrapper for entire handshake
     timeout(HANDSHAKE_TIMEOUT, async {
+        let binding = derive_channel_binding_from_addrs(stream.local_addr()?, stream.peer_addr()?);
+        let ctx = ctx
+            .with_roles(HandshakeRole::Server, HandshakeRole::Client)
+            .with_channel_binding(binding)
+            .with_required_capabilities(vec!["wifi-direct".to_string()])
+            .with_channel_binding_required(true);
+
         // Step 1: Receive and verify ClientHello
         let client_hello: ClientHello = receive_message(stream).await
             .context("Failed to receive ClientHello from WiFi Direct client")?;
@@ -304,7 +321,7 @@ pub async fn handshake_as_responder(
         );
         
         // CRITICAL: Verify client's signature
-        client_hello.verify_signature(ctx)
+        client_hello.verify_signature(&ctx)
             .context("Client signature verification failed - rejecting connection")?;
         
         tracing::info!(
@@ -315,7 +332,7 @@ pub async fn handshake_as_responder(
         
         // Step 2: Create and send ServerHello
         let capabilities = create_wifi_direct_capabilities();
-        let server_hello = ServerHello::new(identity, capabilities, &client_hello)
+        let server_hello = ServerHello::new(identity, capabilities, &client_hello, &ctx)
             .context("Failed to create ServerHello")?;
         
         send_message(stream, &server_hello).await
@@ -333,12 +350,17 @@ pub async fn handshake_as_responder(
         tracing::debug!("WiFi Direct: ClientFinish received");
         
         // CRITICAL: Verify client's signature on server nonce
-        client_finish.verify_signature(&server_hello.response_nonce, &client_hello.identity.public_key)
+        client_finish.verify_signature_with_context(
+            &server_hello.response_nonce,
+            &client_hello.identity.public_key,
+            &ctx,
+        )
             .context("ClientFinish signature verification failed")?;
         
         tracing::debug!("WiFi Direct: ClientFinish verified, handshake complete");
         
         // Step 4: Derive session key (same as client - deterministic)
+        let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)?;
         let result = HandshakeResult::new(
             client_hello.identity.clone(),
             server_hello.negotiated.clone(),
@@ -347,6 +369,7 @@ pub async fn handshake_as_responder(
             &client_hello.identity.did,
             &server_hello.identity.did,
             client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp (same as client)
+            &session_info,
         ).context("Failed to derive session key")?;
         
         tracing::info!(
@@ -506,7 +529,7 @@ fn create_wifi_direct_capabilities() -> HandshakeCapabilities {
 mod tests {
     use super::*;
     use lib_identity::ZhtpIdentity;
-    use crate::handshake::{NonceCache, HandshakeContext};
+    use crate::handshake::{NonceCache, HandshakeContext, HandshakeRole};
     use tokio::net::{TcpListener, TcpStream};
 
     /// Helper to create test identity
@@ -521,11 +544,18 @@ mod tests {
     }
 
     fn net_tests_disabled() -> bool {
-        std::env::var("ZHTP_ALLOW_NET_TESTS")
-            .ok()
-            .as_deref()
-            .unwrap_or_default()
-            != "1"
+        !cfg!(feature = "allow-net-tests")
+    }
+
+    fn test_ctx_pair() -> (HandshakeContext, HandshakeContext) {
+        let nonce_cache = NonceCache::new_test(300, 1000);
+        let base = HandshakeContext::new(nonce_cache)
+            .with_channel_binding(vec![1u8; 32])
+            .with_required_capabilities(vec!["wifi-direct".to_string()])
+            .with_channel_binding_required(true);
+        let client_ctx = base.with_roles(HandshakeRole::Client, HandshakeRole::Server);
+        let server_ctx = base.with_roles(HandshakeRole::Server, HandshakeRole::Client);
+        (client_ctx, server_ctx)
     }
 
     /// Test full WiFi Direct handshake (client + group owner)
@@ -603,17 +633,16 @@ mod tests {
         let identity = create_test_identity("replay-test");
         
         // Create two handshakes - second should succeed (different nonces)
-        let nonce_cache = NonceCache::new_test(300, 1000);
-        let ctx = HandshakeContext::new(nonce_cache);
-        
-        let hello1 = ClientHello::new(&identity, create_wifi_direct_capabilities()).unwrap();
-        let hello2 = ClientHello::new(&identity, create_wifi_direct_capabilities()).unwrap();
+        let (client_ctx, server_ctx) = test_ctx_pair();
+
+        let hello1 = ClientHello::new(&identity, create_wifi_direct_capabilities(), &client_ctx).unwrap();
+        let hello2 = ClientHello::new(&identity, create_wifi_direct_capabilities(), &client_ctx).unwrap();
         
         // First verification should succeed
-        assert!(hello1.verify_signature(&ctx).is_ok(), "First handshake should succeed");
+        assert!(hello1.verify_signature(&server_ctx).is_ok(), "First handshake should succeed");
         
         // Second verification should succeed (different nonce)
-        assert!(hello2.verify_signature(&ctx).is_ok(), "Second handshake with new nonce should succeed");
+        assert!(hello2.verify_signature(&server_ctx).is_ok(), "Second handshake with new nonce should succeed");
         
         println!("✓ Replay attack prevention test passed");
     }
@@ -684,16 +713,15 @@ mod tests {
         let valid_identity = create_test_identity("valid-peer");
         
         // Create ClientHello with valid identity
-        let mut hello = ClientHello::new(&valid_identity, create_wifi_direct_capabilities()).unwrap();
+        let (client_ctx, server_ctx) = test_ctx_pair();
+
+        let mut hello = ClientHello::new(&valid_identity, create_wifi_direct_capabilities(), &client_ctx).unwrap();
         
         // Corrupt the NodeId (simulates collision attack or invalid identity)
         hello.identity.node_id = lib_identity::NodeId::from_bytes([0xFF; 32]);
         
         // Verification should fail due to invalid NodeId
-        let nonce_cache = NonceCache::new_test(300, 1000);
-        let ctx = HandshakeContext::new(nonce_cache);
-        
-        let result = hello.verify_signature(&ctx);
+        let result = hello.verify_signature(&server_ctx);
         assert!(result.is_err(), "Should reject peer with invalid NodeId");
         
         println!("✓ Invalid peer rejection test passed");

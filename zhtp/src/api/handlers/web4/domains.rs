@@ -2,14 +2,14 @@
 
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
-use crate::web4_stub::DomainRegistrationRequest;
-// Removed unused DomainRegistrationResponse, DomainLookupResponse
+use lib_network::web4::{DomainRegistrationRequest, DomainMetadata, DomainEconomicSettings};
 use lib_identity::ZhtpIdentity;
 use lib_proofs::ZeroKnowledgeProof;
 use serde::{Deserialize, Serialize};
 use tracing::{info, error, warn};
 use anyhow::anyhow;
 use base64::{Engine as _, engine::general_purpose};
+use crate::web4_manifest::{DeployManifest, ensure_canonical_file_list, compute_root_hash, manifest_unsigned_bytes};
 
 use super::Web4Handler;
 use std::collections::HashMap;
@@ -41,13 +41,15 @@ pub struct ApiDomainRegistrationRequest {
 
 /// Manifest-based domain registration request (used by CLI deploy)
 /// This is a simpler format where content has already been uploaded
-/// and the manifest_cid references the uploaded manifest
+/// and the deploy_manifest_cid references the uploaded DeployManifest
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ManifestDomainRegistrationRequest {
     /// Domain to register
     pub domain: String,
-    /// CID of the uploaded manifest
-    pub manifest_cid: String,
+    /// CANONICAL: CID of the uploaded DeployManifest
+    /// This will be converted to web4_manifest_cid during registration
+    #[serde(alias = "manifest_cid")]  // Backwards compatibility
+    pub deploy_manifest_cid: String,
     /// Owner DID (did:zhtp:hex format)
     pub owner: String,
 }
@@ -128,39 +130,34 @@ impl Web4Handler {
         info!(" Owner: {}", simple_request.owner);
         info!(" Content paths: {}", simple_request.content_mappings.len());
 
-        // Parse owner field - can be DID (did:zhtp:hex) or raw hex identity hash
-        let owner_identity_id = if simple_request.owner.starts_with("did:zhtp:") {
-            // Extract hex from DID format: did:zhtp:a1b2c3d4...
-            let hex_part = simple_request.owner.strip_prefix("did:zhtp:")
-                .ok_or_else(|| anyhow!("Invalid DID format"))?;
-            
-            // Decode hex to bytes
-            let id_bytes = hex::decode(hex_part)
-                .map_err(|e| anyhow!("Invalid DID hex encoding: {}", e))?;
-            
-            // Convert to IdentityId (Hash)
-            lib_crypto::Hash::from_bytes(&id_bytes)
+        // BOUNDARY CODE: Accept DID as-is, use proper DID resolution
+        // DID is the public contract - do not fabricate internal IdentityIds
+        let owner_did = if simple_request.owner.starts_with("did:zhtp:") {
+            simple_request.owner.clone()
         } else {
-            // Try as raw hex identity hash
-            let id_bytes = hex::decode(&simple_request.owner)
-                .map_err(|e| anyhow!(
-                    "Owner must be either DID format (did:zhtp:hex) or raw identity hash (hex). Error: {}", e
-                ))?;
-            lib_crypto::Hash::from_bytes(&id_bytes)
+            // Support raw hex for backward compat, but convert to DID
+            format!("did:zhtp:{}", simple_request.owner)
         };
-        
-        // Look up owner identity in identity manager
+
+        // Look up owner identity using boundary-safe DID API
+        // This is the correct layer: accept DID, use get_identity_by_did()
         let identity_mgr = self.identity_manager.read().await;
-        let owner_identity = identity_mgr.get_identity(&owner_identity_id)
+        let owner_identity = identity_mgr.get_identity_by_did(&owner_did)
             .ok_or_else(|| anyhow!(
-                "Owner identity not found. DID/Hash: {}. Please register this identity first using /api/v1/identity/create",
-                simple_request.owner
+                "Owner identity not found: {}. Please register this identity first using /api/v1/identity/create",
+                owner_did
             ))?
             .clone();
+
+        // DEBUG: Check wallet state right after retrieval
+        info!("  WALLET DEBUG (after IdentityManager retrieval):");
+        info!("    Wallet count: {}", owner_identity.wallet_manager.wallets.len());
+        for (id, w) in &owner_identity.wallet_manager.wallets {
+            info!("    - Wallet: {} (type: {:?})", hex::encode(&id.0[..8]), w.wallet_type);
+        }
+
         drop(identity_mgr);
-        
-        let owner_did = format!("did:zhtp:{}", hex::encode(&owner_identity.id.0));
-        info!(" Using identity: {} (Display name: {})", 
+        info!(" Using identity: {} (Display name: {})",
             owner_did,
             owner_identity.metadata.get("display_name").map(|s| s.as_str()).unwrap_or("no name")
         );
@@ -192,95 +189,82 @@ impl Web4Handler {
         // Verify that the request was signed by the owner's private key
         info!(" Verifying signature for authorization...");
         
-        //  DEVELOPMENT MODE: Check for test signature bypass
-        let is_test_signature = simple_request.signature == "746573745f6465765f7369676e6174757265"; // "test_dev_signature" in hex
+        // Check timestamp is recent (within 5 minutes)
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| anyhow!("System time error: {}", e))?
+            .as_secs();
         
-        if is_test_signature {
-            warn!(" DEV MODE: Bypassing signature verification (test signature detected)");
-            warn!("     SECURITY WARNING: This would fail in production!");
-            warn!("   Signature: {}", simple_request.signature);
-            info!(" Test signature accepted for development");
+        let time_diff = if current_time > simple_request.timestamp {
+            current_time - simple_request.timestamp
         } else {
-            // Production signature verification
-            
-            // Check timestamp is recent (within 5 minutes)
-            let current_time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| anyhow!("System time error: {}", e))?
-                .as_secs();
-            
-            let time_diff = if current_time > simple_request.timestamp {
-                current_time - simple_request.timestamp
-            } else {
-                simple_request.timestamp - current_time
-            };
-            
-            if time_diff > 300 { // 5 minutes = 300 seconds
-                return Err(anyhow!(
-                    "Request expired. Timestamp difference: {} seconds (max 300). Current: {}, Request: {}",
-                    time_diff, current_time, simple_request.timestamp
-                ));
-            }
-            
-            // Create the message that should have been signed
-            // Format: domain|timestamp|fee_amount
-            // The user signs with THEIR fee amount (not our calculated minimum)
-            let signed_message = format!("{}|{}|{}", 
-                simple_request.domain,
-                simple_request.timestamp,
-                user_provided_fee
-            );
-            
-            // Decode the signature from hex
-            let signature_bytes = hex::decode(&simple_request.signature)
-                .map_err(|e| anyhow!("Invalid signature hex encoding: {}", e))?;
-            
-            // DEBUG: Log verification inputs
-            info!(" DEBUG SIGNATURE VERIFICATION:");
-            info!("   Message: {}", signed_message);
-            info!("   Signature length: {} bytes", signature_bytes.len());
-            info!("   Public key length: {} bytes", owner_identity.public_key.size());
-            info!("   Expected public key length: 1312 (Dilithium2)");
-            
-            // Verify signature using owner's public key
-            let is_valid = lib_crypto::verify_signature(
-                signed_message.as_bytes(),
-                &signature_bytes,
-                &owner_identity.public_key.as_bytes()
-            ).map_err(|e| anyhow!("Signature verification error: {}", e))?;
-            
-            info!(" DEBUG: Signature verification result: {}", is_valid);
-            
-            if !is_valid {
-                error!(" AUTHORIZATION DENIED: Invalid signature for identity {}", owner_did);
-                return Err(anyhow!(
-                    "Authorization denied: Invalid signature. You must sign the request with the private key for identity {}",
-                    owner_did
-                ));
-            }
-            
-            info!(" Signature verified successfully - owner authenticated");
+            simple_request.timestamp - current_time
+        };
+        
+        if time_diff > 300 { // 5 minutes = 300 seconds
+            return Err(anyhow!(
+                "Request expired. Timestamp difference: {} seconds (max 300). Current: {}, Request: {}",
+                time_diff, current_time, simple_request.timestamp
+            ));
         }
+        
+        // Create the message that should have been signed
+        // Format: domain|timestamp|fee_amount
+        // The user signs with THEIR fee amount (not our calculated minimum)
+        let signed_message = format!("{}|{}|{}", 
+            simple_request.domain,
+            simple_request.timestamp,
+            user_provided_fee
+        );
+        
+        // Decode the signature from hex
+        let signature_bytes = hex::decode(&simple_request.signature)
+            .map_err(|e| anyhow!("Invalid signature hex encoding: {}", e))?;
+        
+        // DEBUG: Log verification inputs
+        info!(" DEBUG SIGNATURE VERIFICATION:");
+        info!("   Message: {}", signed_message);
+        info!("   Signature length: {} bytes", signature_bytes.len());
+        info!("   Public key length: {} bytes", owner_identity.public_key.size());
+        info!("   Expected public key length: 1312 (Dilithium2)");
+        
+        // Verify signature using owner's public key
+        let is_valid = lib_crypto::verify_signature(
+            signed_message.as_bytes(),
+            &signature_bytes,
+            &owner_identity.public_key.as_bytes()
+        ).map_err(|e| anyhow!("Signature verification error: {}", e))?;
+        
+        info!(" DEBUG: Signature verification result: {}", is_valid);
+        
+        if !is_valid {
+            error!(" AUTHORIZATION DENIED: Invalid signature for identity {}", owner_did);
+            return Err(anyhow!(
+                "Authorization denied: Invalid signature. You must sign the request with the private key for identity {}",
+                owner_did
+            ));
+        }
+        
+        info!(" Signature verified successfully - owner authenticated");
         // ========== END SIGNATURE VERIFICATION ==========
         
         info!(" Calculated registration fee: {} ZHTP tokens (domain length: {} chars, estimated tx size: ~5400 bytes)", 
             registration_fee_tokens, simple_request.domain.len());
 
         // Check wallet balance before payment
-        let identity_mgr = self.identity_manager.write().await;
-        
-        // Get primary wallet for the identity
-        let (wallet_dilithium_pubkey, wallet_utxo_hash, wallet_id_hex) = if let Some(check_identity) = identity_mgr.get_identity(&owner_identity_id) {
+        // Use the already-retrieved owner_identity (no need for second lookup)
+        let (wallet_dilithium_pubkey, wallet_utxo_hash, wallet_id_hex) = {
+            let check_identity = &owner_identity;
             // Find the PRIMARY wallet (not Staking wallet)
             let primary_wallet = check_identity.wallet_manager.wallets.values()
                 .find(|w| w.wallet_type == lib_identity::WalletType::Primary)
-                .ok_or_else(|| anyhow!("No PRIMARY wallet found for owner identity {}. Found {} wallets total.", 
+                .ok_or_else(|| anyhow!("No PRIMARY wallet found for owner identity {}. Found {} wallets total.",
                     owner_did, check_identity.wallet_manager.wallets.len()))?;
-            
+
             let wallet_id_hex = hex::encode(&primary_wallet.id.0);
             let wallet_id_short = hex::encode(&primary_wallet.id.0[..8]);
             let current_balance = primary_wallet.balance;
-            
+
             // DEBUG: Check blockchain wallet registry for this wallet
             let blockchain = self.blockchain.read().await;
             let in_registry = blockchain.wallet_registry.contains_key(&wallet_id_hex);
@@ -296,45 +280,39 @@ impl Web4Handler {
             info!("   Total wallet_registry entries: {}", blockchain.wallet_registry.len());
             info!("   Wallet registry keys: {:?}", blockchain.wallet_registry.keys().map(|k| &k[..16]).collect::<Vec<_>>());
             drop(blockchain);
-            
-            info!("💳 Checking wallet {} balance: {} ZHTP (need {} ZHTP)", 
+
+            info!("💳 Checking wallet {} balance: {} ZHTP (need {} ZHTP)",
                 wallet_id_short, current_balance, registration_fee_tokens);
             info!("   Full wallet ID: {}", wallet_id_hex);
-            
+
             if current_balance < registration_fee_tokens {
-                drop(identity_mgr);
                 return Err(anyhow!(
                     "Insufficient balance. Required: {} ZHTP, Available: {} ZHTP in wallet {}. \
                     HINT: Your genesis wallet should have 5000 ZHTP. Check if wallet balance sync ran at startup.",
                     registration_fee_tokens, current_balance, wallet_id_short
                 ));
             }
-            
+
             // CRITICAL: Get the FULL Dilithium2 public key from the identity (1312 bytes)
             // This must match what's stored in wallet_registry for transaction validation
             // P1-7: Get public key directly from identity
             let identity_dilithium_pubkey = check_identity.public_key.dilithium_pk.clone();
-            
+
             // For UTXO matching, use the 32-byte identity hash (what's in UTXO recipients)
             let identity_hash_for_utxo = check_identity.id.0.to_vec();
-            
+
             info!(" TRANSACTION IDENTITY DEBUG:");
             info!("   - Identity ID: {}", hex::encode(&check_identity.id.0));
             info!("   - Dilithium2 public key: {} bytes", identity_dilithium_pubkey.len());
             info!("   - Public key (first 32): {}", hex::encode(&identity_dilithium_pubkey[..32.min(identity_dilithium_pubkey.len())]));
             info!("   - Identity hash: {} bytes for UTXO matching", identity_hash_for_utxo.len());
-            
+
             (identity_dilithium_pubkey, identity_hash_for_utxo, wallet_id_hex)
-        } else {
-            drop(identity_mgr);
-            return Err(anyhow!("Identity not found"));
         };
-        
+
         let payment_purpose = format!("domain_registration:{}", simple_request.domain);
-        
+
         info!("💳 Creating UTXO payment transaction ({} ZHTP to treasury)", registration_fee_tokens);
-        
-        drop(identity_mgr); // Release lock before blockchain access
         
         // ========================================================================
         // NOTE: Wallet ownership validation now happens in transaction validation
@@ -353,10 +331,20 @@ impl Web4Handler {
         // wallet_utxo_hash is the 32-byte identity hash used in UTXO recipients
         let wallet_utxo_hash: Vec<u8> = wallet_utxo_hash;
         
-        info!(" Scanning {} UTXOs for wallet pubkey: {}", 
-              blockchain.utxo_set.len(), 
+        info!(" Scanning {} UTXOs for wallet pubkey: {}",
+              blockchain.utxo_set.len(),
               hex::encode(&wallet_utxo_hash[..8.min(wallet_utxo_hash.len())]));
-        
+
+        // DEBUG: Show what UTXOs exist in blockchain
+        if blockchain.utxo_set.is_empty() {
+            info!("  WARNING: UTXO set is EMPTY - no UTXOs in blockchain");
+        } else {
+            info!("  First few UTXOs in blockchain:");
+            for (i, (hash, output)) in blockchain.utxo_set.iter().take(3).enumerate() {
+                info!("    UTXO {}: recipient={}", i, hex::encode(output.recipient.as_bytes()));
+            }
+        }
+
         for (utxo_hash, output) in &blockchain.utxo_set {
             // Check if this UTXO belongs to our wallet by comparing identity hashes
             if output.recipient.as_bytes() == wallet_utxo_hash.as_slice() {
@@ -504,23 +492,16 @@ impl Web4Handler {
         // ========================================================================
         // STEP 6: Sign the transaction hash with identity keypair
         // ========================================================================
-        let identity_mgr = self.identity_manager.read().await;
-
-        // Get identity for signing
-        let identity = identity_mgr.get_identity(&owner_identity_id)
-            .ok_or_else(|| anyhow!("Owner identity not found"))?;
-
         // Get private key from identity (P1-7: private keys stored in identity)
-        let private_key = identity.private_key.as_ref()
+        // We already have owner_identity from earlier retrieval - use it directly
+        let private_key = owner_identity.private_key.as_ref()
             .ok_or_else(|| anyhow!("Identity missing private key"))?;
 
         // Create keypair for signing
         let keypair = lib_crypto::KeyPair {
             private_key: private_key.clone(),
-            public_key: identity.public_key.clone(),
+            public_key: owner_identity.public_key.clone(),
         };
-
-        drop(identity_mgr); // Release lock before continuing
 
         // Sign the TRANSACTION HASH (not a custom message!)
         let keypair_signature = lib_crypto::sign_message(&keypair, tx_hash.as_bytes())
@@ -561,13 +542,6 @@ impl Web4Handler {
         info!("   Transaction will be included in next mined block");
         info!("   Transaction fee: {} ZHTP (covers domain registration + processing)", fee);
         info!("   Change returned to wallet: {} ZHTP", change_amount);
-        
-        // Re-acquire identity manager for subsequent operations
-        let identity_mgr = self.identity_manager.read().await;
-        let owner_identity = identity_mgr.get_identity(&owner_identity_id)
-            .ok_or_else(|| anyhow!("Failed to retrieve updated identity"))?
-            .clone();
-        drop(identity_mgr);
 
         // Prepare content mappings WITH RICH METADATA for storage
         let mut initial_content = HashMap::new();
@@ -639,7 +613,7 @@ impl Web4Handler {
         }
 
         // Create domain metadata
-        let metadata = crate::web4_stub::DomainMetadata {
+        let metadata = DomainMetadata {
             title: simple_request.metadata.as_ref()
                 .and_then(|m| m.get("title"))
                 .and_then(|v| v.as_str())
@@ -657,7 +631,7 @@ impl Web4Handler {
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
             public: true,
-            economic_settings: crate::web4_stub::DomainEconomicSettings {
+            economic_settings: DomainEconomicSettings {
                 registration_fee: 10.0,
                 renewal_fee: 5.0,
                 transfer_fee: 2.0,
@@ -665,27 +639,23 @@ impl Web4Handler {
             },
         };
 
-        // Register domain using Web4Manager's registry (stub)
-        let manager = self.web4_manager.read().await;
-        let registration_result = manager.registry.register_domain_with_content(
+        // Register domain using domain registry
+        let registration_result = self.domain_registry.register_domain_with_content(
             simple_request.domain.clone(),
             owner_identity.clone(),  // Clone since we need it later for wallet operations
             initial_content,
             metadata,
         ).await;
-        drop(manager); // Release lock
 
         let registration_response = registration_result
             .map_err(|e| anyhow!("Domain registration failed: {}", e))?;
 
         let total_fees = registration_response.fees_charged;
-        info!(" Domain {} registered via Web4Manager with {} ZHTP fees", simple_request.domain, total_fees);
+        info!(" Domain {} registered with {} ZHTP fees", simple_request.domain, total_fees);
 
-        // Get the ACTUAL content mappings from Web4Manager (with correct DHT hashes)
-        let manager = self.web4_manager.read().await;
-        let domain_lookup = manager.registry.lookup_domain(&simple_request.domain).await
+        // Get the ACTUAL content mappings from domain registry (with correct DHT hashes)
+        let domain_lookup = self.domain_registry.lookup_domain(&simple_request.domain).await
             .map_err(|e| anyhow!("Failed to lookup registered domain: {}", e))?;
-        drop(manager);
 
         let actual_content_mappings = if domain_lookup.found {
             domain_lookup.content_mappings
@@ -767,45 +737,56 @@ impl Web4Handler {
         ))
     }
 
-    /// Register a domain using manifest CID (from CLI deploy command)
+    /// Register a domain using DeployManifest CID (from CLI deploy command)
     /// This is a simplified flow where content has already been uploaded
     async fn register_domain_from_manifest(&self, request: ManifestDomainRegistrationRequest) -> ZhtpResult<ZhtpResponse> {
         info!("Processing manifest-based domain registration");
         info!(" Domain: {}", request.domain);
-        info!(" Manifest CID: {}", request.manifest_cid);
+        info!(" DeployManifest CID: {}", request.deploy_manifest_cid);
         info!(" Owner: {}", request.owner);
 
-        // Derive owner identity ID from DID
-        // Identity ID = Blake3(DID string) - same derivation as ZhtpIdentity::new()
-        let owner_identity_id = lib_crypto::Hash::from_bytes(
-            &lib_crypto::hash_blake3(request.owner.as_bytes()).to_vec()
-        );
+        let manifest = self
+            .load_and_verify_manifest(&request.domain, &request.deploy_manifest_cid)
+            .await
+            .map_err(|e| anyhow!("Manifest verification failed: {}", e))?;
 
-        // Look up owner identity
+        // BOUNDARY CODE: Accept DID as-is, use proper DID resolution
+        let owner_did = if request.owner.starts_with("did:zhtp:") {
+            request.owner.clone()
+        } else {
+            format!("did:zhtp:{}", request.owner)
+        };
+
+        // Look up owner identity using boundary-safe DID API
         let identity_mgr = self.identity_manager.read().await;
-        let owner_identity = identity_mgr.get_identity(&owner_identity_id)
+        let owner_identity = identity_mgr.get_identity_by_did(&owner_did)
             .ok_or_else(|| anyhow!(
                 "Owner identity not found: {}. Register identity first.",
-                request.owner
+                owner_did
             ))?
             .clone();
         drop(identity_mgr);
-
-        let owner_did = format!("did:zhtp:{}", hex::encode(&owner_identity.id.0));
         info!(" Verified owner identity: {}", owner_did);
 
-        // Register domain with Web4Manager using manifest CID
-        let manager = self.web4_manager.write().await;
-        info!("🔍 register_domain_from_manifest: DomainRegistry ptr: {:p}", &*manager.registry as *const _);
+        if owner_identity.did != manifest.author_did {
+            return Err(anyhow!(
+                "Manifest author DID does not match owner identity ({} != {})",
+                manifest.author_did,
+                owner_identity.did
+            ));
+        }
+
+        // Register domain using manifest CID
+        info!("Registering domain from manifest: {}", request.domain);
 
         // Create domain metadata
-        let metadata = crate::web4_stub::DomainMetadata {
+        let metadata = DomainMetadata {
             title: request.domain.clone(),
-            description: format!("Domain registered via manifest {}", request.manifest_cid),
+            description: format!("Domain registered via DeployManifest {}", request.deploy_manifest_cid),
             category: "website".to_string(),
             tags: vec!["web4".to_string(), "manifest".to_string()],
             public: true,
-            economic_settings: crate::web4_stub::DomainEconomicSettings {
+            economic_settings: DomainEconomicSettings {
                 registration_fee: 0.0,
                 renewal_fee: 0.0,
                 transfer_fee: 0.0,
@@ -825,7 +806,8 @@ impl Web4Handler {
             None,
         );
 
-        // Create domain registration request
+        // Create domain registration request with deploy_manifest_cid
+        // This will be converted to web4_manifest_cid during registration
         let domain_request = DomainRegistrationRequest {
             domain: request.domain.clone(),
             owner: owner_identity.clone(),
@@ -833,18 +815,19 @@ impl Web4Handler {
             metadata,
             initial_content: HashMap::new(), // Content already uploaded via manifest
             registration_proof,
-            manifest_cid: Some(request.manifest_cid.clone()), // Use the uploaded manifest CID
+            deploy_manifest_cid: Some(request.deploy_manifest_cid.clone()),
         };
 
-        let registration_result = manager.registry.register_domain(domain_request).await
+        // Register domain
+        let registration_result = self.domain_registry.register_domain(domain_request).await
             .map_err(|e| anyhow!("Failed to register domain: {}", e))?;
 
-        info!(" Domain {} registered with manifest {}", request.domain, request.manifest_cid);
+        info!(" Domain {} registered with DeployManifest {}", request.domain, request.deploy_manifest_cid);
 
         let response = serde_json::json!({
             "status": "success",
             "domain": request.domain,
-            "manifest_cid": request.manifest_cid,
+            "deploy_manifest_cid": request.deploy_manifest_cid,
             "owner": owner_did,
             "registration_id": registration_result.registration_id,
             "message": "Domain registered successfully"
@@ -892,13 +875,13 @@ impl Web4Handler {
         }
 
         // Create domain metadata
-        let metadata = crate::web4_stub::DomainMetadata {
+        let metadata = DomainMetadata {
             title: api_request.title,
             description: api_request.description,
             category: api_request.category,
             tags: api_request.tags,
             public: api_request.public,
-            economic_settings: crate::web4_stub::DomainEconomicSettings {
+            economic_settings: DomainEconomicSettings {
                 registration_fee: 10.0, // Will be calculated properly
                 renewal_fee: 5.0,
                 transfer_fee: 2.0,
@@ -914,13 +897,12 @@ impl Web4Handler {
             metadata,
             initial_content,
             registration_proof,
-            manifest_cid: None, // Auto-generate for non-manifest registration
+            deploy_manifest_cid: None, // Auto-generate for non-manifest registration
         };
 
         // Process registration
-        let manager = self.web4_manager.read().await;
         
-        match manager.registry.register_domain(registration_request).await {
+        match self.domain_registry.register_domain(registration_request).await {
             Ok(response) => {
                 let response_json = serde_json::to_vec(&response)
                     .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
@@ -957,9 +939,8 @@ impl Web4Handler {
         let domain = path_parts[5]; // ["", "api", "v1", "web4", "domains", "hello-world.zhtp"]
         info!(" Looking up Web4 domain: {}", domain);
 
-        let manager = self.web4_manager.read().await;
         
-        match manager.registry.lookup_domain(domain).await {
+        match self.domain_registry.lookup_domain(domain).await {
             Ok(response) => {
                 let response_json = serde_json::to_vec(&response)
                     .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
@@ -980,6 +961,43 @@ impl Web4Handler {
         }
     }
 
+    /// List domains for an owner
+    /// GET /api/v1/web4/domains?owner={did}
+    pub async fn list_domains(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let owner = request
+            .uri
+            .splitn(2, '?')
+            .nth(1)
+            .and_then(|query| {
+                query.split('&').find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    let key = parts.next()?;
+                    let value = parts.next()?;
+                    if key == "owner" { Some(value) } else { None }
+                })
+            });
+        let owner = match owner {
+            Some(value) if !value.is_empty() => value,
+            _ => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Missing owner query parameter".to_string(),
+                ));
+            }
+        };
+
+        // NOTE: list_domains_by_owner requires iterating all persisted domains, which is not
+        // yet implemented in the DomainRegistry. This endpoint is reserved for future use.
+        // For now, we return a not-implemented error rather than silently returning empty results,
+        // which would confuse API clients expecting functional behavior.
+        return Err(anyhow!(
+            "The list_domains_by_owner endpoint is not yet implemented. \
+             This feature requires registry support for domain enumeration by owner. \
+             Please use domain lookup endpoints for specific domains or track deployments \
+             in your application state."
+        ));
+    }
+
     /// Transfer domain to new owner
     pub async fn transfer_domain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!(" Processing Web4 domain transfer request");
@@ -988,20 +1006,30 @@ impl Web4Handler {
         let api_request: ApiDomainTransferRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow!("Invalid domain transfer request: {}", e))?;
 
-        // Deserialize identities
+        // Deserialize owner identities
+        let from_owner = self.deserialize_identity(&api_request.from_owner)
+            .map_err(|e| anyhow!("Invalid from_owner identity: {}", e))?;
         let to_owner = self.deserialize_identity(&api_request.to_owner)
             .map_err(|e| anyhow!("Invalid to_owner identity: {}", e))?;
 
-        // Deserialize transfer proof
-        let transfer_proof = self.deserialize_proof(&api_request.transfer_proof)
-            .map_err(|e| anyhow!("Invalid transfer proof: {}", e))?;
+        // Create transfer proof (simplified for now)
+        let transfer_proof = lib_proofs::ZeroKnowledgeProof::new(
+            "Plonky2".to_string(),
+            lib_crypto::hash_blake3(&[
+                from_owner.id.0.as_slice(),
+                to_owner.id.0.as_slice(),
+                api_request.domain.as_bytes(),
+            ].concat()).to_vec(),
+            from_owner.id.0.to_vec(),
+            to_owner.id.0.to_vec(),
+            None,
+        );
 
-        let manager = self.web4_manager.read().await;
-        
-        match manager.registry.transfer_domain(
+        match self.domain_registry.transfer_domain(
             &api_request.domain,
+            &from_owner,
             &to_owner,
-            Some(Vec::new()),
+            transfer_proof,
         ).await {
             Ok(success) => {
                 let response = serde_json::json!({
@@ -1044,13 +1072,26 @@ impl Web4Handler {
         let api_request: ApiDomainReleaseRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow!("Invalid domain release request: {}", e))?;
 
-        // Deserialize owner identity
-        let owner_identity = self.deserialize_identity(&api_request.owner_identity)
-            .map_err(|e| anyhow!("Invalid owner identity: {}", e))?;
+        // BOUNDARY: Accept owner_identity from request and look it up in identity manager
+        // This verifies the identity exists in the system
+        let normalized_did = if api_request.owner_identity.starts_with("did:zhtp:") {
+            api_request.owner_identity.clone()
+        } else {
+            format!("did:zhtp:{}", api_request.owner_identity)
+        };
 
-        let manager = self.web4_manager.read().await;
-        
-        match manager.registry.release_domain(&api_request.domain, &owner_identity).await {
+        let identity_mgr = self.identity_manager.read().await;
+        let owner_identity = identity_mgr.get_identity_by_did(&normalized_did)
+            .ok_or_else(|| anyhow!(
+                "Owner identity not found: {}. Identity must be registered first.",
+                normalized_did
+            ))?
+            .clone();
+        drop(identity_mgr);
+
+        info!(" Verified owner identity for domain release: {}", normalized_did);
+
+        match self.domain_registry.release_domain(&api_request.domain, &owner_identity).await {
             Ok(success) => {
                 let response = serde_json::json!({
                     "success": success,
@@ -1084,16 +1125,17 @@ impl Web4Handler {
         }
     }
 
-    /// Deserialize identity from string (simplified for now)
-    pub fn deserialize_identity(&self, identity_str: &str) -> Result<ZhtpIdentity, String> {
-        // In production, this would properly deserialize from JSON/base64
-        // For now, create a test identity from the string
+    /// Deserialize identity from string (for compatibility with older code)
+    /// DEPRECATED: Use identity manager lookup instead
+    pub fn deserialize_identity(&self, _identity_str: &str) -> Result<ZhtpIdentity, String> {
+        // This is a fallback for legacy code - should use identity manager lookup instead
+        // Creates a placeholder human identity (should not be used for ownership verification)
         ZhtpIdentity::new_unified(
             lib_identity::types::IdentityType::Human,
-            Some(25), // Default age
-            Some("US".to_string()), // Default jurisdiction
-            &format!("web4-{}", &identity_str[..std::cmp::min(8, identity_str.len())]),
-            None, // Random seed
+            None,
+            None,
+            "placeholder-user",
+            None,
         ).map_err(|e| format!("Failed to create identity: {}", e))
     }
 
@@ -1152,11 +1194,23 @@ impl Web4Handler {
         let domain = path_parts[6];
         info!(" Getting status for domain: {}", domain);
 
-        let manager = self.web4_manager.read().await;
 
-        match manager.registry.get_domain_status(domain).await {
+        match self.domain_registry.get_domain_status(domain).await {
             Ok(status) => {
-                let response_json = serde_json::to_vec(&status)
+                // MIGRATION: Include both old and new field names for backwards compatibility with CLI
+                let response = serde_json::json!({
+                    "found": status.found,
+                    "domain": status.domain,
+                    "version": status.version,
+                    "current_web4_manifest_cid": status.current_web4_manifest_cid,
+                    "current_manifest_cid": status.current_web4_manifest_cid,  // Backwards compat for CLI
+                    "owner_did": status.owner_did,
+                    "updated_at": status.updated_at,
+                    "expires_at": status.expires_at,
+                    "build_hash": status.build_hash,
+                });
+
+                let response_json = serde_json::to_vec(&response)
                     .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
 
                 Ok(ZhtpResponse::success_with_content_type(
@@ -1199,9 +1253,8 @@ impl Web4Handler {
 
         info!(" Getting history for domain: {} (limit: {})", domain, limit);
 
-        let manager = self.web4_manager.read().await;
 
-        match manager.registry.get_domain_history(domain, limit).await {
+        match self.domain_registry.get_domain_history(domain, limit).await {
             Ok(history) => {
                 let response_json = serde_json::to_vec(&history)
                     .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
@@ -1228,7 +1281,7 @@ impl Web4Handler {
         info!(" Processing domain update request");
 
         // Parse update request
-        let update_request: crate::web4_stub::DomainUpdateRequest =
+        let update_request: lib_network::web4::DomainUpdateRequest =
             serde_json::from_slice(&request.body)
                 .map_err(|e| anyhow!("Invalid domain update request: {}", e))?;
 
@@ -1238,20 +1291,77 @@ impl Web4Handler {
             &update_request.expected_previous_manifest_cid[..16.min(update_request.expected_previous_manifest_cid.len())]
         );
 
-        // TODO: Verify signature matches domain owner
-        // For now, we trust the caller has authenticated
+        let status = self.domain_registry
+            .get_domain_status(&update_request.domain)
+            .await
+            .map_err(|e| anyhow!("Failed to fetch domain status: {}", e))?;
 
-        let manager = self.web4_manager.read().await;
+        let owner_did = if status.owner_did.is_empty() {
+            return Err(anyhow!("Domain owner not found"));
+        } else {
+            &status.owner_did
+        };
 
-        match manager.registry.update_domain(update_request).await {
+        if update_request.signature.is_empty() {
+            return Err(anyhow!("Update signature missing"));
+        }
+
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| anyhow!("System time error: {}", e))?
+            .as_secs();
+        let time_diff = if current_time > update_request.timestamp {
+            current_time - update_request.timestamp
+        } else {
+            update_request.timestamp - current_time
+        };
+        if time_diff > 300 {
+            return Err(anyhow!(
+                "Update request expired. Timestamp difference: {} seconds (max 300). Current: {}, Request: {}",
+                time_diff, current_time, update_request.timestamp
+            ));
+        }
+
+        let signed_message = format!(
+            "{}|{}|{}|{}",
+            update_request.domain,
+            update_request.expected_previous_manifest_cid,
+            update_request.new_manifest_cid,
+            update_request.timestamp
+        );
+        let signature_bytes = hex::decode(&update_request.signature)
+            .map_err(|e| anyhow!("Invalid update signature hex encoding: {}", e))?;
+
+        let identity_mgr = self.identity_manager.read().await;
+        let owner_id = lib_crypto::Hash::from_bytes(
+            &lib_crypto::hash_blake3(owner_did.as_bytes()).to_vec(),
+        );
+        let owner_identity = identity_mgr
+            .get_identity(&owner_id)
+            .ok_or_else(|| anyhow!("Owner identity not found: {}", owner_did))?;
+
+        let is_valid = lib_crypto::verify_signature(
+            signed_message.as_bytes(),
+            &signature_bytes,
+            &owner_identity.public_key.as_bytes(),
+        )
+        .map_err(|e| anyhow!("Signature verification error: {}", e))?;
+
+        if !is_valid {
+            return Err(anyhow!("Invalid update signature"));
+        }
+
+        let _manifest = self
+            .load_and_verify_manifest(&update_request.domain, &update_request.new_manifest_cid)
+            .await
+            .map_err(|e| anyhow!("Manifest verification failed: {}", e))?;
+
+
+        match self.domain_registry.update_domain(update_request).await {
             Ok(response) => {
                 if response.success {
-                    let version = response.new_version.unwrap_or(0);
-                    let cid_preview = response
-                        .new_manifest_cid
-                        .as_deref()
-                        .map(|cid| &cid[..16.min(cid.len())])
-                        .unwrap_or("");
+                    let version = response.new_version;
+                    let cid_preview = &response.new_manifest_cid[..16.min(response.new_manifest_cid.len())];
                     info!(
                         " Domain updated to v{} (CID: {}...)",
                         version,
@@ -1283,6 +1393,57 @@ impl Web4Handler {
         }
     }
 
+    async fn load_and_verify_manifest(&self, domain: &str, manifest_cid: &str) -> anyhow::Result<DeployManifest> {
+        let manifest_bytes = self.domain_registry.get_content_by_cid(manifest_cid)
+            .await
+            .map_err(|e| anyhow!("Failed to fetch manifest: {}", e))?
+            .ok_or_else(|| anyhow!("Manifest content not found for CID {}", manifest_cid))?;
+        let manifest: DeployManifest = serde_json::from_slice(&manifest_bytes)
+            .map_err(|e| anyhow!("Invalid manifest JSON: {}", e))?;
+
+        if manifest.domain != domain {
+            return Err(anyhow!(
+                "Manifest domain mismatch: expected {}, got {}",
+                domain,
+                manifest.domain
+            ));
+        }
+
+        ensure_canonical_file_list(&manifest.files)?;
+        let computed_hash = compute_root_hash(&manifest.files);
+        if computed_hash != manifest.root_hash {
+            return Err(anyhow!("Manifest root hash mismatch"));
+        }
+
+        if manifest.signature.is_empty() {
+            return Err(anyhow!("Manifest signature missing"));
+        }
+
+        let unsigned_bytes = manifest_unsigned_bytes(&manifest)?;
+        let signature_bytes = general_purpose::STANDARD
+            .decode(&manifest.signature)
+            .map_err(|e| anyhow!("Invalid manifest signature encoding: {}", e))?;
+
+        let identity_mgr = self.identity_manager.read().await;
+        let author_id = lib_crypto::Hash::from_bytes(
+            &lib_crypto::hash_blake3(manifest.author_did.as_bytes()).to_vec(),
+        );
+        let author_identity = identity_mgr.get_identity(&author_id)
+            .ok_or_else(|| anyhow!("Author identity not found: {}", manifest.author_did))?;
+
+        let is_valid = lib_crypto::verify_signature(
+            &unsigned_bytes,
+            &signature_bytes,
+            &author_identity.public_key.dilithium_pk,
+        ).map_err(|e| anyhow!("Signature verification error: {}", e))?;
+
+        if !is_valid {
+            return Err(anyhow!("Invalid manifest signature"));
+        }
+
+        Ok(manifest)
+    }
+
     /// Resolve domain to current manifest
     /// POST /api/v1/web4/domains/resolve
     pub async fn resolve_domain_manifest(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
@@ -1297,11 +1458,9 @@ impl Web4Handler {
 
         info!("🔍 resolve_domain_manifest: Resolving '{}' (version: {:?})", resolve_req.domain, resolve_req.version);
 
-        let manager = self.web4_manager.read().await;
-        info!("🔍 resolve_domain_manifest: Got manager, DomainRegistry ptr: {:p}", &*manager.registry as *const _);
 
         // Get domain status
-        let status = manager.registry.get_domain_status(&resolve_req.domain).await
+        let status = self.domain_registry.get_domain_status(&resolve_req.domain).await
             .map_err(|e| anyhow!("Domain not found: {}", e))?;
 
         info!("🔍 resolve_domain_manifest: status.found={} for '{}'", status.found, resolve_req.domain);
@@ -1315,20 +1474,21 @@ impl Web4Handler {
         }
 
         // If specific version requested, look up that manifest
-        let manifest_cid = if let Some(version) = resolve_req.version {
-            let history = manager.registry.get_domain_history(&resolve_req.domain, 1000).await
+        // CANONICAL: Always use web4_manifest_cid for resolution
+        let web4_manifest_cid = if let Some(version) = resolve_req.version {
+            let history = self.domain_registry.get_domain_history(&resolve_req.domain, 1000).await
                 .map_err(|e| anyhow!("Failed to get history: {}", e))?;
 
             history.versions.iter()
                 .find(|v| v.version == version)
-                .map(|v| v.manifest_cid.clone())
+                .map(|v| v.web4_manifest_cid.clone())
                 .unwrap_or_else(|| "manifest-not-found".to_string())
         } else {
-            status.current_manifest_cid.clone().unwrap_or_else(|| "manifest-not-found".to_string())
+            status.current_web4_manifest_cid.clone()
         };
 
         // Debug: load manifest details to log what will be served
-        if let Ok(Some(manifest)) = manager.registry.get_manifest(&resolve_req.domain, &manifest_cid).await {
+        if let Ok(Some(manifest)) = self.domain_registry.get_manifest(&resolve_req.domain, &web4_manifest_cid).await {
             let manifest_cid_computed = manifest.compute_cid();
             let files_count = manifest.files.len();
             info!(
@@ -1338,15 +1498,15 @@ impl Web4Handler {
                 build_hash = %manifest.build_hash,
                 files = files_count,
                 manifest_cid = %manifest_cid_computed,
-                requested_cid = %manifest_cid,
+                requested_cid = %web4_manifest_cid,
                 "resolve_domain_manifest: serving manifest"
             );
         }
 
         let response = serde_json::json!({
             "domain": resolve_req.domain,
-            "version": resolve_req.version.or(status.version).unwrap_or(0),
-            "manifest_cid": manifest_cid,
+            "version": resolve_req.version.unwrap_or(status.version),
+            "web4_manifest_cid": web4_manifest_cid,
             "owner_did": status.owner_did,
             "updated_at": status.updated_at,
         });
@@ -1390,16 +1550,15 @@ impl Web4Handler {
         let owner_did = request.headers.get("x-owner-did")
             .unwrap_or_else(|| "anonymous".to_string());
 
-        let manager = self.web4_manager.read().await;
 
-        match manager.registry.rollback_domain(domain, rollback_req.to_version, &owner_did).await {
+        match self.domain_registry.rollback_domain(domain, rollback_req.to_version, &owner_did).await {
             Ok(response) => {
                 if response.success {
                     info!(
                         " Domain {} rolled back to v{} (new version: v{})",
                         domain,
                         rollback_req.to_version,
-                        response.new_version.unwrap_or(0)
+                        response.new_version
                     );
                 }
 

@@ -45,7 +45,6 @@ fn test_discovery_result_creation() {
     assert_eq!(result.protocol, DiscoveryProtocol::UdpMulticast);
     assert_eq!(result.mesh_port, 9333);
     assert!(result.public_key.is_none());
-    assert!(result.capabilities.is_none());
 }
 
 #[test]

@@ -92,7 +92,7 @@ All proof serialization includes version markers for forward compatibility.
 cargo build --release --workspace
 
 # Run the orchestrator
-./target/release/zhtp-orchestrator --config zhtp/configs/test-node1.toml
+./target/release/zhtp --config zhtp/configs/test-node1.toml
 ```
 
 ## 📋 Configuration
@@ -188,9 +188,20 @@ When a node starts successfully, you'll see:
 
 - **Post-quantum cryptography** support
 - **Zero-trust security model**
-- **Encrypted mesh networking**
+- **Encrypted mesh networking** (TLS 1.3 + ChaCha20+Kyber defense-in-depth)
 - **DHT-based peer discovery** (no central authority)
 - **Configurable security levels** (Low/Medium/High)
+
+### 📚 Security Documentation
+
+For detailed information on our encryption architecture and cryptographic design:
+
+- **[Encryption Architecture Guide](./docs/encryption/)** - Complete documentation on ZHTP's dual-layer encryption
+  - [Architecture Decision Record (ADR)](./docs/encryption/ADR_QUIC_ENCRYPTION.md) - Why defense-in-depth, threat models, trade-offs
+  - [Protocol Specification](./docs/encryption/QUIC_ENCRYPTION_PROTOCOL.md) - Complete protocol details, handshake flows, examples
+  - [Comprehensive Guide](./docs/encryption/QUIC_ENCRYPTION_GUIDE.md) - Quick reference, learning paths, troubleshooting
+
+See [docs/encryption/README.md](./docs/encryption/README.md) for documentation index and learning paths by role.
 
 ## 🛠️ Troubleshooting
 

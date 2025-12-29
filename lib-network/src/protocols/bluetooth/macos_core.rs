@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "macos", allow(deprecated))]
 // Core Bluetooth implementation for macOS
 // Uses native CBCentralManager and CBPeripheralManager for production-grade Bluetooth LE
 
@@ -22,7 +23,7 @@ use objc2_foundation::NSString;
 
 // Import common Bluetooth utilities
 #[cfg(target_os = "macos")]
-use crate::protocols::bluetooth::device::{BleDevice, BluetoothDeviceInfo, ConnectionState};
+use crate::protocols::bluetooth::device::{BleDevice, ConnectionState};
 #[cfg(target_os = "macos")]
 use crate::protocols::bluetooth::macos_delegate;
 
@@ -199,6 +200,7 @@ pub struct CBCentralManagerHandle {
     /// Raw pointer to CBCentralManager Objective-C object
     manager_ptr: *mut AnyObject,
     /// Delegate for handling callbacks
+    #[allow(dead_code)]
     delegate: CBCentralManagerDelegate,
 }
 
@@ -221,6 +223,7 @@ pub struct CBPeripheralManagerHandle {
     /// Raw pointer to CBPeripheralManager Objective-C object
     manager_ptr: *mut AnyObject,
     /// Delegate for handling callbacks
+    #[allow(dead_code)]
     delegate: CBPeripheralManagerDelegate,
 }
 
@@ -412,7 +415,7 @@ impl CoreBluetoothManager {
                         
                         // Try to deserialize as MeshHandshake
                         if value.len() >= 20 { // Minimum handshake size
-                            match bincode::deserialize::<crate::discovery::local_network::MeshHandshake>(&value) {
+                            match bincode::deserialize::<crate::protocols::bluetooth::MeshHandshake>(&value) {
                                 Ok(handshake) => {
                                     info!("🤝 Received MeshHandshake from {}", central_id);
                                     info!("   Version: {}", handshake.version);
@@ -773,7 +776,8 @@ impl CoreBluetoothManager {
     
     /// Create Objective-C delegate object for CBCentralManager
     /// This creates a custom NSObject subclass that implements CBCentralManagerDelegate protocol
-    unsafe fn create_central_manager_delegate_object(event_sender: tokio::sync::mpsc::UnboundedSender<CoreBluetoothEvent>) -> *mut AnyObject {
+    #[allow(dead_code)]
+    unsafe fn create_central_manager_delegate_object(_event_sender: tokio::sync::mpsc::UnboundedSender<CoreBluetoothEvent>) -> *mut AnyObject {
         // For now, we'll use a simple approach without creating a custom class
         // In production, you'd use objc::declare::ClassDecl to create a proper delegate class
         // with protocol implementations
@@ -789,7 +793,8 @@ impl CoreBluetoothManager {
     }
     
     /// Create Objective-C delegate object for CBPeripheralManager
-    unsafe fn create_peripheral_manager_delegate_object(event_sender: tokio::sync::mpsc::UnboundedSender<CoreBluetoothEvent>) -> *mut AnyObject {
+    #[allow(dead_code)]
+    unsafe fn create_peripheral_manager_delegate_object(_event_sender: tokio::sync::mpsc::UnboundedSender<CoreBluetoothEvent>) -> *mut AnyObject {
         // TODO: Implement proper delegate class with protocol methods:
         // - peripheralManagerDidUpdateState:
         // - peripheralManager:didAddService:error:

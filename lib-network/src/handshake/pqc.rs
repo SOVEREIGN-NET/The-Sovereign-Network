@@ -126,11 +126,14 @@ pub fn verify_pqc_offer(offer: &PqcHandshakeOffer) -> Result<()> {
 }
 
 /// Encapsulate a Kyber shared secret to the peer's PQC offer
+///
+/// ✅ FIX: Use consistent KDF info for encapsulation/decapsulation pair
 pub fn encapsulate_pqc(offer: &PqcHandshakeOffer) -> Result<(Vec<u8>, [u8; 32])> {
     if !offer.suite.is_enabled() {
         return Err(anyhow!("PQC not enabled for encapsulation"));
     }
-    kyber1024_encapsulate(&offer.kyber_public_key)
+    let kdf_info = b"ZHTP-KEM-v1.0";
+    kyber1024_encapsulate(&offer.kyber_public_key, kdf_info)
 }
 
 /// Decapsulate a Kyber shared secret using local state

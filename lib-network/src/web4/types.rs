@@ -18,15 +18,44 @@ use std::collections::HashMap;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::{ZhtpIdentity, IdentityId};
 
+/// Manifest reference entry in version history
+/// CANONICAL: This is what appears in the manifest_index
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestRef {
+    /// Version number (monotonically increasing)
+    pub version: u64,
+    /// CANONICAL: The Web4Manifest CID (runtime truth)
+    /// Used for all domain resolution and runtime lookups
+    pub web4_manifest_cid: String,
+    /// AUDIT: The original DeployManifest CID (provenance)
+    /// Stored for audit trail and signature verification
+    #[serde(default)]
+    pub deploy_manifest_cid: Option<String>,
+    /// BLAKE3 hash of the build output
+    pub build_hash: String,
+    /// Deployment timestamp
+    pub created_at: u64,
+    /// Deployment message (optional)
+    pub message: Option<String>,
+}
+
 /// Web4 domain registration record (versioned pointer)
+///
+/// CANONICAL ARCHITECTURE:
+/// - current_web4_manifest_cid points to the RUNTIME truth (Web4Manifest)
+/// - All resolution uses web4_manifest_cid exclusively
+/// - deploy_manifest_cid is stored only in manifest_index for audit
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainRecord {
     /// Domain name (e.g., "myapp.zhtp")
     pub domain: String,
     /// Owner's identity
     pub owner: IdentityId,
-    /// Current manifest CID (content-addressed pointer)
-    pub current_manifest_cid: String,
+    /// CANONICAL: Current Web4Manifest CID (runtime truth for resolution)
+    /// This is the authoritative pointer used by all domain resolution logic
+    /// MIGRATION: serde alias allows loading old records with "current_manifest_cid"
+    #[serde(alias = "current_manifest_cid")]
+    pub current_web4_manifest_cid: String,
     /// Current version number (monotonically increasing)
     pub version: u64,
     /// Registration timestamp
@@ -171,8 +200,9 @@ pub struct DomainUpdateResponse {
 pub struct DomainVersionEntry {
     /// Version number
     pub version: u64,
-    /// Manifest CID for this version
-    pub manifest_cid: String,
+    /// CANONICAL: Web4Manifest CID for this version
+    /// This is what's used for runtime resolution
+    pub web4_manifest_cid: String,
     /// Creation timestamp
     pub created_at: u64,
     /// Creator DID
@@ -205,8 +235,8 @@ pub struct DomainStatusResponse {
     pub domain: String,
     /// Current version
     pub version: u64,
-    /// Current manifest CID
-    pub current_manifest_cid: String,
+    /// CANONICAL: Current Web4Manifest CID (runtime truth)
+    pub current_web4_manifest_cid: String,
     /// Owner DID
     pub owner_did: String,
     /// Last update timestamp
@@ -277,9 +307,10 @@ pub struct DomainRegistrationRequest {
     pub initial_content: HashMap<String, Vec<u8>>,
     /// Registration proof
     pub registration_proof: ZeroKnowledgeProof,
-    /// Manifest CID (if registering with pre-uploaded manifest)
+    /// CANONICAL: DeployManifest CID (if registering with pre-uploaded manifest)
+    /// This will be converted to web4_manifest_cid during registration
     #[serde(default)]
-    pub manifest_cid: Option<String>,
+    pub deploy_manifest_cid: Option<String>,
 }
 
 /// Domain registration response

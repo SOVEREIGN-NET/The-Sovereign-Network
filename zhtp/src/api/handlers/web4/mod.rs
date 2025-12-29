@@ -29,11 +29,12 @@ use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::web4_stub::{Web4Manager, Web4ContentService};
+use lib_network::web4::{DomainRegistry, ContentPublisher, Web4ContentService};
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use chrono;
 use uuid;
+use hex;
 
 /// Standardized error response format (Issue #11)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,8 +46,10 @@ pub struct ErrorResponse {
 
 /// Web4 API handler that integrates with existing ZHTP server
 pub struct Web4Handler {
-    /// Web4 system manager
-    web4_manager: Arc<RwLock<Web4Manager>>,
+    /// Domain registry for managing Web4 domains
+    domain_registry: Arc<DomainRegistry>,
+    /// Content publisher for publishing content
+    content_publisher: Arc<ContentPublisher>,
     /// Content service for serving Web4 content
     content_service: Arc<Web4ContentService>,
     /// Wallet-content ownership manager
@@ -60,53 +63,18 @@ pub struct Web4Handler {
 }
 
 impl Web4Handler {
-    /// Create new Web4 API handler with existing storage system and identity manager
-    pub async fn new(
-        storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
-        identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
-        blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
-    ) -> ZhtpResult<Self> {
-        info!("Initializing Web4 API handler with existing storage system");
-
-        let web4_manager = crate::web4_stub::initialize_web4_system_with_storage(storage).await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize Web4 system: {}", e))?;
-
-        // Create content service using the registry from the manager
-        let content_service = Web4ContentService::new(Arc::clone(&web4_manager.registry));
-
-        info!("Web4 API handler initialized successfully");
-
-        // Initialize wallet-content manager for ownership tracking
-        let wallet_content_manager = lib_storage::WalletContentManager::new();
-
-        Ok(Self {
-            web4_manager: Arc::new(RwLock::new(web4_manager)),
-            content_service: Arc::new(content_service),
-            wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
-            identity_manager,
-            blockchain,
-            chunked_upload_manager: Arc::new(ChunkedUploadManager::new()),
-        })
-    }
-
-    /// Create new Web4 API handler with existing domain registry (avoids creating duplicate)
+    /// Create new Web4 API handler with existing domain registry and content publisher
     /// This is the preferred constructor when a DomainRegistry already exists
     pub async fn new_with_registry(
-        domain_registry: Arc<crate::web4_stub::DomainRegistry>,
-        storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+        domain_registry: Arc<DomainRegistry>,
+        content_publisher: Arc<ContentPublisher>,
         identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
         blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
     ) -> ZhtpResult<Self> {
         info!("Initializing Web4 API handler with existing domain registry");
 
-        // Create Web4Manager using existing registry
-        let web4_manager = crate::web4_stub::Web4Manager::new_with_registry(
-            domain_registry.clone(),
-            storage.clone()
-        ).await.map_err(|e| anyhow::anyhow!("Failed to create Web4Manager: {}", e))?;
-
         // Create content service using the shared registry
-        let content_service = Web4ContentService::new(domain_registry);
+        let content_service = Web4ContentService::new(domain_registry.clone());
 
         info!("Web4 API handler initialized with shared domain registry");
 
@@ -114,7 +82,8 @@ impl Web4Handler {
         let wallet_content_manager = lib_storage::WalletContentManager::new();
 
         Ok(Self {
-            web4_manager: Arc::new(RwLock::new(web4_manager)),
+            domain_registry,
+            content_publisher,
             content_service: Arc::new(content_service),
             wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
             identity_manager,
@@ -123,9 +92,9 @@ impl Web4Handler {
         })
     }
 
-    /// Get reference to the Web4Manager for sharing with other handlers
-    pub fn get_web4_manager(&self) -> Arc<RwLock<Web4Manager>> {
-        Arc::clone(&self.web4_manager)
+    /// Get reference to the domain registry
+    pub fn get_domain_registry(&self) -> Arc<DomainRegistry> {
+        Arc::clone(&self.domain_registry)
     }
 
     /// Create standardized JSON error response (Issue #11)
@@ -151,9 +120,8 @@ impl Web4Handler {
 
     /// Get Web4 system statistics
     async fn get_web4_statistics(&self) -> ZhtpResult<ZhtpResponse> {
-        let manager = self.web4_manager.read().await;
 
-        match manager.registry.get_statistics().await {
+        match self.domain_registry.get_statistics().await {
             Ok(stats) => {
                 let stats_json = serde_json::to_vec(&stats)
                     .map_err(|e| anyhow::anyhow!("Failed to serialize statistics: {}", e))?;
@@ -197,20 +165,12 @@ impl Web4Handler {
             (parts[0].to_string(), parts.get(1).map(|s| s.to_string()))
         };
 
-        let manager = self.web4_manager.read().await;
-
         // Resolve domain to get contract ID
-        match manager.registry.lookup_domain(&domain).await {
+        match self.domain_registry.lookup_domain(&domain).await {
             Ok(lookup) if lookup.found => {
                 if let Some(record) = lookup.record {
-                    let owner = record.get("owner")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    let content_available = record.get("content_mappings")
-                        .and_then(|v| v.as_object())
-                        .map(|m| !m.is_empty())
-                        .unwrap_or(false);
+                    let owner = hex::encode(&record.owner.0[..16]);
+                    let content_available = !record.content_mappings.is_empty();
                     // Return contract/content information
                     // Note: Web4 domains don't have direct contract associations yet
                     let response = serde_json::json!({
@@ -262,14 +222,12 @@ impl Web4Handler {
 
         info!("Resolving Web4 domain: {}", domain);
 
-        let manager = self.web4_manager.read().await;
-
-        match manager.registry.lookup_domain(domain).await {
+        match self.domain_registry.lookup_domain(domain).await {
             Ok(lookup) if lookup.found => {
                 if let Some(record) = lookup.record {
-                    let owner = record.get("owner").and_then(|v| v.as_str()).unwrap_or_default();
-                    let registered_at = record.get("registered_at").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let expires_at = record.get("expires_at").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let owner = hex::encode(&record.owner.0[..16]);
+                    let registered_at = record.registered_at;
+                    let expires_at = record.expires_at;
                     // Note: Web4 domains don't have direct contract associations yet
                     let response = serde_json::json!({
                         "status": "success",
@@ -424,8 +382,7 @@ impl Web4Handler {
         );
 
         // Store blob in content-addressed storage
-        let manager = self.web4_manager.read().await;
-        let content_id = manager.registry.store_content_by_cid(request.body.clone()).await
+        let content_id = self.domain_registry.store_content_by_cid(request.body.clone()).await
             .map_err(|e| anyhow::anyhow!("Failed to store blob: {}", e))?;
 
         let response = serde_json::json!({
@@ -465,8 +422,16 @@ impl Web4Handler {
             .map_err(|e| anyhow::anyhow!("Invalid manifest JSON: {}", e))?;
 
         let files_count = manifest.get("files")
-            .and_then(|v| v.as_object())
-            .map(|o| o.len())
+            .and_then(|v| {
+                // Handle both array (Vec<FileEntry>) and object (HashMap<String, ManifestFile>) formats
+                if let Some(arr) = v.as_array() {
+                    Some(arr.len())
+                } else if let Some(obj) = v.as_object() {
+                    Some(obj.len())
+                } else {
+                    None
+                }
+            })
             .unwrap_or(0);
 
         debug!(
@@ -476,8 +441,7 @@ impl Web4Handler {
         );
 
         // Store manifest in content-addressed storage
-        let manager = self.web4_manager.read().await;
-        let manifest_cid = manager.registry.store_content_by_cid(request.body.clone()).await
+        let manifest_cid = self.domain_registry.store_content_by_cid(request.body.clone()).await
             .map_err(|e| anyhow::anyhow!("Failed to store manifest: {}", e))?;
 
         let response = serde_json::json!({
@@ -504,8 +468,7 @@ impl Web4Handler {
     async fn fetch_content_by_cid(&self, cid: &str) -> ZhtpResult<ZhtpResponse> {
         info!("Fetching content by CID: {}", cid);
 
-        let manager = self.web4_manager.read().await;
-        let content = manager.registry.get_content_by_cid(cid).await
+        let content = self.domain_registry.get_content_by_cid(cid).await
             .map_err(|e| anyhow::anyhow!("Failed to retrieve content: {}", e))?;
 
         match content {
@@ -576,6 +539,9 @@ impl ZhtpRequestHandler for Web4Handler {
             // Domain management endpoints
             path if path.starts_with("/api/v1/web4/domains/register") => {
                 self.register_domain_simple(request.body).await
+            }
+            path if path.starts_with("/api/v1/web4/domains?") && request.method == lib_protocols::ZhtpMethod::Get => {
+                self.list_domains(request).await
             }
             path if path.starts_with("/api/v1/web4/domains/") && request.method == lib_protocols::ZhtpMethod::Get => {
                 self.get_domain(request).await

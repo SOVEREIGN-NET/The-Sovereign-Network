@@ -21,7 +21,7 @@ use tracing::{debug, info, warn, error};
 use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use lib_crypto::PublicKey;
-use lib_network::discovery::local_network::MeshHandshake;
+use lib_network::protocols::bluetooth::MeshHandshake;
 use lib_network::protocols::zhtp_auth::ZhtpAuthResponse;
 
 use super::core::MeshRouter;

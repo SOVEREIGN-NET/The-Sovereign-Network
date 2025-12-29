@@ -25,12 +25,12 @@
 //! - Contains a MAC over the request bytes
 
 use anyhow::{anyhow, Result, Context};
-use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::{info, debug, warn};
+use uuid::Uuid;
 
 use quinn::{Endpoint, Connection, ClientConfig};
 
@@ -45,6 +45,35 @@ use crate::handshake::{HandshakeContext, NonceCache};
 use crate::protocols::quic_handshake;
 
 use super::trust::{TrustConfig, ZhtpTrustVerifier};
+
+/// Configuration for Web4Client initialization
+///
+/// This struct allows explicit configuration of client behavior without
+/// relying on environment variables or process IDs.
+#[derive(Clone, Debug)]
+pub struct Web4ClientConfig {
+    /// Allow bootstrap mode for development/testing
+    /// When true, accepts any TLS certificate (INSECURE - dev only)
+    pub allow_bootstrap: bool,
+
+    /// Custom cache directory for nonce storage.
+    /// If None, uses a temporary directory with UUID-based naming.
+    pub cache_dir: Option<PathBuf>,
+
+    /// Unique session identifier for cache directory naming.
+    /// If not specified, a new UUID is generated.
+    pub session_id: Option<String>,
+}
+
+impl Default for Web4ClientConfig {
+    fn default() -> Self {
+        Self {
+            allow_bootstrap: false,
+            cache_dir: None,
+            session_id: None,
+        }
+    }
+}
 
 /// Web4 client for authenticated QUIC communication
 pub struct Web4Client {
@@ -65,6 +94,9 @@ pub struct Web4Client {
 
     /// Trust verifier (stored for DID binding after handshake)
     trust_verifier: Option<Arc<ZhtpTrustVerifier>>,
+
+    /// Client configuration
+    config: Web4ClientConfig,
 }
 
 /// Connection with completed UHP+Kyber handshake
@@ -108,15 +140,26 @@ impl AuthenticatedConnection {
 }
 
 impl Web4Client {
-    /// Create a new Web4 client with the given identity and trust config
-    pub async fn new_with_trust(identity: ZhtpIdentity, trust_config: TrustConfig) -> Result<Self> {
+    /// Create a new Web4 client with the given identity, trust config, and explicit config
+    pub async fn new_with_trust_and_config(
+        identity: ZhtpIdentity,
+        trust_config: TrustConfig,
+        config: Web4ClientConfig,
+    ) -> Result<Self> {
         // Create QUIC endpoint (client-only, no listening)
         let endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
 
-        // Create nonce cache in temp directory (for CLI single-use)
-        let temp_dir = std::env::temp_dir().join(format!("web4_client_{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir)?;
-        let nonce_cache = NonceCache::open(&temp_dir.join("nonces"), 3600, 10_000)
+        // Determine cache directory and session ID
+        let session_id = config.session_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
+        let cache_dir = if let Some(dir) = config.cache_dir.as_ref() {
+            dir.clone()
+        } else {
+            // Use temp directory with UUID-based naming (not process ID)
+            std::env::temp_dir().join(format!("web4_client_{}", session_id))
+        };
+
+        std::fs::create_dir_all(&cache_dir)?;
+        let nonce_cache = NonceCache::open(&cache_dir.join("nonces"), 3600, 10_000)
             .context("Failed to create nonce cache")?;
         let handshake_ctx = HandshakeContext::new(nonce_cache);
 
@@ -137,7 +180,13 @@ impl Web4Client {
             handshake_ctx,
             trust_config,
             trust_verifier: None,
+            config,
         })
+    }
+
+    /// Create a new Web4 client with the given identity and trust config (uses default config)
+    pub async fn new_with_trust(identity: ZhtpIdentity, trust_config: TrustConfig) -> Result<Self> {
+        Self::new_with_trust_and_config(identity, trust_config, Web4ClientConfig::default()).await
     }
 
     /// Create a new Web4 client with default trust (strict - requires pin or TOFU)
@@ -155,14 +204,38 @@ impl Web4Client {
         Self::new_with_trust(identity, trust_config).await
     }
 
-    /// Create a new Web4 client in bootstrap mode (accepts any cert - DEV ONLY)
+    /// Create a new Web4 client in bootstrap mode with explicit config (accepts any cert - DEV ONLY)
     ///
     /// WARNING: Bootstrap mode provides NO certificate verification.
     /// Use only for development or when connecting to known local nodes.
-    pub async fn new_bootstrap(identity: ZhtpIdentity) -> Result<Self> {
-        Self::ensure_bootstrap_allowed()?;
+    pub async fn new_bootstrap_with_config(
+        identity: ZhtpIdentity,
+        config: Web4ClientConfig,
+    ) -> Result<Self> {
+        if !config.allow_bootstrap {
+            return Err(anyhow!(
+                "Bootstrap mode requires Web4ClientConfig::allow_bootstrap to be true"
+            ));
+        }
         warn!("Web4 client created in BOOTSTRAP MODE - NO TLS VERIFICATION");
-        Self::new_with_trust(identity, TrustConfig::bootstrap()).await
+        Self::new_with_trust_and_config(identity, TrustConfig::bootstrap(), config).await
+    }
+
+    /// Create a new Web4 client in bootstrap mode (accepts any cert - DEV ONLY)
+    ///
+    /// Deprecated: Use `new_bootstrap_with_config()` with explicit config instead.
+    /// This method is maintained for backwards compatibility.
+    ///
+    /// WARNING: Bootstrap mode provides NO certificate verification.
+    /// Use only for development or when connecting to known local nodes.
+    #[deprecated(since = "1.1.0", note = "Use new_bootstrap_with_config with explicit config")]
+    pub async fn new_bootstrap(identity: ZhtpIdentity) -> Result<Self> {
+        warn!("Web4 client created in BOOTSTRAP MODE - NO TLS VERIFICATION");
+        let config = Web4ClientConfig {
+            allow_bootstrap: true,
+            ..Default::default()
+        };
+        Self::new_bootstrap_with_config(identity, config).await
     }
 
     /// Create a new Web4 client with TOFU (Trust On First Use)
@@ -172,23 +245,6 @@ impl Web4Client {
     pub async fn new_tofu(identity: ZhtpIdentity) -> Result<Self> {
         let trustdb_path = TrustConfig::default_trustdb_path()?;
         Self::new_with_trust(identity, TrustConfig::with_tofu(trustdb_path)).await
-    }
-
-    /// Enforce explicit bootstrap enablement in release builds
-    fn ensure_bootstrap_allowed() -> Result<()> {
-        let allowed = env::var("ZHTP_ALLOW_BOOTSTRAP").ok().map(|v| v == "1").unwrap_or(false);
-
-        if !cfg!(debug_assertions) && !allowed {
-            return Err(anyhow!(
-                "Bootstrap mode is disabled in production builds. Set ZHTP_ALLOW_BOOTSTRAP=1 to proceed (dev only)."
-            ));
-        }
-        if !allowed {
-            return Err(anyhow!(
-                "Bootstrap mode requires ZHTP_ALLOW_BOOTSTRAP=1. Use only with --trust-node for development."
-            ));
-        }
-        Ok(())
     }
 
     /// Create a new Web4 client with SPKI pinning
@@ -281,7 +337,7 @@ impl Web4Client {
             &self.handshake_ctx,
         ).await.context("UHP+Kyber handshake failed")?;
 
-        let peer_did = handshake_result.peer_identity.did.clone();
+        let peer_did = handshake_result.verified_peer.identity.did.clone();
 
         // Verify node DID matches trust configuration
         if let Some(ref verifier) = self.trust_verifier {
@@ -316,6 +372,19 @@ impl Web4Client {
         });
 
         Ok(())
+    }
+
+    /// Ensure bootstrap mode is explicitly enabled via environment variable
+    fn ensure_bootstrap_allowed() -> Result<()> {
+        match std::env::var("ZHTP_ALLOW_BOOTSTRAP") {
+            Ok(val) if val == "1" || val.eq_ignore_ascii_case("true") => Ok(()),
+            _ => Err(anyhow!(
+                "Bootstrap mode requires ZHTP_ALLOW_BOOTSTRAP environment variable to be set to \
+                 an explicit enabling value. This mode is insecure and should only be used for \
+                 development. Set ZHTP_ALLOW_BOOTSTRAP=1 or ZHTP_ALLOW_BOOTSTRAP=true to proceed \
+                 at your own risk."
+            ))
+        }
     }
 
     /// Configure QUIC client with trust verifier

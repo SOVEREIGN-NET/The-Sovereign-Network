@@ -27,4 +27,4 @@
 
 mod zhtp_client;
 
-pub use zhtp_client::ZhtpClient;
+pub use zhtp_client::{ZhtpClient, ZhtpClientConfig};
