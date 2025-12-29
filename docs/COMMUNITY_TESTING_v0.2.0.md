@@ -1,8 +1,27 @@
-# 🚀 ZHTP Node v0.2.0 - Community Testing Release
+# 🚀 ZHTP Node - v0.2.0 Candidate Testing Phase
 
+**Status**: ⚠️ **PRE-RELEASE** - Community Testing Phase (Expect Major Issues)
 **Announcement Date**: December 29, 2025
 
-We're excited to announce a major update with significant improvements to Web4 domain management, persistence, and infrastructure. **We need your help testing!**
+We're opening up a major update with significant improvements to Web4 domain management, persistence, and infrastructure for **community testing**. This is **NOT** a stable release yet—we expect to find (and fix) major issues together.
+
+**Your testing will directly shape what goes into the stable v0.2.0 release.**
+
+---
+
+## ⚠️ Important: This Is Pre-Release Testing
+
+- **DO NOT use this for production** - Major bugs and breaking changes are expected
+- **Data loss possible** - The canonical manifest architecture may require migration/reset
+- **APIs may change** - Command syntax and behavior could shift based on feedback
+- **Performance unoptimized** - We haven't tuned for speed yet
+- **But**: Your feedback here directly shapes what becomes the stable release
+
+**In exchange for testing, you get**:
+- Early access to new features
+- Influence over API design and UX
+- Recognition in release notes
+- Direct communication with the dev team
 
 ---
 
@@ -291,12 +310,39 @@ By testing, you're directly helping us:
 Your feedback is critical to making ZHTP production-ready. Whether you:
 - ✅ Successfully deployed 100 sites (awesome!)
 - ⚠️ Hit an edge case we didn't anticipate (perfect!)
-- ❌ Found a blocking bug (we want to know!)
+- ❌ Found a blocking bug (we NEED to know!)
 - 💡 Have a suggestion (tell us!)
+- 💥 Broke something completely (best kind of test!)
 
-**Tell us about it.**
+**Tell us about it.** Seriously.
 
-The more you test, the more we learn. The more you report, the faster we improve.
+The more you test, the more we learn. The more you report (especially the bad stuff), the faster we improve. This testing phase directly shapes the stable v0.2.0 release.
+
+---
+
+## 📌 Expected Issues in This Phase
+
+Heads up: You'll likely encounter:
+- **Data model changes** - The manifest system is new, may require fresh starts
+- **Missing error messages** - Edge cases with unclear failures
+- **Performance issues** - Not optimized yet
+- **Inconsistent behavior** - Especially in edge cases
+- **Missing commands** - Some features may be incomplete
+
+**This is normal.** That's why we're testing.
+
+---
+
+## 🎯 Our Goal
+
+Move from this pre-release testing phase to a **stable v0.2.0** based on:
+- ✅ No critical bugs blocking basic workflows
+- ✅ Persistence working reliably
+- ✅ Clear error messages for failure cases
+- ✅ Documentation covering common scenarios
+- ✅ Cross-platform compatibility verified
+
+**You determine when we're ready.**
 
 ---
 
