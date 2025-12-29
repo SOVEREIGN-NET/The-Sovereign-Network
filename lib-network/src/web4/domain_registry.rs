@@ -11,11 +11,14 @@ use tracing::{info, error, warn};
 use lib_crypto::hash_blake3;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::ZhtpIdentity;
-#[cfg(feature = "storage-integration")]
-use lib_storage::{UnifiedStorageSystem, UploadRequest, AccessControlSettings, ContentStorageRequirements};
 
 use crate::dht::ZkDHTIntegration;
 use super::types::*;
+
+// Use storage stub (protocol-only per architecture)
+// Real storage integration happens at application layer (zhtp)
+use crate::storage_stub::{UnifiedStorageSystem, UnifiedStorageConfig};
+
 #[cfg(feature = "storage-integration")]
 use super::content_publisher::ContentPublisher;
 #[cfg(feature = "chain-integration")]
@@ -44,7 +47,7 @@ impl DomainRegistry {
     }
 
     /// Create new domain registry with existing storage system (avoids creating duplicates)
-    pub async fn new_with_storage(storage: std::sync::Arc<tokio::sync::RwLock<lib_storage::UnifiedStorageSystem>>) -> Result<Self> {
+    pub async fn new_with_storage(storage: std::sync::Arc<tokio::sync::RwLock<UnifiedStorageSystem>>) -> Result<Self> {
         let registry = Self {
             domain_records: Arc::new(RwLock::new(HashMap::new())),
             dht_client: Arc::new(RwLock::new(None)), // No DHT client needed when using shared storage
@@ -74,7 +77,7 @@ impl DomainRegistry {
 
     /// Create new domain registry with optional existing DHT client
     pub async fn new_with_dht(dht_client: Option<ZkDHTIntegration>) -> Result<Self> {
-        let storage_config = lib_storage::UnifiedStorageConfig::default();
+        let storage_config = UnifiedStorageConfig::default();
         let storage_system = UnifiedStorageSystem::new(storage_config).await?;
 
         let registry = Self {
@@ -656,103 +659,11 @@ impl DomainRegistry {
         Ok(())
     }
 
-    /// Store domain content in DHT
-    async fn store_domain_content(&self, domain: &str, path: &str, content: Vec<u8>) -> Result<String> {
-        // Calculate original content hash for logging only
-        let hash_bytes = hash_blake3(&content);
-        let short_hash = hex::encode(&hash_bytes[..8]); // For logging only
-
-        info!(" Storing content for domain {} at path {} (original hash: {}..., size: {} bytes)",
-              domain, path, short_hash, content.len());
-
-        // Prepare upload request and uploader identity OUTSIDE of lock
-        let storage_requirements = ContentStorageRequirements {
-            duration_days: 365, // 1 year storage
-            quality_requirements: lib_storage::QualityRequirements {
-                min_uptime: 0.99,
-                max_response_time: 1000,
-                min_replication: 2,
-                geographic_distribution: None,
-                required_certifications: vec![],
-            },
-            budget_constraints: lib_storage::BudgetConstraints {
-                max_total_cost: 1000,
-                max_cost_per_gb_day: 10,
-                payment_schedule: lib_storage::types::economic_types::PaymentSchedule::Daily,
-                max_price_volatility: 0.1,
-            },
-        };
-
-        // Determine MIME type from path
-        let mime_type = if path.ends_with(".css") {
-            "text/css"
-        } else if path.ends_with(".js") {
-            "application/javascript"
-        } else if path.ends_with(".json") {
-            "application/json"
-        } else if path.ends_with(".png") {
-            "image/png"
-        } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
-            "image/jpeg"
-        } else {
-            "text/html"
-        }.to_string();
-
-        // Create upload request
-        let upload_request = UploadRequest {
-            content: content.clone(),
-            filename: format!("{}:{}", domain, path),
-            mime_type,
-            description: format!("Web4 content for {} at {}", domain, path),
-            tags: vec!["web4".to_string(), domain.to_string()],
-            encrypt: false, // Web4 content is public
-            compress: true,  // Compress for efficiency
-            access_control: AccessControlSettings {
-                public_read: true,
-                read_permissions: vec![],
-                write_permissions: vec![],
-                expires_at: None,
-            },
-            storage_requirements,
-        };
-
-        // Create uploader identity (use domain owner or anonymous)
-        let uploader = lib_identity::ZhtpIdentity::new_unified(
-            lib_identity::types::identity_types::IdentityType::Human,
-            Some(25), // Default age
-            Some("US".to_string()), // Default jurisdiction
-            &format!("web4_publisher_{}", domain),
-            None, // Random seed
-        ).map_err(|e| anyhow!("Failed to create uploader identity: {}", e))?;
-
-        // LOCK SAFETY: Acquire storage lock, do async work, release before acquiring other locks
-        let actual_storage_hash = {
-            let mut storage = self.storage_system.write().await;
-            storage.upload_content(upload_request, uploader).await
-                .map_err(|e| {
-                    error!(" DHT storage FAILED (no cache fallback): {}", e);
-                    anyhow!("Failed to store content in DHT: {}", e)
-                })?
-        }; // storage lock released here
-
-        info!("  Stored in DHT successfully");
-        info!("    Original hash: {}", short_hash);
-        info!("    DHT storage hash: {}", hex::encode(actual_storage_hash.as_bytes()));
-        info!("    (Different due to compression)");
-
-        // Convert storage_hash to hex string for content_mappings
-        let storage_hash_hex = hex::encode(actual_storage_hash.as_bytes());
-
-        // LOCK SAFETY: Acquire cache lock separately
-        {
-            let mut cache = self.content_cache.write().await;
-            cache.insert(storage_hash_hex.clone(), content);
-            info!(" Cached content with DHT storage hash: {}", storage_hash_hex);
-        } // cache lock released here
-
-        // CRITICAL: Return the ACTUAL DHT storage hash (after compression/encryption)
-        // This is the hash that can be used to retrieve the content from DHT
-        Ok(storage_hash_hex)
+    /// Store domain content in DHT - NOT IMPLEMENTED in stub
+    /// Real implementation provided by application layer (zhtp) with actual storage integration
+    async fn store_domain_content(&self, domain: &str, path: &str, _content: Vec<u8>) -> Result<String> {
+        // Stub implementation - just return error
+        Err(anyhow!("Content storage not implemented in protocol-only lib-network. Use zhtp application layer for storage integration."))
     }
 
     /// Store domain record to persistent storage
@@ -845,65 +756,10 @@ impl DomainRegistry {
         Ok(())
     }
 
-    /// Get content by hash from DHT ONLY (cache disabled for testing)
+    /// Get content by hash from DHT ONLY - NOT IMPLEMENTED in stub
+    /// Real implementation provided by application layer (zhtp) with actual storage integration
     pub async fn get_content(&self, content_hash: &str) -> Result<Vec<u8>> {
-        // CACHE DISABLED - Force DHT retrieval for testing
-        info!(" TESTING MODE: Skipping cache, retrieving from DHT for content hash: {}", content_hash);
-
-        // Note: Cache check disabled to test DHT functionality
-        // {
-        //     let cache = self.content_cache.read().await;
-        //     if let Some(content) = cache.get(content_hash) {
-        //         info!(" Cache hit for content hash: {}", content_hash);
-        //         return Ok(content.clone());
-        //     }
-        // }
-
-        // Prepare download request OUTSIDE of lock
-        let hash_bytes = hex::decode(content_hash)
-            .map_err(|e| anyhow!("Invalid content hash format: {}", e))?;
-
-        if hash_bytes.len() != 32 {
-            return Err(anyhow!("Content hash must be 32 bytes, got {}", hash_bytes.len()));
-        }
-
-        let content_hash_obj = lib_crypto::Hash(hash_bytes.try_into()
-            .map_err(|_| anyhow!("Failed to convert hash to array"))?);
-
-        // Create download request with anonymous requester
-        let requester = lib_identity::ZhtpIdentity::new_unified(
-            lib_identity::types::identity_types::IdentityType::Human,
-            Some(25), // Default age
-            Some("US".to_string()), // Default jurisdiction
-            "web4_retriever",
-            None, // Random seed
-        ).map_err(|e| anyhow!("Failed to create requester identity: {}", e))?;
-
-        let download_request = lib_storage::DownloadRequest {
-            content_hash: content_hash_obj,
-            requester,
-            version: None,
-        };
-
-        // LOCK SAFETY: Acquire storage lock, do async work, release before acquiring other locks
-        let content = {
-            let mut storage = self.storage_system.write().await;
-            storage.download_content(download_request).await
-                .map_err(|e| {
-                    error!(" Failed to retrieve content from DHT: {}", e);
-                    anyhow!("Content not found for hash: {} (DHT error: {})", content_hash, e)
-                })?
-        }; // storage lock released here
-
-        info!(" Retrieved {} bytes from DHT", content.len());
-
-        // LOCK SAFETY: Acquire cache lock separately
-        {
-            let mut cache = self.content_cache.write().await;
-            cache.insert(content_hash.to_string(), content.clone());
-        } // cache lock released here
-
-        Ok(content)
+        Err(anyhow!("Content retrieval not implemented in protocol-only lib-network. Use zhtp application layer for storage integration. (requested hash: {})", content_hash))
     }
 
     /// Get content for a domain path
@@ -1270,7 +1126,7 @@ impl Web4Manager {
     }
 
     /// Create new Web4 manager with existing storage system (avoids creating duplicates)
-    pub async fn new_with_storage(storage: std::sync::Arc<tokio::sync::RwLock<lib_storage::UnifiedStorageSystem>>) -> Result<Self> {
+    pub async fn new_with_storage(storage: std::sync::Arc<tokio::sync::RwLock<UnifiedStorageSystem>>) -> Result<Self> {
         let registry = DomainRegistry::new_with_storage(storage.clone()).await?;
         let registry_arc = Arc::new(registry);
         let content_publisher = super::content_publisher::ContentPublisher::new_with_storage(registry_arc.clone(), storage).await?;
@@ -1297,7 +1153,7 @@ impl Web4Manager {
     /// This is the preferred constructor when a DomainRegistry already exists
     pub async fn new_with_registry(
         registry: Arc<DomainRegistry>,
-        storage: std::sync::Arc<tokio::sync::RwLock<lib_storage::UnifiedStorageSystem>>,
+        storage: std::sync::Arc<tokio::sync::RwLock<UnifiedStorageSystem>>,
     ) -> Result<Self> {
         let content_publisher = super::content_publisher::ContentPublisher::new_with_storage(
             registry.clone(),
@@ -1356,9 +1212,9 @@ mod tests {
     use tempfile::TempDir;
 
     /// Create a test storage system with persistence enabled
-    async fn create_test_storage_with_persistence(persist_path: std::path::PathBuf) -> Arc<RwLock<UnifiedStorageSystem>> {
-        let mut config = lib_storage::UnifiedStorageConfig::default();
-        config.storage_config.dht_persist_path = Some(persist_path);
+    async fn create_test_storage_with_persistence(_persist_path: std::path::PathBuf) -> Arc<RwLock<UnifiedStorageSystem>> {
+        // Stub only - real persistence requires lib-storage integration
+        let config = UnifiedStorageConfig::default();
         let storage = UnifiedStorageSystem::new(config).await.unwrap();
         Arc::new(RwLock::new(storage))
     }
