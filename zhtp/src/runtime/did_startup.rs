@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use lib_identity::{ZhtpIdentity, IdentityId};
-use lib_identity::wallets::WalletId;
+use lib_identity::wallets::{WalletId, QuantumWallet, WalletType};
 use lib_identity::types::IdentityType;
 use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_crypto::{PrivateKey, Hash};
@@ -63,6 +63,12 @@ struct PersistedWalletData {
     wallet_address: String,
     node_wallet_id: Vec<u8>,
     node_identity_id: Vec<u8>,
+    #[serde(default = "default_genesis_balance")]
+    balance: u64,
+}
+
+fn default_genesis_balance() -> u64 {
+    5000 // Default genesis wallet balance
 }
 
 /// Get the default keystore path (~/.zhtp/keystore)
@@ -119,7 +125,7 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
         master_seed: user_keystore_key.master_seed.clone(),
     };
 
-    let user_identity = ZhtpIdentity::from_serialized(&user_identity_data, &user_private_key)
+    let mut user_identity = ZhtpIdentity::from_serialized(&user_identity_data, &user_private_key)
         .map_err(|e| KeystoreError::Corrupt(user_identity_file.clone(), e.to_string()))?;
 
     // Load node identity
@@ -148,19 +154,52 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
     let wallet_data: PersistedWalletData = serde_json::from_str(&wallet_data_str)
         .map_err(|e| KeystoreError::Corrupt(wallet_data_file.clone(), e.to_string()))?;
 
-    // Reconstruct PrivateIdentityData for user
+    // CRITICAL: Restore wallet into user_identity's wallet_manager
+    // When identity is deserialized, wallet_manager is empty - we must repopulate it
+    // Create a basic QuantumWallet from the persisted metadata
+    let wallet_id = lib_crypto::Hash(
+        wallet_data.node_wallet_id.clone().try_into()
+            .map_err(|_| KeystoreError::Corrupt(wallet_data_file.clone(), "Invalid wallet_id length".to_string()))?
+    );
+
+    // Create wallet with restored identity's public key (seed phrase not preserved for security)
+    let mut restored_wallet = QuantumWallet::new(
+        WalletType::Primary,
+        wallet_data.wallet_name.clone(),
+        None, // No alias
+        Some(user_identity.id.clone()),
+        user_identity.public_key.dilithium_pk.clone(), // Use actual public key from restored identity
+    );
+
+    // Override the auto-generated wallet_id with the saved one
+    restored_wallet.id = wallet_id.clone();
+
+    // CRITICAL: Restore the wallet balance from persisted data
+    // Without this, restored wallets would have 0 balance
+    restored_wallet.balance = wallet_data.balance;
+
+    // Insert wallet into the wallet_manager
+    user_identity.wallet_manager.wallets.insert(wallet_id.clone(), restored_wallet);
+    eprintln!("✓ WALLET RESTORATION: Restored {} wallet (ID: {}) into user_identity {}",
+        wallet_data.wallet_name,
+        hex::encode(&wallet_id.0[..8]),
+        hex::encode(&user_identity.id.0[..8])
+    );
+    eprintln!("  Wallet count: {}, Balance: {} ZHTP",
+        user_identity.wallet_manager.wallets.len(),
+        wallet_data.balance);
+
+    // Reconstruct PrivateIdentityData for user (recovery data only, no seed field)
     let user_private_data = lib_identity::identity::PrivateIdentityData::new(
         user_keystore_key.dilithium_sk,
         user_identity.public_key.dilithium_pk.clone(),
-        user_keystore_key.master_seed.clone().try_into().unwrap_or([0u8; 32]),
         vec![], // Recovery phrases not stored for security
     );
 
-    // Reconstruct PrivateIdentityData for node
+    // Reconstruct PrivateIdentityData for node (recovery data only, no seed field)
     let node_private_data = lib_identity::identity::PrivateIdentityData::new(
         node_keystore_key.dilithium_sk,
         node_identity.public_key.dilithium_pk.clone(),
-        node_keystore_key.master_seed.clone().try_into().unwrap_or([0u8; 32]),
         vec![],
     );
 
@@ -250,11 +289,18 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
     write_file_with_permissions(&node_identity_file, &node_identity_json)?;
 
     // Save wallet data
+    // Extract primary wallet balance from user_identity
+    let primary_balance = result.user_identity.wallet_manager.wallets.values()
+        .find(|w| w.wallet_type == lib_identity::WalletType::Primary)
+        .map(|w| w.balance)
+        .unwrap_or(5000); // Default to genesis balance if not found
+
     let wallet_data = PersistedWalletData {
         wallet_name: result.wallet_name.clone(),
         wallet_address: result.wallet_address.clone(),
         node_wallet_id: result.node_wallet_id.0.to_vec(),
         node_identity_id: result.node_identity_id.0.to_vec(),
+        balance: primary_balance,
     };
 
     let wallet_data_json = serde_json::to_string_pretty(&wallet_data)
@@ -1401,7 +1447,6 @@ async fn create_user_identity_with_wallet(
     let private_data = lib_identity::identity::PrivateIdentityData::new(
         private_key.dilithium_sk.clone(),
         identity.public_key.dilithium_pk.clone(),
-        [0u8; 32], // TODO: Extract actual seed from identity if available
         vec![seed_phrase.clone()],
     );
 
@@ -1436,7 +1481,6 @@ async fn create_node_device_identity(
     let private_data = lib_identity::identity::PrivateIdentityData::new(
         private_key.dilithium_sk.clone(),
         identity.public_key.dilithium_pk.clone(),
-        [0u8; 32], // TODO: Extract actual seed from identity if available
         vec![],
     );
 

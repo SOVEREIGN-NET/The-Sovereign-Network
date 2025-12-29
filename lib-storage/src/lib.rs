@@ -77,7 +77,7 @@ pub use network_integration::{
     process_network_outputs_with,
 };
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_identity::ZhtpIdentity;
@@ -558,6 +558,18 @@ impl UnifiedStorageSystem {
     /// Store a Web4 domain record in DHT storage
     /// Uses key format: `web4/domain/{domain}`
     pub async fn store_domain_record(&mut self, domain: &str, record_data: &[u8]) -> Result<()> {
+        // NAMESPACE GUARD: UnifiedStorageSystem only stores domain data, not blockchain
+        // If this assertion fails, it indicates either:
+        // 1. MeshRouter DHT is using the same persistence file (bug in dht_integration.rs)
+        // 2. Someone is trying to store blockchain data via UnifiedStorage (wrong usage)
+        if domain.starts_with("block_header:") || domain.starts_with("tx_idx:") {
+            return Err(anyhow!(
+                "NAMESPACE VIOLATION: UnifiedStorageSystem tried to store blockchain key '{}'. \
+                This indicates cross-namespace pollution. Ensure MeshRouter uses separate DHT file.",
+                domain
+            ));
+        }
+
         let key = format!("web4/domain/{}", domain);
         tracing::info!("Storing domain record for {} ({} bytes)", domain, record_data.len());
         self.dht_storage.store(key, record_data.to_vec(), None).await
@@ -669,7 +681,7 @@ impl Default for UnifiedStorageConfig {
                 default_tier: StorageTier::Hot,
                 enable_compression: true,
                 enable_encryption: true,
-                dht_persist_path: None, // No persistence by default
+                dht_persist_path: None, // Default has no persistence - runtime initialization sets this
             },
             erasure_config: ErasureConfig {
                 data_shards: 4,
@@ -872,5 +884,58 @@ mod tests {
         identity.created_at = created_at;
         identity.last_active = created_at;
         identity
+    }
+}
+
+/// Wrapper type for Arc<RwLock<UnifiedStorageSystem>> to implement the UnifiedStorage trait
+/// Needed due to Rust's orphan rule (can't implement external traits on external types)
+#[cfg(feature = "network-integration")]
+pub struct UnifiedStorageWrapper(pub std::sync::Arc<tokio::sync::RwLock<UnifiedStorageSystem>>);
+
+/// Implement the lib-network UnifiedStorage trait
+#[cfg(feature = "network-integration")]
+#[async_trait::async_trait]
+impl lib_network::storage_stub::UnifiedStorage for UnifiedStorageWrapper {
+    /// Store a domain record
+    async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> anyhow::Result<()> {
+        let mut sys = self.0.write().await;
+        sys.store_domain_record(domain, &data).await
+    }
+
+    /// Load a domain record
+    async fn load_domain_record(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let mut sys = self.0.write().await;
+        sys.get_domain_record(domain).await
+    }
+
+    /// Delete a domain record
+    async fn delete_domain_record(&self, domain: &str) -> anyhow::Result<()> {
+        let mut sys = self.0.write().await;
+        sys.delete_domain_record(domain).await
+    }
+
+    /// List all domain records
+    async fn list_domain_records(&self) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+        let mut sys = self.0.write().await;
+        sys.list_domain_records().await
+    }
+
+    /// Store manifest history for a domain
+    async fn store_manifest(&self, domain: &str, manifest_data: Vec<u8>) -> anyhow::Result<()> {
+        let mut sys = self.0.write().await;
+        let manifest_key = format!("manifest:{}", domain);
+        sys.store_domain_record(&manifest_key, &manifest_data).await
+    }
+
+    /// Load manifest history for a domain
+    async fn load_manifest(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let mut sys = self.0.write().await;
+        let manifest_key = format!("manifest:{}", domain);
+        sys.get_domain_record(&manifest_key).await
+    }
+
+    /// Check if this is a stub (it's not - this is real storage)
+    fn is_stub(&self) -> bool {
+        false
     }
 }

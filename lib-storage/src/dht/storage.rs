@@ -18,7 +18,7 @@ use std::io::Write;
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
 use serde::{Serialize, Deserialize};
-use tracing::{debug, warn, info};
+use tracing::{debug, warn, info, error};
 
 /// Current version of DHT storage persistence format
 const DHT_STORAGE_VERSION: u32 = 1;
@@ -130,6 +130,9 @@ impl DhtStorage {
     /// Save storage state to disk (versioned, deterministic format)
     /// Uses spawn_blocking to avoid stalling async runtime with file I/O
     pub async fn save_to_file(&self, path: &Path) -> Result<()> {
+        let path_owned = path.to_path_buf();
+        let entry_count_before = self.storage.len();
+
         // Sort entries by key for deterministic output
         let mut entries: Vec<(String, StorageEntry)> =
             self.storage.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
@@ -153,14 +156,12 @@ impl DhtStorage {
         let bytes = bincode::serialize(&persisted)
             .map_err(|e| anyhow!("Failed to serialize DHT storage: {}", e))?;
 
-        let path_owned = path.to_path_buf();
-        let entry_count = self.storage.len();
         let byte_count = bytes.len();
 
         atomic_write_async(path_owned.clone(), bytes).await
             .map_err(|e| anyhow!("Failed to write DHT storage: {}", e))?;
 
-        info!("Saved DHT storage to {:?} ({} entries, {} bytes)", path_owned, entry_count, byte_count);
+        info!("DHT storage persisted ({} entries, {} bytes)", entry_count_before, byte_count);
         Ok(())
     }
 
@@ -272,9 +273,21 @@ impl DhtStorage {
     /// Uses async I/O via spawn_blocking to avoid stalling async runtime
     async fn maybe_persist(&self) -> Result<()> {
         if let Some(ref path) = self.persist_path {
-            self.save_to_file(path).await?;
+            debug!("DHT: maybe_persist - persisting {} entries to {:?}", self.storage.len(), path);
+            match self.save_to_file(path).await {
+                Ok(()) => {
+                    debug!("DHT: maybe_persist - ✅ persisted successfully");
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("DHT: maybe_persist - ❌ failed to persist: {}", e);
+                    Err(e)
+                }
+            }
+        } else {
+            debug!("DHT: maybe_persist - no persist_path configured, skipping persistence");
+            Ok(())
         }
-        Ok(())
     }
 
     /// Remove a key from the contract_index

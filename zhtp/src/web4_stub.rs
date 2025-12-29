@@ -12,6 +12,7 @@ use lib_crypto::KeyPair;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::ZhtpIdentity;
 use lib_storage::dht::transport::{DhtTransport, PeerId};
+use lib_network::web4::DomainRegistry;
 
 // ----------------------------- Trust -----------------------------
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -285,13 +286,13 @@ impl StubManifest {
 }
 
 #[derive(Debug, Clone)]
-pub struct DomainRegistry {
+pub struct StubDomainRegistry {
     pub domain_records: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     pub content_store: Arc<RwLock<HashMap<String, Vec<u8>>>>,
     pub history: Arc<RwLock<HashMap<String, Vec<DomainHistoryEntry>>>>,
 }
 
-impl DomainRegistry {
+impl StubDomainRegistry {
     pub async fn new_with_storage(
         _storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
     ) -> Result<Self> {
@@ -617,12 +618,12 @@ impl DomainRegistry {
 
 #[derive(Debug, Clone)]
 pub struct Web4Manager {
-    pub registry: Arc<DomainRegistry>,
+    pub registry: Arc<StubDomainRegistry>,
 }
 
 impl Web4Manager {
     pub async fn new_with_registry(
-        registry: Arc<DomainRegistry>,
+        registry: Arc<StubDomainRegistry>,
         _storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
     ) -> Result<Self> {
         Ok(Self { registry })
@@ -632,7 +633,7 @@ impl Web4Manager {
 pub async fn initialize_web4_system_with_storage(
     storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
 ) -> Result<Web4Manager> {
-    let registry = Arc::new(DomainRegistry::new_with_storage(storage.clone()).await?);
+    let registry = Arc::new(StubDomainRegistry::new_with_storage(storage.clone()).await?);
     Web4Manager::new_with_registry(registry, storage).await
 }
 
@@ -695,10 +696,19 @@ pub struct ContentResult {
     pub is_fallback: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Web4ContentService {
     registry: Arc<DomainRegistry>,
     _zdns: Option<ZdnsResolver>,
+}
+
+impl std::fmt::Debug for Web4ContentService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Web4ContentService")
+            .field("registry", &"<DomainRegistry>")
+            .field("_zdns", &self._zdns)
+            .finish()
+    }
 }
 
 impl Web4ContentService {

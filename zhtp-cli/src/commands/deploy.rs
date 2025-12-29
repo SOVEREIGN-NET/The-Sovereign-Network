@@ -631,23 +631,30 @@ async fn deploy_site_impl(
 
     output.info("Uploading files...")?;
     let (manifest_files, canonical_total_size) = upload_files(&client, &files, domain, output).await?;
+
+    output.print(&format!("📊 Upload complete: {} files, {} bytes total", manifest_files.len(), canonical_total_size))?;
+
     let deployed_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
         .as_secs();
 
+    output.info("Building manifest...")?;
     let manifest = build_manifest(
         domain,
         mode,
-        manifest_files,
+        manifest_files.clone(),
         canonical_total_size,
         deployed_at,
         &loaded.identity.did,
         &loaded.keypair,
     )?;
 
-    output.info("Registering domain...")?;
+    output.print(&format!("✅ Manifest built: {} files, hash computed", manifest.files.len()))?;
+
+    output.info("Uploading manifest...")?;
     let manifest_hash = upload_manifest(&client, &manifest).await?;
+    output.print(&format!("✅ Manifest uploaded with CID: {}", manifest_hash))?;
 
     if let Some(_fee_amount) = fee {
         output.info(&format!("Note: Registration fee of {} tokens reserved for future billing integration", _fee_amount))?;
@@ -734,7 +741,8 @@ async fn deploy_update_impl(
         })?;
 
     let previous_cid = status
-        .get("current_manifest_cid")
+        .get("current_web4_manifest_cid")
+        .or_else(|| status.get("current_manifest_cid"))  // Fallback for backwards compatibility
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| CliError::DeploymentFailed {
@@ -922,7 +930,10 @@ async fn check_deployment_status_impl(
         output.print(&format!("Current version: {}", version))?;
     }
 
-    if let Some(cid) = status.get("current_manifest_cid").and_then(|v| v.as_str()) {
+    if let Some(cid) = status.get("current_web4_manifest_cid")
+        .or_else(|| status.get("current_manifest_cid"))  // Fallback for backwards compatibility
+        .and_then(|v| v.as_str())
+    {
         output.print(&format!("Manifest CID: {}", cid))?;
     }
 
@@ -1037,7 +1048,10 @@ async fn show_deployment_history_impl(
         if let Some(v) = version.get("version").and_then(|v| v.as_u64()) {
             output.print(&format!("    Version: {}", v))?;
         }
-        if let Some(cid) = version.get("manifest_cid").and_then(|v| v.as_str()) {
+        if let Some(cid) = version.get("web4_manifest_cid")
+            .or_else(|| version.get("manifest_cid"))  // Fallback for backwards compatibility
+            .and_then(|v| v.as_str())
+        {
             output.print(&format!("    Manifest CID: {}", cid))?;
         }
         if let Some(created) = version.get("created_at").and_then(|v| v.as_u64()) {
