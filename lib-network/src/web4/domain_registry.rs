@@ -270,16 +270,16 @@ impl DomainRegistry {
 
         // Determine version and manifest info
         let (version, previous_manifest) = if let Some(ref existing) = existing_record {
-            (existing.version + 1, Some(existing.current_manifest_cid.clone()))
+            (existing.version + 1, Some(existing.current_web4_manifest_cid.clone()))
         } else {
             (1, None)
         };
 
-        // FIX (Manifest File List): If manifest_cid is provided by CLI, load and use it
-        // Otherwise, create an empty manifest
-        let manifest_cid = if let Some(ref cli_manifest_cid) = request.manifest_cid {
-            // Load the manifest from storage (uploaded by CLI with all files)
-            match self.get_content_by_cid(cli_manifest_cid).await {
+        // CANONICAL: If deploy_manifest_cid is provided by CLI, load and convert to web4_manifest_cid
+        // Otherwise, create an empty Web4Manifest
+        let web4_manifest_cid = if let Some(ref deploy_manifest_cid) = request.deploy_manifest_cid {
+            // Load the DeployManifest from storage (uploaded by CLI with all files)
+            match self.get_content_by_cid(deploy_manifest_cid).await {
                 Ok(Some(manifest_bytes)) => {
                     // Try to deserialize as a manifest
                     if let Ok(cli_manifest_data) = serde_json::from_slice::<serde_json::Value>(&manifest_bytes) {
@@ -356,7 +356,7 @@ impl DomainRegistry {
                     }
                 }
                 Ok(None) => {
-                    warn!("Manifest content not found for CID {}, creating empty manifest", cli_manifest_cid);
+                    warn!("DeployManifest content not found for CID {}, creating empty manifest", deploy_manifest_cid);
                     // Fallback to empty manifest if content not found
                     let empty_manifest = Web4Manifest {
                         domain: request.domain.clone(),
@@ -373,7 +373,7 @@ impl DomainRegistry {
                     self.store_manifest(empty_manifest).await?
                 }
                 Err(e) => {
-                    warn!("Error loading manifest for CID {}: {}, creating empty manifest", cli_manifest_cid, e);
+                    warn!("Error loading DeployManifest for CID {}: {}, creating empty manifest", deploy_manifest_cid, e);
                     // Fallback to empty manifest on error
                     let empty_manifest = Web4Manifest {
                         domain: request.domain.clone(),
@@ -391,7 +391,7 @@ impl DomainRegistry {
                 }
             }
         } else {
-            // No manifest_cid provided, create empty manifest as before
+            // No deploy_manifest_cid provided, create empty Web4Manifest as before
             let initial_manifest = Web4Manifest {
                 domain: request.domain.clone(),
                 version,
@@ -413,13 +413,13 @@ impl DomainRegistry {
             self.store_manifest(initial_manifest).await?
         };
 
-        // FIX (Domain Update): Allow updating existing domains with new manifest CID
+        // CANONICAL: Store web4_manifest_cid as the authoritative pointer
         let domain_record = if let Some(existing) = existing_record {
-            // Update existing domain with new manifest
+            // Update existing domain with new Web4Manifest
             DomainRecord {
                 domain: request.domain.clone(),
                 owner: existing.owner.clone(),
-                current_manifest_cid: manifest_cid,
+                current_web4_manifest_cid: web4_manifest_cid,
                 version,
                 registered_at: existing.registered_at,
                 updated_at: current_time,
@@ -434,7 +434,7 @@ impl DomainRegistry {
             DomainRecord {
                 domain: request.domain.clone(),
                 owner: request.owner.id.clone(),
-                current_manifest_cid: manifest_cid,
+                current_web4_manifest_cid: web4_manifest_cid,
                 version,
                 registered_at: current_time,
                 updated_at: current_time,
@@ -502,7 +502,7 @@ impl DomainRegistry {
             metadata,
             initial_content,
             registration_proof,
-            manifest_cid: None, // Auto-generate
+            deploy_manifest_cid: None, // Auto-generate
         };
 
         self.register_domain(request).await
@@ -867,11 +867,11 @@ impl DomainRegistry {
                 found: true,
                 domain: record.domain.clone(),
                 version: record.version,
-                current_manifest_cid: record.current_manifest_cid.clone(),
+                current_web4_manifest_cid: record.current_web4_manifest_cid.clone(),
                 owner_did: format!("did:zhtp:{}", hex::encode(&record.owner.0[..16])),
                 updated_at: record.updated_at,
                 expires_at: record.expires_at,
-                build_hash: hex::encode(&hash_blake3(record.current_manifest_cid.as_bytes())[..16]),
+                build_hash: hex::encode(&hash_blake3(record.current_web4_manifest_cid.as_bytes())[..16]),
             });
         }
 
@@ -890,11 +890,11 @@ impl DomainRegistry {
                     found: true,
                     domain: record.domain.clone(),
                     version: record.version,
-                    current_manifest_cid: record.current_manifest_cid.clone(),
+                    current_web4_manifest_cid: record.current_web4_manifest_cid.clone(),
                     owner_did: format!("did:zhtp:{}", hex::encode(&record.owner.0[..16])),
                     updated_at: record.updated_at,
                     expires_at: record.expires_at,
-                    build_hash: hex::encode(&hash_blake3(record.current_manifest_cid.as_bytes())[..16]),
+                    build_hash: hex::encode(&hash_blake3(record.current_web4_manifest_cid.as_bytes())[..16]),
                 });
             }
         }
@@ -903,7 +903,7 @@ impl DomainRegistry {
             found: false,
             domain: domain.to_string(),
             version: 0,
-            current_manifest_cid: String::new(),
+            current_web4_manifest_cid: String::new(),
             owner_did: String::new(),
             updated_at: 0,
             expires_at: 0,
@@ -1003,7 +1003,7 @@ impl DomainRegistry {
             for manifest in domain_manifests.iter().rev().take(limit) {
                 versions.push(DomainVersionEntry {
                     version: manifest.version,
-                    manifest_cid: manifest.compute_cid(),
+                    web4_manifest_cid: manifest.compute_cid(),
                     created_at: manifest.created_at,
                     created_by: manifest.created_by.clone(),
                     message: manifest.message.clone(),
@@ -1014,11 +1014,11 @@ impl DomainRegistry {
             // No history, return current version only
             versions.push(DomainVersionEntry {
                 version: record.version,
-                manifest_cid: record.current_manifest_cid.clone(),
+                web4_manifest_cid: record.current_web4_manifest_cid.clone(),
                 created_at: record.updated_at,
                 created_by: format!("did:zhtp:{}", hex::encode(&record.owner.0[..16])),
                 message: Some("Initial deployment".to_string()),
-                build_hash: hex::encode(&hash_blake3(record.current_manifest_cid.as_bytes())[..16]),
+                build_hash: hex::encode(&hash_blake3(record.current_web4_manifest_cid.as_bytes())[..16]),
             });
         }
 
@@ -1060,17 +1060,17 @@ impl DomainRegistry {
             .ok_or_else(|| anyhow!("Domain not found: {}", update_request.domain))?;
 
         // Compare-and-swap: verify expected previous CID matches current
-        if record.current_manifest_cid != update_request.expected_previous_manifest_cid {
+        if record.current_web4_manifest_cid != update_request.expected_previous_manifest_cid {
             return Ok(DomainUpdateResponse {
                 success: false,
                 new_version: record.version,
-                new_manifest_cid: record.current_manifest_cid.clone(),
-                previous_manifest_cid: record.current_manifest_cid.clone(),
+                new_manifest_cid: record.current_web4_manifest_cid.clone(),
+                previous_manifest_cid: record.current_web4_manifest_cid.clone(),
                 updated_at: record.updated_at,
                 error: Some(format!(
                     "Concurrent update detected. Expected previous CID: {}, actual: {}",
                     update_request.expected_previous_manifest_cid,
-                    record.current_manifest_cid
+                    record.current_web4_manifest_cid
                 )),
             });
         }
@@ -1078,13 +1078,13 @@ impl DomainRegistry {
         // TODO: Verify signature matches domain owner
         // For now, we trust the caller has verified authorization
 
-        let previous_manifest_cid = record.current_manifest_cid.clone();
+        let previous_manifest_cid = record.current_web4_manifest_cid.clone();
         let new_version = record.version + 1;
         let new_manifest_cid = update_request.new_manifest_cid.clone();
 
         // Create updated record for persistence (persist BEFORE mutating memory)
         let mut updated_record = record.clone();
-        updated_record.current_manifest_cid = new_manifest_cid.clone();
+        updated_record.current_web4_manifest_cid = new_manifest_cid.clone();
         updated_record.version = new_version;
         updated_record.updated_at = current_time;
 
@@ -1098,7 +1098,7 @@ impl DomainRegistry {
         {
             let mut records = self.domain_records.write().await;
             if let Some(record) = records.get_mut(&update_request.domain) {
-                record.current_manifest_cid = updated_record.current_manifest_cid.clone();
+                record.current_web4_manifest_cid = updated_record.current_web4_manifest_cid.clone();
                 record.version = updated_record.version;
                 record.updated_at = updated_record.updated_at;
             }
@@ -1222,7 +1222,7 @@ impl DomainRegistry {
         // Get current state
         let records = self.domain_records.read().await;
         let current_cid = records.get(domain)
-            .map(|r| r.current_manifest_cid.clone())
+            .map(|r| r.current_web4_manifest_cid.clone())
             .ok_or_else(|| anyhow!("Domain not found: {}", domain))?;
         drop(records);
 
@@ -1288,7 +1288,7 @@ impl Web4Manager {
             metadata,
             initial_content,
             registration_proof,
-            manifest_cid: None, // Auto-generate
+            deploy_manifest_cid: None, // Auto-generate
         };
 
         self.registry.register_domain(request).await
@@ -1440,7 +1440,7 @@ mod tests {
                 },
                 initial_content: HashMap::new(),
                 registration_proof,
-                manifest_cid: None,
+                deploy_manifest_cid: None,
             };
 
             let response = registry.register_domain(request).await.unwrap();
@@ -1448,7 +1448,7 @@ mod tests {
 
             // Get initial manifest CID
             let lookup = registry.lookup_domain(domain_name).await.unwrap();
-            initial_manifest_cid = lookup.record.as_ref().unwrap().current_manifest_cid.clone();
+            initial_manifest_cid = lookup.record.as_ref().unwrap().current_web4_manifest_cid.clone();
 
             // Update domain
             let update_request = DomainUpdateRequest {
@@ -1476,7 +1476,7 @@ mod tests {
             assert!(lookup.found);
             let record = lookup.record.unwrap();
             assert_eq!(record.version, 2, "Version should be updated");
-            assert_eq!(record.current_manifest_cid, updated_manifest_cid, "Manifest CID should be updated");
+            assert_eq!(record.current_web4_manifest_cid, updated_manifest_cid, "Manifest CID should be updated");
         }
 
         let _ = std::fs::remove_file(&persist_path);

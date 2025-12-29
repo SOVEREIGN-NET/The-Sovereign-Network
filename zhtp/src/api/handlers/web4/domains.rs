@@ -41,13 +41,15 @@ pub struct ApiDomainRegistrationRequest {
 
 /// Manifest-based domain registration request (used by CLI deploy)
 /// This is a simpler format where content has already been uploaded
-/// and the manifest_cid references the uploaded manifest
+/// and the deploy_manifest_cid references the uploaded DeployManifest
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ManifestDomainRegistrationRequest {
     /// Domain to register
     pub domain: String,
-    /// CID of the uploaded manifest
-    pub manifest_cid: String,
+    /// CANONICAL: CID of the uploaded DeployManifest
+    /// This will be converted to web4_manifest_cid during registration
+    #[serde(alias = "manifest_cid")]  // Backwards compatibility
+    pub deploy_manifest_cid: String,
     /// Owner DID (did:zhtp:hex format)
     pub owner: String,
 }
@@ -735,16 +737,16 @@ impl Web4Handler {
         ))
     }
 
-    /// Register a domain using manifest CID (from CLI deploy command)
+    /// Register a domain using DeployManifest CID (from CLI deploy command)
     /// This is a simplified flow where content has already been uploaded
     async fn register_domain_from_manifest(&self, request: ManifestDomainRegistrationRequest) -> ZhtpResult<ZhtpResponse> {
         info!("Processing manifest-based domain registration");
         info!(" Domain: {}", request.domain);
-        info!(" Manifest CID: {}", request.manifest_cid);
+        info!(" DeployManifest CID: {}", request.deploy_manifest_cid);
         info!(" Owner: {}", request.owner);
 
         let manifest = self
-            .load_and_verify_manifest(&request.domain, &request.manifest_cid)
+            .load_and_verify_manifest(&request.domain, &request.deploy_manifest_cid)
             .await
             .map_err(|e| anyhow!("Manifest verification failed: {}", e))?;
 
@@ -780,7 +782,7 @@ impl Web4Handler {
         // Create domain metadata
         let metadata = DomainMetadata {
             title: request.domain.clone(),
-            description: format!("Domain registered via manifest {}", request.manifest_cid),
+            description: format!("Domain registered via DeployManifest {}", request.deploy_manifest_cid),
             category: "website".to_string(),
             tags: vec!["web4".to_string(), "manifest".to_string()],
             public: true,
@@ -804,7 +806,8 @@ impl Web4Handler {
             None,
         );
 
-        // Create domain registration request
+        // Create domain registration request with deploy_manifest_cid
+        // This will be converted to web4_manifest_cid during registration
         let domain_request = DomainRegistrationRequest {
             domain: request.domain.clone(),
             owner: owner_identity.clone(),
@@ -812,19 +815,19 @@ impl Web4Handler {
             metadata,
             initial_content: HashMap::new(), // Content already uploaded via manifest
             registration_proof,
-            manifest_cid: Some(request.manifest_cid.clone()), // Use the uploaded manifest CID
+            deploy_manifest_cid: Some(request.deploy_manifest_cid.clone()),
         };
 
         // Register domain
         let registration_result = self.domain_registry.register_domain(domain_request).await
             .map_err(|e| anyhow!("Failed to register domain: {}", e))?;
 
-        info!(" Domain {} registered with manifest {}", request.domain, request.manifest_cid);
+        info!(" Domain {} registered with DeployManifest {}", request.domain, request.deploy_manifest_cid);
 
         let response = serde_json::json!({
             "status": "success",
             "domain": request.domain,
-            "manifest_cid": request.manifest_cid,
+            "deploy_manifest_cid": request.deploy_manifest_cid,
             "owner": owner_did,
             "registration_id": registration_result.registration_id,
             "message": "Domain registered successfully"
@@ -894,7 +897,7 @@ impl Web4Handler {
             metadata,
             initial_content,
             registration_proof,
-            manifest_cid: None, // Auto-generate for non-manifest registration
+            deploy_manifest_cid: None, // Auto-generate for non-manifest registration
         };
 
         // Process registration
@@ -1446,20 +1449,21 @@ impl Web4Handler {
         }
 
         // If specific version requested, look up that manifest
-        let manifest_cid = if let Some(version) = resolve_req.version {
+        // CANONICAL: Always use web4_manifest_cid for resolution
+        let web4_manifest_cid = if let Some(version) = resolve_req.version {
             let history = self.domain_registry.get_domain_history(&resolve_req.domain, 1000).await
                 .map_err(|e| anyhow!("Failed to get history: {}", e))?;
 
             history.versions.iter()
                 .find(|v| v.version == version)
-                .map(|v| v.manifest_cid.clone())
+                .map(|v| v.web4_manifest_cid.clone())
                 .unwrap_or_else(|| "manifest-not-found".to_string())
         } else {
-            status.current_manifest_cid.clone()
+            status.current_web4_manifest_cid.clone()
         };
 
         // Debug: load manifest details to log what will be served
-        if let Ok(Some(manifest)) = self.domain_registry.get_manifest(&resolve_req.domain, &manifest_cid).await {
+        if let Ok(Some(manifest)) = self.domain_registry.get_manifest(&resolve_req.domain, &web4_manifest_cid).await {
             let manifest_cid_computed = manifest.compute_cid();
             let files_count = manifest.files.len();
             info!(
@@ -1469,7 +1473,7 @@ impl Web4Handler {
                 build_hash = %manifest.build_hash,
                 files = files_count,
                 manifest_cid = %manifest_cid_computed,
-                requested_cid = %manifest_cid,
+                requested_cid = %web4_manifest_cid,
                 "resolve_domain_manifest: serving manifest"
             );
         }
@@ -1477,7 +1481,7 @@ impl Web4Handler {
         let response = serde_json::json!({
             "domain": resolve_req.domain,
             "version": resolve_req.version.unwrap_or(status.version),
-            "manifest_cid": manifest_cid,
+            "web4_manifest_cid": web4_manifest_cid,
             "owner_did": status.owner_did,
             "updated_at": status.updated_at,
         });

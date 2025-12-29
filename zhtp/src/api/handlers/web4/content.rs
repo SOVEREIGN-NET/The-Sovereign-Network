@@ -168,7 +168,7 @@ impl Web4Handler {
         let current_record = current_domain.record.ok_or_else(|| anyhow!("Domain record disappeared"))?;
 
         // Get current manifest or create new one
-        let mut manifest = if let Ok(Some(m)) = self.domain_registry.get_manifest(&api_request.domain, &current_record.current_manifest_cid).await {
+        let mut manifest = if let Ok(Some(m)) = self.domain_registry.get_manifest(&api_request.domain, &current_record.current_web4_manifest_cid).await {
             m
         } else {
             // Create new manifest for v1
@@ -202,7 +202,7 @@ impl Web4Handler {
         // Increment version if not first publish
         if !manifest.previous_manifest.is_none() || manifest.version > 1 {
             manifest.version += 1;
-            manifest.previous_manifest = Some(current_record.current_manifest_cid.clone());
+            manifest.previous_manifest = Some(current_record.current_web4_manifest_cid.clone());
         }
 
         // Store updated manifest
@@ -213,7 +213,7 @@ impl Web4Handler {
         let update_request = lib_network::web4::DomainUpdateRequest {
             domain: api_request.domain.clone(),
             new_manifest_cid: manifest_cid,
-            expected_previous_manifest_cid: current_record.current_manifest_cid,
+            expected_previous_manifest_cid: current_record.current_web4_manifest_cid,
             signature: String::new(), // TODO: Sign properly
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -369,7 +369,7 @@ impl Web4Handler {
         let current_record = current_domain.record.ok_or_else(|| anyhow!("Domain record disappeared"))?;
 
         // Get current manifest
-        let mut manifest = if let Ok(Some(m)) = self.domain_registry.get_manifest(domain, &current_record.current_manifest_cid).await {
+        let mut manifest = if let Ok(Some(m)) = self.domain_registry.get_manifest(domain, &current_record.current_web4_manifest_cid).await {
             m
         } else {
             // Create new manifest if none exists
@@ -402,7 +402,7 @@ impl Web4Handler {
 
         // Increment version
         manifest.version += 1;
-        manifest.previous_manifest = Some(current_record.current_manifest_cid.clone());
+        manifest.previous_manifest = Some(current_record.current_web4_manifest_cid.clone());
 
         // Store updated manifest
         let manifest_cid = self.domain_registry.store_manifest(manifest).await
@@ -412,7 +412,7 @@ impl Web4Handler {
         let update_request = lib_network::web4::DomainUpdateRequest {
             domain: domain.to_string(),
             new_manifest_cid: manifest_cid,
-            expected_previous_manifest_cid: current_record.current_manifest_cid,
+            expected_previous_manifest_cid: current_record.current_web4_manifest_cid,
             signature: String::new(), // TODO: Sign properly
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
