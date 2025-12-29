@@ -15,7 +15,6 @@ use lib_network::web4::types::{Web4Manifest, ManifestFile};
 
 use super::Web4Handler;
 use std::collections::HashMap;
-use lib_crypto;
 
 /// Domain registration request from API
 #[derive(Debug, Serialize, Deserialize)]
