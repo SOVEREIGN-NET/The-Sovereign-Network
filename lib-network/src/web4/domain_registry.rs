@@ -319,7 +319,8 @@ impl DomainRegistry {
                             }
                         }
 
-                        info!("Converted CLI manifest with {} files to Web4Manifest format", manifest_files.len());
+                        let file_count = manifest_files.len();
+                        info!("Converted CLI manifest with {} files to Web4Manifest format", file_count);
 
                         // Create Web4Manifest with CLI's files
                         let converted_manifest = Web4Manifest {
@@ -337,9 +338,9 @@ impl DomainRegistry {
                             created_at: current_time,
                             created_by: format!("{}", request.owner.id),
                             message: if existing_record.is_some() {
-                                Some(format!("Domain {} updated with {} files", request.domain, manifest_files.len()))
+                                Some(format!("Domain {} updated with {} files", request.domain, file_count))
                             } else {
-                                Some(format!("Domain {} registered with {} files", request.domain, manifest_files.len()))
+                                Some(format!("Domain {} registered with {} files", request.domain, file_count))
                             },
                         };
 
