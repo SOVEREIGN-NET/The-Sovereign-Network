@@ -14,6 +14,7 @@ use crate::types::geographic::GeographicLocation;
 use crate::types::mesh_capability::{MeshCapability, SharedResources};
 use crate::types::connection_details::ConnectionDetails;
 use lib_protocols::types::{ZhtpRequest as ProtocolZhtpRequest, ZhtpResponse as ProtocolZhtpResponse};
+use lib_protocols::types::{ZhtpMethod, ZhtpStatus};
 
 /// Default TTL for mesh messages (32 hops)
 pub const DEFAULT_TTL: u8 = 32;
@@ -63,6 +64,7 @@ pub enum MessageType {
 /// **OPTIMIZED (Issue #479):** Single-pass serialization
 /// - `message_type`: Type discriminator for efficient routing decisions
 /// - `payload`: Pre-serialized message bytes (avoids double serialization)
+/// - ZHTP fields: Method, URI, and Status extracted for fast routing decisions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshMessageEnvelope {
     /// Unique message identifier
@@ -82,7 +84,20 @@ pub struct MeshMessageEnvelope {
     /// Message type discriminator (Issue #479)
     pub message_type: MessageType,
     /// Pre-serialized payload bytes (Issue #479)
+    /// For ZHTP messages: contains (headers, body) tuple
+    /// For other messages: contains full message
     pub payload: Vec<u8>,
+    
+    // ZHTP-specific fields for single-pass serialization (only populated for ZhtpRequest/Response)
+    /// ZHTP request method (for routing decisions without deserializing)
+    #[serde(default)]
+    pub zhtp_method: Option<ZhtpMethod>,
+    /// ZHTP request URI (for content routing without deserializing)
+    #[serde(default)]
+    pub zhtp_uri: Option<String>,
+    /// ZHTP response status (for response routing without deserializing)
+    #[serde(default)]
+    pub zhtp_status: Option<ZhtpStatus>,
 }
 
 
@@ -113,6 +128,9 @@ impl MeshMessageEnvelope {
             timestamp,
             message_type,
             payload,
+            zhtp_method: None,
+            zhtp_uri: None,
+            zhtp_status: None,
         }
     }
 
@@ -126,15 +144,177 @@ impl MeshMessageEnvelope {
         destination: PublicKey,
         message: ZhtpMeshMessage,
     ) -> Result<Self> {
-        let (message_type, payload) = message.serialize_with_type()?;
-        Ok(Self::new(message_id, origin, destination, message_type, payload))
+        // Special handling for ZHTP messages to enable single-pass serialization
+        match &message {
+            ZhtpMeshMessage::ZhtpRequest(request) => {
+                Self::from_zhtp_request(message_id, origin, destination, request.clone())
+            },
+            ZhtpMeshMessage::ZhtpResponse(response) => {
+                Self::from_zhtp_response(message_id, origin, destination, response.clone())
+            },
+            _ => {
+                // For non-ZHTP messages, use standard serialization
+                let (message_type, payload) = message.serialize_with_type()?;
+                Ok(Self::new(message_id, origin, destination, message_type, payload))
+            }
+        }
+    }
+
+    /// Create envelope from ZHTP request with single-pass serialization
+    ///
+    /// **OPTIMIZED:** Only serializes headers + body, extracts method/URI to envelope fields
+    pub fn from_zhtp_request(
+        message_id: u64,
+        origin: PublicKey,
+        destination: PublicKey,
+        request: ProtocolZhtpRequest,
+    ) -> Result<Self> {
+        // SECURITY: Serialize headers, body, requester, and auth_proof (not the full request)
+        // This preserves authentication data through mesh routing
+        let payload = bincode::serialize(&(&request.headers, &request.body, &request.requester, &request.auth_proof))
+            .map_err(|e| anyhow!("Failed to serialize ZHTP request: {}", e))?;
+        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Ok(Self {
+            message_id,
+            origin,
+            destination,
+            ttl: DEFAULT_TTL,
+            hop_count: 0,
+            route_history: Vec::new(),
+            timestamp,
+            message_type: MessageType::ZhtpRequest,
+            payload,
+            zhtp_method: Some(request.method),
+            zhtp_uri: Some(request.uri),
+            zhtp_status: None,
+        })
+    }
+
+    /// Create envelope from ZHTP response with single-pass serialization
+    ///
+    /// **OPTIMIZED:** Only serializes headers + body, extracts status to envelope field
+    pub fn from_zhtp_response(
+        message_id: u64,
+        origin: PublicKey,
+        destination: PublicKey,
+        response: ProtocolZhtpResponse,
+    ) -> Result<Self> {
+        // SECURITY: Serialize headers, body, server, and validity_proof (not the full response)
+        // This preserves response authentication data through mesh routing
+        let payload = bincode::serialize(&(&response.headers, &response.body, &response.server, &response.validity_proof))
+            .map_err(|e| anyhow!("Failed to serialize ZHTP response: {}", e))?;
+        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Ok(Self {
+            message_id,
+            origin,
+            destination,
+            ttl: DEFAULT_TTL,
+            hop_count: 0,
+            route_history: Vec::new(),
+            timestamp,
+            message_type: MessageType::ZhtpResponse,
+            payload,
+            zhtp_method: None,
+            zhtp_uri: None,
+            zhtp_status: Some(response.status),
+        })
     }
 
     /// Deserialize the payload into a ZhtpMeshMessage (Issue #479)
     ///
     /// **OPTIMIZED:** Single deserialization pass using the type discriminator.
+    /// For ZHTP messages, reconstructs from envelope fields + payload.
     pub fn deserialize_message(&self) -> Result<ZhtpMeshMessage> {
-        ZhtpMeshMessage::deserialize_from_type(self.message_type, &self.payload)
+        match self.message_type {
+            MessageType::ZhtpRequest => {
+                let request = self.to_zhtp_request()?;
+                Ok(ZhtpMeshMessage::ZhtpRequest(request))
+            },
+            MessageType::ZhtpResponse => {
+                let response = self.to_zhtp_response()?;
+                Ok(ZhtpMeshMessage::ZhtpResponse(response))
+            },
+            _ => {
+                // For non-ZHTP messages, use standard deserialization
+                ZhtpMeshMessage::deserialize_from_type(self.message_type, &self.payload)
+            }
+        }
+    }
+
+    /// Reconstruct ZHTP request from envelope with single-pass deserialization
+    ///
+    /// **OPTIMIZED:** Deserializes headers, body, requester, auth_proof; uses envelope fields for method/URI
+    pub fn to_zhtp_request(&self) -> Result<ProtocolZhtpRequest> {
+        if self.message_type != MessageType::ZhtpRequest {
+            return Err(anyhow!("Not a ZhtpRequest message"));
+        }
+
+        // Deserialize headers, body, requester, auth_proof from payload
+        let (headers, body, requester, auth_proof): (
+            lib_protocols::types::ZhtpHeaders,
+            Vec<u8>,
+            Option<lib_identity::IdentityId>,
+            Option<lib_proofs::ZeroKnowledgeProof>,
+        ) = bincode::deserialize(&self.payload)
+            .map_err(|e| anyhow!("Failed to deserialize ZHTP request payload: {}", e))?;
+
+        // Extract version from headers if available, otherwise use default
+        let version = headers.lib_version.clone().unwrap_or_else(|| "ZHTP/1.0".to_string());
+
+        Ok(ProtocolZhtpRequest {
+            method: self.zhtp_method.ok_or_else(|| anyhow!("Missing ZHTP method in envelope"))?,
+            uri: self.zhtp_uri.clone().ok_or_else(|| anyhow!("Missing ZHTP URI in envelope"))?,
+            version,
+            headers,
+            body,
+            timestamp: self.timestamp,
+            requester,   // SECURITY: Authentication preserved through mesh routing
+            auth_proof,  // SECURITY: ZK proof preserved for validation
+        })
+    }
+
+    /// Reconstruct ZHTP response from envelope with single-pass deserialization
+    ///
+    /// **OPTIMIZED:** Deserializes only headers + body, uses envelope field for status
+    pub fn to_zhtp_response(&self) -> Result<ProtocolZhtpResponse> {
+        if self.message_type != MessageType::ZhtpResponse {
+            return Err(anyhow!("Not a ZhtpResponse message"));
+        }
+
+        // Deserialize headers, body, server, validity_proof from payload
+        let (headers, body, server, validity_proof): (
+            lib_protocols::types::ZhtpHeaders,
+            Vec<u8>,
+            Option<lib_identity::IdentityId>,
+            Option<lib_proofs::ZeroKnowledgeProof>,
+        ) = bincode::deserialize(&self.payload)
+            .map_err(|e| anyhow!("Failed to deserialize ZHTP response payload: {}", e))?;
+
+        // Extract version from headers if available, otherwise use default
+        let version = headers.lib_version.clone().unwrap_or_else(|| "ZHTP/1.0".to_string());
+
+        let status = self.zhtp_status.ok_or_else(|| anyhow!("Missing ZHTP status in envelope"))?;
+
+        Ok(ProtocolZhtpResponse {
+            version,
+            status,
+            status_message: status.to_string(),
+            headers,
+            body,
+            timestamp: self.timestamp,
+            server,          // SECURITY: Server identity preserved through mesh routing
+            validity_proof,  // SECURITY: Validity proof preserved for verification
+        })
     }
 
     /// Serialize to bytes using bincode
@@ -473,10 +653,14 @@ impl ZhtpMeshMessage {
                 (MessageType::HealthReport, bincode::serialize(&(reporter, network_quality, available_bandwidth, connected_peers, uptime_hours))?)
             },
             Self::ZhtpRequest(request) => {
-                (MessageType::ZhtpRequest, bincode::serialize(request)?)
+                // OPTIMIZED: Single-pass serialization - only serialize headers + body
+                // Method, URI, timestamp extracted to envelope fields
+                (MessageType::ZhtpRequest, bincode::serialize(&(&request.headers, &request.body))?)
             },
             Self::ZhtpResponse(response) => {
-                (MessageType::ZhtpResponse, bincode::serialize(response)?)
+                // OPTIMIZED: Single-pass serialization - only serialize headers + body
+                // Status extracted to envelope field
+                (MessageType::ZhtpResponse, bincode::serialize(&(&response.headers, &response.body))?)
             },
             Self::BlockchainRequest { requester, request_id, request_type } => {
                 (MessageType::BlockchainRequest, bincode::serialize(&(requester, request_id, request_type))?)
@@ -573,10 +757,34 @@ impl ZhtpMeshMessage {
                 Self::HealthReport { reporter, network_quality, available_bandwidth, connected_peers, uptime_hours }
             },
             MessageType::ZhtpRequest => {
-                Self::ZhtpRequest(bincode::deserialize(payload)?)
+                // OPTIMIZED: Should not be called directly - use MeshMessageEnvelope::deserialize_message() instead
+                // This fallback deserializes headers + body and creates a minimal request
+                let (headers, body): (lib_protocols::types::ZhtpHeaders, Vec<u8>) = bincode::deserialize(payload)?;
+                Self::ZhtpRequest(ProtocolZhtpRequest {
+                    method: lib_protocols::types::ZhtpMethod::Get, // Default, should be overridden from envelope
+                    uri: "".to_string(), // Default, should be overridden from envelope
+                    version: headers.lib_version.clone().unwrap_or_else(|| "ZHTP/1.0".to_string()),
+                    headers,
+                    body,
+                    timestamp: 0, // Should be overridden from envelope
+                    requester: None,
+                    auth_proof: None,
+                })
             },
             MessageType::ZhtpResponse => {
-                Self::ZhtpResponse(bincode::deserialize(payload)?)
+                // OPTIMIZED: Should not be called directly - use MeshMessageEnvelope::deserialize_message() instead
+                // This fallback deserializes headers + body and creates a minimal response
+                let (headers, body): (lib_protocols::types::ZhtpHeaders, Vec<u8>) = bincode::deserialize(payload)?;
+                Self::ZhtpResponse(ProtocolZhtpResponse {
+                    version: headers.lib_version.clone().unwrap_or_else(|| "ZHTP/1.0".to_string()),
+                    status: lib_protocols::types::ZhtpStatus::Ok, // Default, should be overridden from envelope
+                    status_message: "OK".to_string(),
+                    headers,
+                    body,
+                    timestamp: 0, // Should be overridden from envelope
+                    server: None,
+                    validity_proof: None,
+                })
             },
             MessageType::BlockchainRequest => {
                 let (requester, request_id, request_type) = bincode::deserialize(payload)?;
@@ -695,6 +903,7 @@ pub enum BlockchainRequestType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_protocols::types::{ZhtpHeaders, ZhtpRequest, ZhtpMethod};
 
     #[test]
     fn test_envelope_creation() {
@@ -720,38 +929,51 @@ mod tests {
     }
 
     #[test]
-    fn test_serialization_roundtrip() {
+    fn test_zhtp_request_single_serialization() {
+        use lib_protocols::types::{ZhtpHeaders, ZhtpMethod};
+        
         let origin = PublicKey::new(vec![1, 2, 3]);
         let dest = PublicKey::new(vec![4, 5, 6]);
 
-        let msg = ZhtpMeshMessage::HealthReport {
-            reporter: origin.clone(),
-            network_quality: 0.95,
-            available_bandwidth: 1_000_000,
-            connected_peers: 5,
-            uptime_hours: 24,
+        let request = ProtocolZhtpRequest {
+            method: ZhtpMethod::Get,
+            uri: "/test/endpoint".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers: ZhtpHeaders::default(),
+            body: b"test body".to_vec(),
+            timestamp: 12345,
+            requester: None,
+            auth_proof: None,
         };
 
+        let msg = ZhtpMeshMessage::ZhtpRequest(request.clone());
         let envelope = MeshMessageEnvelope::from_message(456, origin.clone(), dest.clone(), msg)
             .expect("Failed to create envelope");
+
+        // Verify ZHTP fields are extracted
+        assert_eq!(envelope.zhtp_method, Some(ZhtpMethod::Get));
+        assert_eq!(envelope.zhtp_uri, Some("/test/endpoint".to_string()));
+        assert_eq!(envelope.zhtp_status, None);
+
+        // Serialize and deserialize
         let bytes = envelope.to_bytes().unwrap();
         let deserialized = MeshMessageEnvelope::from_bytes(&bytes).unwrap();
 
         assert_eq!(envelope.message_id, deserialized.message_id);
         assert_eq!(envelope.ttl, deserialized.ttl);
-        assert_eq!(envelope.message_type, deserialized.message_type);
+        assert_eq!(envelope.message_type, MessageType::ZhtpRequest);
+        assert_eq!(deserialized.zhtp_method, Some(ZhtpMethod::Get));
+        assert_eq!(deserialized.zhtp_uri, Some("/test/endpoint".to_string()));
 
-        // Verify payload deserialization works
-        let original_msg = envelope.deserialize_message().unwrap();
-        let deserialized_msg = deserialized.deserialize_message().unwrap();
-
-        match (original_msg, deserialized_msg) {
-            (ZhtpMeshMessage::HealthReport { reporter: r1, network_quality: q1, .. },
-             ZhtpMeshMessage::HealthReport { reporter: r2, network_quality: q2, .. }) => {
-                assert_eq!(r1.key_id, r2.key_id);
-                assert!((q1 - q2).abs() < 0.001);
+        // Reconstruct request
+        let reconstructed = deserialized.deserialize_message().unwrap();
+        match reconstructed {
+            ZhtpMeshMessage::ZhtpRequest(req) => {
+                assert_eq!(req.method, ZhtpMethod::Get);
+                assert_eq!(req.uri, "/test/endpoint");
+                assert_eq!(req.body, b"test body");
             },
-            _ => panic!("Message type mismatch after deserialization"),
+            _ => panic!("Wrong message type after deserialization"),
         }
     }
 
@@ -779,35 +1001,175 @@ mod tests {
     }
 
     #[test]
-    fn test_single_serialization_optimization() {
+    fn test_zhtp_response_single_serialization() {
+        use lib_protocols::types::{ZhtpHeaders, ZhtpStatus};
+        
         let origin = PublicKey::new(vec![1, 2, 3]);
         let dest = PublicKey::new(vec![4, 5, 6]);
 
-        let msg = ZhtpMeshMessage::HealthReport {
-            reporter: origin.clone(),
-            network_quality: 0.95,
-            available_bandwidth: 1_000_000,
-            connected_peers: 5,
-            uptime_hours: 24,
+        let response = ProtocolZhtpResponse {
+            version: "ZHTP/1.0".to_string(),
+            status: ZhtpStatus::Ok,
+            status_message: "OK".to_string(),
+            headers: ZhtpHeaders::default(),
+            body: b"response body".to_vec(),
+            timestamp: 67890,
+            server: None,
+            validity_proof: None,
         };
 
-        // Single serialization: message payload is serialized once
+        let msg = ZhtpMeshMessage::ZhtpResponse(response.clone());
         let envelope = MeshMessageEnvelope::from_message(999, origin, dest, msg)
             .expect("Failed to create envelope");
 
-        // Envelope serialization only adds routing metadata
+        // Verify ZHTP status is extracted
+        assert_eq!(envelope.zhtp_status, Some(ZhtpStatus::Ok));
+        assert_eq!(envelope.zhtp_method, None);
+        assert_eq!(envelope.zhtp_uri, None);
+
+        // Serialize and deserialize
         let envelope_bytes = envelope.to_bytes().unwrap();
-
-        // Verify we can deserialize back
         let restored = MeshMessageEnvelope::from_bytes(&envelope_bytes).unwrap();
-        assert_eq!(restored.message_id, 999);
-        assert_eq!(restored.message_type, MessageType::HealthReport);
 
-        // Verify message can be extracted
+        assert_eq!(restored.message_id, 999);
+        assert_eq!(restored.message_type, MessageType::ZhtpResponse);
+        assert_eq!(restored.zhtp_status, Some(ZhtpStatus::Ok));
+
+        // Reconstruct response
         let restored_msg = restored.deserialize_message().unwrap();
         match restored_msg {
-            ZhtpMeshMessage::HealthReport { .. } => {},
+            ZhtpMeshMessage::ZhtpResponse(resp) => {
+                assert_eq!(resp.status, ZhtpStatus::Ok);
+                assert_eq!(resp.body, b"response body");
+            },
             _ => panic!("Wrong message type"),
         }
+    }
+
+    #[test]
+    fn test_multi_hop_routing_production_scenario() {
+        use lib_crypto::Hash;
+        use lib_proofs::ZeroKnowledgeProof;
+        
+        // Simulate a production request being routed through multiple hops
+        let mut headers = ZhtpHeaders::new();
+        headers.set("Host", "destination.zhtp".to_string());
+        headers.set("X-Request-ID", "test-request-123".to_string());
+        
+        // SECURITY: POST requests MUST have authentication in production
+        let requester_id = Hash::from_bytes(b"test-requester-identity-hash");
+        let auth_proof = ZeroKnowledgeProof::empty(); // Mock proof for testing
+        
+        let original_request = ZhtpRequest {
+            method: ZhtpMethod::Post,
+            uri: "/api/transaction".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers: headers.clone(),
+            body: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            timestamp: 0,
+            requester: Some(requester_id),
+            auth_proof: Some(auth_proof),
+        };
+
+        let sender = PublicKey::new(vec![10u8; 1952]); // Dilithium3 public key size
+        let receiver = PublicKey::new(vec![20u8; 1952]);
+
+        let mut envelope = MeshMessageEnvelope::from_zhtp_request(
+            99,
+            sender.clone(),
+            receiver.clone(),
+            original_request.clone(),
+        ).expect("Failed to create envelope");
+
+        // Simulate 10 hops through mesh network (typical production routing path)
+        for hop in 1..=10 {
+            // Serialize at current hop (forwarding)
+            let serialized = bincode::serialize(&envelope).unwrap();
+            
+            // Deserialize at next hop (receiving)
+            envelope = bincode::deserialize(&serialized).unwrap();
+            
+            // Increment hop count (relay behavior)
+            envelope.increment_hop(sender.clone());
+        }
+
+        // Reconstruct at destination
+        let final_request = envelope.to_zhtp_request()
+            .expect("Failed to reconstruct after multi-hop");
+
+        // Verify complete integrity
+        assert_eq!(final_request.method, original_request.method);
+        assert_eq!(final_request.uri, original_request.uri);
+        assert_eq!(final_request.body, original_request.body);
+        assert_eq!(final_request.headers.get("Host"), original_request.headers.get("Host"));
+        
+        // SECURITY: Verify authentication fields preserved through mesh routing
+        assert_eq!(final_request.requester, original_request.requester, "Requester identity must survive multi-hop routing");
+        assert!(final_request.auth_proof.is_some(), "Auth proof must survive multi-hop routing");
+        
+        println!("✅ Production test: ZHTP request routed through {} hops successfully", envelope.hop_count);
+        println!("✅ Security test: Authentication preserved through {} hops", envelope.hop_count);
+    }
+
+    #[test]
+    fn test_optimization_memory_benefit() {
+        use lib_crypto::Hash;
+        use lib_proofs::ZeroKnowledgeProof;
+        
+        // Verify single-pass serialization: the payload only contains (headers, body), not full request        
+        let mut headers = ZhtpHeaders::new();
+        headers.set("Host", "test.zhtp".to_string());
+        headers.set("Authorization", "Bearer token123".to_string());
+        
+        // SECURITY: POST requests MUST have authentication in production
+        let requester_id = Hash::from_bytes(b"test-uploader-identity-hash");
+        let auth_proof = ZeroKnowledgeProof::empty(); // Mock proof for testing
+        
+        let payload = vec![b'X'; 1024]; // 1KB body
+        let request = ZhtpRequest {
+            method: ZhtpMethod::Post,
+            uri: "/api/upload".to_string(),
+            version: "ZHTP/1.0".to_string(),
+            headers: headers.clone(),
+            body: payload.clone(),
+            timestamp: 0,
+            requester: Some(requester_id),
+            auth_proof: Some(auth_proof),
+        };
+
+        let sender = PublicKey::new(vec![1u8; 1952]);
+        let receiver = PublicKey::new(vec![2u8; 1952]);
+
+        // OLD APPROACH: Double serialization - serialize full request into payload
+        let full_request_serialized = bincode::serialize(&request).unwrap();
+        
+        // NEW APPROACH: Single-pass serialization - serialize (headers, body, requester, auth_proof) tuple
+        // SECURITY: Must include authentication fields to preserve them through mesh routing
+        let optimized_tuple = (&request.headers, &request.body, &request.requester, &request.auth_proof);
+        let optimized_payload = bincode::serialize(&optimized_tuple).unwrap();
+        
+        let envelope = MeshMessageEnvelope::from_zhtp_request(
+            100,
+            sender,
+            receiver,
+            request.clone(),
+        ).expect("Failed to create envelope");
+
+        println!("📊 Memory optimization:");
+        println!("   Old approach (full request serialized): {} bytes", full_request_serialized.len());
+        println!("   New approach (headers+body+auth only): {} bytes", optimized_payload.len());
+        println!("   Savings: {} bytes ({:.1}%)", 
+            full_request_serialized.len() - optimized_payload.len(),
+            (1.0 - optimized_payload.len() as f64 / full_request_serialized.len() as f64) * 100.0
+        );
+        
+        // Verify payload contains (headers, body, requester, auth_proof) tuple, not full request
+        assert_eq!(envelope.payload, optimized_payload, "Payload should contain (headers, body, requester, auth_proof) tuple");
+        
+        // Verify method and URI are extracted to envelope fields (not in payload)
+        assert_eq!(envelope.zhtp_method, Some(ZhtpMethod::Post));
+        assert_eq!(envelope.zhtp_uri, Some("/api/upload".to_string()));
+        
+        println!("✅ Production test: Single-pass serialization verified - payload preserves authentication through mesh routing");
     }
 }
