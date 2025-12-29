@@ -159,9 +159,28 @@ impl DomainRegistry {
                 Ok(Some(manifest_data)) => {
                     match serde_json::from_slice::<Vec<Web4Manifest>>(&manifest_data) {
                         Ok(manifests) => {
-                            // Store in manifest_history
-                            let mut history = self.manifest_history.write().await;
-                            history.insert(domain.clone(), manifests);
+                            // Store in manifest_history and cache manifest content
+                            {
+                                let mut history = self.manifest_history.write().await;
+                                history.insert(domain.clone(), manifests.clone());
+                            }
+
+                            // FIX (Content Not Found Bug): Also cache the manifest content for fast CID lookup
+                            {
+                                let mut cache = self.content_cache.write().await;
+                                for manifest in &manifests {
+                                    let cid = manifest.compute_cid();
+                                    let manifest_bytes = match serde_json::to_vec(manifest) {
+                                        Ok(bytes) => bytes,
+                                        Err(e) => {
+                                            warn!(" Failed to serialize manifest for caching: {}", e);
+                                            continue;
+                                        }
+                                    };
+                                    cache.insert(cid, manifest_bytes);
+                                }
+                            }
+
                             loaded_manifests += 1;
                             info!(" ✅ Loaded manifest history for domain: {}", domain);
                         }
@@ -787,16 +806,32 @@ impl DomainRegistry {
     /// Retrieve content by CID
     /// Returns None if content not found
     pub async fn get_content_by_cid(&self, cid: &str) -> Result<Option<Vec<u8>>> {
-        let cache = self.content_cache.read().await;
-        let content = cache.get(cid).cloned();
-
-        if content.is_some() {
-            info!(" Retrieved content by CID: {}", cid);
-        } else {
-            info!(" Content not found for CID: {}", cid);
+        // First check in-memory cache
+        {
+            let cache = self.content_cache.read().await;
+            if let Some(content) = cache.get(cid).cloned() {
+                info!(" Retrieved content by CID from cache: {}", cid);
+                return Ok(Some(content));
+            }
         }
 
-        Ok(content)
+        // FIX (Manifest Not Found Bug): Also check persistent storage for manifest content
+        // Manifests are stored with key "manifest:{cid}" for CID-based retrieval
+        let manifest_key = format!("manifest:{}", cid);
+        match self.storage.load_domain_record(&manifest_key).await {
+            Ok(Some(content)) => {
+                info!(" Retrieved manifest content by CID from storage: {}", cid);
+                Ok(Some(content))
+            }
+            Ok(None) => {
+                info!(" Content not found for CID: {}", cid);
+                Ok(None)
+            }
+            Err(e) => {
+                warn!(" Error retrieving manifest from storage for CID {}: {}", cid, e);
+                Ok(None)
+            }
+        }
     }
 
     /// Get domain version history
@@ -938,6 +973,8 @@ impl DomainRegistry {
     pub async fn store_manifest(&self, manifest: Web4Manifest) -> Result<String> {
         let cid = manifest.compute_cid();
         let domain = manifest.domain.clone();
+        let manifest_bytes = serde_json::to_vec(&manifest)
+            .map_err(|e| anyhow!("Failed to serialize manifest: {}", e))?;
 
         // Validate manifest chain if we have the previous one
         if manifest.version > 1 {
@@ -963,14 +1000,21 @@ impl DomainRegistry {
         // FIX (Phantom Domain Bug): Also persist manifest history to storage
         // Get the updated history for this domain
         if let Some(domain_manifests) = manifests.get(&domain) {
-            let manifest_data = serde_json::to_vec(domain_manifests)
+            let manifest_history_data = serde_json::to_vec(domain_manifests)
                 .map_err(|e| anyhow!("Failed to serialize manifest history: {}", e))?;
 
             // Persist to storage
             drop(manifests); // Release lock before making storage call
-            self.storage.store_manifest(&domain, manifest_data).await?;
+            self.storage.store_manifest(&domain, manifest_history_data).await?;
             info!(" ✅ Persisted manifest history for domain: {} (CID: {})", domain, cid);
         }
+
+        // FIX (Content Not Found Bug): Also store the manifest content itself
+        // The manifest needs to be retrievable by its CID as content
+        // Store manifest content under key "manifest:{cid}" so it can be fetched
+        let manifest_content_key = format!("manifest:{}", cid);
+        self.storage.store_domain_record(&manifest_content_key, &manifest_bytes).await?;
+        info!(" ✅ Stored manifest content with CID: {} (size: {} bytes)", cid, manifest_bytes.len());
 
         info!(" Stored manifest {} for domain", cid);
         Ok(cid)
