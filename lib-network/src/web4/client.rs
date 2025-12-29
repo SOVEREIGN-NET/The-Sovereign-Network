@@ -374,6 +374,19 @@ impl Web4Client {
         Ok(())
     }
 
+    /// Ensure bootstrap mode is explicitly enabled via environment variable
+    fn ensure_bootstrap_allowed() -> Result<()> {
+        match std::env::var("ZHTP_ALLOW_BOOTSTRAP") {
+            Ok(val) if val == "1" || val.eq_ignore_ascii_case("true") => Ok(()),
+            _ => Err(anyhow!(
+                "Bootstrap mode requires ZHTP_ALLOW_BOOTSTRAP environment variable to be set to \
+                 an explicit enabling value. This mode is insecure and should only be used for \
+                 development. Set ZHTP_ALLOW_BOOTSTRAP=1 or ZHTP_ALLOW_BOOTSTRAP=true to proceed \
+                 at your own risk."
+            ))
+        }
+    }
+
     /// Configure QUIC client with trust verifier
     fn configure_client(verifier: Arc<ZhtpTrustVerifier>) -> Result<ClientConfig> {
         // Install crypto provider for rustls 0.23+

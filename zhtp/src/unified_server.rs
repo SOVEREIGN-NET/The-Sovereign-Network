@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::sync::RwLock;
 // REMOVED: TCP/UDP no longer used - QUIC-only architecture
 // use tokio::net::{TcpListener, UdpSocket, TcpStream};
@@ -31,7 +32,7 @@ use lib_storage::UnifiedStorageSystem;
 use lib_identity::IdentityManager;
 use lib_economy::EconomicModel;
 use lib_crypto::PublicKey;
-use crate::web4_stub::DomainRegistry;
+use lib_network::web4::DomainRegistry;
 
 // Import keystore filename constants
 use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
@@ -341,10 +342,20 @@ impl ZhtpUnifiedServer {
 
         // Create canonical domain registry (shared by all components)
         // MUST be created BEFORE register_api_handlers so Web4Handler can use it
+        // Note: storage is injected here - zhtp is the composition root
+        // Wrap storage in UnifiedStorageWrapper to implement the UnifiedStorage trait
+        let storage_wrapper = lib_storage::UnifiedStorageWrapper(storage.clone());
+        let storage_trait: Arc<dyn lib_network::storage_stub::UnifiedStorage> = Arc::new(storage_wrapper);
         let domain_registry = Arc::new(
-            DomainRegistry::new_with_storage(storage.clone()).await?
+            DomainRegistry::new(storage_trait.clone()).await?
         );
         info!(" Domain registry initialized (canonical instance)");
+
+        // Create content publisher with same storage backend
+        let content_publisher = Arc::new(
+            lib_network::web4::ContentPublisher::new(domain_registry.clone(), storage_trait)
+        );
+        info!(" Content publisher initialized");
 
         // Register comprehensive API handlers on ZHTP router (QUIC is the only entry point)
         Self::register_api_handlers(
@@ -356,6 +367,7 @@ impl ZhtpUnifiedServer {
             session_manager.clone(),
             dht_handler,
             domain_registry.clone(),
+            content_publisher.clone(),
         ).await?;
 
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
@@ -447,7 +459,8 @@ impl ZhtpUnifiedServer {
         _economic_model: Arc<RwLock<EconomicModel>>,
         _session_manager: Arc<SessionManager>,
         dht_handler: Arc<dyn ZhtpRequestHandler>,
-        domain_registry: Arc<DomainRegistry>,
+        domain_registry: Arc<lib_network::web4::DomainRegistry>,
+        content_publisher: Arc<lib_network::web4::ContentPublisher>,
     ) -> Result<()> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
         
@@ -551,15 +564,14 @@ impl ZhtpUnifiedServer {
         zhtp_router.register_handler("/api/v1/dht".to_string(), dht_handler);
         
         // Web4 domain and content (handle async creation first)
-        // Pass the shared domain_registry to avoid creating duplicate registries
+        // Pass the shared domain_registry and content_publisher to avoid creating duplicates
         // This ensures domain registrations are visible to all handlers
         let web4_handler = Web4Handler::new_with_registry(
             domain_registry.clone(),
-            storage.clone(),
+            content_publisher.clone(),
             identity_manager.clone(),
             blockchain.clone()
         ).await?;
-        let web4_manager = web4_handler.get_web4_manager();
         let wallet_content_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::WalletContentHandler::new(Arc::clone(&wallet_content_manager))
         );
@@ -576,9 +588,10 @@ impl ZhtpUnifiedServer {
         );
         zhtp_router.register_handler("/api/marketplace".to_string(), marketplace_handler);
 
-        // DNS resolution for .zhtp domains (connect to Web4Manager)
-        let mut dns_handler = DnsHandler::new();
-        dns_handler.set_web4_manager(web4_manager);
+        // DNS resolution for .zhtp domains (connect to domain registry)
+        let dns_handler = DnsHandler::new();
+        // TODO: Connect DnsHandler to actual domain registry from web4_handler
+        // dns_handler.set_domain_registry(web4_handler.get_domain_registry());
         let dns_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(dns_handler);
         zhtp_router.register_handler("/api/v1/dns".to_string(), dns_handler);
 
@@ -977,18 +990,25 @@ impl ZhtpUnifiedServer {
         
         // Get QUIC endpoint from QuicMeshProtocol for accept loop
         let endpoint = self.quic_mesh.get_endpoint();
-        
+
         *self.is_running.write().await = true;
-        
+
         // Start QUIC connection acceptance loop (PRIMARY PROTOCOL)
         let quic_handler = self.quic_handler.clone();
-        tokio::spawn(async move {
+        let accept_loop_handle = tokio::spawn(async move {
             info!("🚀 Starting QUIC accept loop on endpoint...");
             if let Err(e) = quic_handler.accept_loop(endpoint).await {
                 error!("❌ QUIC accept loop terminated: {}", e);
             }
         });
+
+        // Give accept loop a moment to start listening
+        tokio::time::sleep(Duration::from_millis(100)).await;
         info!(" ✅ QUIC handler started - Native ZHTP-over-QUIC ready");
+
+        // NOTE: accept_loop_handle will run in background. If it panics/errors,
+        // that's logged but startup continues. This is intentional - the server
+        // can still serve other protocols if QUIC fails.
         
         // Start mesh protocol handlers (background listeners only)
         self.start_bluetooth_mesh_handler().await?;

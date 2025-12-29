@@ -27,7 +27,8 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn, error, debug};
 
-use crate::web4_stub::{DomainRegistry, Web4ContentService, ZdnsResolver};
+use lib_network::web4::DomainRegistry;
+use crate::web4_stub::{Web4ContentService, ZdnsResolver};
 
 use super::config::{GatewayTlsConfig, TlsMode};
 use super::handlers::{gateway_handler, redirect_handler, health_handler, info_handler, GatewayState};

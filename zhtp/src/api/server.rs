@@ -66,6 +66,12 @@ impl ZhtpServer {
         ));
         
         // For storage, we'll use a placeholder - in implementation this would be proper storage
+        let dht_persist_path = dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".zhtp")
+            .join("storage")
+            .join("dht_storage.bin");
+
         let storage = Arc::new(RwLock::new(
             lib_storage::UnifiedStorageSystem::new(lib_storage::UnifiedStorageConfig {
                 node_id: lib_identity::NodeId::from_bytes([1u8; 32]),
@@ -76,7 +82,7 @@ impl ZhtpServer {
                     default_tier: lib_storage::StorageTier::Hot,
                     enable_compression: true,
                     enable_encryption: true,
-                    dht_persist_path: None,
+                    dht_persist_path: Some(dht_persist_path),
                 },
                 erasure_config: lib_storage::ErasureConfig {
                     data_shards: 4,

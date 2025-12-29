@@ -24,10 +24,41 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::domain_registry::DomainRegistry;
+
+// ZDNS types - available when storage-integration is enabled
 #[cfg(feature = "storage-integration")]
 use crate::zdns::{ZdnsResolver, Web4Record};
+
+// Stub types when ZDNS is not available
 #[cfg(not(feature = "storage-integration"))]
-use crate::web4_stub::{Web4Record, ZdnsResolver};
+struct ZdnsResolver;
+
+#[cfg(not(feature = "storage-integration"))]
+impl ZdnsResolver {
+    /// Stub method - ZDNS not available
+    pub async fn resolve_web4(&self, _domain: &str) -> Result<Web4Record, std::fmt::Error> {
+        Err(std::fmt::Error::default())
+    }
+
+    /// Stub method - ZDNS not available
+    pub async fn invalidate(&self, _domain: &str) {
+        // No-op
+    }
+}
+#[cfg(not(feature = "storage-integration"))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Web4Record {
+    pub domain: String,
+    pub owner: String,
+    pub content_mappings: HashMap<String, String>,
+    pub content_mode: Option<ContentMode>,
+    pub spa_entry: Option<String>,
+    pub asset_prefixes: Option<Vec<String>>,
+    pub capability: Option<Web4Capability>,
+    pub ttl: u32,
+    pub registered_at: u64,
+    pub expires_at: u64,
+}
 
 /// Content serving mode for a domain
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -153,6 +184,7 @@ impl Web4ContentService {
     }
 
     /// Create with ZDNS resolver for cached domain lookups
+    #[cfg(feature = "storage-integration")]
     pub fn with_zdns(
         registry: Arc<DomainRegistry>,
         zdns_resolver: Arc<ZdnsResolver>,
@@ -166,6 +198,7 @@ impl Web4ContentService {
     }
 
     /// Create with ZDNS resolver and custom defaults
+    #[cfg(feature = "storage-integration")]
     pub fn with_zdns_and_defaults(
         registry: Arc<DomainRegistry>,
         zdns_resolver: Arc<ZdnsResolver>,
@@ -177,6 +210,25 @@ impl Web4ContentService {
             defaults,
             domain_configs: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Disabled without storage-integration feature
+    #[cfg(not(feature = "storage-integration"))]
+    pub fn with_zdns(
+        registry: Arc<DomainRegistry>,
+        _zdns_resolver: Arc<ZdnsResolver>,
+    ) -> Self {
+        Self::new(registry)
+    }
+
+    /// Disabled without storage-integration feature
+    #[cfg(not(feature = "storage-integration"))]
+    pub fn with_zdns_and_defaults(
+        registry: Arc<DomainRegistry>,
+        _zdns_resolver: Arc<ZdnsResolver>,
+        defaults: Web4ContentDefaults,
+    ) -> Self {
+        Self::with_defaults(registry, defaults)
     }
 
     /// Get reference to ZDNS resolver (if configured)

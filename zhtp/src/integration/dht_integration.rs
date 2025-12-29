@@ -120,7 +120,10 @@ fn create_persistent_storage(
         warn!("Failed to create DHT storage directory {:?}: {}", zhtp_dir, e);
     }
 
-    let dht_persist_path = zhtp_dir.join("dht_storage.bin");
+    // FIX (Ticket #XXX): Use separate persistence file for MeshRouter DHT storage
+    // to avoid file contention with UnifiedStorageSystem::dht_storage
+    // Both were using dht_storage.bin, causing one to overwrite the other
+    let dht_persist_path = zhtp_dir.join("dht_mesh_storage.bin");
     info!("MeshRouter DHT persistence path: {:?}", dht_persist_path);
 
     dispatcher.dispatch(DhtIntegrationEvent::InitStorage {

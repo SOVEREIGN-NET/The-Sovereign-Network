@@ -7,7 +7,7 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{DomainArgs, DomainAction, ZhtpCli};
+use crate::argument_parsing::{DomainArgs, DomainAction, TrustFlags, ZhtpCli};
 use crate::commands::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore, validate_domain};
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
@@ -505,10 +505,12 @@ mod tests {
             duration: 365,
             metadata: None,
             keystore: None,
-            pin_spki: None,
-            node_did: None,
-            tofu: false,
-            trust_node: false,
+            trust: TrustFlags {
+                pin_spki: None,
+                node_did: None,
+                tofu: false,
+                trust_node: false,
+            },
         };
         assert_eq!(action_to_operation(&action), DomainOperation::Register);
     }
@@ -518,10 +520,12 @@ mod tests {
         let action = DomainAction::Check {
             domain: "test.zhtp".to_string(),
             keystore: None,
-            pin_spki: None,
-            node_did: None,
-            tofu: false,
-            trust_node: false,
+            trust: TrustFlags {
+                pin_spki: None,
+                node_did: None,
+                tofu: false,
+                trust_node: false,
+            },
         };
         assert_eq!(action_to_operation(&action), DomainOperation::Check);
     }
