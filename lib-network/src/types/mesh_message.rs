@@ -83,6 +83,15 @@ pub struct MeshMessageEnvelope {
     pub message_type: MessageType,
     /// Pre-serialized payload bytes (Issue #479)
     pub payload: Vec<u8>,
+    /// ZHTP method (for fast routing without deserialization)
+    #[serde(skip)]
+    pub zhtp_method: Option<lib_protocols::types::ZhtpMethod>,
+    /// ZHTP URI (for fast routing without deserialization)
+    #[serde(skip)]
+    pub zhtp_uri: Option<String>,
+    /// ZHTP status (for fast routing without deserialization)
+    #[serde(skip)]
+    pub zhtp_status: Option<lib_protocols::types::ZhtpStatus>,
 }
 
 
@@ -113,6 +122,9 @@ impl MeshMessageEnvelope {
             timestamp,
             message_type,
             payload,
+            zhtp_method: None,
+            zhtp_uri: None,
+            zhtp_status: None,
         }
     }
 
@@ -184,6 +196,80 @@ impl MeshMessageEnvelope {
     /// Get message size in bytes
     pub fn size(&self) -> usize {
         self.to_bytes().map(|b| b.len()).unwrap_or(0)
+    }
+
+    /// Create envelope from ZHTP request (Issue #479)
+    /// Extracts method/URI for fast routing without full deserialization
+    pub fn from_zhtp_request(
+        request: ProtocolZhtpRequest,
+        origin: PublicKey,
+        destination: PublicKey,
+        hop_count: u8,
+        ttl: u8,
+    ) -> Result<Self> {
+        let method = request.method.clone();
+        let uri = request.uri.clone();
+        let payload = bincode::serialize(&request)?;
+
+        let mut envelope = Self::new(
+            0, // Will be set by caller if needed
+            origin,
+            destination,
+            MessageType::ZhtpRequest,
+            payload,
+        );
+
+        envelope.ttl = ttl;
+        envelope.hop_count = hop_count;
+        envelope.zhtp_method = Some(method);
+        envelope.zhtp_uri = Some(uri);
+
+        Ok(envelope)
+    }
+
+    /// Create envelope from ZHTP response (Issue #479)
+    /// Extracts status for fast routing without full deserialization
+    pub fn from_zhtp_response(
+        response: ProtocolZhtpResponse,
+        origin: PublicKey,
+        destination: PublicKey,
+        hop_count: u8,
+        ttl: u8,
+    ) -> Result<Self> {
+        let status = response.status.clone();
+        let payload = bincode::serialize(&response)?;
+
+        let mut envelope = Self::new(
+            0, // Will be set by caller if needed
+            origin,
+            destination,
+            MessageType::ZhtpResponse,
+            payload,
+        );
+
+        envelope.ttl = ttl;
+        envelope.hop_count = hop_count;
+        envelope.zhtp_status = Some(status);
+
+        Ok(envelope)
+    }
+
+    /// Reconstruct ZHTP request from envelope
+    pub fn to_zhtp_request(&self) -> Result<ProtocolZhtpRequest> {
+        if self.message_type != MessageType::ZhtpRequest {
+            return Err(anyhow!("Message is not a ZHTP request"));
+        }
+        bincode::deserialize(&self.payload)
+            .map_err(|e| anyhow!("Failed to deserialize ZHTP request: {}", e))
+    }
+
+    /// Reconstruct ZHTP response from envelope
+    pub fn to_zhtp_response(&self) -> Result<ProtocolZhtpResponse> {
+        if self.message_type != MessageType::ZhtpResponse {
+            return Err(anyhow!("Message is not a ZHTP response"));
+        }
+        bincode::deserialize(&self.payload)
+            .map_err(|e| anyhow!("Failed to deserialize ZHTP response: {}", e))
     }
 }
 
@@ -463,8 +549,8 @@ impl ZhtpMeshMessage {
             Self::ConnectivityResponse { provider, accepted, available_bandwidth_kbps, cost_tokens_per_mb, connection_details } => {
                 (MessageType::ConnectivityResponse, bincode::serialize(&(provider, accepted, available_bandwidth_kbps, cost_tokens_per_mb, connection_details))?)
             },
-            Self::LongRangeRoute { destination, relay_chain, payload, max_hops } => {
-                (MessageType::LongRangeRoute, bincode::serialize(&(destination, relay_chain, payload, max_hops))?)
+            Self::LongRangeRoute { destination, relay_chain, payload: route_payload, max_hops } => {
+                (MessageType::LongRangeRoute, bincode::serialize(&(destination, relay_chain, route_payload, max_hops))?)
             },
             Self::UbiDistribution { recipient, amount_tokens, distribution_round, proof } => {
                 (MessageType::UbiDistribution, bincode::serialize(&(recipient, amount_tokens, distribution_round, proof))?)
@@ -561,8 +647,8 @@ impl ZhtpMeshMessage {
                 Self::ConnectivityResponse { provider, accepted, available_bandwidth_kbps, cost_tokens_per_mb, connection_details }
             },
             MessageType::LongRangeRoute => {
-                let (destination, relay_chain, payload, max_hops) = bincode::deserialize(payload)?;
-                Self::LongRangeRoute { destination, relay_chain, payload, max_hops }
+                let (destination, relay_chain, route_payload, max_hops) = bincode::deserialize(payload)?;
+                Self::LongRangeRoute { destination, relay_chain, payload: route_payload, max_hops }
             },
             MessageType::UbiDistribution => {
                 let (recipient, amount_tokens, distribution_round, proof) = bincode::deserialize(payload)?;
@@ -651,8 +737,8 @@ impl ZhtpMeshMessage {
                 Self::DhtPong { request_id, timestamp }
             },
             MessageType::DhtGenericPayload => {
-                let (requester, payload, signature) = bincode::deserialize(payload)?;
-                Self::DhtGenericPayload { requester, payload, signature }
+                let (requester, dht_payload, signature) = bincode::deserialize(payload)?;
+                Self::DhtGenericPayload { requester, payload: dht_payload, signature }
             },
         };
         Ok(message)
