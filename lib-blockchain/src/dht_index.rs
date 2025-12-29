@@ -33,6 +33,21 @@ pub struct IndexedTransactionSummary {
     pub block_height: u64,
 }
 
+/// Validate that a key belongs to the blockchain namespace (not domain storage)
+/// This prevents cross-namespace pollution if MeshRouter and UnifiedStorageSystem
+/// accidentally share the same persistence file.
+fn validate_blockchain_key(key: &str) -> Result<()> {
+    if key.starts_with("web4/") || key.starts_with("identity/") || key.starts_with("manifest:") {
+        return Err(anyhow::anyhow!(
+            "NAMESPACE VIOLATION: Blockchain tried to store domain/identity key '{}'. \
+            This indicates MeshRouter and UnifiedStorageSystem are using the same DHT file. \
+            Ensure dht_integration.rs creates separate persistence files.",
+            key
+        ));
+    }
+    Ok(())
+}
+
 /// Index a single block header and its transactions into the DHT.
 ///
 /// Keys are stable strings, so they work across both in-memory and networked
@@ -57,6 +72,7 @@ pub async fn index_block_header(storage: &mut DhtStorage, block: &Block) -> Resu
         timestamp: block.timestamp(),
     };
     let key = format!("block_header:{}", header.height);
+    validate_blockchain_key(&key)?;  // NAMESPACE GUARD
     let bytes = bincode::serialize(&header)?;
     storage.store(key, bytes, None).await
 }
@@ -82,6 +98,7 @@ pub async fn index_transaction(
         };
 
         let key_recipient = format!("tx_idx:recipient:{}:{}", recipient_hex, summary.tx_id_hex);
+        validate_blockchain_key(&key_recipient)?;  // NAMESPACE GUARD
         let bytes = bincode::serialize(&summary)?;
         storage.store(key_recipient, bytes, None).await?;
     }
@@ -95,6 +112,7 @@ pub async fn index_transaction(
         block_height,
     };
     let key_sender = format!("tx_idx:sender:{}:{}", summary.sender_hint, summary.tx_id_hex);
+    validate_blockchain_key(&key_sender)?;  // NAMESPACE GUARD
     let bytes = bincode::serialize(&summary)?;
     storage.store(key_sender, bytes, None).await
 }

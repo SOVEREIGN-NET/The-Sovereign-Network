@@ -558,6 +558,18 @@ impl UnifiedStorageSystem {
     /// Store a Web4 domain record in DHT storage
     /// Uses key format: `web4/domain/{domain}`
     pub async fn store_domain_record(&mut self, domain: &str, record_data: &[u8]) -> Result<()> {
+        // NAMESPACE GUARD: UnifiedStorageSystem only stores domain data, not blockchain
+        // If this assertion fails, it indicates either:
+        // 1. MeshRouter DHT is using the same persistence file (bug in dht_integration.rs)
+        // 2. Someone is trying to store blockchain data via UnifiedStorage (wrong usage)
+        if domain.starts_with("block_header:") || domain.starts_with("tx_idx:") {
+            return Err(anyhow!(
+                "NAMESPACE VIOLATION: UnifiedStorageSystem tried to store blockchain key '{}'. \
+                This indicates cross-namespace pollution. Ensure MeshRouter uses separate DHT file.",
+                domain
+            ));
+        }
+
         let key = format!("web4/domain/{}", domain);
         tracing::info!("Storing domain record for {} ({} bytes)", domain, record_data.len());
         self.dht_storage.store(key, record_data.to_vec(), None).await
