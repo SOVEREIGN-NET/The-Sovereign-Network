@@ -280,26 +280,146 @@ impl DomainRegistry {
             (1, None)
         };
 
-        // Create and store initial manifest (even if empty - prevents phantom CID)
-        let initial_manifest = Web4Manifest {
-            domain: request.domain.clone(),
-            version,
-            previous_manifest,
-            build_hash: hex::encode(lib_crypto::hash_blake3(
-                format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
-            )),
-            files: HashMap::new(), // Empty initially, will be populated by content publishing
-            created_at: current_time,
-            created_by: format!("{}", request.owner.id),
-            message: if existing_record.is_some() {
-                Some(format!("Domain {} updated", request.domain))
-            } else {
-                Some(format!("Domain {} registered", request.domain))
-            },
-        };
+        // FIX (Manifest File List): If manifest_cid is provided by CLI, load and use it
+        // Otherwise, create an empty manifest
+        let manifest_cid = if let Some(ref cli_manifest_cid) = request.manifest_cid {
+            info!("Loading CLI-provided manifest with CID: {}", cli_manifest_cid);
 
-        // Store manifest and get its real CID (not phantom)
-        let manifest_cid = self.store_manifest(initial_manifest).await?;
+            // Load the manifest from storage (uploaded by CLI with all files)
+            match self.get_content_by_cid(cli_manifest_cid).await {
+                Ok(Some(manifest_bytes)) => {
+                    // Try to deserialize as a manifest
+                    if let Ok(cli_manifest_data) = serde_json::from_slice::<serde_json::Value>(&manifest_bytes) {
+                        info!("✅ Loaded CLI manifest from storage: {} bytes", manifest_bytes.len());
+
+                        // Convert CLI manifest format to Web4Manifest
+                        // CLI manifest has files as Vec<FileEntry>, we need HashMap<String, ManifestFile>
+                        let mut manifest_files = HashMap::new();
+
+                        if let Some(files_array) = cli_manifest_data.get("files").and_then(|f| f.as_array()) {
+                            for file_entry in files_array {
+                                if let (Some(path), Some(hash), Some(size), Some(mime_type)) = (
+                                    file_entry.get("path").and_then(|p| p.as_str()),
+                                    file_entry.get("hash").and_then(|h| h.as_str()),
+                                    file_entry.get("size").and_then(|s| s.as_u64()),
+                                    file_entry.get("mime_type").and_then(|m| m.as_str()),
+                                ) {
+                                    // Create ManifestFile from FileEntry
+                                    // Note: FileEntry has hash (BLAKE3 hash), we store it as cid
+                                    manifest_files.insert(
+                                        path.to_string(),
+                                        ManifestFile {
+                                            cid: hash.to_string(),
+                                            size,
+                                            content_type: mime_type.to_string(),
+                                            hash: hash.to_string(),
+                                        },
+                                    );
+                                }
+                            }
+                        }
+
+                        info!("Converted CLI manifest with {} files to Web4Manifest format", manifest_files.len());
+
+                        // Create Web4Manifest with CLI's files
+                        let converted_manifest = Web4Manifest {
+                            domain: request.domain.clone(),
+                            version,
+                            previous_manifest,
+                            build_hash: if let Some(root_hash) = cli_manifest_data.get("root_hash").and_then(|h| h.as_str()) {
+                                root_hash.to_string()
+                            } else {
+                                hex::encode(lib_crypto::hash_blake3(
+                                    format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
+                                ))
+                            },
+                            files: manifest_files,  // FIX: Use files from CLI manifest
+                            created_at: current_time,
+                            created_by: format!("{}", request.owner.id),
+                            message: if existing_record.is_some() {
+                                Some(format!("Domain {} updated with {} files", request.domain, manifest_files.len()))
+                            } else {
+                                Some(format!("Domain {} registered with {} files", request.domain, manifest_files.len()))
+                            },
+                        };
+
+                        // Store this manifest and get its CID
+                        self.store_manifest(converted_manifest).await?
+                    } else {
+                        warn!("Failed to parse CLI manifest as JSON, creating empty manifest");
+                        // Fallback to empty manifest if parse fails
+                        let empty_manifest = Web4Manifest {
+                            domain: request.domain.clone(),
+                            version,
+                            previous_manifest,
+                            build_hash: hex::encode(lib_crypto::hash_blake3(
+                                format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
+                            )),
+                            files: HashMap::new(),
+                            created_at: current_time,
+                            created_by: format!("{}", request.owner.id),
+                            message: Some(format!("Domain {} registered", request.domain)),
+                        };
+                        self.store_manifest(empty_manifest).await?
+                    }
+                }
+                Ok(None) => {
+                    warn!("Manifest content not found for CID {}, creating empty manifest", cli_manifest_cid);
+                    // Fallback to empty manifest if content not found
+                    let empty_manifest = Web4Manifest {
+                        domain: request.domain.clone(),
+                        version,
+                        previous_manifest,
+                        build_hash: hex::encode(lib_crypto::hash_blake3(
+                            format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
+                        )),
+                        files: HashMap::new(),
+                        created_at: current_time,
+                        created_by: format!("{}", request.owner.id),
+                        message: Some(format!("Domain {} registered", request.domain)),
+                    };
+                    self.store_manifest(empty_manifest).await?
+                }
+                Err(e) => {
+                    warn!("Error loading manifest for CID {}: {}, creating empty manifest", cli_manifest_cid, e);
+                    // Fallback to empty manifest on error
+                    let empty_manifest = Web4Manifest {
+                        domain: request.domain.clone(),
+                        version,
+                        previous_manifest,
+                        build_hash: hex::encode(lib_crypto::hash_blake3(
+                            format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
+                        )),
+                        files: HashMap::new(),
+                        created_at: current_time,
+                        created_by: format!("{}", request.owner.id),
+                        message: Some(format!("Domain {} registered", request.domain)),
+                    };
+                    self.store_manifest(empty_manifest).await?
+                }
+            }
+        } else {
+            // No manifest_cid provided, create empty manifest as before
+            let initial_manifest = Web4Manifest {
+                domain: request.domain.clone(),
+                version,
+                previous_manifest,
+                build_hash: hex::encode(lib_crypto::hash_blake3(
+                    format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
+                )),
+                files: HashMap::new(),
+                created_at: current_time,
+                created_by: format!("{}", request.owner.id),
+                message: if existing_record.is_some() {
+                    Some(format!("Domain {} updated", request.domain))
+                } else {
+                    Some(format!("Domain {} registered", request.domain))
+                },
+            };
+
+            // Store manifest and get its real CID
+            self.store_manifest(initial_manifest).await?
+        };
 
         // FIX (Domain Update): Allow updating existing domains with new manifest CID
         let domain_record = if let Some(existing) = existing_record {
