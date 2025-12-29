@@ -72,6 +72,9 @@ impl DomainRegistry {
         // Load persisted domain records from storage on startup
         registry.load_persisted_domains().await?;
 
+        // Load persisted manifest history from storage (FIX: was missing, causing phantom domains)
+        registry.load_persisted_manifests().await?;
+
         Ok(registry)
     }
 
@@ -131,6 +134,52 @@ impl DomainRegistry {
         } // stats lock released here
 
         info!(" ✅ Loaded {} persisted domain records from storage into memory", loaded_count);
+        Ok(())
+    }
+
+    /// Load all persisted manifest histories from storage into memory
+    /// FIX (Phantom Domain Bug): Manifests must be loaded on startup, not just domain records
+    async fn load_persisted_manifests(&self) -> Result<()> {
+        info!("🔍 load_persisted_manifests: Loading manifest history from storage");
+
+        // Get all loaded domain records to know which domains need manifests loaded
+        let domain_records = self.domain_records.read().await;
+        let domains_to_load: Vec<String> = domain_records.keys().cloned().collect();
+        drop(domain_records);
+
+        if domains_to_load.is_empty() {
+            info!(" ℹ️  No domains loaded, skipping manifest load");
+            return Ok(());
+        }
+
+        // Load manifest for each domain
+        let mut loaded_manifests = 0;
+        for domain in &domains_to_load {
+            match self.storage.load_manifest(domain).await {
+                Ok(Some(manifest_data)) => {
+                    match serde_json::from_slice::<Vec<Web4Manifest>>(&manifest_data) {
+                        Ok(manifests) => {
+                            // Store in manifest_history
+                            let mut history = self.manifest_history.write().await;
+                            history.insert(domain.clone(), manifests);
+                            loaded_manifests += 1;
+                            info!(" ✅ Loaded manifest history for domain: {}", domain);
+                        }
+                        Err(e) => {
+                            warn!(" ❌ Failed to deserialize manifest for {}: {}", domain, e);
+                        }
+                    }
+                }
+                Ok(None) => {
+                    info!(" ⚠️  No manifest found for domain: {} (may be newly registered)", domain);
+                }
+                Err(e) => {
+                    warn!(" ⚠️  Error loading manifest for {}: {}", domain, e);
+                }
+            }
+        }
+
+        info!(" ✅ Loaded {} manifest histories from storage", loaded_manifests);
         Ok(())
     }
 
@@ -888,11 +937,12 @@ impl DomainRegistry {
     /// Store a manifest in history
     pub async fn store_manifest(&self, manifest: Web4Manifest) -> Result<String> {
         let cid = manifest.compute_cid();
+        let domain = manifest.domain.clone();
 
         // Validate manifest chain if we have the previous one
         if manifest.version > 1 {
             let manifests = self.manifest_history.read().await;
-            if let Some(domain_manifests) = manifests.get(&manifest.domain) {
+            if let Some(domain_manifests) = manifests.get(&domain) {
                 if let Some(prev) = domain_manifests.last() {
                     manifest.validate_chain(Some(prev))
                         .map_err(|e| anyhow!("Manifest chain validation failed: {}", e))?;
@@ -903,12 +953,24 @@ impl DomainRegistry {
                 .map_err(|e| anyhow!("Manifest validation failed: {}", e))?;
         }
 
-        // Store manifest in history
+        // Store manifest in memory
         let mut manifests = self.manifest_history.write().await;
         manifests
-            .entry(manifest.domain.clone())
+            .entry(domain.clone())
             .or_insert_with(Vec::new)
             .push(manifest);
+
+        // FIX (Phantom Domain Bug): Also persist manifest history to storage
+        // Get the updated history for this domain
+        if let Some(domain_manifests) = manifests.get(&domain) {
+            let manifest_data = serde_json::to_vec(domain_manifests)
+                .map_err(|e| anyhow!("Failed to serialize manifest history: {}", e))?;
+
+            // Persist to storage
+            drop(manifests); // Release lock before making storage call
+            self.storage.store_manifest(&domain, manifest_data).await?;
+            info!(" ✅ Persisted manifest history for domain: {} (CID: {})", domain, cid);
+        }
 
         info!(" Stored manifest {} for domain", cid);
         Ok(cid)
