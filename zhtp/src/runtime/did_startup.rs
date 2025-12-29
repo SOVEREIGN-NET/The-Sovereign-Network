@@ -162,13 +162,13 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
             .map_err(|_| KeystoreError::Corrupt(wallet_data_file.clone(), "Invalid wallet_id length".to_string()))?
     );
 
-    // Create minimal wallet (seed phrase not preserved for security)
+    // Create wallet with restored identity's public key (seed phrase not preserved for security)
     let mut restored_wallet = QuantumWallet::new(
         WalletType::Primary,
         wallet_data.wallet_name.clone(),
         None, // No alias
         Some(user_identity.id.clone()),
-        vec![0u8; 32], // Public key placeholder - not needed for domain registration
+        user_identity.public_key.dilithium_pk.clone(), // Use actual public key from restored identity
     );
 
     // Override the auto-generated wallet_id with the saved one

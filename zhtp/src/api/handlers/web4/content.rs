@@ -200,7 +200,7 @@ impl Web4Handler {
         );
 
         // Increment version if not first publish
-        if !manifest.previous_manifest.is_none() || manifest.version > 1 {
+        if manifest.previous_manifest.is_some() || manifest.version > 1 {
             manifest.version += 1;
             manifest.previous_manifest = Some(current_record.current_web4_manifest_cid.clone());
         }
@@ -209,20 +209,31 @@ impl Web4Handler {
         let manifest_cid = self.domain_registry.store_manifest(manifest).await
             .map_err(|e| anyhow!("Failed to store manifest: {}", e))?;
 
-        // Update domain record to point to new manifest
-        let update_request = lib_network::web4::DomainUpdateRequest {
-            domain: api_request.domain.clone(),
-            new_manifest_cid: manifest_cid,
-            expected_previous_manifest_cid: current_record.current_web4_manifest_cid,
-            signature: String::new(), // TODO: Sign properly
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        };
+        // Update domain record to point to new manifest.
+        //
+        // NOTE: This path currently sends an unsigned update request and is therefore
+        // only permitted in debug builds. In non-debug builds we fail closed to avoid
+        // processing domain updates without proper authorization.
+        if cfg!(debug_assertions) {
+            let update_request = lib_network::web4::DomainUpdateRequest {
+                domain: api_request.domain.clone(),
+                new_manifest_cid: manifest_cid,
+                expected_previous_manifest_cid: current_record.current_web4_manifest_cid,
+                signature: String::new(), // INSECURE: debug-only; production must use proper signing
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            };
 
-        let _update_response = self.domain_registry.update_domain(update_request).await
-            .map_err(|e| anyhow!("Failed to update domain manifest: {}", e))?;
+            let _update_response = self.domain_registry.update_domain(update_request).await
+                .map_err(|e| anyhow!("Failed to update domain manifest: {}", e))?;
+        } else {
+            error!("Refusing unsigned domain update in non-debug build; endpoint is development-only");
+            return Err(anyhow!(
+                "Domain update endpoint is disabled in this build because updates are not signed"
+            ));
+        }
 
         let zhtp_url = format!("zhtp://{}{}", api_request.domain, api_request.path);
         let published_at = std::time::SystemTime::now()
@@ -408,20 +419,31 @@ impl Web4Handler {
         let manifest_cid = self.domain_registry.store_manifest(manifest).await
             .map_err(|e| anyhow!("Failed to store manifest: {}", e))?;
 
-        // Update domain record to point to new manifest
-        let update_request = lib_network::web4::DomainUpdateRequest {
-            domain: domain.to_string(),
-            new_manifest_cid: manifest_cid,
-            expected_previous_manifest_cid: current_record.current_web4_manifest_cid,
-            signature: String::new(), // TODO: Sign properly
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        };
+        // Update domain record to point to new manifest.
+        //
+        // NOTE: This path currently sends an unsigned update request and is therefore
+        // only permitted in debug builds. In non-debug builds we fail closed to avoid
+        // processing domain updates without proper authorization.
+        if cfg!(debug_assertions) {
+            let update_request = lib_network::web4::DomainUpdateRequest {
+                domain: domain.to_string(),
+                new_manifest_cid: manifest_cid,
+                expected_previous_manifest_cid: current_record.current_web4_manifest_cid,
+                signature: String::new(), // INSECURE: debug-only; production must use proper signing
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            };
 
-        let _update_response = self.domain_registry.update_domain(update_request).await
-            .map_err(|e| anyhow!("Failed to update domain manifest: {}", e))?;
+            let _update_response = self.domain_registry.update_domain(update_request).await
+                .map_err(|e| anyhow!("Failed to update domain manifest: {}", e))?;
+        } else {
+            error!("Refusing unsigned domain update in non-debug build; endpoint is development-only");
+            return Err(anyhow!(
+                "Domain update endpoint is disabled in this build because updates are not signed"
+            ));
+        }
 
         let zhtp_url = format!("zhtp://{}{}", domain, content_path);
         let updated_at = std::time::SystemTime::now()

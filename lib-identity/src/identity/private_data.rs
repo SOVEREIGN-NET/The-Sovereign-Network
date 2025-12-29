@@ -65,6 +65,14 @@ impl PrivateIdentityData {
     pub fn public_key(&self) -> &[u8] {
         &self.quantum_keypair.public_key
     }
+
+    /// Set guardian configuration for social recovery after construction.
+    ///
+    /// This provides a way to initialize or update the `guardian_config`
+    /// field without reintroducing the removed constructor parameter.
+    pub fn set_guardian_config(&mut self, guardian_config: GuardianConfig) {
+        self.guardian_config = Some(guardian_config);
+    }
 }
 
 impl QuantumKeypair {

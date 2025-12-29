@@ -986,20 +986,16 @@ impl Web4Handler {
             }
         };
 
-        // Note: list_domains_by_owner requires iterating all domains, which needs registry access
-        // For now, return an empty list as a placeholder
-        // TODO: Add list_domains_by_owner to DomainRegistry public API if needed
-        let domains: Vec<String> = Vec::new();
-
-        let response = serde_json::json!({ "domains": domains });
-        let response_json = serde_json::to_vec(&response)
-            .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
-
-        Ok(ZhtpResponse::success_with_content_type(
-            response_json,
-            "application/json".to_string(),
-            None,
-        ))
+        // NOTE: list_domains_by_owner requires iterating all persisted domains, which is not
+        // yet implemented in the DomainRegistry. This endpoint is reserved for future use.
+        // For now, we return a not-implemented error rather than silently returning empty results,
+        // which would confuse API clients expecting functional behavior.
+        return Err(anyhow!(
+            "The list_domains_by_owner endpoint is not yet implemented. \
+             This feature requires registry support for domain enumeration by owner. \
+             Please use domain lookup endpoints for specific domains or track deployments \
+             in your application state."
+        ));
     }
 
     /// Transfer domain to new owner
