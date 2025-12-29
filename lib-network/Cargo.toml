@@ -123,6 +123,7 @@ lib-economy = { path = "../lib-economy" }
 lib-protocols = { path = "../lib-protocols", default-features = false }
 lib-identity = { path = "../lib-identity" }
 lib-consensus = { path = "../lib-consensus" }
+lib-storage = { path = "../lib-storage" }
 nix = { version = "0.30.1", features = ["socket"] }
 
 # Platform-specific GATT and Bluetooth APIs
