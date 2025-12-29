@@ -75,6 +75,10 @@ impl DomainRegistry {
         // Load persisted manifest history from storage (FIX: was missing, causing phantom domains)
         registry.load_persisted_manifests().await?;
 
+        // FIX (Content Persistence): Content is now persisted to storage with key "content:{cid}"
+        // Content will be loaded on-demand from storage when first accessed via get_content_by_cid()
+        // No need to pre-cache all content on startup - lazy loading is more efficient
+
         Ok(registry)
     }
 
@@ -793,12 +797,18 @@ impl DomainRegistry {
         let content_hash = hash_blake3(&content);
         let cid = format!("bafk{}", hex::encode(&content_hash[..16]));
 
-        // Store in content cache
+        // Store in content cache (for fast access)
         {
             let mut cache = self.content_cache.write().await;
-            cache.insert(cid.clone(), content);
-            info!(" Stored content by CID: {} ({} bytes)", cid, cache.get(&cid).map(|c| c.len()).unwrap_or(0));
+            cache.insert(cid.clone(), content.clone());
+            info!(" Stored content by CID in cache: {} ({} bytes)", cid, content.len());
         }
+
+        // FIX (Content Persistence Bug): Also persist content to storage
+        // Content needs to be stored with key "content:{cid}" for durability across restarts
+        let content_key = format!("content:{}", cid);
+        self.storage.store_domain_record(&content_key, content.clone()).await?;
+        info!(" ✅ Persisted content to storage: {} ({} bytes)", cid, content.len());
 
         Ok(cid)
     }
@@ -815,12 +825,37 @@ impl DomainRegistry {
             }
         }
 
-        // FIX (Manifest Not Found Bug): Also check persistent storage for manifest content
+        // Check persistent storage - content is stored with key "content:{cid}"
+        let content_key = format!("content:{}", cid);
+        match self.storage.load_domain_record(&content_key).await {
+            Ok(Some(content)) => {
+                info!(" Retrieved content by CID from storage: {}", cid);
+                // Cache it for next time
+                {
+                    let mut cache = self.content_cache.write().await;
+                    cache.insert(cid.to_string(), content.clone());
+                }
+                return Ok(Some(content));
+            }
+            Ok(None) => {
+                // Content not found, fall through to check manifest
+            }
+            Err(e) => {
+                warn!(" Error retrieving content from storage for CID {}: {}", cid, e);
+            }
+        }
+
+        // Also check for manifest content with key "manifest:{cid}"
         // Manifests are stored with key "manifest:{cid}" for CID-based retrieval
         let manifest_key = format!("manifest:{}", cid);
         match self.storage.load_domain_record(&manifest_key).await {
             Ok(Some(content)) => {
                 info!(" Retrieved manifest content by CID from storage: {}", cid);
+                // Cache it for next time
+                {
+                    let mut cache = self.content_cache.write().await;
+                    cache.insert(cid.to_string(), content.clone());
+                }
                 Ok(Some(content))
             }
             Ok(None) => {
@@ -1013,7 +1048,7 @@ impl DomainRegistry {
         // The manifest needs to be retrievable by its CID as content
         // Store manifest content under key "manifest:{cid}" so it can be fetched
         let manifest_content_key = format!("manifest:{}", cid);
-        self.storage.store_domain_record(&manifest_content_key, &manifest_bytes).await?;
+        self.storage.store_domain_record(&manifest_content_key, manifest_bytes.clone()).await?;
         info!(" ✅ Stored manifest content with CID: {} (size: {} bytes)", cid, manifest_bytes.len());
 
         info!(" Stored manifest {} for domain", cid);
