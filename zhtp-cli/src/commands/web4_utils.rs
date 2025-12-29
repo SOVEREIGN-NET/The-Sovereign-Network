@@ -32,7 +32,7 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
 
     // Fallback to NODE identity files for backwards compatibility with old keystores
     // that were created before USER/NODE identity separation
-    let using_fallback = if !identity_file.exists() || !private_key_file.exists() {
+    if !identity_file.exists() || !private_key_file.exists() {
         let node_identity_file = keystore_path.join(zhtp::keystore_names::NODE_IDENTITY_FILENAME);
         let node_private_key_file = keystore_path.join(zhtp::keystore_names::NODE_PRIVATE_KEY_FILENAME);
 
@@ -44,13 +44,8 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
             );
             identity_file = node_identity_file;
             private_key_file = node_private_key_file;
-            true
-        } else {
-            false
         }
-    } else {
-        false
-    };
+    }
 
     if !identity_file.exists() {
         return Err(CliError::IdentityError(format!(

@@ -39,9 +39,13 @@ pub struct IndexedTransactionSummary {
 fn validate_blockchain_key(key: &str) -> Result<()> {
     if key.starts_with("web4/") || key.starts_with("identity/") || key.starts_with("manifest:") {
         return Err(anyhow::anyhow!(
-            "NAMESPACE VIOLATION: Blockchain tried to store domain/identity key '{}'. \
-            This indicates MeshRouter and UnifiedStorageSystem are using the same DHT file. \
-            Ensure dht_integration.rs creates separate persistence files.",
+            "NAMESPACE VIOLATION: Blockchain tried to store reserved key '{}'. \
+            Reserved key prefixes are:\n  \
+            - 'web4/' and 'manifest:' → Web4 domain/content storage (UnifiedStorageSystem)\n  \
+            - 'identity/' → Identity management storage\n  \
+            Blockchain keys should use prefixes like 'block_header:', 'tx_idx:' etc.\n\
+            This error indicates DHT persistence file(s) are misconfigured. \
+            Ensure separate persistence files for blockchain vs. Web4/identity operations.",
             key
         ));
     }
