@@ -77,7 +77,7 @@ pub use network_integration::{
     process_network_outputs_with,
 };
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_identity::ZhtpIdentity;
