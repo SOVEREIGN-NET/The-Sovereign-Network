@@ -235,20 +235,11 @@ impl DomainRegistry {
         // Validate domain name
         self.validate_domain_name(&request.domain)?;
 
-        // Check if domain is already registered
-        {
+        // Check if domain is already registered (FIX: allow updates by loading existing record)
+        let existing_record = {
             let records = self.domain_records.read().await;
-            if records.contains_key(&request.domain) {
-                return Ok(DomainRegistrationResponse {
-                    domain: request.domain.clone(),
-                    success: false,
-                    registration_id: String::new(),
-                    expires_at: 0,
-                    fees_charged: 0.0,
-                    error: Some("Domain already registered".to_string()),
-                });
-            }
-        }
+            records.get(&request.domain).cloned()
+        };
 
         // Verify registration proof
         if !self.verify_registration_proof(&request).await? {
@@ -269,9 +260,9 @@ impl DomainRegistry {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
-        
+
         let expires_at = current_time + (request.duration_days * 24 * 60 * 60);
-        
+
         // Create ownership proof
         let ownership_proof = self.create_ownership_proof(&request.owner, &request.domain, current_time).await?;
 
@@ -282,35 +273,65 @@ impl DomainRegistry {
             content_mappings.insert(path.clone(), content_hash);
         }
 
+        // Determine version and manifest info
+        let (version, previous_manifest) = if let Some(ref existing) = existing_record {
+            (existing.version + 1, Some(existing.current_manifest_cid.clone()))
+        } else {
+            (1, None)
+        };
+
         // Create and store initial manifest (even if empty - prevents phantom CID)
         let initial_manifest = Web4Manifest {
             domain: request.domain.clone(),
-            version: 1,
-            previous_manifest: None,
+            version,
+            previous_manifest,
             build_hash: hex::encode(lib_crypto::hash_blake3(
-                format!("{}:v1:{}", request.domain, current_time).as_bytes()
+                format!("{}:v{}:{}", request.domain, version, current_time).as_bytes()
             )),
             files: HashMap::new(), // Empty initially, will be populated by content publishing
             created_at: current_time,
             created_by: format!("{}", request.owner.id),
-            message: Some(format!("Domain {} registered", request.domain)),
+            message: if existing_record.is_some() {
+                Some(format!("Domain {} updated", request.domain))
+            } else {
+                Some(format!("Domain {} registered", request.domain))
+            },
         };
 
         // Store manifest and get its real CID (not phantom)
         let manifest_cid = self.store_manifest(initial_manifest).await?;
 
-        let domain_record = DomainRecord {
-            domain: request.domain.clone(),
-            owner: request.owner.id.clone(),
-            current_manifest_cid: manifest_cid,
-            version: 1,
-            registered_at: current_time,
-            updated_at: current_time,
-            expires_at,
-            ownership_proof,
-            content_mappings,
-            metadata: request.metadata.clone(),
-            transfer_history: vec![],
+        // FIX (Domain Update): Allow updating existing domains with new manifest CID
+        let domain_record = if let Some(existing) = existing_record {
+            // Update existing domain with new manifest
+            DomainRecord {
+                domain: request.domain.clone(),
+                owner: existing.owner.clone(),
+                current_manifest_cid: manifest_cid,
+                version,
+                registered_at: existing.registered_at,
+                updated_at: current_time,
+                expires_at,
+                ownership_proof,
+                content_mappings,
+                metadata: request.metadata.clone(),
+                transfer_history: existing.transfer_history,
+            }
+        } else {
+            // New domain registration
+            DomainRecord {
+                domain: request.domain.clone(),
+                owner: request.owner.id.clone(),
+                current_manifest_cid: manifest_cid,
+                version,
+                registered_at: current_time,
+                updated_at: current_time,
+                expires_at,
+                ownership_proof,
+                content_mappings,
+                metadata: request.metadata.clone(),
+                transfer_history: vec![],
+            }
         };
 
         // Store domain record (legacy method for compatibility)
