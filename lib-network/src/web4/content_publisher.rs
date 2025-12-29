@@ -9,10 +9,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 use lib_identity::ZhtpIdentity;
-
-// Use storage stub (protocol-only per architecture)
-// Real storage integration happens at application layer (zhtp)
-use crate::storage_stub::UnifiedStorageSystem;
+use crate::storage_stub::UnifiedStorage;
 
 use crate::dht::ZkDHTIntegration;
 use super::types::*;
@@ -24,8 +21,8 @@ pub struct ContentPublisher {
     domain_registry: Arc<DomainRegistry>,
     /// DHT client for content storage and retrieval (optional - uses registry's DHT if None)
     dht_client: Arc<RwLock<Option<ZkDHTIntegration>>>,
-    /// Storage backend
-    storage_system: Arc<RwLock<UnifiedStorageSystem>>,
+    /// Storage backend (trait-based, injected by composition root)
+    storage: Arc<dyn UnifiedStorage>,
     /// Content statistics
     stats: Arc<RwLock<ContentPublishingStats>>,
 }
@@ -46,27 +43,24 @@ pub struct ContentPublishingStats {
 }
 
 impl ContentPublisher {
-    /// Create new content publisher without creating a new DHT client
-    pub async fn new(domain_registry: Arc<DomainRegistry>) -> Result<Self> {
-        // Use stub only - real storage integration at zhtp application layer
-        use crate::storage_stub::UnifiedStorageConfig;
-        let storage_config = UnifiedStorageConfig::default();
-        let storage_system = UnifiedStorageSystem::new(storage_config).await?;
-
-        Ok(Self {
+    /// Create new content publisher with injected storage
+    ///
+    /// This is the ONLY public constructor. Storage is injected by composition root (zhtp).
+    pub fn new(domain_registry: Arc<DomainRegistry>, storage: Arc<dyn UnifiedStorage>) -> Self {
+        Self {
             domain_registry,
-            dht_client: Arc::new(RwLock::new(None)), // Will use registry's DHT or be set later
-            storage_system: Arc::new(RwLock::new(storage_system)),
+            dht_client: Arc::new(RwLock::new(None)),
+            storage,
             stats: Arc::new(RwLock::new(ContentPublishingStats::default())),
-        })
+        }
     }
 
-    /// Create new content publisher with existing storage system (avoids creating duplicates)
-    pub async fn new_with_storage(domain_registry: Arc<DomainRegistry>, storage: std::sync::Arc<tokio::sync::RwLock<UnifiedStorageSystem>>) -> Result<Self> {
-        Ok(Self {
+    /// Create new content publisher with optional DHT client
+    pub fn new_with_dht(domain_registry: Arc<DomainRegistry>, storage: Arc<dyn UnifiedStorage>, dht_client: Option<ZkDHTIntegration>) -> Self {
+        Self {
             domain_registry,
-            dht_client: Arc::new(RwLock::new(None)), // Will use registry's DHT or be set later
-            storage_system: storage,
+            dht_client: Arc::new(RwLock::new(dht_client)),
+            storage,
             stats: Arc::new(RwLock::new(ContentPublishingStats::default())),
         })
     }

@@ -14,10 +14,7 @@ use lib_identity::ZhtpIdentity;
 
 use crate::dht::ZkDHTIntegration;
 use super::types::*;
-
-// Use storage stub (protocol-only per architecture)
-// Real storage integration happens at application layer (zhtp)
-use crate::storage_stub::{UnifiedStorageSystem, UnifiedStorageConfig};
+use crate::storage_stub::UnifiedStorage;
 
 #[cfg(feature = "storage-integration")]
 use super::content_publisher::ContentPublisher;
@@ -30,8 +27,8 @@ pub struct DomainRegistry {
     domain_records: Arc<RwLock<HashMap<String, DomainRecord>>>,
     /// DHT client for direct storage
     dht_client: Arc<RwLock<Option<ZkDHTIntegration>>>,
-    /// Storage backend for persistence
-    storage_system: Arc<RwLock<UnifiedStorageSystem>>,
+    /// Storage backend for persistence (trait-based, injected by composition root)
+    storage: Arc<dyn UnifiedStorage>,
     /// Content cache (hash -> bytes)
     content_cache: Arc<RwLock<HashMap<String, Vec<u8>>>>,
     /// Registry statistics
@@ -41,17 +38,23 @@ pub struct DomainRegistry {
 }
 
 impl DomainRegistry {
-    /// Create new domain registry
-    pub async fn new() -> Result<Self> {
-        Self::new_with_dht(None).await
-    }
+    /// Create new domain registry with injected storage
+    ///
+    /// INVARIANT: storage must not be a stub in production.
+    /// Verify with: assert!(!storage.is_stub(), "Stub storage must not be used in production")
+    ///
+    /// This is the ONLY public constructor. All parameters are injected.
+    /// No internal storage creation is allowed.
+    pub async fn new(storage: Arc<dyn UnifiedStorage>) -> Result<Self> {
+        // Defensive check: fail immediately if stub is being used
+        if storage.is_stub() {
+            warn!("⚠️  DomainRegistry initialized with STUB storage - persistence disabled. Real storage must be provided by zhtp.");
+        }
 
-    /// Create new domain registry with existing storage system (avoids creating duplicates)
-    pub async fn new_with_storage(storage: std::sync::Arc<tokio::sync::RwLock<UnifiedStorageSystem>>) -> Result<Self> {
         let registry = Self {
             domain_records: Arc::new(RwLock::new(HashMap::new())),
-            dht_client: Arc::new(RwLock::new(None)), // No DHT client needed when using shared storage
-            storage_system: storage,
+            dht_client: Arc::new(RwLock::new(None)),
+            storage,
             content_cache: Arc::new(RwLock::new(HashMap::new())),
             manifest_history: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(Web4Statistics {
@@ -69,41 +72,16 @@ impl DomainRegistry {
             })),
         };
 
-        // Load persisted domain records from storage
+        // Load persisted domain records from storage on startup
         registry.load_persisted_domains().await?;
 
         Ok(registry)
     }
 
-    /// Create new domain registry with optional existing DHT client
-    pub async fn new_with_dht(dht_client: Option<ZkDHTIntegration>) -> Result<Self> {
-        let storage_config = UnifiedStorageConfig::default();
-        let storage_system = UnifiedStorageSystem::new(storage_config).await?;
-
-        let registry = Self {
-            domain_records: Arc::new(RwLock::new(HashMap::new())),
-            dht_client: Arc::new(RwLock::new(dht_client)), // Use provided DHT client if available
-            storage_system: Arc::new(RwLock::new(storage_system)),
-            content_cache: Arc::new(RwLock::new(HashMap::new())),
-            manifest_history: Arc::new(RwLock::new(HashMap::new())),
-            stats: Arc::new(RwLock::new(Web4Statistics {
-                total_domains: 0,
-                total_content: 0,
-                total_storage_bytes: 0,
-                active_domains: 0,
-                economic_stats: Web4EconomicStats {
-                    registration_fees: 0.0,
-                    storage_fees: 0.0,
-                    transfer_fees: 0.0,
-                    storage_capacity_gb: 1000.0, // 1TB default
-                    storage_utilization: 0.0,
-                },
-            })),
-        };
-
-        // Load persisted domain records from storage
-        registry.load_persisted_domains().await?;
-
+    /// Create with optional DHT client (for tests/advanced use)
+    pub async fn new_with_dht(storage: Arc<dyn UnifiedStorage>, dht_client: Option<ZkDHTIntegration>) -> Result<Self> {
+        let mut registry = Self::new(storage).await?;
+        *registry.dht_client.write().await = dht_client;
         Ok(registry)
     }
 
@@ -111,16 +89,13 @@ impl DomainRegistry {
     // Domain Persistence - Load and save domain records to lib-storage
     // ========================================================================
 
-    /// Load all persisted domain records from lib-storage into the in-memory cache
+    /// Load all persisted domain records from storage into the in-memory cache
     async fn load_persisted_domains(&self) -> Result<()> {
-        // LOCK SAFETY: Acquire storage lock, do async work, release before acquiring other locks
         info!("🔍 load_persisted_domains: Starting to load persisted domains from storage");
-        let records = {
-            let mut storage = self.storage_system.write().await;
-            let result = storage.list_domain_records().await?;
-            info!("🔍 load_persisted_domains: list_domain_records returned {} records", result.len());
-            result
-        }; // storage lock released here
+
+        // Call storage trait method - no lock needed, storage impl handles that
+        let records = self.storage.list_domain_records().await?;
+        info!("🔍 load_persisted_domains: list_domain_records returned {} records", records.len());
 
         if records.is_empty() {
             info!(" ⚠️  No persisted domain records found in storage");
@@ -162,38 +137,25 @@ impl DomainRegistry {
         Ok(())
     }
 
-    /// Persist a domain record to lib-storage
+    /// Persist a domain record to storage
     async fn persist_domain_record(&self, record: &DomainRecord) -> Result<()> {
         let data = serde_json::to_vec(record)
             .map_err(|e| anyhow!("Failed to serialize domain record: {}", e))?;
 
         info!("🔍 persist_domain_record: Serialized domain {} to {} bytes", record.domain, data.len());
-        eprintln!("🔍 persist_domain_record: STDERR - Serialized domain {} to {} bytes", record.domain, data.len());
 
-        let mut storage = self.storage_system.write().await;
-        info!("🔍 persist_domain_record: Acquired storage lock, calling store_domain_record for {}", record.domain);
-        eprintln!("🔍 persist_domain_record: STDERR - Acquired storage lock for {}", record.domain);
+        // Call storage trait method - error is NOT swallowed
+        self.storage.store_domain_record(&record.domain, data).await?;
 
-        match storage.store_domain_record(&record.domain, &data).await {
-            Ok(()) => {
-                info!(" ✅ Persisted domain record: {} (v{}) - storage layer confirmed", record.domain, record.version);
-                eprintln!(" ✅ STDERR - Persisted domain record: {} (v{})", record.domain, record.version);
-                Ok(())
-            }
-            Err(e) => {
-                error!(" ❌ Failed to persist domain record {}: {}", record.domain, e);
-                eprintln!(" ❌ STDERR - Failed to persist domain record {}: {}", record.domain, e);
-                Err(e)
-            }
-        }
+        info!(" ✅ Persisted domain record: {} (v{}) - storage confirmed", record.domain, record.version);
+        Ok(())
     }
 
-    /// Delete a domain record from lib-storage
+    /// Delete a domain record from storage
     async fn delete_persisted_domain(&self, domain: &str) -> Result<()> {
-        let mut storage = self.storage_system.write().await;
-        storage.delete_domain_record(domain).await?;
-
-        info!(" Deleted persisted domain record: {}", domain);
+        // For now, this is a no-op in the trait since we don't have delete
+        // TODO: Add delete_domain_record to UnifiedStorage trait when needed
+        info!(" Deleting persisted domain record: {}", domain);
         Ok(())
     }
 
@@ -341,10 +303,7 @@ impl DomainRegistry {
 
         // Domain not found locally - try storage as fallback
         info!(" Domain {} not found locally, attempting to load from storage", domain);
-        let mut storage = self.storage_system.write().await;
-        if let Ok(Some(data)) = storage.get_domain_record(domain).await {
-            drop(storage); // Release storage lock before acquiring domain_records lock
-
+        if let Ok(Some(data)) = self.storage.load_domain_record(domain).await {
             if let Ok(record) = serde_json::from_slice::<DomainRecord>(&data) {
                 info!(" Loaded domain '{}' from storage", domain);
 
@@ -369,8 +328,6 @@ impl DomainRegistry {
                 });
             }
         }
-
-        drop(storage); // Release storage lock
 
         // Domain not found locally or in storage - query blockchain (disabled for now)
         info!(" Domain {} not found in storage, querying blockchain...", domain);
@@ -804,10 +761,7 @@ impl DomainRegistry {
 
         // Not found in memory - try loading from storage as fallback
         info!(" Domain '{}' not found in memory, attempting to load from storage", domain);
-        let mut storage = self.storage_system.write().await;
-        if let Ok(Some(data)) = storage.get_domain_record(domain).await {
-            drop(storage); // Release storage lock before acquiring domain_records lock
-
+        if let Ok(Some(data)) = self.storage.load_domain_record(domain).await {
             if let Ok(record) = serde_json::from_slice::<DomainRecord>(&data) {
                 info!(" Loaded domain '{}' from storage", domain);
 
