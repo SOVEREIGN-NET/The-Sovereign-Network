@@ -111,11 +111,10 @@ impl DomainRegistry {
         for (domain, data) in records {
             match serde_json::from_slice::<DomainRecord>(&data) {
                 Ok(record) => {
-                    info!(" ✅ Loaded persisted domain: {} (v{})", record.domain, record.version);
                     parsed_records.push((domain, record));
                 }
                 Err(e) => {
-                    warn!(" ❌ Failed to deserialize domain record: {}", e);
+                    warn!("Failed to deserialize domain record: {}", e);
                 }
             }
         }
@@ -137,22 +136,19 @@ impl DomainRegistry {
             stats.active_domains = loaded_count;
         } // stats lock released here
 
-        info!(" ✅ Loaded {} persisted domain records from storage into memory", loaded_count);
+        info!("Loaded {} domains from storage", loaded_count);
         Ok(())
     }
 
     /// Load all persisted manifest histories from storage into memory
     /// FIX (Phantom Domain Bug): Manifests must be loaded on startup, not just domain records
     async fn load_persisted_manifests(&self) -> Result<()> {
-        info!("🔍 load_persisted_manifests: Loading manifest history from storage");
-
         // Get all loaded domain records to know which domains need manifests loaded
         let domain_records = self.domain_records.read().await;
         let domains_to_load: Vec<String> = domain_records.keys().cloned().collect();
         drop(domain_records);
 
         if domains_to_load.is_empty() {
-            info!(" ℹ️  No domains loaded, skipping manifest load");
             return Ok(());
         }
 
@@ -177,7 +173,7 @@ impl DomainRegistry {
                                     let manifest_bytes = match serde_json::to_vec(manifest) {
                                         Ok(bytes) => bytes,
                                         Err(e) => {
-                                            warn!(" Failed to serialize manifest for caching: {}", e);
+                                            warn!("Failed to serialize manifest for caching: {}", e);
                                             continue;
                                         }
                                     };
@@ -186,23 +182,22 @@ impl DomainRegistry {
                             }
 
                             loaded_manifests += 1;
-                            info!(" ✅ Loaded manifest history for domain: {}", domain);
                         }
                         Err(e) => {
-                            warn!(" ❌ Failed to deserialize manifest for {}: {}", domain, e);
+                            warn!("Failed to deserialize manifest for {}: {}", domain, e);
                         }
                     }
                 }
                 Ok(None) => {
-                    info!(" ⚠️  No manifest found for domain: {} (may be newly registered)", domain);
+                    // No manifest found for domain (may be newly registered)
                 }
                 Err(e) => {
-                    warn!(" ⚠️  Error loading manifest for {}: {}", domain, e);
+                    warn!("Error loading manifest for {}: {}", domain, e);
                 }
             }
         }
 
-        info!(" ✅ Loaded {} manifest histories from storage", loaded_manifests);
+        info!("Loaded {} manifest histories from storage", loaded_manifests);
         Ok(())
     }
 
@@ -283,14 +278,11 @@ impl DomainRegistry {
         // FIX (Manifest File List): If manifest_cid is provided by CLI, load and use it
         // Otherwise, create an empty manifest
         let manifest_cid = if let Some(ref cli_manifest_cid) = request.manifest_cid {
-            info!("Loading CLI-provided manifest with CID: {}", cli_manifest_cid);
-
             // Load the manifest from storage (uploaded by CLI with all files)
             match self.get_content_by_cid(cli_manifest_cid).await {
                 Ok(Some(manifest_bytes)) => {
                     // Try to deserialize as a manifest
                     if let Ok(cli_manifest_data) = serde_json::from_slice::<serde_json::Value>(&manifest_bytes) {
-                        info!("✅ Loaded CLI manifest from storage: {} bytes", manifest_bytes.len());
 
                         // Convert CLI manifest format to Web4Manifest
                         // CLI manifest has files as Vec<FileEntry>, we need HashMap<String, ManifestFile>
@@ -320,7 +312,6 @@ impl DomainRegistry {
                         }
 
                         let file_count = manifest_files.len();
-                        info!("Converted CLI manifest with {} files to Web4Manifest format", file_count);
 
                         // Create Web4Manifest with CLI's files
                         let converted_manifest = Web4Manifest {
@@ -553,11 +544,8 @@ impl DomainRegistry {
         drop(records); // Release lock before storage query
 
         // Domain not found locally - try storage as fallback
-        info!(" Domain {} not found locally, attempting to load from storage", domain);
         if let Ok(Some(data)) = self.storage.load_domain_record(domain).await {
             if let Ok(record) = serde_json::from_slice::<DomainRecord>(&data) {
-                info!(" Loaded domain '{}' from storage", domain);
-
                 // Cache it in memory for future lookups
                 {
                     let mut records = self.domain_records.write().await;
@@ -760,11 +748,9 @@ impl DomainRegistry {
         let record_data = serde_json::to_vec(record)?;
         let record_hash = hex::encode(&hash_blake3(&record_data)[..32]);
 
-        info!(" Storing domain record for {} (hash: {})", record.domain, &record_hash[..16]);
-
         // For now, domain records are kept in memory
         // In production, this would be persisted to DHT or database
-        
+
         Ok(record_hash)
     }
 
@@ -892,11 +878,8 @@ impl DomainRegistry {
         drop(records); // Release lock before trying storage
 
         // Not found in memory - try loading from storage as fallback
-        info!(" Domain '{}' not found in memory, attempting to load from storage", domain);
         if let Ok(Some(data)) = self.storage.load_domain_record(domain).await {
             if let Ok(record) = serde_json::from_slice::<DomainRecord>(&data) {
-                info!(" Loaded domain '{}' from storage", domain);
-
                 // Cache it in memory for future lookups
                 {
                     let mut records = self.domain_records.write().await;
@@ -943,14 +926,12 @@ impl DomainRegistry {
         {
             let mut cache = self.content_cache.write().await;
             cache.insert(cid.clone(), content.clone());
-            info!(" Stored content by CID in cache: {} ({} bytes)", cid, content.len());
         }
 
         // FIX (Content Persistence Bug): Also persist content to storage
         // Content needs to be stored with key "content:{cid}" for durability across restarts
         let content_key = format!("content:{}", cid);
         self.storage.store_domain_record(&content_key, content.clone()).await?;
-        info!(" ✅ Persisted content to storage: {} ({} bytes)", cid, content.len());
 
         Ok(cid)
     }
@@ -962,7 +943,6 @@ impl DomainRegistry {
         {
             let cache = self.content_cache.read().await;
             if let Some(content) = cache.get(cid).cloned() {
-                info!(" Retrieved content by CID from cache: {}", cid);
                 return Ok(Some(content));
             }
         }
@@ -971,7 +951,6 @@ impl DomainRegistry {
         let content_key = format!("content:{}", cid);
         match self.storage.load_domain_record(&content_key).await {
             Ok(Some(content)) => {
-                info!(" Retrieved content by CID from storage: {}", cid);
                 // Cache it for next time
                 {
                     let mut cache = self.content_cache.write().await;
@@ -983,7 +962,7 @@ impl DomainRegistry {
                 // Content not found, fall through to check manifest
             }
             Err(e) => {
-                warn!(" Error retrieving content from storage for CID {}: {}", cid, e);
+                warn!("Error retrieving content from storage for CID {}: {}", cid, e);
             }
         }
 
@@ -992,7 +971,6 @@ impl DomainRegistry {
         let manifest_key = format!("manifest:{}", cid);
         match self.storage.load_domain_record(&manifest_key).await {
             Ok(Some(content)) => {
-                info!(" Retrieved manifest content by CID from storage: {}", cid);
                 // Cache it for next time
                 {
                     let mut cache = self.content_cache.write().await;
@@ -1001,11 +979,10 @@ impl DomainRegistry {
                 Ok(Some(content))
             }
             Ok(None) => {
-                info!(" Content not found for CID: {}", cid);
                 Ok(None)
             }
             Err(e) => {
-                warn!(" Error retrieving manifest from storage for CID {}: {}", cid, e);
+                warn!("Error retrieving manifest from storage for CID {}: {}", cid, e);
                 Ok(None)
             }
         }

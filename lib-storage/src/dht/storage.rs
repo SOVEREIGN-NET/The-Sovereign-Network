@@ -133,19 +133,10 @@ impl DhtStorage {
         let path_owned = path.to_path_buf();
         let entry_count_before = self.storage.len();
 
-        eprintln!("🔍 DHT save_to_file: About to save {} entries to {:?}", entry_count_before, path_owned);
-
         // Sort entries by key for deterministic output
         let mut entries: Vec<(String, StorageEntry)> =
             self.storage.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // Log specific domain entries if present
-        for (key, _) in &entries {
-            if key.contains("web4/domain") {
-                eprintln!("🔍 DHT save_to_file: Found domain key: {}", key);
-            }
-        }
 
         // Sort contract index by key, and sort each value list for deterministic output
         let mut contract_index: Vec<(String, Vec<String>)> =
@@ -167,13 +158,10 @@ impl DhtStorage {
 
         let byte_count = bytes.len();
 
-        eprintln!("🔍 DHT save_to_file: Serialized {} bytes, writing to {:?}", byte_count, path_owned);
-
         atomic_write_async(path_owned.clone(), bytes).await
             .map_err(|e| anyhow!("Failed to write DHT storage: {}", e))?;
 
-        eprintln!("✅ DHT save_to_file: Successfully wrote to {:?}", path_owned);
-        info!("Saved DHT storage to {:?} ({} entries, {} bytes)", path_owned, entry_count_before, byte_count);
+        info!("DHT storage persisted ({} entries, {} bytes)", entry_count_before, byte_count);
         Ok(())
     }
 
