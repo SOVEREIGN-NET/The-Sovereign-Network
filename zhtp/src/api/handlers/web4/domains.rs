@@ -1185,7 +1185,20 @@ impl Web4Handler {
 
         match self.domain_registry.get_domain_status(domain).await {
             Ok(status) => {
-                let response_json = serde_json::to_vec(&status)
+                // MIGRATION: Include both old and new field names for backwards compatibility with CLI
+                let response = serde_json::json!({
+                    "found": status.found,
+                    "domain": status.domain,
+                    "version": status.version,
+                    "current_web4_manifest_cid": status.current_web4_manifest_cid,
+                    "current_manifest_cid": status.current_web4_manifest_cid,  // Backwards compat for CLI
+                    "owner_did": status.owner_did,
+                    "updated_at": status.updated_at,
+                    "expires_at": status.expires_at,
+                    "build_hash": status.build_hash,
+                });
+
+                let response_json = serde_json::to_vec(&response)
                     .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
 
                 Ok(ZhtpResponse::success_with_content_type(

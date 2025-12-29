@@ -53,6 +53,8 @@ pub struct DomainRecord {
     pub owner: IdentityId,
     /// CANONICAL: Current Web4Manifest CID (runtime truth for resolution)
     /// This is the authoritative pointer used by all domain resolution logic
+    /// MIGRATION: serde alias allows loading old records with "current_manifest_cid"
+    #[serde(alias = "current_manifest_cid")]
     pub current_web4_manifest_cid: String,
     /// Current version number (monotonically increasing)
     pub version: u64,

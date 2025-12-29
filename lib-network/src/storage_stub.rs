@@ -18,6 +18,9 @@ pub trait UnifiedStorage: Send + Sync {
     /// Load a domain record
     async fn load_domain_record(&self, domain: &str) -> Result<Option<Vec<u8>>>;
 
+    /// Delete a domain record
+    async fn delete_domain_record(&self, domain: &str) -> Result<()>;
+
     /// List all domain records (domain, data pairs)
     async fn list_domain_records(&self) -> Result<Vec<(String, Vec<u8>)>>;
 
@@ -57,6 +60,10 @@ impl UnifiedStorage for UnifiedStorageSystem {
 
     async fn load_domain_record(&self, _domain: &str) -> Result<Option<Vec<u8>>> {
         Ok(None) // Stub returns no data on read - silent but won't lose data in production
+    }
+
+    async fn delete_domain_record(&self, _domain: &str) -> Result<()> {
+        Err(anyhow!("FATAL: Stub storage attempted to delete domain record. Real storage must be provided by zhtp."))
     }
 
     async fn list_domain_records(&self) -> Result<Vec<(String, Vec<u8>)>> {

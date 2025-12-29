@@ -908,6 +908,12 @@ impl lib_network::storage_stub::UnifiedStorage for UnifiedStorageWrapper {
         sys.get_domain_record(domain).await
     }
 
+    /// Delete a domain record
+    async fn delete_domain_record(&self, domain: &str) -> anyhow::Result<()> {
+        let mut sys = self.0.write().await;
+        sys.delete_domain_record(domain).await
+    }
+
     /// List all domain records
     async fn list_domain_records(&self) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
         let mut sys = self.0.write().await;

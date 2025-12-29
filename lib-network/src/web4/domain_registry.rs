@@ -94,6 +94,7 @@ impl DomainRegistry {
     // ========================================================================
 
     /// Load all persisted domain records from storage into the in-memory cache
+    /// MIGRATION: Automatically re-saves records in new format for backwards compatibility
     async fn load_persisted_domains(&self) -> Result<()> {
         info!("🔍 load_persisted_domains: Starting to load persisted domains from storage");
 
@@ -111,6 +112,11 @@ impl DomainRegistry {
         for (domain, data) in records {
             match serde_json::from_slice::<DomainRecord>(&data) {
                 Ok(record) => {
+                    // MIGRATION: Immediately re-save with new format (serde aliases make old data readable)
+                    let migrated_data = serde_json::to_vec(&record)?;
+                    self.storage.store_domain_record(&domain, migrated_data).await
+                        .map_err(|e| anyhow!("Failed to migrate domain record '{}': {}", domain, e))?;
+
                     parsed_records.push((domain, record));
                 }
                 Err(e) => {
@@ -120,6 +126,9 @@ impl DomainRegistry {
         }
 
         let loaded_count = parsed_records.len() as u64;
+        if loaded_count > 0 {
+            info!(" ✅ MIGRATION: Re-saved {} domain records in new format", loaded_count);
+        }
 
         // LOCK SAFETY: Acquire domain_records lock, do sync work only, release
         {
@@ -217,10 +226,8 @@ impl DomainRegistry {
 
     /// Delete a domain record from storage
     async fn delete_persisted_domain(&self, domain: &str) -> Result<()> {
-        // For now, this is a no-op in the trait since we don't have delete
-        // TODO: Add delete_domain_record to UnifiedStorage trait when needed
         info!(" Deleting persisted domain record: {}", domain);
-        Ok(())
+        self.storage.delete_domain_record(domain).await
     }
 
     /// Register a new Web4 domain
@@ -1305,13 +1312,86 @@ mod tests {
     use super::*;
     use lib_identity::{ZhtpIdentity, IdentityType};
     use tempfile::TempDir;
+    use crate::storage_stub::UnifiedStorage;
+    use async_trait::async_trait;
+    use std::sync::RwLock as StdRwLock;
 
-    /// Create a test storage system with persistence enabled
-    async fn create_test_storage_with_persistence(_persist_path: std::path::PathBuf) -> Arc<RwLock<UnifiedStorageSystem>> {
-        // Stub only - real persistence requires lib-storage integration
-        let config = UnifiedStorageConfig::default();
-        let storage = UnifiedStorageSystem::new(config).await.unwrap();
-        Arc::new(RwLock::new(storage))
+    /// Test storage implementation that actually persists data in memory
+    #[derive(Clone, Default)]
+    struct TestStorage {
+        domains: Arc<StdRwLock<HashMap<String, Vec<u8>>>>,
+        manifests: Arc<StdRwLock<HashMap<String, Vec<u8>>>>,
+    }
+
+    #[async_trait]
+    impl UnifiedStorage for TestStorage {
+        async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> Result<()> {
+            self.domains.write().unwrap().insert(domain.to_string(), data);
+            Ok(())
+        }
+
+        async fn load_domain_record(&self, domain: &str) -> Result<Option<Vec<u8>>> {
+            Ok(self.domains.read().unwrap().get(domain).cloned())
+        }
+
+        async fn delete_domain_record(&self, domain: &str) -> Result<()> {
+            self.domains.write().unwrap().remove(domain);
+            Ok(())
+        }
+
+        async fn list_domain_records(&self) -> Result<Vec<(String, Vec<u8>)>> {
+            Ok(self.domains.read().unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect())
+        }
+
+        async fn store_manifest(&self, domain: &str, manifest_data: Vec<u8>) -> Result<()> {
+            self.manifests.write().unwrap().insert(domain.to_string(), manifest_data);
+            Ok(())
+        }
+
+        async fn load_manifest(&self, domain: &str) -> Result<Option<Vec<u8>>> {
+            Ok(self.manifests.read().unwrap().get(domain).cloned())
+        }
+
+        fn is_stub(&self) -> bool {
+            false
+        }
+    }
+
+    /// Test storage registry - maintains persistent storage per path for test isolation
+    use std::collections::HashMap;
+    use std::sync::{OnceLock, Mutex};
+
+    fn get_test_storage_map() -> &'static Mutex<HashMap<String, Arc<TestStorage>>> {
+        static STORAGE_MAP: OnceLock<Mutex<HashMap<String, Arc<TestStorage>>>> = OnceLock::new();
+        STORAGE_MAP.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    fn get_test_storage(path: &std::path::Path) -> Arc<dyn UnifiedStorage> {
+        let map = get_test_storage_map();
+        let mut map = map.lock().unwrap();
+
+        let key = path.to_string_lossy().to_string();
+        if !map.contains_key(&key) {
+            map.insert(key.clone(), Arc::new(TestStorage::default()));
+        }
+
+        map.get(&key).unwrap().clone() as Arc<dyn UnifiedStorage>
+    }
+
+    /// Clear test storage between tests (call at start of each test for isolation)
+    fn clear_test_storage_for_path(path: &std::path::Path) {
+        let map = get_test_storage_map();
+        let mut map = map.lock().unwrap();
+        let key = path.to_string_lossy().to_string();
+        map.remove(&key);
+    }
+
+    /// Create a test storage system that actually persists across multiple calls
+    async fn create_test_storage_with_persistence(persist_path: std::path::PathBuf) -> Arc<dyn UnifiedStorage> {
+        get_test_storage(&persist_path)
     }
 
     /// Create a test identity for domain operations
@@ -1330,6 +1410,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let persist_path = temp_dir.path().join("dht_storage.bin");
 
+        // Clear test storage for isolation
+        clear_test_storage_for_path(&persist_path);
+
         // Clean up any existing file
         let _ = std::fs::remove_file(&persist_path);
 
@@ -1339,7 +1422,7 @@ mod tests {
         // Create registry and register a domain
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.unwrap();
 
             // Register domain
             let registration_proof = ZeroKnowledgeProof::new(
@@ -1369,7 +1452,7 @@ mod tests {
                 },
                 initial_content: HashMap::new(),
                 registration_proof,
-                manifest_cid: None,
+                deploy_manifest_cid: None,
             };
 
             let response = registry.register_domain(request).await.unwrap();
@@ -1383,7 +1466,7 @@ mod tests {
         // Create new registry with same storage path and verify domain persists
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.unwrap();
 
             // Domain should be loaded from persistence
             let lookup = registry.lookup_domain(domain_name).await.unwrap();
@@ -1400,6 +1483,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let persist_path = temp_dir.path().join("dht_storage_update.bin");
 
+        // Clear test storage for isolation
+        clear_test_storage_for_path(&persist_path);
+
         let _ = std::fs::remove_file(&persist_path);
 
         let owner = create_test_identity();
@@ -1410,7 +1496,7 @@ mod tests {
         // Create registry, register domain, then update it
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.unwrap();
 
             // Register domain
             let registration_proof = ZeroKnowledgeProof::new(
@@ -1470,7 +1556,7 @@ mod tests {
         // Verify update persisted across restart
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.unwrap();
 
             let lookup = registry.lookup_domain(domain_name).await.unwrap();
             assert!(lookup.found);
@@ -1487,6 +1573,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let persist_path = temp_dir.path().join("dht_storage_release.bin");
 
+        // Clear test storage for isolation
+        clear_test_storage_for_path(&persist_path);
+
         let _ = std::fs::remove_file(&persist_path);
 
         let owner = create_test_identity();
@@ -1495,7 +1584,7 @@ mod tests {
         // Create registry and register a domain
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.unwrap();
 
             let registration_proof = ZeroKnowledgeProof::new(
                 "Plonky2".to_string(),
@@ -1524,7 +1613,7 @@ mod tests {
                 },
                 initial_content: HashMap::new(),
                 registration_proof,
-                manifest_cid: None,
+                deploy_manifest_cid: None,
             };
 
             let response = registry.register_domain(request).await.unwrap();
@@ -1542,7 +1631,7 @@ mod tests {
         // Verify release persisted across restart
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new_with_storage(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.unwrap();
 
             let lookup = registry.lookup_domain(domain_name).await.unwrap();
             assert!(!lookup.found, "Domain should remain deleted after restart");
