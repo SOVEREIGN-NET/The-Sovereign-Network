@@ -124,15 +124,15 @@ echo "<h1>Hello ZHTP v2!</h1>" > myapp/index.html
   --keystore ~/.zhtp/keystore
 
 # Check deployment status
-./target/release/zhtp-cli deploy status --domain mytest.zhtp
+./target/release/zhtp-cli deploy status mytest.zhtp
 
 # Check deployment history
-./target/release/zhtp-cli deploy history --domain mytest.zhtp
+./target/release/zhtp-cli deploy history mytest.zhtp
 
 # Rollback to previous version (if supported)
 ./target/release/zhtp-cli deploy rollback \
   --domain mytest.zhtp \
-  --version 1 \
+  --to-version 1 \
   --keystore ~/.zhtp/keystore
 ```
 
