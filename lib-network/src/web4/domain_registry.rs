@@ -15,11 +15,7 @@ use lib_identity::ZhtpIdentity;
 use crate::dht::ZkDHTIntegration;
 use super::types::*;
 use crate::storage_stub::UnifiedStorage;
-
-#[cfg(feature = "storage-integration")]
 use super::content_publisher::ContentPublisher;
-#[cfg(feature = "chain-integration")]
-use lib_blockchain;
 
 /// Web4 domain registry manager
 pub struct DomainRegistry {
@@ -266,6 +262,39 @@ impl DomainRegistry {
         })
     }
 
+    /// Convenience method: register domain with initial content (simplifies Web4Handler)
+    pub async fn register_domain_with_content(
+        &self,
+        domain: String,
+        owner: ZhtpIdentity,
+        initial_content: HashMap<String, Vec<u8>>,
+        metadata: DomainMetadata,
+    ) -> Result<DomainRegistrationResponse> {
+        // Create registration proof (simplified for now)
+        let registration_proof = ZeroKnowledgeProof::new(
+            "Plonky2".to_string(),
+            hash_blake3(&[
+                owner.id.0.as_slice(),
+                domain.as_bytes(),
+            ].concat()).to_vec(),
+            owner.id.0.to_vec(),
+            owner.id.0.to_vec(),
+            None,
+        );
+
+        let request = DomainRegistrationRequest {
+            domain,
+            owner,
+            duration_days: 365, // 1 year default
+            metadata,
+            initial_content,
+            registration_proof,
+            manifest_cid: None, // Auto-generate
+        };
+
+        self.register_domain(request).await
+    }
+
     /// Look up domain information
     pub async fn lookup_domain(&self, domain: &str) -> Result<DomainLookupResponse> {
         info!(" Looking up Web4 domain: {}", domain);
@@ -329,135 +358,16 @@ impl DomainRegistry {
             }
         }
 
-        // Domain not found locally or in storage - query blockchain (disabled for now)
-        info!(" Domain {} not found in storage, querying blockchain...", domain);
-        match self.query_blockchain_for_domain(domain).await {
-            Ok(Some(domain_record)) => {
-                info!(" Domain {} found on blockchain, caching locally", domain);
-
-                // Cache the domain record locally for future lookups
-                {
-                    let mut records = self.domain_records.write().await;
-                    records.insert(domain.to_string(), domain_record.clone());
-                }
-
-                let owner_info = PublicOwnerInfo {
-                    identity_hash: hex::encode(&domain_record.owner.0[..16]),
-                    registered_at: domain_record.registered_at,
-                    verified: true,
-                    alias: None,
-                };
-
-                Ok(DomainLookupResponse {
-                    found: true,
-                    record: Some(domain_record.clone()),
-                    content_mappings: domain_record.content_mappings.clone(),
-                    owner_info: Some(owner_info),
-                })
-            }
-            Ok(None) => {
-                info!(" Domain {} not found on blockchain either", domain);
-                Ok(DomainLookupResponse {
-                    found: false,
-                    record: None,
-                    content_mappings: HashMap::new(),
-                    owner_info: None,
-                })
-            }
-            Err(e) => {
-                warn!(" Failed to query blockchain for domain {}: {}", domain, e);
-                // Return not found rather than error to maintain compatibility
-                Ok(DomainLookupResponse {
-                    found: false,
-                    record: None,
-                    content_mappings: HashMap::new(),
-                    owner_info: None,
-                })
-            }
-        }
-    }
-
-    /// Query blockchain for Web4Contract by domain name
-    async fn query_blockchain_for_domain(&self, domain: &str) -> Result<Option<DomainRecord>> {
-        // TODO: Blockchain query temporarily disabled during blockchain provider refactor
-        // Web4 contracts are still recorded on blockchain via zhtp API, but cross-library
-        // access needs to be refactored. For now, domains are discovered via DHT.
-        warn!(" Blockchain query not available in lib-network - domains discovered via DHT only");
-        Ok(None)
-    }
-
-    /// Convert Web4Contract from blockchain to DomainRecord for local use
-    fn convert_web4_contract_to_domain_record(&self, web4_contract: &lib_blockchain::contracts::web4::Web4Contract) -> Result<DomainRecord> {
-        // Convert Web4Contract routes to content_mappings
-        let mut content_mappings: HashMap<String, String> = HashMap::new();
-        
-        for (path, content_route) in &web4_contract.routes {
-            let path_str: String = path.clone();
-            content_mappings.insert(path_str, content_route.content_hash.clone());
-        }
-        
-        // Parse owner identity from string
-        let owner = if web4_contract.owner.len() >= 32 {
-            // If owner is hex string, decode it
-            match hex::decode(&web4_contract.owner) {
-                Ok(bytes) if bytes.len() >= 32 => {
-                    let mut owner_bytes = [0u8; 32];
-                    owner_bytes.copy_from_slice(&bytes[..32]);
-                    lib_crypto::Hash(owner_bytes)
-                }
-                _ => {
-                    // Fallback: hash the owner string
-                    lib_crypto::Hash::from_bytes(&hash_blake3(web4_contract.owner.as_bytes())[..32])
-                }
-            }
-        } else {
-            // Hash short owner strings
-            lib_crypto::Hash::from_bytes(&hash_blake3(web4_contract.owner.as_bytes())[..32])
-        };
-
-        // Convert WebsiteMetadata to DomainMetadata
-        let domain_metadata = DomainMetadata {
-            title: web4_contract.metadata.title.clone(),
-            description: web4_contract.metadata.description.clone(),
-            category: "web4".to_string(), // Default category for Web4 sites
-            tags: web4_contract.metadata.tags.clone(),
-            public: true, // Web4 contracts are publicly accessible
-            economic_settings: DomainEconomicSettings {
-                registration_fee: 1000.0, // Default registration fee
-                renewal_fee: 500.0,       // Default renewal fee  
-                transfer_fee: 250.0,      // Default transfer fee
-                hosting_budget: 10000.0,  // Default hosting budget
-            },
-        };
-
-        // Generate manifest CID from contract data
-        let manifest_cid = format!(
-            "bafk{}",
-            hex::encode(&lib_crypto::hash_blake3(
-                format!("{}:v1:{}", web4_contract.domain, web4_contract.created_at).as_bytes()
-            )[..16])
-        );
-
-        Ok(DomainRecord {
-            domain: web4_contract.domain.clone(),
-            owner,
-            current_manifest_cid: manifest_cid,
-            version: 1, // Contracts imported from blockchain start at version 1
-            registered_at: web4_contract.created_at,
-            updated_at: web4_contract.created_at,
-            expires_at: web4_contract.created_at + (365 * 24 * 60 * 60), // 1 year default
-            content_mappings,
-            metadata: domain_metadata,
-            ownership_proof: ZeroKnowledgeProof::new(
-                "Web4Contract".to_string(),
-                web4_contract.contract_id.as_bytes().to_vec(),
-                web4_contract.domain.as_bytes().to_vec(),
-                web4_contract.owner.as_bytes().to_vec(),
-                None,
-            ),
-            transfer_history: Vec::new(), // Not tracked in current contract version
+        // Domain not found locally or in storage - blockchain query disabled
+        info!(" Domain {} not found in storage or DHT", domain);
+        Ok(DomainLookupResponse {
+            found: false,
+            record: None,
+            content_mappings: HashMap::new(),
+            owner_info: None,
         })
     }
+
 
     /// Transfer domain to new owner
     pub async fn transfer_domain(
@@ -1074,50 +984,13 @@ pub struct Web4Manager {
 }
 
 impl Web4Manager {
-    /// Create new Web4 manager
-    pub async fn new() -> Result<Self> {
-        Self::new_with_dht(None).await
-    }
-
-    /// Create new Web4 manager with existing storage system (avoids creating duplicates)
-    pub async fn new_with_storage(storage: std::sync::Arc<tokio::sync::RwLock<UnifiedStorageSystem>>) -> Result<Self> {
-        let registry = DomainRegistry::new_with_storage(storage.clone()).await?;
-        let registry_arc = Arc::new(registry);
-        let content_publisher = super::content_publisher::ContentPublisher::new_with_storage(registry_arc.clone(), storage).await?;
-        
-        Ok(Self {
-            registry: registry_arc,
-            content_publisher,
-        })
-    }
-
-    /// Create new Web4 manager with optional existing DHT client
-    pub async fn new_with_dht(dht_client: Option<ZkDHTIntegration>) -> Result<Self> {
-        let registry = DomainRegistry::new_with_dht(dht_client).await?;
-        let registry_arc = Arc::new(registry);
-        let content_publisher = super::content_publisher::ContentPublisher::new(registry_arc.clone()).await?;
-
-        Ok(Self {
-            registry: registry_arc,
-            content_publisher,
-        })
-    }
-
-    /// Create new Web4 manager with existing domain registry (avoids duplicates)
-    /// This is the preferred constructor when a DomainRegistry already exists
-    pub async fn new_with_registry(
-        registry: Arc<DomainRegistry>,
-        storage: std::sync::Arc<tokio::sync::RwLock<UnifiedStorageSystem>>,
-    ) -> Result<Self> {
-        let content_publisher = super::content_publisher::ContentPublisher::new_with_storage(
-            registry.clone(),
-            storage
-        ).await?;
-
-        Ok(Self {
+    /// Create new Web4 manager with domain registry and content publisher
+    /// INVARIANT: registry and content_publisher must use the same storage
+    pub fn new(registry: Arc<DomainRegistry>, content_publisher: ContentPublisher) -> Self {
+        Self {
             registry,
             content_publisher,
-        })
+        }
     }
 
     /// Register domain with initial content

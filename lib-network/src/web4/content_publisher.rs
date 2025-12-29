@@ -62,7 +62,7 @@ impl ContentPublisher {
             dht_client: Arc::new(RwLock::new(dht_client)),
             storage,
             stats: Arc::new(RwLock::new(ContentPublishingStats::default())),
-        })
+        }
     }
 
     /// Publish content to Web4 domain

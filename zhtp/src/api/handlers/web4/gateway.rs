@@ -19,7 +19,8 @@
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::zhtp::ZhtpRequestHandler;
-use crate::web4_stub::{Web4ContentService, DomainRegistry, ZdnsResolver};
+use lib_network::web4::DomainRegistry;
+use crate::web4_stub::{Web4ContentService, ZdnsResolver};
 use std::sync::Arc;
 use tracing::{info, warn, debug};
 
@@ -622,7 +623,7 @@ mod tests {
                     )
                 );
                 let registry = std::sync::Arc::new(
-                    crate::web4_stub::DomainRegistry::new_with_storage(storage).await.unwrap()
+                    crate::web4_stub::StubDomainRegistry::new_with_storage(storage).await.unwrap()
                 );
                 let resolver = std::sync::Arc::new(
                     crate::web4_stub::ZdnsResolver::new()

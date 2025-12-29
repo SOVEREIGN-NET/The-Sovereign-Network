@@ -2,9 +2,8 @@
 
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
-use crate::web4_stub::{ContentPublishRequest, ContentPublishResponse, ContentMetadata};
+use lib_network::web4::{ContentPublishRequest, ContentPublishResponse, ContentMetadata};
 use lib_identity::ZhtpIdentity;
-// Removed unused ZeroKnowledgeProof import
 use serde::{Deserialize, Serialize};
 use tracing::{info, error};
 use anyhow::anyhow;
@@ -111,6 +110,18 @@ impl Web4Handler {
             license: api_request.license,
         };
 
+        // Create ownership proof for content publishing
+        let ownership_proof = lib_proofs::ZeroKnowledgeProof::new(
+            "Plonky2".to_string(),
+            lib_crypto::hash_blake3(&[
+                publisher_identity.id.0.as_slice(),
+                api_request.domain.as_bytes(),
+            ].concat()).to_vec(),
+            publisher_identity.id.0.to_vec(),
+            publisher_identity.id.0.to_vec(),
+            None,
+        );
+
         // Create content publishing request
         let _publish_request = ContentPublishRequest {
             domain: api_request.domain.clone(),
@@ -118,16 +129,15 @@ impl Web4Handler {
             content: content.clone(),
             content_type: api_request.content_type,
             publisher: publisher_identity,
-            ownership_proof: Some(Vec::new()), // stub
-            metadata: Some(metadata),
+            ownership_proof,
+            metadata,
         };
 
         // Get content publisher from Web4 manager
-        let manager = self.web4_manager.read().await;
         
         // For now, implement content publishing directly using DHT
         // Verify domain ownership first
-        let domain_info = manager.registry.lookup_domain(&api_request.domain).await
+        let domain_info = self.domain_registry.lookup_domain(&api_request.domain).await
             .map_err(|e| anyhow!("Failed to lookup domain: {}", e))?;
 
         if !domain_info.found {
@@ -166,12 +176,10 @@ impl Web4Handler {
 
         let response = ContentPublishResponse {
             success: true,
-            content_cid: content_hash.clone(),
-            manifest_cid: String::new(),
-            content_hash: Some(content_hash),
-            zhtp_url: Some(zhtp_url),
-            published_at: Some(published_at),
-            storage_fees: Some(0.1),
+            content_hash,
+            zhtp_url,
+            published_at,
+            storage_fees: 0.1,
             error: None,
         };
 
@@ -249,6 +257,18 @@ impl Web4Handler {
             }
         };
 
+        // Create ownership proof for content update
+        let ownership_proof = lib_proofs::ZeroKnowledgeProof::new(
+            "Plonky2".to_string(),
+            lib_crypto::hash_blake3(&[
+                publisher_identity.id.0.as_slice(),
+                domain.as_bytes(),
+            ].concat()).to_vec(),
+            publisher_identity.id.0.to_vec(),
+            publisher_identity.id.0.to_vec(),
+            None,
+        );
+
         // Create content publishing request (reuse for updates)
         let _publish_request = ContentPublishRequest {
             domain: domain.to_string(),
@@ -256,15 +276,14 @@ impl Web4Handler {
             content: content.clone(),
             content_type: api_request.content_type.unwrap_or("application/octet-stream".to_string()),
             publisher: publisher_identity,
-            ownership_proof: Some(Vec::new()),
-            metadata: Some(metadata),
+            ownership_proof,
+            metadata,
         };
 
         // Implement content update using direct DHT approach (same as publish)
-        let manager = self.web4_manager.read().await;
         
         // Verify domain exists and ownership
-        let domain_info = manager.registry.lookup_domain(domain).await
+        let domain_info = self.domain_registry.lookup_domain(domain).await
             .map_err(|e| anyhow!("Failed to lookup domain: {}", e))?;
 
         if !domain_info.found {
@@ -303,12 +322,10 @@ impl Web4Handler {
 
         let response = ContentPublishResponse {
             success: true,
-            content_cid: content_hash.clone(),
-            manifest_cid: String::new(),
-            content_hash: Some(content_hash),
-            zhtp_url: Some(zhtp_url),
-            published_at: Some(updated_at),
-            storage_fees: Some(0.1),
+            content_hash,
+            zhtp_url,
+            published_at: updated_at,
+            storage_fees: 0.1,
             error: None,
         };
 
@@ -349,10 +366,9 @@ impl Web4Handler {
 
         info!(" Getting metadata for content: {}{}", domain, content_path);
 
-        let manager = self.web4_manager.read().await;
         
         // Check if domain exists
-        let domain_info = manager.registry.lookup_domain(domain).await
+        let domain_info = self.domain_registry.lookup_domain(domain).await
             .map_err(|e| anyhow!("Failed to lookup domain: {}", e))?;
 
         // For now, return basic metadata if domain exists and has content mappings
@@ -441,10 +457,9 @@ impl Web4Handler {
         
         tracing::info!("Content deletion requested by publisher: {}", publisher_identity.id.to_string());
 
-        let manager = self.web4_manager.read().await;
         
         // Verify domain exists
-        let domain_info = manager.registry.lookup_domain(domain).await
+        let domain_info = self.domain_registry.lookup_domain(domain).await
             .map_err(|e| anyhow!("Failed to lookup domain: {}", e))?;
 
         if !domain_info.found {
