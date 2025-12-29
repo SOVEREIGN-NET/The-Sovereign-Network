@@ -1076,9 +1076,24 @@ impl Web4Handler {
         let api_request: ApiDomainReleaseRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow!("Invalid domain release request: {}", e))?;
 
-        // Deserialize owner identity
-        let owner_identity = self.deserialize_identity(&api_request.owner_identity)
-            .map_err(|e| anyhow!("Invalid owner identity: {}", e))?;
+        // BOUNDARY: Accept owner_identity from request and look it up in identity manager
+        // This verifies the identity exists in the system
+        let normalized_did = if api_request.owner_identity.starts_with("did:zhtp:") {
+            api_request.owner_identity.clone()
+        } else {
+            format!("did:zhtp:{}", api_request.owner_identity)
+        };
+
+        let identity_mgr = self.identity_manager.read().await;
+        let owner_identity = identity_mgr.get_identity_by_did(&normalized_did)
+            .ok_or_else(|| anyhow!(
+                "Owner identity not found: {}. Identity must be registered first.",
+                normalized_did
+            ))?
+            .clone();
+        drop(identity_mgr);
+
+        info!(" Verified owner identity for domain release: {}", normalized_did);
 
         match self.domain_registry.release_domain(&api_request.domain, &owner_identity).await {
             Ok(success) => {
@@ -1114,16 +1129,17 @@ impl Web4Handler {
         }
     }
 
-    /// Deserialize identity from string (simplified for now)
-    pub fn deserialize_identity(&self, identity_str: &str) -> Result<ZhtpIdentity, String> {
-        // In production, this would properly deserialize from JSON/base64
-        // For now, create a test identity from the string
+    /// Deserialize identity from string (for compatibility with older code)
+    /// DEPRECATED: Use identity manager lookup instead
+    pub fn deserialize_identity(&self, _identity_str: &str) -> Result<ZhtpIdentity, String> {
+        // This is a fallback for legacy code - should use identity manager lookup instead
+        // Creates a placeholder human identity (should not be used for ownership verification)
         ZhtpIdentity::new_unified(
             lib_identity::types::IdentityType::Human,
-            Some(25), // Default age
-            Some("US".to_string()), // Default jurisdiction
-            &format!("web4-{}", &identity_str[..std::cmp::min(8, identity_str.len())]),
-            None, // Random seed
+            None,
+            None,
+            "placeholder-user",
+            None,
         ).map_err(|e| format!("Failed to create identity: {}", e))
     }
 

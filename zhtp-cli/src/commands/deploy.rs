@@ -728,7 +728,8 @@ async fn deploy_update_impl(
         })?;
 
     let previous_cid = status
-        .get("current_manifest_cid")
+        .get("current_web4_manifest_cid")
+        .or_else(|| status.get("current_manifest_cid"))  // Fallback for backwards compatibility
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| CliError::DeploymentFailed {
@@ -916,7 +917,10 @@ async fn check_deployment_status_impl(
         output.print(&format!("Current version: {}", version))?;
     }
 
-    if let Some(cid) = status.get("current_manifest_cid").and_then(|v| v.as_str()) {
+    if let Some(cid) = status.get("current_web4_manifest_cid")
+        .or_else(|| status.get("current_manifest_cid"))  // Fallback for backwards compatibility
+        .and_then(|v| v.as_str())
+    {
         output.print(&format!("Manifest CID: {}", cid))?;
     }
 
@@ -1031,7 +1035,10 @@ async fn show_deployment_history_impl(
         if let Some(v) = version.get("version").and_then(|v| v.as_u64()) {
             output.print(&format!("    Version: {}", v))?;
         }
-        if let Some(cid) = version.get("manifest_cid").and_then(|v| v.as_str()) {
+        if let Some(cid) = version.get("web4_manifest_cid")
+            .or_else(|| version.get("manifest_cid"))  // Fallback for backwards compatibility
+            .and_then(|v| v.as_str())
+        {
             output.print(&format!("    Manifest CID: {}", cid))?;
         }
         if let Some(created) = version.get("created_at").and_then(|v| v.as_u64()) {
