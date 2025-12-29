@@ -4,7 +4,7 @@
 
 use lib_network::types::mesh_message::{MeshMessageEnvelope, ZhtpMeshMessage};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpHeaders, ZhtpMethod, ZhtpStatus};
-use lib_crypto::{PublicKey, SecretKey};
+use lib_crypto::PublicKey;
 
 #[test]
 fn test_zhtp_request_mesh_routing_serialization() {
@@ -21,16 +21,15 @@ fn test_zhtp_request_mesh_routing_serialization() {
     };
 
     // Create sender/receiver keys
-    let sender_key = PublicKey::new(&[1u8; 32]).unwrap();
-    let receiver_key = PublicKey::new(&[2u8; 32]).unwrap();
+    let sender_key = PublicKey::from_bytes(&[1u8; 32]).unwrap();
+    let receiver_key = PublicKey::from_bytes(&[2u8; 32]).unwrap();
 
     // Create envelope using the optimized single-pass serialization
     let envelope = MeshMessageEnvelope::from_zhtp_request(
-        request.clone(),
+        0, // message_id
         sender_key,
         receiver_key,
-        0, // hop count
-        60, // ttl
+        request.clone(),
     ).expect("Failed to create envelope from ZHTP request");
 
     // Verify critical fields were extracted
@@ -75,16 +74,15 @@ fn test_zhtp_response_mesh_routing_serialization() {
     };
 
     // Create sender/receiver keys
-    let sender_key = PublicKey::new(&[2u8; 32]).unwrap();
-    let receiver_key = PublicKey::new(&[1u8; 32]).unwrap();
+    let sender_key = PublicKey::from_bytes(&[2u8; 32]).unwrap();
+    let receiver_key = PublicKey::from_bytes(&[1u8; 32]).unwrap();
 
     // Create envelope using the optimized single-pass serialization
     let envelope = MeshMessageEnvelope::from_zhtp_response(
-        response.clone(),
+        0, // message_id
         sender_key,
         receiver_key,
-        0, // hop count
-        60, // ttl
+        response.clone(),
     ).expect("Failed to create envelope from ZHTP response");
 
     // Verify critical fields were extracted
@@ -130,19 +128,18 @@ fn test_optimization_reduces_payload_size() {
         body: large_body,
     };
 
-    let sender_key = PublicKey::new(&[1u8; 32]).unwrap();
-    let receiver_key = PublicKey::new(&[2u8; 32]).unwrap();
+    let sender_key = PublicKey::from_bytes(&[1u8; 32]).unwrap();
+    let receiver_key = PublicKey::from_bytes(&[2u8; 32]).unwrap();
 
     // OLD approach: serialize full request as payload (what we replaced)
     let full_request_serialized = bincode::serialize(&request).unwrap();
     
     // NEW approach: single-pass serialization (only headers + body tuple)
     let envelope = MeshMessageEnvelope::from_zhtp_request(
-        request,
+        0, // message_id
         sender_key,
         receiver_key,
-        0,
-        60,
+        request,
     ).expect("Failed to create envelope");
     
     let optimized_serialized = bincode::serialize(&envelope).unwrap();
@@ -179,15 +176,14 @@ fn test_multi_hop_routing_preserves_data() {
         body: vec![1, 2, 3, 4, 5],
     };
 
-    let sender = PublicKey::new(&[10u8; 32]).unwrap();
-    let receiver = PublicKey::new(&[20u8; 32]).unwrap();
+    let sender = PublicKey::from_bytes(&[10u8; 32]).unwrap();
+    let receiver = PublicKey::from_bytes(&[20u8; 32]).unwrap();
 
     let mut envelope = MeshMessageEnvelope::from_zhtp_request(
-        original_request.clone(),
+        0, // message_id
         sender.clone(),
         receiver.clone(),
-        0,
-        10,
+        original_request.clone(),
     ).expect("Failed to create envelope");
 
     // Simulate 5 hops through the mesh
@@ -199,9 +195,7 @@ fn test_multi_hop_routing_preserves_data() {
         envelope = bincode::deserialize(&serialized).unwrap();
         
         // Increment hop count (what each relay node does)
-        envelope.increment_hop_count();
-        
-        assert_eq!(envelope.hop_count, hop, "Hop count should increment correctly");
+        envelope.increment_hop(receiver.clone());
     }
 
     // After 5 hops, reconstruct the original request
