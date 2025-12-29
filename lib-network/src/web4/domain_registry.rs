@@ -11,6 +11,7 @@ use tracing::{info, error, warn};
 use lib_crypto::hash_blake3;
 use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::ZhtpIdentity;
+use hex;
 
 use crate::dht::ZkDHTIntegration;
 use super::types::*;
@@ -209,15 +210,22 @@ impl DomainRegistry {
             content_mappings.insert(path.clone(), content_hash);
         }
 
-        // Use provided manifest CID or generate one
-        let manifest_cid = request.manifest_cid.clone().unwrap_or_else(|| {
-            format!(
-                "bafk{}",
-                hex::encode(&lib_crypto::hash_blake3(
-                    format!("{}:v1:{}", request.domain, current_time).as_bytes()
-                )[..16])
-            )
-        });
+        // Create and store initial manifest (even if empty - prevents phantom CID)
+        let initial_manifest = Web4Manifest {
+            domain: request.domain.clone(),
+            version: 1,
+            previous_manifest: None,
+            build_hash: hex::encode(lib_crypto::hash_blake3(
+                format!("{}:v1:{}", request.domain, current_time).as_bytes()
+            )),
+            files: HashMap::new(), // Empty initially, will be populated by content publishing
+            created_at: current_time,
+            created_by: format!("{}", request.owner.id),
+            message: Some(format!("Domain {} registered", request.domain)),
+        };
+
+        // Store manifest and get its real CID (not phantom)
+        let manifest_cid = self.store_manifest(initial_manifest).await?;
 
         let domain_record = DomainRecord {
             domain: request.domain.clone(),
