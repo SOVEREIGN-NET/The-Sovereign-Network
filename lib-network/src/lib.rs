@@ -82,6 +82,7 @@ pub mod transport;
 pub mod dht_stub;
 pub mod dht;
 pub mod web4;
+pub mod fragmentation_v2; // Protocol-grade message fragmentation (session-scoped, versioned)
 mod blockchain_sync_stub;
 pub mod storage_stub;
 pub mod network_output;
