@@ -64,17 +64,13 @@ pub use crate::handshake::{
     HandshakeContext, HandshakeResult, HandshakeCapabilities,
     ClientHello, ServerHello, ClientFinish,
     HandshakeMessage, HandshakePayload,
-    NonceCache, NegotiatedCapabilities, HandshakeRole, HandshakeSessionInfo,
+    NonceCache, NegotiatedCapabilities, HandshakeSessionInfo,
     derive_channel_binding_from_addrs,
 };
 use lib_crypto::KeyPair;
 
 // Use orchestrator helpers to reduce duplication
 use crate::handshake::orchestrator::{extract_payload, check_for_error};
-
-// SECURITY (P1-2 FIX): Use shared constant from constants module
-// Ensures consistency across all UHP implementations (1 MB limit)
-use crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE;
 
 /// Handshake timeout duration (30 seconds)
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);

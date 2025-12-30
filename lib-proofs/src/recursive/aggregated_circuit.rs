@@ -126,7 +126,7 @@ pub struct AggregatedCircuitBuilder {
 
 /// Metadata for individual proofs being aggregated
 #[derive(Debug, Clone)]
-pub(crate) struct ProofMetadata {
+pub struct ProofMetadata {
     proof_type: String,
     #[allow(dead_code)]
     complexity_score: u32,

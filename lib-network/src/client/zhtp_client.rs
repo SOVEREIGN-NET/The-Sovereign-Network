@@ -7,7 +7,6 @@ use anyhow::{anyhow, Result, Context};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::path::Path;
 use tracing::{info, debug, warn};
 
 use quinn::{Endpoint, Connection, ClientConfig};
