@@ -39,7 +39,7 @@ pricing_tier = "hot"
 [network_config]
 mesh_port = 33444
 max_peers = 20  # Small network for development
-protocols = ["tcp"]  # TCP only for simplicity
+protocols = ["tcp", "quic"]  # TCP and QUIC (required for mesh mode)
 bootstrap_peers = ["127.0.0.1:9333"]  # Localhost bootstrap
 long_range_relays = false
 

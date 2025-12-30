@@ -39,7 +39,7 @@ pricing_tier = "archive"  # Cheapest tier
 [network_config]
 mesh_port = 33445  # Testnet mesh port
 max_peers = 20    # Low peer count for edge devices
-protocols = ["bluetooth", "wifi_direct"]  # Mesh protocols only
+protocols = ["bluetooth", "wifi_direct", "quic"]  # Mesh protocols with required QUIC
 bootstrap_peers = [
     "testnet-seed1.sovereign.net:9334",
     "testnet-seed2.sovereign.net:9334"

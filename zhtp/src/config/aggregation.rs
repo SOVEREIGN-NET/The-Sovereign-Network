@@ -396,6 +396,7 @@ impl Default for NodeConfig {
                     "bluetooth".to_string(),
                     "wifi_direct".to_string(),
                     "lorawan".to_string(),
+                    "quic".to_string(),
                     "tcp".to_string()
                 ],
                 bootstrap_peers: vec![

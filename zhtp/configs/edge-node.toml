@@ -44,7 +44,7 @@ pricing_tier = "warm"
 [network_config]
 mesh_port = 33444
 max_peers = 50  # Optimized for mesh routing
-protocols = ["bluetooth_le", "wifi_direct", "lorawan"]  # BLE only (not classic) - Pure mesh
+protocols = ["bluetooth_le", "wifi_direct", "lorawan", "quic"]  # BLE only (not classic) - Pure mesh with QUIC required
 bootstrap_peers = []  # Mesh discovery only
 long_range_relays = true  # CRITICAL for pure mesh mode
 
