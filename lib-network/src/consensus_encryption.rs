@@ -121,15 +121,20 @@
 //!
 //! # Design Decisions
 //!
-//! ## Nonce Counter Ordering (Atomic::Relaxed)
+//! ## Counter-Based Nonce with Atomic::Relaxed Ordering
 //!
-//! The send counter uses `fetch_add(1, Ordering::Relaxed)` because:
+//! The counter is incremented atomically and directly used in ChaCha20Poly1305 encryption
+//! (see `encrypt()` which calls `encrypt_data_with_ad_nonce()` with the counter-based nonce).
+//!
+//! Why `Ordering::Relaxed` is safe:
+//! - Counter is embedded in nonce and passed to encryption function (encrypt_data_with_ad_nonce)
 //! - Single logical sender stream per direction within one ConsensusAead instance
-//! - `fetch_add` is atomic: concurrent encrypt() calls get unique counter values
-//! - No explicit synchronization barrier needed with receive side (nonce carried in ciphertext)
-//! - Receiver is stateless (extracts nonce from envelope, validates via AEAD tag + AAD)
+//! - `fetch_add(1, Relaxed)` is atomic: concurrent encrypt() calls get unique counter values
+//! - No memory synchronization needed with receive side because:
+//!   - Nonce is transmitted with ciphertext (no receiver-side counter state needed)
+//!   - Receiver validates via AEAD tag + AAD (authentication covers integrity)
 //!
-//! This is safe and sufficient without stronger memory ordering.
+//! This is safe and sufficient without stronger memory ordering (SeqCst, AcqRel).
 //!
 //! ## Stateless Decryption Design
 //!
@@ -199,18 +204,20 @@ impl RoleDirection {
 ///
 /// # Design Notes
 ///
-/// ## Nonce Management (CE-4)
-/// - Nonce = 4-byte prefix (deterministic per direction/session) + 8-byte counter (monotonic)
-/// - Counter uses `Ordering::Relaxed` (atomic, no additional barriers) since:
+/// ## Nonce Management (CE-4: Counter-Based, Not Random)
+/// - **Nonce structure**: 4-byte prefix (deterministic per direction/session) + 8-byte counter (monotonic)
+/// - **How counter is used**: `encrypt()` method increments counter, passes nonce to `encrypt_data_with_ad_nonce()`
+/// - **Counter atomicity**: Uses `Ordering::Relaxed` (atomic fetch_add, no stronger barriers) because:
 ///   - Single logical stream per direction within one instance
-///   - `fetch_add(1)` is atomic, concurrent callers get unique values
-///   - No explicit synchronization with receive side needed (nonce carried with ciphertext)
+///   - `fetch_add(1)` is atomic: concurrent encrypt() calls get unique counter values
+///   - No memory synchronization needed with receive side (nonce transmitted with ciphertext)
+/// - **Security property**: Every (key, nonce) pair is unique within session—no birthday bound collision risk
 ///
 /// ## Stateless Decryption
-/// - Receive side is stateless: nonce extracted from ciphertext, no replay window tracking
-/// - Integrity guaranteed by: ChaCha20Poly1305 tag + AAD binding to sender/receiver
-/// - Monotonic counter at sender ensures (key, nonce) never repeats within a session
-/// - Replay across different sessions blocked by new session_key (new ConsensusAead instance)
+/// - Receive side is **stateless**: nonce extracted from ciphertext, no replay window tracking needed
+/// - Integrity guaranteed by: ChaCha20Poly1305 authentication tag + AAD binding
+/// - **Why this works**: Monotonic counter at sender ensures no (key, nonce) reuse within session
+/// - **Cross-session protection**: new handshake → new ConsensusAead → new session_key + new nonce prefix
 ///
 /// ## Session Lifecycle (CE-6)
 /// - Caller is responsible for creating new `ConsensusAead` on new handshake
