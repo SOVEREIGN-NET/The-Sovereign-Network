@@ -1,8 +1,8 @@
 //! DAO types and data structures
 
-use serde::{Deserialize, Serialize};
 use lib_crypto::Hash;
 use lib_identity::IdentityId;
+use serde::{Deserialize, Serialize};
 
 /// DAO proposal for governance decisions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,7 +257,7 @@ impl DaoVoteTally {
         }
         (self.yes_votes as f64 / self.total_votes as f64) * 100.0
     }
-    
+
     /// Calculate quorum percentage
     pub fn quorum_percentage(&self) -> f64 {
         if self.total_eligible_power == 0 {
@@ -265,7 +265,7 @@ impl DaoVoteTally {
         }
         (self.total_votes as f64 / self.total_eligible_power as f64) * 100.0
     }
-    
+
     /// Calculate weighted approval percentage
     pub fn weighted_approval_percentage(&self) -> f64 {
         let total_weighted = self.weighted_yes + self.weighted_no;
@@ -642,4 +642,3 @@ pub enum FundingStatus {
     /// Completed successfully
     Completed,
 }
-

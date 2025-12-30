@@ -1,12 +1,12 @@
 //! Core types for ZHTP consensus system
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_identity::IdentityId;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // Re-export proof types from proofs module
-pub use crate::proofs::{StakeProof, StorageProof, WorkProof, ProofOfUsefulWork, StorageChallenge};
+pub use crate::proofs::{ProofOfUsefulWork, StakeProof, StorageChallenge, StorageProof, WorkProof};
 
 /// Consensus mechanism types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -101,7 +101,7 @@ pub struct ConsensusRound {
     pub timed_out: bool,
     /// Locked proposal (if any)
     pub locked_proposal: Option<Hash>,
-    /// Valid proposal (if any) 
+    /// Valid proposal (if any)
     pub valid_proposal: Option<Hash>,
 }
 
@@ -230,20 +230,20 @@ impl Default for ConsensusConfig {
     fn default() -> Self {
         Self {
             consensus_type: ConsensusType::Hybrid,
-            min_stake: 1000 * 1_000_000, // 1000 ZHTP tokens
+            min_stake: 1000 * 1_000_000,           // 1000 ZHTP tokens
             min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
             max_validators: 100,
-            block_time: 10, // 10 seconds
-            propose_timeout: 3000, // 3 seconds
-            prevote_timeout: 1000, // 1 second
+            block_time: 10,          // 10 seconds
+            propose_timeout: 3000,   // 3 seconds
+            prevote_timeout: 1000,   // 1 second
             precommit_timeout: 1000, // 1 second
             max_transactions_per_block: 1000,
             max_difficulty: 0x00000000FFFFFFFF,
             target_difficulty: 0x00000FFF,
             byzantine_threshold: 1.0 / 3.0, // 1/3 Byzantine tolerance
-            slash_double_sign: 5, // 5% slash for double signing
-            slash_liveness: 1, // 1% slash for liveness violation
-            development_mode: false, // Production mode by default
+            slash_double_sign: 5,           // 5% slash for double signing
+            slash_liveness: 1,              // 1% slash for liveness violation
+            development_mode: false,        // Production mode by default
         }
     }
 }

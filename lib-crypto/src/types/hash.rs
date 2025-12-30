@@ -6,7 +6,12 @@ use anyhow::Result;
 use serde::{Serialize, Deserialize};
 
 /// Hash wrapper type for ZHTP - implementation from production codebase
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+///
+/// CRITICAL: Includes Ord and PartialOrd derives to support BTreeMap usage
+/// in consensus message structures. This ensures canonical ordering for
+/// deterministic serialization (CM-3, CM-4). Must NOT use HashMap for
+/// any consensus-critical data structures.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Hash(pub [u8; 32]);
 
 impl Hash {

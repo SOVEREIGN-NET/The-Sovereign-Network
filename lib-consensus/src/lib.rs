@@ -1,5 +1,5 @@
 //! ZHTP Consensus Package
-//! 
+//!
 //! Multi-layered consensus system combining Proof of Stake, Proof of Storage,
 //! Proof of Useful Work, and Byzantine Fault Tolerance for the ZHTP blockchain network.
 //!
@@ -9,24 +9,26 @@
 #[cfg(all(not(debug_assertions), feature = "dev-insecure"))]
 compile_error!("dev-insecure must not be enabled in release builds");
 
-pub mod types;
-pub mod engines;
-pub mod validators;
-pub mod proofs;
 pub mod byzantine;
-pub mod dao;
-pub mod rewards;
 pub mod chain_evaluation;
+pub mod dao;
+pub mod engines;
 pub mod mining;
+pub mod network;
+pub mod proofs;
+pub mod rewards;
+pub mod types;
+pub mod validators;
 
 // Re-export commonly used types
-pub use types::*;
+pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
+pub use engines::enhanced_bft_engine::{ConsensusStatus, EnhancedBftEngine};
 pub use engines::ConsensusEngine;
-pub use engines::enhanced_bft_engine::{EnhancedBftEngine, ConsensusStatus};
-pub use validators::{Validator, ValidatorManager};
-pub use proofs::*;
-pub use chain_evaluation::{ChainEvaluator, ChainDecision, ChainMergeResult, ChainSummary};
 pub use mining::{should_mine_block, IdentityData};
+pub use network::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
+pub use proofs::*;
+pub use types::*;
+pub use validators::{Validator, ValidatorManager};
 
 #[cfg(feature = "dao")]
 pub use dao::*;
@@ -45,46 +47,45 @@ pub type ConsensusResult<T> = Result<T, ConsensusError>;
 pub enum ConsensusError {
     #[error("Invalid consensus type: {0}")]
     InvalidConsensusType(String),
-    
+
     #[error("Validator error: {0}")]
     ValidatorError(String),
-    
+
     #[error("Proof verification failed: {0}")]
     ProofVerificationFailed(String),
-    
+
     #[error("Byzantine fault detected: {0}")]
     ByzantineFault(String),
-    
+
     #[error("DAO governance error: {0}")]
     DaoError(String),
-    
+
     #[error("Reward calculation error: {0}")]
     RewardError(String),
-    
+
     #[error("Network state error: {0}")]
     NetworkStateError(String),
-    
+
     #[error("Crypto error: {0}")]
     CryptoError(#[from] anyhow::Error),
-    
+
     #[error("Identity error: {0}")]
     IdentityError(String),
-    
+
     // #[error("Storage error: {0}")]
     // StorageError(#[from] lib_storage::StorageError),  // TODO: Uncomment when storage is implemented
-    
     #[error("Network error: {0}")]
     NetworkError(String),
-    
+
     #[error("ZK proof error: {0}")]
     ZkError(String),
-    
+
     #[error("Invalid previous hash: {0}")]
     InvalidPreviousHash(String),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
-    
+
     #[error("System time error: {0}")]
     TimeError(#[from] std::time::SystemTimeError),
 }

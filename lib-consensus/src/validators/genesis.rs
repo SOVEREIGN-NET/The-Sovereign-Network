@@ -1,5 +1,5 @@
 //! Genesis Validator Registration
-//! 
+//!
 //! This module handles validator registration during genesis block creation.
 //! It provides types and utilities for multi-node network initialization.
 
@@ -8,7 +8,7 @@ use lib_crypto::{Hash, PublicKey};
 use lib_identity::IdentityId;
 
 /// Genesis validator configuration for multi-node network initialization
-/// 
+///
 /// This struct represents a validator that should be registered during
 /// genesis block creation. It contains all necessary information to
 /// bootstrap a validator into the consensus system.
@@ -51,9 +51,9 @@ impl GenesisValidator {
             node_device_id: None,
         }
     }
-    
+
     /// Parse identity from DID or hex string
-    /// 
+    ///
     /// Accepts:
     /// - DID format: "did:zhtp:hexstring"
     /// - Hex format: "hexstring"
@@ -82,17 +82,17 @@ impl GenesisValidator {
                 }
             }
         }
-        
+
         // Fallback: hash the string
         Hash(lib_crypto::hashing::hash_blake3(identity_str.as_bytes()))
     }
-    
+
     /// Parse consensus key from hex string
     pub fn parse_consensus_key(key_str: &str, identity_id: &Hash) -> Option<PublicKey> {
         if key_str.is_empty() {
             return None;
         }
-        
+
         // Try to parse as hex
         if let Ok(bytes) = hex::decode(key_str) {
             Some(PublicKey {
@@ -104,13 +104,13 @@ impl GenesisValidator {
             None
         }
     }
-    
+
     /// Get identity as IdentityId for lib-consensus
     pub fn as_identity_id(&self) -> IdentityId {
         // Convert lib_crypto::Hash to lib_identity::IdentityId
         IdentityId::from_bytes(&self.identity_id.0)
     }
-    
+
     /// Get consensus key bytes
     pub fn consensus_key_bytes(&self) -> Vec<u8> {
         self.consensus_key
@@ -144,49 +144,49 @@ impl GenesisValidatorBuilder {
             node_device_id: None,
         }
     }
-    
+
     /// Set identity from string (DID or hex)
     pub fn identity(mut self, identity_str: &str) -> Self {
         self.identity_id = Some(GenesisValidator::parse_identity(identity_str));
         self
     }
-    
+
     /// Set identity from Hash directly
     pub fn identity_hash(mut self, identity_id: Hash) -> Self {
         self.identity_id = Some(identity_id);
         self
     }
-    
+
     /// Set stake amount
     pub fn stake(mut self, stake: u64) -> Self {
         self.stake = stake;
         self
     }
-    
+
     /// Set storage capacity
     pub fn storage(mut self, storage_provided: u64) -> Self {
         self.storage_provided = storage_provided;
         self
     }
-    
+
     /// Set commission rate (basis points)
     pub fn commission(mut self, commission_rate: u16) -> Self {
         self.commission_rate = commission_rate;
         self
     }
-    
+
     /// Add an endpoint
     pub fn endpoint(mut self, endpoint: String) -> Self {
         self.endpoints.push(endpoint);
         self
     }
-    
+
     /// Set endpoints
     pub fn endpoints(mut self, endpoints: Vec<String>) -> Self {
         self.endpoints = endpoints;
         self
     }
-    
+
     /// Set consensus key from hex string
     pub fn consensus_key_hex(mut self, key_str: &str) -> Self {
         if let Some(identity_id) = &self.identity_id {
@@ -194,24 +194,25 @@ impl GenesisValidatorBuilder {
         }
         self
     }
-    
+
     /// Set consensus key directly
     pub fn consensus_key(mut self, key: PublicKey) -> Self {
         self.consensus_key = Some(key);
         self
     }
-    
+
     /// Set node device ID
     pub fn node_device(mut self, device_id: IdentityId) -> Self {
         self.node_device_id = Some(device_id);
         self
     }
-    
+
     /// Build the GenesisValidator
     pub fn build(self) -> Result<GenesisValidator> {
-        let identity_id = self.identity_id
+        let identity_id = self
+            .identity_id
             .ok_or_else(|| anyhow::anyhow!("Identity ID is required"))?;
-        
+
         Ok(GenesisValidator {
             identity_id,
             stake: self.stake,
@@ -233,36 +234,36 @@ impl Default for GenesisValidatorBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_parse_identity_did() {
         let did = "did:zhtp:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let identity = GenesisValidator::parse_identity(did);
-        
+
         // Should successfully parse DID
         assert_eq!(identity.0[0], 0x01);
         assert_eq!(identity.0[1], 0x23);
     }
-    
+
     #[test]
     fn test_parse_identity_hex() {
         let hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let identity = GenesisValidator::parse_identity(hex);
-        
+
         // Should successfully parse hex
         assert_eq!(identity.0[0], 0x01);
         assert_eq!(identity.0[1], 0x23);
     }
-    
+
     #[test]
     fn test_parse_identity_fallback() {
         let text = "test_validator";
         let identity = GenesisValidator::parse_identity(text);
-        
+
         // Should hash the string
         assert_eq!(identity.0.len(), 32);
     }
-    
+
     #[test]
     fn test_builder() {
         let validator = GenesisValidatorBuilder::new()
@@ -273,7 +274,7 @@ mod tests {
             .endpoint("tcp://127.0.0.1:9333".to_string())
             .build()
             .unwrap();
-        
+
         assert_eq!(validator.stake, 100_000_000);
         assert_eq!(validator.storage_provided, 1_000_000_000);
         assert_eq!(validator.commission_rate, 500);
