@@ -126,7 +126,7 @@ pub struct AggregatedCircuitBuilder {
 
 /// Metadata for individual proofs being aggregated
 #[derive(Debug, Clone)]
-pub struct ProofMetadata {
+pub(crate) struct ProofMetadata {
     proof_type: String,
     #[allow(dead_code)]
     complexity_score: u32,
@@ -158,7 +158,7 @@ impl AggregatedCircuitBuilder {
     }
 
     /// Add proof to aggregation batch
-    pub fn add_proof(&mut self, proof: Plonky2Proof, metadata: Option<ProofMetadata>) -> Result<()> {
+    pub(crate) fn add_proof(&mut self, proof: Plonky2Proof, metadata: Option<ProofMetadata>) -> Result<()> {
         if self.pending_proofs.len() >= 1000 { // Reasonable limit
             return Err(anyhow::anyhow!("Too many proofs in batch"));
         }
