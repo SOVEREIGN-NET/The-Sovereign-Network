@@ -533,8 +533,9 @@ fn derive_key_for_direction(
     info.push(0x00);
     info.extend_from_slice(direction.as_str().as_bytes()); // Direction separates c2s from s2c
 
-    // HKDF-Expand with session_key as both salt and IKM
-    let hkdf = Hkdf::<Sha3_256>::new(Some(session_key), session_key);
+    // HKDF-Extract: fixed domain salt + session_key (authenticated secret)
+    // Domain salt provides explicit separation; direction/context differentiation is in the info parameter
+    let hkdf = Hkdf::<Sha3_256>::new(Some(b"ZHTP-CONSENSUS-AEAD-v1"), session_key);
     let mut key = [0u8; 32];
     hkdf.expand(&info, &mut key)
         .map_err(|_| anyhow::anyhow!("HKDF expansion failed for consensus key"))?;
@@ -563,7 +564,9 @@ fn derive_nonce_prefix(
     info.push(0x00);
     info.extend_from_slice(direction.as_str().as_bytes());
 
-    let hkdf = Hkdf::<Sha3_256>::new(Some(session_key), session_key);
+    // HKDF-Extract: fixed domain salt + session_key (authenticated secret)
+    // Domain salt provides explicit separation; direction differentiation is in the info parameter
+    let hkdf = Hkdf::<Sha3_256>::new(Some(b"ZHTP-CONSENSUS-AEAD-v1"), session_key);
     let mut prefix = [0u8; 4];
     hkdf.expand(&info, &mut prefix)
         .map_err(|_| anyhow::anyhow!("HKDF expansion failed for nonce prefix"))?;
