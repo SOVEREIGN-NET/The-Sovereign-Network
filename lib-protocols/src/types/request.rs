@@ -368,15 +368,15 @@ mod tests {
     fn test_request_creation() {
         let economic_model = EconomicModel::new();
         let request = ZhtpRequest::new(
-            ZhtpMethod::Get,
+            ZhtpMethod::Post,
             "/test".to_string(),
-            vec![],
+            b"test data".to_vec(),
             None,
             Priority::Normal,
             &economic_model,
         ).unwrap();
 
-        assert_eq!(request.method, ZhtpMethod::Get);
+        assert_eq!(request.method, ZhtpMethod::Post);
         assert_eq!(request.uri, "/test");
         assert_eq!(request.version, ZHTP_VERSION);
         assert!(request.headers.dao_fee >= MIN_DAO_FEE);

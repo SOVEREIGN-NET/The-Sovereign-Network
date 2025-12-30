@@ -2096,8 +2096,8 @@ impl RuntimeOrchestrator {
         info!("   → Starting NetworkComponent...");
         self.start_component(ComponentId::Network).await?;
         
-        // Start multicast broadcasting directly (without full ProtocolsComponent)
-        info!("   → Starting UDP multicast peer discovery...");
+        // Start peer discovery (via lib-network DHT, mDNS, etc.)
+        info!("   → Starting peer discovery...");
         let node_uuid = uuid::Uuid::new_v4();
         let mesh_port = self.config.network_config.mesh_port;
         

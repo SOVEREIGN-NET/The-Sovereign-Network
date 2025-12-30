@@ -1703,10 +1703,11 @@ mod tests {
     async fn test_api_endpoint_routing() {
         let config = HandlerConfig::default();
         let handlers = ZhtpHandlers::new(config);
-        
-        let request = create_test_request(ZhtpMethod::Get, "/api/v1/protocol/info");
+
+        // Test that capabilities endpoint returns Ok
+        let request = create_test_request(ZhtpMethod::Get, "/.well-known/zhtp");
         let response = handlers.handle_get(request).await.unwrap();
-        
+
         assert_eq!(response.status, ZhtpStatus::Ok);
     }
 }

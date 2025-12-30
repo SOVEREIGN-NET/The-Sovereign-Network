@@ -120,7 +120,8 @@ impl fmt::Display for PtrRRData {
 
 #[test]
 fn test() {
-    let buf = vec![ ];
+    // Root domain encoding
+    let buf = vec![0u8];
     let record = PtrRRData::from_bytes(&buf).unwrap();
     assert_eq!(buf, record.to_bytes().unwrap());
 }

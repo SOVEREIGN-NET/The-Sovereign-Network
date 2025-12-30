@@ -1,7 +1,7 @@
 //! Discovery Coordinator - Centralized peer discovery management
-//! 
-//! This module coordinates all discovery protocols (UDP multicast, mDNS, BLE, WiFi Direct, etc.)
-//! to prevent duplicate peer discoveries and optimize network resource usage.
+//!
+//! This module coordinates all discovery protocols (DHT, mDNS, BLE, WiFi Direct, etc.)
+//! to prevent duplicate peer discoveries and optimize network resource usage in QUIC-based mesh.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -458,7 +458,7 @@ impl DiscoveryCoordinator {
         environment: &crate::config::Environment,
     ) -> Result<crate::runtime::ExistingNetworkInfo> {
         info!("📡 Discovering ZHTP peers on local network...");
-        info!("   Methods: DHT/mDNS, UDP multicast, port scanning");
+        info!("   Methods: DHT, mDNS, port scanning");
         
         // Create node identity for DHT
         let node_identity = crate::runtime::create_or_load_node_identity(environment).await?;
@@ -552,16 +552,15 @@ impl DiscoveryCoordinator {
             info!("      Found {} peer(s) via bootstrap config", discovered_peers.len());
         }
         
-        // Method 1: UDP Multicast (handled by lib-network discovery)
-        // NOTE: Multicast peer discovery is handled by lib_network::discovery::local_network::listen_for_announcements()
-        // which correctly filters peers by node_id (not IP address) and registers them with this DiscoveryCoordinator.
-        // Waiting a moment here to allow multicast announcements to be processed.
+        // Method 1: Peer discovery via lib-network
+        // NOTE: Peer discovery is handled by lib-network which correctly filters peers by node_id.
+        // Waiting a moment here to allow discovery announcements to be processed.
         if discovered_peers.is_empty() {
-            info!("   → Waiting for UDP multicast peer discovery (handled by lib-network)...");
+            info!("   → Waiting for peer discovery (handled by lib-network)...");
             tokio::time::sleep(Duration::from_millis(500)).await;
             let all_peers = self.get_all_peers().await;
             if !all_peers.is_empty() {
-                info!("      Found {} peer(s) discovered via lib-network multicast", all_peers.len());
+                info!("      Found {} peer(s) via lib-network discovery", all_peers.len());
                 for peer in all_peers {
                     for addr in &peer.addresses {
                         if !discovered_peers.contains(addr) {
