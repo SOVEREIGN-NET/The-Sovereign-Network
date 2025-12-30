@@ -1,10 +1,10 @@
 //! Reward calculation system
 
-use std::collections::HashMap;
+use crate::types::UsefulWorkType;
+use crate::validators::ValidatorManager;
 use anyhow::Result;
 use lib_identity::IdentityId;
-use crate::validators::ValidatorManager;
-use crate::types::UsefulWorkType;
+use std::collections::HashMap;
 
 /// Reward calculation engine
 #[derive(Debug, Clone)]
@@ -55,7 +55,11 @@ impl RewardCalculator {
     }
 
     /// Calculate rewards for a consensus round
-    pub fn calculate_round_rewards(&mut self, validator_manager: &ValidatorManager, current_height: u64) -> Result<RewardRound> {
+    pub fn calculate_round_rewards(
+        &mut self,
+        validator_manager: &ValidatorManager,
+        current_height: u64,
+    ) -> Result<RewardRound> {
         let active_validators = validator_manager.get_active_validators();
         let mut validator_rewards = HashMap::new();
         let mut total_rewards = 0u64;
@@ -83,14 +87,20 @@ impl RewardCalculator {
             self.reward_history.remove(0);
         }
 
-        tracing::info!("Calculated round rewards: {} ZHTP total to {} validators", 
-                      total_rewards, validator_rewards.len());
+        tracing::info!(
+            "Calculated round rewards: {} ZHTP total to {} validators",
+            total_rewards,
+            validator_rewards.len()
+        );
 
         Ok(reward_round)
     }
 
     /// Calculate reward for a single validator
-    fn calculate_validator_reward(&self, validator: &crate::validators::Validator) -> Result<ValidatorReward> {
+    fn calculate_validator_reward(
+        &self,
+        validator: &crate::validators::Validator,
+    ) -> Result<ValidatorReward> {
         // Base reward based primarily on stake (traditional validator model)
         let stake_factor = (validator.stake as f64).sqrt() / 1000.0;
         let base_reward = (self.base_reward as f64 * stake_factor) as u64;
@@ -98,7 +108,8 @@ impl RewardCalculator {
         // Optional storage bonus (only if validator provides storage)
         let _storage_bonus = if validator.storage_provided > 0 {
             let storage_gb = validator.storage_provided as f64 / (1024.0 * 1024.0 * 1024.0);
-            (base_reward as f64 * 0.1 * storage_gb.ln().max(0.0)).min(base_reward as f64 * 0.2) as u64
+            (base_reward as f64 * 0.1 * storage_gb.ln().max(0.0)).min(base_reward as f64 * 0.2)
+                as u64
         } else {
             0
         };
@@ -159,8 +170,11 @@ impl RewardCalculator {
 
             tracing::info!(
                 " Distributed {} ZHTP to validator {:?} (base: {}, work: {}, participation: {})",
-                reward.total_reward, validator_id, reward.base_reward, 
-                reward.work_bonus, reward.participation_bonus
+                reward.total_reward,
+                validator_id,
+                reward.base_reward,
+                reward.work_bonus,
+                reward.participation_bonus
             );
         }
 
@@ -171,7 +185,11 @@ impl RewardCalculator {
     pub fn get_reward_stats(&self) -> RewardStatistics {
         let total_rounds = self.reward_history.len();
         let total_rewards: u64 = self.reward_history.iter().map(|r| r.total_rewards).sum();
-        let average_per_round = if total_rounds > 0 { total_rewards / total_rounds as u64 } else { 0 };
+        let average_per_round = if total_rounds > 0 {
+            total_rewards / total_rounds as u64
+        } else {
+            0
+        };
 
         RewardStatistics {
             total_rounds: total_rounds as u64,
@@ -183,7 +201,11 @@ impl RewardCalculator {
 
     /// Update reward multipliers
     pub fn update_work_multiplier(&mut self, work_type: UsefulWorkType, multiplier: f64) {
-        tracing::info!("Updated reward multiplier for {:?}: {}", work_type, multiplier);
+        tracing::info!(
+            "Updated reward multiplier for {:?}: {}",
+            work_type,
+            multiplier
+        );
         self.work_multipliers.insert(work_type, multiplier);
     }
 
@@ -191,7 +213,11 @@ impl RewardCalculator {
     pub fn adjust_base_reward(&mut self, new_base_reward: u64) {
         let old_reward = self.base_reward;
         self.base_reward = new_base_reward;
-        tracing::info!("Base reward adjusted: {} -> {} ZHTP", old_reward, new_base_reward);
+        tracing::info!(
+            "Base reward adjusted: {} -> {} ZHTP",
+            old_reward,
+            new_base_reward
+        );
     }
 }
 

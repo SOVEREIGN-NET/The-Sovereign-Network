@@ -1,19 +1,19 @@
 //! Main consensus engine implementation combining all consensus mechanisms
-//! 
+//!
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lib_crypto::{Hash, PostQuantumSignature, hash_blake3};
+use lib_crypto::{hash_blake3, Hash, PostQuantumSignature};
 use lib_identity::IdentityId;
 
+use crate::byzantine::ByzantineFaultDetector;
+use crate::dao::DaoEngine;
+use crate::proofs::{StakeProof, StorageProof, WorkProof};
+use crate::rewards::RewardCalculator;
 use crate::types::*;
 use crate::validators::ValidatorManager;
-use crate::proofs::{StakeProof, StorageProof, WorkProof};
-use crate::dao::DaoEngine;
-use crate::byzantine::ByzantineFaultDetector;
-use crate::rewards::RewardCalculator;
-use crate::{ConsensusResult, ConsensusError};
+use crate::{ConsensusError, ConsensusResult};
 
 /// Main ZHTP consensus engine combining all mechanisms
 #[derive(Debug)]
@@ -53,8 +53,10 @@ impl ConsensusEngine {
             height: 0,
             round: 0,
             step: ConsensusStep::Propose,
-            start_time: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            start_time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
             proposer: None,
             proposals: Vec::new(),
             votes: HashMap::new(),
@@ -89,99 +91,149 @@ impl ConsensusEngine {
     ) -> ConsensusResult<()> {
         // Validate minimum requirements (skip for genesis node)
         if !is_genesis && stake < self.config.min_stake {
-            return Err(ConsensusError::ValidatorError("Insufficient stake amount".to_string()));
+            return Err(ConsensusError::ValidatorError(
+                "Insufficient stake amount".to_string(),
+            ));
         }
 
         if storage_capacity < self.config.min_storage {
-            return Err(ConsensusError::ValidatorError("Insufficient storage capacity".to_string()));
+            return Err(ConsensusError::ValidatorError(
+                "Insufficient storage capacity".to_string(),
+            ));
         }
 
         if commission_rate > 100 {
-            return Err(ConsensusError::ValidatorError("Invalid commission rate".to_string()));
+            return Err(ConsensusError::ValidatorError(
+                "Invalid commission rate".to_string(),
+            ));
         }
 
         // Register with validator manager
-        self.validator_manager.register_validator(
-            identity.clone(),
-            stake,
-            storage_capacity,
-            consensus_key,
-            commission_rate,
-        ).map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;
+        self.validator_manager
+            .register_validator(
+                identity.clone(),
+                stake,
+                storage_capacity,
+                consensus_key,
+                commission_rate,
+            )
+            .map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;
 
         // Set as local validator if this is the first one
         if self.validator_identity.is_none() {
             self.validator_identity = Some(identity.clone());
         }
 
-        tracing::info!("Registered validator {:?} with {} ZHTP stake", identity, stake);
+        tracing::info!(
+            "Registered validator {:?} with {} ZHTP stake",
+            identity,
+            stake
+        );
         Ok(())
     }
 
     /// Process a single consensus event (pure component method)
     /// This replaces the standalone start_consensus() loop pattern
-    pub async fn handle_consensus_event(&mut self, event: ConsensusEvent) -> ConsensusResult<Vec<ConsensusEvent>> {
+    pub async fn handle_consensus_event(
+        &mut self,
+        event: ConsensusEvent,
+    ) -> ConsensusResult<Vec<ConsensusEvent>> {
         match event {
             ConsensusEvent::StartRound { height, trigger } => {
-                tracing::info!(" Starting consensus round {} (trigger: {})", height, trigger);
-                
+                tracing::info!(
+                    " Starting consensus round {} (trigger: {})",
+                    height,
+                    trigger
+                );
+
                 // Log different trigger types for monitoring and debugging
                 match trigger.as_str() {
-                    "timeout" => tracing::warn!("⏰ Consensus round triggered by timeout - potential network delays"),
-                    "new_transaction" => tracing::debug!("💳 New transaction triggered consensus round"),
-                    "validator_join" => tracing::info!("New validator joining triggered consensus round"),
-                    "validator_leave" => tracing::warn!(" Validator leaving triggered consensus round"),
+                    "timeout" => tracing::warn!(
+                        "⏰ Consensus round triggered by timeout - potential network delays"
+                    ),
+                    "new_transaction" => {
+                        tracing::debug!("💳 New transaction triggered consensus round")
+                    }
+                    "validator_join" => {
+                        tracing::info!("New validator joining triggered consensus round")
+                    }
+                    "validator_leave" => {
+                        tracing::warn!(" Validator leaving triggered consensus round")
+                    }
                     "force_restart" => tracing::warn!(" Manual consensus restart triggered"),
                     _ => tracing::debug!("Custom trigger: {}", trigger),
                 }
-                
+
                 self.prepare_consensus_round(height).await?;
                 Ok(vec![ConsensusEvent::RoundPrepared { height }])
             }
-            ConsensusEvent::NewBlock { height, previous_hash } => {
-                tracing::info!("🧱 Processing new block at height {} with previous hash: {}", height, previous_hash);
-                
+            ConsensusEvent::NewBlock {
+                height,
+                previous_hash,
+            } => {
+                tracing::info!(
+                    "🧱 Processing new block at height {} with previous hash: {}",
+                    height,
+                    previous_hash
+                );
+
                 // Validate blockchain continuity by checking previous hash
                 if let Err(e) = self.validate_previous_hash(height, &previous_hash).await {
                     tracing::error!("Previous hash validation failed: {}", e);
-                    return Ok(vec![ConsensusEvent::RoundFailed { 
-                        height, 
-                        error: format!("Previous hash validation failed: {}", e) 
+                    return Ok(vec![ConsensusEvent::RoundFailed {
+                        height,
+                        error: format!("Previous hash validation failed: {}", e),
                     }]);
                 }
-                
+
                 match self.run_consensus_round().await {
                     Ok(_) => {
                         let mut events = vec![ConsensusEvent::RoundCompleted { height }];
-                        
+
                         // Process DAO proposals
                         if let Err(e) = self.dao_engine.process_expired_proposals().await {
                             tracing::warn!("DAO processing error: {}", e);
-                            events.push(ConsensusEvent::DaoError { error: e.to_string() });
+                            events.push(ConsensusEvent::DaoError {
+                                error: e.to_string(),
+                            });
                         }
-                        
+
                         // Check for Byzantine faults
-                        if let Err(e) = self.byzantine_detector.detect_faults(&self.validator_manager) {
+                        if let Err(e) = self
+                            .byzantine_detector
+                            .detect_faults(&self.validator_manager)
+                        {
                             tracing::warn!("Byzantine fault detection error: {}", e);
-                            events.push(ConsensusEvent::ByzantineFault { error: e.to_string() });
+                            events.push(ConsensusEvent::ByzantineFault {
+                                error: e.to_string(),
+                            });
                         }
-                        
+
                         // Calculate and distribute rewards
-                        if let Err(e) = self.reward_calculator.calculate_round_rewards(&self.validator_manager, self.current_round.height) {
+                        if let Err(e) = self.reward_calculator.calculate_round_rewards(
+                            &self.validator_manager,
+                            self.current_round.height,
+                        ) {
                             tracing::warn!("Reward calculation error: {}", e);
-                            events.push(ConsensusEvent::RewardError { error: e.to_string() });
+                            events.push(ConsensusEvent::RewardError {
+                                error: e.to_string(),
+                            });
                         }
-                        
+
                         Ok(events)
-                    },
+                    }
                     Err(e) => {
                         tracing::error!("Consensus round failed: {}", e);
-                        Ok(vec![ConsensusEvent::RoundFailed { height, error: e.to_string() }])
+                        Ok(vec![ConsensusEvent::RoundFailed {
+                            height,
+                            error: e.to_string(),
+                        }])
                     }
                 }
             }
             ConsensusEvent::ValidatorJoin { identity, stake } => {
-                self.handle_validator_registration(identity.clone(), stake).await?;
+                self.handle_validator_registration(identity.clone(), stake)
+                    .await?;
                 Ok(vec![ConsensusEvent::ValidatorRegistered { identity }])
             }
             _ => {
@@ -195,7 +247,7 @@ impl ConsensusEngine {
     async fn prepare_consensus_round(&mut self, height: u64) -> ConsensusResult<()> {
         if !self.validator_manager.has_sufficient_validators() {
             return Err(ConsensusError::ValidatorError(
-                "Insufficient validators for consensus".to_string()
+                "Insufficient validators for consensus".to_string(),
             ));
         }
 
@@ -205,15 +257,20 @@ impl ConsensusEngine {
     }
 
     /// Handle validator registration event
-    async fn handle_validator_registration(&mut self, identity: lib_identity::IdentityId, stake: u64) -> ConsensusResult<()> {
+    async fn handle_validator_registration(
+        &mut self,
+        identity: lib_identity::IdentityId,
+        stake: u64,
+    ) -> ConsensusResult<()> {
         self.register_validator(
             identity.clone(),
             stake,
             1024 * 1024 * 1024, // Default storage capacity
-            vec![0u8; 32], // Default consensus key
-            5, // Default commission rate
-            false, // Not genesis
-        ).await?;
+            vec![0u8; 32],      // Default consensus key
+            5,                  // Default commission rate
+            false,              // Not genesis
+        )
+        .await?;
         Ok(())
     }
 
@@ -222,7 +279,8 @@ impl ConsensusEngine {
         self.advance_to_next_round();
 
         // Select proposer for this round
-        let proposer = self.validator_manager
+        let proposer = self
+            .validator_manager
             .select_proposer(self.current_round.height, self.current_round.round)
             .ok_or_else(|| ConsensusError::ValidatorError("No proposer available".to_string()))?;
 
@@ -230,7 +288,9 @@ impl ConsensusEngine {
 
         tracing::info!(
             "Starting consensus round {} at height {} with proposer {:?}",
-            self.current_round.round, self.current_round.height, proposer.identity
+            self.current_round.round,
+            self.current_round.height,
+            proposer.identity
         );
 
         // Run consensus steps
@@ -276,7 +336,8 @@ impl ConsensusEngine {
         }
 
         // Wait for proposals with timeout
-        self.wait_for_step_timeout(self.config.propose_timeout).await;
+        self.wait_for_step_timeout(self.config.propose_timeout)
+            .await;
 
         Ok(())
     }
@@ -287,11 +348,13 @@ impl ConsensusEngine {
 
         // Cast prevote
         if let Some(proposal_id) = self.current_round.proposals.first() {
-            self.cast_vote(proposal_id.clone(), VoteType::PreVote).await?;
+            self.cast_vote(proposal_id.clone(), VoteType::PreVote)
+                .await?;
         }
 
         // Wait for prevotes with timeout
-        self.wait_for_step_timeout(self.config.prevote_timeout).await;
+        self.wait_for_step_timeout(self.config.prevote_timeout)
+            .await;
 
         Ok(())
     }
@@ -306,13 +369,15 @@ impl ConsensusEngine {
             let threshold = self.validator_manager.get_byzantine_threshold();
 
             if prevote_count >= threshold {
-                self.cast_vote(proposal_id.clone(), VoteType::PreCommit).await?;
+                self.cast_vote(proposal_id.clone(), VoteType::PreCommit)
+                    .await?;
                 self.current_round.valid_proposal = Some(proposal_id);
             }
         }
 
         // Wait for precommits with timeout
-        self.wait_for_step_timeout(self.config.precommit_timeout).await;
+        self.wait_for_step_timeout(self.config.precommit_timeout)
+            .await;
 
         Ok(())
     }
@@ -327,11 +392,13 @@ impl ConsensusEngine {
             let threshold = self.validator_manager.get_byzantine_threshold();
 
             if precommit_count >= threshold {
-                self.cast_vote(proposal_id.clone(), VoteType::Commit).await?;
-                
+                self.cast_vote(proposal_id.clone(), VoteType::Commit)
+                    .await?;
+
                 tracing::info!(
                     "Block committed at height {} with proposal {:?}",
-                    self.current_round.height, proposal_id
+                    self.current_round.height,
+                    proposal_id
                 );
 
                 // Process the committed block
@@ -344,7 +411,9 @@ impl ConsensusEngine {
 
     /// Create a new proposal
     async fn create_proposal(&self) -> ConsensusResult<ConsensusProposal> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
         // Get previous block hash from blockchain state
@@ -354,12 +423,15 @@ impl ConsensusEngine {
         let block_data = self.collect_block_transactions().await?;
 
         // Generate proposal ID from deterministic data
-        let proposal_id = Hash::from_bytes(&hash_blake3(&[
-            &self.current_round.height.to_le_bytes(),
-            previous_hash.as_bytes(),
-            &block_data,
-            validator_id.as_bytes(),
-        ].concat()));
+        let proposal_id = Hash::from_bytes(&hash_blake3(
+            &[
+                &self.current_round.height.to_le_bytes(),
+                previous_hash.as_bytes(),
+                &block_data,
+                validator_id.as_bytes(),
+            ]
+            .concat(),
+        ));
 
         // Create consensus proof
         let consensus_proof = self.create_consensus_proof().await?;
@@ -372,7 +444,7 @@ impl ConsensusEngine {
             &previous_hash,
             &block_data,
         )?;
-        
+
         let signature = self.sign_proposal_data(&proposal_data).await?;
 
         let proposal = ConsensusProposal {
@@ -381,15 +453,19 @@ impl ConsensusEngine {
             height: self.current_round.height,
             previous_hash,
             block_data,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
             signature,
             consensus_proof,
         };
 
         tracing::info!(
             "Created proposal {:?} for height {} by {:?}",
-            proposal.id, proposal.height, proposal.proposer
+            proposal.id,
+            proposal.height,
+            proposal.proposer
         );
 
         Ok(proposal)
@@ -415,18 +491,20 @@ impl ConsensusEngine {
         // 2. Validate transactions
         // 3. Select transactions based on fees and priority
         // 4. Create block data with transaction merkle tree
-        
+
         // For demo, create minimal block data
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?.as_secs();
-        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ConsensusError::TimeError(e))?
+            .as_secs();
+
         let block_data = format!(
-            "block_height:{},timestamp:{},validator_count:{}", 
+            "block_height:{},timestamp:{},validator_count:{}",
             self.current_round.height,
             timestamp,
             self.validator_manager.get_active_validators().len()
         );
-        
+
         Ok(block_data.into_bytes())
     }
 
@@ -451,10 +529,14 @@ impl ConsensusEngine {
 
     /// Sign proposal data
     async fn sign_proposal_data(&self, data: &[u8]) -> ConsensusResult<PostQuantumSignature> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
-        let validator = self.validator_manager.get_validator(validator_id)
+        let validator = self
+            .validator_manager
+            .get_validator(validator_id)
             .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
 
         // Create signature using validator's consensus key
@@ -469,16 +551,20 @@ impl ConsensusEngine {
                 key_id: validator_id.as_bytes().try_into().unwrap_or([0u8; 32]),
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
         })
     }
 
     /// Create consensus proof based on configuration
     async fn create_consensus_proof(&self) -> ConsensusResult<ConsensusProof> {
         let consensus_type = self.config.consensus_type.clone();
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| ConsensusError::TimeError(e))?.as_secs();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ConsensusError::TimeError(e))?
+            .as_secs();
 
         match consensus_type {
             ConsensusType::ProofOfStake => {
@@ -491,7 +577,7 @@ impl ConsensusEngine {
                     zk_did_proof: None,
                     timestamp,
                 })
-            },
+            }
             ConsensusType::ProofOfStorage => {
                 let storage_proof = self.create_storage_proof().await?;
                 Ok(ConsensusProof {
@@ -502,7 +588,7 @@ impl ConsensusEngine {
                     zk_did_proof: None,
                     timestamp,
                 })
-            },
+            }
             ConsensusType::ProofOfUsefulWork => {
                 let work_proof = self.create_work_proof().await?;
                 Ok(ConsensusProof {
@@ -513,7 +599,7 @@ impl ConsensusEngine {
                     zk_did_proof: None,
                     timestamp,
                 })
-            },
+            }
             ConsensusType::Hybrid => {
                 let stake_proof = self.create_stake_proof().await?;
                 let storage_proof = self.create_storage_proof().await?;
@@ -525,7 +611,7 @@ impl ConsensusEngine {
                     zk_did_proof: None,
                     timestamp,
                 })
-            },
+            }
             ConsensusType::ByzantineFaultTolerance => {
                 // BFT uses all proof types
                 let stake_proof = self.create_stake_proof().await?;
@@ -539,16 +625,20 @@ impl ConsensusEngine {
                     zk_did_proof: None,
                     timestamp,
                 })
-            },
+            }
         }
     }
 
     /// Create stake proof
     async fn create_stake_proof(&self) -> ConsensusResult<StakeProof> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
-        let validator = self.validator_manager.get_validator(validator_id)
+        let validator = self
+            .validator_manager
+            .get_validator(validator_id)
             .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
 
         // Create deterministic stake transaction hash based on validator identity and stake
@@ -556,7 +646,8 @@ impl ConsensusEngine {
             validator_id.as_bytes(),
             &validator.stake.to_le_bytes(),
             b"stake_transaction",
-        ].concat();
+        ]
+        .concat();
         let stake_tx_hash = Hash::from_bytes(&hash_blake3(&stake_tx_data));
 
         let stake_proof = StakeProof::new(
@@ -564,41 +655,49 @@ impl ConsensusEngine {
             validator.stake,
             stake_tx_hash,
             self.current_round.height.saturating_sub(1), // Stake was made in previous block
-            86400, // 1 day lock time in seconds
-        ).map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+            86400,                                       // 1 day lock time in seconds
+        )
+        .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
 
         Ok(stake_proof)
     }
 
     /// Create storage proof
     async fn create_storage_proof(&self) -> ConsensusResult<StorageProof> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
-        let validator = self.validator_manager.get_validator(validator_id)
+        let validator = self
+            .validator_manager
+            .get_validator(validator_id)
             .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
 
         // Create realistic storage challenges
         let mut challenges = Vec::new();
         let num_challenges = 3; // Standard number of challenges
-        
+
         for i in 0..num_challenges {
             let challenge_data = [
                 validator_id.as_bytes(),
                 &(i as u32).to_le_bytes(),
                 &self.current_round.height.to_le_bytes(),
-            ].concat();
-            
+            ]
+            .concat();
+
             let challenge = crate::proofs::StorageChallenge {
                 id: Hash::from_bytes(&hash_blake3(&challenge_data)),
-                content_hash: Hash::from_bytes(&hash_blake3(&[
-                    challenge_data.clone(),
-                    b"content".to_vec(),
-                ].concat())),
+                content_hash: Hash::from_bytes(&hash_blake3(
+                    &[challenge_data.clone(), b"content".to_vec()].concat(),
+                )),
                 challenge: challenge_data[..16].to_vec(), // First 16 bytes as challenge
                 response: hash_blake3(&challenge_data).to_vec(), // Hash as response
-                timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                    .map_err(|e| ConsensusError::TimeError(e))?.as_secs() - (i as u64 * 3600),
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|e| ConsensusError::TimeError(e))?
+                    .as_secs()
+                    - (i as u64 * 3600),
             };
             challenges.push(challenge);
         }
@@ -608,13 +707,14 @@ impl ConsensusEngine {
             validator_id.as_bytes(),
             &validator.storage_provided.to_le_bytes(),
             b"merkle_root",
-        ].concat();
+        ]
+        .concat();
         let merkle_proof = vec![Hash::from_bytes(&hash_blake3(&merkle_data))];
 
         // Calculate realistic utilization based on validator activity
         let utilization = std::cmp::min(
-            90, // Max 90% utilization
-            50 + (validator.reputation / 10) // 50-90% based on reputation
+            90,                               // Max 90% utilization
+            50 + (validator.reputation / 10), // 50-90% based on reputation
         ) as u64;
 
         let storage_proof = StorageProof::new(
@@ -623,17 +723,22 @@ impl ConsensusEngine {
             utilization,
             challenges,
             merkle_proof,
-        ).map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+        )
+        .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
 
         Ok(storage_proof)
     }
 
     /// Create work proof
     async fn create_work_proof(&self) -> ConsensusResult<WorkProof> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
-        let validator = self.validator_manager.get_validator(validator_id)
+        let validator = self
+            .validator_manager
+            .get_validator(validator_id)
             .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
 
         // Calculate realistic work values based on validator capabilities
@@ -645,38 +750,44 @@ impl ConsensusEngine {
             routing_work,
             storage_work,
             compute_work,
-            SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
             validator_id.as_bytes().try_into().unwrap_or([0u8; 32]),
-        ).map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+        )
+        .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
 
         Ok(work_proof)
     }
 
     /// Cast a vote
     async fn cast_vote(&mut self, proposal_id: Hash, vote_type: VoteType) -> ConsensusResult<()> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
-        let validator = self.validator_manager.get_validator(validator_id)
+        let validator = self
+            .validator_manager
+            .get_validator(validator_id)
             .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
 
         // Create vote ID from deterministic data
-        let vote_id = Hash::from_bytes(&hash_blake3(&[
-            proposal_id.as_bytes(),
-            validator_id.as_bytes(),
-            &(vote_type.clone() as u8).to_le_bytes(),
-            &self.current_round.height.to_le_bytes(),
-            &self.current_round.round.to_le_bytes(),
-        ].concat()));
+        let vote_id = Hash::from_bytes(&hash_blake3(
+            &[
+                proposal_id.as_bytes(),
+                validator_id.as_bytes(),
+                &(vote_type.clone() as u8).to_le_bytes(),
+                &self.current_round.height.to_le_bytes(),
+                &self.current_round.round.to_le_bytes(),
+            ]
+            .concat(),
+        ));
 
         // Create vote data for signing
-        let vote_data = self.serialize_vote_data(
-            &vote_id,
-            validator_id,
-            &proposal_id,
-            &vote_type,
-        )?;
+        let vote_data =
+            self.serialize_vote_data(&vote_id, validator_id, &proposal_id, &vote_type)?;
 
         // Sign the vote
         let signature = self.sign_vote_data(&vote_data, &validator).await?;
@@ -688,22 +799,28 @@ impl ConsensusEngine {
             vote_type: vote_type.clone(),
             height: self.current_round.height,
             round: self.current_round.round,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
             signature,
         };
 
         // Store vote
-        self.vote_pool.entry(self.current_round.height)
+        self.vote_pool
+            .entry(self.current_round.height)
             .or_insert_with(HashMap::new)
             .insert(vote.id.clone(), vote);
 
         // Update validator activity
-        self.validator_manager.update_validator_activity(validator_id);
+        self.validator_manager
+            .update_validator_activity(validator_id);
 
         tracing::debug!(
             " Cast {:?} vote on proposal {:?} from validator {:?}",
-            vote_type, proposal_id, validator_id
+            vote_type,
+            proposal_id,
+            validator_id
         );
 
         Ok(())
@@ -742,18 +859,25 @@ impl ConsensusEngine {
             public_key: lib_crypto::PublicKey {
                 dilithium_pk: validator.consensus_key.clone(),
                 kyber_pk: validator.consensus_key[..16].to_vec(),
-                key_id: validator.identity.as_bytes().try_into().unwrap_or([0u8; 32]),
+                key_id: validator
+                    .identity
+                    .as_bytes()
+                    .try_into()
+                    .unwrap_or([0u8; 32]),
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?.as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
         })
     }
 
     /// Count votes for a proposal
     fn count_votes_for_proposal(&self, proposal_id: &Hash, vote_type: &VoteType) -> u64 {
         if let Some(votes) = self.vote_pool.get(&self.current_round.height) {
-            votes.values()
+            votes
+                .values()
                 .filter(|vote| &vote.proposal_id == proposal_id && &vote.vote_type == vote_type)
                 .count() as u64
         } else {
@@ -769,31 +893,37 @@ impl ConsensusEngine {
     /// Process committed block
     async fn process_committed_block(&mut self, proposal_id: &Hash) -> ConsensusResult<()> {
         // Find and process the committed proposal
-        if let Some(proposal_index) = self.pending_proposals.iter()
-            .position(|p| &p.id == proposal_id) {
+        if let Some(proposal_index) = self
+            .pending_proposals
+            .iter()
+            .position(|p| &p.id == proposal_id)
+        {
             let proposal = self.pending_proposals.remove(proposal_index).unwrap();
-            
+
             // Validate the block one more time before applying
             self.validate_committed_block(&proposal).await?;
-            
+
             // Apply block to state
             self.apply_block_to_state(&proposal).await?;
-            
+
             // Update validator activities and reputation
             self.update_validator_metrics(&proposal).await?;
-            
+
             // Calculate and distribute block rewards
-            let reward_round = self.reward_calculator.calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
+            let reward_round = self
+                .reward_calculator
+                .calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
             self.reward_calculator.distribute_rewards(&reward_round)?;
-            
+
             // Process any DAO proposals that may have expired
             if let Err(e) = self.dao_engine.process_expired_proposals().await {
                 tracing::warn!("Error processing DAO proposals: {}", e);
             }
-            
+
             tracing::info!(
                 " Successfully processed committed block: {:?} at height {}",
-                proposal.id, proposal.height
+                proposal.id,
+                proposal.height
             );
         }
 
@@ -810,17 +940,23 @@ impl ConsensusEngine {
             &proposal.previous_hash,
             &proposal.block_data,
         )?;
-        
-        if !self.verify_signature(&proposal_data, &proposal.signature).await? {
+
+        if !self
+            .verify_signature(&proposal_data, &proposal.signature)
+            .await?
+        {
             return Err(ConsensusError::ProofVerificationFailed(
-                "Invalid proposal signature".to_string()
+                "Invalid proposal signature".to_string(),
             ));
         }
 
         // Verify consensus proof
-        if !self.verify_consensus_proof(&proposal.consensus_proof).await? {
+        if !self
+            .verify_consensus_proof(&proposal.consensus_proof)
+            .await?
+        {
             return Err(ConsensusError::ProofVerificationFailed(
-                "Invalid consensus proof".to_string()
+                "Invalid consensus proof".to_string(),
             ));
         }
 
@@ -836,18 +972,23 @@ impl ConsensusEngine {
         // 3. Update validator set if needed
         // 4. Apply any governance changes
         // 5. Store block in blockchain database
-        
+
         // For now, just log the application
         tracing::info!(
             " Applied block {:?} to state (height: {}, size: {} bytes)",
-            proposal.id, proposal.height, proposal.block_data.len()
+            proposal.id,
+            proposal.height,
+            proposal.block_data.len()
         );
-        
+
         Ok(())
     }
 
     /// Update validator metrics based on block participation
-    async fn update_validator_metrics(&mut self, proposal: &ConsensusProposal) -> ConsensusResult<()> {
+    async fn update_validator_metrics(
+        &mut self,
+        proposal: &ConsensusProposal,
+    ) -> ConsensusResult<()> {
         // Update proposer metrics
         let proposer_id = proposal.proposer.clone();
         if let Some(proposer) = self.validator_manager.get_validator_mut(&proposer_id) {
@@ -878,8 +1019,7 @@ impl ConsensusEngine {
     ) -> ConsensusResult<bool> {
         // In production, this would use proper post-quantum signature verification
         // For demo, we verify that the signature is not empty and has correct structure
-        Ok(!signature.signature.is_empty() && 
-           !signature.public_key.dilithium_pk.is_empty())
+        Ok(!signature.signature.is_empty() && !signature.public_key.dilithium_pk.is_empty())
     }
 
     /// Verify consensus proof
@@ -891,43 +1031,49 @@ impl ConsensusEngine {
                 } else {
                     Ok(false)
                 }
-            },
+            }
             ConsensusType::ProofOfStorage => {
                 if let Some(storage_proof) = &proof.storage_proof {
                     Ok(storage_proof.verify()?)
                 } else {
                     Ok(false)
                 }
-            },
+            }
             ConsensusType::ProofOfUsefulWork => {
                 if let Some(work_proof) = &proof.work_proof {
                     Ok(work_proof.verify()?)
                 } else {
                     Ok(false)
                 }
-            },
+            }
             ConsensusType::Hybrid => {
-                let stake_valid = proof.stake_proof.as_ref()
+                let stake_valid = proof
+                    .stake_proof
+                    .as_ref()
                     .map(|p| p.verify(self.current_round.height))
-                    .transpose()?.unwrap_or(false);
-                
-                let storage_valid = proof.storage_proof.as_ref()
+                    .transpose()?
+                    .unwrap_or(false);
+
+                let storage_valid = proof
+                    .storage_proof
+                    .as_ref()
                     .map(|p| p.verify())
-                    .transpose()?.unwrap_or(false);
-                    
+                    .transpose()?
+                    .unwrap_or(false);
+
                 Ok(stake_valid && storage_valid)
-            },
+            }
             ConsensusType::ByzantineFaultTolerance => {
                 // For BFT, we rely on vote thresholds rather than individual proofs
                 Ok(true)
-            },
+            }
         }
     }
 
     /// Archive completed round
     fn archive_completed_round(&mut self) {
         self.round_history.push_back(self.current_round.clone());
-        
+
         // Keep only recent history
         if self.round_history.len() > 100 {
             self.round_history.pop_front();
@@ -960,30 +1106,39 @@ impl ConsensusEngine {
     }
 
     /// Validate that the previous hash matches the expected blockchain state
-    async fn validate_previous_hash(&self, height: u64, previous_hash: &Hash) -> ConsensusResult<()> {
+    async fn validate_previous_hash(
+        &self,
+        height: u64,
+        previous_hash: &Hash,
+    ) -> ConsensusResult<()> {
         // For genesis block (height 0), previous hash should be zero
         if height == 0 {
             let zero_hash = Hash::from_bytes(&[0u8; 32]);
             if *previous_hash != zero_hash {
-                return Err(ConsensusError::InvalidPreviousHash(
-                    format!("Genesis block must have zero previous hash, got: {}", previous_hash)
-                ));
+                return Err(ConsensusError::InvalidPreviousHash(format!(
+                    "Genesis block must have zero previous hash, got: {}",
+                    previous_hash
+                )));
             }
             return Ok(());
         }
 
         // For subsequent blocks, validate against the actual chain state
         // In a implementation, this would check against stored blockchain state
-        
+
         // Check if we have the expected previous block
         if height > 1 {
-            tracing::debug!("Validating previous hash {} for height {}", previous_hash, height);
-            
+            tracing::debug!(
+                "Validating previous hash {} for height {}",
+                previous_hash,
+                height
+            );
+
             // Here we would normally:
             // 1. Query the blockchain storage for block at height-1
             // 2. Compare its hash with the provided previous_hash
             // 3. Detect potential forks or reorganizations
-            
+
             // For now, we log the validation but don't fail
             tracing::info!("Previous hash validation passed for height {}", height);
         }

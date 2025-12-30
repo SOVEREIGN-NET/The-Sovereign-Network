@@ -4,20 +4,18 @@
 //! in Byzantine Fault Tolerance consensus rounds. Handles proposal, vote, and commit
 //! message broadcasting between validators.
 
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
+use tracing::{debug, info, warn};
 
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_identity::IdentityId;
 
-use crate::types::{
-    ConsensusProposal, ConsensusVote, VoteType, ConsensusStep
-};
+use crate::types::{ConsensusProposal, ConsensusStep, ConsensusVote, VoteType};
 use crate::validators::ValidatorDiscoveryProtocol;
 
 /// BFT consensus message types
@@ -144,6 +142,11 @@ pub struct Justification {
 }
 
 /// Validator's view of consensus state
+///
+/// **CRITICAL INVARIANT**: Uses BTreeMap instead of HashMap for vote_counts
+/// to ensure canonical serialization order. This message is part of ValidatorMessage,
+/// which is signable and hashable. Non-deterministic HashMap iteration order would
+/// break signature/hash consensus across nodes. (CM-3, CM-4)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsensusStateView {
     /// Current block height
@@ -154,8 +157,8 @@ pub struct ConsensusStateView {
     pub step: ConsensusStep,
     /// Known proposals in this round
     pub known_proposals: Vec<Hash>,
-    /// Vote counts by proposal
-    pub vote_counts: HashMap<Hash, u32>,
+    /// Vote counts by proposal (BTreeMap for canonical iteration order)
+    pub vote_counts: BTreeMap<Hash, u32>,
 }
 
 /// Commitment proof with aggregate signatures
@@ -197,16 +200,16 @@ pub struct NetworkSummary {
 pub struct ValidatorProtocol {
     /// Local validator identity
     validator_identity: Option<IdentityId>,
-    
+
     /// Discovery protocol for finding other validators
     discovery: Arc<ValidatorDiscoveryProtocol>,
-    
+
     /// Message handlers by validator identity
     peer_connections: Arc<RwLock<HashMap<IdentityId, ValidatorPeerConnection>>>,
-    
+
     /// Message cache to prevent duplicates
     message_cache: Arc<RwLock<HashMap<Hash, u64>>>, // message_id -> timestamp
-    
+
     /// Configuration
     config: ValidatorProtocolConfig,
 }
@@ -280,22 +283,24 @@ impl ValidatorProtocol {
             config: config.unwrap_or_default(),
         }
     }
-    
+
     /// Set the local validator identity
     pub async fn set_validator_identity(&mut self, identity: IdentityId) {
         self.validator_identity = Some(identity.clone());
         info!("Validator protocol initialized for validator: {}", identity);
     }
-    
+
     /// Broadcast a proposal to all connected validators
     pub async fn broadcast_proposal(
         &self,
         proposal: ConsensusProposal,
         justification: Option<Justification>,
     ) -> Result<()> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| anyhow!("Validator identity not set"))?;
-        
+
         let message = ProposeMessage {
             message_id: self.generate_message_id(),
             proposer: validator_id.clone(),
@@ -304,24 +309,27 @@ impl ValidatorProtocol {
             timestamp: self.current_timestamp(),
             signature: PostQuantumSignature::default(), // TODO: Sign message
         };
-        
+
         info!(
             "Broadcasting proposal for height {} from validator {}",
             message.proposal.height, validator_id
         );
-        
-        self.broadcast_message(ValidatorMessage::Propose(message)).await
+
+        self.broadcast_message(ValidatorMessage::Propose(message))
+            .await
     }
-    
+
     /// Broadcast a vote to all connected validators
     pub async fn broadcast_vote(
         &self,
         vote: ConsensusVote,
         consensus_state: ConsensusStateView,
     ) -> Result<()> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| anyhow!("Validator identity not set"))?;
-        
+
         let message = VoteMessage {
             message_id: self.generate_message_id(),
             voter: validator_id.clone(),
@@ -330,22 +338,23 @@ impl ValidatorProtocol {
             timestamp: self.current_timestamp(),
             signature: PostQuantumSignature::default(), // TODO: Sign message
         };
-        
+
         debug!(
             "Broadcasting {} vote for proposal {} from validator {}",
             match message.vote.vote_type {
                 VoteType::PreVote => "pre-vote",
-                VoteType::PreCommit => "pre-commit", 
+                VoteType::PreCommit => "pre-commit",
                 VoteType::Commit => "commit",
                 VoteType::Against => "against",
             },
             message.vote.proposal_id,
             validator_id
         );
-        
-        self.broadcast_message(ValidatorMessage::Vote(message)).await
+
+        self.broadcast_message(ValidatorMessage::Vote(message))
+            .await
     }
-    
+
     /// Broadcast a commit message to finalize a block
     pub async fn broadcast_commit(
         &self,
@@ -354,9 +363,11 @@ impl ValidatorProtocol {
         round: u32,
         commitment_proof: CommitmentProof,
     ) -> Result<()> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| anyhow!("Validator identity not set"))?;
-        
+
         let message = CommitMessage {
             message_id: self.generate_message_id(),
             committer: validator_id.clone(),
@@ -367,15 +378,16 @@ impl ValidatorProtocol {
             timestamp: self.current_timestamp(),
             signature: PostQuantumSignature::default(), // TODO: Sign message
         };
-        
+
         info!(
             "Broadcasting commit for proposal {} at height {} from validator {}",
             proposal_id, height, validator_id
         );
-        
-        self.broadcast_message(ValidatorMessage::Commit(message)).await
+
+        self.broadcast_message(ValidatorMessage::Commit(message))
+            .await
     }
-    
+
     /// Request a round change due to timeout or other issues
     pub async fn request_round_change(
         &self,
@@ -384,9 +396,11 @@ impl ValidatorProtocol {
         reason: RoundChangeReason,
         locked_proposal: Option<Hash>,
     ) -> Result<()> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| anyhow!("Validator identity not set"))?;
-        
+
         let message = RoundChangeMessage {
             message_id: self.generate_message_id(),
             validator: validator_id.clone(),
@@ -397,15 +411,16 @@ impl ValidatorProtocol {
             timestamp: self.current_timestamp(),
             signature: PostQuantumSignature::default(), // TODO: Sign message
         };
-        
+
         warn!(
             "Requesting round change to {} for height {} due to {:?}",
             new_round, height, reason
         );
-        
-        self.broadcast_message(ValidatorMessage::RoundChange(message)).await
+
+        self.broadcast_message(ValidatorMessage::RoundChange(message))
+            .await
     }
-    
+
     /// Send periodic heartbeat to maintain liveness
     pub async fn send_heartbeat(
         &self,
@@ -414,9 +429,11 @@ impl ValidatorProtocol {
         step: ConsensusStep,
         network_summary: NetworkSummary,
     ) -> Result<()> {
-        let validator_id = self.validator_identity.as_ref()
+        let validator_id = self
+            .validator_identity
+            .as_ref()
             .ok_or_else(|| anyhow!("Validator identity not set"))?;
-        
+
         let message = HeartbeatMessage {
             message_id: self.generate_message_id(),
             validator: validator_id.clone(),
@@ -427,12 +444,13 @@ impl ValidatorProtocol {
             timestamp: self.current_timestamp(),
             signature: PostQuantumSignature::default(), // TODO: Sign message
         };
-        
+
         debug!("Sending heartbeat from validator {}", validator_id);
-        
-        self.broadcast_message(ValidatorMessage::Heartbeat(message)).await
+
+        self.broadcast_message(ValidatorMessage::Heartbeat(message))
+            .await
     }
-    
+
     /// Process incoming validator message
     pub async fn handle_message(&self, message: ValidatorMessage) -> Result<()> {
         // Check for duplicate messages
@@ -441,10 +459,11 @@ impl ValidatorProtocol {
             debug!("Ignoring duplicate message: {}", message_id);
             return Ok(());
         }
-        
+
         // Cache the message
-        self.cache_message(message_id, self.current_timestamp()).await?;
-        
+        self.cache_message(message_id, self.current_timestamp())
+            .await?;
+
         match message {
             ValidatorMessage::Propose(msg) => self.handle_propose_message(msg).await,
             ValidatorMessage::Vote(msg) => self.handle_vote_message(msg).await,
@@ -453,58 +472,65 @@ impl ValidatorProtocol {
             ValidatorMessage::Heartbeat(msg) => self.handle_heartbeat_message(msg).await,
         }
     }
-    
+
     /// Connect to other validators in the network
     pub async fn connect_to_validators(&self) -> Result<()> {
         info!("Connecting to validator network...");
-        
+
         // Discover active validators
-        let validators = self.discovery.discover_validators(Default::default()).await?;
-        
+        let validators = self
+            .discovery
+            .discover_validators(Default::default())
+            .await?;
+
         let mut connections = self.peer_connections.write().await;
-        
+
         for validator in validators {
             if let Some(ref local_id) = self.validator_identity {
                 if validator.identity_id == *local_id {
                     continue; // Skip self
                 }
             }
-            
+
             let peer_connection = ValidatorPeerConnection {
                 validator_id: validator.identity_id.clone(),
-                endpoints: validator.endpoints.iter().map(|e| e.address.clone()).collect(),
+                endpoints: validator
+                    .endpoints
+                    .iter()
+                    .map(|e| e.address.clone())
+                    .collect(),
                 status: PeerConnectionStatus::Connecting,
                 last_heartbeat: 0,
                 latency_ms: 0,
             };
-            
-            connections.insert(
-                validator.identity_id.clone(),
-                peer_connection
-            );
+
+            connections.insert(validator.identity_id.clone(), peer_connection);
         }
-        
+
         info!("Connected to {} validators", connections.len());
         Ok(())
     }
-    
+
     /// Get current network statistics
     pub async fn get_network_stats(&self) -> ValidatorNetworkStats {
         let connections = self.peer_connections.read().await;
-        
-        let active_peers = connections.values()
+
+        let active_peers = connections
+            .values()
             .filter(|conn| conn.status == PeerConnectionStatus::Active)
             .count();
-        
+
         let avg_latency = if active_peers > 0 {
-            connections.values()
+            connections
+                .values()
                 .filter(|conn| conn.status == PeerConnectionStatus::Active)
                 .map(|conn| conn.latency_ms)
-                .sum::<u64>() / active_peers as u64
+                .sum::<u64>()
+                / active_peers as u64
         } else {
             0
         };
-        
+
         ValidatorNetworkStats {
             total_peers: connections.len(),
             active_peers,
@@ -512,82 +538,96 @@ impl ValidatorProtocol {
             message_cache_size: self.message_cache.read().await.len(),
         }
     }
-    
+
     // Private helper methods
-    
+
     /// Broadcast message to all connected validators
     async fn broadcast_message(&self, _message: ValidatorMessage) -> Result<()> {
         let connections = self.peer_connections.read().await;
-        let active_peers: Vec<_> = connections.values()
+        let active_peers: Vec<_> = connections
+            .values()
             .filter(|conn| conn.status == PeerConnectionStatus::Active)
             .take(self.config.max_broadcast_peers)
             .collect();
-        
-        info!("Broadcasting message to {} active peers", active_peers.len());
-        
+
+        info!(
+            "Broadcasting message to {} active peers",
+            active_peers.len()
+        );
+
         // TODO: Implement actual network broadcasting
         // This would use lib-network to send messages to peer endpoints
         // For now, just log the broadcast intent
-        
+
         Ok(())
     }
-    
+
     /// Handle incoming proposal message
     async fn handle_propose_message(&self, message: ProposeMessage) -> Result<()> {
-        info!("Received proposal from {} for height {}", 
-              message.proposer, message.proposal.height);
-        
+        info!(
+            "Received proposal from {} for height {}",
+            message.proposer, message.proposal.height
+        );
+
         // TODO: Validate proposal and forward to consensus engine
         // This would integrate with BftEngine to process the proposal
-        
+
         Ok(())
     }
-    
+
     /// Handle incoming vote message
     async fn handle_vote_message(&self, message: VoteMessage) -> Result<()> {
-        debug!("Received vote from {} for proposal {}", 
-               message.voter, message.vote.proposal_id);
-        
+        debug!(
+            "Received vote from {} for proposal {}",
+            message.voter, message.vote.proposal_id
+        );
+
         // TODO: Validate vote and forward to consensus engine
-        
+
         Ok(())
     }
-    
+
     /// Handle incoming commit message
     async fn handle_commit_message(&self, message: CommitMessage) -> Result<()> {
-        info!("Received commit from {} for proposal {} at height {}", 
-              message.committer, message.proposal_id, message.height);
-        
+        info!(
+            "Received commit from {} for proposal {} at height {}",
+            message.committer, message.proposal_id, message.height
+        );
+
         // TODO: Validate commitment and forward to consensus engine
-        
+
         Ok(())
     }
-    
+
     /// Handle round change request
     async fn handle_round_change_message(&self, message: RoundChangeMessage) -> Result<()> {
-        warn!("Received round change request from {} for round {} due to {:?}", 
-              message.validator, message.new_round, message.reason);
-        
+        warn!(
+            "Received round change request from {} for round {} due to {:?}",
+            message.validator, message.new_round, message.reason
+        );
+
         // TODO: Process round change and coordinate with consensus engine
-        
+
         Ok(())
     }
-    
+
     /// Handle heartbeat message
     async fn handle_heartbeat_message(&self, message: HeartbeatMessage) -> Result<()> {
-        debug!("Received heartbeat from {} at height {}", 
-               message.validator, message.height);
-        
+        debug!(
+            "Received heartbeat from {} at height {}",
+            message.validator, message.height
+        );
+
         // Update peer connection status
         let mut connections = self.peer_connections.write().await;
         if let Some(connection) = connections.get_mut(&message.validator) {
             connection.last_heartbeat = message.timestamp;
             connection.status = PeerConnectionStatus::Active;
         }
-        
+
         Ok(())
     }
-    
+
     /// Generate unique message ID
     fn generate_message_id(&self) -> Hash {
         let timestamp = self.current_timestamp();
@@ -596,7 +636,7 @@ impl ValidatorProtocol {
         data.extend_from_slice(&nonce);
         Hash::from_bytes(&lib_crypto::hash_blake3(&data))
     }
-    
+
     /// Get message ID from validator message
     fn get_message_id(&self, message: &ValidatorMessage) -> Hash {
         match message {
@@ -607,27 +647,27 @@ impl ValidatorProtocol {
             ValidatorMessage::Heartbeat(msg) => msg.message_id.clone(),
         }
     }
-    
+
     /// Check if message is duplicate
     async fn is_duplicate_message(&self, message_id: &Hash) -> Result<bool> {
         let cache = self.message_cache.read().await;
         Ok(cache.contains_key(message_id))
     }
-    
+
     /// Cache message to prevent duplicates
     async fn cache_message(&self, message_id: Hash, timestamp: u64) -> Result<()> {
         let mut cache = self.message_cache.write().await;
-        
+
         // Clean old entries if cache is too large
         if cache.len() >= self.config.max_cache_size {
             let cutoff = timestamp - self.config.message_ttl;
             cache.retain(|_, ts| *ts > cutoff);
         }
-        
+
         cache.insert(message_id, timestamp);
         Ok(())
     }
-    
+
     /// Get current timestamp
     fn current_timestamp(&self) -> u64 {
         SystemTime::now()
@@ -653,24 +693,24 @@ pub struct ValidatorNetworkStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_validator_protocol_creation() {
         let discovery = Arc::new(ValidatorDiscoveryProtocol::new(3600));
         let protocol = ValidatorProtocol::new(discovery, None);
-        
+
         assert!(protocol.validator_identity.is_none());
         assert_eq!(protocol.config.heartbeat_interval, 30);
     }
-    
+
     #[tokio::test]
     async fn test_message_id_generation() {
         let discovery = Arc::new(ValidatorDiscoveryProtocol::new(3600));
         let protocol = ValidatorProtocol::new(discovery, None);
-        
+
         let id1 = protocol.generate_message_id();
         let id2 = protocol.generate_message_id();
-        
+
         // IDs should be different (due to timestamp)
         assert_ne!(id1, id2);
     }
