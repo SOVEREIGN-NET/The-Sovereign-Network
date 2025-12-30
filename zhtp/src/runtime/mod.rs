@@ -38,10 +38,17 @@ pub mod dht_indexing;
 pub mod routing_rewards;
 pub mod storage_rewards;
 pub mod reward_orchestrator;
+pub mod node_runtime;
+pub mod node_runtime_orchestrator;
 #[cfg(test)]
 pub mod test_api_integration;
 
 pub use components::*;
+pub use node_runtime::{
+    NodeRuntime, DefaultNodeRuntime, NodeRole, NodeAction, PeerInfo, PeerState,
+    PeerStateChange, DiscoveryProtocol, SyncType, Tick,
+};
+pub use node_runtime_orchestrator::NodeRuntimeOrchestrator;
 pub use shared_blockchain::*;
 pub use shared_dht::*;
 pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_blockchain, is_global_blockchain_available};

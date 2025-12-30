@@ -264,6 +264,8 @@ impl Component for ProtocolsComponent {
             economic_model.clone(),
             self.api_port,
             Some(peer_discovery_tx),
+            None,  // discovery_port - use default
+            None,  // quic_port - use default
         ).await?;
         
         // Initialize blockchain provider
