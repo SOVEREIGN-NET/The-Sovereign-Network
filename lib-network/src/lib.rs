@@ -52,6 +52,11 @@ pub use crate::encryption::{
     EncryptionStats, create_encryption,
 };
 
+// Consensus message encryption (Gap 1.3)
+pub use crate::consensus_encryption::{
+    ConsensusAead, RoleDirection,
+};
+
 // Consensus message broadcaster for validator communication
 pub use crate::message_broadcaster::{
     MessageBroadcaster, MeshMessageBroadcaster, MockMessageBroadcaster,
@@ -78,6 +83,7 @@ pub mod peer_registry; // Unified peer registry (single source of truth)
 pub mod client; // Authenticated QUIC client for control-plane operations
 pub mod handshake; // Unified Handshake Protocol (UHP)
 pub mod encryption; // Unified protocol encryption
+pub mod consensus_encryption; // Consensus message encryption (Gap 1.3)
 pub mod message_broadcaster; // Consensus message broadcaster trait
 pub mod constants; // Protocol constants
 pub mod monitoring;
