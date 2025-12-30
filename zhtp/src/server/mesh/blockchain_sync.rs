@@ -302,7 +302,7 @@ impl MeshRouter {
 
         let connections = self.connections.read().await;
         let mut success_count = 0;
-        let mut identity_violations = Vec::new();
+        let mut identity_violations_count = 0;
 
         // Route each message through MeshRouter instead of direct protocol calls
         for peer_entry in connections.all_peers() {
@@ -329,7 +329,7 @@ impl MeshRouter {
                                 "⚠️ IDENTITY VIOLATION: Peer {:?} failed verification - permanently skipping: {}",
                                 &peer_pubkey.key_id[..8], err.message
                             );
-                            identity_violations.push(peer_pubkey.clone());
+                            identity_violations_count += 1;
                         }
                         crate::server::mesh::routing_errors::RoutingErrorClass::Transient => {
                             // Transient error - continue with other peers
@@ -352,12 +352,12 @@ impl MeshRouter {
 
         self.track_bytes_sent((serialized.len() * success_count) as u64).await;
 
-        if !identity_violations.is_empty() {
+        if identity_violations_count > 0 {
             warn!(
                 "📤 Broadcast complete: {}/{} peers reached ({} failed identity verification)",
                 success_count,
                 connections.all_peers().count(),
-                identity_violations.len()
+                identity_violations_count
             );
         } else {
             info!(
