@@ -114,10 +114,17 @@ pub struct ZhtpUnifiedServer {
     // Web4 domain registry (shared, canonical instance)
     domain_registry: Arc<DomainRegistry>,
 
+    // NodeRuntime - Policy authority (NR-1: Policy Ownership)
+    // All "should we?" decisions delegated to runtime
+    runtime: Arc<dyn crate::runtime::NodeRuntime>,
+    runtime_orchestrator: Arc<crate::runtime::NodeRuntimeOrchestrator>,
+
     // Server state
     is_running: Arc<RwLock<bool>>,
     server_id: Uuid,
     port: u16,
+    discovery_port: u16,  // Port for discovery announcements
+    quic_port: u16,       // Port for QUIC connections
 }
 
 impl ZhtpUnifiedServer {
@@ -278,7 +285,7 @@ impl ZhtpUnifiedServer {
         economic_model: Arc<RwLock<EconomicModel>>,
         port: u16, // Port from configuration
     ) -> Result<Self> {
-        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None).await
+        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None, None, None).await
     }
     
     /// Create new unified server with peer discovery notification channel
@@ -289,11 +296,34 @@ impl ZhtpUnifiedServer {
         economic_model: Arc<RwLock<EconomicModel>>,
         port: u16,
         peer_discovery_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+        discovery_port: Option<u16>,
+        quic_port: Option<u16>,
     ) -> Result<Self> {
         let server_id = Uuid::new_v4();
-        
+
+        // Use configured ports or defaults
+        let discovery_port = discovery_port.unwrap_or(9333);
+        let quic_port = quic_port.unwrap_or(9334);
+
+        // Validate that discovery and QUIC ports are different
+        if discovery_port == quic_port {
+            return Err(anyhow::anyhow!(
+                "Discovery port ({}) and QUIC port ({}) must be different",
+                discovery_port, quic_port
+            ));
+        }
+
+        // Validate port numbers are in valid range
+        if quic_port > 65535 {
+            return Err(anyhow::anyhow!(
+                "QUIC port ({}) exceeds maximum valid port (65535)",
+                quic_port
+            ));
+        }
+
         info!("Creating ZHTP Unified Server (ID: {})", server_id);
         info!("Port: {} (HTTP + UDP + WiFi + Bootstrap)", port);
+        info!("Discovery port: {}, QUIC port: {}", discovery_port, quic_port);
         
         // Initialize session manager first
         let session_manager = Arc::new(SessionManager::new());
@@ -348,11 +378,11 @@ impl ZhtpUnifiedServer {
         // NOTE: Bluetooth initialization happens in start() to avoid double initialization
         // The bluetooth_router is created here but initialized later when server starts
 
-        // Initialize QUIC mesh protocol (uses port 9334 to avoid UDP conflicts)
+        // Initialize QUIC mesh protocol (uses configurable QUIC port to avoid conflicts)
         // QUIC is now REQUIRED (not optional) for all networking
-        let quic_mesh = Self::init_quic_mesh(port, server_id).await
+        let quic_mesh = Self::init_quic_mesh(quic_port, server_id).await
             .context("Failed to initialize QUIC mesh protocol - QUIC is required")?;
-        info!(" QUIC mesh protocol initialized on UDP port 9334");
+        info!(" QUIC mesh protocol initialized on UDP port {}", quic_port);
         let quic_arc = Arc::new(quic_mesh);
         
         // Set QUIC protocol on mesh_router for sending messages
@@ -408,6 +438,29 @@ impl ZhtpUnifiedServer {
         mesh_router_arc.set_zhtp_router(zhtp_router_arc.clone()).await;
         info!(" ZHTP router registered with mesh router for UDP endpoint handling");
 
+        // Initialize NodeRuntime - Policy Authority (NR-1: Policy Ownership)
+        // Delegates all "should we?" decisions to runtime, server only executes "can we?" operations
+        let runtime: Arc<dyn crate::runtime::NodeRuntime> = Arc::new(
+            crate::runtime::DefaultNodeRuntime::full_validator()
+        );
+        info!("✓ NodeRuntime initialized - Policy authority ready");
+
+        // Initialize NodeRuntimeOrchestrator - Periodic policy driver
+        let runtime_orchestrator = Arc::new(
+            crate::runtime::NodeRuntimeOrchestrator::new(runtime.clone())
+        );
+        info!("✓ NodeRuntimeOrchestrator initialized - Periodic decisions ready");
+
+        // SECURITY FIX: Start orchestrator BEFORE registering with discovery (prevents race condition)
+        // This ensures action queue processing is active before peers are discovered
+        let _orchestrator_handle = runtime_orchestrator.start().await;
+        info!("✓ NodeRuntimeOrchestrator started - ready to process actions");
+
+        // THEN register runtime and action queue with discovery coordinator
+        let action_queue = runtime_orchestrator.action_queue().clone();
+        discovery_coordinator.set_runtime(runtime.clone(), action_queue).await;
+        info!("✓ Discovery coordinator integrated with NodeRuntime");
+
         Ok(Self {
             quic_mesh: quic_arc,
             quic_handler,
@@ -422,18 +475,18 @@ impl ZhtpUnifiedServer {
             session_manager,
             discovery_coordinator,
             domain_registry,
+            runtime,
+            runtime_orchestrator,
             is_running: Arc::new(RwLock::new(false)),
             server_id,
             port,
+            discovery_port,
+            quic_port,
         })
     }
     
-    /// Initialize QUIC mesh protocol (uses port 9334 to avoid UDP conflicts)
-    async fn init_quic_mesh(port: u16, server_id: Uuid) -> Result<QuicMeshProtocol> {
-        // QUIC uses UDP port 9334 to avoid conflicts with:
-        // - Port 9333 UDP: Mesh protocol + Multicast discovery
-        // - Port 9333 TCP: HTTP API
-        let quic_port = port + 1; // 9334
+    /// Initialize QUIC mesh protocol with configurable port
+    async fn init_quic_mesh(quic_port: u16, server_id: Uuid) -> Result<QuicMeshProtocol> {
         let bind_addr: std::net::SocketAddr = format!("0.0.0.0:{}", quic_port).parse()
             .context("Failed to parse QUIC bind address")?;
         
@@ -687,7 +740,67 @@ impl ZhtpUnifiedServer {
         } else {
             info!(" ZHTP relay protocol already initialized (authentication active)");
         }
-        
+
+        // ============================================================================
+        // NODERUNTIMEORCHESTRATOR ALREADY STARTED IN new()
+        // ============================================================================
+        info!("✓ NodeRuntimeOrchestrator is running - Periodic decisions active");
+        info!("  Node Role: {}", match self.runtime.get_role() {
+            crate::runtime::NodeRole::FullValidator => "FullValidator",
+            crate::runtime::NodeRole::LightNode => "LightNode",
+            crate::runtime::NodeRole::MobileNode => "MobileNode",
+            crate::runtime::NodeRole::BootstrapNode => "BootstrapNode",
+            crate::runtime::NodeRole::Observer => "Observer",
+            crate::runtime::NodeRole::ArchivalNode => "ArchivalNode",
+        });
+
+        // Start action execution loop - executes NodeActions from orchestrator queue
+        let action_queue = self.runtime_orchestrator.action_queue().clone();
+        let quic_mesh_for_actions = self.quic_mesh.clone();
+        let discovery_port = self.discovery_port;
+        let quic_port = self.quic_port;
+        tokio::spawn(async move {
+            info!("📋 Action executor started - consuming NodeActions from queue");
+            while let Some(action) = action_queue.dequeue().await {
+                match action {
+                    crate::runtime::NodeAction::Connect { peer, protocol, address } => {
+                        info!("→ Executing Connect action: peer={:?}, protocol={:?}",
+                              hex::encode(&peer.key_id[..8]), protocol);
+                        if let Some(addr_str) = address {
+                            if let Ok(addr) = addr_str.parse::<std::net::SocketAddr>() {
+                                if let Err(e) = quic_mesh_for_actions.connect_to_peer(addr).await {
+                                    warn!("  Failed to connect to peer: {}", e);
+                                }
+                            }
+                        }
+                    }
+                    crate::runtime::NodeAction::BootstrapFrom(peers) => {
+                        info!("→ Executing BootstrapFrom action: {} peers", peers.len());
+                        for peer_str in peers {
+                            let addr_str = peer_str.trim_start_matches("zhtp://").trim_start_matches("http://");
+                            if let Ok(mut peer_addr) = addr_str.parse::<std::net::SocketAddr>() {
+                                // Use configured ports for mapping (not hardcoded)
+                                if peer_addr.port() == discovery_port {
+                                    peer_addr.set_port(quic_port);
+                                    info!("Port mapping: {} → {} (discovery → QUIC)", discovery_port, quic_port);
+                                }
+                                if let Err(e) = quic_mesh_for_actions.connect_to_peer(peer_addr).await {
+                                    warn!("  Failed to bootstrap from {}: {}", peer_addr, e);
+                                }
+                            }
+                        }
+                    }
+                    crate::runtime::NodeAction::DiscoverVia(protocol) => {
+                        debug!("→ Executing DiscoverVia action: {:?}", protocol);
+                    }
+                    _ => {
+                        debug!("→ Action queued (executor will handle in future): {:?}", action);
+                    }
+                }
+            }
+            warn!("⚠️ Action executor stopped - queue closed");
+        });
+
         // ============================================================================
         // PEER DISCOVERY STATUS SUMMARY
         // ============================================================================
@@ -809,150 +922,41 @@ impl ZhtpUnifiedServer {
         });
         let bluetooth_le_status = "INITIALIZING";
         
-        // IMPORTANT: Clone mesh_router AFTER bluetooth_protocol is set above
-        // This ensures the spawned task has access to the protocol
-        let mesh_router_for_ble = self.mesh_router.clone();
-        let sync_coordinator_for_ble = self.mesh_router.sync_coordinator.clone();
-        let is_edge_node_for_ble = self.mesh_router.is_edge_node.clone(); // Track edge vs full node mode
-        let coordinator_for_ble = self.discovery_coordinator.clone();  // Phase 3: Coordinator integration
+        // BLE peer discovery is now coordinated through discovery coordinator
+        let coordinator_for_ble = self.discovery_coordinator.clone();
         
+        // BLE Peer Discovery Handler - Simplified (Policy moved to NodeRuntime)
+        // This just notifies discovery coordinator; runtime makes all "should we?" decisions
         tokio::spawn(async move {
-            info!(" BLE peer discovery listener active - will trigger sync via BLE (coordinated with other protocols)");
+            info!(" BLE peer discovery listener active");
             while let Some(peer_pubkey) = ble_peer_rx.recv().await {
-                info!(" BLE peer discovered: {} - checking if sync needed", hex::encode(&peer_pubkey.key_id[..8]));
-                
-                // Phase 3: Register peer with discovery coordinator
-                {
-                    use crate::discovery_coordinator::{DiscoveredPeer, DiscoveryProtocol};
-                    use std::time::SystemTime;
-                    
-                    let now = SystemTime::now();
-                    let discovered_peer = DiscoveredPeer {
-                        public_key: Some(peer_pubkey.clone()),  // BLE provides PublicKey in GATT handshake
-                        addresses: vec!["ble://local".to_string()],  // BLE uses local connection
-                        discovered_via: DiscoveryProtocol::BluetoothLE,
-                        first_seen: now,
-                        last_seen: now,
-                        node_id: None,
-                        capabilities: Some("BLE GATT".to_string()),
-                    };
-                    
-                    let _ = coordinator_for_ble.register_peer(discovered_peer).await;
-                    debug!("   ✓ Registered BLE peer with discovery coordinator");
-                }
-                
-                // Check if edge node or full node
-                let is_edge_node = *is_edge_node_for_ble.read().await;
-                let sync_type = if is_edge_node {
-                    lib_network::blockchain_sync::SyncType::EdgeNode
-                } else {
-                    lib_network::blockchain_sync::SyncType::FullBlockchain
+                // SECURITY (MEDIUM #5): BLE peer discovery without cryptographic proof
+                // WARNING: Public key received from BLE is NOT cryptographically verified
+                // The peer claims to own this key but we have no proof of possession
+                // Resolution: Only trust this peer's identity AFTER QUIC handshake completes
+                // (QUIC uses UHP+Kyber which provides cryptographic proof)
+                // TODO: Implement peer verification status tracking
+                // - Mark BLE peers as "awaiting cryptographic verification"
+                // - Only sync AFTER QUIC connection and handshake succeeds
+                // - Update should_sync_with() to check verification status
+                // For now, BLE peers are registered but policy decisions deferred to runtime
+
+                // Notify discovery coordinator about BLE peer
+                // Runtime will call on_peer_discovered() to decide what to do
+                use crate::discovery_coordinator::{DiscoveredPeer, DiscoveryProtocol};
+                use std::time::SystemTime;
+
+                let discovered_peer = DiscoveredPeer {
+                    public_key: Some(peer_pubkey.clone()),
+                    addresses: vec!["ble://local".to_string()],
+                    discovered_via: DiscoveryProtocol::BluetoothLE,
+                    first_seen: SystemTime::now(),
+                    last_seen: SystemTime::now(),
+                    node_id: None,
+                    capabilities: Some("BLE GATT".to_string()),
                 };
-                
-                // SMART PROTOCOL SELECTION: Check if peer has TCP/QUIC address before using BLE
-                // BLE should be fallback for mobile devices, not primary sync method
-                let prefer_tcp_quic = {
-                    let peers = coordinator_for_ble.get_all_peers().await;
-                    peers.iter().any(|p| {
-                        // Check if this is the same peer with TCP/UDP address
-                        if let Some(ref pk) = p.public_key {
-                            if pk.key_id == peer_pubkey.key_id {
-                                // Found same peer - check if it has TCP/UDP/QUIC address
-                                p.addresses.iter().any(|addr| {
-                                    addr.starts_with("http://") || 
-                                    addr.starts_with("https://") ||
-                                    addr.starts_with("tcp://") ||
-                                    addr.starts_with("udp://") ||
-                                    addr.starts_with("quic://") ||
-                                    // Bootstrap addresses are plain IP:port (TCP)
-                                    addr.parse::<std::net::SocketAddr>().is_ok()
-                                })
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    })
-                };
-                
-                if prefer_tcp_quic {
-                    info!(" Peer {} has TCP/QUIC address - preferring faster protocol over BLE", 
-                          hex::encode(&peer_pubkey.key_id[..8]));
-                    info!("   BLE connection will be used as backup if TCP/QUIC sync fails");
-                    
-                    // Still register BLE as available protocol (for fallback)
-                    sync_coordinator_for_ble.register_peer_protocol(
-                        peer_pubkey.clone(),
-                        lib_network::protocols::NetworkProtocol::BluetoothLE,
-                        sync_type
-                    ).await;
-                    
-                    // But don't initiate sync via BLE - let TCP/QUIC handle it
-                    continue;
-                }
-                
-                // Check with sync coordinator if we should sync with this peer via BLE
-                let should_sync = sync_coordinator_for_ble.register_peer_protocol(
-                    peer_pubkey.clone(),
-                    lib_network::protocols::NetworkProtocol::BluetoothLE,
-                    sync_type
-                ).await;
-                
-                if !should_sync {
-                    info!(" Skipping BLE sync with peer {} (already syncing via another protocol)", 
-                          hex::encode(&peer_pubkey.key_id[..8]));
-                    continue;
-                }
-                
-                info!(" Sync coordinator approved {:?} sync via BLE with peer {}", 
-                      sync_type, hex::encode(&peer_pubkey.key_id[..8]));
-                info!("   Using BLE as primary protocol (no TCP/QUIC address available)");
-                
-                // Get our public key for the request
-                match mesh_router_for_ble.get_sender_public_key().await {
-                    Ok(our_pubkey) => {
-                        let request_id = uuid::Uuid::new_v4().as_u128() as u64;
-                        
-                        // Record sync start with coordinator
-                        sync_coordinator_for_ble.start_sync(
-                            peer_pubkey.clone(),
-                            request_id,
-                            sync_type,
-                            lib_network::protocols::NetworkProtocol::BluetoothLE
-                        ).await;
-                        
-                        // Create appropriate request based on node type
-                        let request_message = if is_edge_node {
-                            // Edge nodes request headers only
-                            ZhtpMeshMessage::HeadersRequest {
-                                requester: our_pubkey,
-                                request_id,
-                                start_height: 0,
-                                count: 500, // Default edge node capacity
-                            }
-                        } else {
-                            // Full nodes request complete blockchain
-                            ZhtpMeshMessage::BlockchainRequest {
-                                requester: our_pubkey,
-                                request_id,
-                                request_type: lib_network::types::mesh_message::BlockchainRequestType::FullChain,
-                            }
-                        };
-                        
-                        // Send request to BLE peer
-                        if let Err(e) = mesh_router_for_ble.send_to_peer(&peer_pubkey, request_message).await {
-                            warn!("Failed to request blockchain from BLE peer: {}", e);
-                            // Mark sync as failed
-                            sync_coordinator_for_ble.fail_sync(&peer_pubkey, request_id, sync_type).await;
-                        } else {
-                            info!("📤 Sent {:?} request via BLE to peer (ID: {})", sync_type, request_id);
-                        }
-                    }
-                    Err(e) => {
-                        warn!(" Could not get sender public key for BLE sync: {}", e);
-                    }
-                }
+
+                let _ = coordinator_for_ble.register_peer(discovered_peer).await;
             }
             info!("BLE peer discovery listener stopped");
         });
@@ -1194,16 +1198,16 @@ impl ZhtpUnifiedServer {
         info!(" Connecting to {} bootstrap peer(s) for blockchain sync via QUIC...", bootstrap_peers.len());
         
         for peer_str in &bootstrap_peers {
-            // Parse the peer address - it might be "192.168.1.245:9333" (discovery port) or "zhtp://192.168.1.245:9334" (QUIC port)
+            // Parse the peer address - it might be at discovery port or QUIC port
             let addr_str = peer_str.trim_start_matches("zhtp://").trim_start_matches("http://");
-            
+
             match addr_str.parse::<SocketAddr>() {
                 Ok(mut peer_addr) => {
-                    // Discovery announces port 9333, but QUIC mesh runs on port 9334
-                    // If we see port 9333, adjust to 9334 for QUIC connection
-                    if peer_addr.port() == 9333 {
-                        peer_addr.set_port(9334);
-                        info!("   Connecting to bootstrap peer: {} (adjusted discovery port 9333 → QUIC port 9334)", peer_addr);
+                    // If the peer address uses the discovery port, adjust to QUIC port
+                    if peer_addr.port() == self.discovery_port {
+                        peer_addr.set_port(self.quic_port);
+                        info!("   Connecting to bootstrap peer: {} (adjusted discovery port {} → QUIC port {})",
+                              peer_addr, self.discovery_port, self.quic_port);
                     } else {
                         info!("   Connecting to bootstrap peer: {}", peer_addr);
                     }
