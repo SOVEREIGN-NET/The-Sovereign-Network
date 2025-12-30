@@ -120,7 +120,7 @@ DISABLE_BLUETOOTH=1 ./target/release/zhtp node start --network testnet
 
 3. **Post-Quantum Cryptography:**
    - Support for Dilithium2 and Kyber512
-   - Defense-in-depth encryption (TLS 1.3 + ChaCha20+Kyber)
+   - Defense-in-depth encryption (TLS 1.3 + ChaCha20Poly1305+Kyber512)
    - See docs/encryption/ for detailed architecture
 
 ### Code Organization
