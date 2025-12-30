@@ -1,10 +1,10 @@
 //! Byzantine fault detection system
 
-use std::collections::HashMap;
+use crate::types::SlashType;
+use crate::validators::ValidatorManager;
 use anyhow::Result;
 use lib_identity::IdentityId;
-use crate::validators::ValidatorManager;
-use crate::types::SlashType;
+use std::collections::HashMap;
 
 /// Byzantine fault detector
 #[derive(Debug, Clone)]
@@ -60,7 +60,10 @@ impl ByzantineFaultDetector {
     }
 
     /// Detect Byzantine faults among validators
-    pub fn detect_faults(&mut self, validator_manager: &ValidatorManager) -> Result<Vec<ByzantineFault>> {
+    pub fn detect_faults(
+        &mut self,
+        validator_manager: &ValidatorManager,
+    ) -> Result<Vec<ByzantineFault>> {
         let mut detected_faults = Vec::new();
 
         // Check for double signing
@@ -78,16 +81,18 @@ impl ByzantineFaultDetector {
 
         // Check for liveness violations
         for (validator_id, violations) in &self.liveness_violations {
-            let recent_violations = violations.iter()
-                .filter(|v| v.missed_rounds >= 3)
-                .count();
-            
+            let recent_violations = violations.iter().filter(|v| v.missed_rounds >= 3).count();
+
             if recent_violations > 0 {
                 detected_faults.push(ByzantineFault {
                     validator: validator_id.clone(),
                     fault_type: ByzantineFaultType::Liveness,
                     evidence: format!("Missed {} rounds in recent violations", recent_violations),
-                    severity: if recent_violations >= 10 { FaultSeverity::Critical } else { FaultSeverity::Minor },
+                    severity: if recent_violations >= 10 {
+                        FaultSeverity::Critical
+                    } else {
+                        FaultSeverity::Minor
+                    },
                     detected_at: violations.last().unwrap().detected_at,
                 });
             }
@@ -130,7 +135,10 @@ impl ByzantineFaultDetector {
                 .as_secs(),
         };
 
-        self.double_signs.entry(validator).or_insert_with(Vec::new).push(event);
+        self.double_signs
+            .entry(validator)
+            .or_insert_with(Vec::new)
+            .push(event);
     }
 
     /// Record a liveness violation
@@ -152,7 +160,10 @@ impl ByzantineFaultDetector {
                 .as_secs(),
         };
 
-        self.liveness_violations.entry(validator).or_insert_with(Vec::new).push(violation);
+        self.liveness_violations
+            .entry(validator)
+            .or_insert_with(Vec::new)
+            .push(violation);
     }
 
     /// Record an invalid proposal
@@ -174,7 +185,10 @@ impl ByzantineFaultDetector {
                 .as_secs(),
         };
 
-        self.invalid_proposals.entry(validator).or_insert_with(Vec::new).push(event);
+        self.invalid_proposals
+            .entry(validator)
+            .or_insert_with(Vec::new)
+            .push(event);
     }
 
     /// Process detected faults and apply penalties
@@ -190,7 +204,7 @@ impl ByzantineFaultDetector {
                         FaultSeverity::Critical => 10, // 10% slash for double signing
                         _ => 5,
                     };
-                    
+
                     if let Err(e) = validator_manager.slash_validator(
                         &fault.validator,
                         SlashType::DoubleSign,
@@ -198,13 +212,13 @@ impl ByzantineFaultDetector {
                     ) {
                         tracing::warn!("Failed to slash validator for double signing: {}", e);
                     }
-                },
+                }
                 ByzantineFaultType::Liveness => {
                     let slash_percentage = match fault.severity {
                         FaultSeverity::Critical => 3, // 3% slash for severe liveness violations
-                        _ => 1, // 1% slash for minor violations
+                        _ => 1,                       // 1% slash for minor violations
                     };
-                    
+
                     if let Err(e) = validator_manager.slash_validator(
                         &fault.validator,
                         SlashType::Liveness,
@@ -212,7 +226,7 @@ impl ByzantineFaultDetector {
                     ) {
                         tracing::warn!("Failed to slash validator for liveness violation: {}", e);
                     }
-                },
+                }
                 ByzantineFaultType::InvalidProposal => {
                     if let Err(e) = validator_manager.slash_validator(
                         &fault.validator,
@@ -221,12 +235,14 @@ impl ByzantineFaultDetector {
                     ) {
                         tracing::warn!("Failed to slash validator for invalid proposal: {}", e);
                     }
-                },
+                }
             }
 
             tracing::warn!(
                 " Byzantine fault detected: {:?} by validator {:?} - {}",
-                fault.fault_type, fault.validator, fault.evidence
+                fault.fault_type,
+                fault.validator,
+                fault.evidence
             );
         }
 
