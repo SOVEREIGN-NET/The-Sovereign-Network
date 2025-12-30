@@ -149,7 +149,7 @@
 //! - AAD binding: modifying AAD components fails decryption
 
 use anyhow::{Result, Context as AnyhowContext};
-use lib_crypto::symmetric::chacha20::{encrypt_data_with_ad, decrypt_data_with_ad};
+use lib_crypto::symmetric::chacha20::{encrypt_data_with_ad_nonce, decrypt_data_with_ad_nonce};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{debug, warn};
@@ -332,22 +332,22 @@ impl ConsensusAead {
     pub fn encrypt(&self, plaintext_frame: &[u8]) -> Result<Vec<u8>> {
         debug!("Encrypting consensus frame: {} bytes", plaintext_frame.len());
 
-        // Generate counter-based nonce
+        // Generate counter-based nonce (guarantees uniqueness within session)
         let counter = self.send_counter.fetch_add(1, Ordering::Relaxed);
         let nonce = self.build_send_nonce(counter);
 
         // Build AAD for this message (includes direction and sender/receiver)
         let aad = self.build_send_aad();
 
-        // Encrypt with AAD binding
-        let encrypted_core = encrypt_data_with_ad(plaintext_frame, &self.key_send, &aad)
-            .context("ChaCha20Poly1305 encryption failed")?;
+        // Encrypt with explicit counter-based nonce and AAD binding
+        let encrypted_with_nonce = encrypt_data_with_ad_nonce(plaintext_frame, &self.key_send, &nonce, &aad)
+            .context("ChaCha20Poly1305 encryption with counter-based nonce failed")?;
 
-        // Build wire format: [enc_version] [nonce] [ciphertext || tag]
-        let mut envelope = Vec::with_capacity(1 + 12 + encrypted_core.len());
+        // Build wire format: [enc_version] [nonce (from encrypted_with_nonce)] [ciphertext || tag]
+        // encrypted_with_nonce already has: [nonce (12 bytes)] [ciphertext || tag]
+        let mut envelope = Vec::with_capacity(1 + encrypted_with_nonce.len());
         envelope.push(CONSENSUS_ENCRYPTION_VERSION);
-        envelope.extend_from_slice(&nonce);
-        envelope.extend_from_slice(&encrypted_core);
+        envelope.extend_from_slice(&encrypted_with_nonce);
 
         debug!(
             "Encrypted consensus frame: {} bytes → {} bytes envelope",
@@ -391,17 +391,18 @@ impl ConsensusAead {
             ));
         }
 
-        // Extract nonce from envelope
-        let nonce = &encrypted_envelope[1..13];
+        // Extract nonce from envelope (bytes 1-13)
+        let mut nonce_array = [0u8; 12];
+        nonce_array.copy_from_slice(&encrypted_envelope[1..13]);
 
-        // Extract ciphertext + tag
+        // Extract ciphertext + tag (everything after nonce)
         let ciphertext = &encrypted_envelope[13..];
 
         // Build AAD for this message (must match encryption AAD)
         let aad = self.build_recv_aad();
 
-        // Decrypt with AAD validation
-        let plaintext = decrypt_data_with_ad(ciphertext, &self.key_recv, &aad)
+        // Decrypt with explicit nonce and AAD validation
+        let plaintext = decrypt_data_with_ad_nonce(ciphertext, &self.key_recv, &nonce_array, &aad)
             .context("ChaCha20Poly1305 decryption failed (AAD mismatch, tampering, or wrong key)")?;
 
         debug!(
