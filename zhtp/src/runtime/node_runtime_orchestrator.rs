@@ -9,37 +9,70 @@
 //! This is the bridge between policy (runtime) and execution (server).
 
 use std::sync::Arc;
+use std::collections::HashSet;
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::{interval, Duration};
-use tracing::{info, warn, debug};
+use tracing::{info, warn, debug, error};
 
 use super::node_runtime::{NodeRuntime, NodeAction, Tick, PeerStateChange, PeerState};
 
 /// Queue of pending actions for the server to execute
+/// SECURITY: Bounded queue with deduplication to prevent DoS
 pub struct ActionQueue {
-    tx: mpsc::UnboundedSender<NodeAction>,
-    rx: RwLock<mpsc::UnboundedReceiver<NodeAction>>,
+    tx: mpsc::Sender<NodeAction>,
+    rx: RwLock<mpsc::Receiver<NodeAction>>,
+    dedup_set: Arc<RwLock<HashSet<String>>>,
+    max_queue_size: usize,
 }
 
 impl ActionQueue {
     pub fn new() -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(1000); // SECURITY: Max 1000 pending actions
         Self {
             tx,
             rx: RwLock::new(rx),
+            dedup_set: Arc::new(RwLock::new(HashSet::new())),
+            max_queue_size: 1000,
         }
     }
 
-    /// Enqueue an action for server execution
-    pub fn enqueue(&self, action: NodeAction) {
-        if let Err(e) = self.tx.send(action.clone()) {
-            warn!("Failed to enqueue action: {:?} - {}", action, e);
+    /// Enqueue an action for server execution (with deduplication and backpressure)
+    pub async fn enqueue(&self, action: NodeAction) {
+        // SECURITY: Deduplication - prevent duplicate actions from being queued
+        let action_id = format!("{:?}", action);
+        let mut dedup = self.dedup_set.write().await;
+
+        if dedup.contains(&action_id) {
+            debug!("🚫 Dropping duplicate action");
+            return;
+        }
+
+        dedup.insert(action_id.clone());
+        drop(dedup); // Release lock before sending
+
+        // SECURITY: Bounded send provides backpressure - will fail if queue full
+        match self.tx.send(action.clone()).await {
+            Ok(()) => {
+                debug!("✓ Action enqueued");
+            }
+            Err(e) => {
+                error!("⚠️ Action queue full or closed - dropping action");
+                // Remove from dedup set since we couldn't queue it
+                self.dedup_set.write().await.remove(&action_id);
+            }
         }
     }
 
-    /// Get next action from queue (non-blocking)
+    /// Get next action from queue (blocking)
     pub async fn dequeue(&self) -> Option<NodeAction> {
-        self.rx.write().await.recv().await
+        if let Some(action) = self.rx.write().await.recv().await {
+            // Remove from dedup set once dequeued
+            let action_id = format!("{:?}", action);
+            self.dedup_set.write().await.remove(&action_id);
+            Some(action)
+        } else {
+            None
+        }
     }
 }
 
@@ -118,10 +151,12 @@ impl NodeRuntimeOrchestrator {
         *self.is_running.write().await = false;
     }
 
-    /// Notify runtime of peer state change
+    /// Notify runtime of peer state change (NR-7: Policy Input Completeness)
+    /// Caller must provide authoritative peer_info from discovery/registry
     pub async fn on_peer_state_changed(
         &self,
         peer: lib_crypto::PublicKey,
+        peer_info: super::PeerInfo,
         old_state: PeerState,
         new_state: PeerState,
         reason: Option<String>,
@@ -132,9 +167,10 @@ impl NodeRuntimeOrchestrator {
             states.insert(peer.key_id.to_vec(), new_state.clone());
         }
 
-        // Notify runtime
+        // Notify runtime with complete peer metadata
         let change = PeerStateChange {
             peer,
+            peer_info,
             old_state,
             new_state,
             reason,
@@ -147,8 +183,7 @@ impl NodeRuntimeOrchestrator {
     /// Helper to enqueue multiple actions
     async fn enqueue_actions(queue: &Arc<ActionQueue>, actions: Vec<NodeAction>) {
         for action in actions {
-            debug!("📋 Enqueued action: {:?}", action);
-            queue.enqueue(action);
+            queue.enqueue(action).await;
         }
     }
 }

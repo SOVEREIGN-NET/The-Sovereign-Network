@@ -46,6 +46,20 @@
 //! **NR-6: Replaceability Invariant**
 //! Must be possible to replace NodeRuntime without modifying ZhtpUnifiedServer.
 //! Enables: multiple runtimes (desktop, mobile, test, simulation).
+//!
+//! **NR-7: Policy Input Completeness Invariant**
+//! NodeRuntime policy decisions MUST be based on authoritative peer facts.
+//! - Addresses, discovery protocol, capabilities from discovery/registry
+//! - NO synthetic/partial PeerInfo with empty fields
+//! - PeerStateChange MUST carry the original PeerInfo, not reconstructed data
+//! Prevents: light/mobile sync regressions, routing failures, capability-based decisions
+//!
+//! **NR-8: Action Completeness Invariant**
+//! Every NodeAction that implies connectivity MUST include all execution parameters.
+//! - StartSync must include the selected protocol (not default to QUIC)
+//! - Connect must include the chosen address
+//! - No server "fill-in" of missing policy decisions
+//! Prevents: hardcoded protocol defaults, capability-incompatible connections
 
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -132,6 +146,7 @@ pub enum PeerState {
 #[derive(Clone, Debug)]
 pub struct PeerStateChange {
     pub peer: PublicKey,
+    pub peer_info: PeerInfo,  // NR-7: Policy Input Completeness - authoritative peer metadata
     pub old_state: PeerState,
     pub new_state: PeerState,
     pub reason: Option<String>,
@@ -354,18 +369,18 @@ impl NodeRuntime for DefaultNodeRuntime {
                 vec![]
             }
             PeerState::Connected => {
-                // Once connected, ask if we should sync
-                if self.should_sync_with(&PeerInfo {
-                    public_key: change.peer.clone(),
-                    addresses: vec![],
-                    discovered_via: DiscoveryProtocol::Bootstrap,
-                    first_seen: SystemTime::now(),
-                    last_seen: SystemTime::now(),
-                    capabilities: None,
-                }) {
+                // Use authoritative peer_info (NR-7: Policy Input Completeness)
+                // This carries addresses, discovery protocol, capabilities - all needed for decisions
+                if self.should_sync_with(&change.peer_info) {
+                    // Select protocol based on peer metadata (NR-8: Action Completeness)
+                    let preferred_protocols = self.get_preferred_protocols(&change.peer_info);
+                    let selected_protocol = preferred_protocols.first()
+                        .cloned()
+                        .unwrap_or(NetworkProtocol::QUIC);
+
                     vec![NodeAction::StartSync {
                         peer: change.peer,
-                        protocol: NetworkProtocol::QUIC, // Should use best available
+                        protocol: selected_protocol,
                         full_sync: self.get_role().stores_full_blockchain(),
                     }]
                 } else {
@@ -440,23 +455,35 @@ impl NodeRuntime for DefaultNodeRuntime {
         // Decision logic for whether to sync with a peer
         // Based on node role and peer characteristics
 
+        // SECURITY: All node types require valid addresses to sync
+        // This prevents blockchain poisoning from peers with no reachable endpoints
+        if peer.addresses.is_empty() {
+            return false;
+        }
+
         match self.get_role() {
             NodeRole::FullValidator | NodeRole::Observer => {
-                // Full nodes should sync with most peers
-                // Except those marked as unreliable (in real impl: check reputation)
+                // SECURITY: Full validators should validate peer reputation before syncing
+                // TODO (MEDIUM #7): Implement peer reputation tracking:
+                // - Track blocks accepted/rejected per peer
+                // - Require minimum acceptance rate (70% for validators)
+                // - Reject peers with too many rejected blocks
+                // - Update reputation on each block validation
+                // For now, require valid addresses (checked above) as minimum validation
                 true
             }
             NodeRole::LightNode | NodeRole::MobileNode => {
-                // Light nodes are selective - only sync with high-quality peers
-                // In production: check peer reputation, latency, block height
-                !peer.addresses.is_empty() // Must have at least one address
+                // Light nodes are very selective - only sync with high-quality peers
+                // SECURITY: Require peer has valid addresses (checked above)
+                // TODO: Add peer reputation, latency checks, block height validation
+                true
             }
             NodeRole::BootstrapNode => {
-                // Bootstrap nodes serve everyone
+                // Bootstrap nodes serve everyone (but still require valid addresses)
                 true
             }
             NodeRole::ArchivalNode => {
-                // Archival nodes want data from everywhere
+                // Archival nodes want data from everywhere (but still require valid addresses)
                 true
             }
         }

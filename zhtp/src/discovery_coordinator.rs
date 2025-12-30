@@ -191,29 +191,41 @@ pub struct ProtocolStats {
 pub struct DiscoveryCoordinator {
     /// All discovered peers (deduplicated by public key)
     peers: Arc<RwLock<HashMap<Vec<u8>, DiscoveredPeer>>>,
-    
+
     /// Currently active protocols
     active_protocols: Arc<RwLock<HashSet<DiscoveryProtocol>>>,
-    
+
     /// Channel for discovery events
     discovery_tx: mpsc::UnboundedSender<DiscoveredPeer>,
     discovery_rx: Arc<RwLock<Option<mpsc::UnboundedReceiver<DiscoveredPeer>>>>,
-    
+
     /// Prevent duplicate processing
     seen_addresses: Arc<RwLock<HashSet<String>>>,
-    
+
     /// Statistics per protocol
     stats: Arc<RwLock<HashMap<DiscoveryProtocol, ProtocolStats>>>,
-    
+
     /// Current discovery strategy
     strategy: Arc<RwLock<DiscoveryStrategy>>,
+
+    /// NodeRuntime for policy decisions (optional, for future integration)
+    runtime: Arc<RwLock<Option<Arc<dyn crate::runtime::NodeRuntime>>>>,
+
+    /// Action queue for runtime-driven decisions (optional)
+    action_queue: Arc<RwLock<Option<Arc<crate::runtime::node_runtime_orchestrator::ActionQueue>>>>,
+
+    /// SECURITY: Max peers to prevent DoS via memory exhaustion
+    max_peers: usize,
+
+    /// SECURITY: Max addresses per peer to prevent memory bloat
+    max_addresses_per_peer: usize,
 }
 
 impl DiscoveryCoordinator {
-    /// Create a new discovery coordinator
+    /// Create a new discovery coordinator with security limits
     pub fn new() -> Self {
         let (discovery_tx, discovery_rx) = mpsc::unbounded_channel();
-        
+
         Self {
             peers: Arc::new(RwLock::new(HashMap::new())),
             active_protocols: Arc::new(RwLock::new(HashSet::new())),
@@ -222,7 +234,17 @@ impl DiscoveryCoordinator {
             seen_addresses: Arc::new(RwLock::new(HashSet::new())),
             stats: Arc::new(RwLock::new(HashMap::new())),
             strategy: Arc::new(RwLock::new(DiscoveryStrategy::default())),
+            runtime: Arc::new(RwLock::new(None)),
+            action_queue: Arc::new(RwLock::new(None)),
+            max_peers: 10_000,           // SECURITY: Prevent unbounded peer collection
+            max_addresses_per_peer: 20,  // SECURITY: Prevent address bloat per peer
         }
+    }
+
+    /// Set the NodeRuntime and action queue for policy integration
+    pub async fn set_runtime(&self, runtime: Arc<dyn crate::runtime::NodeRuntime>, action_queue: Arc<crate::runtime::node_runtime_orchestrator::ActionQueue>) {
+        *self.runtime.write().await = Some(runtime);
+        *self.action_queue.write().await = Some(action_queue);
     }
     
     /// Set discovery strategy
@@ -240,14 +262,18 @@ impl DiscoveryCoordinator {
     pub async fn start_event_listener(&self) {
         let mut rx = self.discovery_rx.write().await.take()
             .expect("Event listener already started");
-        
+
         let peers = self.peers.clone();
         let seen = self.seen_addresses.clone();
         let stats = self.stats.clone();
-        
+        let runtime = self.runtime.clone();
+        let action_queue = self.action_queue.clone();
+        let max_peers = self.max_peers;              // SECURITY: Capture limits
+        let max_addresses_per_peer = self.max_addresses_per_peer;
+
         tokio::spawn(async move {
             info!("📡 Discovery event listener started");
-            
+
             while let Some(discovered_peer) = rx.recv().await {
                 // Deduplicate by public key (if available) or primary address
                 let peer_key = if let Some(ref pubkey) = discovered_peer.public_key {
@@ -258,46 +284,70 @@ impl DiscoveryCoordinator {
                         .map(|addr| addr.as_bytes().to_vec())
                         .unwrap_or_default()
                 };
-                
+
+                let is_new_peer = !peers.read().await.contains_key(&peer_key);
+
                 let mut peers_lock = peers.write().await;
-                
+
                 if let Some(existing_peer) = peers_lock.get_mut(&peer_key) {
-                    // Merge addresses
-                    for addr in &discovered_peer.addresses {
-                        if !existing_peer.addresses.contains(addr) {
-                            existing_peer.addresses.push(addr.clone());
-                            debug!("➕ Added address {} to existing peer", addr);
+                    // SECURITY: Enforce max addresses per peer limit
+                    let addresses_to_add: Vec<String> = discovered_peer.addresses.iter()
+                        .filter(|addr| !existing_peer.addresses.contains(addr))
+                        .cloned()
+                        .collect();
+
+                    for addr in addresses_to_add {
+                        if existing_peer.addresses.len() >= max_addresses_per_peer {
+                            warn!("Peer {} has reached max addresses ({}), not adding: {}",
+                                  hex::encode(&peer_key[..std::cmp::min(8, peer_key.len())]),
+                                  max_addresses_per_peer, addr);
+                            break;
                         }
+                        existing_peer.addresses.push(addr);
+                        debug!("➕ Added address to peer");
                     }
                     existing_peer.last_seen = SystemTime::now();
-                    
+
                     // Update PublicKey if we didn't have it before
                     if existing_peer.public_key.is_none() && discovered_peer.public_key.is_some() {
                         existing_peer.public_key = discovered_peer.public_key.clone();
                         debug!("🔑 Updated peer with PublicKey");
                     }
                 } else {
-                    // New peer
-                    let pubkey_status = if discovered_peer.public_key.is_some() {
-                        "with PublicKey"
+                    // SECURITY: Enforce max peer count
+                    if peers_lock.len() >= max_peers {
+                        warn!("Discovery coordinator reached max peer limit ({}), rejecting new peer",
+                              max_peers);
                     } else {
-                        "address-only (awaiting handshake)"
-                    };
-                    info!(
-                        "🆕 New peer discovered via {}: {} addresses ({})",
-                        discovered_peer.discovered_via.name(),
-                        discovered_peer.addresses.len(),
-                        pubkey_status
-                    );
-                    peers_lock.insert(peer_key.to_vec(), discovered_peer.clone());
+                        // New peer - check address limit
+                        let mut peer_to_insert = discovered_peer.clone();
+                        if peer_to_insert.addresses.len() > max_addresses_per_peer {
+                            warn!("New peer has {} addresses, truncating to {}",
+                                  peer_to_insert.addresses.len(), max_addresses_per_peer);
+                            peer_to_insert.addresses.truncate(max_addresses_per_peer);
+                        }
+
+                        let pubkey_status = if peer_to_insert.public_key.is_some() {
+                            "with PublicKey"
+                        } else {
+                            "address-only (awaiting handshake)"
+                        };
+                        info!(
+                            "🆕 New peer discovered via {}: {} addresses ({})",
+                            peer_to_insert.discovered_via.name(),
+                            peer_to_insert.addresses.len(),
+                            pubkey_status
+                        );
+                        peers_lock.insert(peer_key.to_vec(), peer_to_insert);
+                    }
                 }
-                
+
                 // Track seen addresses
                 let mut seen_lock = seen.write().await;
                 for addr in &discovered_peer.addresses {
                     seen_lock.insert(addr.clone());
                 }
-                
+
                 // Update stats
                 let mut stats_lock = stats.write().await;
                 let protocol_stats = stats_lock.entry(discovered_peer.discovered_via)
@@ -305,8 +355,50 @@ impl DiscoveryCoordinator {
                 protocol_stats.peers_discovered += 1;
                 protocol_stats.success_count += 1;
                 protocol_stats.last_success = Some(SystemTime::now());
+
+                // If runtime is set and this is a new peer, route through runtime for policy decisions
+                // SECURITY: Only route if we have authoritative peer_info (NR-7: Policy Input Completeness)
+                if is_new_peer {
+                    // HIGH: Only proceed if we have the actual public key (not synthetic)
+                    if let Some(pubkey) = discovered_peer.public_key.clone() {
+                        if let Some(runtime_opt) = runtime.read().await.as_ref() {
+                            if let Some(queue_opt) = action_queue.read().await.as_ref() {
+                                // Convert DiscoveredPeer to PeerInfo for runtime with COMPLETE data
+                                let peer_info = crate::runtime::PeerInfo {
+                                    public_key: pubkey,
+                                    addresses: discovered_peer.addresses.clone(),
+                                    discovered_via: match discovered_peer.discovered_via {
+                                        DiscoveryProtocol::UdpMulticast => crate::runtime::DiscoveryProtocol::UdpMulticast,
+                                        DiscoveryProtocol::MDns => crate::runtime::DiscoveryProtocol::UdpMulticast, // Treat mDNS as multicast-like
+                                        DiscoveryProtocol::BluetoothLE => crate::runtime::DiscoveryProtocol::BluetoothLE,
+                                        DiscoveryProtocol::BluetoothClassic => crate::runtime::DiscoveryProtocol::BluetoothClassic,
+                                        DiscoveryProtocol::WiFiDirect => crate::runtime::DiscoveryProtocol::WiFiDirect,
+                                        DiscoveryProtocol::DHT => crate::runtime::DiscoveryProtocol::UdpMulticast, // DHT uses UDP
+                                        DiscoveryProtocol::PortScan => crate::runtime::DiscoveryProtocol::UdpMulticast, // Port scan fallback uses UDP
+                                        DiscoveryProtocol::LoRaWAN => crate::runtime::DiscoveryProtocol::LoRaWAN,
+                                        DiscoveryProtocol::Satellite => crate::runtime::DiscoveryProtocol::Bootstrap, // Satellite discovery implies bootstrap
+                                    },
+                                    first_seen: discovered_peer.first_seen,
+                                    last_seen: discovered_peer.last_seen,
+                                    capabilities: discovered_peer.capabilities.clone(),
+                                };
+
+                                // Get policy decisions from runtime (with authoritative data)
+                                let actions = runtime_opt.on_peer_discovered(peer_info).await;
+
+                                // Enqueue actions for server execution
+                                for action in actions {
+                                    queue_opt.enqueue(action).await;
+                                }
+                            }
+                        }
+                    } else {
+                        // Defer policy decision until we have the public key (e.g., after BLE handshake)
+                        debug!("Deferring peer policy decision - waiting for cryptographic proof");
+                    }
+                }
             }
-            
+
             info!("📡 Discovery event listener stopped");
         });
     }
@@ -511,24 +603,33 @@ impl DiscoveryCoordinator {
         let env_config = environment.get_default_config();
         if !env_config.network_settings.bootstrap_peers.is_empty() {
             info!("   → Trying configured bootstrap peers ({} addresses)...", env_config.network_settings.bootstrap_peers.len());
+
+            // SECURITY (MEDIUM #8): Hash peer IPs before logging to prevent information disclosure
+            // Hashing reveals nothing about which IPs are actually used, but allows correlation
+            let hash_peer_for_logging = |peer: &str| -> String {
+                let hash = blake3::hash(peer.as_bytes());
+                format!("peer_{}", hex::encode(&hash.as_bytes()[..4]))
+            };
+
             for peer in &env_config.network_settings.bootstrap_peers {
-                info!("      Checking bootstrap peer: {}", peer);
-                
+                let peer_hash = hash_peer_for_logging(peer);
+                debug!("      Checking bootstrap peer: {}", peer_hash);
+
                 // Skip localhost addresses (can't discover ourselves)
                 if peer.starts_with("127.0.0.1") || peer.starts_with("localhost") {
-                    info!("      Skipping localhost address: {}", peer);
+                    debug!("      Skipping localhost address: {}", peer_hash);
                     continue;
                 }
-                
-                // Skip our own IP address (prevent self-discovery)
+
+                // Skip our own IP address (prevent self-discovery) - don't log this for security
                 if let Ok(local_ip) = get_local_ip().await {
                     let local_ip_str = local_ip.to_string();
                     if peer.starts_with(&local_ip_str) {
-                        info!("      Skipping own IP address: {}", peer);
+                        // Don't log - silently skip to avoid revealing own IP
                         continue;
                     }
                 }
-                
+
                 // Verify peer is reachable
                 if let Ok(socket_addr) = peer.as_str().parse::<std::net::SocketAddr>() {
                     // Quick TCP check on port 9333
@@ -537,14 +638,14 @@ impl DiscoveryCoordinator {
                         tokio::net::TcpStream::connect(socket_addr)
                     ).await {
                         Ok(Ok(_)) => {
-                            info!("      ✓ Bootstrap peer {} is reachable", peer);
+                            debug!("      ✓ Bootstrap peer {} is reachable", peer_hash);
                             discovered_peers.push(peer.clone());
                         }
-                        Ok(Err(e)) => {
-                            warn!("      ✗ Bootstrap peer {} unreachable: {}", peer, e);
+                        Ok(Err(_e)) => {
+                            debug!("      ✗ Bootstrap peer {} unreachable (connection failed)", peer_hash);
                         }
                         Err(_) => {
-                            warn!("      ✗ Bootstrap peer {} timeout", peer);
+                            debug!("      ✗ Bootstrap peer {} timeout", peer_hash);
                         }
                     }
                 }
