@@ -56,8 +56,15 @@ impl MeshRouter {
     /// 1. Check per-IP rate limit BEFORE processing handshake
     /// 2. Block if too many connection attempts from same IP
     /// 3. Exponential backoff for repeat offenders
+    /// ⚠️ DEPRECATED: This method is for TCP connections (no longer supported).
+    /// The system is QUIC-only. This method should not be called.
+    ///
+    /// Kept for API compatibility but marked deprecated.
+    #[deprecated(note = "QUIC is the only supported transport. TCP connections are not accepted.")]
     pub async fn handle_tcp_mesh(&self, mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
-        info!("🔌 Processing TCP mesh connection from: {}", addr);
+        error!("❌ TCP connections are no longer supported - QUIC is required");
+        error!("   Connection from {} rejected", addr);
+        return Err(anyhow::anyhow!("TCP is not supported - use QUIC"));
 
         // HIGH-4 FIX: Check rate limit BEFORE processing handshake
         if let Err(block_duration) = self.connection_rate_limiter.check_ip(addr.ip()).await {

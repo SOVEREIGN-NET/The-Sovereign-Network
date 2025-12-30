@@ -1,24 +1,31 @@
 //! Mesh Mode Configuration Management
-//! 
-//! Handles pure mesh vs hybrid mode settings and protocol selection
+//!
+//! Defines mesh networking operation modes.
+//!
+//! ⚠️ NOTE: Only PureMesh (QUIC-only) is currently supported.
+//! TCP/IP hybrid mode is no longer available - the system is fully QUIC-based.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Mesh networking operation modes
+///
+/// ⚠️ QUIC-ONLY: Only PureMesh is supported. TCP/IP and hybrid modes are deprecated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MeshMode {
-    /// Pure mesh mode - Complete  using only mesh protocols
+    /// Pure mesh mode - QUIC-only with local mesh protocols
     PureMesh,
-    /// Hybrid mode - Mesh networking with TCP/IP fallback for transition
+    /// ⚠️ DEPRECATED: Hybrid mode is no longer supported (TCP/IP removed)
+    #[deprecated(note = "QUIC is the only transport - hybrid TCP/IP mode is not supported")]
     Hybrid,
 }
 
 impl fmt::Display for MeshMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MeshMode::PureMesh => write!(f, "Pure Mesh (ISP-free)"),
-            MeshMode::Hybrid => write!(f, "Hybrid (Mesh + TCP/IP)"),
+            MeshMode::PureMesh => write!(f, "Pure Mesh (QUIC-only, ISP-free)"),
+            #[allow(deprecated)]
+            MeshMode::Hybrid => write!(f, "Hybrid (deprecated - use Pure Mesh)"),
         }
     }
 }
@@ -48,18 +55,22 @@ impl MeshMode {
                 bluetooth_le: true,
                 wifi_direct: true,
                 lorawan: true,
-                tcp_ip: false,        // No TCP/IP in pure mesh
-                websockets: false,    // No WebSockets in pure mesh
-                quic: false,          // No QUIC in pure mesh
+                tcp_ip: false,        // No TCP/IP - QUIC-only
+                websockets: false,    // No WebSockets
+                quic: true,           // QUIC is required and primary transport
             },
-            MeshMode::Hybrid => ProtocolSelection {
-                bluetooth_le: true,
-                wifi_direct: true,
-                lorawan: true,
-                tcp_ip: true,         // TCP/IP available for fallback
-                websockets: true,     // WebSockets for browser integration
-                quic: true,           // QUIC for modern transport
-            },
+            #[allow(deprecated)]
+            MeshMode::Hybrid => {
+                // Hybrid mode is deprecated - treat as PureMesh (QUIC-only)
+                ProtocolSelection {
+                    bluetooth_le: true,
+                    wifi_direct: true,
+                    lorawan: true,
+                    tcp_ip: false,
+                    websockets: false,
+                    quic: true,
+                }
+            }
         }
     }
     
@@ -67,62 +78,51 @@ impl MeshMode {
     pub fn requires_long_range_relays(&self) -> bool {
         match self {
             MeshMode::PureMesh => true,  // Critical for global coverage without ISPs
-            MeshMode::Hybrid => false,   // TCP/IP provides fallback connectivity
+            #[allow(deprecated)]
+            MeshMode::Hybrid => true,     // Hybrid is deprecated - treat as mesh-only
         }
     }
-    
+
     /// Get bootstrap strategy for this mode
     pub fn get_bootstrap_strategy(&self) -> BootstrapStrategy {
         match self {
             MeshMode::PureMesh => BootstrapStrategy::MeshDiscovery,
-            MeshMode::Hybrid => BootstrapStrategy::TcpAndMesh,
+            #[allow(deprecated)]
+            MeshMode::Hybrid => BootstrapStrategy::MeshDiscovery, // Hybrid is deprecated - use mesh discovery
         }
     }
     
     /// Validate that required capabilities are available for this mode
     pub fn validate_capabilities(&self, available_protocols: &[String]) -> Result<(), String> {
         let _required = self.get_protocol_selection();
-        
+
         match self {
             MeshMode::PureMesh => {
                 // Must have at least one mesh protocol
                 let has_mesh_protocol = available_protocols.iter().any(|p| {
                     matches!(p.as_str(), "bluetooth" | "wifi_direct" | "lorawan")
                 });
-                
+
                 if !has_mesh_protocol {
                     return Err("Pure mesh mode requires at least one mesh protocol (Bluetooth, WiFi Direct, or LoRaWAN)".to_string());
                 }
-                
-                // Check for TCP/IP protocols that shouldn't be present
-                let has_tcp_ip = available_protocols.iter().any(|p| {
-                    matches!(p.as_str(), "tcp" | "websocket" | "quic")
+
+                // QUIC is required in all modes
+                let has_quic = available_protocols.iter().any(|p| {
+                    matches!(p.as_str(), "quic")
                 });
-                
-                if has_tcp_ip {
-                    return Err("Pure mesh mode cannot use TCP/IP protocols".to_string());
+
+                if !has_quic {
+                    return Err("QUIC is required for all mesh modes".to_string());
                 }
             }
+            #[allow(deprecated)]
             MeshMode::Hybrid => {
-                // Should have both mesh and TCP/IP capabilities
-                let has_mesh = available_protocols.iter().any(|p| {
-                    matches!(p.as_str(), "bluetooth" | "wifi_direct" | "lorawan")
-                });
-                
-                let has_tcp_ip = available_protocols.iter().any(|p| {
-                    matches!(p.as_str(), "tcp" | "websocket")
-                });
-                
-                if !has_mesh {
-                    tracing::warn!("Hybrid mode without mesh protocols - falling back to TCP/IP only");
-                }
-                
-                if !has_tcp_ip {
-                    tracing::warn!("Hybrid mode without TCP/IP protocols - operating as pure mesh");
-                }
+                // Hybrid mode is deprecated - validate as PureMesh instead
+                return Self::PureMesh.validate_capabilities(available_protocols);
             }
         }
-        
+
         Ok(())
     }
 }

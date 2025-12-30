@@ -1,14 +1,25 @@
-//! ZHTP Unified Server - Single Server for All Protocols
-//! 
-//! ✅ REFACTORED - Now uses modular components from server/ directory
-//! 
-//! This file orchestrates the server components:
-//! - Protocol detection and routing (server::protocol_detection)
-//! - TCP/UDP handlers (server::tcp_handler, server::udp_handler)
-//! - HTTP router and middleware (server::http)
-//! - Mesh router and authentication (server::mesh)
-//! - WiFi/Bluetooth protocols (server::protocols)
-//! - API handler registration (server::api_registration)
+//! ZHTP Unified Server - Mesh-native with QUIC-only entry point
+//!
+//! # INVARIANTS
+//!
+//! This server enforces a QUIC-only architecture:
+//! - **INGRESS**: QUIC is the sole entry point (UDP port 9334)
+//! - **DISCOVERY**: DHT, mDNS, BLE, Bluetooth Classic, WiFi Direct, LoRaWAN
+//! - **AUTHENTICATION**: UHP + Kyber for QUIC connections
+//! - **PROHIBITED**: TCP, UDP mesh, HTTP, WebSockets, or any legacy protocols as entry points
+//!
+//! # Failure Mode
+//!
+//! If the QUIC accept loop fails, the entire node crashes immediately.
+//! Silent partial liveness is not tolerated - the node cannot function without QUIC.
+//!
+//! # Architecture
+//!
+//! Orchestrates modular components from server/ directory:
+//! - QUIC handler (native ZHTP-over-QUIC)
+//! - Mesh router and identity verification
+//! - Discovery coordinators (DHT, mDNS, BLE, etc.)
+//! - Protocol handlers for mesh-local transport
 
 use std::sync::Arc;
 use std::net::SocketAddr;
@@ -53,19 +64,12 @@ use crate::session_manager::SessionManager;
 
 // Re-export for backward compatibility with code that imports from crate::unified_server::*
 pub use crate::server::{
-    // Protocol detection
     IncomingProtocol,
-    // ❌ DELETED: TcpHandler, UdpHandler - Replaced by QuicHandler
-    // ❌ DELETED: register_api_handlers - Was duplicate dead code
-    // ❌ DELETED: HttpRouter - QUIC is the only entry point
-    // HTTP middleware (still needed for middleware processing)
     Middleware,
     CorsMiddleware,
     RateLimitMiddleware,
     AuthMiddleware,
-    // Mesh layer
     MeshRouter,
-    // Monitoring layer
     PeerReputation,
     PeerRateLimit,
     BroadcastMetrics,
@@ -75,12 +79,10 @@ pub use crate::server::{
     AlertThresholds,
     MetricsSnapshot,
     PeerPerformanceStats,
-    // Protocol routers
     WiFiRouter,
     BluetoothRouter,
     BluetoothClassicRouter,
     ClassicProtocol,
-    // ❌ REMOVED: BootstrapRouter - Use lib-network::bootstrap instead
 };
 
 /// Main unified server that handles all protocols
@@ -92,12 +94,10 @@ pub struct ZhtpUnifiedServer {
     quic_handler: Arc<QuicHandler>,
 
     // Protocol routers
-    // ❌ DELETED: http_router - QUIC is the only entry point, HttpCompatibilityLayer → ZhtpRouter
-    mesh_router: MeshRouter,
+    mesh_router: Arc<MeshRouter>,
     wifi_router: WiFiRouter,
     bluetooth_router: BluetoothRouter,
     bluetooth_classic_router: BluetoothClassicRouter,
-    // ❌ REMOVED: bootstrap_router - Using lib-network::bootstrap servers instead
     
     // Shared backend state (from ZHTP orchestrator)
     blockchain: Arc<RwLock<Blockchain>>,
@@ -171,7 +171,13 @@ impl ZhtpUnifiedServer {
     /// Load server identity from keystore for UHP+Kyber authentication
     ///
     /// Loads the persistent identity from ~/.zhtp/keystore/node_identity.json.
-    /// Falls back to creating a deterministic identity if keystore is unavailable.
+    ///
+    /// **CRITICAL**: Identity continuity is required for blockchain accountability.
+    /// Deterministic fallback is ONLY allowed:
+    /// - In debug builds (development), OR
+    /// - When explicitly enabled with ZHTP_EPHEMERAL=true
+    ///
+    /// Production systems MUST have a persistent keystore. Fails hard if keystore is missing in release mode.
     fn create_server_identity(server_id: Uuid) -> Result<Arc<lib_identity::ZhtpIdentity>> {
         use lib_identity::{ZhtpIdentity, IdentityType};
 
@@ -214,8 +220,27 @@ impl ZhtpUnifiedServer {
             tracing::warn!("Keystore exists but failed to load identity, creating fallback");
         }
 
-        // Fallback: Generate deterministic seed from server UUID
-        tracing::warn!("No keystore identity found, creating deterministic server identity");
+        // CRITICAL: Gate deterministic fallback to dev-only or explicit opt-in
+        // Production systems MUST have persistent keystore - losing identity is not acceptable
+        let allow_ephemeral = cfg!(debug_assertions) || std::env::var("ZHTP_EPHEMERAL").is_ok();
+
+        if !allow_ephemeral {
+            return Err(anyhow::anyhow!(
+                "IDENTITY BOOTSTRAP FAILED: No keystore identity found at {:?}\n\
+                 Identity continuity is required for blockchain accountability.\n\
+                 This is a configuration error - restore your keystore or:\n\
+                 - In development: Use a release build or set ZHTP_EPHEMERAL=true\n\
+                 - In production: Never use ephemeral identities - restore your keystore",
+                keystore_path
+            ));
+        }
+
+        // Ephemeral mode: Generate deterministic seed from server UUID (dev-only or explicit opt-in)
+        tracing::warn!(
+            "⚠️ EPHEMERAL MODE: No keystore identity found, creating deterministic server identity\n\
+             This should ONLY be used in development. Production systems must use persistent keystore.\n\
+             Set ZHTP_EPHEMERAL=true to acknowledge this is intentional."
+        );
         let mut seed = [0u8; 64];
         seed[..16].copy_from_slice(server_id.as_bytes());
         seed[16..32].copy_from_slice(server_id.as_bytes());
@@ -241,11 +266,8 @@ impl ZhtpUnifiedServer {
     
     /// Get the mesh router as an Arc for global provider access
     pub fn get_mesh_router_arc(&self) -> Arc<MeshRouter> {
-        // MeshRouter is already Arc-wrapped internally, but we need to clone the Arc to return
-        // Since MeshRouter isn't stored as Arc in the struct, we need to wrap it
-        // For now, we'll need to refactor mesh_router to be Arc<MeshRouter> instead of MeshRouter
-        // As a temporary solution, return a reference through the methods
-        Arc::new(self.mesh_router.clone())
+        // mesh_router is already Arc<MeshRouter>, so clone just increments refcount
+        self.mesh_router.clone()
     }
     
     /// Create new unified server with comprehensive backend integration
@@ -283,7 +305,6 @@ impl ZhtpUnifiedServer {
         info!(" Discovery coordinator initialized - all protocols will report to single coordinator");
         
         // Initialize protocol routers
-        // ❌ DELETED: http_router - QUIC is the only entry point
         let mut zhtp_router = crate::server::zhtp::ZhtpRouter::new();  // Native ZHTP router for QUIC - ONLY ROUTER NEEDED
         let mut mesh_router = MeshRouter::new(server_id, session_manager.clone());
         let wifi_router = WiFiRouter::new_with_peer_notification(peer_discovery_tx);
@@ -291,6 +312,8 @@ impl ZhtpUnifiedServer {
         let bluetooth_classic_router = BluetoothClassicRouter::new();
         
         // Set identity manager on mesh router for direct UDP access
+        // This is used by send_with_routing() and broadcast_to_peers() to get sender identity
+        // Failure to set this before set_broadcast_receiver() will cause broadcast to fail
         mesh_router.set_identity_manager(identity_manager.clone());
         
         // Set identity manager on WiFi router for UHP handshake authentication
@@ -307,7 +330,12 @@ impl ZhtpUnifiedServer {
         }
         
         // Configure mesh router to receive broadcasts
-        mesh_router.set_broadcast_receiver(broadcast_receiver).await;
+        // CRITICAL INITIALIZATION ORDER:
+        // 1. identity_manager must be set (line 297) BEFORE this call
+        // 2. Blockchain broadcast immediately sends blocks/transactions when channel is ready
+        // 3. If identity is not initialized, broadcast_to_peers() will panic with configuration error
+        let mesh_router_arc = Arc::new(mesh_router);
+        MeshRouter::set_broadcast_receiver(mesh_router_arc.clone(), broadcast_receiver);
         
         // Initialize WiFi Direct protocol
         if let Err(e) = wifi_router.initialize().await {
@@ -319,10 +347,7 @@ impl ZhtpUnifiedServer {
         
         // NOTE: Bluetooth initialization happens in start() to avoid double initialization
         // The bluetooth_router is created here but initialized later when server starts
-        
-        // ❌ REMOVED: Bootstrap router - lib-network bootstrap servers handle this now
-        // let bootstrap_router = BootstrapRouter::new(server_id);
-        
+
         // Initialize QUIC mesh protocol (uses port 9334 to avoid UDP conflicts)
         // QUIC is now REQUIRED (not optional) for all networking
         let quic_mesh = Self::init_quic_mesh(port, server_id).await
@@ -331,14 +356,14 @@ impl ZhtpUnifiedServer {
         let quic_arc = Arc::new(quic_mesh);
         
         // Set QUIC protocol on mesh_router for sending messages
-        mesh_router.set_quic_protocol(quic_arc.clone()).await;
-        
+        mesh_router_arc.set_quic_protocol(quic_arc.clone()).await;
+
         // Create DHT handler for pure UDP mesh protocol and register it on mesh_router
         // This MUST happen before register_api_handlers to ensure the actual mesh_router instance gets the handler
         let dht_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            DhtHandler::new_with_storage(Arc::new(mesh_router.clone()), storage.clone())
+            DhtHandler::new_with_storage(mesh_router_arc.clone(), storage.clone())
         );
-        mesh_router.set_dht_handler(dht_handler.clone()).await;
+        mesh_router_arc.set_dht_handler(dht_handler.clone()).await;
 
         // Create canonical domain registry (shared by all components)
         // MUST be created BEFORE register_api_handlers so Web4Handler can use it
@@ -380,18 +405,16 @@ impl ZhtpUnifiedServer {
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
-        mesh_router.set_zhtp_router(zhtp_router_arc.clone()).await;
+        mesh_router_arc.set_zhtp_router(zhtp_router_arc.clone()).await;
         info!(" ZHTP router registered with mesh router for UDP endpoint handling");
 
         Ok(Self {
             quic_mesh: quic_arc,
             quic_handler,
-            // ❌ DELETED: http_router - QUIC is the only entry point
-            mesh_router,
+            mesh_router: mesh_router_arc,
             wifi_router,
             bluetooth_router,
             bluetooth_classic_router,
-            // ❌ REMOVED: bootstrap_router field
             blockchain,
             storage,
             identity_manager,
@@ -638,7 +661,7 @@ impl ZhtpUnifiedServer {
         info!("Starting ZHTP Unified Server on port {}", self.port);
 
         // Initialize global mesh router provider for API handlers
-        let mesh_router_arc = Arc::new(self.mesh_router.clone());
+        let mesh_router_arc = self.mesh_router.clone();
         if let Err(e) = crate::runtime::set_global_mesh_router(mesh_router_arc).await {
             warn!("Failed to initialize global mesh router provider: {}", e);
         } else {
@@ -738,7 +761,7 @@ impl ZhtpUnifiedServer {
         let ble_peer_tx_clone = ble_peer_tx.clone();
         let our_public_key_clone = our_public_key.clone();
         let sync_coordinator_clone = self.mesh_router.sync_coordinator.clone();
-        let mesh_router_clone = Arc::new(self.mesh_router.clone());
+        let mesh_router_clone = self.mesh_router.clone();
         let mesh_router_bluetooth_protocol = self.mesh_router.bluetooth_protocol.clone();
 
         tokio::spawn(async move {
@@ -993,22 +1016,44 @@ impl ZhtpUnifiedServer {
 
         *self.is_running.write().await = true;
 
-        // Start QUIC connection acceptance loop (PRIMARY PROTOCOL)
+        // Start QUIC connection acceptance loop (REQUIRED PRIMARY PROTOCOL)
+        // In QUIC-only architecture, if accept loop fails, the node is dead.
+        // Fail fast rather than silent partial liveness.
         let quic_handler = self.quic_handler.clone();
         let accept_loop_handle = tokio::spawn(async move {
             info!("🚀 Starting QUIC accept loop on endpoint...");
-            if let Err(e) = quic_handler.accept_loop(endpoint).await {
-                error!("❌ QUIC accept loop terminated: {}", e);
+            match quic_handler.accept_loop(endpoint).await {
+                Ok(()) => {
+                    // Accept loop completed normally (shouldn't happen unless shutdown)
+                    error!("❌ QUIC accept loop exited unexpectedly (without error)");
+                }
+                Err(e) => {
+                    // CRITICAL: QUIC is the only entry point. If it's down, node is dead.
+                    error!("🚨 QUIC ACCEPT LOOP FAILED - NODE IS DEAD");
+                    error!("   Error: {}", e);
+                    error!("   QUIC is the only entry point in this architecture.");
+                    error!("   Without it, the node cannot receive or send messages.");
+                    panic!("QUIC accept loop critical failure - crashing for restart: {}", e);
+                }
             }
         });
 
-        // Give accept loop a moment to start listening
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        info!(" ✅ QUIC handler started - Native ZHTP-over-QUIC ready");
+        // Give accept loop time to start and bind to port
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // NOTE: accept_loop_handle will run in background. If it panics/errors,
-        // that's logged but startup continues. This is intentional - the server
-        // can still serve other protocols if QUIC fails.
+        // Check if accept loop task has already panicked/crashed
+        if accept_loop_handle.is_finished() {
+            return Err(anyhow::anyhow!(
+                "QUIC accept loop crashed on startup - check logs for details\n\
+                 This is a critical error - QUIC is required to function"
+            ));
+        }
+
+        info!(" ✅ QUIC handler started - Native ZHTP-over-QUIC ready");
+        info!(" 🔒 QUIC-ONLY architecture: All messages flow through QUIC");
+
+        // Store the accept loop handle to detect crashes during runtime
+        // (In production, would use watchdog to restart if it crashes)
         
         // Start mesh protocol handlers (background listeners only)
         self.start_bluetooth_mesh_handler().await?;
@@ -1016,9 +1061,10 @@ impl ZhtpUnifiedServer {
         // WiFi Direct already initialized above with mDNS
         self.start_lorawan_handler().await?;
         
-        info!("ZHTP Unified Server online");
-        info!("Protocols: BLE + BT Classic + WiFi Direct + LoRaWAN + ZHTP Relay");
-        info!(" ZHTP relay: Encrypted DHT queries with Dilithium2 + Kyber512 + ChaCha20");
+        info!("🔒 ZHTP Unified Server ONLINE (QUIC-ONLY architecture)");
+        info!("   Entry point: QUIC (required and primary)");
+        info!("   Discovery: BLE, BT Classic, WiFi Direct, LoRaWAN");
+        info!("   Relay: Encrypted DHT with Dilithium2 + Kyber512 + ChaCha20");
         
         // Verify network isolation is working
         info!(" Verifying network isolation...");

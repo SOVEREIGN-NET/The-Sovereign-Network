@@ -32,6 +32,10 @@ impl Default for DnsKeyRRData {
 impl RRData for DnsKeyRRData {
 
     fn from_bytes(buf: &[u8]) -> Result<Self, RRDataError> {
+        if buf.len() < 4 {
+            return Err(RRDataError("DNSKEY data too short".to_string()));
+        }
+
         let flags = u16::from_be_bytes([buf[0], buf[1]]);
         /*
         Flags: 0x0100
@@ -44,7 +48,11 @@ impl RRData for DnsKeyRRData {
         let protocol = buf[2];
         let algorithm = buf[3];
 
-        let public_key = buf[4..buf.len()].to_vec();
+        let public_key = if buf.len() > 4 {
+            buf[4..buf.len()].to_vec()
+        } else {
+            Vec::new()
+        };
 
         Ok(Self {
             flags,
@@ -197,7 +205,12 @@ impl fmt::Display for DnsKeyRRData {
 
 #[test]
 fn test() {
-    let buf = vec![ ];
+    // Empty buffer should return error
+    let buf_empty = vec![];
+    assert!(DnsKeyRRData::from_bytes(&buf_empty).is_err());
+
+    // Valid DNSKEY: flags(2) + protocol(1) + algorithm(1) + no_public_key
+    let buf = vec![0u8, 0u8, 0u8, 0u8];
     let record = DnsKeyRRData::from_bytes(&buf).unwrap();
     assert_eq!(buf, record.to_bytes().unwrap());
 }
