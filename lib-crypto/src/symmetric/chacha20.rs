@@ -7,30 +7,38 @@
 //! ChaCha20Poly1305 requires unique nonces per key to maintain security.
 //! Nonce collision would allow an attacker to break confidentiality.
 //!
-//! MITIGATION STRATEGY:
-//! 1. Random nonces (current): 96-bit random nonce per message
-//!    - Birthday bound: ~2^48 messages before 50% collision probability
-//!    - Suitable for per-connection encryption (typical session < 1M messages)
+//! # Nonce Strategies Available
 //!
-//! 2. Key rotation (recommended): Rotate keys after 1M messages
-//!    - Implemented in lib-network/src/protocols/quic_mesh.rs
-//!    - Keys rotated every 1 million messages or 24 hours
+//! ## 1. Random nonces (encrypt_data_with_ad)
+//! - 96-bit random nonce per message from OS RNG
+//! - Birthday bound: ~2^48 messages before 50% collision probability
+//! - Suitable for per-connection encryption (typical session < 1M messages)
+//! - Recommended for short-lived connections or where key rotation is in place
 //!
-//! 3. For long-lived connections: Use stateful nonce counter
-//!    - Combined: [4-byte random prefix | 8-byte counter]
-//!    - Ensures per-key uniqueness across sessions
+//! ## 2. Counter-based nonces (encrypt_data_with_ad_nonce) ✅ PREFERRED FOR LONG-LIVED
+//! - Explicit nonce control: caller provides 96-bit nonce
+//! - Pattern: [4-byte prefix || 8-byte counter] for session-spanning uniqueness
+//! - Guarantees no collisions within a session (no birthday bound)
+//! - Used by: lib-network consensus encryption (Counter starts at 0, increments per message)
+//! - Recommended for: validator-to-validator communication, high-traffic streams
 //!
-//! CURRENT APPROACH:
-//! - Uses unpredictable nonces from OS RNG
-//! - Suitable for mesh network usage patterns
-//! - Nonce embedded in ciphertext for transmission
-//! - Each message uses fresh nonce
+//! ## 3. Key rotation (fallback)
+//! - Rotate keys after ~1M messages (safety margin below birthday bound)
+//! - Implemented in lib-network/src/protocols/quic_mesh.rs
+//! - Keys rotated every 1 million messages or 24 hours
 //!
-//! RECOMMENDATIONS FOR PRODUCTION:
-//! - Monitor message counts per key
-//! - Implement key rotation at 10M messages (safety margin)
-//! - Use stateful counter for long-lived connections
-//! - See: docs/NONCE_MANAGEMENT.md
+//! # Function Reference
+//!
+//! **Random nonce functions (legacy):**
+//! - `encrypt_data()` / `decrypt_data()` - basic encryption
+//! - `encrypt_data_with_ad()` / `decrypt_data_with_ad()` - with associated data
+//!
+//! **Explicit nonce functions (preferred for stateful nonce counters):**
+//! - `encrypt_data_with_ad_nonce()` - caller provides 12-byte nonce
+//! - `decrypt_data_with_ad_nonce()` - caller provides 12-byte nonce
+//!
+//! **CRITICAL:** When using nonce functions, nonce MUST be unique per key.
+//! Reusing (key, nonce) breaks ChaCha20Poly1305 completely.
 
 use anyhow::Result;
 use chacha20poly1305::{

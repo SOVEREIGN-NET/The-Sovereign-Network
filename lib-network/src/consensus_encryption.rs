@@ -29,15 +29,23 @@
 //! Each is 32 bytes, per-direction, per-session, per-peer, protocol-bound.
 //! ```
 //!
-//! ## Nonce Strategy
+//! ## Nonce Strategy (CE-4: Guaranteed Uniqueness)
 //!
-//! - **Prefix**: 4-byte deterministic prefix per direction, derived from root
-//! - **Counter**: 8-byte monotonic counter per direction
+//! Each message uses a unique nonce, preventing nonce reuse attacks:
+//! - **Prefix**: 4-byte deterministic prefix per direction, derived from root using HKDF
+//! - **Counter**: 8-byte monotonic counter per direction, incremented on every encrypt
 //! - **Nonce**: prefix (4 bytes) || counter_le (8 bytes) = 96 bits total
 //!
+//! **Security guarantees:**
+//! - Counter is monotonic: starts at 0, increments by 1 for each message
+//! - Prefix prevents collision across session boundaries (even if counter resets to 0)
+//! - Within a session: every (key, nonce) pair is unique—no birthday bound collision risk
+//! - Across sessions: new handshake → new ConsensusAead instance → new prefix, counter resets
+//!
 //! State per session:
-//! - `send_counter`: u64 incremented on encrypt
-//! - Receive is stateless (nonce carried with ciphertext)
+//! - `send_counter`: Arc<AtomicU64> incremented atomically on each encrypt (atomic fetch_add)
+//! - Receive is stateless: nonce extracted from ciphertext, no replay window tracking
+//! - Nonce is ALWAYS passed to ChaCha20Poly1305 encryption (never uses random nonces)
 //!
 //! ## Wire Format
 //!
@@ -73,8 +81,11 @@
 //! - **Authenticity**: Poly1305 AEAD tag
 //! - **Forward Secrecy**: Per-session keys from ephemeral handshake nonces
 //! - **Post-Quantum Ready**: Works with hybrid session_key from PQC handshake
-//! - **Replay Protection**: Monotonic counters + AAD binding
-//! - **Context Binding**: AAD prevents cross-channel confusion
+//! - **Nonce Uniqueness**: Counter-based nonces guarantee no collisions within session (CE-4)
+//! - **Replay Protection**:
+//!   - Within session: unique nonce prevents same ciphertext replay
+//!   - Cross-session: new handshake creates new ConsensusAead with fresh keys + nonce prefix
+//! - **Context Binding**: AAD prevents cross-channel confusion (CE-5)
 //!
 //! # Usage
 //!
