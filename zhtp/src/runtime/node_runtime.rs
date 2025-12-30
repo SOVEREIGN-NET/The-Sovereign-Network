@@ -291,12 +291,34 @@ impl DefaultNodeRuntime {
         Self { role }
     }
 
+    /// Full validator - stores entire blockchain, participates in consensus
     pub fn full_validator() -> Self {
         Self::new(NodeRole::FullValidator)
     }
 
+    /// Light node - stores only headers + ZK proofs
     pub fn light_node() -> Self {
         Self::new(NodeRole::LightNode)
+    }
+
+    /// Mobile node - minimal storage, BLE-optimized
+    pub fn mobile_node() -> Self {
+        Self::new(NodeRole::MobileNode)
+    }
+
+    /// Bootstrap node - helps new nodes join the network
+    pub fn bootstrap_node() -> Self {
+        Self::new(NodeRole::BootstrapNode)
+    }
+
+    /// Observer node - validates but doesn't participate in consensus
+    pub fn observer() -> Self {
+        Self::new(NodeRole::Observer)
+    }
+
+    /// Archival node - stores all historical data
+    pub fn archival_node() -> Self {
+        Self::new(NodeRole::ArchivalNode)
     }
 }
 
@@ -356,11 +378,29 @@ impl NodeRuntime for DefaultNodeRuntime {
 
     async fn on_timer(&self, tick: Tick) -> Vec<NodeAction> {
         match tick {
-            Tick::ThirtySecond => {
-                // Every 30 seconds, maybe start a discovery loop
-                vec![NodeAction::DiscoverVia(DiscoveryProtocol::UdpMulticast)]
+            Tick::FiveSecond => {
+                // Every 5 seconds: light checks
+                // In future: check for stalled syncs, retry failed peers
+                vec![]
             }
-            _ => vec![],
+            Tick::ThirtySecond => {
+                // Every 30 seconds: discover peers via multicast/mDNS
+                vec![
+                    NodeAction::DiscoverVia(DiscoveryProtocol::UdpMulticast),
+                    NodeAction::DiscoverVia(DiscoveryProtocol::WiFiDirect),
+                ]
+            }
+            Tick::OneMinute => {
+                // Every minute: periodic maintenance
+                // Check peer health, prune bad peers, etc.
+                vec![]
+            }
+            Tick::FiveMinute => {
+                // Every 5 minutes: major decisions
+                // Peer promotion/demotion
+                // Rebalance sync load
+                vec![]
+            }
         }
     }
 
@@ -396,14 +436,40 @@ impl NodeRuntime for DefaultNodeRuntime {
         }
     }
 
-    fn should_sync_with(&self, _peer: &PeerInfo) -> bool {
-        // For now, sync with all discovered peers
-        // More sophisticated implementations can filter
-        true
+    fn should_sync_with(&self, peer: &PeerInfo) -> bool {
+        // Decision logic for whether to sync with a peer
+        // Based on node role and peer characteristics
+
+        match self.get_role() {
+            NodeRole::FullValidator | NodeRole::Observer => {
+                // Full nodes should sync with most peers
+                // Except those marked as unreliable (in real impl: check reputation)
+                true
+            }
+            NodeRole::LightNode | NodeRole::MobileNode => {
+                // Light nodes are selective - only sync with high-quality peers
+                // In production: check peer reputation, latency, block height
+                !peer.addresses.is_empty() // Must have at least one address
+            }
+            NodeRole::BootstrapNode => {
+                // Bootstrap nodes serve everyone
+                true
+            }
+            NodeRole::ArchivalNode => {
+                // Archival nodes want data from everywhere
+                true
+            }
+        }
     }
 
     fn should_retry(&self, _peer: &PublicKey, attempt: u32) -> bool {
-        // Exponential backoff: retry up to 5 times
-        attempt < 5
+        // Exponential backoff based on node role
+        let max_attempts = match self.get_role() {
+            NodeRole::BootstrapNode | NodeRole::FullValidator => 10,
+            NodeRole::Observer | NodeRole::ArchivalNode => 8,
+            NodeRole::LightNode | NodeRole::MobileNode => 3,
+        };
+
+        attempt < max_attempts
     }
 }
