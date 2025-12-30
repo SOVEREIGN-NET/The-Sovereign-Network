@@ -65,15 +65,16 @@
 //!     || protocol_id || 0x00
 //!     || codec_version || 0x00
 //!     || sender_did || 0x00
-//!     || receiver_did || 0x00
-//!     || direction_str
+//!     || receiver_did
 //! ```
+//!
+//! **Direction is implicit:** The sender→receiver ordering uniquely defines direction.
+//! AAD from A→B differs from B→A (different sender/receiver DIDs), preventing direction swaps.
 //!
 //! If any field changes, authentication fails. Prevents:
 //! - Cross-network replay
 //! - Cross-protocol replay
-//! - Sender/receiver swapping
-//! - Direction spoofing
+//! - Sender/receiver identity swapping
 //!
 //! # Security Properties
 //!
@@ -581,7 +582,12 @@ fn build_aad_base(network_id: &str, protocol_id: &str, codec_version: u8) -> Vec
 }
 
 /// Build full AAD including sender, receiver
-/// Sender and receiver implicitly define direction (sender→receiver)
+///
+/// Direction is implicit: sender→receiver ordering uniquely defines direction.
+/// AAD computed for A→B differs from B→A (different sender/receiver values),
+/// so explicit direction field is unnecessary for preventing direction spoofing.
+///
+/// Format: aad_base || 0x00 || sender_did || 0x00 || receiver_did
 fn build_full_aad(aad_base: &[u8], sender_did: &str, receiver_did: &str) -> Vec<u8> {
     let mut aad = Vec::new();
     aad.extend_from_slice(aad_base);
