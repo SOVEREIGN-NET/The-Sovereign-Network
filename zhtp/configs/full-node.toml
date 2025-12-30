@@ -44,7 +44,7 @@ pricing_tier = "hot"
 [network_config]
 mesh_port = 33444
 max_peers = 150  # Higher peer count for full nodes
-protocols = ["tcp", "bluetooth", "wifi_direct"]
+protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = ["100.94.204.6:9333", "bootstrap.sovereign.net:9333"]
 long_range_relays = false
 
