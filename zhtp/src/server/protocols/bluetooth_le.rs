@@ -17,7 +17,7 @@ use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use std::net::SocketAddr;
 use uuid::Uuid;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
 use lib_crypto::PublicKey;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
@@ -276,12 +276,31 @@ impl BluetoothRouter {
                                                     headers: serialized_headers,
                                                     start_height: *start_height,
                                                 };
-                                                
-                                                // Send response back via BLE
-                                                if let Err(e) = mesh_router_for_gatt.send_to_peer(requester, response).await {
-                                                    warn!("Failed to send HeadersResponse via GATT: {}", e);
-                                                } else {
-                                                    info!("✅ GATT: HeadersResponse sent successfully");
+
+                                                // ✅ TICKET 2.6 FIX: Route through MeshRouter with CORRECT sender identity
+                                                // CRITICAL CORRECTNESS: Sender MUST always be the local node, never the requester
+                                                // This ensures:
+                                                // - Identity verification is meaningful
+                                                // - Logs accurately reflect message provenance
+                                                // - Signatures and accountability are valid
+                                                match mesh_router_for_gatt.get_sender_public_key().await {
+                                                    Ok(our_pubkey) => {
+                                                        match mesh_router_for_gatt.send_with_routing(
+                                                            response,
+                                                            requester,
+                                                            &our_pubkey,
+                                                        ).await {
+                                                            Ok(msg_id) => {
+                                                                info!("✅ GATT: HeadersResponse routed successfully (ID: {}, destination verified)", msg_id);
+                                                            }
+                                                            Err(e) => {
+                                                                warn!("Failed to route HeadersResponse via MeshRouter: {}", e);
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        error!("FATAL: Cannot send HeadersResponse - local identity not available: {}", e);
+                                                    }
                                                 }
                                             }
                                             Err(e) => {

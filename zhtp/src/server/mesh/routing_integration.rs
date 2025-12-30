@@ -76,7 +76,7 @@ impl MeshRouter {
         message: ZhtpMeshMessage,
         destination: &PublicKey,
         sender: &PublicKey,
-    ) -> Result<u64> {
+    ) -> Result<u64, super::routing_errors::RoutingError> {
         debug!("🔀 Routing message to {} (type: {:?})",
                hex::encode(&destination.key_id[..8]),
                std::mem::discriminant(&message));
@@ -119,24 +119,21 @@ impl MeshRouter {
             VerificationResult::NotFound => {
                 error!("❌ Sender {} identity not found on blockchain - routing denied",
                        sender_peer.did());
-                return Err(anyhow::anyhow!(
-                    "Routing denied: sender identity {} not verified on blockchain",
-                    sender_peer.did()
+                return Err(super::routing_errors::RoutingError::identity_violation(
+                    format!("Sender identity {} not verified on blockchain", sender_peer.did())
                 ));
             }
             VerificationResult::InsufficientTrust => {
                 error!("❌ Sender {} has insufficient trust score - routing denied",
                        sender_peer.did());
-                return Err(anyhow::anyhow!(
-                    "Routing denied: sender {} has insufficient trust score",
-                    sender_peer.did()
+                return Err(super::routing_errors::RoutingError::identity_violation(
+                    format!("Sender {} has insufficient trust score", sender_peer.did())
                 ));
             }
             VerificationResult::Blocked => {
                 error!("🚫 Sender {} is blocked - routing denied", sender_peer.did());
-                return Err(anyhow::anyhow!(
-                    "Routing denied: sender {} is blocked",
-                    sender_peer.did()
+                return Err(super::routing_errors::RoutingError::identity_violation(
+                    format!("Sender {} is blocked", sender_peer.did())
                 ));
             }
         }
@@ -153,7 +150,9 @@ impl MeshRouter {
             Err(e) => {
                 warn!("❌ All routing attempts failed for {}: {}",
                       hex::encode(&destination.key_id[..8]), e);
-                Err(anyhow::anyhow!("Message routing failed: {}", e))
+                Err(super::routing_errors::RoutingError::transient(
+                    format!("Message routing failed: {}", e)
+                ))
             }
         }
     }
