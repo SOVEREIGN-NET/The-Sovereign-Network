@@ -2,6 +2,7 @@
 //!
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature};
@@ -15,8 +16,10 @@ use crate::types::*;
 use crate::validators::ValidatorManager;
 use crate::{ConsensusError, ConsensusResult};
 
-/// Main ZHTP consensus engine combining all mechanisms
-#[derive(Debug)]
+/// Main ZHTP consensus engine combining all consensus mechanisms
+///
+/// Debug is not derived because `MessageBroadcaster` is a trait object.
+/// Use tracing/logging at call sites instead.
 pub struct ConsensusEngine {
     /// Local validator identity
     validator_identity: Option<IdentityId>,
@@ -38,11 +41,22 @@ pub struct ConsensusEngine {
     byzantine_detector: ByzantineFaultDetector,
     /// Reward calculation system
     reward_calculator: RewardCalculator,
+    /// Message broadcaster for network distribution
+    ///
+    /// Invariant CE-ENG-1: ConsensusEngine never constructs, configures, or inspects
+    /// the broadcaster. It only calls it.
+    broadcaster: Arc<dyn MessageBroadcaster>,
 }
 
 impl ConsensusEngine {
     /// Create a new consensus engine
-    pub fn new(config: ConsensusConfig) -> ConsensusResult<Self> {
+    ///
+    /// Invariant CE-ENG-1: The broadcaster is dependency-injected.
+    /// No defaults. No globals. No feature flags.
+    pub fn new(
+        config: ConsensusConfig,
+        broadcaster: Arc<dyn MessageBroadcaster>,
+    ) -> ConsensusResult<Self> {
         let validator_manager = ValidatorManager::new_with_development_mode(
             config.max_validators,
             config.min_stake,
@@ -76,6 +90,7 @@ impl ConsensusEngine {
             dao_engine: DaoEngine::new(),
             byzantine_detector: ByzantineFaultDetector::new(),
             reward_calculator: RewardCalculator::new(),
+            broadcaster,
         })
     }
 
@@ -305,6 +320,18 @@ impl ConsensusEngine {
         Ok(())
     }
 
+    /// Get active validator IDs for the current round
+    ///
+    /// This is used when broadcasting to ensure the validator set is passed explicitly
+    /// rather than queried from network state (Invariant CE-ENG-5).
+    fn get_active_validator_ids(&self) -> Vec<IdentityId> {
+        self.validator_manager
+            .get_active_validators()
+            .iter()
+            .map(|v| v.identity.clone())
+            .collect()
+    }
+
     /// Advance to the next consensus round
     fn advance_to_next_round(&mut self) {
         self.current_round.height += 1;
@@ -331,6 +358,22 @@ impl ConsensusEngine {
             if Some(validator_id) == self.current_round.proposer.as_ref() {
                 let proposal = self.create_proposal().await?;
                 self.current_round.proposals.push(proposal.id.clone());
+
+                // Invariant CE-ENG-3: Broadcast after state transition, not before
+                // Create canonical ValidatorMessage from already-formed proposal
+                let msg = ValidatorMessage::Propose {
+                    proposal: proposal.clone(),
+                };
+
+                // Invariant CE-ENG-5: Pass validator set explicitly, never query network
+                let validator_ids = self.get_active_validator_ids();
+
+                // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
+                // Ignore delivery success - consensus correctness must not depend on it
+                let _telemetry = self.broadcaster
+                    .broadcast_to_validators(msg, &validator_ids)
+                    .await;
+
                 self.pending_proposals.push_back(proposal);
             }
         }
@@ -348,8 +391,21 @@ impl ConsensusEngine {
 
         // Cast prevote
         if let Some(proposal_id) = self.current_round.proposals.first() {
-            self.cast_vote(proposal_id.clone(), VoteType::PreVote)
+            let vote = self.cast_vote(proposal_id.clone(), VoteType::PreVote)
                 .await?;
+
+            // Invariant CE-ENG-3: Broadcast after state transition
+            // Create canonical ValidatorMessage from already-formed vote
+            let msg = ValidatorMessage::Vote { vote };
+
+            // Invariant CE-ENG-5: Pass validator set explicitly, never query network
+            let validator_ids = self.get_active_validator_ids();
+
+            // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
+            // Ignore delivery success - consensus correctness must not depend on it
+            let _telemetry = self.broadcaster
+                .broadcast_to_validators(msg, &validator_ids)
+                .await;
         }
 
         // Wait for prevotes with timeout
@@ -369,9 +425,22 @@ impl ConsensusEngine {
             let threshold = self.validator_manager.get_byzantine_threshold();
 
             if prevote_count >= threshold {
-                self.cast_vote(proposal_id.clone(), VoteType::PreCommit)
+                let vote = self.cast_vote(proposal_id.clone(), VoteType::PreCommit)
                     .await?;
                 self.current_round.valid_proposal = Some(proposal_id);
+
+                // Invariant CE-ENG-3: Broadcast after state transition
+                // Create canonical ValidatorMessage from already-formed vote
+                let msg = ValidatorMessage::Vote { vote };
+
+                // Invariant CE-ENG-5: Pass validator set explicitly, never query network
+                let validator_ids = self.get_active_validator_ids();
+
+                // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
+                // Ignore delivery success - consensus correctness must not depend on it
+                let _telemetry = self.broadcaster
+                    .broadcast_to_validators(msg, &validator_ids)
+                    .await;
             }
         }
 
@@ -392,7 +461,7 @@ impl ConsensusEngine {
             let threshold = self.validator_manager.get_byzantine_threshold();
 
             if precommit_count >= threshold {
-                self.cast_vote(proposal_id.clone(), VoteType::Commit)
+                let vote = self.cast_vote(proposal_id.clone(), VoteType::Commit)
                     .await?;
 
                 tracing::info!(
@@ -400,6 +469,19 @@ impl ConsensusEngine {
                     self.current_round.height,
                     proposal_id
                 );
+
+                // Invariant CE-ENG-3: Broadcast after state transition
+                // Create canonical ValidatorMessage from already-formed vote
+                let msg = ValidatorMessage::Vote { vote };
+
+                // Invariant CE-ENG-5: Pass validator set explicitly, never query network
+                let validator_ids = self.get_active_validator_ids();
+
+                // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
+                // Ignore delivery success - consensus correctness must not depend on it
+                let _telemetry = self.broadcaster
+                    .broadcast_to_validators(msg, &validator_ids)
+                    .await;
 
                 // Process the committed block
                 self.process_committed_block(&proposal_id).await?;
@@ -762,7 +844,10 @@ impl ConsensusEngine {
     }
 
     /// Cast a vote
-    async fn cast_vote(&mut self, proposal_id: Hash, vote_type: VoteType) -> ConsensusResult<()> {
+    ///
+    /// Returns the created vote so that the caller can broadcast it.
+    /// Invariant CE-ENG-3: Broadcast happens after this state transition.
+    async fn cast_vote(&mut self, proposal_id: Hash, vote_type: VoteType) -> ConsensusResult<ConsensusVote> {
         let validator_id = self
             .validator_identity
             .as_ref()
@@ -810,7 +895,7 @@ impl ConsensusEngine {
         self.vote_pool
             .entry(self.current_round.height)
             .or_insert_with(HashMap::new)
-            .insert(vote.id.clone(), vote);
+            .insert(vote.id.clone(), vote.clone());
 
         // Update validator activity
         self.validator_manager
@@ -823,7 +908,7 @@ impl ConsensusEngine {
             validator_id
         );
 
-        Ok(())
+        Ok(vote)
     }
 
     /// Serialize vote data for signing
@@ -1146,3 +1231,407 @@ impl ConsensusEngine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Mock message broadcaster for testing
+    ///
+    /// Tracks all broadcast calls and message types without side effects.
+    /// This is used to verify that the consensus engine broadcasts
+    /// the correct messages at the correct phases.
+    #[derive(Debug)]
+    struct MockMessageBroadcaster {
+        /// All broadcast calls in order
+        broadcasts: Mutex<Vec<BroadcastCall>>,
+    }
+
+    #[derive(Debug)]
+    struct BroadcastCall {
+        message: ValidatorMessage,
+        validator_ids: Vec<IdentityId>,
+    }
+
+    impl MockMessageBroadcaster {
+        fn new() -> Self {
+            Self {
+                broadcasts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn get_broadcasts(&self) -> Vec<BroadcastCall> {
+            self.broadcasts.lock().unwrap().clone()
+        }
+
+        fn count_broadcasts(&self) -> usize {
+            self.broadcasts.lock().unwrap().len()
+        }
+
+        fn count_message_type(&self, predicate: impl Fn(&ValidatorMessage) -> bool) -> usize {
+            self.broadcasts
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|call| predicate(&call.message))
+                .count()
+        }
+
+        fn has_propose_message(&self) -> bool {
+            self.broadcasts
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|call| matches!(call.message, ValidatorMessage::Propose { .. }))
+        }
+
+        fn has_vote_message(&self) -> bool {
+            self.broadcasts
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|call| matches!(call.message, ValidatorMessage::Vote { .. }))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MessageBroadcaster for MockMessageBroadcaster {
+        async fn broadcast_to_validators(
+            &self,
+            message: ValidatorMessage,
+            validator_ids: &[IdentityId],
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            self.broadcasts.lock().unwrap().push(BroadcastCall {
+                message,
+                validator_ids: validator_ids.to_vec(),
+            });
+            Ok(())
+        }
+    }
+
+    impl Clone for BroadcastCall {
+        fn clone(&self) -> Self {
+            // Manually clone since ValidatorMessage contains dyn trait types
+            let message = match &self.message {
+                ValidatorMessage::Propose { proposal } => {
+                    ValidatorMessage::Propose { proposal: proposal.clone() }
+                }
+                ValidatorMessage::Vote { vote } => {
+                    ValidatorMessage::Vote { vote: vote.clone() }
+                }
+                ValidatorMessage::Commit { proposal_id, height, round } => {
+                    ValidatorMessage::Commit {
+                        proposal_id: proposal_id.clone(),
+                        height: *height,
+                        round: *round,
+                    }
+                }
+            };
+            Self {
+                message,
+                validator_ids: self.validator_ids.clone(),
+            }
+        }
+    }
+
+    fn test_validator_id(id: u8) -> IdentityId {
+        // Create a deterministic test validator ID from a single byte
+        // by repeating it 32 times to match Hash::from_bytes signature
+        lib_crypto::Hash::from_bytes(&[id; 32])
+    }
+
+    #[tokio::test]
+    async fn test_consensus_engine_creation_with_broadcaster() {
+        let config = ConsensusConfig::default();
+        let mock_broadcaster: Arc<dyn MessageBroadcaster> =
+            Arc::new(MockMessageBroadcaster::new());
+        let result = ConsensusEngine::new(config, mock_broadcaster);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_proposal_broadcast_in_propose_phase() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let mock_broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster: Arc<dyn MessageBroadcaster> = Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
+        let mut engine = ConsensusEngine::new(config, broadcaster)
+            .expect("Failed to create consensus engine");
+
+        // Register as validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        // Set as proposer (needed to create a proposal)
+        engine.current_round.proposer = Some(validator_id.clone());
+        engine.validator_identity = Some(validator_id);
+
+        // Run propose step
+        engine.run_propose_step().await.expect("Failed to run propose step");
+
+        // Verify proposal was broadcast
+        let broadcasts = mock_broadcaster.get_broadcasts();
+        assert!(
+            broadcasts.len() > 0,
+            "Expected at least one broadcast in propose phase"
+        );
+
+        // Verify it's a propose message
+        assert!(
+            broadcasts.iter().any(|call| matches!(call.message, ValidatorMessage::Propose { .. })),
+            "Expected ValidatorMessage::Propose variant"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vote_broadcast_in_prevote_phase() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let mock_broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster: Arc<dyn MessageBroadcaster> = Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
+        let mut engine = ConsensusEngine::new(config, broadcaster)
+            .expect("Failed to create consensus engine");
+
+        // Register as validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        // Create a proposal to vote on
+        let proposal = engine.create_proposal().await.expect("Failed to create proposal");
+        engine.current_round.proposals.push(proposal.id.clone());
+
+        // Run prevote step
+        engine.run_prevote_step().await.expect("Failed to run prevote step");
+
+        // Verify vote was broadcast
+        let broadcasts = mock_broadcaster.get_broadcasts();
+        assert!(
+            broadcasts.len() > 0,
+            "Expected at least one broadcast in prevote phase"
+        );
+
+        // Verify it's a vote message
+        assert!(
+            broadcasts.iter().any(|call| matches!(call.message, ValidatorMessage::Vote { .. })),
+            "Expected ValidatorMessage::Vote variant"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validator_set_passed_to_broadcaster() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let mock_broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster: Arc<dyn MessageBroadcaster> = Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
+        let mut engine = ConsensusEngine::new(config, broadcaster)
+            .expect("Failed to create consensus engine");
+
+        // Register multiple validators
+        let validator_ids: Vec<_> = (0..3)
+            .map(|i| test_validator_id(i))
+            .collect();
+
+        for id in &validator_ids {
+            engine
+                .register_validator(
+                    id.clone(),
+                    10_000_000_000,
+                    100 * 1024 * 1024 * 1024,
+                    vec![42u8; 32],
+                    5,
+                    true,
+                )
+                .await
+                .expect("Failed to register validator");
+        }
+
+        // Create a proposal to vote on
+        engine.current_round.proposer = Some(validator_ids[0].clone());
+        engine.validator_identity = Some(validator_ids[0].clone());
+        let proposal = engine.create_proposal().await.expect("Failed to create proposal");
+        engine.current_round.proposals.push(proposal.id.clone());
+
+        // Run prevote step
+        engine.run_prevote_step().await.expect("Failed to run prevote step");
+
+        // Verify validator set was passed to broadcaster
+        let broadcasts = mock_broadcaster.get_broadcasts();
+        assert!(broadcasts.len() > 0, "Expected broadcasts");
+
+        for call in broadcasts {
+            assert!(
+                !call.validator_ids.is_empty(),
+                "Expected validator IDs to be passed to broadcaster"
+            );
+            // All registered validators should be in the list
+            assert!(
+                call.validator_ids.len() >= 3,
+                "Expected all validators to be in broadcast recipient list"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_failure_does_not_affect_consensus() {
+        /// Mock broadcaster that always fails
+        struct FailingBroadcaster;
+
+        #[async_trait::async_trait]
+        impl MessageBroadcaster for FailingBroadcaster {
+            async fn broadcast_to_validators(
+                &self,
+                _message: ValidatorMessage,
+                _validator_ids: &[IdentityId],
+            ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                Err("Network error".into())
+            }
+        }
+
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(FailingBroadcaster);
+        let mut engine =
+            ConsensusEngine::new(config, broadcaster).expect("Failed to create consensus engine");
+
+        // Register as validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        // Create a proposal to vote on
+        let proposal = engine.create_proposal().await.expect("Failed to create proposal");
+        engine.current_round.proposals.push(proposal.id.clone());
+
+        // Run prevote step - should not fail even though broadcaster fails
+        let result = engine.run_prevote_step().await;
+        assert!(
+            result.is_ok(),
+            "Prevote step should succeed even if broadcast fails"
+        );
+
+        // Vote should still be in the vote pool
+        let votes = engine.vote_pool.get(&engine.current_round.height);
+        assert!(votes.is_some(), "Vote should be stored even if broadcast fails");
+    }
+
+    #[tokio::test]
+    async fn test_proposal_only_broadcast_when_proposer() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let mock_broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster: Arc<dyn MessageBroadcaster> = Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
+        let mut engine = ConsensusEngine::new(config, broadcaster)
+            .expect("Failed to create consensus engine");
+
+        // Register as validator but don't make it the proposer
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        // Set a different validator as proposer
+        engine.current_round.proposer = Some(test_validator_id(2));
+
+        // Run propose step
+        engine.run_propose_step().await.expect("Failed to run propose step");
+
+        // Verify no proposal was broadcast
+        assert_eq!(
+            mock_broadcaster.count_broadcasts(),
+            0,
+            "Proposal should not be broadcast if not proposer"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multiple_phases_produce_multiple_broadcasts() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let mock_broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster: Arc<dyn MessageBroadcaster> = Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
+        let mut engine = ConsensusEngine::new(config, broadcaster)
+            .expect("Failed to create consensus engine");
+
+        // Register as validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        // Set as proposer
+        engine.current_round.proposer = Some(validator_id.clone());
+        engine.validator_identity = Some(validator_id);
+
+        // Run propose step - should broadcast proposal
+        engine.run_propose_step().await.expect("Failed to run propose step");
+        let broadcasts_after_propose = mock_broadcaster.count_broadcasts();
+        assert!(broadcasts_after_propose > 0, "Expected broadcast in propose phase");
+
+        // Run prevote step - should broadcast vote
+        engine.run_prevote_step().await.expect("Failed to run prevote step");
+        let broadcasts_after_prevote = mock_broadcaster.count_broadcasts();
+        assert!(
+            broadcasts_after_prevote > broadcasts_after_propose,
+            "Expected additional broadcast in prevote phase"
+        );
+    }
+}
+

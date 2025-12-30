@@ -1,5 +1,6 @@
 //! Core types for ZHTP consensus system
 
+use async_trait::async_trait;
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_identity::IdentityId;
 use serde::{Deserialize, Serialize};
@@ -290,4 +291,70 @@ pub enum ConsensusEvent {
     ProposalReceived { proposal: ConsensusProposal },
     /// Vote received
     VoteReceived { vote: ConsensusVote },
+}
+
+/// Canonical validator message for network broadcast
+///
+/// Invariant CE-ENG-2: ConsensusEngine broadcasts only signed, canonical ValidatorMessages.
+/// It never broadcasts raw Vote, Proposal, or internal structs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ValidatorMessage {
+    /// Proposal message for new block
+    Propose {
+        proposal: ConsensusProposal,
+    },
+    /// Vote message (PreVote, PreCommit, or Commit)
+    Vote {
+        vote: ConsensusVote,
+    },
+    /// Commit message (aggregated commitment)
+    Commit {
+        proposal_id: Hash,
+        height: u64,
+        round: u32,
+    },
+}
+
+/// Message broadcaster trait for network distribution
+///
+/// This trait handles peer-to-peer message distribution.
+/// The consensus engine dependency-injects this and calls it as a side effect
+/// after state transitions, treating it as best-effort telemetry.
+///
+/// **Invariant CE-ENG-1**: The consensus engine never constructs, configures, or inspects
+/// the broadcaster. It only calls it.
+///
+/// **Invariant CE-ENG-2**: ConsensusEngine broadcasts only signed, canonical ValidatorMessages.
+/// It never broadcasts raw Vote, Proposal, or internal structs.
+///
+/// **Invariant CE-ENG-3**: Broadcast is a side-effect of a completed consensus step, never a prerequisite.
+/// This preserves determinism and replayability.
+///
+/// **Invariant CE-ENG-4**: Consensus correctness MUST NOT depend on broadcast success, failure,
+/// or reachability. No retries. No quorum checks. No "if delivered < X then…".
+/// All liveness logic belongs elsewhere (timeouts, view change).
+///
+/// **Invariant CE-ENG-5**: ConsensusEngine never queries network state to determine "who to send to".
+/// The network delivers; consensus decides authority. Validator set is passed explicitly.
+///
+/// **Invariant CE-ENG-6**: Side-effect isolation. Broadcasting is the only external side-effect
+/// ConsensusEngine performs. Everything else stays in memory or storage.
+///
+/// **Invariant CE-ENG-7**: Deterministic emission. Given the same inputs, ConsensusEngine must emit
+/// the same sequence of ValidatorMessages, regardless of network behavior. This is what makes
+/// simulation and replay possible.
+#[async_trait]
+pub trait MessageBroadcaster: Send + Sync {
+    /// Broadcast message to all validators in the given validator set
+    ///
+    /// Invariant CE-ENG-5: ConsensusEngine passes validator set explicitly.
+    /// It never queries network state to determine "who to send to".
+    ///
+    /// Invariant CE-ENG-4: Consensus correctness MUST NOT depend on broadcast success,
+    /// failure, or reachability. This is best-effort telemetry only.
+    async fn broadcast_to_validators(
+        &self,
+        message: ValidatorMessage,
+        validator_ids: &[IdentityId],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
