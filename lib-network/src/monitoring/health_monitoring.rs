@@ -8,8 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::{info, warn};
-use crate::identity::unified_peer::UnifiedPeerId;
-use crate::mesh::{MeshConnection, MeshProtocolStats};
+use crate::mesh::MeshProtocolStats;
 use crate::relays::LongRangeRelay;
 
 /// Network health monitoring system

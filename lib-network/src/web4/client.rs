@@ -36,7 +36,7 @@ use quinn::{Endpoint, Connection, ClientConfig};
 
 use lib_identity::ZhtpIdentity;
 use lib_protocols::wire::{
-    ZhtpRequestWire, ZhtpResponseWire,
+    ZhtpRequestWire,
     read_response, write_request,
 };
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod};

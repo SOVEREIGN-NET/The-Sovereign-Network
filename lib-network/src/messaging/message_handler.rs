@@ -13,7 +13,6 @@ use lib_crypto::PublicKey;
 
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::protocols::NetworkProtocol;
-use crate::mesh::connection::MeshConnection;
 use crate::identity::unified_peer::UnifiedPeerId;
 
 use crate::relays::LongRangeRelay;
@@ -222,6 +221,13 @@ impl MeshMessageHandler {
             ZhtpMeshMessage::DhtGenericPayload { requester, payload, signature } => {
                 // Ticket #154: Handle generic DHT payload routed through mesh network
                 self.handle_dht_generic_payload(requester, payload, signature).await?;
+            },
+            ZhtpMeshMessage::ValidatorMessage(_msg) => {
+                // Consensus validator messages are routed through the mesh layer
+                // but handled by the consensus layer, not here. Just log receipt.
+                tracing::debug!("Received ValidatorMessage from peer {:?}",
+                    hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
+                );
             },
         }
         Ok(())

@@ -71,8 +71,6 @@ impl std::fmt::Debug for WiFiDirectEncryptionState {
 // ============================================================================
 
 mod core {
-    use super::*;
-
     /// Build AAD (Associated Authenticated Data) for domain separation
     ///
     /// Format: `wifi-direct\0v1\0<message_type>`

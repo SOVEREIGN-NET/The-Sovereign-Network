@@ -176,7 +176,7 @@ impl ZkConsensusIntegration {
     }
     
     /// Verify work proof without revealing work details
-    pub async fn verify_work_proof_zk(&self, proof: &ZkProof, commitment: &[u8; 8]) -> Result<bool> {
+    pub async fn verify_work_proof_zk(&self, proof: &ZkProof, _commitment: &[u8; 8]) -> Result<bool> {
         // Verify the ZK proof of work using range proof verification
         if let Some(plonky2_proof) = &proof.plonky2_proof {
             return self.zk_system.verify_range(plonky2_proof);

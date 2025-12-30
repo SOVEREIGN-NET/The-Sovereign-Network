@@ -96,7 +96,7 @@ impl RewardCalculator {
         let base_reward = (self.base_reward as f64 * stake_factor) as u64;
 
         // Optional storage bonus (only if validator provides storage)
-        let storage_bonus = if validator.storage_provided > 0 {
+        let _storage_bonus = if validator.storage_provided > 0 {
             let storage_gb = validator.storage_provided as f64 / (1024.0 * 1024.0 * 1024.0);
             (base_reward as f64 * 0.1 * storage_gb.ln().max(0.0)).min(base_reward as f64 * 0.2) as u64
         } else {

@@ -62,16 +62,13 @@ use lib_crypto::kdf::hkdf::hkdf_sha3;
 use lib_crypto::post_quantum::kyber::{kyber512_keypair, kyber512_encapsulate, kyber512_decapsulate};
 use crate::handshake::{
     ClientHello, ServerHello, ClientFinish, HandshakeContext, HandshakeResult,
-    HandshakeCapabilities, PqcCapability, HandshakeRole, HandshakeSessionInfo,
+    HandshakeCapabilities, PqcCapability, HandshakeSessionInfo,
 };
 use quinn::Connection;
 use tokio::time::{timeout, Duration};
 use serde::{Serialize, Deserialize};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use zeroize::Zeroize;
-
-// Use consistent message size limit
-use crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE;
 
 /// Maximum QUIC handshake message size (16 KB - more constrained than general UHP)
 /// QUIC handshake should be lean; 16KB is more than enough for identity + capabilities

@@ -64,7 +64,7 @@ pub use crate::handshake::{
     HandshakeContext, HandshakeResult, HandshakeCapabilities,
     ClientHello, ServerHello, ClientFinish,
     HandshakeMessage, HandshakePayload,
-    NonceCache, NegotiatedCapabilities, HandshakeRole, HandshakeSessionInfo,
+    NonceCache, NegotiatedCapabilities, HandshakeSessionInfo,
     derive_channel_binding_from_addrs,
 };
 use lib_crypto::KeyPair;

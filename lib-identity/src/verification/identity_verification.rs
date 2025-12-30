@@ -309,7 +309,6 @@ impl IdentityVerifier {
     /// - Challenge response: identity must sign the challenge with its Dilithium key
     /// - Quantum resistance: verifies the key is a valid post-quantum algorithm (Dilithium)
     async fn verify_cryptographic_identity(&mut self, identity: &ZhtpIdentity) -> Result<CryptoVerificationResult, Box<dyn std::error::Error>> {
-        use lib_crypto::post_quantum::dilithium::{dilithium2_verify, dilithium5_verify};
 
         // Generate challenge for signature verification
         let challenge = self.generate_verification_challenge().await?;

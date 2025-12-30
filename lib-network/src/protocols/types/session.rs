@@ -531,7 +531,7 @@ impl ProtocolSession {
         created_at: u64,
         mac_key: &[u8; 32],
     ) -> SessionMac {
-        use sha2::{Sha256, Digest};
+        use sha2::Sha256;
         use hmac::{Hmac, Mac};
 
         type HmacSha256 = Hmac<Sha256>;

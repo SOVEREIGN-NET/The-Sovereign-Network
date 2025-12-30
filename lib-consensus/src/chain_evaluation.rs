@@ -378,7 +378,7 @@ impl ChainEvaluator {
 
     /// Check if imported chain has unique content worth preserving
     /// Used when local chain is longer but imported has valuable data
-    fn has_unique_content(local: &ChainSummary, imported: &ChainSummary) -> bool {
+    fn has_unique_content(_local: &ChainSummary, imported: &ChainSummary) -> bool {
         // If imported chain has any unique identities, wallets, contracts, or UTXOs
         // that might not exist in the longer local chain, return true
         

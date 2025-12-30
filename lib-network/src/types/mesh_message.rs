@@ -57,6 +57,9 @@ pub enum MessageType {
     DhtPing = 26,
     DhtPong = 27,
     DhtGenericPayload = 28,
+    /// Opaque consensus message (Proposal, Vote, Commit, RoundChange, or Heartbeat)
+    /// lib-network treats this as opaque bytes and never interprets message kind
+    ConsensusMessage = 29,
 }
 
 /// Message envelope for multi-hop routing
@@ -636,6 +639,10 @@ pub enum ZhtpMeshMessage {
         payload: Vec<u8>, // Bincode-serialized DhtMessage
         signature: Vec<u8>, // ED25519 signature of (requester + payload)
     },
+
+    /// Consensus validator message (Proposal, Vote, Commit, etc.)
+    /// Fully signed and validated by consensus layer before transmission
+    ValidatorMessage(lib_consensus::validators::ValidatorMessage),
 }
 
 impl ZhtpMeshMessage {
@@ -732,6 +739,12 @@ impl ZhtpMeshMessage {
             },
             Self::DhtGenericPayload { requester, payload, signature } => {
                 (MessageType::DhtGenericPayload, bincode::serialize(&(requester, payload, signature))?)
+            },
+            Self::ValidatorMessage(msg) => {
+                // INVARIANT MB-1/MB-7: Treat as opaque bytes
+                // lib-network never branches on message kind (Propose, Vote, etc.)
+                // That's a consensus-layer concern, not networking's
+                (MessageType::ConsensusMessage, bincode::serialize(&msg)?)
             },
         };
         Ok((msg_type, payload))
@@ -875,6 +888,13 @@ impl ZhtpMeshMessage {
             MessageType::DhtGenericPayload => {
                 let (requester, payload, signature) = bincode::deserialize(payload)?;
                 Self::DhtGenericPayload { requester, payload, signature }
+            },
+            MessageType::ConsensusMessage => {
+                // INVARIANT MB-1/MB-7: Treat as opaque bytes
+                // lib-network never branches on message kind (Propose, Vote, etc.)
+                // That's a consensus-layer concern, not networking's
+                let msg = bincode::deserialize(payload)?;
+                Self::ValidatorMessage(msg)
             },
         };
         Ok(message)

@@ -44,8 +44,6 @@ use tracing::debug;
 // ============================================================================
 
 mod core {
-    use super::*;
-
     /// Build AAD (Associated Authenticated Data) for domain separation
     ///
     /// Format: `quic\0v1\0<message_type>\0<session_id>`

@@ -28,19 +28,16 @@
 use super::{
     ClientHello, ServerHello, ClientFinish, HandshakeMessage, HandshakePayload,
     HandshakeContext, HandshakeResult, HandshakeSessionInfo, HandshakeRole,
-    NodeIdentity, HandshakeCapabilities,
-    PqcHandshakeState, decapsulate_pqc, verify_pqc_offer,
+    HandshakeCapabilities,
+    decapsulate_pqc, verify_pqc_offer,
 };
-use anyhow::{Result, anyhow, Context};
+use anyhow::{Result, anyhow};
 use lib_identity::ZhtpIdentity;
 use lib_crypto::KeyPair;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 
 // Use orchestrator helpers to reduce duplication
 use crate::handshake::orchestrator::{extract_payload, check_for_error};
-
-// SECURITY (P1-2 FIX): Use shared constant for message size limit
-use crate::constants::MAX_HANDSHAKE_MESSAGE_SIZE;
 
 // ============================================================================
 // Error Types

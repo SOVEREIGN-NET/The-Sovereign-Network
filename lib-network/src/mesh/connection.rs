@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use lib_crypto::PublicKey;
 use crate::protocols::NetworkProtocol;
 use crate::identity::unified_peer::UnifiedPeerId;
 

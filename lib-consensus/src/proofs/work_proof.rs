@@ -40,8 +40,8 @@ impl WorkProof {
         routing_work: u64,
         storage_work: u64,
         compute_work: u64,
-        timestamp: u64,
-        node_id: [u8; 32],
+        _timestamp: u64,
+        _node_id: [u8; 32],
     ) -> Result<Self> {
         // Calculate quality score based on work distribution
         let total_work = routing_work + storage_work + compute_work;

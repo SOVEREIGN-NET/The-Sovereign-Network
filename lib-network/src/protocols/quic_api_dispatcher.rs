@@ -25,7 +25,7 @@ use anyhow::{anyhow, Result, Context};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, debug, warn, error};
+use tracing::{info, debug, warn};
 
 use quinn::{Endpoint, Connection};
 
@@ -49,8 +49,8 @@ pub struct VerifiedPrincipal {
     pub sequence: Option<u64>,
 }
 
-use crate::handshake::{HandshakeContext, NonceCache};
-use crate::protocols::quic_handshake::{self, QuicHandshakeResult};
+use crate::handshake::HandshakeContext;
+use crate::protocols::quic_handshake;
 
 /// Handler function type for processing ZHTP requests
 ///

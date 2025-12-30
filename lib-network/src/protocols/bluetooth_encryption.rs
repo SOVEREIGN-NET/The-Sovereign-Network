@@ -34,12 +34,12 @@
 //! - **Versioning**: Wire format version field for future compatibility
 
 use crate::encryption::{ProtocolEncryption, EncryptionStats};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::debug;
 
 const PROTOCOL_VERSION: u8 = 0x01;
 const NONCE_SIZE: usize = 12;

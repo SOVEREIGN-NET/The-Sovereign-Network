@@ -142,8 +142,8 @@
 //!
 //! Suitable for all mesh protocols including low-power LoRaWAN devices.
 
-use anyhow::{Result, Context as AnyhowContext};
-use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data, encrypt_data_with_ad, decrypt_data_with_ad};
+use anyhow::{Result, Context};
+use lib_crypto::symmetric::chacha20::{encrypt_data_with_ad, decrypt_data_with_ad};
 use serde::{Serialize, Deserialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
