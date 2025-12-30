@@ -10,7 +10,6 @@ use serde_json;
 use lib_crypto::{PublicKey, Signature};
 use crate::mesh::{MeshConnection, MeshProtocolStats};
 use crate::protocols::NetworkProtocol;
-use crate::identity::unified_peer::UnifiedPeerId;
 
 /// Simple in-memory routing statistics (no blockchain state)
 #[derive(Debug, Clone, Default)]

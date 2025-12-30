@@ -60,7 +60,7 @@ impl ByzantineFaultDetector {
     }
 
     /// Detect Byzantine faults among validators
-    pub fn detect_faults(&mut self, validator_manager: &ValidatorManager) -> Result<Vec<ByzantineFault>> {
+    pub fn detect_faults(&mut self, _validator_manager: &ValidatorManager) -> Result<Vec<ByzantineFault>> {
         let mut detected_faults = Vec::new();
 
         // Check for double signing

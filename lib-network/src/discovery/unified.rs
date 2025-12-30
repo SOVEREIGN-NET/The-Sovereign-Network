@@ -39,16 +39,16 @@
 //! - Exposes node to potentially malicious services
 //! - Multicast discovery is the proper protocol-aware method
 
-use anyhow::{Result, Context, anyhow};
+use anyhow::{Result, anyhow, Context};
 use lib_crypto::PublicKey;
 use lib_identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 

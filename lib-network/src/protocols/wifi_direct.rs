@@ -2,14 +2,14 @@
 //!
 //! Handles WiFi Direct mesh networking for medium-range peer connections
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
-use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data};
+use lib_crypto::symmetric::chacha20::encrypt_data;
 use crate::network_utils::get_local_ip;
 
 // Enhanced WiFi Direct implementations with cross-platform support

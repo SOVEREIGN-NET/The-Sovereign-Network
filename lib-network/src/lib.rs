@@ -52,6 +52,12 @@ pub use crate::encryption::{
     EncryptionStats, create_encryption,
 };
 
+// Consensus message broadcaster for validator communication
+pub use crate::message_broadcaster::{
+    MessageBroadcaster, MeshMessageBroadcaster, MockMessageBroadcaster,
+    BroadcastResult,
+};
+
 // Network utilities
 pub mod network_utils;
 pub use crate::network_utils::{get_local_ip, get_local_ip_with_config, LocalIpConfig};
@@ -72,6 +78,7 @@ pub mod peer_registry; // Unified peer registry (single source of truth)
 pub mod client; // Authenticated QUIC client for control-plane operations
 pub mod handshake; // Unified Handshake Protocol (UHP)
 pub mod encryption; // Unified protocol encryption
+pub mod message_broadcaster; // Consensus message broadcaster trait
 pub mod constants; // Protocol constants
 pub mod monitoring;
 pub mod zk_integration;
@@ -187,5 +194,3 @@ pub use anyhow::{Result, Error};
 pub use serde::{Deserialize, Serialize};
 pub use tokio;
 pub use uuid::Uuid;
-
-use tracing::info;
