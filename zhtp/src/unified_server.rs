@@ -229,7 +229,7 @@ impl ZhtpUnifiedServer {
                 "IDENTITY BOOTSTRAP FAILED: No keystore identity found at {:?}\n\
                  Identity continuity is required for blockchain accountability.\n\
                  This is a configuration error - restore your keystore or:\n\
-                 - In development: Rebuild with debug profile (cargo build) or set ZHTP_EPHEMERAL=true\n\
+                 - In development: Use a release build or set ZHTP_EPHEMERAL=true\n\
                  - In production: Never use ephemeral identities - restore your keystore",
                 keystore_path
             ));
