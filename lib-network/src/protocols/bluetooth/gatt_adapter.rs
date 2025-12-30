@@ -9,6 +9,7 @@ use std::io;
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use futures::FutureExt;
 
 use super::gatt_stream::GattStream;
 
