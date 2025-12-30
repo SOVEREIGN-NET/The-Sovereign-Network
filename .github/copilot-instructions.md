@@ -113,7 +113,7 @@ DISABLE_BLUETOOTH=1 ./target/release/zhtp node start --network testnet
    - See lib-identity for implementation details
 
 2. **Versioned Proofs:**
-   - All proofs use `ProofEnvelope` with version markers
+   - All proofs use the `ZkProof` structure (see `lib-proofs/src/types/zk_proof.rs`) with version markers
    - Current: V0 (legacy wrapper)
    - Planned: V1 (typed/governed proofs)
    - See lib-proofs for implementation
