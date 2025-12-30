@@ -37,7 +37,7 @@ pricing_tier = "hot"
 [network_config]
 mesh_port = 9003
 max_peers = 50
-protocols = ["tcp", "bluetooth", "wifi_direct"]
+protocols = ["tcp", "quic", "bluetooth", "wifi_direct"]
 bootstrap_peers = ["127.0.0.1:9001"]  # Connect to Node 1
 long_range_relays = false
 

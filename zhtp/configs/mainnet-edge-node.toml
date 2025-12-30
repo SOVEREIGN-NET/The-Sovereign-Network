@@ -39,7 +39,7 @@ pricing_tier = "archive"  # Cheapest tier
 [network_config]
 mesh_port = 33446  # Mainnet mesh port
 max_peers = 30    # Low peer count for edge devices
-protocols = ["bluetooth", "wifi_direct"]  # Mesh protocols only
+protocols = ["bluetooth", "wifi_direct", "quic"]  # Mesh protocols with required QUIC
 bootstrap_peers = [
     "mainnet-seed1.sovereign.net:9333",
     "mainnet-seed2.sovereign.net:9333"
