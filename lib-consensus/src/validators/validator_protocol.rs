@@ -542,7 +542,7 @@ impl ValidatorProtocol {
     // Private helper methods
 
     /// Broadcast message to all connected validators
-    async fn broadcast_message(&self, message: ValidatorMessage) -> Result<()> {
+    async fn broadcast_message(&self, _message: ValidatorMessage) -> Result<()> {
         let connections = self.peer_connections.read().await;
         let active_peers: Vec<_> = connections
             .values()

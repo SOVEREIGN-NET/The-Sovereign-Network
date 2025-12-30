@@ -155,7 +155,7 @@ impl DaoEngine {
         voter: IdentityId,
         proposal_id: Hash,
         vote_choice: DaoVoteChoice,
-        justification: Option<String>,
+        _justification: Option<String>,
     ) -> Result<Hash> {
         // Check if user has already voted (use local cache)
         if let Some(user_votes) = self.vote_tracking.get(&proposal_id) {

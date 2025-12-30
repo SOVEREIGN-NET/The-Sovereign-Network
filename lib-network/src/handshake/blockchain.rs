@@ -60,7 +60,7 @@
 //!   |<== Secure + Validated Session ===> |
 //! ```
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use lib_crypto::Hash;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};

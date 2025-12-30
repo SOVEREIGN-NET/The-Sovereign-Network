@@ -3,7 +3,7 @@
 //! Intelligently selects optimal peers based on proximity, performance, and network conditions
 
 use anyhow::Result;
-use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{SocketAddr, IpAddr, Ipv6Addr};
 use std::collections::HashMap;
 use tracing::{info, debug};
 use crate::network_utils::get_local_ip;

@@ -5,7 +5,6 @@
 
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
-use rand::RngCore;
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_proofs::ZeroKnowledgeProof;
 
@@ -561,7 +560,7 @@ impl IdentityManager {
         }
         
         // Derive identity from recovery phrase
-        let (identity_id, private_key_bytes, public_key, seed) = recovery_manager.restore_from_phrase(&phrase_words).await?;
+        let (identity_id, private_key_bytes, public_key, _seed) = recovery_manager.restore_from_phrase(&phrase_words).await?;
 
         // Wrap in PrivateKey struct
         let private_key = lib_crypto::PrivateKey {

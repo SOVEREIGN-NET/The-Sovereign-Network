@@ -37,14 +37,13 @@
 
 use crate::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption, EncryptionStats};
 use anyhow::Result;
-use tracing::{debug, warn};
+use tracing::debug;
 
 // ============================================================================
 // FUNCTIONAL CORE: Pure Cryptography
 // ============================================================================
 
 mod core {
-    use super::*;
 
     /// Build AAD (Associated Authenticated Data) for domain separation
     ///

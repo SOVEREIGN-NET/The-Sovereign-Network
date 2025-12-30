@@ -11,7 +11,7 @@
 
 use anyhow::Result;
 use crate::handshake::{HandshakeMessage, HandshakePayload};
-use crate::handshake::core::{HandshakeIoError, send_message, recv_message};
+use crate::handshake::core::HandshakeIoError;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 // Re-export commonly used types
