@@ -31,29 +31,15 @@ pub struct TimerToken {
 
 impl TimerToken {
     pub fn new(height: u64, round: u32, step: &ConsensusStep) -> Self {
-        let step_ordinal = match step {
-            ConsensusStep::Propose => 0,
-            ConsensusStep::PreVote => 1,
-            ConsensusStep::PreCommit => 2,
-            ConsensusStep::Commit => 3,
-            ConsensusStep::NewRound => 4,
-        };
         Self {
             height,
             round,
-            step_ordinal,
+            step_ordinal: step.as_ordinal(),
         }
     }
 
     pub fn matches(&self, height: u64, round: u32, step: &ConsensusStep) -> bool {
-        let step_ordinal = match step {
-            ConsensusStep::Propose => 0,
-            ConsensusStep::PreVote => 1,
-            ConsensusStep::PreCommit => 2,
-            ConsensusStep::Commit => 3,
-            ConsensusStep::NewRound => 4,
-        };
-        self.height == height && self.round == round && self.step_ordinal == step_ordinal
+        self.height == height && self.round == round && self.step_ordinal == step.as_ordinal()
     }
 }
 
@@ -82,16 +68,12 @@ impl RoundTimer {
             ConsensusStep::Propose => self.proposal_timeout,
             ConsensusStep::PreVote => self.prevote_timeout,
             ConsensusStep::PreCommit => self.precommit_timeout,
-            ConsensusStep::Commit => Duration::from_secs(1), // Placeholder
-            ConsensusStep::NewRound => Duration::from_secs(1), // Placeholder
+            // For now, reuse the precommit timeout for commit, and proposal timeout for a new round.
+            // Both values are derived from ConsensusConfig.
+            ConsensusStep::Commit => self.precommit_timeout,
+            ConsensusStep::NewRound => self.proposal_timeout,
         };
         tokio::time::sleep(duration)
-    }
-
-    /// Check if timer should be updated when state changes
-    pub fn should_update(&self, _height: u64, _round: u32, _old_step: &ConsensusStep, _new_step: &ConsensusStep) -> bool {
-        // Always update timer on state change
-        true
     }
 }
 
@@ -419,6 +401,10 @@ impl ConsensusEngine {
     /// their own sleeps and timeouts. This is incompatible with the event-driven run_consensus_loop().
     ///
     /// TODO: Remove this method or refactor callers to use run_consensus_loop() instead.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use run_consensus_loop() instead. This legacy round driver conflicts with the event-driven consensus architecture."
+    )]
     async fn run_consensus_round(&mut self) -> ConsensusResult<()> {
         self.advance_to_next_round();
 
@@ -1446,18 +1432,14 @@ impl ConsensusEngine {
                         );
                         self.on_round_timeout().await?;
                     } else {
+                        let stale_step = ConsensusStep::from_ordinal(timer_token.step_ordinal)
+                            .map(|s| format!("{:?}", s))
+                            .unwrap_or_else(|| "Unknown".to_string());
                         tracing::debug!(
-                            "Ignoring stale timer for height {} round {} step {:?} (current: {} {} {:?})",
+                            "Ignoring stale timer for height {} round {} step {} (current: {} {} {:?})",
                             timer_token.height,
                             timer_token.round,
-                            match timer_token.step_ordinal {
-                                0 => "Propose",
-                                1 => "PreVote",
-                                2 => "PreCommit",
-                                3 => "Commit",
-                                4 => "NewRound",
-                                _ => "Unknown",
-                            },
+                            stale_step,
                             self.current_round.height,
                             self.current_round.round,
                             self.current_round.step
@@ -1484,16 +1466,23 @@ impl ConsensusEngine {
                             self.on_message(msg).await?;
 
                             // Re-arm timer if state changed
-                            timer_token = TimerToken::new(
+                            let state_changed = !timer_token.matches(
                                 self.current_round.height,
                                 self.current_round.round,
                                 &self.current_round.step,
                             );
-                            timer_fut.set(self.round_timer.next_deadline(
-                                self.current_round.height,
-                                self.current_round.round,
-                                &self.current_round.step,
-                            ));
+                            if state_changed {
+                                timer_token = TimerToken::new(
+                                    self.current_round.height,
+                                    self.current_round.round,
+                                    &self.current_round.step,
+                                );
+                                timer_fut.set(self.round_timer.next_deadline(
+                                    self.current_round.height,
+                                    self.current_round.round,
+                                    &self.current_round.step,
+                                ));
+                            }
                         }
                         None => {
                             // Receiver closed: engine cannot make further progress
@@ -1904,7 +1893,11 @@ impl ConsensusEngine {
                 self.current_round.step >= ConsensusStep::PreCommit
             }
             VoteType::Commit => {
-                self.current_round.step >= ConsensusStep::Commit
+                // Commit votes are considered relevant as long as height and round
+                // match the current round, even if we have not yet reached the
+                // Commit step locally. This matches the behavior of `on_commit_vote()`
+                // and preserves CE-L2 compliance.
+                true
             }
             VoteType::Against => false,
         }
@@ -2091,6 +2084,22 @@ mod tests {
         // Create a deterministic test validator ID from a single byte
         // by repeating it 32 times to match Hash::from_bytes signature
         lib_crypto::Hash::from_bytes(&[id; 32])
+    }
+
+    fn create_test_signature() -> PostQuantumSignature {
+        PostQuantumSignature {
+            signature: vec![99u8; 32],
+            public_key: lib_crypto::PublicKey {
+                dilithium_pk: vec![42u8; 32],
+                kyber_pk: vec![43u8; 32],
+                key_id: [1u8; 32],
+            },
+            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        }
     }
 
     #[tokio::test]
@@ -2868,22 +2877,6 @@ mod tests {
 
         // Step should still be PreVote (no automatic transition since quorum not reached)
         assert_eq!(engine.current_round.step, ConsensusStep::PreVote);
-    }
-}
-
-fn create_test_signature() -> PostQuantumSignature {
-    PostQuantumSignature {
-        signature: vec![99u8; 32],
-        public_key: lib_crypto::PublicKey {
-            dilithium_pk: vec![42u8; 32],
-            kyber_pk: vec![43u8; 32],
-            key_id: [1u8; 32],
-        },
-        algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-        timestamp: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
     }
 }
 

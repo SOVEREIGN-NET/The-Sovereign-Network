@@ -81,6 +81,31 @@ pub enum ConsensusStep {
     NewRound,
 }
 
+impl ConsensusStep {
+    /// Convert step to ordinal value for comparison and serialization
+    pub fn as_ordinal(&self) -> u8 {
+        match self {
+            ConsensusStep::Propose => 0,
+            ConsensusStep::PreVote => 1,
+            ConsensusStep::PreCommit => 2,
+            ConsensusStep::Commit => 3,
+            ConsensusStep::NewRound => 4,
+        }
+    }
+
+    /// Convert ordinal value back to ConsensusStep
+    pub fn from_ordinal(ordinal: u8) -> Option<Self> {
+        match ordinal {
+            0 => Some(ConsensusStep::Propose),
+            1 => Some(ConsensusStep::PreVote),
+            2 => Some(ConsensusStep::PreCommit),
+            3 => Some(ConsensusStep::Commit),
+            4 => Some(ConsensusStep::NewRound),
+            _ => None,
+        }
+    }
+}
+
 /// Consensus round information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsensusRound {
