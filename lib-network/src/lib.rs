@@ -63,6 +63,11 @@ pub use crate::message_broadcaster::{
     BroadcastResult,
 };
 
+// Consensus receiver (Gap 4: ingress boundary)
+pub use crate::consensus_receiver::{
+    ConsensusReceiver, ReceivedConsensusMessage,
+};
+
 // Network utilities
 pub mod network_utils;
 pub use crate::network_utils::{get_local_ip, get_local_ip_with_config, LocalIpConfig};
@@ -85,6 +90,7 @@ pub mod handshake; // Unified Handshake Protocol (UHP)
 pub mod encryption; // Unified protocol encryption
 pub mod consensus_encryption; // Consensus message encryption (Gap 1.3)
 pub mod message_broadcaster; // Consensus message broadcaster trait
+pub mod consensus_receiver; // Consensus receiver (Gap 4: ingress boundary)
 pub mod constants; // Protocol constants
 pub mod monitoring;
 pub mod zk_integration;
