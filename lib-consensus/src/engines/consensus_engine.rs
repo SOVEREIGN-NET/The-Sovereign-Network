@@ -406,6 +406,17 @@ impl ConsensusEngine {
         note = "Use run_consensus_loop() instead. This legacy round driver conflicts with the event-driven consensus architecture."
     )]
     async fn run_consensus_round(&mut self) -> ConsensusResult<()> {
+        // **CRITICAL**: This method conflicts with run_consensus_loop()
+        // Both are consensus drivers and cannot coexist.
+        // Reject if message receiver has been set (indicating run_consensus_loop() is intended).
+        if self.message_rx.is_some() {
+            return Err(ConsensusError::ValidatorError(
+                "Cannot use run_consensus_round() with run_consensus_loop(). \
+                 These are incompatible consensus drivers. Use run_consensus_loop() instead."
+                    .to_string(),
+            ));
+        }
+
         self.advance_to_next_round();
 
         // Select proposer for this round
@@ -417,7 +428,7 @@ impl ConsensusEngine {
         self.current_round.proposer = Some(proposer.identity.clone());
 
         tracing::warn!(
-            "DEPRECATED: run_consensus_round() called - conflicts with new run_consensus_loop(). \
+            "Using legacy run_consensus_round() - consider migrating to run_consensus_loop(). \
             Starting consensus round {} at height {} with proposer {:?}",
             self.current_round.round,
             self.current_round.height,
@@ -1131,7 +1142,9 @@ impl ConsensusEngine {
             .iter()
             .position(|p| &p.id == proposal_id)
         {
-            let proposal = self.pending_proposals.remove(proposal_index).unwrap();
+            // Safe: index came from position() which found it
+            let proposal = self.pending_proposals.remove(proposal_index)
+                .expect("Proposal index came from position(), element must exist");
 
             // Validate the block one more time before applying
             self.validate_committed_block(&proposal).await?;
@@ -1597,8 +1610,20 @@ impl ConsensusEngine {
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
         if has_quorum(prevote_count, total_validators) && self.current_round.step == ConsensusStep::PreVote {
-            // Update valid_proposal if not already set, or confirm if matching
-            if self.current_round.valid_proposal.is_none() || self.current_round.valid_proposal == Some(proposal_id.clone()) {
+            // **CE-S1**: Only transition if this proposal can be the valid proposal
+            // If valid_proposal is already set to a DIFFERENT proposal, we have conflicting quorums
+            // which violates safety - don't transition
+            if let Some(existing) = self.current_round.valid_proposal.as_ref() {
+                if existing != &proposal_id {
+                    tracing::warn!(
+                        "Conflicting quorum detected: proposal {:?} has quorum but valid_proposal is already {:?}",
+                        proposal_id, existing
+                    );
+                    // Don't transition - this violates BFT safety
+                    return Ok(());
+                }
+            } else {
+                // First proposal to reach quorum in this round
                 self.current_round.valid_proposal = Some(proposal_id.clone());
             }
             self.enter_precommit_step().await?;
@@ -1654,8 +1679,19 @@ impl ConsensusEngine {
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
         if has_quorum(precommit_count, total_validators) && self.current_round.step == ConsensusStep::PreCommit {
-            // Update locked_proposal if not already set, or confirm if matching
-            if self.current_round.locked_proposal.is_none() || self.current_round.locked_proposal == Some(proposal_id.clone()) {
+            // **CE-S1**: Only transition if this proposal can be locked
+            // If locked_proposal is already set to a DIFFERENT proposal, we have conflicting quorums
+            if let Some(existing) = self.current_round.locked_proposal.as_ref() {
+                if existing != &proposal_id {
+                    tracing::warn!(
+                        "Conflicting precommit quorum detected: proposal {:?} has quorum but locked_proposal is already {:?}",
+                        proposal_id, existing
+                    );
+                    // Don't transition - this violates BFT safety
+                    return Ok(());
+                }
+            } else {
+                // First proposal to reach precommit quorum in this round
                 self.current_round.locked_proposal = Some(proposal_id.clone());
             }
             self.enter_commit_step().await?;
@@ -1669,8 +1705,20 @@ impl ConsensusEngine {
 
     async fn on_commit_vote(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
         // **CE-L2**: Accept commit votes at ANY step, not only during Commit.
-        // Height check only; round check is relaxed to allow catch-up.
+        // Only reject votes from future heights. Accept current/past heights at any round
+        // to allow catch-up from previous rounds.
         if vote.height > self.current_round.height {
+            return Ok(());
+        }
+
+        // Reject if we've already moved past this height entirely
+        // (height is locked in, no new consensus activity on old heights)
+        if vote.height < self.current_round.height {
+            tracing::debug!(
+                "Ignoring commit vote for past height {} (current: {})",
+                vote.height,
+                self.current_round.height
+            );
             return Ok(());
         }
 
