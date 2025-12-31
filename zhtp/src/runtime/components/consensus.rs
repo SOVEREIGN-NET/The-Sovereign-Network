@@ -9,6 +9,21 @@ use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, C
 use lib_consensus::{ConsensusEngine, ConsensusConfig, ValidatorManager, NoOpBroadcaster};
 use lib_blockchain::Blockchain;
 
+/// No-op message broadcaster for use in zhtp runtime
+#[derive(Debug)]
+struct NoOpBroadcaster;
+
+#[async_trait::async_trait]
+impl lib_consensus::MessageBroadcaster for NoOpBroadcaster {
+    async fn broadcast_to_validators(
+        &self,
+        _message: lib_consensus::ValidatorMessage,
+        _validator_ids: &[lib_identity::IdentityId],
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
 /// Adapter to make blockchain ValidatorInfo compatible with consensus ValidatorInfo trait
 pub struct BlockchainValidatorAdapter(pub lib_blockchain::ValidatorInfo);
 
