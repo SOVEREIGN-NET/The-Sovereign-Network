@@ -53,7 +53,7 @@ pub enum ValidatorStatus {
 }
 
 /// Vote types for consensus
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum VoteType {
     /// Pre-vote for a proposal
@@ -67,7 +67,7 @@ pub enum VoteType {
 }
 
 /// Consensus step in the BFT protocol
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
 pub enum ConsensusStep {
     /// Propose step - validator proposes a block
     Propose,
@@ -79,6 +79,31 @@ pub enum ConsensusStep {
     Commit,
     /// New round initialization
     NewRound,
+}
+
+impl ConsensusStep {
+    /// Convert step to ordinal value for comparison and serialization
+    pub fn as_ordinal(&self) -> u8 {
+        match self {
+            ConsensusStep::Propose => 0,
+            ConsensusStep::PreVote => 1,
+            ConsensusStep::PreCommit => 2,
+            ConsensusStep::Commit => 3,
+            ConsensusStep::NewRound => 4,
+        }
+    }
+
+    /// Convert ordinal value back to ConsensusStep
+    pub fn from_ordinal(ordinal: u8) -> Option<Self> {
+        match ordinal {
+            0 => Some(ConsensusStep::Propose),
+            1 => Some(ConsensusStep::PreVote),
+            2 => Some(ConsensusStep::PreCommit),
+            3 => Some(ConsensusStep::Commit),
+            4 => Some(ConsensusStep::NewRound),
+            _ => None,
+        }
+    }
 }
 
 /// Consensus round information
