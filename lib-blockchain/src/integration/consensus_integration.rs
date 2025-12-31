@@ -7,6 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{info, warn, error, debug};
 
@@ -15,7 +16,7 @@ use lib_consensus::{
     DaoEngine, DaoProposalType, DaoVoteChoice,
     RewardCalculator, RewardRound,
     ConsensusProposal, ConsensusVote, VoteType, ConsensusStep,
-    ConsensusType, ConsensusProof
+    ConsensusType, ConsensusProof, MessageBroadcaster, ValidatorMessage
 };
 use lib_crypto::{Hash, hash_blake3, KeyPair};
 use lib_identity::IdentityId;
@@ -27,6 +28,20 @@ use crate::{
     utils::time::current_timestamp,
     transaction::IdentityTransactionData,
 };
+
+#[derive(Debug)]
+struct NoOpBroadcaster;
+
+#[async_trait]
+impl MessageBroadcaster for NoOpBroadcaster {
+    async fn broadcast_to_validators(
+        &self,
+        _message: ValidatorMessage,
+        _validator_ids: &[IdentityId],
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
 
 /// Validator keypair for cryptographic operations
 #[derive(Debug, Clone)]
@@ -55,11 +70,10 @@ pub struct ValidatorInfo {
 }
 
 /// Blockchain consensus coordinator
-/// 
+///
 /// This struct bridges the blockchain with the consensus engine, handling
 /// all consensus-related operations including block production, validation,
 /// DAO governance, and reward distribution.
-#[derive(Debug)]
 pub struct BlockchainConsensusCoordinator {
     /// Core consensus engine from lib-consensus
     consensus_engine: Arc<RwLock<ConsensusEngine>>,
@@ -82,6 +96,19 @@ pub struct BlockchainConsensusCoordinator {
     active_votes: Arc<RwLock<HashMap<Hash, Vec<ConsensusVote>>>>,
 }
 
+// Manual Debug implementation because ConsensusEngine doesn't derive Debug
+impl std::fmt::Debug for BlockchainConsensusCoordinator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockchainConsensusCoordinator")
+            .field("local_validator_id", &self.local_validator_id)
+            .field("is_producing_blocks", &self.is_producing_blocks)
+            .field("consensus_engine", &"<ConsensusEngine>")
+            .field("blockchain", &"<Blockchain>")
+            .field("mempool", &"<Mempool>")
+            .finish()
+    }
+}
+
 impl BlockchainConsensusCoordinator {
     /// Create a new blockchain consensus coordinator
     pub async fn new(
@@ -90,7 +117,7 @@ impl BlockchainConsensusCoordinator {
         consensus_config: ConsensusConfig,
     ) -> Result<Self> {
         let consensus_engine = Arc::new(RwLock::new(
-            ConsensusEngine::new(consensus_config)?
+            ConsensusEngine::new(consensus_config, Arc::new(NoOpBroadcaster))?
         ));
 
         let (event_sender, event_receiver) = mpsc::unbounded_channel();

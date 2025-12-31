@@ -1,13 +1,30 @@
 //! Integration tests for the main consensus engine
 
 use anyhow::Result;
+use async_trait::async_trait;
 use lib_consensus::{
     ConsensusConfig, ConsensusEngine, ConsensusError, ConsensusType, ValidatorStatus, VoteType,
+    MessageBroadcaster, ValidatorMessage,
 };
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_test;
+
+#[derive(Debug)]
+struct NoOpBroadcaster;
+
+#[async_trait]
+impl MessageBroadcaster for NoOpBroadcaster {
+    async fn broadcast_to_validators(
+        &self,
+        _message: ValidatorMessage,
+        _validator_ids: &[IdentityId],
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
 
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {
@@ -38,7 +55,7 @@ fn create_test_config() -> ConsensusConfig {
 #[tokio::test]
 async fn test_consensus_engine_initialization() -> Result<()> {
     let config = create_test_config();
-    let consensus_engine = ConsensusEngine::new(config)?;
+    let consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     assert_eq!(consensus_engine.current_round().height, 0);
     assert_eq!(consensus_engine.current_round().round, 0);
@@ -56,7 +73,7 @@ async fn test_consensus_engine_initialization() -> Result<()> {
 #[tokio::test]
 async fn test_validator_registration_success() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     let identity = create_test_identity("alice");
     let stake = 2000 * 1_000_000; // 2000 ZHTP
@@ -90,7 +107,7 @@ async fn test_validator_registration_success() -> Result<()> {
 #[tokio::test]
 async fn test_validator_registration_insufficient_stake() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     let identity = create_test_identity("bob");
     let insufficient_stake = 500 * 1_000_000; // 500 ZHTP (below minimum)
@@ -123,7 +140,7 @@ async fn test_validator_registration_insufficient_stake() -> Result<()> {
 #[tokio::test]
 async fn test_validator_registration_insufficient_storage() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     let identity = create_test_identity("charlie");
     let stake = 2000 * 1_000_000;
@@ -156,7 +173,7 @@ async fn test_validator_registration_insufficient_storage() -> Result<()> {
 #[tokio::test]
 async fn test_multiple_validator_registration() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     let validators = vec![
         ("alice", 2000 * 1_000_000, 200 * 1024 * 1024 * 1024),
@@ -194,7 +211,7 @@ async fn test_multiple_validator_registration() -> Result<()> {
 #[tokio::test]
 async fn test_proposer_selection() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register multiple validators
     let validators = vec!["alice", "bob", "charlie"];
@@ -232,7 +249,7 @@ async fn test_proposer_selection() -> Result<()> {
 #[tokio::test]
 async fn test_byzantine_threshold_calculation() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register validators with different stakes
     let validators = vec![
@@ -283,7 +300,7 @@ async fn test_byzantine_threshold_calculation() -> Result<()> {
 async fn test_insufficient_validators_for_consensus() -> Result<()> {
     let mut config = create_test_config();
     config.development_mode = false; // Disable development mode to test BFT requirements
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register only one validator (insufficient for BFT)
     let identity = create_test_identity("alice");
@@ -329,7 +346,7 @@ async fn test_insufficient_validators_for_consensus() -> Result<()> {
 #[tokio::test]
 async fn test_consensus_round_initialization() -> Result<()> {
     let config = create_test_config();
-    let consensus_engine = ConsensusEngine::new(config)?;
+    let consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     let current_round = consensus_engine.current_round();
 
@@ -351,7 +368,7 @@ async fn test_maximum_validator_limit() -> Result<()> {
     let mut config = create_test_config();
     config.max_validators = 2; // Set low limit for testing
 
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register up to the limit
     for i in 1..=2 {

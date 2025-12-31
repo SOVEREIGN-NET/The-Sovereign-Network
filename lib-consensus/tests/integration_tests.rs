@@ -1,14 +1,30 @@
 //! Integration tests combining multiple consensus system components
 
 use anyhow::Result;
+use async_trait::async_trait;
 use lib_consensus::{
     ByzantineFaultDetector, ConsensusConfig, ConsensusEngine, ConsensusType, DaoProposalType,
-    DaoVoteChoice, ValidatorStatus,
+    DaoVoteChoice, ValidatorStatus, MessageBroadcaster, ValidatorMessage,
 };
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_test;
+
+#[derive(Debug)]
+struct NoOpBroadcaster;
+
+#[async_trait]
+impl MessageBroadcaster for NoOpBroadcaster {
+    async fn broadcast_to_validators(
+        &self,
+        _message: ValidatorMessage,
+        _validator_ids: &[IdentityId],
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
 
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {
@@ -39,7 +55,7 @@ fn create_test_config() -> ConsensusConfig {
 #[tokio::test]
 async fn test_full_consensus_flow() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register multiple validators
     let validators = vec![
@@ -90,7 +106,7 @@ async fn test_full_consensus_flow() -> Result<()> {
 #[tokio::test]
 async fn test_dao_governance_integration() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register validators
     let validators = vec!["alice", "bob", "charlie"];
@@ -158,7 +174,7 @@ async fn test_dao_governance_integration() -> Result<()> {
 #[tokio::test]
 async fn test_byzantine_fault_handling() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register validators
     let validators = vec!["alice", "bob", "charlie", "dave"];
@@ -223,7 +239,7 @@ async fn test_byzantine_fault_handling() -> Result<()> {
 #[tokio::test]
 async fn test_consensus_with_insufficient_validators() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register only 2 validators (insufficient for BFT)
     let validators = vec!["alice", "bob"];
@@ -273,7 +289,7 @@ async fn test_consensus_with_insufficient_validators() -> Result<()> {
 #[tokio::test]
 async fn test_validator_lifecycle_management() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register initial validators
     let initial_validators = vec!["alice", "bob", "charlie"];
@@ -327,7 +343,7 @@ async fn test_validator_lifecycle_management() -> Result<()> {
 #[tokio::test]
 async fn test_treasury_integration() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register validators
     let validators = vec!["alice", "bob", "charlie"];
@@ -359,7 +375,7 @@ async fn test_treasury_integration() -> Result<()> {
 #[tokio::test]
 async fn test_reward_system_integration() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register validators with different stakes
     let validators = vec![
@@ -402,7 +418,7 @@ async fn test_reward_system_integration() -> Result<()> {
 async fn test_consensus_configuration_validation() -> Result<()> {
     // Test with valid configuration
     let valid_config = create_test_config();
-    let consensus_engine = ConsensusEngine::new(valid_config);
+    let consensus_engine = ConsensusEngine::new(valid_config, Arc::new(NoOpBroadcaster));
     assert!(consensus_engine.is_ok());
 
     // Test configuration limits
@@ -410,7 +426,7 @@ async fn test_consensus_configuration_validation() -> Result<()> {
     invalid_config.max_validators = 0; // Invalid: no validators allowed
 
     // The engine should still initialize but won't be able to run consensus
-    let consensus_engine = ConsensusEngine::new(invalid_config);
+    let consensus_engine = ConsensusEngine::new(invalid_config, Arc::new(NoOpBroadcaster));
     assert!(consensus_engine.is_ok());
 
     Ok(())
@@ -431,7 +447,7 @@ async fn test_multi_type_consensus_mechanisms() -> Result<()> {
         let mut config = create_test_config();
         config.consensus_type = consensus_type.clone();
 
-        let mut consensus_engine = ConsensusEngine::new(config)?;
+        let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
         // Register a validator for each consensus type
         let identity = create_test_identity("test_validator");
@@ -459,7 +475,7 @@ async fn test_multi_type_consensus_mechanisms() -> Result<()> {
 #[tokio::test]
 async fn test_system_resilience_under_load() -> Result<()> {
     let config = create_test_config();
-    let mut consensus_engine = ConsensusEngine::new(config)?;
+    let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     // Register maximum number of validators
     for i in 0..10 {

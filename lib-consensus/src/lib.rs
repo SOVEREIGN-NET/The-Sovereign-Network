@@ -90,20 +90,41 @@ pub enum ConsensusError {
     TimeError(#[from] std::time::SystemTimeError),
 }
 
-/// Initialize the consensus system with configuration
-pub fn init_consensus(config: ConsensusConfig) -> ConsensusResult<ConsensusEngine> {
+/// Initialize the consensus system with configuration and message broadcaster
+///
+/// Invariant CE-ENG-1: The broadcaster is dependency-injected, not configured internally.
+/// No defaults. No globals. No feature flags.
+pub fn init_consensus(
+    config: ConsensusConfig,
+    broadcaster: std::sync::Arc<dyn MessageBroadcaster>,
+) -> ConsensusResult<ConsensusEngine> {
     tracing::info!(" Initializing ZHTP consensus system");
-    Ok(ConsensusEngine::new(config)?)
+    Ok(ConsensusEngine::new(config, broadcaster)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Simple mock broadcaster for testing
+    struct MockBroadcaster;
+
+    #[async_trait::async_trait]
+    impl MessageBroadcaster for MockBroadcaster {
+        async fn broadcast_to_validators(
+            &self,
+            _message: ValidatorMessage,
+            _validator_ids: &[lib_identity::IdentityId],
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn test_consensus_initialization() {
         let config = ConsensusConfig::default();
-        let result = init_consensus(config);
+        let broadcaster = std::sync::Arc::new(MockBroadcaster);
+        let result = init_consensus(config, broadcaster);
         assert!(result.is_ok());
     }
 }
