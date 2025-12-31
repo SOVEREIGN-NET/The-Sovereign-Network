@@ -1,5 +1,5 @@
 //! Integration Module
-//! 
+//!
 //! Provides integration utilities to coordinate and orchestrate interactions
 //! Between all ZHTP protocol components,
 //! external packages, and third-party systems.
@@ -9,6 +9,7 @@ use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 // use lib_blockchain::get_shared_blockchain; // Removed - use zhtp::runtime::blockchain_provider instead
 
 use serde::{Serialize, Deserialize};
+use std::sync::Arc;
 
 use crate::crypto::ZhtpCrypto;
 use crate::economics::ZhtpEconomics;
@@ -18,6 +19,26 @@ use crate::storage::{StorageIntegration, StorageConfig};
 use crate::storage_stub::{StorageIntegration, StorageConfig};
 use crate::identity::{ProtocolIdentityService, IdentityServiceConfig};
 use std::collections::HashMap;
+
+/// No-op message broadcaster for testing and integration
+///
+/// This broadcaster discards all messages and is used for integration tests
+/// where network distribution is not being tested. For production use,
+/// provide a real broadcaster implementation.
+#[derive(Debug)]
+struct NoOpBroadcaster;
+
+#[async_trait::async_trait]
+impl lib_consensus::MessageBroadcaster for NoOpBroadcaster {
+    async fn broadcast_to_validators(
+        &self,
+        _message: lib_consensus::ValidatorMessage,
+        _validator_ids: &[lib_identity::IdentityId],
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // No-op: discards all messages
+        Ok(())
+    }
+}
 
 /// Integration configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -805,11 +826,12 @@ pub mod packages {
     pub async fn init_consensus_integration() -> Result<()> {
         // Use the consensus package's consensus engine directly
         use lib_consensus::ConsensusEngine;
-        
-        // Initialize consensus engine with default configuration
-        let _consensus_engine = ConsensusEngine::new(lib_consensus::ConsensusConfig::default())
+
+        // Initialize consensus engine with default configuration and no-op broadcaster
+        let broadcaster = Arc::new(NoOpBroadcaster);
+        let _consensus_engine = ConsensusEngine::new(lib_consensus::ConsensusConfig::default(), broadcaster)
             .map_err(|e| ProtocolError::InternalError(format!("Failed to create consensus engine: {}", e)))?;
-        
+
         tracing::info!("lib-consensus integration initialized successfully");
         Ok(())
     }
@@ -866,7 +888,8 @@ pub mod packages {
         // Test lib-consensus health
         health.insert("lib-consensus".to_string(), {
             use lib_consensus::ConsensusEngine;
-            ConsensusEngine::new(lib_consensus::ConsensusConfig::default()).is_ok()
+            let broadcaster = Arc::new(NoOpBroadcaster);
+            ConsensusEngine::new(lib_consensus::ConsensusConfig::default(), broadcaster).is_ok()
         });
         
         // Test lib-network health (simplified check)

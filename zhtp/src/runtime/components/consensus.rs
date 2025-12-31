@@ -9,6 +9,21 @@ use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, C
 use lib_consensus::{ConsensusEngine, ConsensusConfig, ValidatorManager};
 use lib_blockchain::Blockchain;
 
+/// No-op message broadcaster for use in zhtp runtime
+#[derive(Debug)]
+struct NoOpBroadcaster;
+
+#[async_trait::async_trait]
+impl lib_consensus::MessageBroadcaster for NoOpBroadcaster {
+    async fn broadcast_to_validators(
+        &self,
+        _message: lib_consensus::ValidatorMessage,
+        _validator_ids: &[lib_identity::IdentityId],
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
 /// Adapter to make blockchain ValidatorInfo compatible with consensus ValidatorInfo trait
 pub struct BlockchainValidatorAdapter(pub lib_blockchain::ValidatorInfo);
 
@@ -47,7 +62,6 @@ impl lib_consensus::validators::ValidatorInfo for BlockchainValidatorAdapter {
 }
 
 /// Consensus component implementation using lib-consensus package
-#[derive(Debug)]
 pub struct ConsensusComponent {
     status: Arc<RwLock<ComponentStatus>>,
     start_time: Arc<RwLock<Option<Instant>>>,
@@ -55,6 +69,20 @@ pub struct ConsensusComponent {
     validator_manager: Arc<RwLock<ValidatorManager>>,
     blockchain: Arc<RwLock<Option<Arc<RwLock<Blockchain>>>>>,
     environment: crate::config::Environment,
+}
+
+// Manual Debug implementation because ConsensusEngine doesn't derive Debug
+impl std::fmt::Debug for ConsensusComponent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConsensusComponent")
+            .field("status", &self.status)
+            .field("start_time", &self.start_time)
+            .field("consensus_engine", &"<ConsensusEngine>")
+            .field("validator_manager", &"<ValidatorManager>")
+            .field("blockchain", &"<Blockchain>")
+            .field("environment", &self.environment)
+            .finish()
+    }
 }
 
 impl ConsensusComponent {
@@ -155,8 +183,9 @@ impl Component for ConsensusComponent {
         
         // Note: Edge nodes will still initialize consensus component but won't participate in validation
         // Edge node check happens at validator registration (requires min stake + storage)
-        
-        let consensus_engine = lib_consensus::init_consensus(config)?;
+
+        let broadcaster = Arc::new(NoOpBroadcaster);
+        let consensus_engine = lib_consensus::init_consensus(config, broadcaster)?;
         
         info!("Consensus engine initialized with hybrid PoS");
         info!("Validator management ready");
