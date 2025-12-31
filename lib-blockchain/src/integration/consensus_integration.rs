@@ -16,7 +16,7 @@ use lib_consensus::{
     DaoEngine, DaoProposalType, DaoVoteChoice,
     RewardCalculator, RewardRound,
     ConsensusProposal, ConsensusVote, VoteType, ConsensusStep,
-    ConsensusType, ConsensusProof, MessageBroadcaster, ValidatorMessage
+    ConsensusType, ConsensusProof, NoOpBroadcaster
 };
 use lib_crypto::{Hash, hash_blake3, KeyPair};
 use lib_identity::IdentityId;
@@ -28,20 +28,6 @@ use crate::{
     utils::time::current_timestamp,
     transaction::IdentityTransactionData,
 };
-
-#[derive(Debug)]
-struct NoOpBroadcaster;
-
-#[async_trait]
-impl MessageBroadcaster for NoOpBroadcaster {
-    async fn broadcast_to_validators(
-        &self,
-        _message: ValidatorMessage,
-        _validator_ids: &[IdentityId],
-    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Ok(())
-    }
-}
 
 /// Validator keypair for cryptographic operations
 #[derive(Debug, Clone)]

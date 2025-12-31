@@ -9,7 +9,6 @@
 //! 6. Calculate and distribute rewards
 
 use anyhow::Result;
-use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio;
@@ -17,24 +16,10 @@ use tracing_subscriber;
 
 use lib_consensus::{
     ConsensusConfig, ConsensusEngine, ConsensusType, DaoProposalType, DaoVoteChoice,
-    ValidatorStatus, MessageBroadcaster, ValidatorMessage,
+    ValidatorStatus, NoOpBroadcaster,
 };
 use lib_crypto::Hash;
 use lib_identity::IdentityId;
-
-#[derive(Debug)]
-struct NoOpBroadcaster;
-
-#[async_trait]
-impl MessageBroadcaster for NoOpBroadcaster {
-    async fn broadcast_to_validators(
-        &self,
-        _message: ValidatorMessage,
-        _validator_ids: &[IdentityId],
-    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Ok(())
-    }
-}
 
 /// Helper function to create a sample identity from string
 fn create_identity_from_string(s: &str) -> Result<IdentityId> {
