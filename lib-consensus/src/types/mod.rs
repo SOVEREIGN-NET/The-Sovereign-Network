@@ -303,15 +303,9 @@ pub enum ValidatorMessage {
     Propose {
         proposal: ConsensusProposal,
     },
-    /// Vote message (PreVote, PreCommit, or Commit)
+    /// Vote message (PreVote, PreCommit, or Commit votes)
     Vote {
         vote: ConsensusVote,
-    },
-    /// Commit message (aggregated commitment)
-    Commit {
-        proposal_id: Hash,
-        height: u64,
-        round: u32,
     },
 }
 

@@ -358,23 +358,29 @@ impl ConsensusEngine {
             if Some(validator_id) == self.current_round.proposer.as_ref() {
                 let proposal = self.create_proposal().await?;
                 self.current_round.proposals.push(proposal.id.clone());
+                self.pending_proposals.push_back(proposal.clone());
 
-                // Invariant CE-ENG-3: Broadcast after state transition, not before
+                // Invariant CE-ENG-3: Broadcast after state transition (proposal now in state)
                 // Create canonical ValidatorMessage from already-formed proposal
                 let msg = ValidatorMessage::Propose {
-                    proposal: proposal.clone(),
+                    proposal,
                 };
 
                 // Invariant CE-ENG-5: Pass validator set explicitly, never query network
                 let validator_ids = self.get_active_validator_ids();
 
                 // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
-                // Ignore delivery success - consensus correctness must not depend on it
-                let _telemetry = self.broadcaster
+                // Log failures for observability without affecting consensus correctness
+                if let Err(e) = self.broadcaster
                     .broadcast_to_validators(msg, &validator_ids)
-                    .await;
-
-                self.pending_proposals.push_back(proposal);
+                    .await
+                {
+                    tracing::debug!(
+                        error = ?e,
+                        height = self.current_round.height,
+                        "Failed to broadcast proposal to validators (continuing per CE-ENG-4)"
+                    );
+                }
             }
         }
 
@@ -402,10 +408,17 @@ impl ConsensusEngine {
             let validator_ids = self.get_active_validator_ids();
 
             // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
-            // Ignore delivery success - consensus correctness must not depend on it
-            let _telemetry = self.broadcaster
+            // Log failures for observability without affecting consensus correctness
+            if let Err(e) = self.broadcaster
                 .broadcast_to_validators(msg, &validator_ids)
-                .await;
+                .await
+            {
+                tracing::debug!(
+                    error = ?e,
+                    height = self.current_round.height,
+                    "Failed to broadcast prevote to validators (continuing per CE-ENG-4)"
+                );
+            }
         }
 
         // Wait for prevotes with timeout
@@ -437,10 +450,17 @@ impl ConsensusEngine {
                 let validator_ids = self.get_active_validator_ids();
 
                 // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
-                // Ignore delivery success - consensus correctness must not depend on it
-                let _telemetry = self.broadcaster
+                // Log failures for observability without affecting consensus correctness
+                if let Err(e) = self.broadcaster
                     .broadcast_to_validators(msg, &validator_ids)
-                    .await;
+                    .await
+                {
+                    tracing::debug!(
+                        error = ?e,
+                        height = self.current_round.height,
+                        "Failed to broadcast precommit to validators (continuing per CE-ENG-4)"
+                    );
+                }
             }
         }
 
@@ -478,10 +498,18 @@ impl ConsensusEngine {
                 let validator_ids = self.get_active_validator_ids();
 
                 // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
-                // Ignore delivery success - consensus correctness must not depend on it
-                let _telemetry = self.broadcaster
+                // Log failures for observability without affecting consensus correctness
+                if let Err(e) = self.broadcaster
                     .broadcast_to_validators(msg, &validator_ids)
-                    .await;
+                    .await
+                {
+                    tracing::debug!(
+                        error = ?e,
+                        height = self.current_round.height,
+                        proposal_id = ?proposal_id,
+                        "Failed to broadcast commit vote to validators (continuing per CE-ENG-4)"
+                    );
+                }
 
                 // Process the committed block
                 self.process_committed_block(&proposal_id).await?;
@@ -1268,31 +1296,6 @@ mod tests {
         fn count_broadcasts(&self) -> usize {
             self.broadcasts.lock().unwrap().len()
         }
-
-        fn count_message_type(&self, predicate: impl Fn(&ValidatorMessage) -> bool) -> usize {
-            self.broadcasts
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|call| predicate(&call.message))
-                .count()
-        }
-
-        fn has_propose_message(&self) -> bool {
-            self.broadcasts
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|call| matches!(call.message, ValidatorMessage::Propose { .. }))
-        }
-
-        fn has_vote_message(&self) -> bool {
-            self.broadcasts
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|call| matches!(call.message, ValidatorMessage::Vote { .. }))
-        }
     }
 
     #[async_trait::async_trait]
@@ -1312,24 +1315,8 @@ mod tests {
 
     impl Clone for BroadcastCall {
         fn clone(&self) -> Self {
-            // Manually clone since ValidatorMessage contains dyn trait types
-            let message = match &self.message {
-                ValidatorMessage::Propose { proposal } => {
-                    ValidatorMessage::Propose { proposal: proposal.clone() }
-                }
-                ValidatorMessage::Vote { vote } => {
-                    ValidatorMessage::Vote { vote: vote.clone() }
-                }
-                ValidatorMessage::Commit { proposal_id, height, round } => {
-                    ValidatorMessage::Commit {
-                        proposal_id: proposal_id.clone(),
-                        height: *height,
-                        round: *round,
-                    }
-                }
-            };
             Self {
-                message,
+                message: self.message.clone(),
                 validator_ids: self.validator_ids.clone(),
             }
         }
@@ -1590,6 +1577,7 @@ mod tests {
             "Proposal should not be broadcast if not proposer"
         );
     }
+
 
     #[tokio::test]
     async fn test_multiple_phases_produce_multiple_broadcasts() {
