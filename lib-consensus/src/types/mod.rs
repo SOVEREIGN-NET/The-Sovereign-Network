@@ -53,7 +53,7 @@ pub enum ValidatorStatus {
 }
 
 /// Vote types for consensus
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum VoteType {
     /// Pre-vote for a proposal
@@ -67,7 +67,7 @@ pub enum VoteType {
 }
 
 /// Consensus step in the BFT protocol
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
 pub enum ConsensusStep {
     /// Propose step - validator proposes a block
     Propose,
