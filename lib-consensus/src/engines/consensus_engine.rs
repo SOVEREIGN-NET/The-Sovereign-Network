@@ -1578,7 +1578,6 @@ mod tests {
         );
     }
 
-
     #[tokio::test]
     async fn test_multiple_phases_produce_multiple_broadcasts() {
         let config = ConsensusConfig {

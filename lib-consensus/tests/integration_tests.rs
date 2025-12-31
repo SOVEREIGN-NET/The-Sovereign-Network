@@ -1,30 +1,15 @@
 //! Integration tests combining multiple consensus system components
 
 use anyhow::Result;
-use async_trait::async_trait;
 use lib_consensus::{
     ByzantineFaultDetector, ConsensusConfig, ConsensusEngine, ConsensusType, DaoProposalType,
-    DaoVoteChoice, ValidatorStatus, MessageBroadcaster, ValidatorMessage,
+    DaoVoteChoice, ValidatorStatus, NoOpBroadcaster,
 };
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_test;
-
-#[derive(Debug)]
-struct NoOpBroadcaster;
-
-#[async_trait]
-impl MessageBroadcaster for NoOpBroadcaster {
-    async fn broadcast_to_validators(
-        &self,
-        _message: ValidatorMessage,
-        _validator_ids: &[IdentityId],
-    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Ok(())
-    }
-}
 
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {

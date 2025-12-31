@@ -44,7 +44,7 @@ pub struct ValidatorAnnouncement {
 }
 
 /// Network endpoint for validator communication
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValidatorEndpoint {
     /// Protocol type (TCP, UDP, etc.)
     pub protocol: String,
@@ -304,6 +304,75 @@ impl ValidatorDiscoveryProtocol {
         Ok(())
     }
 
+    /// Select the best endpoint for a validator, respecting priority
+    ///
+    /// # Invariants
+    /// - Endpoint selection is deterministic across all consensus nodes
+    /// - Blockchain-sourced announcements are authoritative
+    /// - Gossip may add endpoints but never overrides priority semantics
+    /// - Consensus selects endpoints; lib-network executes connections
+    ///
+    /// # Determinism Guarantees
+    /// Selection uses a stable sort order:
+    /// 1. Higher priority wins (higher u8 values preferred)
+    /// 2. Stable tie-breaker on protocol (alphabetical)
+    /// 3. Stable tie-breaker on address (alphabetical)
+    pub async fn select_validator_endpoint(
+        &self,
+        identity_id: &Hash,
+    ) -> Result<Option<ValidatorEndpoint>> {
+        let cache = self.validator_cache.read().await;
+        let validator = match cache.get(identity_id) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+
+        if validator.endpoints.is_empty() {
+            return Ok(None);
+        }
+
+        // Deterministic priority selection
+        let mut endpoints = validator.endpoints.clone();
+        endpoints.sort_by(|a, b| {
+            b.priority
+                .cmp(&a.priority) // higher priority first
+                .then_with(|| a.protocol.cmp(&b.protocol))
+                .then_with(|| a.address.cmp(&b.address))
+        });
+
+        debug!(
+            "Selected endpoint for validator {}: protocol={}, address={}",
+            identity_id,
+            endpoints[0].protocol,
+            endpoints[0].address
+        );
+
+        Ok(endpoints.into_iter().next())
+    }
+
+    /// Resolve validator endpoint for routing to lib-network
+    ///
+    /// Returns the protocol and address of the best endpoint, ready for
+    /// network routing. This is the primary method for consensus to obtain
+    /// actionable network endpoints.
+    ///
+    /// # Invariants
+    /// - No network capability checks performed (consensus domain)
+    /// - No connection attempts or fallback logic (network domain)
+    /// - Endpoint selection is deterministic and consensus-driven
+    ///
+    /// # Returns
+    /// Some((protocol, address)) if validator has endpoints, None otherwise
+    pub async fn resolve_validator_route(
+        &self,
+        identity_id: &Hash,
+    ) -> Result<Option<(String, String)>> {
+        if let Some(endpoint) = self.select_validator_endpoint(identity_id).await? {
+            return Ok(Some((endpoint.protocol, endpoint.address)));
+        }
+        Ok(None)
+    }
+
     // Private helper methods
 
     /// Check if validator matches discovery filter
@@ -397,5 +466,173 @@ mod tests {
             ..Default::default()
         };
         assert!(!protocol.matches_filter(&validator, &filter));
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_priority_selection() {
+        let protocol = ValidatorDiscoveryProtocol::new(3600);
+
+        let validator = ValidatorAnnouncement {
+            identity_id: Hash::from_bytes(&[1u8; 32]),
+            consensus_key: PublicKey {
+                dilithium_pk: vec![0u8; 32],
+                kyber_pk: Vec::new(),
+                key_id: [0u8; 32],
+            },
+            stake: 100,
+            storage_provided: 0,
+            commission_rate: 0,
+            endpoints: vec![
+                ValidatorEndpoint {
+                    protocol: "ble".into(),
+                    address: "ble://a".into(),
+                    priority: 1,
+                },
+                ValidatorEndpoint {
+                    protocol: "quic".into(),
+                    address: "1.2.3.4:1234".into(),
+                    priority: 10,
+                },
+            ],
+            status: ValidatorStatus::Active,
+            last_updated: 0,
+            signature: vec![],
+        };
+
+        protocol.announce_validator(validator).await.unwrap();
+
+        // Test deterministic selection: higher priority (10) should win over (1)
+        let ep = protocol
+            .select_validator_endpoint(&Hash::from_bytes(&[1u8; 32]))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(ep.protocol, "quic");
+        assert_eq!(ep.address, "1.2.3.4:1234");
+        assert_eq!(ep.priority, 10);
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_selection_with_tie_breaker() {
+        let protocol = ValidatorDiscoveryProtocol::new(3600);
+
+        let validator = ValidatorAnnouncement {
+            identity_id: Hash::from_bytes(&[2u8; 32]),
+            consensus_key: PublicKey {
+                dilithium_pk: vec![0u8; 32],
+                kyber_pk: Vec::new(),
+                key_id: [0u8; 32],
+            },
+            stake: 100,
+            storage_provided: 0,
+            commission_rate: 0,
+            // Equal priority - tie-breaker selects first alphabetically: "quic" before "tcp"
+            endpoints: vec![
+                ValidatorEndpoint {
+                    protocol: "tcp".into(),
+                    address: "1.2.3.4:1234".into(),
+                    priority: 5,
+                },
+                ValidatorEndpoint {
+                    protocol: "quic".into(),
+                    address: "1.2.3.4:4321".into(),
+                    priority: 5,
+                },
+            ],
+            status: ValidatorStatus::Active,
+            last_updated: 0,
+            signature: vec![],
+        };
+
+        protocol.announce_validator(validator).await.unwrap();
+
+        let ep = protocol
+            .select_validator_endpoint(&Hash::from_bytes(&[2u8; 32]))
+            .await
+            .unwrap()
+            .unwrap();
+
+        // With equal priority, alphabetically first protocol wins ("quic" before "tcp")
+        assert_eq!(ep.protocol, "quic");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_validator_route() {
+        let protocol = ValidatorDiscoveryProtocol::new(3600);
+
+        let validator = ValidatorAnnouncement {
+            identity_id: Hash::from_bytes(&[3u8; 32]),
+            consensus_key: PublicKey {
+                dilithium_pk: vec![0u8; 32],
+                kyber_pk: Vec::new(),
+                key_id: [0u8; 32],
+            },
+            stake: 100,
+            storage_provided: 0,
+            commission_rate: 0,
+            endpoints: vec![ValidatorEndpoint {
+                protocol: "quic".into(),
+                address: "1.2.3.4:1234".into(),
+                priority: 10,
+            }],
+            status: ValidatorStatus::Active,
+            last_updated: 0,
+            signature: vec![],
+        };
+
+        protocol.announce_validator(validator).await.unwrap();
+
+        // Test routing resolution
+        let route = protocol
+            .resolve_validator_route(&Hash::from_bytes(&[3u8; 32]))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(route.0, "quic");
+        assert_eq!(route.1, "1.2.3.4:1234");
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_selection_no_endpoints() {
+        let protocol = ValidatorDiscoveryProtocol::new(3600);
+
+        let validator = ValidatorAnnouncement {
+            identity_id: Hash::from_bytes(&[4u8; 32]),
+            consensus_key: PublicKey {
+                dilithium_pk: vec![0u8; 32],
+                kyber_pk: Vec::new(),
+                key_id: [0u8; 32],
+            },
+            stake: 100,
+            storage_provided: 0,
+            commission_rate: 0,
+            endpoints: vec![], // No endpoints
+            status: ValidatorStatus::Active,
+            last_updated: 0,
+            signature: vec![],
+        };
+
+        protocol.announce_validator(validator).await.unwrap();
+
+        let ep = protocol
+            .select_validator_endpoint(&Hash::from_bytes(&[4u8; 32]))
+            .await
+            .unwrap();
+
+        assert_eq!(ep, None);
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_selection_missing_validator() {
+        let protocol = ValidatorDiscoveryProtocol::new(3600);
+
+        let ep = protocol
+            .select_validator_endpoint(&Hash::from_bytes(&[255u8; 32]))
+            .await
+            .unwrap();
+
+        assert_eq!(ep, None);
     }
 }

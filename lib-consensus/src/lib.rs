@@ -17,6 +17,7 @@ pub mod mining;
 pub mod network;
 pub mod proofs;
 pub mod rewards;
+pub mod testing;
 pub mod types;
 pub mod validators;
 
@@ -27,6 +28,7 @@ pub use engines::ConsensusEngine;
 pub use mining::{should_mine_block, IdentityData};
 pub use network::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
 pub use proofs::*;
+pub use testing::NoOpBroadcaster;
 pub use types::*;
 pub use validators::{Validator, ValidatorManager};
 

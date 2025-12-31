@@ -19,26 +19,7 @@ use crate::storage::{StorageIntegration, StorageConfig};
 use crate::storage_stub::{StorageIntegration, StorageConfig};
 use crate::identity::{ProtocolIdentityService, IdentityServiceConfig};
 use std::collections::HashMap;
-
-/// No-op message broadcaster for testing and integration
-///
-/// This broadcaster discards all messages and is used for integration tests
-/// where network distribution is not being tested. For production use,
-/// provide a real broadcaster implementation.
-#[derive(Debug)]
-struct NoOpBroadcaster;
-
-#[async_trait::async_trait]
-impl lib_consensus::MessageBroadcaster for NoOpBroadcaster {
-    async fn broadcast_to_validators(
-        &self,
-        _message: lib_consensus::ValidatorMessage,
-        _validator_ids: &[lib_identity::IdentityId],
-    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // No-op: discards all messages
-        Ok(())
-    }
-}
+use lib_consensus::NoOpBroadcaster;
 
 /// Integration configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
