@@ -10,13 +10,31 @@ use tokio::sync::mpsc;
 ///
 /// This is the boundary interface: consensus receives opaque bytes,
 /// not ValidatorMessage. Consensus engine deserializes and verifies signatures.
+///
+/// # Wire Format
+/// The payload field contains framed consensus message bytes in the format:
+/// - 4-byte big-endian length prefix (excludes prefix itself)
+/// - 1-byte version byte (currently 0x01)
+/// - Remaining bytes: bincode-encoded ValidatorMessage
+///
+/// # Framing Responsibility
+/// - Network layer (lib-network): Adds length prefix + version
+/// - ConsensusReceiver: Receives already-framed bytes, passes opaque
+/// - ConsensusEngine consumer: Deserializes using ConsensusMessageCodec
+///
+/// # Invariant
+/// CR-1: Boundary purity - receiver treats payload as opaque bytes.
+/// No deserialization, no validation, no branching on message type.
 #[derive(Debug, Clone)]
 pub struct ReceivedConsensusMessage {
-    /// Verified validator identity from authenticated session
+    /// Verified validator identity from authenticated session.
+    /// Enforces CR-2: sender authenticity.
     pub from_validator_id: IdentityId,
-    /// Unix epoch seconds when message was received
+    /// Unix epoch seconds when message was received.
+    /// Used for CR-4 timestamp validation and message ordering.
     pub received_at: u64,
-    /// Framed consensus bytes (includes 4-byte length prefix + version + payload)
+    /// Framed consensus bytes (length + version + payload).
+    /// Opaque to ConsensusReceiver - no deserialization happens here.
     pub payload: Vec<u8>,
 }
 
@@ -40,6 +58,20 @@ impl DedupCache {
             ttl_secs,
         }
     }
+
+    /// # Cleanup Strategy
+    /// The cleanup runs synchronously during `try_insert_if_new()`.
+    /// This is acceptable because:
+    /// - TTL cleanup is O(n) where n = cache entries
+    /// - Cache is bounded by message TTL window (typically 300-600 secs)
+    /// - Typical validator count is 100-1000, so n is bounded
+    /// - Synchronous cleanup avoids background task overhead
+    /// - Per-message cleanup distributes work evenly
+    ///
+    /// For high-volume scenarios (>10k msgs/sec), consider:
+    /// - Time-ordered data structure (BTreeMap by timestamp)
+    /// - Separate background cleanup task
+    /// - Sampling-based cleanup (cleanup every N messages, not every message)
 
     /// Atomically check and insert (validator_id, message_id) pair
     ///
@@ -107,10 +139,10 @@ pub struct ConsensusReceiver {
     receiver: Option<mpsc::Receiver<ReceivedConsensusMessage>>,
     dedup: Arc<tokio::sync::Mutex<DedupCache>>,
     clock_skew_secs: u64,
-    /// Validator registry or checker function
-    /// Used to enforce CR-2: sender authenticity
-    /// Fails fast if validator_id is not registered/known
-    known_validators: Arc<std::sync::Mutex<std::collections::HashSet<IdentityId>>>,
+    /// Validator registry for CR-2 enforcement
+    /// Stores set of validator IDs that are allowed to send messages.
+    /// Uses tokio::sync::Mutex for consistency with async context.
+    known_validators: Arc<tokio::sync::Mutex<std::collections::HashSet<IdentityId>>>,
 }
 
 impl ConsensusReceiver {
@@ -135,7 +167,7 @@ impl ConsensusReceiver {
             receiver: Some(receiver),
             dedup,
             clock_skew_secs,
-            known_validators: Arc::new(std::sync::Mutex::new(known_validators)),
+            known_validators: Arc::new(tokio::sync::Mutex::new(known_validators)),
         }
     }
 
@@ -143,20 +175,14 @@ impl ConsensusReceiver {
     ///
     /// Used to enforce CR-2: sender authenticity.
     /// Only registered validators can send messages.
-    pub fn register_validator(&self, validator_id: IdentityId) {
-        let mut validators = self
-            .known_validators
-            .lock()
-            .expect("validator registry lock poisoned");
+    pub async fn register_validator(&self, validator_id: IdentityId) {
+        let mut validators = self.known_validators.lock().await;
         validators.insert(validator_id);
     }
 
     /// Check if a validator is registered/known
-    fn is_validator_known(&self, validator_id: &IdentityId) -> bool {
-        let validators = self
-            .known_validators
-            .lock()
-            .expect("validator registry lock poisoned");
+    async fn is_validator_known(&self, validator_id: &IdentityId) -> bool {
+        let validators = self.known_validators.lock().await;
         validators.contains(validator_id)
     }
 
@@ -197,7 +223,7 @@ impl ConsensusReceiver {
         // Step 1: Verify sender authenticity (CR-2: Sender authenticity)
         // CRITICAL: Only registered validators are allowed.
         // Drop immediately if sender is not in trusted validator set.
-        if !self.is_validator_known(&from_validator_id) {
+        if !self.is_validator_known(&from_validator_id).await {
             // Unknown validator - drop silently (CR-2 violation attempt)
             // In production, would log security event
             return Ok(());
@@ -259,20 +285,32 @@ impl ConsensusReceiver {
 
     /// Acknowledge receipt of a message (transport-level only)
     ///
-    /// # Invariant CR-6
-    /// Ack does NOT:
-    /// - Confirm validity
-    /// - Confirm signature
-    /// - Confirm inclusion in consensus
+    /// # Invariant CR-6: Best-effort acknowledgment
     ///
-    /// Ack means: "received and queued", nothing more.
+    /// This method sends a transport-level ACK that does NOT confirm:
+    /// - Message validity or correctness
+    /// - Signature verification (done downstream)
+    /// - Inclusion in consensus (done by ConsensusEngine)
+    /// - Consensus acceptance or finality
+    ///
+    /// ACK means only: "message received and queued for processing"
+    ///
+    /// # Error Handling
+    /// Transport failures in ACK sending are **non-critical**:
+    /// - The message has already been enqueued (Step 4)
+    /// - The caller (network layer) cannot retry based on ACK failure
+    /// - Callers ignore the Result (see receive_message Step 5)
+    ///
+    /// Future implementations **must** handle transport errors internally
+    /// and still return Ok(()). Treat as best-effort telemetry only.
     pub async fn acknowledge_message(
         &self,
         _from_validator_id: &IdentityId,
         _message_id: &Hash,
     ) -> Result<()> {
-        // Transport-level acknowledgment only
+        // Transport-level acknowledgment only (currently no-op stub)
         // In production, would send ACK frame to sender
+        // Failures are logged but not propagated (CR-6: best-effort)
         Ok(())
     }
 }
@@ -510,18 +548,25 @@ mod tests {
     }
 
     /// Test CR-5: Non-blocking ingress with concurrent receives
+    ///
+    /// Verifies that concurrent message reception doesn't block.
+    /// Uses channel capacity >= number of senders to verify all messages accepted.
     #[tokio::test]
     async fn test_concurrent_receives() {
+        let num_senders = 10;
         let mut validators = std::collections::HashSet::new();
-        for i in 0..10 {
+        for i in 0..num_senders {
             validators.insert(Hash([i as u8; 32]));
         }
-        let receiver = Arc::new(ConsensusReceiver::new(5, 60, 300, validators));
+
+        let mut receiver = ConsensusReceiver::new(num_senders, 60, 300, validators);
+        let mut channel = receiver.message_channel();
+        let receiver = Arc::new(receiver);
         let now = current_time().unwrap();
 
         // Spawn 10 concurrent receivers (DIFFERENT message_ids)
         let mut handles = vec![];
-        for i in 0..10 {
+        for i in 0..num_senders {
             let recv = Arc::clone(&receiver);
             let handle = tokio::spawn(async move {
                 let validator_id = Hash([i as u8; 32]);
@@ -534,11 +579,31 @@ mod tests {
             handles.push(handle);
         }
 
-        // All should complete without blocking
+        // All send operations should complete without blocking
         for handle in handles {
             let result = handle.await;
             assert!(result.is_ok());
         }
+
+        // All messages should be delivered (channel capacity >= senders)
+        let mut received_count = 0;
+        loop {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                channel.recv(),
+            )
+            .await
+            {
+                Ok(Some(_)) => received_count += 1,
+                Ok(None) => break,
+                Err(_) => break, // timeout
+            }
+        }
+        assert_eq!(
+            received_count, num_senders,
+            "All {} concurrent messages should be delivered",
+            num_senders
+        );
     }
 
     /// Test CR-4: Time sanity - reject stale messages
@@ -549,7 +614,8 @@ mod tests {
         let mut validators = std::collections::HashSet::new();
         validators.insert(validator_id.clone());
 
-        let receiver = ConsensusReceiver::new(10, clock_skew, 300, validators);
+        let mut receiver = ConsensusReceiver::new(10, clock_skew, 300, validators);
+        let mut channel = receiver.message_channel();
         let message_id = Hash([2u8; 32]);
         let payload = vec![0x01];
 
@@ -566,6 +632,14 @@ mod tests {
             )
             .await;
         assert!(result.is_ok()); // No error, but message was dropped
+
+        // Verify message was NOT delivered to channel
+        let timeout_result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            channel.recv(),
+        )
+        .await;
+        assert!(timeout_result.is_err(), "Stale message should be dropped, not delivered");
     }
 
     /// Test CR-4: Time sanity - reject future messages
@@ -576,7 +650,8 @@ mod tests {
         let mut validators = std::collections::HashSet::new();
         validators.insert(validator_id.clone());
 
-        let receiver = ConsensusReceiver::new(10, clock_skew, 300, validators);
+        let mut receiver = ConsensusReceiver::new(10, clock_skew, 300, validators);
+        let mut channel = receiver.message_channel();
         let message_id = Hash([2u8; 32]);
         let payload = vec![0x01];
 
@@ -593,6 +668,14 @@ mod tests {
             )
             .await;
         assert!(result.is_ok()); // No error, but message was dropped
+
+        // Verify message was NOT delivered to channel
+        let timeout_result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            channel.recv(),
+        )
+        .await;
+        assert!(timeout_result.is_err(), "Future message should be dropped, not delivered");
     }
 
     /// Test CR-7: Channel isolation - consensus receives exactly what was enqueued
