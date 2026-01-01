@@ -1621,9 +1621,10 @@ impl BluetoothClassicProtocol {
                 is_outgoing: true,
             };
             
-            // Avoid holding WinRT types across an await; use blocking_write to update connections
+            // Update active connections using async write to avoid blocking the runtime
             self.active_connections
-                .blocking_write()
+                .write()
+                .await
                 .insert(device_address.to_string(), connection);
 
             Ok(RfcommStream::from_windows_socket(socket, reader, writer, device_address.to_string()))
