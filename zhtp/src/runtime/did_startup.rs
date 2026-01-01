@@ -365,9 +365,9 @@ pub async fn load_node_identity_from_keystore(keystore_path: &Path) -> Result<Op
         .map_err(|e| anyhow!("Failed to parse node private key: {}", e))?;
 
     let private_key = PrivateKey {
-        dilithium_sk: keystore_key.dilithium_sk.clone(),
-        kyber_sk: keystore_key.kyber_sk.clone(),
-        master_seed: keystore_key.master_seed.clone(),
+        dilithium_sk: keystore_key.dilithium_sk,
+        kyber_sk: keystore_key.kyber_sk,
+        master_seed: keystore_key.master_seed,
     };
 
     let identity = ZhtpIdentity::from_serialized(&identity_data, &private_key)
