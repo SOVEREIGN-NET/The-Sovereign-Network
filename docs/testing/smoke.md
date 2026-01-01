@@ -25,5 +25,8 @@
 - Use `--no-run` for broad coverage to keep builds fast and network-independent.
 - Avoid adding tests that require external services or network; if unavoidable, mark ignored and document setup.
 - If the smoke set starts exceeding time budgets, split into:
-  - `smoke` (always on)
-  - `full` (manual/cron) using the same commands without `--no-run`.
+- `smoke` (always on)
+- `full` (manual/cron) using the same commands without `--no-run`.
+
+## Mesh identity integration (manual)
+- Run `cargo test -p lib-network --test mesh_network_integration` after changes to mesh identity or handshake code to verify NodeId determinism and key binding across mesh nodes.
