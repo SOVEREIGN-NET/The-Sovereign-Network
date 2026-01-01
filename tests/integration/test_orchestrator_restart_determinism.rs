@@ -1,4 +1,4 @@
-awouse anyhow::Result;
+use anyhow::Result;
 use lib_crypto::PrivateKey;
 use lib_identity::{types::IdentityType, NodeId, ZhtpIdentity};
 use lib_network::{dht::protocol::DhtPeerInfo, identity::UnifiedPeerId};
