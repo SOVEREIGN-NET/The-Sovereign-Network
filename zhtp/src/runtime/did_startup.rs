@@ -333,6 +333,84 @@ fn write_file_with_permissions(path: &Path, content: &str) -> std::result::Resul
     Ok(())
 }
 
+/// Load only the node identity from keystore (non-interactive).
+///
+/// Returns Ok(None) when the node identity and private key files are absent.
+/// Returns an error for partial/corrupt keystores to avoid silent identity drift.
+pub async fn load_node_identity_from_keystore(keystore_path: &Path) -> Result<Option<ZhtpIdentity>> {
+    let identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
+    let key_file = keystore_path.join(NODE_PRIVATE_KEY_FILENAME);
+
+    if !identity_file.exists() && !key_file.exists() {
+        return Ok(None);
+    }
+
+    if identity_file.exists() ^ key_file.exists() {
+        return Err(anyhow!(
+            "Node keystore is incomplete: identity file present = {}, private key file present = {}",
+            identity_file.exists(),
+            key_file.exists()
+        ));
+    }
+
+    let identity_data = tokio::fs::read_to_string(&identity_file)
+        .await
+        .map_err(|e| anyhow!("Failed to read node identity {:?}: {}", identity_file, e))?;
+
+    let key_data = tokio::fs::read_to_string(&key_file)
+        .await
+        .map_err(|e| anyhow!("Failed to read node private key {:?}: {}", key_file, e))?;
+
+    let keystore_key: KeystorePrivateKey = serde_json::from_str(&key_data)
+        .map_err(|e| anyhow!("Failed to parse node private key: {}", e))?;
+
+    let private_key = PrivateKey {
+        dilithium_sk: keystore_key.dilithium_sk.clone(),
+        kyber_sk: keystore_key.kyber_sk.clone(),
+        master_seed: keystore_key.master_seed.clone(),
+    };
+
+    let identity = ZhtpIdentity::from_serialized(&identity_data, &private_key)
+        .map_err(|e| anyhow!("Failed to deserialize node identity: {}", e))?;
+
+    Ok(Some(identity))
+}
+
+/// Persist node identity and private key to the standard keystore paths.
+pub async fn persist_node_identity_to_keystore(
+    keystore_path: &Path,
+    identity: &ZhtpIdentity,
+) -> Result<()> {
+    std::fs::create_dir_all(keystore_path)
+        .map_err(|e| anyhow!("Failed to create keystore directory {:?}: {}", keystore_path, e))?;
+
+    let identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
+    let key_file = keystore_path.join(NODE_PRIVATE_KEY_FILENAME);
+
+    let private_key = identity
+        .private_key
+        .as_ref()
+        .ok_or_else(|| anyhow!("Node identity missing private key (cannot persist)"))?;
+
+    let key_payload = KeystorePrivateKey {
+        dilithium_sk: private_key.dilithium_sk.clone(),
+        kyber_sk: private_key.kyber_sk.clone(),
+        master_seed: private_key.master_seed.clone(),
+    };
+
+    let identity_json = serde_json::to_string_pretty(identity)
+        .map_err(|e| anyhow!("Failed to serialize node identity: {}", e))?;
+    let key_json = serde_json::to_string_pretty(&key_payload)
+        .map_err(|e| anyhow!("Failed to serialize node private key: {}", e))?;
+
+    write_file_with_permissions(&identity_file, &identity_json)
+        .map_err(|e| anyhow!("Failed to write node identity {:?}: {}", identity_file, e))?;
+    write_file_with_permissions(&key_file, &key_json)
+        .map_err(|e| anyhow!("Failed to write node private key {:?}: {}", key_file, e))?;
+
+    Ok(())
+}
+
 /// Node wallet startup options
 #[derive(Debug, Clone)]
 pub enum WalletStartupChoice {
