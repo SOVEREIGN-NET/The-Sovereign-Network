@@ -381,7 +381,8 @@ pub async fn persist_node_identity_to_keystore(
     keystore_path: &Path,
     identity: &ZhtpIdentity,
 ) -> Result<()> {
-    std::fs::create_dir_all(keystore_path)
+    tokio::fs::create_dir_all(keystore_path)
+        .await
         .map_err(|e| anyhow!("Failed to create keystore directory {:?}: {}", keystore_path, e))?;
 
     let identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
