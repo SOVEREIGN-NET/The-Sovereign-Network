@@ -2253,7 +2253,7 @@ pub async fn create_or_load_node_identity(
 
     // Try to load an existing identity (with private key) from the keystore
     if let Some(identity) = crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await? {
-        info!("Loaded existing node identity from keystore: {} (device: {})", identity.did, device_name);
+        info!("Loaded existing node identity from keystore: {}", identity.did);
         return Ok(identity);
     }
 
