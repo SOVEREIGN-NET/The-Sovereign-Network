@@ -200,7 +200,7 @@ impl BluetoothMeshProtocol {
             let data_buffer = writer.DetachBuffer()?;
 
             let write_result_async = mesh_char
-                .WriteValueWithResultAsync(data_buffer)
+                .WriteValueWithResultAsync(&data_buffer)
                 .map_err(|e| anyhow!("Failed to write GATT value: {:?}", e))?;
             let write_result = write_result_async
                 .get()
