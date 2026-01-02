@@ -376,6 +376,7 @@ pub async fn discover_wifi_direct_peers() -> Result<Vec<WiFiNetworkInfo>> {
 #[cfg(target_os = "linux")]
 async fn linux_discover_wifi_direct_peers() -> Result<Vec<WiFiNetworkInfo>> {
     use std::process::Command;
+    use std::time::Duration;
     
     let mut direct_peers = Vec::new();
     
