@@ -66,6 +66,39 @@ fn node_id_remains_stable_across_restart() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn node_id_changes_with_different_seed() -> Result<()> {
+    let device = "alpha-mesh-node-01";
+    let a = identity_with_seed(device, [0x11u8; 64])?;
+    let b = identity_with_seed(device, [0x12u8; 64])?;
+
+    assert_ne!(a.did, b.did, "Different seeds should produce different DIDs");
+    assert_ne!(
+        a.node_id, b.node_id,
+        "Different seeds should produce different NodeIds"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn node_id_changes_with_different_device_name() -> Result<()> {
+    let seed = [0x11u8; 64];
+    let a = identity_with_seed("alpha-mesh-node-01", seed)?;
+    let b = identity_with_seed("alpha-mesh-node-02", seed)?;
+
+    assert_eq!(
+        a.did, b.did,
+        "Same seed should produce same DID even across devices"
+    );
+    assert_ne!(
+        a.node_id, b.node_id,
+        "Different device names should produce different NodeIds"
+    );
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()> {
     // Use distinct seed patterns (0x21, 0x22, 0x23) to create unique, deterministic identities
@@ -140,40 +173,123 @@ fn quic_master_key_is_bound_to_node_id() -> Result<()> {
     let same_device_seed = [0x33u8; 64];
     let identity = identity_with_seed(device, same_device_seed)?;
     let restarted_identity = identity_with_seed(device, same_device_seed)?;
-    let different_identity = identity_with_seed("alpha-mesh-node-03", [0x34u8; 64])?;
+    let other_peer = identity_with_seed("alpha-mesh-node-03", [0x34u8; 64])?;
 
-    // These KDF info strings match the production QUIC master key derivation in the handshake
-    // The full key derivation: extract with "zhtp-quic-mesh", then expand with "zhtp-quic-master"
-    let uhp_session_key = hash_blake3(b"mesh-uhp-session");
-    let pqc_shared_secret = hash_blake3(b"mesh-pqc-secret");
-    let transcript_hash = hash_blake3(b"mesh-transcript");
+    let uhp_session_key = [
+        0x5e, 0x2a, 0x1c, 0x9f, 0x73, 0x4b, 0x88, 0xd1,
+        0x0f, 0xa6, 0x23, 0x4c, 0x71, 0x9d, 0x55, 0x3e,
+        0x96, 0x1a, 0xb4, 0x2f, 0x07, 0x65, 0x9c, 0xee,
+        0xa3, 0x14, 0x4f, 0x82, 0x19, 0xd8, 0x0c, 0x6a,
+    ];
+    let pqc_shared_secret = [
+        0x0c, 0x91, 0x8d, 0x7b, 0x2e, 0x4a, 0x63, 0xf5,
+        0x11, 0xb9, 0xe0, 0x37, 0x58, 0xaa, 0x6f, 0x92,
+        0xe5, 0x1d, 0x26, 0x99, 0x43, 0xc0, 0x7a, 0x34,
+        0xf8, 0x2b, 0x6d, 0x10, 0x95, 0xce, 0x77, 0x04,
+    ];
+    let transcript_hash = [
+        0x9a, 0x57, 0x02, 0xcc, 0x13, 0x7d, 0xe8, 0x61,
+        0xb3, 0x4e, 0x29, 0x90, 0x0a, 0xf6, 0x7b, 0x1d,
+        0x48, 0xc2, 0x5f, 0xa9, 0x3c, 0x70, 0x1e, 0xd4,
+        0x6b, 0x88, 0x0f, 0x31, 0xad, 0x52, 0xc6, 0x7f,
+    ];
 
-    let master1 = derive_master_key_for_test(
+    let master = derive_master_key_for_test(
         &uhp_session_key,
         &pqc_shared_secret,
         &transcript_hash,
         identity.node_id.as_bytes(),
     )?;
-    let master2 = derive_master_key_for_test(
+    assert_eq!(master.len(), 32, "Master key must be 32 bytes");
+
+    let master_restarted = derive_master_key_for_test(
         &uhp_session_key,
         &pqc_shared_secret,
         &transcript_hash,
         restarted_identity.node_id.as_bytes(),
     )?;
-    let master3 = derive_master_key_for_test(
+    assert_eq!(
+        master, master_restarted,
+        "Master key should remain stable when NodeId is stable across restarts"
+    );
+
+    let master_other_peer = derive_master_key_for_test(
         &uhp_session_key,
         &pqc_shared_secret,
         &transcript_hash,
-        different_identity.node_id.as_bytes(),
+        other_peer.node_id.as_bytes(),
     )?;
-
-    assert_eq!(
-        master1, master2,
-        "Master key should remain stable when NodeId is stable across restarts"
-    );
     assert_ne!(
-        master1, master3,
-        "Changing NodeId must change the derived mesh master key"
+        master, master_other_peer,
+        "Changing peer NodeId must change the derived mesh master key"
+    );
+
+    let mut uhp_session_key_changed = uhp_session_key;
+    uhp_session_key_changed[0] ^= 0x01;
+    let master_uhp_changed = derive_master_key_for_test(
+        &uhp_session_key_changed,
+        &pqc_shared_secret,
+        &transcript_hash,
+        identity.node_id.as_bytes(),
+    )?;
+    assert_ne!(
+        master, master_uhp_changed,
+        "Changing UHP session key must change the derived master key"
+    );
+
+    let mut pqc_shared_secret_changed = pqc_shared_secret;
+    pqc_shared_secret_changed[0] ^= 0x01;
+    let master_pqc_changed = derive_master_key_for_test(
+        &uhp_session_key,
+        &pqc_shared_secret_changed,
+        &transcript_hash,
+        identity.node_id.as_bytes(),
+    )?;
+    assert_ne!(
+        master, master_pqc_changed,
+        "Changing PQC shared secret must change the derived master key"
+    );
+
+    let mut transcript_hash_changed = transcript_hash;
+    transcript_hash_changed[0] ^= 0x01;
+    let master_transcript_changed = derive_master_key_for_test(
+        &uhp_session_key,
+        &pqc_shared_secret,
+        &transcript_hash_changed,
+        identity.node_id.as_bytes(),
+    )?;
+    assert_ne!(
+        master, master_transcript_changed,
+        "Changing transcript hash must change the derived master key"
+    );
+
+    let mut ikm = Vec::with_capacity(32 + 32 + 32 + identity.node_id.as_bytes().len());
+    ikm.extend_from_slice(&uhp_session_key);
+    ikm.extend_from_slice(&pqc_shared_secret);
+    ikm.extend_from_slice(&transcript_hash);
+    ikm.extend_from_slice(identity.node_id.as_bytes());
+
+    let extracted = hkdf_sha3(&ikm, b"zhtp-quic-mesh", 32)?;
+    let expanded = hkdf_sha3(&extracted, b"zhtp-quic-master", 32)?;
+    assert_eq!(
+        master.to_vec(),
+        expanded,
+        "Master key derivation must use both HKDF labels"
+    );
+
+    let wrong_expand = hkdf_sha3(&extracted, b"zhtp-quic-master-wrong", 32)?;
+    assert_ne!(
+        master.to_vec(),
+        wrong_expand,
+        "Changing HKDF expansion label must change the derived master key"
+    );
+
+    let extracted_wrong = hkdf_sha3(&ikm, b"zhtp-quic-mesh-wrong", 32)?;
+    let expanded_wrong = hkdf_sha3(&extracted_wrong, b"zhtp-quic-master", 32)?;
+    assert_ne!(
+        master.to_vec(),
+        expanded_wrong,
+        "Changing HKDF extraction label must change the derived master key"
     );
 
     Ok(())
