@@ -2247,77 +2247,27 @@ pub async fn create_or_load_node_identity(
         .join(".zhtp")
         .join("keystore");
 
-    let identity_file = keystore_path.join(NODE_IDENTITY_FILENAME);
+    // Allow explicit device name override to keep NodeId deterministic across restarts
+    let device_name = std::env::var("ZHTP_DEVICE_NAME")
+        .unwrap_or_else(|_| "zhtp-node".to_string());
 
-    // Try to load existing identity from keystore (requires private key)
-    let private_key_file = keystore_path.join(NODE_PRIVATE_KEY_FILENAME);
-
-    if identity_file.exists() && private_key_file.exists() {
-        if let (Ok(identity_data), Ok(key_data)) = (
-            tokio::fs::read_to_string(&identity_file).await,
-            tokio::fs::read_to_string(&private_key_file).await,
-        ) {
-            // Parse private key
-            if let Ok(key_json) = serde_json::from_str::<serde_json::Value>(&key_data) {
-                if let (Some(dilithium), Some(kyber), Some(seed)) = (
-                    key_json.get("dilithium_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                    key_json.get("kyber_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                    key_json.get("master_seed").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                ) {
-                    let private_key = lib_crypto::PrivateKey {
-                        dilithium_sk: dilithium,
-                        kyber_sk: kyber,
-                        master_seed: seed,
-                    };
-
-                    match lib_identity::ZhtpIdentity::from_serialized(&identity_data, &private_key) {
-                        Ok(identity) => {
-                            info!("✓ Loaded existing node identity from keystore: {}", identity.did);
-                            return Ok(identity);
-                        }
-                        Err(e) => {
-                            // FATAL: Do NOT overwrite - require manual recovery
-                            return Err(anyhow::anyhow!(
-                                "FATAL: Failed to load node identity from keystore: {}\n\
-                                The keystore file may be corrupted. Manual recovery required.",
-                                e
-                            ));
-                        }
-                    }
-                }
-            }
-            // Private key parse failed - FATAL
-            return Err(anyhow::anyhow!(
-                "FATAL: Failed to parse node private key from keystore.\n\
-                The keystore may be corrupted. Manual recovery required."
-            ));
-        }
-    }
-
-    // Only create new identity if keystore doesn't exist at all
-    if identity_file.exists() {
-        return Err(anyhow::anyhow!(
-            "FATAL: Node identity file exists but private key is missing.\n\
-            Cannot load identity without private key. Manual recovery required."
-        ));
+    // Try to load an existing identity (with private key) from the keystore
+    if let Some(identity) = crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await? {
+        info!("Loaded existing node identity from keystore: {}", identity.did);
+        return Ok(identity);
     }
 
     // Create new identity using P1-7 architecture
-    info!("Creating new node identity (no existing keystore found)...");
+    info!("Creating new node identity (no existing keystore found)... device={}", device_name);
     let node_identity = lib_identity::ZhtpIdentity::new_unified(
         lib_identity::types::IdentityType::Device,
         None, // No age for device
         None, // No jurisdiction for device
-        "zhtp-node",
+        &device_name,
         None, // Random seed
     )?;
 
-    // Save identity to keystore
-    tokio::fs::create_dir_all(&keystore_path).await?;
-    let json = serde_json::to_string_pretty(&node_identity)?;
-    tokio::fs::write(&identity_file, json).await?;
-
-    info!("✓ Created and saved node identity to keystore");
+    crate::runtime::did_startup::persist_node_identity_to_keystore(&keystore_path, &node_identity).await?;
+    info!("Created and saved node identity to keystore at {:?}", keystore_path);
     Ok(node_identity)
 }
-
