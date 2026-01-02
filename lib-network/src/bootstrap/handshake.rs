@@ -56,7 +56,6 @@
 
 use anyhow::{Result, anyhow};
 use lib_identity::ZhtpIdentity;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 // Re-export UHP types for convenience

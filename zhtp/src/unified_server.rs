@@ -37,7 +37,6 @@ use lib_network::protocols::quic_mesh::QuicMeshProtocol;
 
 // Import new QUIC handler for native ZHTP-over-QUIC
 use crate::server::QuicHandler;
-use lib_network::types::mesh_message::ZhtpMeshMessage;
 use lib_blockchain::Blockchain;
 use lib_storage::UnifiedStorageSystem;
 use lib_identity::IdentityManager;
@@ -809,7 +808,7 @@ impl ZhtpUnifiedServer {
         info!("═══════════════════════════════════════════════════════════════");
         
         // Get our public key for discovery protocols
-        let our_public_key_for_discovery = match self.mesh_router.get_sender_public_key().await {
+        let _our_public_key_for_discovery = match self.mesh_router.get_sender_public_key().await {
             Ok(pk) => pk,
             Err(e) => {
                 warn!(" Failed to get public key for discovery: {}", e);

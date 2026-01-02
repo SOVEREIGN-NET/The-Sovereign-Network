@@ -55,7 +55,7 @@
 
 use crate::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption, EncryptionStats};
 use anyhow::Result;
-use tracing::{debug, warn};
+use tracing::debug;
 
 // ============================================================================
 // FUNCTIONAL CORE: Pure Cryptography
