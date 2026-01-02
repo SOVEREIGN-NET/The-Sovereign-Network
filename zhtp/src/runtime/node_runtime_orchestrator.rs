@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::collections::HashSet;
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::{interval, Duration};
-use tracing::{info, warn, debug, error};
+use tracing::{info, debug, error};
 
 use super::node_runtime::{NodeRuntime, NodeAction, Tick, PeerStateChange, PeerState};
 

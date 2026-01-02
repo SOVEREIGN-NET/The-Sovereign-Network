@@ -83,7 +83,7 @@ pub async fn detect_lorawan_hardware() -> Result<Vec<LoRaWANHardware>> {
 
 // Update individual detection functions to return Vec<LoRaWANHardware>
 async fn detect_spi_concentrators() -> Result<Vec<LoRaWANHardware>> {
-    let mut radios = Vec::new();
+    let radios = Vec::new();
     
     // ...existing SPI detection logic...
     // Instead of returning early on first found, collect all
@@ -92,7 +92,7 @@ async fn detect_spi_concentrators() -> Result<Vec<LoRaWANHardware>> {
 }
 
 async fn detect_usb_radios() -> Result<Vec<LoRaWANHardware>> {
-    let mut radios = Vec::new();
+    let radios = Vec::new();
     
     // ...existing USB detection logic...
     // Collect all USB LoRa devices
@@ -101,7 +101,7 @@ async fn detect_usb_radios() -> Result<Vec<LoRaWANHardware>> {
 }
 
 async fn detect_i2c_radios() -> Result<Vec<LoRaWANHardware>> {
-    let mut radios = Vec::new();
+    let radios = Vec::new();
     
     // ...existing I2C detection logic...
     // Collect all I2C LoRa devices
@@ -110,7 +110,7 @@ async fn detect_i2c_radios() -> Result<Vec<LoRaWANHardware>> {
 }
 
 async fn detect_hat_radios() -> Result<Vec<LoRaWANHardware>> {
-    let mut radios = Vec::new();
+    let radios = Vec::new();
     
     // ...existing HAT detection logic...
     // Collect all HAT-based LoRa devices
