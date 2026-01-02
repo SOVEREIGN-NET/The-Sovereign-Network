@@ -27,6 +27,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use base64::{Engine as _, engine::general_purpose};
 
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
@@ -273,7 +274,7 @@ async fn handle_generate_proof(
             let commitment = lib_crypto::hashing::hash_blake3(&[&age.to_le_bytes()[..], &identity_id.0[..]].concat());
 
             let proof_data = ProofData {
-                proof_data: base64::encode(&proof_bytes),
+                proof_data: general_purpose::STANDARD.encode(&proof_bytes),
                 public_inputs: vec![hex::encode(&commitment[..16])], // Opaque commitment, not range bounds
                 proof_type: "age_over_18".to_string(),
                 generated_at: now,
@@ -307,7 +308,7 @@ async fn handle_generate_proof(
             );
 
             let proof_data = ProofData {
-                proof_data: base64::encode(&proof_bytes),
+                proof_data: general_purpose::STANDARD.encode(&proof_bytes),
                 public_inputs: vec![hex::encode(&bracket_hash[..16])], // Opaque bracket ID
                 proof_type: "age_range".to_string(),
                 generated_at: now,
@@ -333,7 +334,7 @@ async fn handle_generate_proof(
             let commitment = lib_crypto::hashing::hash_blake3(&identity_id.0);
 
             let proof_data = ProofData {
-                proof_data: base64::encode(&proof_bytes),
+                proof_data: general_purpose::STANDARD.encode(&proof_bytes),
                 public_inputs: vec![hex::encode(&commitment[..16])],
                 proof_type: "citizenship_verified".to_string(),
                 generated_at: now,
@@ -363,7 +364,7 @@ async fn handle_generate_proof(
 
             let proof_bytes = serde_json::to_vec(&range_proof)?;
             let proof_data = ProofData {
-                proof_data: base64::encode(&proof_bytes),
+                proof_data: general_purpose::STANDARD.encode(&proof_bytes),
                 public_inputs: vec![hex::encode(&jurisdiction_hash[..16])], // Salted hash prevents reverse lookup
                 proof_type: "jurisdiction_membership".to_string(),
                 generated_at: now,
