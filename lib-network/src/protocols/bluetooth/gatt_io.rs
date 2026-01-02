@@ -25,10 +25,18 @@ impl BluetoothMeshProtocol {
                 .await?;
         }
 
-        #[cfg(target_os = "windows")]
+        #[cfg(all(target_os = "windows", feature = "windows-gatt"))]
         {
             self.windows_register_bypass_service(service_uuid, &characteristics)
                 .await?;
+        }
+
+        #[cfg(all(target_os = "windows", not(feature = "windows-gatt")))]
+        {
+            warn!(
+                "Skipping Windows GATT registration for {} because the windows-gatt feature is disabled",
+                service_uuid
+            );
         }
 
         #[cfg(target_os = "macos")]
@@ -369,7 +377,7 @@ Value=00
         Ok(())
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(all(target_os = "windows", feature = "windows-gatt"))]
     async fn windows_register_bypass_service(
         &self,
         service_uuid: &str,

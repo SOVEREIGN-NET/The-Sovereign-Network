@@ -355,7 +355,7 @@ impl AuthenticationMiddleware {
     }
     
     /// Verify signature
-    async fn verify_signature(&self, request: &ZhtpRequest, signature: &str) -> ZhtpResult<bool> {
+    async fn verify_signature(&self, _request: &ZhtpRequest, signature: &str) -> ZhtpResult<bool> {
         // In production, this would verify the actual signature
         // For now, basic validation
         Ok(signature.len() >= 64 && signature.chars().all(|c| c.is_ascii_hexdigit()))
@@ -806,7 +806,7 @@ impl ZhtpMiddleware for RateLimitMiddleware {
 
 impl RateLimitMiddleware {
     /// Check if request should be rate limited
-    fn is_rate_limited(&self, key: &str, current_time: u64) -> bool {
+    fn is_rate_limited(&self, _key: &str, current_time: u64) -> bool {
         // This is a simplified implementation
         // In production, would use a more sophisticated algorithm like token bucket
         // and would need to be thread-safe with proper synchronization

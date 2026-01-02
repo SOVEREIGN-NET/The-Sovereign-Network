@@ -81,12 +81,12 @@ pub trait ZhtpServerEvents: Send + Sync {
     }
     
     /// Called when request is received
-    async fn on_request(&self, request: &ZhtpRequest) -> ZhtpResult<()> {
+    async fn on_request(&self, _request: &ZhtpRequest) -> ZhtpResult<()> {
         Ok(())
     }
     
     /// Called when response is sent
-    async fn on_response(&self, response: &ZhtpResponse) -> ZhtpResult<()> {
+    async fn on_response(&self, _response: &ZhtpResponse) -> ZhtpResult<()> {
         Ok(())
     }
     
