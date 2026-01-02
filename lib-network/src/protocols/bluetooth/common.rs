@@ -161,7 +161,7 @@ pub fn mac_to_dbus_path(mac: &[u8; 6]) -> String {
 /// 
 /// Converts standard UUID format (8-4-4-4-12) to Windows GUID structure
 /// Example: "6ba7b810-9dad-11d1-80b4-00c04fd430ca"
-#[cfg(all(target_os = "windows", feature = "windows-gatt"))]
+#[cfg(target_os = "windows")]
 pub fn parse_uuid_to_guid(uuid_str: &str) -> Result<windows::core::GUID> {
     use windows::core::GUID;
     
