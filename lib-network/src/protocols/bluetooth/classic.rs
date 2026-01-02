@@ -1621,8 +1621,12 @@ impl BluetoothClassicProtocol {
                 is_outgoing: true,
             };
             
-            self.active_connections.write().await.insert(device_address.to_string(), connection);
-            
+            // Update active connections using async write to avoid blocking the runtime
+            self.active_connections
+                .write()
+                .await
+                .insert(device_address.to_string(), connection);
+
             Ok(RfcommStream::from_windows_socket(socket, reader, writer, device_address.to_string()))
         }
         
