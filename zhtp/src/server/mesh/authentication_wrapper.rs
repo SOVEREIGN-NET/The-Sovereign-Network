@@ -303,7 +303,7 @@ impl MeshRouter {
     /// - Err(_) if critical error
     async fn authenticate_peer_only(
         &self,
-        peer_pubkey: &PublicKey,
+        _peer_pubkey: &PublicKey,
         handshake: &MeshHandshake,
         stream: &mut TcpStream,
     ) -> Result<Option<(f64, Vec<u8>)>> {

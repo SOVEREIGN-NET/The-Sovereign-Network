@@ -295,7 +295,7 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid publisher identity: {}", e))?;
 
         // Deserialize ownership proof
-        let ownership_proof = self.deserialize_proof(&api_request.ownership_proof)
+        let _ownership_proof = self.deserialize_proof(&api_request.ownership_proof)
             .map_err(|e| anyhow!("Invalid ownership proof: {}", e))?;
 
         // Decode content from base64

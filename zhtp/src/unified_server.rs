@@ -808,7 +808,7 @@ impl ZhtpUnifiedServer {
         info!("═══════════════════════════════════════════════════════════════");
         
         // Get our public key for discovery protocols
-        let our_public_key_for_discovery = match self.mesh_router.get_sender_public_key().await {
+        let _our_public_key_for_discovery = match self.mesh_router.get_sender_public_key().await {
             Ok(pk) => pk,
             Err(e) => {
                 warn!(" Failed to get public key for discovery: {}", e);
