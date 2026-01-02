@@ -16,6 +16,7 @@ use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_crypto::{PrivateKey, Hash};
 use serde::{Serialize, Deserialize};
 use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME, WALLET_DATA_FILENAME};
+use tracing::info;
 // Core wallet functionality with mesh network integration
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -180,12 +181,12 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
 
     // Insert wallet into the wallet_manager
     user_identity.wallet_manager.wallets.insert(wallet_id.clone(), restored_wallet);
-    eprintln!("✓ WALLET RESTORATION: Restored {} wallet (ID: {}) into user_identity {}",
+    info!("Wallet restoration: restored {} wallet (ID: {}) into user_identity {}",
         wallet_data.wallet_name,
         hex::encode(&wallet_id.0[..8]),
         hex::encode(&user_identity.id.0[..8])
     );
-    eprintln!("  Wallet count: {}, Balance: {} ZHTP",
+    info!("Wallet count: {}, Balance: {} ZHTP",
         user_identity.wallet_manager.wallets.len(),
         wallet_data.balance);
 
