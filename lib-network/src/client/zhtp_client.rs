@@ -119,7 +119,7 @@ impl ZhtpClient {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         // Create QUIC endpoint
-        let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)
+        let endpoint = Endpoint::client("0.0.0.0:0".parse()?)
             .context("Failed to create QUIC endpoint")?;
 
         // Configure transport

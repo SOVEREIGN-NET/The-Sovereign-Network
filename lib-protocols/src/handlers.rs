@@ -1472,7 +1472,7 @@ impl ZhtpHandlers {
         }
 
         // Use TransactionVerifier for detailed verification
-        if let Ok(verifier) = TransactionVerifier::new() {
+        if let Ok(_verifier) = TransactionVerifier::new() {
             // Create a simple transaction proof from the request data
             let public_inputs = self.generate_zk_public_inputs(request);
             

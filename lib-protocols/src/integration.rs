@@ -230,7 +230,7 @@ impl ZhtpIntegration {
     }
 
     /// Process mesh routing
-    async fn process_mesh_routing(&mut self, request: &ZhtpRequest) -> Result<()> {
+    async fn process_mesh_routing(&mut self, _request: &ZhtpRequest) -> Result<()> {
         // Check if mesh routing is needed based on request headers
         // For now, mesh routing is handled by external lib-network package
         if self.config.mesh_enabled {
@@ -248,7 +248,7 @@ impl ZhtpIntegration {
             ZhtpMethod::Post | ZhtpMethod::Put => {
                 // Store content
                 if !request.body.is_empty() {
-                    let metadata = crate::types::ContentMetadata {
+                    let _metadata = crate::types::ContentMetadata {
                         content_type: request.headers.get("Content-Type")
                                 .unwrap_or_else(|| "application/octet-stream".to_string()),
                         encoding: None,
@@ -370,7 +370,7 @@ impl ZhtpIntegration {
             }
             ZhtpMethod::Get => {
                 // Retrieve content
-                let content_id = request.uri.trim_start_matches("/content/");
+                let _content_id = request.uri.trim_start_matches("/content/");
                 
                 // Authenticate request to get identity
                 let authenticated_identity = self.identity_service.authenticate_request(&request).await?;
@@ -862,7 +862,7 @@ pub mod packages {
         
         // Test lib-identity health
         health.insert("lib-identity".to_string(), {
-            let identity_manager = lib_identity::IdentityManager::new();
+            let _identity_manager = lib_identity::IdentityManager::new();
             true // Identity manager creation always succeeds
         });
         

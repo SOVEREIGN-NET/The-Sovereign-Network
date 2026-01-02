@@ -5,8 +5,6 @@
 
 pub mod router;
 pub mod serialization;
-pub mod compatibility;
 
 pub use router::ZhtpRouter;
 pub use serialization::{serialize_request, deserialize_request, serialize_response, deserialize_response};
-pub use compatibility::HttpCompatibilityLayer;

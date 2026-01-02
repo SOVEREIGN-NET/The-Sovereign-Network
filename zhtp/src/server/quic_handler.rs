@@ -4,7 +4,6 @@
 //! protocol detection:
 //! - PQC Handshake → Mesh message flow (blockchain sync, peer discovery)
 //! - ZHTP Magic → Native ZHTP protocol (API requests)
-//! - HTTP Methods → HTTP compatibility layer (legacy clients)
 //!
 //! Architecture:
 //! ```text
@@ -22,9 +21,6 @@
 //!      ├─── ZHTP magic (b"ZHTP")
 //!      │         → ZhtpRouter (native ZHTP API)
 //!      │
-//!      ├─── HTTP method (GET/POST/PUT/DELETE/HEAD/OPTIONS/PATCH/CONNECT/TRACE)
-//!      │         → HttpCompatibilityLayer (HTTP-over-QUIC)
-//!      │
 //!      └─── Mesh Message (encrypted bincode)
 //!               → MeshMessageHandler (blockchain sync)
 //! ```
@@ -35,14 +31,12 @@
 //! 2. First connection is authenticated via PQC handshake (if peer-to-peer)
 //! 3. Subsequent streams are protocol-routed based on first bytes (non-consuming detection):
 //!    - b"ZHTP" → Native ZHTP (binary protocol)
-//!    - b"GET ", etc → HTTP compatibility layer
 //!    - Encrypted mesh messages → MeshMessageHandler
 //!
 //! # Thread Safety
 //!
 //! - `QuicHandler::clone()` creates a new handle to shared state
 //! - `zhtp_router` uses RwLock - multiple concurrent readers allowed
-//! - `http_compat` is Arc-wrapped and immutable after creation
 //! - `pqc_connections` uses RwLock for concurrent peer connection tracking
 
 use std::sync::Arc;
@@ -61,7 +55,7 @@ use lib_network::messaging::message_handler::MeshMessageHandler;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
 use lib_crypto::PublicKey;
 
-use super::zhtp::{ZhtpRouter, HttpCompatibilityLayer};
+use super::zhtp::ZhtpRouter;
 use super::zhtp::serialization::ZHTP_MAGIC;
 
 /// Connection idle timeout for client connections (60 seconds)
@@ -125,9 +119,6 @@ pub enum ConnectionMode {
     /// Control plane: UHP handshake required, then authenticated API requests
     /// ALPN: zhtp-uhp/1
     ControlPlane,
-    /// HTTP-compatible: No UHP handshake, direct HTTP requests (legacy)
-    /// ALPN: zhtp-http/1, zhtp/1.0, h3
-    HttpCompat,
     /// Mesh peer-to-peer: UHP handshake, then encrypted mesh messages
     /// ALPN: zhtp-mesh/1
     Mesh,
@@ -140,7 +131,6 @@ impl ConnectionMode {
             Some(b"zhtp-public/1") => ConnectionMode::Public,
             Some(b"zhtp-uhp/1") => ConnectionMode::ControlPlane,
             Some(b"zhtp-mesh/1") => ConnectionMode::Mesh,
-            Some(b"zhtp-http/1") | Some(b"zhtp/1.0") | Some(b"h3") => ConnectionMode::HttpCompat,
             _ => ConnectionMode::Public, // Default to public read-only for unknown (safe default)
         }
     }
@@ -153,8 +143,6 @@ enum ProtocolType {
     PqcHandshake(Vec<u8>),
     /// Native ZHTP protocol (API request)
     NativeZhtp(Vec<u8>),
-    /// Legacy HTTP (needs compatibility conversion)
-    LegacyHttp(Vec<u8>),
     /// Encrypted mesh message (post-handshake)
     MeshMessage(Vec<u8>),
     /// Unknown/unsupported protocol
@@ -218,9 +206,6 @@ pub struct QuicHandler {
     /// ZHTP router for native API requests
     zhtp_router: Arc<RwLock<ZhtpRouter>>,
 
-    /// HTTP compatibility layer for legacy clients
-    http_compat: Arc<HttpCompatibilityLayer>,
-
     /// QUIC mesh protocol (for connection storage and PQC operations)
     quic_protocol: Arc<QuicMeshProtocol>,
 
@@ -244,13 +229,8 @@ impl QuicHandler {
         quic_protocol: Arc<QuicMeshProtocol>,
         identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
     ) -> Self {
-        let http_compat = Arc::new(HttpCompatibilityLayer::new(
-            zhtp_router.clone()
-        ));
-
         Self {
             zhtp_router,
-            http_compat,
             quic_protocol,
             mesh_handler: None,
             pqc_connections: Arc::new(RwLock::new(HashMap::new())),
@@ -435,10 +415,6 @@ impl QuicHandler {
             ConnectionMode::Mesh => {
                 // Mesh: Perform UHP handshake, then handle mesh messages
                 self.handle_mesh_connection(connection, peer_addr).await
-            }
-            ConnectionMode::HttpCompat => {
-                // HTTP-compat: Handle HTTP/ZHTP requests directly (no UHP handshake)
-                self.handle_http_compat_connection(connection, peer_addr).await
             }
         }
     }
@@ -829,70 +805,21 @@ impl QuicHandler {
     }
 
     /// Handle a single public read-only stream
-    /// Only allows GET requests to public endpoints
+    /// Only allows ZHTP native protocol requests
     async fn handle_public_stream(&self, mut recv: RecvStream, send: SendStream) -> Result<()> {
-        // Detect protocol (HTTP or ZHTP)
+        // Detect protocol (ZHTP only)
         let protocol = self.detect_protocol_buffered(&mut recv).await?;
 
         match protocol {
-            ProtocolType::LegacyHttp(initial_data) => {
-                // Parse HTTP request and validate it's a read operation
-                self.handle_public_http_stream(initial_data, recv, send).await
-            }
             ProtocolType::NativeZhtp(initial_data) => {
                 // Parse ZHTP request and validate it's a read operation
                 self.handle_public_zhtp_stream(initial_data, recv, send).await
             }
             _ => {
-                // Reject non-HTTP/ZHTP protocols on public connection
-                self.send_error_response(send, "Public connections only support HTTP/ZHTP read requests").await
+                // Reject non-ZHTP protocols on public connection
+                self.send_error_response(send, "Public connections only support native ZHTP read requests").await
             }
         }
-    }
-
-    /// Handle public HTTP stream - allows GET and whitelisted POST endpoints
-    async fn handle_public_http_stream(&self, initial_data: Vec<u8>, recv: RecvStream, mut send: SendStream) -> Result<()> {
-        // Debug log the incoming request
-        let request_preview = String::from_utf8_lossy(&initial_data[..initial_data.len().min(200)]);
-        info!("📖 PUBLIC HTTP request: {}", request_preview.lines().next().unwrap_or("(empty)"));
-
-        // GET requests always allowed on public connection
-        if initial_data.starts_with(b"GET ") {
-            return self.handle_http_stream_with_prefix(initial_data, recv, send).await;
-        }
-
-        // POST requests only allowed to specific unauthenticated endpoints
-        if initial_data.starts_with(b"POST ") {
-            // Whitelist of POST endpoints allowed without authentication:
-            // - Identity creation (user has no identity yet)
-            // - Health checks
-            // - Web4 content fetching (read-only, public data)
-            let allowed_post_prefixes = [
-                // Identity bootstrap
-                b"POST /api/v1/identity/create".as_slice(),
-                b"POST /api/v1/identity ".as_slice(),
-                // Health
-                b"POST /api/v1/protocol/health".as_slice(),
-                // Web4 content (read-only fetches, not mutations)
-                b"POST /api/v1/web4/domains".as_slice(),
-                b"POST /api/v1/web4/content".as_slice(),
-                b"POST /api/v1/web4/resolve".as_slice(),
-            ];
-
-            let is_allowed = allowed_post_prefixes.iter().any(|prefix| {
-                initial_data.starts_with(prefix)
-            });
-
-            if is_allowed {
-                return self.handle_http_stream_with_prefix(initial_data, recv, send).await;
-            }
-        }
-
-        // Reject all other methods (PUT, DELETE, PATCH, etc.) and non-whitelisted POSTs
-        let response = b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: 62\r\n\r\nPublic connections only allow GET and whitelisted POST requests";
-        send.write_all(response).await?;
-        send.finish()?;
-        Ok(())
     }
 
     /// Handle public ZHTP stream - only allows read operations
@@ -901,43 +828,6 @@ impl QuicHandler {
         // For now, allow all ZHTP requests through (the API handlers will enforce read-only)
         // TODO: Add request parsing to reject mutations at this layer
         self.handle_zhtp_stream_with_prefix(initial_data, recv, send).await
-    }
-
-    /// Handle HTTP-compatible connection (legacy mobile apps, browsers)
-    /// No UHP handshake - direct HTTP/ZHTP requests
-    async fn handle_http_compat_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
-        debug!("📱 HTTP-compat connection from {}", peer_addr);
-
-        // Wait for first stream
-        let first_stream_result = tokio::time::timeout(
-            Duration::from_secs(30),
-            connection.accept_bi()
-        ).await;
-
-        match first_stream_result {
-            Ok(Ok((send, recv))) => {
-                // Handle first stream with protocol detection
-                let handler = self.clone();
-                let conn_clone = connection.clone();
-
-                let result = handler.handle_first_stream(recv, send, conn_clone, peer_addr).await;
-
-                if let Err(e) = result {
-                    warn!("⚠️ HTTP-compat stream error from {}: {}", peer_addr, e);
-                }
-            }
-            Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
-                debug!("🔒 HTTP-compat connection closed before first stream from {}", peer_addr);
-            }
-            Ok(Err(e)) => {
-                warn!("⚠️ HTTP-compat stream error from {}: {}", peer_addr, e);
-            }
-            Err(_) => {
-                warn!("⏱️ HTTP-compat timeout waiting for first stream from {}", peer_addr);
-            }
-        }
-
-        Ok(())
     }
 
     /// Handle the first stream of a connection - determines connection type
@@ -961,12 +851,6 @@ impl QuicHandler {
             ProtocolType::NativeZhtp(initial_data) => {
                 debug!("✅ Native ZHTP protocol detected from {}", peer_addr);
                 self.handle_zhtp_stream_with_prefix(initial_data, recv, send).await?;
-                // Continue accepting more streams on this connection
-                self.accept_additional_streams(connection, None);
-            }
-            ProtocolType::LegacyHttp(initial_data) => {
-                debug!("🔄 Legacy HTTP detected from {} (compatibility mode)", peer_addr);
-                self.handle_http_stream_with_prefix(initial_data, recv, send).await?;
                 // Continue accepting more streams on this connection
                 self.accept_additional_streams(connection, None);
             }
@@ -1044,9 +928,6 @@ impl QuicHandler {
         match protocol {
             ProtocolType::NativeZhtp(initial_data) => {
                 self.handle_zhtp_stream_with_prefix(initial_data, recv, send).await
-            }
-            ProtocolType::LegacyHttp(initial_data) => {
-                self.handle_http_stream_with_prefix(initial_data, recv, send).await
             }
             ProtocolType::MeshMessage(initial_data) => {
                 if let Some(peer_id) = peer_node_id {
@@ -1220,17 +1101,6 @@ impl QuicHandler {
         router.handle_zhtp_stream_buffered(&mut buffered, send).await
     }
 
-    /// Handle HTTP stream with already-read prefix data
-    async fn handle_http_stream_with_prefix(
-        &self,
-        prefix: Vec<u8>,
-        recv: RecvStream,
-        send: SendStream,
-    ) -> Result<()> {
-        let mut buffered = BufferedStream::new(prefix, recv);
-        self.http_compat.handle_http_over_quic_buffered(&mut buffered, send).await
-    }
-
     /// Send error response to client
     async fn send_error_response(&self, mut send: SendStream, message: &str) -> Result<()> {
         let error_msg = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
@@ -1270,22 +1140,7 @@ impl QuicHandler {
                     return Ok(ProtocolType::NativeZhtp(buffer));
                 }
 
-                // 2. Check for HTTP methods (comprehensive list)
-                let magic_str = String::from_utf8_lossy(&buffer[0..buffer.len().min(8)]);
-                if magic_str.starts_with("GET ") ||
-                   magic_str.starts_with("POST ") ||
-                   magic_str.starts_with("PUT ") ||
-                   magic_str.starts_with("DELETE ") ||
-                   magic_str.starts_with("HEAD ") ||
-                   magic_str.starts_with("OPTIONS ") ||
-                   magic_str.starts_with("PATCH ") ||
-                   magic_str.starts_with("CONNECT ") ||
-                   magic_str.starts_with("TRACE ") {
-                    debug!("🔄 HTTP method detected");
-                    return Ok(ProtocolType::LegacyHttp(buffer));
-                }
-
-                // 3. Check for UHP ClientHello (UHP+Kyber handshake initiation)
+                // 2. Check for UHP ClientHello (UHP+Kyber handshake initiation)
                 // ClientHello contains: version(1B) + identity + capabilities + nonce(32B) + signature
                 // The UHP handshake uses a dedicated bidirectional stream, so protocol detection
                 // should recognize this as a handshake initiation
@@ -1326,7 +1181,6 @@ impl Clone for QuicHandler {
     fn clone(&self) -> Self {
         Self {
             zhtp_router: self.zhtp_router.clone(),
-            http_compat: self.http_compat.clone(),
             quic_protocol: self.quic_protocol.clone(),
             mesh_handler: self.mesh_handler.clone(),
             pqc_connections: self.pqc_connections.clone(),

@@ -37,7 +37,6 @@ use lib_network::protocols::quic_mesh::QuicMeshProtocol;
 
 // Import new QUIC handler for native ZHTP-over-QUIC
 use crate::server::QuicHandler;
-use lib_network::types::mesh_message::ZhtpMeshMessage;
 use lib_blockchain::Blockchain;
 use lib_storage::UnifiedStorageSystem;
 use lib_identity::IdentityManager;

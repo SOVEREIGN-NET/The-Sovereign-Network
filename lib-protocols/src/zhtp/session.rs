@@ -716,7 +716,7 @@ impl ZhtpSessionManager {
     
     // Helper methods implementation
     
-    async fn authenticate_user(&self, credentials: &[AuthCredential]) -> ZhtpResult<AuthResult> {
+    async fn authenticate_user(&self, _credentials: &[AuthCredential]) -> ZhtpResult<AuthResult> {
         // Simplified authentication implementation
         Ok(AuthResult {
             success: true,
@@ -725,7 +725,7 @@ impl ZhtpSessionManager {
         })
     }
     
-    async fn calculate_session_fees(&self, request: &SessionCreateRequest, auth_result: &AuthResult) -> ZhtpResult<EconomicAssessment> {
+    async fn calculate_session_fees(&self, _request: &SessionCreateRequest, auth_result: &AuthResult) -> ZhtpResult<EconomicAssessment> {
         let base_fee = self.config.economic_incentives.session_creation_fee;
         let security_multiplier = self.config.economic_incentives.security_level_multipliers
             .get(&auth_result.security_level)

@@ -355,7 +355,7 @@ impl AuthenticationMiddleware {
     }
     
     /// Verify signature
-    async fn verify_signature(&self, request: &ZhtpRequest, signature: &str) -> ZhtpResult<bool> {
+    async fn verify_signature(&self, _request: &ZhtpRequest, signature: &str) -> ZhtpResult<bool> {
         // In production, this would verify the actual signature
         // For now, basic validation
         Ok(signature.len() >= 64 && signature.chars().all(|c| c.is_ascii_hexdigit()))

@@ -2,7 +2,7 @@
 
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
-use lib_network::web4::{ContentPublishRequest, ContentPublishResponse, ContentMetadata, Web4Manifest, ManifestFile};
+use lib_network::web4::{ContentPublishResponse, ContentMetadata, Web4Manifest, ManifestFile};
 use lib_identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};
 use tracing::{info, error};
