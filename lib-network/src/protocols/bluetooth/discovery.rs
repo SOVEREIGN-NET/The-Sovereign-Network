@@ -12,6 +12,7 @@ use super::BluetoothMeshProtocol;
 use super::device;
 
 use sha2::{Digest, Sha256};
+use crate::constants::BLE_MESH_SERVICE_UUID;
 
 #[cfg(target_os = "macos")]
 use super::macos_core::CoreBluetoothManager;
