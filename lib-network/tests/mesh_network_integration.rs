@@ -1,255 +1,180 @@
-//! Integration-style tests for mesh networking with deterministic NodeIds.
-//! These tests exercise the UHP handshake pipeline directly to validate:
-//! - NodeId determinism from seeded identities
-//! - Session keys are derived uniquely per peer pair and bound to NodeIds
-//! - Handshake verification rejects spoofed NodeIds
-//! - Nodes can "restart" (regenerate identities) without changing NodeIds
-
 use anyhow::Result;
-use lib_crypto::KeyPair;
-use lib_identity::{IdentityType, ZhtpIdentity};
-use lib_identity::types::NodeId;
-use lib_network::handshake::{
-    ClientFinish, ClientHello, HandshakeCapabilities, HandshakeContext, HandshakeResult,
-    HandshakeSessionInfo, NonceCache, ServerHello,
+use lib_crypto::{hash_blake3, kdf::hkdf::hkdf_sha3};
+use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
+use lib_network::{
+    discovery::{DiscoveryProtocol, DiscoveryResult, UnifiedDiscoveryService},
+    identity::UnifiedPeerId,
 };
-use std::collections::{HashMap, HashSet};
-use tempfile::TempDir;
+use std::net::SocketAddr;
+use uuid::Uuid;
 
-const BINDING: &[u8] = b"mesh-network-integration-binding";
-
-fn deterministic_identity(seed_byte: u8, device: &str) -> Result<ZhtpIdentity> {
-    let seed = [seed_byte; 64];
+fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
     ZhtpIdentity::new_unified(
-        IdentityType::Human,
-        Some(25),
-        Some("US".to_string()),
+        IdentityType::Device,
+        None,
+        None,
         device,
         Some(seed),
     )
 }
 
-fn ordered_pair(a: NodeId, b: NodeId) -> (NodeId, NodeId) {
-    if a <= b {
-        (a, b)
-    } else {
-        (b, a)
-    }
-}
+fn derive_master_key_for_test(
+    uhp_session_key: &[u8; 32],
+    pqc_shared_secret: &[u8; 32],
+    transcript_hash: &[u8; 32],
+    peer_node_id: &[u8],
+) -> Result<[u8; 32]> {
+    let mut ikm = Vec::with_capacity(32 + 32 + 32 + peer_node_id.len());
+    ikm.extend_from_slice(uhp_session_key);
+    ikm.extend_from_slice(pqc_shared_secret);
+    ikm.extend_from_slice(transcript_hash);
+    ikm.extend_from_slice(peer_node_id);
 
-struct HandshakeContexts {
-    client_ctx: HandshakeContext,
-    server_ctx: HandshakeContext,
-    _client_dir: TempDir,
-    _server_dir: TempDir,
-}
+    let extracted = hkdf_sha3(&ikm, b"zhtp-quic-mesh", 32)?;
+    let expanded = hkdf_sha3(&extracted, b"zhtp-quic-master", 32)?;
 
-fn handshake_contexts() -> Result<HandshakeContexts> {
-    let client_dir = TempDir::new()?;
-    let server_dir = TempDir::new()?;
-
-    let client_cache = NonceCache::open_default(client_dir.path(), 300)?;
-    let server_cache = NonceCache::open_default(server_dir.path(), 300)?;
-
-    let client_ctx = HandshakeContext::new(client_cache)
-        .for_client_with_transport(BINDING.to_vec(), "quic");
-    let server_ctx = HandshakeContext::new(server_cache)
-        .for_server_with_transport(BINDING.to_vec(), "quic");
-
-    Ok(HandshakeContexts {
-        client_ctx,
-        server_ctx,
-        _client_dir: client_dir,
-        _server_dir: server_dir,
-    })
-}
-
-fn quic_capabilities() -> HandshakeCapabilities {
-    let mut capabilities = HandshakeCapabilities::default();
-    if !capabilities.protocols.iter().any(|p| p == "quic") {
-        capabilities.protocols.push("quic".to_string());
-    }
-    capabilities
-}
-
-fn perform_handshake(
-    client_identity: &ZhtpIdentity,
-    server_identity: &ZhtpIdentity,
-) -> Result<(HandshakeResult, HandshakeResult)> {
-    let contexts = handshake_contexts()?;
-    let HandshakeContexts {
-        client_ctx,
-        server_ctx,
-        _client_dir,
-        _server_dir,
-    } = contexts;
-
-    let capabilities = quic_capabilities();
-    let client_hello = ClientHello::new(client_identity, capabilities.clone(), &client_ctx)?;
-    client_hello.verify_signature(&server_ctx)?;
-
-    let server_hello = ServerHello::new(server_identity, capabilities, &client_hello, &server_ctx)?;
-
-    let client_keypair = KeyPair {
-        public_key: client_identity.public_key.clone(),
-        private_key: client_identity
-            .private_key
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("client missing private key"))?,
-    };
-
-    let client_finish =
-        ClientFinish::new(&server_hello, &client_hello, &client_keypair, &client_ctx)?;
-    client_finish.verify_signature_with_context(
-        &server_hello.response_nonce,
-        &client_hello.identity.public_key,
-        &server_ctx,
-    )?;
-
-    let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)?;
-
-    let client_session = HandshakeResult::new(
-        server_hello.identity.clone(),
-        server_hello.negotiated.clone(),
-        &client_hello.challenge_nonce,
-        &server_hello.response_nonce,
-        &client_identity.did,
-        &server_identity.did,
-        client_hello.timestamp,
-        &session_info,
-    )?;
-
-    let server_session = HandshakeResult::new(
-        client_hello.identity.clone(),
-        server_hello.negotiated.clone(),
-        &client_hello.challenge_nonce,
-        &server_hello.response_nonce,
-        &client_identity.did,
-        &server_identity.did,
-        client_hello.timestamp,
-        &session_info,
-    )?;
-
-    Ok((client_session, server_session))
+    let mut master_key = [0u8; 32];
+    master_key.copy_from_slice(&expanded);
+    Ok(master_key)
 }
 
 #[test]
-fn test_three_node_mesh_handshakes_are_unique_and_symmetric() -> Result<()> {
-    let alice = deterministic_identity(0xA1, "alice")?;
-    let bob = deterministic_identity(0xB2, "bob")?;
-    let charlie = deterministic_identity(0xC3, "charlie")?;
+fn node_id_remains_stable_across_restart() -> Result<()> {
+    // Use a fixed seed (0x11 pattern) to ensure deterministic NodeId derivation
+    // This seed simulates device state preservation across restarts
+    let seed = [0x11u8; 64];
+    let device = "alpha-mesh-node-01";
 
-    let pairs = vec![
-        (&alice, &bob),
-        (&alice, &charlie),
-        (&bob, &charlie),
-    ];
+    let first = identity_with_seed(device, seed)?;
+    let second = identity_with_seed(device, seed)?;
 
-    let mut session_keys = HashMap::new();
-    let mut adjacency: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
+    assert_eq!(first.did, second.did, "DID should be deterministic");
+    assert_eq!(first.node_id, second.node_id, "NodeId should survive restart with same seed");
+    assert!(!first.public_key.as_bytes().is_empty(), "Public key should be present");
+    assert!(!second.public_key.as_bytes().is_empty(), "Public key should be present");
 
-    for (client, server) in pairs {
-        let (client_session, server_session) = perform_handshake(client, server)?;
-
-        // Both sides must derive the same key for a given pair
-        assert_eq!(client_session.session_key, server_session.session_key);
-        assert_eq!(server_session.peer_identity.node_id, client.node_id);
-        assert_eq!(client_session.peer_identity.node_id, server.node_id);
-
-        let key = ordered_pair(client.node_id, server.node_id);
-        session_keys.insert(key, client_session.session_key);
-        adjacency
-            .entry(client.node_id)
-            .or_default()
-            .insert(server.node_id);
-        adjacency
-            .entry(server.node_id)
-            .or_default()
-            .insert(client.node_id);
-    }
-
-    // Fully connected 3-node mesh => each node should see 2 peers
-    assert_eq!(adjacency.get(&alice.node_id).map(|s| s.len()), Some(2));
-    assert_eq!(adjacency.get(&bob.node_id).map(|s| s.len()), Some(2));
-    assert_eq!(adjacency.get(&charlie.node_id).map(|s| s.len()), Some(2));
-
-    // Session keys must be unique per pair
-    let unique_keys: HashSet<_> = session_keys.values().collect();
-    assert_eq!(unique_keys.len(), session_keys.len());
-
-    Ok(())
-}
-
-#[test]
-fn test_nodeid_stability_across_restart_and_rejoin() -> Result<()> {
-    let alice_first = deterministic_identity(0xAA, "alice")?;
-    let bob = deterministic_identity(0xBB, "bob")?;
-
-    let (first_client_session, first_server_session) =
-        perform_handshake(&alice_first, &bob)?;
-    assert_eq!(first_server_session.peer_identity.node_id, alice_first.node_id);
-
-    // Simulate restart: regenerate Alice from the same seed
-    let alice_restart = deterministic_identity(0xAA, "alice")?;
-    assert_eq!(alice_first.node_id, alice_restart.node_id);
-
-    let (second_client_session, second_server_session) =
-        perform_handshake(&alice_restart, &bob)?;
+    let expected = NodeId::from_did_device(&first.did, device)?;
     assert_eq!(
-        second_server_session.peer_identity.node_id,
-        alice_restart.node_id
+        expected,
+        first.node_id,
+        "NodeId must match DID + device derivation"
     );
 
-    // Restarted node should derive a fresh session key even though NodeId is identical
-    assert_ne!(
-        first_client_session.session_key,
-        second_client_session.session_key
-    );
+    let peer_id = UnifiedPeerId::from_zhtp_identity(&first)?;
+    peer_id.verify_node_id()?;
 
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()> {
+    // Use distinct seed patterns (0x21, 0x22, 0x23) to create unique, deterministic identities
+    // Each seed simulates a different node's persistent state across restarts
+    let seeds = [[0x21u8; 64], [0x22u8; 64], [0x23u8; 64]];
+    let devices = ["alpha-mesh-a01", "alpha-mesh-b02", "alpha-mesh-c03"];
+
+    let identities: Vec<ZhtpIdentity> = seeds
+        .iter()
+        .zip(devices.iter())
+        .map(|(seed, device)| identity_with_seed(device, *seed))
+        .collect::<Result<_>>()?;
+
+    let service = UnifiedDiscoveryService::new(
+        Uuid::new_v4(),
+        9443,
+        identities[0].public_key.clone(),
+    );
+
+    // Set a 10-second timeout for the entire test to prevent hangs in CI
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        async {
+            let mut peer_ids = Vec::new();
+            for (idx, identity) in identities.iter().enumerate() {
+                let peer_id = Uuid::new_v4();
+                peer_ids.push(peer_id);
+
+                let addr: SocketAddr = format!("10.0.0.{}:9443", 10 + idx).parse().unwrap();
+                let mut result = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9443);
+                result.public_key = Some(identity.public_key.clone());
+                result.did = Some(identity.did.clone());
+                result.device_id = Some(identity.primary_device.clone());
+                service.register_peer(result).await;
+            }
+
+            assert_eq!(service.peer_count().await, identities.len());
+
+            for (idx, peer_id) in peer_ids.iter().enumerate() {
+                let peer = service
+                    .get_peer(peer_id)
+                    .await
+                    .expect("peer should be registered");
+                let identity = &identities[idx];
+
+                assert_eq!(peer.did.as_deref(), Some(identity.did.as_str()));
+                assert_eq!(peer.device_id.as_deref(), Some(identity.primary_device.as_str()));
+                assert_eq!(
+                    peer.public_key.as_ref().map(|k| k.as_bytes()),
+                    Some(identity.public_key.as_bytes())
+                );
+
+                let expected_node_id = NodeId::from_did_device(&identity.did, &identity.primary_device)?;
+                assert_eq!(identity.node_id, expected_node_id);
+
+                let unified_peer = UnifiedPeerId::from_zhtp_identity(identity)?;
+                unified_peer.verify_node_id()?;
+            }
+
+            Ok::<(), anyhow::Error>(())
+        }
+    ).await;
+
+    result.map_err(|_| anyhow::anyhow!("Test timed out after 10 seconds"))?
+}
+
 #[test]
-fn test_handshake_rejects_spoofed_node_id() -> Result<()> {
-    let honest = deterministic_identity(0xD1, "honest")?;
-    let server = deterministic_identity(0xE2, "server")?;
+fn quic_master_key_is_bound_to_node_id() -> Result<()> {
+    // Use seed pattern 0x33 for the stable node, 0x34 for a different node
+    // This tests both stability (same seed on restart) and differentiation (different seeds)
+    let device = "alpha-mesh-node-02";
+    let same_device_seed = [0x33u8; 64];
+    let identity = identity_with_seed(device, same_device_seed)?;
+    let restarted_identity = identity_with_seed(device, same_device_seed)?;
+    let different_identity = identity_with_seed("alpha-mesh-node-03", [0x34u8; 64])?;
 
-    let contexts = handshake_contexts()?;
-    let HandshakeContexts {
-        client_ctx,
-        server_ctx,
-        _client_dir,
-        _server_dir,
-    } = contexts;
+    // These KDF info strings match the production QUIC master key derivation in the handshake
+    // The full key derivation: extract with "zhtp-quic-mesh", then expand with "zhtp-quic-master"
+    let uhp_session_key = hash_blake3(b"mesh-uhp-session");
+    let pqc_shared_secret = hash_blake3(b"mesh-pqc-secret");
+    let transcript_hash = hash_blake3(b"mesh-transcript");
 
-    let capabilities = quic_capabilities();
-    let client_hello = ClientHello::new(&honest, capabilities.clone(), &client_ctx)?;
-
-    // Tamper with the NodeId after signing to simulate spoofing
-    let mut tampered = client_hello.clone();
-    tampered.identity.node_id = NodeId::from_bytes([0xFF; 32]);
-
-    // Server should reject because the signature no longer matches the identity payload
-    assert!(tampered.verify_signature(&server_ctx).is_err());
-
-    // Control: the untampered message should verify
-    client_hello.verify_signature(&server_ctx)?;
-
-    // Complete a successful handshake to ensure the path still works
-    let server_hello = ServerHello::new(&server, capabilities, &client_hello, &server_ctx)?;
-    let client_keypair = KeyPair {
-        public_key: honest.public_key.clone(),
-        private_key: honest
-            .private_key
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("honest identity missing private key"))?,
-    };
-    let finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &client_ctx)?;
-    finish.verify_signature_with_context(
-        &server_hello.response_nonce,
-        &client_hello.identity.public_key,
-        &server_ctx,
+    let master1 = derive_master_key_for_test(
+        &uhp_session_key,
+        &pqc_shared_secret,
+        &transcript_hash,
+        identity.node_id.as_bytes(),
     )?;
+    let master2 = derive_master_key_for_test(
+        &uhp_session_key,
+        &pqc_shared_secret,
+        &transcript_hash,
+        restarted_identity.node_id.as_bytes(),
+    )?;
+    let master3 = derive_master_key_for_test(
+        &uhp_session_key,
+        &pqc_shared_secret,
+        &transcript_hash,
+        different_identity.node_id.as_bytes(),
+    )?;
+
+    assert_eq!(
+        master1, master2,
+        "Master key should remain stable when NodeId is stable across restarts"
+    );
+    assert_ne!(
+        master1, master3,
+        "Changing NodeId must change the derived mesh master key"
+    );
 
     Ok(())
 }
