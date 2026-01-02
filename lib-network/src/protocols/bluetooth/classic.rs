@@ -1621,11 +1621,12 @@ impl BluetoothClassicProtocol {
                 is_outgoing: true,
             };
             
-            // Update active connections using async write to avoid blocking the runtime
-            self.active_connections
-                .write()
-                .await
-                .insert(device_address.to_string(), connection);
+            // Track connection without holding WinRT handles across an await.
+            let active_connections = self.active_connections.clone();
+            let peer_key = device_address.to_string();
+            tokio::spawn(async move {
+                active_connections.write().await.insert(peer_key, connection);
+            });
 
             Ok(RfcommStream::from_windows_socket(socket, reader, writer, device_address.to_string()))
         }
