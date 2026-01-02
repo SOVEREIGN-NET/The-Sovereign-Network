@@ -716,7 +716,7 @@ impl ZhtpSessionManager {
     
     // Helper methods implementation
     
-    async fn authenticate_user(&self, credentials: &[AuthCredential]) -> ZhtpResult<AuthResult> {
+    async fn authenticate_user(&self, _credentials: &[AuthCredential]) -> ZhtpResult<AuthResult> {
         // Simplified authentication implementation
         Ok(AuthResult {
             success: true,
@@ -725,7 +725,7 @@ impl ZhtpSessionManager {
         })
     }
     
-    async fn calculate_session_fees(&self, request: &SessionCreateRequest, auth_result: &AuthResult) -> ZhtpResult<EconomicAssessment> {
+    async fn calculate_session_fees(&self, _request: &SessionCreateRequest, auth_result: &AuthResult) -> ZhtpResult<EconomicAssessment> {
         let base_fee = self.config.economic_incentives.session_creation_fee;
         let security_multiplier = self.config.economic_incentives.security_level_multipliers
             .get(&auth_result.security_level)
@@ -775,7 +775,7 @@ impl ZhtpSessionManager {
         Ok(())
     }
     
-    async fn get_geo_info(&self, ip_address: &str) -> AnyhowResult<GeoInfo> {
+    async fn get_geo_info(&self, _ip_address: &str) -> AnyhowResult<GeoInfo> {
         // Simplified geo lookup implementation
         Ok(GeoInfo {
             country: "US".to_string(),
@@ -788,7 +788,7 @@ impl ZhtpSessionManager {
         })
     }
     
-    async fn generate_zk_proof(&self, session_id: &str, user_id: &str) -> ZhtpResult<ZkProofInfo> {
+    async fn generate_zk_proof(&self, _session_id: &str, _user_id: &str) -> ZhtpResult<ZkProofInfo> {
         // Simplified ZK proof generation
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)

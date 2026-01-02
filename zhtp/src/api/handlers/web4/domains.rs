@@ -976,7 +976,7 @@ impl Web4Handler {
                     if key == "owner" { Some(value) } else { None }
                 })
             });
-        let owner = match owner {
+        let _owner = match owner {
             Some(value) if !value.is_empty() => value,
             _ => {
                 return Ok(ZhtpResponse::error(

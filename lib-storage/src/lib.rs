@@ -195,7 +195,7 @@ impl UnifiedStorageSystem {
         )?;
 
         // Initialize DHT storage with optional persistence
-        let mut dht_storage = match &config.storage_config.dht_persist_path {
+        let dht_storage = match &config.storage_config.dht_persist_path {
             Some(persist_path) => {
                 let mut storage = dht::storage::DhtStorage::new_with_persistence(
                     node_id.clone(),

@@ -617,7 +617,7 @@ fn parse_lib_request(data: &[u8]) -> ZhtpResult<Option<ZhtpRequest>> {
     let method = request_line_parts[0].parse::<ZhtpMethod>()
         .map_err(|e| anyhow::anyhow!("Invalid method: {}", e))?;
     let uri = request_line_parts[1].to_string();
-    let version = request_line_parts[2].to_string();
+    let _version = request_line_parts[2].to_string();
     
     // Parse headers
     let mut headers = ZhtpHeaders::new();

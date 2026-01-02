@@ -204,7 +204,7 @@ fn extract_user_agent(request: &lib_protocols::types::ZhtpRequest) -> String {
 }
 
 /// Check HTTPS enforcement for production (P0-5)
-fn check_https(request: &lib_protocols::types::ZhtpRequest) -> Result<(), ZhtpResponse> {
+fn check_https(_request: &lib_protocols::types::ZhtpRequest) -> Result<(), ZhtpResponse> {
     // Only enforce HTTPS in production (non-debug builds)
     #[cfg(not(debug_assertions))]
     {

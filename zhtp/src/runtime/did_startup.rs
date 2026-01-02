@@ -1298,7 +1298,7 @@ impl WalletStartupManager {
         match serde_json::from_slice::<serde_json::Value>(data) {
             Ok(wallet_info) => {
                 // Extract seed phrase if available
-                if let Some(seed_phrase) = wallet_info.get("seed_phrase").and_then(|s| s.as_str()) {
+                if let Some(_seed_phrase) = wallet_info.get("seed_phrase").and_then(|s| s.as_str()) {
                     println!("Recovering identity and wallet from seed phrase...");
                     
                     // Create user identity with wallet recovery - NOW capturing private_data
@@ -1387,7 +1387,7 @@ impl WalletStartupManager {
     }
 
     /// Set password for a wallet
-    async fn set_wallet_password(wallet_id: &WalletId, password: &str) -> Result<()> {
+    async fn set_wallet_password(_wallet_id: &WalletId, password: &str) -> Result<()> {
         // Note: WalletPasswordManager was merged into IdentityWallets (Step 6 refactoring)
         // Wallet password functionality is now available through IdentityWallets methods:
         // - set_wallet_password()

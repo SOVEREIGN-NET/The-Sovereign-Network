@@ -61,7 +61,7 @@ impl MeshRouter {
     ///
     /// Kept for API compatibility but marked deprecated.
     #[deprecated(note = "QUIC is the only supported transport. TCP connections are not accepted.")]
-    pub async fn handle_tcp_mesh(&self, mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
+    pub async fn handle_tcp_mesh(&self, stream: TcpStream, addr: SocketAddr) -> Result<()> {
         error!("❌ TCP connections are no longer supported - QUIC is required");
         error!("   Connection from {} rejected", addr);
         return Err(anyhow::anyhow!("TCP is not supported - use QUIC"));
@@ -303,7 +303,7 @@ impl MeshRouter {
     /// - Err(_) if critical error
     async fn authenticate_peer_only(
         &self,
-        peer_pubkey: &PublicKey,
+        _peer_pubkey: &PublicKey,
         handshake: &MeshHandshake,
         stream: &mut TcpStream,
     ) -> Result<Option<(f64, Vec<u8>)>> {

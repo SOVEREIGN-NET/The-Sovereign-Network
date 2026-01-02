@@ -154,7 +154,7 @@ impl MiningService {
 
     /// Mining loop with consensus coordination
     async fn mining_loop(
-        blockchain: Arc<RwLock<Option<Blockchain>>>,
+        _blockchain: Arc<RwLock<Option<Blockchain>>>,
         validator_manager_arc: Arc<RwLock<Option<Arc<RwLock<ValidatorManager>>>>>,
         node_identity_arc: Arc<RwLock<Option<IdentityId>>>,
     ) {

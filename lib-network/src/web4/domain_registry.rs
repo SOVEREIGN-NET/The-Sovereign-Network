@@ -84,7 +84,7 @@ impl DomainRegistry {
 
     /// Create with optional DHT client (for tests/advanced use)
     pub async fn new_with_dht(storage: Arc<dyn UnifiedStorage>, dht_client: Option<ZkDHTIntegration>) -> Result<Self> {
-        let mut registry = Self::new(storage).await?;
+        let registry = Self::new(storage).await?;
         *registry.dht_client.write().await = dht_client;
         Ok(registry)
     }

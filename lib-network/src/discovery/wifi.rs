@@ -1,6 +1,5 @@
 use anyhow::Result;
 use rand;
-use std::time::Duration;
 use crate::types::wifi_security::WiFiSecurity;
 use crate::discovery::hardware::HardwareCapabilities;
 
@@ -377,6 +376,7 @@ pub async fn discover_wifi_direct_peers() -> Result<Vec<WiFiNetworkInfo>> {
 #[cfg(target_os = "linux")]
 async fn linux_discover_wifi_direct_peers() -> Result<Vec<WiFiNetworkInfo>> {
     use std::process::Command;
+    use std::time::Duration;
     
     let mut direct_peers = Vec::new();
     

@@ -556,14 +556,12 @@ impl WiFiDirectMeshProtocol {
     /// Start P2P device discovery
     async fn start_p2p_discovery(&self) -> Result<()> {
         info!("Starting WiFi Direct P2P discovery...");
-        
+
         #[cfg(all(target_os = "macos", feature = "enhanced-wifi-direct"))]
         {
             return self.start_enhanced_macos_p2p_discovery().await;
         }
-        
-        let connected_devices = self.connected_devices.clone();
-        
+
         let connected_devices = self.connected_devices.clone();
         
         // Spawn background discovery task

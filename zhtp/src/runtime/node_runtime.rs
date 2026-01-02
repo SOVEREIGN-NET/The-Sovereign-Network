@@ -61,7 +61,6 @@
 //! - No server "fill-in" of missing policy decisions
 //! Prevents: hardcoded protocol defaults, capability-incompatible connections
 
-use std::sync::Arc;
 use std::time::SystemTime;
 use lib_crypto::PublicKey;
 use lib_network::protocols::NetworkProtocol;
