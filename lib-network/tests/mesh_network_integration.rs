@@ -1,12 +1,14 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use lib_crypto::{hash_blake3, kdf::hkdf::hkdf_sha3};
 use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
 use lib_network::{
     discovery::{DiscoveryProtocol, DiscoveryResult, UnifiedDiscoveryService},
     identity::UnifiedPeerId,
 };
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use uuid::Uuid;
+
+const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
     ZhtpIdentity::new_unified(
@@ -16,6 +18,10 @@ fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
         device,
         Some(seed),
     )
+}
+
+fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
+    Uuid::from_slice(&node_id.as_bytes()[..16]).expect("NodeId must be at least 16 bytes")
 }
 
 fn derive_master_key_for_test(
@@ -101,68 +107,192 @@ fn node_id_changes_with_different_device_name() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()> {
-    // Use distinct seed patterns (0x21, 0x22, 0x23) to create unique, deterministic identities
-    // Each seed simulates a different node's persistent state across restarts
-    let seeds = [[0x21u8; 64], [0x22u8; 64], [0x23u8; 64]];
-    let devices = ["alpha-mesh-a01", "alpha-mesh-b02", "alpha-mesh-c03"];
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let local = identity_with_seed("alpha-mesh-local", [0x20u8; 64])?;
+        let service = UnifiedDiscoveryService::new(
+            peer_id_from_node_id(&local.node_id),
+            9443,
+            local.public_key.clone(),
+        );
 
-    let identities: Vec<ZhtpIdentity> = seeds
-        .iter()
-        .zip(devices.iter())
-        .map(|(seed, device)| identity_with_seed(device, *seed))
-        .collect::<Result<_>>()?;
+        let seeds = [[0x21u8; 64], [0x22u8; 64], [0x23u8; 64]];
+        let devices = ["alpha-mesh-a01", "alpha-mesh-b02", "alpha-mesh-c03"];
 
-    let service = UnifiedDiscoveryService::new(
-        Uuid::new_v4(),
-        9443,
-        identities[0].public_key.clone(),
-    );
+        let identities: Vec<ZhtpIdentity> = seeds
+            .iter()
+            .zip(devices.iter())
+            .map(|(seed, device)| identity_with_seed(device, *seed))
+            .collect::<Result<_>>()?;
 
-    // Set a 10-second timeout for the entire test to prevent hangs in CI
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        async {
-            let mut peer_ids = Vec::new();
-            for (idx, identity) in identities.iter().enumerate() {
-                let peer_id = Uuid::new_v4();
-                peer_ids.push(peer_id);
+        for (idx, identity) in identities.iter().enumerate() {
+            let peer_id = peer_id_from_node_id(&identity.node_id);
+            let addr: SocketAddr = format!("192.0.2.{}:9443", 10 + idx).parse().unwrap(); // RFC 5737
 
-                let addr: SocketAddr = format!("10.0.0.{}:9443", 10 + idx).parse().unwrap();
-                let mut result = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9443);
-                result.public_key = Some(identity.public_key.clone());
-                result.did = Some(identity.did.clone());
-                result.device_id = Some(identity.primary_device.clone());
-                service.register_peer(result).await;
-            }
-
-            assert_eq!(service.peer_count().await, identities.len());
-
-            for (idx, peer_id) in peer_ids.iter().enumerate() {
-                let peer = service
-                    .get_peer(peer_id)
-                    .await
-                    .expect("peer should be registered");
-                let identity = &identities[idx];
-
-                assert_eq!(peer.did.as_deref(), Some(identity.did.as_str()));
-                assert_eq!(peer.device_id.as_deref(), Some(identity.primary_device.as_str()));
-                assert_eq!(
-                    peer.public_key.as_ref().map(|k| k.as_bytes()),
-                    Some(identity.public_key.as_bytes())
-                );
-
-                let expected_node_id = NodeId::from_did_device(&identity.did, &identity.primary_device)?;
-                assert_eq!(identity.node_id, expected_node_id);
-
-                let unified_peer = UnifiedPeerId::from_zhtp_identity(identity)?;
-                unified_peer.verify_node_id()?;
-            }
-
-            Ok::<(), anyhow::Error>(())
+            let mut result =
+                DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9443);
+            result.public_key = Some(identity.public_key.clone());
+            result.did = Some(identity.did.clone());
+            result.device_id = Some(identity.primary_device.clone());
+            service.register_peer(result).await;
         }
-    ).await;
 
-    result.map_err(|_| anyhow::anyhow!("Test timed out after 10 seconds"))?
+        assert_eq!(service.peer_count().await, identities.len());
+
+        for identity in identities.iter() {
+            let peer_id = peer_id_from_node_id(&identity.node_id);
+            let peer = service
+                .get_peer(&peer_id)
+                .await
+                .expect("peer should be registered");
+
+            assert_eq!(peer.did.as_deref(), Some(identity.did.as_str()));
+            assert_eq!(peer.device_id.as_deref(), Some(identity.primary_device.as_str()));
+            assert_eq!(
+                peer.public_key.as_ref().map(|k| k.as_bytes()),
+                Some(identity.public_key.as_bytes())
+            );
+
+            let expected_node_id =
+                NodeId::from_did_device(&identity.did, &identity.primary_device)?;
+            assert_eq!(identity.node_id, expected_node_id);
+
+            let unified_peer = UnifiedPeerId::from_zhtp_identity(identity)?;
+            unified_peer.verify_node_id()?;
+        }
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .map_err(|_| anyhow!("Test timed out after {TEST_TIMEOUT:?}"))??;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Result<()> {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let local = identity_with_seed("alpha-mesh-local", [0x30u8; 64])?;
+        let service = UnifiedDiscoveryService::new(
+            peer_id_from_node_id(&local.node_id),
+            9443,
+            local.public_key.clone(),
+        );
+
+        let identity = identity_with_seed("alpha-mesh-peer", [0x31u8; 64])?;
+        let peer_id = peer_id_from_node_id(&identity.node_id);
+
+        let addr_a: SocketAddr = "192.0.2.10:9443".parse().unwrap(); // RFC 5737
+        let addr_b: SocketAddr = "192.0.2.11:9443".parse().unwrap(); // RFC 5737
+
+        let mut initial =
+            DiscoveryResult::new(peer_id, addr_a, DiscoveryProtocol::PortScan, 9443);
+        initial.did = Some(identity.did.clone());
+        initial.device_id = Some(identity.primary_device.clone());
+        service.register_peer(initial).await;
+
+        let mut upgraded =
+            DiscoveryResult::new(peer_id, addr_b, DiscoveryProtocol::UdpMulticast, 9443);
+        upgraded.public_key = Some(identity.public_key.clone());
+        upgraded.did = Some(identity.did.clone());
+        upgraded.device_id = Some(identity.primary_device.clone());
+        service.register_peer(upgraded).await;
+
+        assert_eq!(service.peer_count().await, 1);
+
+        let peer = service
+            .get_peer(&peer_id)
+            .await
+            .expect("peer should be registered");
+        assert!(peer.addresses.contains(&addr_a));
+        assert!(peer.addresses.contains(&addr_b));
+        assert_eq!(peer.protocol, DiscoveryProtocol::UdpMulticast);
+        assert_eq!(peer.did.as_deref(), Some(identity.did.as_str()));
+        assert_eq!(peer.device_id.as_deref(), Some(identity.primary_device.as_str()));
+        assert_eq!(
+            peer.public_key.as_ref().map(|k| k.as_bytes()),
+            Some(identity.public_key.as_bytes())
+        );
+
+        // If a different key appears later for the same peer_id, the discovery cache should not
+        // overwrite an existing verified public key.
+        let other_identity = identity_with_seed("alpha-mesh-peer-rotated", [0x32u8; 64])?;
+        let mut key_rotation_attempt =
+            DiscoveryResult::new(peer_id, addr_b, DiscoveryProtocol::UdpMulticast, 9443);
+        key_rotation_attempt.public_key = Some(other_identity.public_key.clone());
+        service.register_peer(key_rotation_attempt).await;
+
+        let peer_after = service
+            .get_peer(&peer_id)
+            .await
+            .expect("peer should be registered");
+        assert_eq!(
+            peer_after.public_key.as_ref().map(|k| k.as_bytes()),
+            Some(identity.public_key.as_bytes())
+        );
+
+        let removed = service.remove_peer(&peer_id).await;
+        assert!(removed.is_some(), "peer should be removed");
+        assert_eq!(service.peer_count().await, 0);
+        assert!(service.get_peer(&peer_id).await.is_none());
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .map_err(|_| anyhow!("Test timed out after {TEST_TIMEOUT:?}"))??;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mesh_discovery_concurrent_duplicate_registration_is_consistent() -> Result<()> {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let local = identity_with_seed("alpha-mesh-local", [0x40u8; 64])?;
+        let service = Arc::new(UnifiedDiscoveryService::new(
+            peer_id_from_node_id(&local.node_id),
+            9443,
+            local.public_key.clone(),
+        ));
+
+        let identity = identity_with_seed("alpha-mesh-peer", [0x41u8; 64])?;
+        let peer_id = peer_id_from_node_id(&identity.node_id);
+
+        let addr_a: SocketAddr = "198.51.100.10:9443".parse().unwrap(); // RFC 5737
+        let addr_b: SocketAddr = "198.51.100.11:9443".parse().unwrap(); // RFC 5737
+
+        let mut a =
+            DiscoveryResult::new(peer_id, addr_a, DiscoveryProtocol::UdpMulticast, 9443);
+        a.public_key = Some(identity.public_key.clone());
+        a.did = Some(identity.did.clone());
+        a.device_id = Some(identity.primary_device.clone());
+
+        let mut b =
+            DiscoveryResult::new(peer_id, addr_b, DiscoveryProtocol::UdpMulticast, 9443);
+        b.public_key = Some(identity.public_key.clone());
+        b.did = Some(identity.did.clone());
+        b.device_id = Some(identity.primary_device.clone());
+
+        let s1 = Arc::clone(&service);
+        let s2 = Arc::clone(&service);
+        let t1 = tokio::spawn(async move { s1.register_peer(a).await });
+        let t2 = tokio::spawn(async move { s2.register_peer(b).await });
+        t1.await.expect("task should complete");
+        t2.await.expect("task should complete");
+
+        assert_eq!(service.peer_count().await, 1);
+
+        let peer = service
+            .get_peer(&peer_id)
+            .await
+            .expect("peer should be registered");
+        assert!(peer.addresses.contains(&addr_a));
+        assert!(peer.addresses.contains(&addr_b));
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .map_err(|_| anyhow!("Test timed out after {TEST_TIMEOUT:?}"))??;
+
+    Ok(())
 }
 
 #[test]
