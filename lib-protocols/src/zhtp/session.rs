@@ -788,7 +788,7 @@ impl ZhtpSessionManager {
         })
     }
     
-    async fn generate_zk_proof(&self, session_id: &str, user_id: &str) -> ZhtpResult<ZkProofInfo> {
+    async fn generate_zk_proof(&self, _session_id: &str, _user_id: &str) -> ZhtpResult<ZkProofInfo> {
         // Simplified ZK proof generation
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)

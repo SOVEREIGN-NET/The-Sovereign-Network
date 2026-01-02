@@ -305,7 +305,7 @@ impl ZhtpIntegration {
                     let mut device_node_ids = std::collections::HashMap::new();
                     device_node_ids.insert("uploader-device".to_string(), uploader_node_id);
 
-                    let uploader = lib_identity::ZhtpIdentity {
+                    let _uploader = lib_identity::ZhtpIdentity {
                         id: uploader_id.clone(),
                         identity_type: lib_identity::IdentityType::Human,
                         did: uploader_did,
