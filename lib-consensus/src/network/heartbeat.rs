@@ -359,9 +359,9 @@ impl HeartbeatTracker {
             ));
         }
 
-        // Reject placeholder signatures (all zeros or trivial patterns)
+        // Reject placeholder signatures (e.g., too short or all bytes identical)
         let sig_bytes = &heartbeat.signature.signature;
-        if sig_bytes.len() < 32 || sig_bytes.iter().all(|&b| b == 0) || sig_bytes.iter().all(|&b| b == 1) {
+        if sig_bytes.len() < 32 || sig_bytes.iter().all(|&b| b == sig_bytes[0]) {
             return Err(HeartbeatValidationError::InvalidSignature(
                 "Placeholder or trivial signature detected".to_string(),
             ));
