@@ -13,7 +13,7 @@
 //! 2. **Validator membership**: Sender is in the validator set for the target height (height-scoped)
 //! 3. **Height**: vote.height == local.height (rejects votes for wrong height)
 //! 4. **Round**: vote.round == local.round (rejects votes for wrong round)
-//! 5. **Vote type coherence**: PreVote ONLY in PreVote step; PreCommit ONLY in PreCommit step (strict equality)
+//! 5. **Vote type coherence**: PreVote ONLY valid in PreVote step; PreCommit ONLY valid in PreCommit step (strict equality)
 //!
 //! This is enforced by `validate_remote_vote()` and `on_commit_vote()`.
 //!
@@ -1456,23 +1456,11 @@ impl ConsensusEngine {
         active_validators.iter().any(|v| v.identity == *voter)
     }
 
-    /// Validate a remote vote against all BFT safety invariants
+    /// Verify the cryptographic signature of a vote
     ///
-    /// A remote vote MUST be rejected if any of the following fail:
-    ///
-    /// 1. **Signature**: Cryptographically valid and signed by the claimed validator key
-    /// 2. **Validator membership**: Sender is in the active validator set for the target height
-    /// 3. **Height**: vote.height == local.height
-    /// 4. **Round**: vote.round == local.round
-    /// 5. **Vote type coherence**: PreVote only accepted in PreVote step; PreCommit only in PreCommit step
-    ///
-    /// **Invariant**: validate_remote_vote() is a hard gate, not a soft filter.
-    /// Invalid votes are rejected immediately and never stored.
-    ///
-    /// **Design**: This enforces locally deterministic validation independent of network state.
-    /// Signature verification assumes CONSENSUS-NET-4.2 (network delivers authenticated sender + canonical vote envelope).
-    async fn validate_remote_vote(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
-        // 1. Verify signature
+    /// Uses the vote's own height and round to reconstruct the signed data.
+    /// Returns true if signature is valid, false otherwise.
+    async fn verify_vote_signature(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
         // Reconstruct the vote data that was signed, using the vote's own height/round
         // This ensures the signature binds to the vote's exact content, not local state
         let vote_data = self.serialize_vote_data(
@@ -1491,6 +1479,28 @@ impl ConsensusEngine {
                 vote.height,
                 vote.round
             );
+        }
+        Ok(signature_valid)
+    }
+
+    /// Validate a remote vote against all BFT safety invariants
+    ///
+    /// A remote vote MUST be rejected if any of the following fail:
+    ///
+    /// 1. **Signature**: Cryptographically valid and signed by the claimed validator key
+    /// 2. **Validator membership**: Sender is in the active validator set for the target height
+    /// 3. **Height**: vote.height == local.height
+    /// 4. **Round**: vote.round == local.round
+    /// 5. **Vote type coherence**: PreVote only accepted in PreVote step; PreCommit only in PreCommit step
+    ///
+    /// **Invariant**: validate_remote_vote() is a hard gate, not a soft filter.
+    /// Invalid votes are rejected immediately and never stored.
+    ///
+    /// **Design**: This enforces locally deterministic validation independent of network state.
+    /// Signature verification assumes CONSENSUS-NET-4.2 (network delivers authenticated sender + canonical vote envelope).
+    async fn validate_remote_vote(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
+        // 1. Verify signature
+        if !self.verify_vote_signature(vote).await? {
             return Ok(false);
         }
 
@@ -1938,23 +1948,7 @@ impl ConsensusEngine {
 
         // Harden: Verify signature and validator membership (core validation)
         // Commit votes have special rules for height/round, so we only check signature + membership
-        // Use the vote's own height/round for signature verification
-        let vote_data = self.serialize_vote_data(
-            &vote.id,
-            &vote.voter,
-            &vote.proposal_id,
-            &vote.vote_type,
-            vote.height,
-            vote.round,
-        )?;
-        let signature_valid = self.verify_signature(&vote_data, &vote.signature).await?;
-        if !signature_valid {
-            tracing::warn!(
-                "Commit vote rejected: invalid signature from validator {} for height {} round {}",
-                vote.voter,
-                vote.height,
-                vote.round
-            );
+        if !self.verify_vote_signature(&vote).await? {
             return Ok(());
         }
 
