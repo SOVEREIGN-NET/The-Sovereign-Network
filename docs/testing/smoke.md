@@ -10,6 +10,7 @@
   - `cargo test -p lib-blockchain --tests -- --nocapture --test-threads=1`
   - `cargo test -p zhtp --tests -- --nocapture --test-threads=1`
 - Optional (enable when time allows): `cargo check -p lib-network -p lib-identity` to catch interface drift.
+- Integration readiness check for runtime identity wiring: `cargo test -p integration-tests -- --nocapture` (covers NodeId/DID stability across restarts).
 
 ## When to run
 - On every PR via CI (fast lane).
