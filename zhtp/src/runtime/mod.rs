@@ -2290,4 +2290,3 @@ pub async fn create_or_load_node_identity(
     info!("Created and saved node identity to keystore at {:?}", keystore_path);
     Ok(node_identity)
 }
-
