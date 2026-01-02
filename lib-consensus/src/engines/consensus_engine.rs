@@ -31,6 +31,7 @@
 //!   - Same round
 //!   - Same proposal/block hash
 //!   - Same vote type (PreVote or PreCommit)
+//! - **Threshold calculation**: (total_validators * 2 / 3) + 1 using integer division
 //!
 //! - **Mixed or split votes DO NOT count**: If validators disagree on which proposal to vote for,
 //!   no supermajority is reached until 2/3+1 agree on the same proposal.
@@ -139,19 +140,10 @@ impl RoundTimer {
     }
 }
 
-/// Quorum threshold helper
-///
-/// Centralizes the calculation of Byzantine quorum: 2f+1 where f = floor((n-1)/3).
-/// All step transitions must use this for consistency.
-fn has_quorum(votes_for_value: u64, total_validators: u64) -> bool {
-    let threshold = (total_validators * 2 / 3) + 1;
-    votes_for_value >= threshold
-}
-
 /// Check supermajority with explicit quorum calculation
 ///
 /// Makes quorum math explicit and correct:
-/// - threshold = floor((2 * validator_count) / 3) + 1
+/// - threshold = (total_validators * 2 / 3) + 1 (using integer division, which is equivalent to floor for positive integers)
 /// - Matching votes means same height, round, proposal/block hash, and vote type
 /// - Mixed or split votes MUST NOT count toward quorum
 ///
@@ -1448,6 +1440,22 @@ impl ConsensusEngine {
         &self.config
     }
 
+    /// Check if a validator is a member of the active validator set
+    ///
+    /// **INVARIANT**: Validator membership is a function of height, not wall-clock time.
+    /// A validator is valid only if it was a member of the validator set at the target height.
+    ///
+    /// TODO: If validator sets change per height (epoch transitions), implement height-scoped lookup.
+    /// For now, check against the current active set (correct if validator sets are static).
+    ///
+    /// **Safety consideration**: If validator sets change, a vote from a validator who was
+    /// valid at vote.height but is no longer active would be rejected, potentially breaking
+    /// consensus during epoch transitions.
+    fn is_validator_member(&self, voter: &IdentityId, height: u64) -> bool {
+        let active_validators = self.validator_manager.get_active_validators();
+        active_validators.iter().any(|v| v.identity == *voter)
+    }
+
     /// Validate a remote vote against all BFT safety invariants
     ///
     /// A remote vote MUST be rejected if any of the following fail:
@@ -1487,16 +1495,7 @@ impl ConsensusEngine {
         }
 
         // 2. Verify validator membership
-        // **INVARIANT**: Validator membership is a function of height, not wall-clock time.
-        // A validator is valid only if it was a member of the validator set at vote.height.
-        // TODO: If validator sets change per height (epoch transitions), implement height-scoped lookup.
-        // For now, check against the current active set (correct if validator sets are static).
-        let active_validators = self.validator_manager.get_active_validators();
-        let voter_is_member = active_validators
-            .iter()
-            .any(|v| v.identity == vote.voter);
-
-        if !voter_is_member {
+        if !self.is_validator_member(&vote.voter, vote.height) {
             tracing::warn!(
                 "Vote rejected: voter {} is not in active validator set for height {}",
                 vote.voter,
@@ -1535,7 +1534,20 @@ impl ConsensusEngine {
         let valid_for_step = match vote.vote_type {
             VoteType::PreVote => self.current_round.step == ConsensusStep::PreVote,
             VoteType::PreCommit => self.current_round.step == ConsensusStep::PreCommit,
-            VoteType::Commit => true, // Commit votes are always valid if height/round match
+            VoteType::Commit => {
+                // Commit votes intentionally bypass step-based validation here.
+                //
+                // **Design rationale**:
+                // - Commit votes are allowed as long as height and round match local state.
+                // - The 2/3+1 identical-commit quorum requirement is enforced in `maybe_finalize()`,
+                //   which is the only place where blocks are actually finalized.
+                // - Keeping quorum logic out of `validate_remote_vote()` preserves the invariant that
+                //   this function performs only local, stateless validation (signature, membership,
+                //   height/round coherence, and step compatibility for non-commit votes).
+                // - Any commit votes that never reach quorum are handled by higher-level cleanup
+                //   when rounds/heights advance and vote sets are pruned.
+                true
+            }
             VoteType::Against => false, // Against votes are never valid in BFT
         };
 
@@ -1947,15 +1959,7 @@ impl ConsensusEngine {
         }
 
         // Verify validator membership
-        // **INVARIANT**: Validator membership is a function of height, not wall-clock time.
-        // A validator is valid only if it was a member of the validator set at vote.height.
-        // TODO: If validator sets change per height, implement height-scoped lookup.
-        let active_validators = self.validator_manager.get_active_validators();
-        let voter_is_member = active_validators
-            .iter()
-            .any(|v| v.identity == vote.voter);
-
-        if !voter_is_member {
+        if !self.is_validator_member(&vote.voter, vote.height) {
             tracing::warn!(
                 "Commit vote rejected: voter {} is not in active validator set for height {}",
                 vote.voter,
@@ -2079,7 +2083,7 @@ impl ConsensusEngine {
             let prevote_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreVote);
             let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
-            if has_quorum(prevote_count, total_validators) {
+            if check_supermajority(prevote_count, total_validators) {
                 let vote = self.cast_vote(proposal_id.clone(), VoteType::PreCommit).await?;
                 self.current_round.valid_proposal = Some(proposal_id);
 
@@ -2117,7 +2121,7 @@ impl ConsensusEngine {
             let precommit_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreCommit);
             let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
-            if has_quorum(precommit_count, total_validators) {
+            if check_supermajority(precommit_count, total_validators) {
                 let vote = self.cast_vote(proposal_id.clone(), VoteType::Commit).await?;
 
                 tracing::info!(
@@ -2887,26 +2891,26 @@ mod tests {
 
     /// Gap 4 Invariant Test: Threshold consistency
     ///
-    /// Verifies that has_quorum() correctly identifies quorum threshold.
+    /// Verifies that check_supermajority() correctly identifies quorum threshold.
     /// For 3 validators: threshold should be 3 (2f+1 where f=1)
     /// For 4 validators: threshold should be 3 (2f+1 where f=1)
     /// For 7 validators: threshold should be 5 (2f+1 where f=2)
     #[tokio::test]
     async fn test_gap4_quorum_threshold_consistency() {
         // 3 validators: need 3 votes (all of them)
-        assert!(has_quorum(3, 3), "3/3 votes should be quorum");
-        assert!(!has_quorum(2, 3), "2/3 votes should NOT be quorum");
+        assert!(check_supermajority(3, 3), "3/3 votes should be quorum");
+        assert!(!check_supermajority(2, 3), "2/3 votes should NOT be quorum");
 
         // 4 validators: need 3 votes (2/3 + 1)
-        assert!(has_quorum(3, 4), "3/4 votes should be quorum");
-        assert!(!has_quorum(2, 4), "2/4 votes should NOT be quorum");
+        assert!(check_supermajority(3, 4), "3/4 votes should be quorum");
+        assert!(!check_supermajority(2, 4), "2/4 votes should NOT be quorum");
 
         // 7 validators: need 5 votes
-        assert!(has_quorum(5, 7), "5/7 votes should be quorum");
-        assert!(!has_quorum(4, 7), "4/7 votes should NOT be quorum");
+        assert!(check_supermajority(5, 7), "5/7 votes should be quorum");
+        assert!(!check_supermajority(4, 7), "4/7 votes should NOT be quorum");
 
         // Edge case: 1 validator (needs 1)
-        assert!(has_quorum(1, 1), "1/1 vote should be quorum");
+        assert!(check_supermajority(1, 1), "1/1 vote should be quorum");
     }
 
     /// Gap 4 Invariant Test: Timer token staleness guard
@@ -3178,27 +3182,27 @@ mod tests {
     /// Test: check_supermajority() with correct threshold formula
     ///
     /// Verifies that check_supermajority() uses the correct formula:
-    /// threshold = floor((2 * validator_count) / 3) + 1
+    /// threshold = (total_validators * 2 / 3) + 1 (integer division)
     #[test]
     fn test_hardening_check_supermajority_correct_threshold() {
-        // 1 validator: threshold = floor(2/3) + 1 = 1
+        // 1 validator: (1 * 2) / 3 + 1 = 0 + 1 = 1 (integer division)
         assert!(!check_supermajority(0, 1), "0/1 should not be supermajority");
         assert!(check_supermajority(1, 1), "1/1 should be supermajority");
 
-        // 3 validators: threshold = floor(6/3) + 1 = 3
+        // 3 validators: (3 * 2) / 3 + 1 = 2 + 1 = 3
         assert!(!check_supermajority(2, 3), "2/3 should not be supermajority");
         assert!(check_supermajority(3, 3), "3/3 should be supermajority");
 
-        // 4 validators: threshold = floor(8/3) + 1 = 3
+        // 4 validators: (4 * 2) / 3 + 1 = 2 + 1 = 3 (integer division)
         assert!(!check_supermajority(2, 4), "2/4 should not be supermajority");
         assert!(check_supermajority(3, 4), "3/4 should be supermajority");
         assert!(check_supermajority(4, 4), "4/4 should be supermajority");
 
-        // 7 validators: threshold = floor(14/3) + 1 = 5
+        // 7 validators: (7 * 2) / 3 + 1 = 4 + 1 = 5 (integer division)
         assert!(!check_supermajority(4, 7), "4/7 should not be supermajority");
         assert!(check_supermajority(5, 7), "5/7 should be supermajority");
 
-        // 100 validators: threshold = floor(200/3) + 1 = 67
+        // 100 validators: (100 * 2) / 3 + 1 = 66 + 1 = 67 (integer division)
         assert!(!check_supermajority(66, 100), "66/100 should not be supermajority");
         assert!(check_supermajority(67, 100), "67/100 should be supermajority");
     }
@@ -3544,6 +3548,113 @@ mod tests {
                 step
             );
         }
+    }
+
+    /// Test: Remote vote validation - invalid signature rejection
+    ///
+    /// A vote with invalid signature MUST be rejected (Invariant #1)
+    #[tokio::test]
+    async fn test_hardening_vote_validation_invalid_signature() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to PreVote step
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Create a vote with an empty signature (invalid)
+        let mut bad_signature = create_test_signature();
+        bad_signature.signature = Vec::new(); // Make signature invalid
+
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: engine.current_round.height,
+            round: engine.current_round.round,
+            timestamp: 0,
+            signature: bad_signature,
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(!is_valid, "Vote with invalid signature MUST be rejected");
+    }
+
+    /// Test: Remote vote validation - commit votes allow round catch-up
+    ///
+    /// on_commit_vote() is designed to accept commit votes from any round at the current height
+    /// to allow catch-up from previous rounds. This test verifies that such votes are not
+    /// rejected at the basic validation level.
+    #[tokio::test]
+    async fn test_hardening_commit_vote_accepts_past_round() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to height=5, round=3
+        engine.current_round.height = 5;
+        engine.current_round.round = 3;
+        engine.current_round.step = ConsensusStep::PreCommit;
+
+        let proposal_id = Hash::from_bytes(&[2u8; 32]);
+
+        // Create a commit vote from a PAST round (round=2 while current is 3)
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: proposal_id.clone(),
+            vote_type: VoteType::Commit,
+            height: 5,  // Same height
+            round: 2,   // Past round
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Call on_commit_vote with past-round commit vote
+        // It should be accepted (not rejected) for catch-up purposes
+        engine.on_commit_vote(vote.clone()).await.expect("commit vote failed");
+
+        // Verify the vote was stored
+        let commit_count = engine.count_commits_for(5, 2, &proposal_id);
+        assert_eq!(commit_count, 1, "Past-round commit vote should be stored for catch-up");
     }
 }
 
