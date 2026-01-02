@@ -2243,7 +2243,7 @@ pub async fn create_or_load_node_identity(
     // Use the standard keystore path for ALL environments
     // This matches WalletStartupManager and ensures identity persistence
     let keystore_path = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow("Could not determine home directory"))?
+        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
         .join(".zhtp")
         .join("keystore");
 
@@ -2271,4 +2271,3 @@ pub async fn create_or_load_node_identity(
     info!("Created and saved node identity to keystore at {:?}", keystore_path);
     Ok(node_identity)
 }
-
