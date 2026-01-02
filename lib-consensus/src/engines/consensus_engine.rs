@@ -1,5 +1,68 @@
 //! Main consensus engine implementation combining all consensus mechanisms
 //!
+//! # Enforced Invariants for BFT Safety
+//!
+//! This consensus engine enforces the following invariants to ensure BFT safety:
+//!
+//! ## Vote Validity (Local and Deterministic)
+//!
+//! Vote validity is local and deterministic. A remote vote is accepted only if ALL
+//! of the following conditions hold. Invalid votes are rejected immediately and never stored:
+//!
+//! 1. **Signature**: Cryptographically valid, verified against the vote's own data (height/round), not local state
+//! 2. **Validator membership**: Sender is in the validator set for the target height (height-scoped)
+//! 3. **Height**: vote.height == local.height (rejects votes for wrong height)
+//! 4. **Round**: vote.round == local.round (rejects votes for wrong round)
+//! 5. **Vote type coherence**: PreVote ONLY valid in PreVote step; PreCommit ONLY valid in PreCommit step (strict equality)
+//!
+//! This is enforced by `validate_remote_vote()` and `on_commit_vote()`.
+//!
+//! **Critical Fixes** (CONSENSUS-NET-4.3 Issue Corrections):
+//! - Signature verification uses vote data bound to vote.height/round, not local consensus state
+//! - Vote type validation uses strict == equality, rejecting late votes unconditionally
+//! - Validator membership is height-scoped (implementation tracks current set; TODO for epoch transitions)
+//!
+//! ## Quorum is Proposal-Scoped, Not Round-Scoped
+//!
+//! Quorum calculations are proposal-scoped to prevent split votes from being mistaken for quorum:
+//!
+//! - **Supermajority requires identical votes**: All votes counted toward quorum must have:
+//!   - Same height
+//!   - Same round
+//!   - Same proposal/block hash
+//!   - Same vote type (PreVote or PreCommit)
+//! - **Threshold calculation**: (total_validators * 2 / 3) + 1 using integer division
+//!
+//! - **Mixed or split votes DO NOT count**: If validators disagree on which proposal to vote for,
+//!   no supermajority is reached until 2/3+1 agree on the same proposal.
+//!
+//! This is enforced by `count_prevotes_for()`, `count_precommits_for()`, and
+//! `check_supermajority()` which use proposal-scoped vote counting.
+//!
+//! Example: With 4 validators:
+//! - Threshold = floor(8/3) + 1 = 3
+//! - 2 votes for proposal A + 2 votes for proposal B = 0 quorum (mixed votes)
+//! - 3 votes for proposal A = quorum reached
+//!
+//! ## No Vote Can Advance Consensus Unless It Matches Local Step
+//!
+//! PreVotes advance consensus only during PreVote step, PreCommits only during PreCommit step.
+//! This is enforced in `on_prevote()` and `on_precommit()` which call `validate_remote_vote()`.
+//!
+//! Exception: Commit votes can finalize immediately regardless of local step,
+//! but only if 2/3+1 identical commit votes are present (CE-L1, CE-L2 liveness rules).
+//!
+//! ## No Vote Equivocation
+//!
+//! A validator cannot vote twice for the same (height, round, vote_type).
+//! Multiple votes from the same validator for the same (H,R,type) trigger equivocation detection.
+//! This is enforced by the composite key in `VotePoolKey`.
+//!
+//! ## Design Principles
+//!
+//! - **Determinism**: Given the same inputs, consensus produces the same sequence of steps.
+//! - **Locality**: Vote validation depends only on local state, not network availability.
+//! - **Simplicity**: All validation is explicit and fully specified in code comments.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -77,13 +140,22 @@ impl RoundTimer {
     }
 }
 
-/// Quorum threshold helper
+/// Check supermajority with explicit quorum calculation
 ///
-/// Centralizes the calculation of Byzantine quorum: 2f+1 where f = floor((n-1)/3).
-/// All step transitions must use this for consistency.
-fn has_quorum(votes_for_value: u64, total_validators: u64) -> bool {
+/// Makes quorum math explicit and correct:
+/// - threshold = (total_validators * 2 / 3) + 1 (using integer division, which is equivalent to floor for positive integers)
+/// - Matching votes means same height, round, proposal/block hash, and vote type
+/// - Mixed or split votes MUST NOT count toward quorum
+///
+/// **Invariant**: Supermajority requires identical votes, not aggregate counts.
+/// A supermajority on a proposal means 2/3 + 1 validators agree on ALL aspects:
+/// - Same height
+/// - Same round
+/// - Same proposal/block hash
+/// - Same vote type (PreVote or PreCommit)
+fn check_supermajority(matching_votes: u64, total_validators: u64) -> bool {
     let threshold = (total_validators * 2 / 3) + 1;
-    votes_for_value >= threshold
+    matching_votes >= threshold
 }
 
 /// Vote pool entry key: composite key to prevent equivocation
@@ -1026,8 +1098,15 @@ impl ConsensusEngine {
         ));
 
         // Create vote data for signing
-        let vote_data =
-            self.serialize_vote_data(&vote_id, validator_id, &proposal_id, &vote_type)?;
+        // Use current height/round since this vote is being created for the current consensus round
+        let vote_data = self.serialize_vote_data(
+            &vote_id,
+            validator_id,
+            &proposal_id,
+            &vote_type,
+            self.current_round.height,
+            self.current_round.round,
+        )?;
 
         // Sign the vote
         let signature = self.sign_vote_data(&vote_data, &validator).await?;
@@ -1076,14 +1155,21 @@ impl ConsensusEngine {
         voter: &IdentityId,
         proposal_id: &Hash,
         vote_type: &VoteType,
+        height: u64,
+        round: u32,
     ) -> ConsensusResult<Vec<u8>> {
+        // **CRITICAL INVARIANT**: Vote signature MUST be bound to the vote's own height/round,
+        // not the local consensus state. This ensures:
+        // - Signature verifies against the exact vote data, not local state
+        // - Commit votes from past rounds/heights can be properly validated
+        // - No latent safety faults when strict verification is enabled
         let mut data = Vec::new();
         data.extend_from_slice(vote_id.as_bytes());
         data.extend_from_slice(voter.as_bytes());
         data.extend_from_slice(proposal_id.as_bytes());
         data.push(vote_type.clone() as u8);
-        data.extend_from_slice(&self.current_round.height.to_le_bytes());
-        data.extend_from_slice(&self.current_round.round.to_le_bytes());
+        data.extend_from_slice(&height.to_le_bytes());
+        data.extend_from_slice(&round.to_le_bytes());
         Ok(data)
     }
 
@@ -1354,6 +1440,140 @@ impl ConsensusEngine {
         &self.config
     }
 
+    /// Check if a validator is a member of the active validator set
+    ///
+    /// **INVARIANT**: Validator membership is a function of height, not wall-clock time.
+    /// A validator is valid only if it was a member of the validator set at the target height.
+    ///
+    /// TODO: If validator sets change per height (epoch transitions), implement height-scoped lookup.
+    /// For now, check against the current active set (correct if validator sets are static).
+    ///
+    /// **Safety consideration**: If validator sets change, a vote from a validator who was
+    /// valid at vote.height but is no longer active would be rejected, potentially breaking
+    /// consensus during epoch transitions.
+    fn is_validator_member(&self, voter: &IdentityId, height: u64) -> bool {
+        let active_validators = self.validator_manager.get_active_validators();
+        active_validators.iter().any(|v| v.identity == *voter)
+    }
+
+    /// Verify the cryptographic signature of a vote
+    ///
+    /// Uses the vote's own height and round to reconstruct the signed data.
+    /// Returns true if signature is valid, false otherwise.
+    async fn verify_vote_signature(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
+        // Reconstruct the vote data that was signed, using the vote's own height/round
+        // This ensures the signature binds to the vote's exact content, not local state
+        let vote_data = self.serialize_vote_data(
+            &vote.id,
+            &vote.voter,
+            &vote.proposal_id,
+            &vote.vote_type,
+            vote.height,
+            vote.round,
+        )?;
+        let signature_valid = self.verify_signature(&vote_data, &vote.signature).await?;
+        if !signature_valid {
+            tracing::warn!(
+                "Vote rejected: invalid signature from validator {} for height {} round {}",
+                vote.voter,
+                vote.height,
+                vote.round
+            );
+        }
+        Ok(signature_valid)
+    }
+
+    /// Validate a remote vote against all BFT safety invariants
+    ///
+    /// A remote vote MUST be rejected if any of the following fail:
+    ///
+    /// 1. **Signature**: Cryptographically valid and signed by the claimed validator key
+    /// 2. **Validator membership**: Sender is in the active validator set for the target height
+    /// 3. **Height**: vote.height == local.height
+    /// 4. **Round**: vote.round == local.round
+    /// 5. **Vote type coherence**: PreVote only accepted in PreVote step; PreCommit only in PreCommit step
+    ///
+    /// **Invariant**: validate_remote_vote() is a hard gate, not a soft filter.
+    /// Invalid votes are rejected immediately and never stored.
+    ///
+    /// **Design**: This enforces locally deterministic validation independent of network state.
+    /// Signature verification assumes CONSENSUS-NET-4.2 (network delivers authenticated sender + canonical vote envelope).
+    async fn validate_remote_vote(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
+        // 1. Verify signature
+        if !self.verify_vote_signature(vote).await? {
+            return Ok(false);
+        }
+
+        // 2. Verify validator membership
+        if !self.is_validator_member(&vote.voter, vote.height) {
+            tracing::warn!(
+                "Vote rejected: voter {} is not in active validator set for height {}",
+                vote.voter,
+                vote.height
+            );
+            return Ok(false);
+        }
+
+        // 3. Verify height matches
+        if vote.height != self.current_round.height {
+            tracing::debug!(
+                "Vote rejected: height mismatch. Vote height {} != local height {}",
+                vote.height,
+                self.current_round.height
+            );
+            return Ok(false);
+        }
+
+        // 4. Verify round matches
+        if vote.round != self.current_round.round {
+            tracing::debug!(
+                "Vote rejected: round mismatch. Vote round {} != local round {}",
+                vote.round,
+                self.current_round.round
+            );
+            return Ok(false);
+        }
+
+        // 5. Verify vote type coherence - STRICT equality, not >=
+        // **CRITICAL INVARIANT**: Votes are only valid in the step they are defined for.
+        // Late votes (e.g., PreVote in PreCommit step) are INVALID and never stored.
+        // This ensures:
+        // - No retroactive quorum formation
+        // - Step transitions are monotonic and deterministic
+        // - No ambiguous quorum timing
+        let valid_for_step = match vote.vote_type {
+            VoteType::PreVote => self.current_round.step == ConsensusStep::PreVote,
+            VoteType::PreCommit => self.current_round.step == ConsensusStep::PreCommit,
+            VoteType::Commit => {
+                // Commit votes intentionally bypass step-based validation here.
+                //
+                // **Design rationale**:
+                // - Commit votes are allowed as long as height and round match local state.
+                // - The 2/3+1 identical-commit quorum requirement is enforced in `maybe_finalize()`,
+                //   which is the only place where blocks are actually finalized.
+                // - Keeping quorum logic out of `validate_remote_vote()` preserves the invariant that
+                //   this function performs only local, stateless validation (signature, membership,
+                //   height/round coherence, and step compatibility for non-commit votes).
+                // - Any commit votes that never reach quorum are handled by higher-level cleanup
+                //   when rounds/heights advance and vote sets are pruned.
+                true
+            }
+            VoteType::Against => false, // Against votes are never valid in BFT
+        };
+
+        if !valid_for_step {
+            tracing::warn!(
+                "Vote rejected: vote type {:?} not valid for current step {:?}",
+                vote.vote_type,
+                self.current_round.step
+            );
+            return Ok(false);
+        }
+
+        // All validations passed
+        Ok(true)
+    }
+
     /// Validate that the previous hash matches the expected blockchain state
     async fn validate_previous_hash(
         &self,
@@ -1565,7 +1785,8 @@ impl ConsensusEngine {
     }
 
     async fn on_prevote(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
-        if !self.is_vote_relevant(&vote) {
+        // Harden: Validate remote vote against all BFT safety invariants
+        if !self.validate_remote_vote(&vote).await? {
             return Ok(());
         }
 
@@ -1605,11 +1826,12 @@ impl ConsensusEngine {
             vote.round
         );
 
-        // **CE-S1**: Check quorum for THIS proposal, not the round aggregate
+        // **CE-S1**: Check supermajority for THIS proposal, not the round aggregate
+        // Matching votes means: same height, round, proposal/block hash, and vote type
         let prevote_count = self.count_prevotes_for(vote.height, vote.round, &proposal_id);
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
-        if has_quorum(prevote_count, total_validators) && self.current_round.step == ConsensusStep::PreVote {
+        if check_supermajority(prevote_count, total_validators) && self.current_round.step == ConsensusStep::PreVote {
             // **CE-S1**: Only transition if this proposal can be the valid proposal
             // If valid_proposal is already set to a DIFFERENT proposal, we have conflicting quorums
             // which violates safety - don't transition
@@ -1636,7 +1858,8 @@ impl ConsensusEngine {
     }
 
     async fn on_precommit(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
-        if !self.is_vote_relevant(&vote) {
+        // Harden: Validate remote vote against all BFT safety invariants
+        if !self.validate_remote_vote(&vote).await? {
             return Ok(());
         }
 
@@ -1674,11 +1897,12 @@ impl ConsensusEngine {
             vote.round
         );
 
-        // **CE-S1**: Check quorum for THIS proposal, not the round aggregate
+        // **CE-S1**: Check supermajority for THIS proposal, not the round aggregate
+        // Matching votes means: same height, round, proposal/block hash, and vote type
         let precommit_count = self.count_precommits_for(vote.height, vote.round, &proposal_id);
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
-        if has_quorum(precommit_count, total_validators) && self.current_round.step == ConsensusStep::PreCommit {
+        if check_supermajority(precommit_count, total_validators) && self.current_round.step == ConsensusStep::PreCommit {
             // **CE-S1**: Only transition if this proposal can be locked
             // If locked_proposal is already set to a DIFFERENT proposal, we have conflicting quorums
             if let Some(existing) = self.current_round.locked_proposal.as_ref() {
@@ -1718,6 +1942,22 @@ impl ConsensusEngine {
                 "Ignoring commit vote for past height {} (current: {})",
                 vote.height,
                 self.current_round.height
+            );
+            return Ok(());
+        }
+
+        // Harden: Verify signature and validator membership (core validation)
+        // Commit votes have special rules for height/round, so we only check signature + membership
+        if !self.verify_vote_signature(&vote).await? {
+            return Ok(());
+        }
+
+        // Verify validator membership
+        if !self.is_validator_member(&vote.voter, vote.height) {
+            tracing::warn!(
+                "Commit vote rejected: voter {} is not in active validator set for height {}",
+                vote.voter,
+                vote.height
             );
             return Ok(());
         }
@@ -1837,7 +2077,7 @@ impl ConsensusEngine {
             let prevote_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreVote);
             let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
-            if has_quorum(prevote_count, total_validators) {
+            if check_supermajority(prevote_count, total_validators) {
                 let vote = self.cast_vote(proposal_id.clone(), VoteType::PreCommit).await?;
                 self.current_round.valid_proposal = Some(proposal_id);
 
@@ -1875,7 +2115,7 @@ impl ConsensusEngine {
             let precommit_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreCommit);
             let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
-            if has_quorum(precommit_count, total_validators) {
+            if check_supermajority(precommit_count, total_validators) {
                 let vote = self.cast_vote(proposal_id.clone(), VoteType::Commit).await?;
 
                 tracing::info!(
@@ -2023,10 +2263,12 @@ impl ConsensusEngine {
     /// **Invariant**: Called from on_prevote, on_precommit, on_commit_vote, and enter_commit_step
     /// to prevent "stored but never used" regressions.
     async fn maybe_finalize(&mut self, height: u64, round: u32, proposal_id: &Hash) -> ConsensusResult<()> {
+        // Count matching commit votes: all votes for this specific proposal at height/round
+        // This ensures supermajority is proposal-scoped, not round-scoped
         let commit_count = self.count_commits_for(height, round, proposal_id);
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
-        if has_quorum(commit_count, total_validators) {
+        if check_supermajority(commit_count, total_validators) {
             tracing::info!(
                 "Finalization triggered: {} commits for proposal {:?} at height {} round {}",
                 commit_count,
@@ -2643,26 +2885,26 @@ mod tests {
 
     /// Gap 4 Invariant Test: Threshold consistency
     ///
-    /// Verifies that has_quorum() correctly identifies quorum threshold.
+    /// Verifies that check_supermajority() correctly identifies quorum threshold.
     /// For 3 validators: threshold should be 3 (2f+1 where f=1)
     /// For 4 validators: threshold should be 3 (2f+1 where f=1)
     /// For 7 validators: threshold should be 5 (2f+1 where f=2)
     #[tokio::test]
     async fn test_gap4_quorum_threshold_consistency() {
         // 3 validators: need 3 votes (all of them)
-        assert!(has_quorum(3, 3), "3/3 votes should be quorum");
-        assert!(!has_quorum(2, 3), "2/3 votes should NOT be quorum");
+        assert!(check_supermajority(3, 3), "3/3 votes should be quorum");
+        assert!(!check_supermajority(2, 3), "2/3 votes should NOT be quorum");
 
         // 4 validators: need 3 votes (2/3 + 1)
-        assert!(has_quorum(3, 4), "3/4 votes should be quorum");
-        assert!(!has_quorum(2, 4), "2/4 votes should NOT be quorum");
+        assert!(check_supermajority(3, 4), "3/4 votes should be quorum");
+        assert!(!check_supermajority(2, 4), "2/4 votes should NOT be quorum");
 
         // 7 validators: need 5 votes
-        assert!(has_quorum(5, 7), "5/7 votes should be quorum");
-        assert!(!has_quorum(4, 7), "4/7 votes should NOT be quorum");
+        assert!(check_supermajority(5, 7), "5/7 votes should be quorum");
+        assert!(!check_supermajority(4, 7), "4/7 votes should NOT be quorum");
 
         // Edge case: 1 validator (needs 1)
-        assert!(has_quorum(1, 1), "1/1 vote should be quorum");
+        assert!(check_supermajority(1, 1), "1/1 vote should be quorum");
     }
 
     /// Gap 4 Invariant Test: Timer token staleness guard
@@ -2925,6 +3167,488 @@ mod tests {
 
         // Step should still be PreVote (no automatic transition since quorum not reached)
         assert_eq!(engine.current_round.step, ConsensusStep::PreVote);
+    }
+
+    // ============================================================================
+    // CONSENSUS-NET-4.3: Remote Vote Validation and Supermajority Hardening Tests
+    // ============================================================================
+
+    /// Test: check_supermajority() with correct threshold formula
+    ///
+    /// Verifies that check_supermajority() uses the correct formula:
+    /// threshold = (total_validators * 2 / 3) + 1 (integer division)
+    #[test]
+    fn test_hardening_check_supermajority_correct_threshold() {
+        // 1 validator: (1 * 2) / 3 + 1 = 0 + 1 = 1 (integer division)
+        assert!(!check_supermajority(0, 1), "0/1 should not be supermajority");
+        assert!(check_supermajority(1, 1), "1/1 should be supermajority");
+
+        // 3 validators: (3 * 2) / 3 + 1 = 2 + 1 = 3
+        assert!(!check_supermajority(2, 3), "2/3 should not be supermajority");
+        assert!(check_supermajority(3, 3), "3/3 should be supermajority");
+
+        // 4 validators: (4 * 2) / 3 + 1 = 2 + 1 = 3 (integer division)
+        assert!(!check_supermajority(2, 4), "2/4 should not be supermajority");
+        assert!(check_supermajority(3, 4), "3/4 should be supermajority");
+        assert!(check_supermajority(4, 4), "4/4 should be supermajority");
+
+        // 7 validators: (7 * 2) / 3 + 1 = 4 + 1 = 5 (integer division)
+        assert!(!check_supermajority(4, 7), "4/7 should not be supermajority");
+        assert!(check_supermajority(5, 7), "5/7 should be supermajority");
+
+        // 100 validators: (100 * 2) / 3 + 1 = 66 + 1 = 67 (integer division)
+        assert!(!check_supermajority(66, 100), "66/100 should not be supermajority");
+        assert!(check_supermajority(67, 100), "67/100 should be supermajority");
+    }
+
+    /// Test: Acceptance criteria - 4 validators
+    ///
+    /// With 4 validators, threshold = 3:
+    /// - 2 votes → no quorum
+    /// - 3 identical votes → quorum reached
+    /// - Mixed votes (2+2) → no quorum
+    #[test]
+    fn test_hardening_4validator_acceptance_criteria() {
+        let total_validators = 4u64;
+
+        // Criterion: 2 votes → no quorum
+        assert!(
+            !check_supermajority(2, total_validators),
+            "2/4 votes should NOT be supermajority"
+        );
+
+        // Criterion: 3 identical votes → quorum reached
+        assert!(
+            check_supermajority(3, total_validators),
+            "3/4 identical votes MUST trigger supermajority"
+        );
+
+        // Note: 2+2 mixed votes is handled by counting proposal-scoped votes
+        // If 2 vote for proposal A and 2 vote for proposal B:
+        // count_prevotes_for(proposal_a) = 2 (no quorum)
+        // count_prevotes_for(proposal_b) = 2 (no quorum)
+        // Result: Mixed or split votes MUST NOT count
+    }
+
+    /// Test: Remote vote validation - height mismatch rejection
+    ///
+    /// A vote with height != local.height MUST be rejected
+    #[tokio::test]
+    async fn test_hardening_vote_validation_height_mismatch() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to height=5, round=0, PreVote step
+        engine.current_round.height = 5;
+        engine.current_round.round = 0;
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Create a vote with wrong height (height=6)
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: 6, // WRONG: height != local.height
+            round: 0,
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(
+            !is_valid,
+            "Vote with height mismatch MUST be rejected (height={} != local.height={})",
+            vote.height,
+            engine.current_round.height
+        );
+    }
+
+    /// Test: Remote vote validation - round mismatch rejection
+    ///
+    /// A vote with round != local.round MUST be rejected
+    #[tokio::test]
+    async fn test_hardening_vote_validation_round_mismatch() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to height=0, round=5, PreVote step
+        engine.current_round.height = 0;
+        engine.current_round.round = 5;
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Create a vote with wrong round (round=6)
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: 0,
+            round: 6, // WRONG: round != local.round
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(
+            !is_valid,
+            "Vote with round mismatch MUST be rejected (round={} != local.round={})",
+            vote.round,
+            engine.current_round.round
+        );
+    }
+
+    /// Test: Remote vote validation - non-member validator rejection
+    ///
+    /// A vote from a validator NOT in active set MUST be rejected
+    #[tokio::test]
+    async fn test_hardening_vote_validation_non_member_validator() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register only validator 1
+        let validator_id_1 = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id_1.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Create a vote from validator 2 (NOT registered)
+        let validator_id_2 = test_validator_id(2);
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id_2.clone(),
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: engine.current_round.height,
+            round: engine.current_round.round,
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(
+            !is_valid,
+            "Vote from non-member validator MUST be rejected"
+        );
+    }
+
+    /// Test: Remote vote validation - vote type coherence (PreVote in Propose step)
+    ///
+    /// A PreVote is NOT valid during Propose step
+    #[tokio::test]
+    async fn test_hardening_vote_validation_prevote_in_propose_step() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to Propose step
+        engine.current_round.step = ConsensusStep::Propose;
+
+        // Create a PreVote while in Propose step
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: engine.current_round.height,
+            round: engine.current_round.round,
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(
+            !is_valid,
+            "PreVote in Propose step MUST be rejected (step coherence violation)"
+        );
+    }
+
+    /// Test: Remote vote validation - vote type coherence (PreCommit in PreVote step)
+    ///
+    /// A PreCommit is NOT valid during PreVote step
+    #[tokio::test]
+    async fn test_hardening_vote_validation_precommit_in_prevote_step() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to PreVote step
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Create a PreCommit while in PreVote step
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreCommit,
+            height: engine.current_round.height,
+            round: engine.current_round.round,
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(
+            !is_valid,
+            "PreCommit in PreVote step MUST be rejected (step coherence violation)"
+        );
+    }
+
+    /// Test: Remote vote validation - Commit votes always valid (if height/round match)
+    ///
+    /// Commit votes are always valid regardless of current step
+    #[tokio::test]
+    async fn test_hardening_vote_validation_commit_always_valid() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Test in each step
+        for step in &[
+            ConsensusStep::Propose,
+            ConsensusStep::PreVote,
+            ConsensusStep::PreCommit,
+            ConsensusStep::Commit,
+        ] {
+            engine.current_round.step = step.clone();
+
+            // Create a Commit vote
+            let vote = ConsensusVote {
+                id: Hash::from_bytes(&[1u8; 32]),
+                voter: validator_id.clone(),
+                proposal_id: Hash::from_bytes(&[2u8; 32]),
+                vote_type: VoteType::Commit,
+                height: engine.current_round.height,
+                round: engine.current_round.round,
+                timestamp: 0,
+                signature: create_test_signature(),
+            };
+
+            // Validate the vote - should always be valid
+            let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+            assert!(
+                is_valid,
+                "Commit vote MUST always be valid regardless of step (currently in {:?})",
+                step
+            );
+        }
+    }
+
+    /// Test: Remote vote validation - invalid signature rejection
+    ///
+    /// A vote with invalid signature MUST be rejected (Invariant #1)
+    #[tokio::test]
+    async fn test_hardening_vote_validation_invalid_signature() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to PreVote step
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Create a vote with an empty signature (invalid)
+        let mut bad_signature = create_test_signature();
+        bad_signature.signature = Vec::new(); // Make signature invalid
+
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: engine.current_round.height,
+            round: engine.current_round.round,
+            timestamp: 0,
+            signature: bad_signature,
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(!is_valid, "Vote with invalid signature MUST be rejected");
+    }
+
+    /// Test: Remote vote validation - commit votes allow round catch-up
+    ///
+    /// on_commit_vote() is designed to accept commit votes from any round at the current height
+    /// to allow catch-up from previous rounds. This test verifies that such votes are not
+    /// rejected at the basic validation level.
+    #[tokio::test]
+    async fn test_hardening_commit_vote_accepts_past_round() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to height=5, round=3
+        engine.current_round.height = 5;
+        engine.current_round.round = 3;
+        engine.current_round.step = ConsensusStep::PreCommit;
+
+        let proposal_id = Hash::from_bytes(&[2u8; 32]);
+
+        // Create a commit vote from a PAST round (round=2 while current is 3)
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: proposal_id.clone(),
+            vote_type: VoteType::Commit,
+            height: 5,  // Same height
+            round: 2,   // Past round
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Call on_commit_vote with past-round commit vote
+        // It should be accepted (not rejected) for catch-up purposes
+        engine.on_commit_vote(vote.clone()).await.expect("commit vote failed");
+
+        // Verify the vote was stored
+        let commit_count = engine.count_commits_for(5, 2, &proposal_id);
+        assert_eq!(commit_count, 1, "Past-round commit vote should be stored for catch-up");
     }
 }
 
