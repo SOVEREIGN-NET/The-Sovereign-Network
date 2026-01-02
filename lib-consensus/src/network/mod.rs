@@ -10,5 +10,7 @@
 //! while remaining opaque to message semantics.
 
 pub mod codec;
+pub mod heartbeat;
 
 pub use codec::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
+pub use heartbeat::{HeartbeatProcessingResult, HeartbeatTracker, HeartbeatValidationError};

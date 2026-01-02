@@ -9,6 +9,9 @@ use std::collections::HashMap;
 // Re-export proof types from proofs module
 pub use crate::proofs::{ProofOfUsefulWork, StakeProof, StorageChallenge, StorageProof, WorkProof};
 
+// Re-export heartbeat types from validator protocol module
+pub use crate::validators::validator_protocol::HeartbeatMessage;
+
 /// Consensus mechanism types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ConsensusType {
@@ -331,6 +334,10 @@ pub enum ValidatorMessage {
     /// Vote message (PreVote, PreCommit, or Commit votes)
     Vote {
         vote: ConsensusVote,
+    },
+    /// Heartbeat message for validator liveness detection
+    Heartbeat {
+        message: HeartbeatMessage,
     },
 }
 
