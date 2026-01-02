@@ -806,7 +806,7 @@ impl ZhtpMiddleware for RateLimitMiddleware {
 
 impl RateLimitMiddleware {
     /// Check if request should be rate limited
-    fn is_rate_limited(&self, key: &str, current_time: u64) -> bool {
+    fn is_rate_limited(&self, _key: &str, current_time: u64) -> bool {
         // This is a simplified implementation
         // In production, would use a more sophisticated algorithm like token bucket
         // and would need to be thread-safe with proper synchronization

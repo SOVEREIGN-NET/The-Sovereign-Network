@@ -344,7 +344,7 @@ impl ZhtpContentManager {
         let content_id = Uuid::new_v4().to_string();
         
         // Calculate economic fees
-        let economic_assessment = self.calculate_storage_fees(content.len(), &metadata, request)?;
+        let _economic_assessment = self.calculate_storage_fees(content.len(), &metadata, request)?;
         
         // Process content (compression/encryption would be handled elsewhere if needed)
         let processed_content = content.to_vec();
@@ -755,7 +755,7 @@ impl ZhtpContentManager {
         Ok(())
     }
     
-    fn matches_filter(&self, content: &ServerContent, filter: &ContentFilter) -> bool {
+    fn matches_filter(&self, _content: &ServerContent, _filter: &ContentFilter) -> bool {
         // Simplified filter matching
         true
     }

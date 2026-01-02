@@ -775,7 +775,7 @@ impl ZhtpSessionManager {
         Ok(())
     }
     
-    async fn get_geo_info(&self, ip_address: &str) -> AnyhowResult<GeoInfo> {
+    async fn get_geo_info(&self, _ip_address: &str) -> AnyhowResult<GeoInfo> {
         // Simplified geo lookup implementation
         Ok(GeoInfo {
             country: "US".to_string(),
