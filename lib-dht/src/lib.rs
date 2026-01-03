@@ -25,6 +25,7 @@ mod tests {
     use crate::kademlia::Kademlia;
 
     #[test]
+    #[ignore = "Manual network smoke test (long-running/infinite loop)."]
     fn test() {
         let kad = Kademlia::try_from("Kademlia").unwrap();
         kad.get_routing_table().lock().unwrap().set_secure_only(false);
