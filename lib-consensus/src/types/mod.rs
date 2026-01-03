@@ -319,6 +319,20 @@ pub enum ConsensusEvent {
     ProposalReceived { proposal: ConsensusProposal },
     /// Vote received
     VoteReceived { vote: ConsensusVote },
+    /// Consensus stalled due to validator timeouts
+    ConsensusStalled {
+        height: u64,
+        round: u32,
+        timed_out_validators: Vec<IdentityId>,
+        total_validators: usize,
+        timestamp: u64,
+    },
+    /// Consensus recovered from stall
+    ConsensusRecovered {
+        height: u64,
+        round: u32,
+        timestamp: u64,
+    },
 }
 
 /// Canonical validator message for network broadcast

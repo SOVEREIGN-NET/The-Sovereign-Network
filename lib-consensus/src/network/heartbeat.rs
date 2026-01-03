@@ -569,7 +569,7 @@ mod tests {
                 active_validators: 10,
                 health_score: 0.95,
                 block_rate: 0.1,
-                
+
             },
             timestamp: now,
             signature: create_test_signature(now),
@@ -596,7 +596,7 @@ mod tests {
                 active_validators: 10,
                 health_score: 0.95,
                 block_rate: 0.1,
-                
+
             },
             timestamp: now,
             signature: create_test_signature(now),
@@ -623,7 +623,7 @@ mod tests {
                 active_validators: 10,
                 health_score: 0.95,
                 block_rate: 0.1,
-                
+
             },
             timestamp: now,
             signature: create_test_signature(now),
@@ -653,7 +653,7 @@ mod tests {
                 active_validators: 10,
                 health_score: 0.95,
                 block_rate: 0.1,
-                
+
             },
             timestamp: now,
             signature: create_test_signature(now),
@@ -682,7 +682,7 @@ mod tests {
                 active_validators: 10,
                 health_score: 0.95,
                 block_rate: 0.1,
-                
+
             },
             timestamp: now,
             signature: create_test_signature(now),
