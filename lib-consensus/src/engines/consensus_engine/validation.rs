@@ -5,12 +5,16 @@ impl ConsensusEngine {
     /// Verify a signature
     pub(super) async fn verify_signature(
         &self,
-        _data: &[u8],
+        data: &[u8],
         signature: &PostQuantumSignature,
     ) -> ConsensusResult<bool> {
-        // In production, this would use proper post-quantum signature verification
-        // For demo, we verify that the signature is not empty and has correct structure
-        Ok(!signature.signature.is_empty() && !signature.public_key.dilithium_pk.is_empty())
+        match signature.public_key.verify(data, signature) {
+            Ok(is_valid) => Ok(is_valid),
+            Err(e) => {
+                tracing::warn!("Signature verification error: {}", e);
+                Ok(false)
+            }
+        }
     }
 
     /// Verify consensus proof
@@ -66,15 +70,20 @@ impl ConsensusEngine {
     /// **INVARIANT**: Validator membership is a function of height, not wall-clock time.
     /// A validator is valid only if it was a member of the validator set at the target height.
     ///
-    /// TODO: If validator sets change per height (epoch transitions), implement height-scoped lookup.
-    /// For now, check against the current active set (correct if validator sets are static).
-    ///
-    /// **Safety consideration**: If validator sets change, a vote from a validator who was
-    /// valid at vote.height but is no longer active would be rejected, potentially breaking
-    /// consensus during epoch transitions.
-    pub(super) fn is_validator_member(&self, voter: &IdentityId, _height: u64) -> bool {
-        let active_validators = self.validator_manager.get_active_validators();
-        active_validators.iter().any(|v| v.identity == *voter)
+    pub(super) fn is_validator_member(&self, voter: &IdentityId, height: u64) -> bool {
+        if let Some(snapshot) = self.validator_set_for_height(height) {
+            return snapshot.contains(voter);
+        }
+
+        tracing::debug!(
+            "Validator snapshot missing for height {}, falling back to active set",
+            height
+        );
+
+        self.validator_manager
+            .get_active_validators()
+            .iter()
+            .any(|v| v.identity == *voter)
     }
 
     /// Verify the cryptographic signature of a vote
@@ -82,6 +91,27 @@ impl ConsensusEngine {
     /// Uses the vote's own height and round to reconstruct the signed data.
     /// Returns true if signature is valid, false otherwise.
     pub(super) async fn verify_vote_signature(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
+        let validator = match self.validator_manager.get_validator(&vote.voter) {
+            Some(validator) => validator,
+            None => {
+                tracing::warn!(
+                    "Vote rejected: validator {} not found for signature verification",
+                    vote.voter
+                );
+                return Ok(false);
+            }
+        };
+
+        if validator.consensus_key != vote.signature.public_key.dilithium_pk {
+            tracing::warn!(
+                "Vote rejected: consensus key mismatch for validator {} at height {} round {}",
+                vote.voter,
+                vote.height,
+                vote.round
+            );
+            return Ok(false);
+        }
+
         // Reconstruct the vote data that was signed, using the vote's own height/round
         // This ensures the signature binds to the vote's exact content, not local state
         let vote_data = self.serialize_vote_data(

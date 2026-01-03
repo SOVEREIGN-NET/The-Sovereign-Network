@@ -143,6 +143,7 @@ impl ConsensusEngine {
 
         tracing::info!(" Preparing ZHTP consensus for height {}", height);
         self.current_round.height = height;
+        self.snapshot_validator_set(height);
         Ok(())
     }
 
@@ -164,24 +165,12 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    /// Run a single consensus round
-    /// DEPRECATED: Legacy consensus round driver
+    /// Run a single consensus round (synchronous driver)
     ///
-    /// **CRITICAL INVARIANT VIOLATION**: This method must NOT be used alongside run_consensus_loop().
-    /// The consensus engine should have a SINGLE async driver:
-    /// - Option 1 (RECOMMENDED): Use run_consensus_loop() exclusively
-    /// - Option 2: Refactor to call initialize_round_state() and let loop take over
-    ///
-    /// Calling both causes conflicting state transitions and undefined behavior.
-    ///
-    /// Current behavior: Calls sequential run_propose_step/run_prevote_step/etc which have
-    /// their own sleeps and timeouts. This is incompatible with the event-driven run_consensus_loop().
-    ///
-    /// TODO: Remove this method or refactor callers to use run_consensus_loop() instead.
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use run_consensus_loop() instead. This legacy round driver conflicts with the event-driven consensus architecture."
-    )]
+    /// **Invariant**: This method must NOT be used alongside `run_consensus_loop()`.
+    /// The consensus engine should have a single active driver to avoid conflicting
+    /// state transitions. This synchronous driver is intended for integrations that
+    /// do not run the event loop.
     async fn run_consensus_round(&mut self) -> ConsensusResult<()> {
         // **CRITICAL**: This method conflicts with run_consensus_loop()
         // Both are consensus drivers and cannot coexist.
@@ -204,9 +193,8 @@ impl ConsensusEngine {
 
         self.current_round.proposer = Some(proposer.identity.clone());
 
-        tracing::warn!(
-            "Using legacy run_consensus_round() - consider migrating to run_consensus_loop(). \
-            Starting consensus round {} at height {} with proposer {:?}",
+        tracing::info!(
+            "Starting consensus round {} at height {} with proposer {:?}",
             self.current_round.round,
             self.current_round.height,
             proposer.identity
@@ -239,6 +227,7 @@ impl ConsensusEngine {
         self.current_round.timed_out = false;
         self.current_round.locked_proposal = None;
         self.current_round.valid_proposal = None;
+        self.snapshot_validator_set(self.current_round.height);
     }
 
     /// Run the propose step
@@ -547,6 +536,16 @@ impl ConsensusEngine {
             &proposal.previous_hash,
             &proposal.block_data,
         )?;
+
+        let proposer = self.validator_manager.get_validator(&proposal.proposer).ok_or_else(|| {
+            ConsensusError::ValidatorError("Proposer not found for proposal validation".to_string())
+        })?;
+
+        if proposer.consensus_key != proposal.signature.public_key.dilithium_pk {
+            return Err(ConsensusError::ProofVerificationFailed(
+                "Proposal signature key does not match proposer consensus key".to_string(),
+            ));
+        }
 
         if !self
             .verify_signature(&proposal_data, &proposal.signature)
@@ -1084,39 +1083,6 @@ impl ConsensusEngine {
             return false;
         }
         true
-    }
-
-    #[allow(dead_code)]
-    fn is_vote_relevant(&self, vote: &ConsensusVote) -> bool {
-        if vote.height < self.current_round.height {
-            return false;
-        }
-        if vote.height > self.current_round.height {
-            return false;
-        }
-        if vote.round < self.current_round.round {
-            return false;
-        }
-        if vote.round > self.current_round.round {
-            return false;
-        }
-
-        match vote.vote_type {
-            VoteType::PreVote => {
-                self.current_round.step >= ConsensusStep::PreVote
-            }
-            VoteType::PreCommit => {
-                self.current_round.step >= ConsensusStep::PreCommit
-            }
-            VoteType::Commit => {
-                // Commit votes are considered relevant as long as height and round
-                // match the current round, even if we have not yet reached the
-                // Commit step locally. This matches the behavior of `on_commit_vote()`
-                // and preserves CE-L2 compliance.
-                true
-            }
-            VoteType::Against => false,
-        }
     }
 
     /// Check if commit quorum is reached for a proposal and finalize if so.

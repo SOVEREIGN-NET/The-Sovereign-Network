@@ -132,23 +132,9 @@ impl ConsensusEngine {
             .get_validator(validator_id)
             .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
 
-        // Create signature using validator's consensus key
-        let signature_data = [data, &validator.consensus_key].concat();
-        let signature_hash = hash_blake3(&signature_data);
-
-        Ok(PostQuantumSignature {
-            signature: signature_hash.to_vec(),
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk: validator.consensus_key.clone(),
-                kyber_pk: validator.consensus_key[..16].to_vec(), // Truncated for demo
-                key_id: validator_id.as_bytes().try_into().unwrap_or([0u8; 32]),
-            },
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?
-                .as_secs(),
-        })
+        let keypair = self.local_signing_keypair(validator)?;
+        let signature = keypair.sign(data)?;
+        Ok(signature)
     }
 
     /// Create consensus proof based on configuration
@@ -385,26 +371,30 @@ impl ConsensusEngine {
         data: &[u8],
         validator: &crate::validators::Validator,
     ) -> ConsensusResult<PostQuantumSignature> {
-        // Create signature using validator's consensus key
-        let signature_data = [data, &validator.consensus_key].concat();
-        let signature_hash = hash_blake3(&signature_data);
+        let keypair = self.local_signing_keypair(validator)?;
+        let signature = keypair.sign(data)?;
+        Ok(signature)
+    }
 
-        Ok(PostQuantumSignature {
-            signature: signature_hash.to_vec(),
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk: validator.consensus_key.clone(),
-                kyber_pk: validator.consensus_key[..16].to_vec(),
-                key_id: validator
-                    .identity
-                    .as_bytes()
-                    .try_into()
-                    .unwrap_or([0u8; 32]),
-            },
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?
-                .as_secs(),
-        })
+    fn local_signing_keypair(
+        &self,
+        validator: &crate::validators::Validator,
+    ) -> ConsensusResult<&lib_crypto::KeyPair> {
+        let keypair = self
+            .validator_keypair
+            .as_ref()
+            .ok_or_else(|| {
+                ConsensusError::ValidatorError(
+                    "No signing keypair configured for local validator".to_string(),
+                )
+            })?;
+
+        if keypair.public_key.dilithium_pk != validator.consensus_key {
+            return Err(ConsensusError::ValidatorError(
+                "Local keypair does not match validator consensus key".to_string(),
+            ));
+        }
+
+        Ok(keypair)
     }
 }

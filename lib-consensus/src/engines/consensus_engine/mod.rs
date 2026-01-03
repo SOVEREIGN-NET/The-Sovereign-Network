@@ -20,7 +20,7 @@
 //! **Critical Fixes** (CONSENSUS-NET-4.3 Issue Corrections):
 //! - Signature verification uses vote data bound to vote.height/round, not local consensus state
 //! - Vote type validation uses strict == equality, rejecting late votes unconditionally
-//! - Validator membership is height-scoped (implementation tracks current set; TODO for epoch transitions)
+//! - Validator membership is height-scoped using per-height snapshots
 //!
 //! ## Quorum is Proposal-Scoped, Not Round-Scoped
 //!
@@ -64,11 +64,11 @@
 //! - **Locality**: Vote validation depends only on local state, not network availability.
 //! - **Simplicity**: All validation is explicit and fully specified in code comments.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use lib_crypto::Hash;
+use lib_crypto::{Hash, KeyPair};
 use lib_identity::IdentityId;
 use tokio::sync::mpsc;
 use tokio::time::Sleep;
@@ -180,6 +180,13 @@ struct VotePoolKey {
     validator_id: IdentityId,
 }
 
+/// Snapshot of validator membership for a specific height
+#[derive(Debug, Clone)]
+struct ValidatorSetSnapshot {
+    height: u64,
+    validators: HashSet<IdentityId>,
+}
+
 /// Main ZHTP consensus engine combining all consensus mechanisms
 ///
 /// Debug is not derived because `MessageBroadcaster` is a trait object.
@@ -201,6 +208,8 @@ pub struct ConsensusEngine {
     vote_pool: HashMap<VotePoolKey, (ConsensusVote, Hash)>,
     /// Consensus state history
     round_history: VecDeque<ConsensusRound>,
+    /// Validator membership snapshots by height (height-scoped validation)
+    validator_set_history: VecDeque<ValidatorSetSnapshot>,
     /// DAO governance engine
     dao_engine: DaoEngine,
     /// Byzantine fault detection
@@ -224,6 +233,8 @@ pub struct ConsensusEngine {
     liveness_monitor: crate::network::LivenessMonitor,
     /// Liveness check interval (5 seconds)
     liveness_check_interval: Option<tokio::time::Interval>,
+    /// Local validator signing keypair (required for proposal/vote signing)
+    validator_keypair: Option<KeyPair>,
 }
 
 impl ConsensusEngine {
@@ -267,6 +278,7 @@ impl ConsensusEngine {
             pending_proposals: VecDeque::new(),
             vote_pool: HashMap::new(), // Composite key prevents equivocation
             round_history: VecDeque::new(),
+            validator_set_history: VecDeque::new(),
             dao_engine: DaoEngine::new(),
             byzantine_detector: ByzantineFaultDetector::new(),
             reward_calculator: RewardCalculator::new(),
@@ -277,12 +289,29 @@ impl ConsensusEngine {
             heartbeat_interval: None,
             liveness_monitor: crate::network::LivenessMonitor::new(),
             liveness_check_interval: None,
+            validator_keypair: None,
         })
     }
 
     /// Set the message receiver (from network layer)
     pub fn set_message_receiver(&mut self, rx: mpsc::Receiver<ValidatorMessage>) {
         self.message_rx = Some(rx);
+    }
+
+    /// Set the local validator signing keypair (required for proposal/vote signing)
+    pub fn set_validator_keypair(&mut self, keypair: KeyPair) -> ConsensusResult<()> {
+        if let Some(identity) = &self.validator_identity {
+            if let Some(validator) = self.validator_manager.get_validator(identity) {
+                if validator.consensus_key != keypair.public_key.dilithium_pk {
+                    return Err(ConsensusError::ValidatorError(
+                        "Validator keypair does not match registered consensus key".to_string(),
+                    ));
+                }
+            }
+        }
+
+        self.validator_keypair = Some(keypair);
+        Ok(())
     }
 
     /// Register as a validator
@@ -312,6 +341,16 @@ impl ConsensusEngine {
             return Err(ConsensusError::ValidatorError(
                 "Invalid commission rate".to_string(),
             ));
+        }
+
+        if self.validator_identity.is_none() {
+            if let Some(keypair) = &self.validator_keypair {
+                if keypair.public_key.dilithium_pk != consensus_key {
+                    return Err(ConsensusError::ValidatorError(
+                        "Validator keypair does not match registered consensus key".to_string(),
+                    ));
+                }
+            }
         }
 
         // Register with validator manager
@@ -345,6 +384,56 @@ impl ConsensusEngine {
     /// This is used when broadcasting to ensure the validator set is passed explicitly
     /// rather than queried from network state (Invariant CE-ENG-5).
     fn get_active_validator_ids(&self) -> Vec<IdentityId> {
+        self.get_validator_ids_for_height(self.current_round.height)
+    }
+
+    /// Snapshot validator membership for a specific height
+    pub(super) fn snapshot_validator_set(&mut self, height: u64) {
+        let validators: HashSet<IdentityId> = self
+            .validator_manager
+            .get_active_validators()
+            .iter()
+            .map(|v| v.identity.clone())
+            .collect();
+
+        if let Some(existing) = self
+            .validator_set_history
+            .iter_mut()
+            .find(|snapshot| snapshot.height == height)
+        {
+            existing.validators = validators;
+            return;
+        }
+
+        self.validator_set_history.push_back(ValidatorSetSnapshot {
+            height,
+            validators,
+        });
+
+        if self.validator_set_history.len() > 100 {
+            self.validator_set_history.pop_front();
+        }
+    }
+
+    /// Get the validator set snapshot for a height, if available
+    pub(super) fn validator_set_for_height(&self, height: u64) -> Option<&HashSet<IdentityId>> {
+        self.validator_set_history
+            .iter()
+            .find(|snapshot| snapshot.height == height)
+            .map(|snapshot| &snapshot.validators)
+    }
+
+    /// Get validator IDs for a height, falling back to current active set when missing
+    fn get_validator_ids_for_height(&self, height: u64) -> Vec<IdentityId> {
+        if let Some(snapshot) = self.validator_set_for_height(height) {
+            return snapshot.iter().cloned().collect();
+        }
+
+        tracing::debug!(
+            "Validator set snapshot missing for height {}, using current active set",
+            height
+        );
+
         self.validator_manager
             .get_active_validators()
             .iter()

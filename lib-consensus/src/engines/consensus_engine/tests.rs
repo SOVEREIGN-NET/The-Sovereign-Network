@@ -1,5 +1,5 @@
     use super::*;
-    use lib_crypto::PostQuantumSignature;
+    use lib_crypto::{KeyPair, PostQuantumSignature};
     use std::sync::Mutex;
 
     /// Mock message broadcaster for testing
@@ -65,23 +65,93 @@
         lib_crypto::Hash::from_bytes(&[id; 32])
     }
 
-    fn create_test_signature() -> PostQuantumSignature {
-        // FIX #1: Use proper Dilithium2 signature sizes for testing
-        // Dilithium2 requires:
-        // - public_key: exactly 1312 bytes
-        // - signature: exactly 2420 bytes
-        PostQuantumSignature {
-            signature: vec![99u8; 2420],  // Dilithium2 signature size
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk: vec![42u8; 1312],  // Dilithium2 public key size
-                kyber_pk: vec![43u8; 32],
-                key_id: [1u8; 32],
-            },
-            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+    fn create_test_keypair() -> KeyPair {
+        KeyPair::generate().expect("Failed to generate test keypair")
+    }
+
+    fn sign_bytes(keypair: &KeyPair, data: &[u8]) -> PostQuantumSignature {
+        keypair.sign(data).expect("Failed to sign test data")
+    }
+
+    async fn register_local_validator(
+        engine: &mut ConsensusEngine,
+        validator_id: IdentityId,
+        keypair: &KeyPair,
+        is_genesis: bool,
+    ) {
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                keypair.public_key.dilithium_pk.clone(),
+                5,
+                is_genesis,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        engine
+            .set_validator_keypair(keypair.clone())
+            .expect("Failed to set validator keypair");
+    }
+
+    async fn register_validator_with_keypair(
+        engine: &mut ConsensusEngine,
+        validator_id: IdentityId,
+        keypair: &KeyPair,
+        is_genesis: bool,
+    ) {
+        engine
+            .register_validator(
+                validator_id,
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                keypair.public_key.dilithium_pk.clone(),
+                5,
+                is_genesis,
+            )
+            .await
+            .expect("Failed to register validator");
+    }
+
+    fn make_signed_vote(
+        engine: &ConsensusEngine,
+        keypair: &KeyPair,
+        voter: IdentityId,
+        proposal_id: Hash,
+        vote_type: VoteType,
+        height: u64,
+        round: u32,
+    ) -> ConsensusVote {
+        let vote_id = Hash::from_bytes(&lib_crypto::hash_blake3(
+            &[
+                proposal_id.as_bytes(),
+                voter.as_bytes(),
+                &(vote_type.clone() as u8).to_le_bytes(),
+                &height.to_le_bytes(),
+                &round.to_le_bytes(),
+            ]
+            .concat(),
+        ));
+
+        let vote_data = engine
+            .serialize_vote_data(&vote_id, &voter, &proposal_id, &vote_type, height, round)
+            .expect("Failed to serialize vote data");
+        let signature = sign_bytes(keypair, &vote_data);
+
+        ConsensusVote {
+            id: vote_id,
+            voter,
+            proposal_id,
+            vote_type,
+            height,
+            round,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
+            signature,
         }
     }
 
@@ -107,17 +177,8 @@
 
         // Register as validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register validator");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Set as proposer (needed to create a proposal)
         engine.current_round.proposer = Some(validator_id.clone());
@@ -153,17 +214,8 @@
 
         // Register as validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register validator");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Create a proposal to vote on
         let proposal = engine.create_proposal().await.expect("Failed to create proposal");
@@ -202,19 +254,19 @@
             .map(|i| test_validator_id(i))
             .collect();
 
-        for id in &validator_ids {
-            engine
-                .register_validator(
-                    id.clone(),
-                    10_000_000_000,
-                    100 * 1024 * 1024 * 1024,
-                    vec![42u8; 32],
-                    5,
-                    true,
-                )
-                .await
-                .expect("Failed to register validator");
+        let local_keypair = create_test_keypair();
+        for (idx, id) in validator_ids.iter().enumerate() {
+            let keypair = if idx == 0 {
+                local_keypair.clone()
+            } else {
+                create_test_keypair()
+            };
+            register_validator_with_keypair(&mut engine, id.clone(), &keypair, true).await;
         }
+
+        engine
+            .set_validator_keypair(local_keypair)
+            .expect("Failed to set validator keypair");
 
         // Create a proposal to vote on
         engine.current_round.proposer = Some(validator_ids[0].clone());
@@ -268,17 +320,8 @@
 
         // Register as validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register validator");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Create a proposal to vote on
         let proposal = engine.create_proposal().await.expect("Failed to create proposal");
@@ -314,17 +357,8 @@
 
         // Register as validator but don't make it the proposer
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register validator");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Set a different validator as proposer
         engine.current_round.proposer = Some(test_validator_id(2));
@@ -353,17 +387,8 @@
 
         // Register as validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register validator");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Set as proposer
         engine.current_round.proposer = Some(validator_id.clone());
@@ -398,17 +423,8 @@
             .expect("Failed to create engine");
 
         let validator1 = test_validator_id(1);
-        engine
-            .register_validator(
-                validator1.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator1.clone(), &keypair, true).await;
 
         // Set engine to height=2, round=1
         engine.current_round.height = 2;
@@ -416,61 +432,45 @@
         engine.current_round.step = ConsensusStep::PreVote;
 
         // Create votes for different heights/rounds
-        let vote_past_height = ConsensusVote {
-            id: Hash::from_bytes(&[1u8; 32]),
-            voter: validator1.clone(),
-            proposal_id: Hash::from_bytes(&[10u8; 32]),
-            vote_type: VoteType::PreVote,
-            height: 1, // Past height
-            round: 0,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            signature: create_test_signature(),
-        };
+        let vote_past_height = make_signed_vote(
+            &engine,
+            &keypair,
+            validator1.clone(),
+            Hash::from_bytes(&[10u8; 32]),
+            VoteType::PreVote,
+            1,
+            0,
+        );
 
-        let vote_future_height = ConsensusVote {
-            id: Hash::from_bytes(&[2u8; 32]),
-            voter: validator1.clone(),
-            proposal_id: Hash::from_bytes(&[11u8; 32]),
-            vote_type: VoteType::PreVote,
-            height: 3, // Future height
-            round: 0,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            signature: create_test_signature(),
-        };
+        let vote_future_height = make_signed_vote(
+            &engine,
+            &keypair,
+            validator1.clone(),
+            Hash::from_bytes(&[11u8; 32]),
+            VoteType::PreVote,
+            3,
+            0,
+        );
 
-        let vote_past_round = ConsensusVote {
-            id: Hash::from_bytes(&[3u8; 32]),
-            voter: validator1.clone(),
-            proposal_id: Hash::from_bytes(&[12u8; 32]),
-            vote_type: VoteType::PreVote,
-            height: 2,
-            round: 0, // Past round
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            signature: create_test_signature(),
-        };
+        let vote_past_round = make_signed_vote(
+            &engine,
+            &keypair,
+            validator1.clone(),
+            Hash::from_bytes(&[12u8; 32]),
+            VoteType::PreVote,
+            2,
+            0,
+        );
 
-        let vote_relevant = ConsensusVote {
-            id: Hash::from_bytes(&[4u8; 32]),
-            voter: validator1.clone(),
-            proposal_id: Hash::from_bytes(&[13u8; 32]),
-            vote_type: VoteType::PreVote,
-            height: 2,
-            round: 1, // Matches current state
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            signature: create_test_signature(),
-        };
+        let vote_relevant = make_signed_vote(
+            &engine,
+            &keypair,
+            validator1.clone(),
+            Hash::from_bytes(&[13u8; 32]),
+            VoteType::PreVote,
+            2,
+            1,
+        );
 
         // Process irrelevant votes
         engine.on_prevote(vote_past_height).await.expect("Process vote");
@@ -503,49 +503,32 @@
             .expect("Failed to create engine");
 
         let validator1 = test_validator_id(1);
-        engine
-            .register_validator(
-                validator1.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator1.clone(), &keypair, true).await;
 
         engine.current_round.step = ConsensusStep::PreVote;
 
         // Vote 1: for proposal A
-        let vote_a = ConsensusVote {
-            id: Hash::from_bytes(&[1u8; 32]),
-            voter: validator1.clone(),
-            proposal_id: Hash::from_bytes(&[100u8; 32]), // Proposal A
-            vote_type: VoteType::PreVote,
-            height: 0,
-            round: 0,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            signature: create_test_signature(),
-        };
+        let vote_a = make_signed_vote(
+            &engine,
+            &keypair,
+            validator1.clone(),
+            Hash::from_bytes(&[100u8; 32]),
+            VoteType::PreVote,
+            0,
+            0,
+        );
 
         // Vote 2: same validator, same H/R/type, for proposal B (equivocation)
-        let vote_b = ConsensusVote {
-            id: Hash::from_bytes(&[2u8; 32]),
-            voter: validator1.clone(),
-            proposal_id: Hash::from_bytes(&[101u8; 32]), // Different proposal B
-            vote_type: VoteType::PreVote,
-            height: 0,
-            round: 0,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            signature: create_test_signature(),
-        };
+        let vote_b = make_signed_vote(
+            &engine,
+            &keypair,
+            validator1.clone(),
+            Hash::from_bytes(&[101u8; 32]),
+            VoteType::PreVote,
+            0,
+            0,
+        );
 
         // Add vote A
         engine.on_prevote(vote_a.clone()).await.expect("Process vote");
@@ -734,19 +717,13 @@
             .expect("Failed to create engine");
 
         // Register 4 validators for testing
+        let mut validators = Vec::new();
         for i in 1..=4 {
             let validator_id = test_validator_id(i as u8);
-            engine
-                .register_validator(
-                    validator_id,
-                    10_000_000_000,
-                    100 * 1024 * 1024 * 1024,
-                    vec![42u8; 32],
-                    5,
-                    i == 1,
-                )
-                .await
-                .expect("Failed to register");
+            let keypair = create_test_keypair();
+            register_validator_with_keypair(&mut engine, validator_id.clone(), &keypair, i == 1)
+                .await;
+            validators.push((validator_id, keypair));
         }
 
         let proposal_id = Hash::from_bytes(&[42u8; 32]);
@@ -755,24 +732,23 @@
         engine.current_round.step = ConsensusStep::PreVote;
 
         // Add 3 commit votes (quorum) directly to vote pool
-        for i in 1..=3 {
-            let validator_id = test_validator_id(i as u8);
+        for i in 0..3 {
+            let (validator_id, keypair) = validators[i].clone();
             let key = VotePoolKey {
                 height: engine.current_round.height,
                 round: engine.current_round.round,
                 vote_type: VoteType::Commit,
                 validator_id: validator_id.clone(),
             };
-            let vote = ConsensusVote {
-                id: Hash::from_bytes(&[(i + 100) as u8; 32]),
-                voter: validator_id,
-                proposal_id: proposal_id.clone(),
-                vote_type: VoteType::Commit,
-                height: engine.current_round.height,
-                round: engine.current_round.round,
-                timestamp: 0,
-                signature: create_test_signature(),
-            };
+            let vote = make_signed_vote(
+                &engine,
+                &keypair,
+                validator_id,
+                proposal_id.clone(),
+                VoteType::Commit,
+                engine.current_round.height,
+                engine.current_round.round,
+            );
             engine.vote_pool.insert(key, (vote, proposal_id.clone()));
         }
 
@@ -813,19 +789,13 @@
             .expect("Failed to create engine");
 
         // Register 3 validators
+        let mut validators = Vec::new();
         for i in 1..=3 {
             let validator_id = test_validator_id(i as u8);
-            engine
-                .register_validator(
-                    validator_id,
-                    10_000_000_000,
-                    100 * 1024 * 1024 * 1024,
-                    vec![42u8; 32],
-                    5,
-                    i == 1,
-                )
-                .await
-                .expect("Failed to register");
+            let keypair = create_test_keypair();
+            register_validator_with_keypair(&mut engine, validator_id.clone(), &keypair, i == 1)
+                .await;
+            validators.push((validator_id, keypair));
         }
 
         let proposal_id = Hash::from_bytes(&[55u8; 32]);
@@ -835,17 +805,16 @@
         assert_eq!(engine.current_round.step, ConsensusStep::PreVote);
 
         // Create a commit vote while in PreVote step
-        let validator_id = test_validator_id(1);
-        let vote = ConsensusVote {
-            id: Hash::from_bytes(&[200u8; 32]),
-            voter: validator_id,
-            proposal_id: proposal_id.clone(),
-            vote_type: VoteType::Commit,
-            height: engine.current_round.height,
-            round: engine.current_round.round,
-            timestamp: 0,
-            signature: create_test_signature(),
-        };
+        let (validator_id, keypair) = validators[0].clone();
+        let vote = make_signed_vote(
+            &engine,
+            &keypair,
+            validator_id,
+            proposal_id.clone(),
+            VoteType::Commit,
+            engine.current_round.height,
+            engine.current_round.round,
+        );
 
         // Call on_commit_vote while in PreVote step
         engine.on_commit_vote(vote.clone()).await.unwrap();
@@ -938,17 +907,8 @@
 
         // Register a validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Set engine to height=5, round=0, PreVote step
         engine.current_round.height = 5;
@@ -956,16 +916,15 @@
         engine.current_round.step = ConsensusStep::PreVote;
 
         // Create a vote with wrong height (height=6)
-        let vote = ConsensusVote {
-            id: Hash::from_bytes(&[1u8; 32]),
-            voter: validator_id,
-            proposal_id: Hash::from_bytes(&[2u8; 32]),
-            vote_type: VoteType::PreVote,
-            height: 6, // WRONG: height != local.height
-            round: 0,
-            timestamp: 0,
-            signature: create_test_signature(),
-        };
+        let vote = make_signed_vote(
+            &engine,
+            &keypair,
+            validator_id,
+            Hash::from_bytes(&[2u8; 32]),
+            VoteType::PreVote,
+            6,
+            0,
+        );
 
         // Validate the vote - should be rejected
         let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
@@ -992,17 +951,8 @@
 
         // Register a validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Set engine to height=0, round=5, PreVote step
         engine.current_round.height = 0;
@@ -1010,16 +960,15 @@
         engine.current_round.step = ConsensusStep::PreVote;
 
         // Create a vote with wrong round (round=6)
-        let vote = ConsensusVote {
-            id: Hash::from_bytes(&[1u8; 32]),
-            voter: validator_id,
-            proposal_id: Hash::from_bytes(&[2u8; 32]),
-            vote_type: VoteType::PreVote,
-            height: 0,
-            round: 6, // WRONG: round != local.round
-            timestamp: 0,
-            signature: create_test_signature(),
-        };
+        let vote = make_signed_vote(
+            &engine,
+            &keypair,
+            validator_id,
+            Hash::from_bytes(&[2u8; 32]),
+            VoteType::PreVote,
+            0,
+            6,
+        );
 
         // Validate the vote - should be rejected
         let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
@@ -1046,30 +995,21 @@
 
         // Register only validator 1
         let validator_id_1 = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id_1.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id_1.clone(), &keypair, true).await;
 
         // Create a vote from validator 2 (NOT registered)
         let validator_id_2 = test_validator_id(2);
-        let vote = ConsensusVote {
-            id: Hash::from_bytes(&[1u8; 32]),
-            voter: validator_id_2.clone(),
-            proposal_id: Hash::from_bytes(&[2u8; 32]),
-            vote_type: VoteType::PreVote,
-            height: engine.current_round.height,
-            round: engine.current_round.round,
-            timestamp: 0,
-            signature: create_test_signature(),
-        };
+        let foreign_keypair = create_test_keypair();
+        let vote = make_signed_vote(
+            &engine,
+            &foreign_keypair,
+            validator_id_2.clone(),
+            Hash::from_bytes(&[2u8; 32]),
+            VoteType::PreVote,
+            engine.current_round.height,
+            engine.current_round.round,
+        );
 
         // Validate the vote - should be rejected
         let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
@@ -1094,32 +1034,22 @@
 
         // Register a validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Set engine to Propose step
         engine.current_round.step = ConsensusStep::Propose;
 
         // Create a PreVote while in Propose step
-        let vote = ConsensusVote {
-            id: Hash::from_bytes(&[1u8; 32]),
-            voter: validator_id,
-            proposal_id: Hash::from_bytes(&[2u8; 32]),
-            vote_type: VoteType::PreVote,
-            height: engine.current_round.height,
-            round: engine.current_round.round,
-            timestamp: 0,
-            signature: create_test_signature(),
-        };
+        let vote = make_signed_vote(
+            &engine,
+            &keypair,
+            validator_id,
+            Hash::from_bytes(&[2u8; 32]),
+            VoteType::PreVote,
+            engine.current_round.height,
+            engine.current_round.round,
+        );
 
         // Validate the vote - should be rejected
         let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
@@ -1144,32 +1074,22 @@
 
         // Register a validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Set engine to PreVote step
         engine.current_round.step = ConsensusStep::PreVote;
 
         // Create a PreCommit while in PreVote step
-        let vote = ConsensusVote {
-            id: Hash::from_bytes(&[1u8; 32]),
-            voter: validator_id,
-            proposal_id: Hash::from_bytes(&[2u8; 32]),
-            vote_type: VoteType::PreCommit,
-            height: engine.current_round.height,
-            round: engine.current_round.round,
-            timestamp: 0,
-            signature: create_test_signature(),
-        };
+        let vote = make_signed_vote(
+            &engine,
+            &keypair,
+            validator_id,
+            Hash::from_bytes(&[2u8; 32]),
+            VoteType::PreCommit,
+            engine.current_round.height,
+            engine.current_round.round,
+        );
 
         // Validate the vote - should be rejected
         let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
@@ -1194,17 +1114,8 @@
 
         // Register a validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Test in each step
         for step in &[
@@ -1216,16 +1127,15 @@
             engine.current_round.step = step.clone();
 
             // Create a Commit vote
-            let vote = ConsensusVote {
-                id: Hash::from_bytes(&[1u8; 32]),
-                voter: validator_id.clone(),
-                proposal_id: Hash::from_bytes(&[2u8; 32]),
-                vote_type: VoteType::Commit,
-                height: engine.current_round.height,
-                round: engine.current_round.round,
-                timestamp: 0,
-                signature: create_test_signature(),
-            };
+            let vote = make_signed_vote(
+                &engine,
+                &keypair,
+                validator_id.clone(),
+                Hash::from_bytes(&[2u8; 32]),
+                VoteType::Commit,
+                engine.current_round.height,
+                engine.current_round.round,
+            );
 
             // Validate the vote - should always be valid
             let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
@@ -1252,27 +1162,29 @@
 
         // Register a validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Set engine to PreVote step
         engine.current_round.step = ConsensusStep::PreVote;
 
         // Create a vote with an empty signature (invalid)
-        let mut bad_signature = create_test_signature();
+        let vote_id = Hash::from_bytes(&[1u8; 32]);
+        let vote_data = engine
+            .serialize_vote_data(
+                &vote_id,
+                &validator_id,
+                &Hash::from_bytes(&[2u8; 32]),
+                &VoteType::PreVote,
+                engine.current_round.height,
+                engine.current_round.round,
+            )
+            .expect("Failed to serialize vote data");
+        let mut bad_signature = sign_bytes(&keypair, &vote_data);
         bad_signature.signature = Vec::new(); // Make signature invalid
 
         let vote = ConsensusVote {
-            id: Hash::from_bytes(&[1u8; 32]),
+            id: vote_id,
             voter: validator_id,
             proposal_id: Hash::from_bytes(&[2u8; 32]),
             vote_type: VoteType::PreVote,
@@ -1304,17 +1216,8 @@
 
         // Register a validator
         let validator_id = test_validator_id(1);
-        engine
-            .register_validator(
-                validator_id.clone(),
-                10_000_000_000,
-                100 * 1024 * 1024 * 1024,
-                vec![42u8; 32],
-                5,
-                true,
-            )
-            .await
-            .expect("Failed to register");
+        let keypair = create_test_keypair();
+        register_local_validator(&mut engine, validator_id.clone(), &keypair, true).await;
 
         // Set engine to height=5, round=3
         engine.current_round.height = 5;
@@ -1324,16 +1227,15 @@
         let proposal_id = Hash::from_bytes(&[2u8; 32]);
 
         // Create a commit vote from a PAST round (round=2 while current is 3)
-        let vote = ConsensusVote {
-            id: Hash::from_bytes(&[1u8; 32]),
-            voter: validator_id,
-            proposal_id: proposal_id.clone(),
-            vote_type: VoteType::Commit,
-            height: 5,  // Same height
-            round: 2,   // Past round
-            timestamp: 0,
-            signature: create_test_signature(),
-        };
+        let vote = make_signed_vote(
+            &engine,
+            &keypair,
+            validator_id,
+            proposal_id.clone(),
+            VoteType::Commit,
+            5,
+            2,
+        );
 
         // Call on_commit_vote with past-round commit vote
         // It should be accepted (not rejected) for catch-up purposes

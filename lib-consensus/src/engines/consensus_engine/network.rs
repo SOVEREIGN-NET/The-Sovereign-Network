@@ -43,6 +43,9 @@ impl ConsensusEngine {
             &self.current_round.step,
         ));
 
+        // Ensure validator membership snapshot is initialized for the current height
+        self.snapshot_validator_set(self.current_round.height);
+
         tracing::info!(
             "Starting consensus loop at height {} round {} step {:?}",
             self.current_round.height,
