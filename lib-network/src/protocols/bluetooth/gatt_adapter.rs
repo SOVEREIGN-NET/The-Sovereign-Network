@@ -60,6 +60,7 @@ impl GattUhpAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt;
     use tokio::sync::mpsc;
 
     #[tokio::test]
