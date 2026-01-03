@@ -214,6 +214,7 @@ pub struct VoteTrackingKey {
 /// Subsequent votes are compared against this record.
 #[derive(Clone, Debug)]
 pub struct FirstVoteRecord {
+    pub vote_id: Hash,
     pub proposal_id: Hash,
     pub signature: PostQuantumSignature,
     pub timestamp: u64,

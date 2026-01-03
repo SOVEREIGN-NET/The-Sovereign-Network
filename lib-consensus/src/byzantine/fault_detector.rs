@@ -345,11 +345,11 @@ impl ByzantineFaultDetector {
                 round: vote.round,
                 vote_type: vote.vote_type,
                 vote_a: ConflictingVote {
-                    vote_id: lib_crypto::Hash::from_bytes(&[0u8; 32]), // Placeholder - would need vote.id
+                    vote_id: first_vote.vote_id.clone(),
                     proposal_id: first_vote.proposal_id.clone(),
                     timestamp: first_vote.timestamp,
                     signature: first_vote.signature.clone(),
-                    received_at: 0, // Placeholder
+                    received_at: first_vote.received_at,
                 },
                 vote_b: ConflictingVote {
                     vote_id: vote.id.clone(),
@@ -371,6 +371,7 @@ impl ByzantineFaultDetector {
         self.first_votes.insert(
             key,
             FirstVoteRecord {
+                vote_id: vote.id.clone(),
                 proposal_id: proposal_id.clone(),
                 signature: vote.signature.clone(),
                 timestamp: vote.timestamp,
