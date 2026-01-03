@@ -21,7 +21,8 @@ fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
 }
 
 fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
-    Uuid::from_slice(&node_id.as_bytes()[..16]).expect("NodeId must be at least 16 bytes")
+    Uuid::from_slice(&node_id.as_bytes()[..16])
+        .expect("NodeId::as_bytes() must return at least 16 bytes for UUID conversion")
 }
 
 fn derive_master_key_for_test(
