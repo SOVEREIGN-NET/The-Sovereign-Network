@@ -1909,6 +1909,31 @@ impl ConsensusEngine {
                             }
                         }
                     }
+
+                    // NEW: Periodic partition detection
+                    let current_time = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+
+                    if let Some(partition_evidence) = self.byzantine_detector.detect_network_partition(
+                        &self.liveness_monitor,
+                        self.current_round.height,
+                        self.current_round.round,
+                        current_time,
+                    ) {
+                        tracing::error!(
+                            "🔌 PARTITION SUSPECTED: {}/{} validators timed out (threshold: {})",
+                            partition_evidence.timed_out_validators.len(),
+                            partition_evidence.total_validators,
+                            partition_evidence.stall_threshold
+                        );
+
+                        // Could trigger automatic response (future work):
+                        // - Round timeout acceleration
+                        // - Proposer rotation
+                        // - Emergency validator set update
+                    }
                 }
             }
         }
@@ -1928,6 +1953,51 @@ impl ConsensusEngine {
                 self.on_proposal(proposal).await?;
             }
             ValidatorMessage::Vote { vote } => {
+                // NEW: Compute payload hash for replay detection
+                let payload_bytes = bincode::serialize(&vote)
+                    .expect("Vote serialization cannot fail");
+                let payload_hash = lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&payload_bytes));
+
+                let current_time = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+
+                // NEW: Detect replay attack
+                if let Some(replay_evidence) = self.byzantine_detector.detect_replay_attack(
+                    &vote.voter,
+                    payload_hash.clone(),
+                    current_time,
+                ) {
+                    tracing::warn!(
+                        "⚠️  REPLAY: Validator {} sent duplicate message {} times",
+                        vote.voter, replay_evidence.replay_count
+                    );
+                    // Continue processing (replay is advisory, not blocking)
+                }
+
+                // NEW: Record forensic signature
+                let message_type = match vote.vote_type {
+                    VoteType::PreVote => crate::byzantine::ForensicMessageType::PreVote,
+                    VoteType::PreCommit => crate::byzantine::ForensicMessageType::PreCommit,
+                    VoteType::Commit => crate::byzantine::ForensicMessageType::Commit,
+                    VoteType::Against => {
+                        tracing::debug!("Received Against vote, ignoring");
+                        return Ok(());
+                    }
+                };
+
+                self.byzantine_detector.record_message_signature(
+                    vote.id.clone(),
+                    vote.voter.clone(),
+                    vote.signature.clone(),
+                    payload_hash,
+                    message_type,
+                    current_time,
+                    None, // peer_id if available from network layer
+                );
+
+                // Route to handler
                 match vote.vote_type {
                     VoteType::PreVote => {
                         self.on_prevote(vote).await?;
@@ -1939,7 +2009,7 @@ impl ConsensusEngine {
                         self.on_commit_vote(vote).await?;
                     }
                     VoteType::Against => {
-                        tracing::debug!("Received Against vote, ignoring");
+                        // Should not reach here (already returned above)
                     }
                 }
             }
@@ -2001,6 +2071,25 @@ impl ConsensusEngine {
         // Harden: Validate remote vote against all BFT safety invariants
         if !self.validate_remote_vote(&vote).await? {
             return Ok(());
+        }
+
+        // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        if let Some(evidence) = self.byzantine_detector.detect_equivocation(
+            &vote,
+            &vote.proposal_id,
+            current_time,
+            None,
+        ) {
+            tracing::error!(
+                "🚨 EQUIVOCATION: Validator {} voted for two proposals at H={} R={} type=PreVote",
+                evidence.validator, evidence.height, evidence.round
+            );
+            return Ok(()); // REJECT vote
         }
 
         let key = VotePoolKey {
@@ -2074,6 +2163,25 @@ impl ConsensusEngine {
         // Harden: Validate remote vote against all BFT safety invariants
         if !self.validate_remote_vote(&vote).await? {
             return Ok(());
+        }
+
+        // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        if let Some(evidence) = self.byzantine_detector.detect_equivocation(
+            &vote,
+            &vote.proposal_id,
+            current_time,
+            None,
+        ) {
+            tracing::error!(
+                "🚨 EQUIVOCATION: Validator {} voted for two proposals at H={} R={} type=PreCommit",
+                evidence.validator, evidence.height, evidence.round
+            );
+            return Ok(()); // REJECT vote
         }
 
         let key = VotePoolKey {
@@ -2173,6 +2281,25 @@ impl ConsensusEngine {
                 vote.height
             );
             return Ok(());
+        }
+
+        // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        if let Some(evidence) = self.byzantine_detector.detect_equivocation(
+            &vote,
+            &vote.proposal_id,
+            current_time,
+            None,
+        ) {
+            tracing::error!(
+                "🚨 EQUIVOCATION: Validator {} voted for two proposals at H={} R={} type=Commit",
+                evidence.validator, evidence.height, evidence.round
+            );
+            return Ok(()); // REJECT vote
         }
 
         let key = VotePoolKey {
