@@ -211,6 +211,10 @@ pub struct ConsensusEngine {
     heartbeat_tracker: crate::network::HeartbeatTracker,
     /// Heartbeat send interval
     heartbeat_interval: Option<tokio::time::Interval>,
+    /// Liveness monitor for stall detection
+    liveness_monitor: crate::network::LivenessMonitor,
+    /// Liveness check interval (5 seconds)
+    liveness_check_interval: Option<tokio::time::Interval>,
 }
 
 impl ConsensusEngine {
@@ -262,6 +266,8 @@ impl ConsensusEngine {
             round_timer,
             heartbeat_tracker: crate::network::HeartbeatTracker::new(Duration::from_secs(10)),
             heartbeat_interval: None,
+            liveness_monitor: crate::network::LivenessMonitor::new(),
+            liveness_check_interval: None,
         })
     }
 
@@ -276,6 +282,24 @@ impl ConsensusEngine {
     pub fn initialize_heartbeat_sender(&mut self) {
         let interval = tokio::time::interval(Duration::from_secs(3));
         self.heartbeat_interval = Some(interval);
+    }
+
+    /// Initialize the liveness monitor for consensus stall detection
+    ///
+    /// Call this after `register_validator()` to enable periodic liveness monitoring.
+    /// Sets up a 5-second check interval and initializes with current validator set.
+    pub fn initialize_liveness_monitor(&mut self) {
+        let interval = tokio::time::interval(Duration::from_secs(5));
+        self.liveness_check_interval = Some(interval);
+
+        // Initialize with current validator set
+        let active_validators: Vec<_> = self
+            .validator_manager
+            .get_active_validators()
+            .iter()
+            .map(|v| v.identity.clone())
+            .collect();
+        self.liveness_monitor.update_validator_set(&active_validators);
     }
 
     /// Register as a validator
@@ -435,7 +459,26 @@ impl ConsensusEngine {
             ConsensusEvent::ValidatorJoin { identity, stake } => {
                 self.handle_validator_registration(identity.clone(), stake)
                     .await?;
+                // Update liveness monitor with new validator set
+                let active_validators: Vec<_> = self.validator_manager
+                    .get_active_validators()
+                    .iter()
+                    .map(|v| v.identity.clone())
+                    .collect();
+                self.liveness_monitor.update_validator_set(&active_validators);
                 Ok(vec![ConsensusEvent::ValidatorRegistered { identity }])
+            }
+            ConsensusEvent::ValidatorLeave { identity } => {
+                // Remove validator and update liveness monitor
+                self.validator_manager.remove_validator(&identity);
+                let active_validators: Vec<_> = self.validator_manager
+                    .get_active_validators()
+                    .iter()
+                    .map(|v| v.identity.clone())
+                    .collect();
+                self.liveness_monitor.update_validator_set(&active_validators);
+                tracing::info!("Validator {} left consensus", identity);
+                Ok(vec![])
             }
             _ => {
                 tracing::debug!("Unhandled consensus event: {:?}", event);
@@ -1687,6 +1730,16 @@ impl ConsensusEngine {
         let mut message_rx = self.message_rx.take()
             .ok_or_else(|| ConsensusError::ValidatorError("Message receiver not set".to_string()))?;
 
+        // Auto-initialize heartbeat sender if not already initialized
+        if self.heartbeat_interval.is_none() {
+            self.initialize_heartbeat_sender();
+        }
+
+        // Auto-initialize liveness monitor if not already initialized
+        if self.liveness_check_interval.is_none() {
+            self.initialize_liveness_monitor();
+        }
+
         let mut heartbeat_interval = self.heartbeat_interval.take();
 
         let mut timer_token = TimerToken::new(
@@ -1814,6 +1867,49 @@ impl ConsensusEngine {
                         }
                     }
                 }
+
+                // Liveness check interval tick (every 5 seconds)
+                _ = async {
+                    if let Some(interval) = &mut self.liveness_check_interval {
+                        interval.tick().await
+                    } else {
+                        loop { std::future::pending::<()>().await }
+                    }
+                } => {
+                    // Check for validator timeouts and consensus stalls
+                    let state_changed = self.liveness_monitor.watch_timeouts(&self.heartbeat_tracker);
+
+                    if state_changed {
+                        // Check for stall transition
+                        if let Some((is_stalled, timed_out_set)) = self.liveness_monitor.check_stall_transition() {
+                            let timed_out_validators: Vec<_> = timed_out_set.into_iter().collect();
+                            if is_stalled {
+                                // NOTE: This represents a ConsensusStalled event.
+                                // Currently logged for observability; future work will emit as proper events.
+                                tracing::warn!(
+                                    event = "ConsensusStalled",
+                                    height = self.current_round.height,
+                                    round = self.current_round.round,
+                                    timed_out_count = timed_out_validators.len(),
+                                    total_validators = self.liveness_monitor.total_validators,
+                                    threshold = self.liveness_monitor.stall_threshold,
+                                    "CONSENSUS STALLED: {}/{} validators timed out, quorum impossible",
+                                    timed_out_validators.len(),
+                                    self.liveness_monitor.total_validators,
+                                );
+                            } else {
+                                // NOTE: This represents a ConsensusRecovered event.
+                                // Currently logged for observability; future work will emit as proper events.
+                                tracing::info!(
+                                    event = "ConsensusRecovered",
+                                    height = self.current_round.height,
+                                    round = self.current_round.round,
+                                    "CONSENSUS RECOVERED: Sufficient validators responsive again"
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1855,6 +1951,7 @@ impl ConsensusEngine {
                         .any(|v| v.identity == *vid)
                 };
 
+                let validator_id = message.validator.clone();
                 let result = self.heartbeat_tracker.process_heartbeat(
                     message,
                     is_validator,
@@ -1863,7 +1960,9 @@ impl ConsensusEngine {
 
                 match result {
                     crate::network::HeartbeatProcessingResult::Accepted => {
-                        tracing::debug!("Heartbeat accepted");
+                        tracing::debug!("Heartbeat accepted from {}", validator_id);
+                        // Mark validator as responsive in liveness monitor
+                        self.liveness_monitor.mark_responsive(&validator_id);
                     }
                     crate::network::HeartbeatProcessingResult::Rejected(reason) => {
                         tracing::debug!("Heartbeat rejected: {}", reason);

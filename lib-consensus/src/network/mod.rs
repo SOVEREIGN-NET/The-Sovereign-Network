@@ -11,6 +11,8 @@
 
 pub mod codec;
 pub mod heartbeat;
+pub mod liveness_monitor;
 
 pub use codec::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
 pub use heartbeat::{HeartbeatProcessingResult, HeartbeatTracker, HeartbeatValidationError};
+pub use liveness_monitor::LivenessMonitor;
