@@ -207,6 +207,14 @@ pub struct ConsensusEngine {
     message_rx: Option<mpsc::Receiver<ValidatorMessage>>,
     /// Round timer for phase timeouts
     round_timer: RoundTimer,
+    /// Heartbeat tracker for validator liveness detection
+    heartbeat_tracker: crate::network::HeartbeatTracker,
+    /// Heartbeat send interval
+    heartbeat_interval: Option<tokio::time::Interval>,
+    /// Liveness monitor for stall detection
+    liveness_monitor: crate::network::LivenessMonitor,
+    /// Liveness check interval (5 seconds)
+    liveness_check_interval: Option<tokio::time::Interval>,
 }
 
 impl ConsensusEngine {
@@ -256,12 +264,42 @@ impl ConsensusEngine {
             broadcaster,
             message_rx: None,
             round_timer,
+            heartbeat_tracker: crate::network::HeartbeatTracker::new(Duration::from_secs(10)),
+            heartbeat_interval: None,
+            liveness_monitor: crate::network::LivenessMonitor::new(),
+            liveness_check_interval: None,
         })
     }
 
     /// Set the message receiver (from network layer)
     pub fn set_message_receiver(&mut self, rx: mpsc::Receiver<ValidatorMessage>) {
         self.message_rx = Some(rx);
+    }
+
+    /// Initialize the heartbeat sender with default 3-second interval
+    ///
+    /// Call this before `run_consensus_loop()` to enable periodic heartbeat sending.
+    pub fn initialize_heartbeat_sender(&mut self) {
+        let interval = tokio::time::interval(Duration::from_secs(3));
+        self.heartbeat_interval = Some(interval);
+    }
+
+    /// Initialize the liveness monitor for consensus stall detection
+    ///
+    /// Call this after `register_validator()` to enable periodic liveness monitoring.
+    /// Sets up a 5-second check interval and initializes with current validator set.
+    pub fn initialize_liveness_monitor(&mut self) {
+        let interval = tokio::time::interval(Duration::from_secs(5));
+        self.liveness_check_interval = Some(interval);
+
+        // Initialize with current validator set
+        let active_validators: Vec<_> = self
+            .validator_manager
+            .get_active_validators()
+            .iter()
+            .map(|v| v.identity.clone())
+            .collect();
+        self.liveness_monitor.update_validator_set(&active_validators);
     }
 
     /// Register as a validator
@@ -307,6 +345,8 @@ impl ConsensusEngine {
         // Set as local validator if this is the first one
         if self.validator_identity.is_none() {
             self.validator_identity = Some(identity.clone());
+            // Also set the heartbeat tracker's local validator so heartbeats are properly attributed
+            self.heartbeat_tracker.set_local_validator(identity.clone());
         }
 
         tracing::info!(
@@ -419,7 +459,26 @@ impl ConsensusEngine {
             ConsensusEvent::ValidatorJoin { identity, stake } => {
                 self.handle_validator_registration(identity.clone(), stake)
                     .await?;
+                // Update liveness monitor with new validator set
+                let active_validators: Vec<_> = self.validator_manager
+                    .get_active_validators()
+                    .iter()
+                    .map(|v| v.identity.clone())
+                    .collect();
+                self.liveness_monitor.update_validator_set(&active_validators);
                 Ok(vec![ConsensusEvent::ValidatorRegistered { identity }])
+            }
+            ConsensusEvent::ValidatorLeave { identity } => {
+                // Remove validator and update liveness monitor
+                self.validator_manager.remove_validator(&identity);
+                let active_validators: Vec<_> = self.validator_manager
+                    .get_active_validators()
+                    .iter()
+                    .map(|v| v.identity.clone())
+                    .collect();
+                self.liveness_monitor.update_validator_set(&active_validators);
+                tracing::info!("Validator {} left consensus", identity);
+                Ok(vec![])
             }
             _ => {
                 tracing::debug!("Unhandled consensus event: {:?}", event);
@@ -1440,6 +1499,43 @@ impl ConsensusEngine {
         &self.config
     }
 
+    /// Check if a validator is currently alive based on heartbeat presence
+    ///
+    /// A validator is considered alive if a valid heartbeat has been received
+    /// within the configured liveness timeout period (default: 10 seconds).
+    pub fn is_validator_alive(&self, validator_id: &IdentityId) -> bool {
+        self.heartbeat_tracker.is_validator_alive(validator_id)
+    }
+
+    /// Get the age of the last heartbeat received from a validator
+    ///
+    /// Returns None if no heartbeat has been received from the validator.
+    /// Returns Some(duration) with the elapsed time since the last heartbeat.
+    pub fn last_heartbeat_age(&self, validator_id: &IdentityId) -> Option<Duration> {
+        self.heartbeat_tracker.last_heartbeat_age(validator_id)
+    }
+
+    /// Set the liveness timeout duration for heartbeat tracking
+    ///
+    /// Validators not sending heartbeats within this duration will be
+    /// considered not alive. Default is 10 seconds.
+    pub fn set_liveness_timeout(&mut self, timeout: Duration) {
+        self.heartbeat_tracker.set_liveness_timeout(timeout);
+    }
+
+    /// Get list of validators currently considered alive based on heartbeats
+    ///
+    /// Returns a vector of IdentityIds for all active validators who have
+    /// sent a heartbeat within the liveness timeout period.
+    pub fn get_alive_validators(&self) -> Vec<IdentityId> {
+        self.validator_manager
+            .get_active_validators()
+            .iter()
+            .filter(|v| self.heartbeat_tracker.is_validator_alive(&v.identity))
+            .map(|v| v.identity.clone())
+            .collect()
+    }
+
     /// Check if a validator is a member of the active validator set
     ///
     /// **INVARIANT**: Validator membership is a function of height, not wall-clock time.
@@ -1634,6 +1730,18 @@ impl ConsensusEngine {
         let mut message_rx = self.message_rx.take()
             .ok_or_else(|| ConsensusError::ValidatorError("Message receiver not set".to_string()))?;
 
+        // Auto-initialize heartbeat sender if not already initialized
+        if self.heartbeat_interval.is_none() {
+            self.initialize_heartbeat_sender();
+        }
+
+        // Auto-initialize liveness monitor if not already initialized
+        if self.liveness_check_interval.is_none() {
+            self.initialize_liveness_monitor();
+        }
+
+        let mut heartbeat_interval = self.heartbeat_interval.take();
+
         let mut timer_token = TimerToken::new(
             self.current_round.height,
             self.current_round.round,
@@ -1724,6 +1832,84 @@ impl ConsensusEngine {
                         }
                     }
                 }
+
+                // Heartbeat interval tick (optional - only if initialized)
+                _ = async {
+                    match &mut heartbeat_interval {
+                        Some(interval) => interval.tick().await,
+                        None => loop { std::future::pending::<()>().await },
+                    }
+                } => {
+                    // Send heartbeat (best-effort, ignore errors)
+                    if let Some(validator_id) = &self.validator_identity {
+                        let heartbeat_msg = self.heartbeat_tracker.create_heartbeat_message(
+                            self.current_round.height,
+                            self.current_round.round,
+                            self.current_round.step.clone(),
+                            self.validator_manager.get_active_validators().len() as u32,
+                        );
+
+                        // Get all validator IDs for broadcast
+                        let validator_ids: Vec<_> = self.validator_manager
+                            .get_active_validators()
+                            .iter()
+                            .map(|v| v.identity.clone())
+                            .collect();
+
+                        // Broadcast heartbeat (best-effort, ignore failures)
+                        if let Err(e) = self.broadcaster.broadcast_to_validators(
+                            ValidatorMessage::Heartbeat {
+                                message: heartbeat_msg,
+                            },
+                            &validator_ids,
+                        ).await {
+                            tracing::debug!("Heartbeat broadcast failed: {}", e);
+                        }
+                    }
+                }
+
+                // Liveness check interval tick (every 5 seconds)
+                _ = async {
+                    if let Some(interval) = &mut self.liveness_check_interval {
+                        interval.tick().await
+                    } else {
+                        loop { std::future::pending::<()>().await }
+                    }
+                } => {
+                    // Check for validator timeouts and consensus stalls
+                    let state_changed = self.liveness_monitor.watch_timeouts(&self.heartbeat_tracker);
+
+                    if state_changed {
+                        // Check for stall transition
+                        if let Some((is_stalled, timed_out_set)) = self.liveness_monitor.check_stall_transition() {
+                            let timed_out_validators: Vec<_> = timed_out_set.into_iter().collect();
+                            if is_stalled {
+                                // NOTE: This represents a ConsensusStalled event.
+                                // Currently logged for observability; future work will emit as proper events.
+                                tracing::warn!(
+                                    event = "ConsensusStalled",
+                                    height = self.current_round.height,
+                                    round = self.current_round.round,
+                                    timed_out_count = timed_out_validators.len(),
+                                    total_validators = self.liveness_monitor.total_validators,
+                                    threshold = self.liveness_monitor.stall_threshold,
+                                    "CONSENSUS STALLED: {}/{} validators timed out, quorum impossible",
+                                    timed_out_validators.len(),
+                                    self.liveness_monitor.total_validators,
+                                );
+                            } else {
+                                // NOTE: This represents a ConsensusRecovered event.
+                                // Currently logged for observability; future work will emit as proper events.
+                                tracing::info!(
+                                    event = "ConsensusRecovered",
+                                    height = self.current_round.height,
+                                    round = self.current_round.round,
+                                    "CONSENSUS RECOVERED: Sufficient validators responsive again"
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1756,6 +1942,33 @@ impl ConsensusEngine {
                         tracing::debug!("Received Against vote, ignoring");
                     }
                 }
+            }
+            ValidatorMessage::Heartbeat { message } => {
+                // Process heartbeat (advisory only, never affects consensus)
+                let is_validator = |vid: &IdentityId| {
+                    self.validator_manager.get_active_validators()
+                        .iter()
+                        .any(|v| v.identity == *vid)
+                };
+
+                let validator_id = message.validator.clone();
+                let result = self.heartbeat_tracker.process_heartbeat(
+                    message,
+                    is_validator,
+                    self.current_round.height,
+                );
+
+                match result {
+                    crate::network::HeartbeatProcessingResult::Accepted => {
+                        tracing::debug!("Heartbeat accepted from {}", validator_id);
+                        // Mark validator as responsive in liveness monitor
+                        self.liveness_monitor.mark_responsive(&validator_id);
+                    }
+                    crate::network::HeartbeatProcessingResult::Rejected(reason) => {
+                        tracing::debug!("Heartbeat rejected: {}", reason);
+                    }
+                }
+                // Heartbeats never affect consensus state
             }
         }
         Ok(())
