@@ -74,8 +74,13 @@ fn validate_device_name(name: &str) -> Result<()> {
         ));
     }
     if !name.chars().all(is_allowed_device_char) {
+        let invalid_chars: String = name
+            .chars()
+            .filter(|c| !is_allowed_device_char(*c))
+            .collect();
         return Err(anyhow!(
-            "Device name may only contain alphanumeric characters, '-' or '_'"
+            "Device name may only contain alphanumeric characters, '-' or '_'. Invalid characters: {:?}",
+            invalid_chars
         ));
     }
     Ok(())
