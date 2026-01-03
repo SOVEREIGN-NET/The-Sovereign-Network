@@ -1911,10 +1911,15 @@ impl ConsensusEngine {
                     }
 
                     // NEW: Periodic partition detection
-                    let current_time = std::time::SystemTime::now()
+                    let current_time = match std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                    {
+                        Ok(duration) => duration.as_secs(),
+                        Err(e) => {
+                            tracing::error!("Failed to get current timestamp for partition detection: {}", e);
+                            continue; // Skip this check if timestamp is unavailable
+                        }
+                    };
 
                     if let Some(partition_evidence) = self.byzantine_detector.detect_network_partition(
                         &self.liveness_monitor,
@@ -1953,15 +1958,26 @@ impl ConsensusEngine {
                 self.on_proposal(proposal).await?;
             }
             ValidatorMessage::Vote { vote } => {
-                // NEW: Compute payload hash for replay detection
-                let payload_bytes = bincode::serialize(&vote)
-                    .expect("Vote serialization cannot fail");
-                let payload_hash = lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&payload_bytes));
-
-                let current_time = std::time::SystemTime::now()
+                // NEW: Get current timestamp for replay detection and forensics
+                let current_time = match std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
+                {
+                    Ok(duration) => duration.as_secs(),
+                    Err(e) => {
+                        tracing::error!("Failed to get current timestamp for Byzantine detection: {}", e);
+                        0
+                    }
+                };
+
+                // NEW: Compute payload hash for replay detection (with fallback)
+                let payload_hash = match bincode::serialize(&vote) {
+                    Ok(payload_bytes) => lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&payload_bytes)),
+                    Err(e) => {
+                        tracing::error!("Failed to serialize vote for replay detection: {}", e);
+                        // Use vote ID as fallback hash (vote is already validated)
+                        vote.id.clone()
+                    }
+                };
 
                 // NEW: Detect replay attack
                 if let Some(replay_evidence) = self.byzantine_detector.detect_replay_attack(
@@ -2074,10 +2090,15 @@ impl ConsensusEngine {
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
-        let current_time = std::time::SystemTime::now()
+        let current_time = match std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        {
+            Ok(duration) => duration.as_secs(),
+            Err(e) => {
+                tracing::error!("Failed to get current timestamp for equivocation detection: {}", e);
+                0
+            }
+        };
 
         if let Some(evidence) = self.byzantine_detector.detect_equivocation(
             &vote,
@@ -2166,10 +2187,15 @@ impl ConsensusEngine {
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
-        let current_time = std::time::SystemTime::now()
+        let current_time = match std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        {
+            Ok(duration) => duration.as_secs(),
+            Err(e) => {
+                tracing::error!("Failed to get current timestamp for equivocation detection: {}", e);
+                0
+            }
+        };
 
         if let Some(evidence) = self.byzantine_detector.detect_equivocation(
             &vote,
@@ -2284,10 +2310,15 @@ impl ConsensusEngine {
         }
 
         // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
-        let current_time = std::time::SystemTime::now()
+        let current_time = match std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        {
+            Ok(duration) => duration.as_secs(),
+            Err(e) => {
+                tracing::error!("Failed to get current timestamp for equivocation detection: {}", e);
+                0
+            }
+        };
 
         if let Some(evidence) = self.byzantine_detector.detect_equivocation(
             &vote,
