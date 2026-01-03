@@ -17,7 +17,6 @@
 
 use lib_crypto::{Hash, PostQuantumSignature};
 use lib_identity::IdentityId;
-use std::collections::HashMap;
 
 /// Top-level Byzantine evidence enum
 ///
@@ -238,6 +237,7 @@ pub struct ReplayMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_forensic_message_type_display() {

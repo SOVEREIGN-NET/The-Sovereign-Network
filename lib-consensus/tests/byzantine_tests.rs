@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use lib_consensus::{
-    ByzantineFault, ByzantineFaultDetector, ByzantineFaultType, FaultSeverity, ValidatorManager,
+    ByzantineFaultDetector, ByzantineFaultType, FaultSeverity, ValidatorManager,
 };
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
