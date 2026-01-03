@@ -28,6 +28,7 @@ pub struct HybridEngine {
     /// Vote pool by height
     vote_pool: HashMap<u64, HashMap<Hash, ConsensusVote>>,
     /// Round history
+    #[allow(dead_code)]
     round_history: VecDeque<ConsensusRound>,
     /// Local validator identity
     validator_identity: Option<IdentityId>,
@@ -540,6 +541,7 @@ impl HybridEngine {
     }
 
     /// Advance to next round
+    #[allow(dead_code)]
     async fn advance_to_next_round(&mut self) -> ConsensusResult<()> {
         // Save current round
         self.round_history.push_back(self.current_round.clone());

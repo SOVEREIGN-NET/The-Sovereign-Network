@@ -242,6 +242,7 @@ pub trait Protocol: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
 
     #[test]
     fn test_session_id_generation() {

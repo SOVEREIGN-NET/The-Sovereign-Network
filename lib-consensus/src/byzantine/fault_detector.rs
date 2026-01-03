@@ -47,9 +47,6 @@ pub struct ByzantineFaultDetector {
     /// Partition detection rate limiting
     last_partition_check: u64,
     partition_check_interval_secs: u64,
-
-    /// Configuration
-    config: FaultDetectorConfig,
 }
 
 /// Configuration for Byzantine fault detector
@@ -120,7 +117,6 @@ impl ByzantineFaultDetector {
             evidence_log: Vec::new(),
             last_partition_check: 0,
             partition_check_interval_secs: config.partition_check_interval_secs,
-            config,
         }
     }
 

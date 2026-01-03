@@ -35,6 +35,7 @@ impl DaoEngine {
     /// Initialize DAO with production-ready data
     /// NOTE: This method is deprecated - data is loaded from blockchain
     #[deprecated(note = "DAO state is now read from blockchain, not initialized in memory")]
+    #[allow(dead_code)]
     fn initialize_production_dao(&mut self) {
         tracing::info!("DAO initialization skipped - data loaded from blockchain");
     }
@@ -42,6 +43,7 @@ impl DaoEngine {
     /// Load treasury state from blockchain
     /// NOTE: This method is deprecated - use blockchain.get_dao_treasury_balance()
     #[deprecated(note = "Use blockchain.get_dao_treasury_balance() instead")]
+    #[allow(dead_code)]
     fn load_treasury_from_blockchain(&mut self) {
         tracing::warn!(
             "load_treasury_from_blockchain is deprecated - treasury data comes from blockchain"
@@ -51,6 +53,7 @@ impl DaoEngine {
     /// Load active proposals from blockchain state
     /// NOTE: This method is deprecated - use blockchain.get_dao_proposals()
     #[deprecated(note = "Use blockchain.get_dao_proposals() instead")]
+    #[allow(dead_code)]
     fn load_proposals_from_blockchain(&mut self) {
         tracing::warn!(
             "load_proposals_from_blockchain is deprecated - proposals come from blockchain"
@@ -258,6 +261,7 @@ impl DaoEngine {
     }
 
     /// Sign a DAO vote
+    #[allow(dead_code)]
     async fn sign_dao_vote(
         &self,
         voter: &IdentityId,
@@ -303,6 +307,7 @@ impl DaoEngine {
     /// DEPRECATED: Proposal execution now happens on blockchain layer via execute_dao_proposal()
     /// which creates proper DaoExecution transactions with real UTXO transfers
     #[deprecated(note = "Use blockchain.execute_dao_proposal() instead")]
+    #[allow(dead_code)]
     async fn execute_dao_proposal(&mut self, _proposal_id: &Hash) -> Result<()> {
         tracing::warn!(
             "execute_dao_proposal is deprecated - use blockchain.execute_dao_proposal() instead"
@@ -311,6 +316,7 @@ impl DaoEngine {
     }
 
     /// Parse treasury amount from proposal (helper method)
+    #[allow(dead_code)]
     fn parse_treasury_amount_from_proposal(&self, proposal: &DaoProposal) -> Result<u64> {
         // Look for amount in description (e.g., "amount:1000")
         let description = &proposal.description;
@@ -390,6 +396,7 @@ impl DaoEngine {
     }
 
     /// Calculate total eligible voting power in the network
+    #[allow(dead_code)]
     fn calculate_total_eligible_power(&self) -> u64 {
         // In production, this would sum up all eligible voters' power
         // For now, estimate based on active participants

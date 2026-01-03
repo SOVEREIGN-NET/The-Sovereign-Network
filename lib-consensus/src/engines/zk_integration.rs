@@ -7,6 +7,7 @@ use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use lib_proofs::{ZkProof, ZkProofSystem, ZkTransactionProof};
 
+#[cfg(any(test, feature = "dev-insecure"))]
 const VOTE_DOMAIN_TAG: &[u8] = b"ZHTP/CONSENSUS/VOTE/v1\0";
 
 /// ZK integration for consensus system
@@ -306,7 +307,7 @@ impl ZkConsensusIntegration {
     #[cfg(any(test, feature = "dev-insecure"))]
     pub async fn validate_vote_zk(&self, vote: &ConsensusVote) -> Result<bool> {
         // Verify voter signature using post-quantum cryptography
-        let vote_data = self.serialize_vote_for_zk_verification(vote)?;
+        let _vote_data = self.serialize_vote_for_zk_verification(vote)?;
 
         // For testing, skip signature validation if using test signature
         let signature_valid = if vote.signature.signature == vec![1, 2, 3] {
@@ -343,6 +344,7 @@ impl ZkConsensusIntegration {
     }
 
     /// Serialize vote data for ZK verification
+    #[cfg(any(test, feature = "dev-insecure"))]
     fn serialize_vote_for_zk_verification(&self, vote: &ConsensusVote) -> Result<Vec<u8>> {
         let mut data = Vec::new();
         data.extend_from_slice(VOTE_DOMAIN_TAG);

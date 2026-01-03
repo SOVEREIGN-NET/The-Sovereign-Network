@@ -1,15 +1,10 @@
 //! Integration tests for the main consensus engine
 
 use anyhow::Result;
-use lib_consensus::{
-    ConsensusConfig, ConsensusEngine, ConsensusError, ConsensusType, ValidatorStatus, VoteType,
-    NoOpBroadcaster,
-};
+use lib_consensus::{ConsensusConfig, ConsensusEngine, ConsensusError, ConsensusType, NoOpBroadcaster};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio_test;
 
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {

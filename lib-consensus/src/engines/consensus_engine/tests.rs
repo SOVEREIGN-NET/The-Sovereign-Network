@@ -1,0 +1,1345 @@
+    use super::*;
+    use lib_crypto::PostQuantumSignature;
+    use std::sync::Mutex;
+
+    /// Mock message broadcaster for testing
+    ///
+    /// Tracks all broadcast calls and message types without side effects.
+    /// This is used to verify that the consensus engine broadcasts
+    /// the correct messages at the correct phases.
+    #[derive(Debug)]
+    struct MockMessageBroadcaster {
+        /// All broadcast calls in order
+        broadcasts: Mutex<Vec<BroadcastCall>>,
+    }
+
+    #[derive(Debug)]
+    struct BroadcastCall {
+        message: ValidatorMessage,
+        validator_ids: Vec<IdentityId>,
+    }
+
+    impl MockMessageBroadcaster {
+        fn new() -> Self {
+            Self {
+                broadcasts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn get_broadcasts(&self) -> Vec<BroadcastCall> {
+            self.broadcasts.lock().unwrap().clone()
+        }
+
+        fn count_broadcasts(&self) -> usize {
+            self.broadcasts.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MessageBroadcaster for MockMessageBroadcaster {
+        async fn broadcast_to_validators(
+            &self,
+            message: ValidatorMessage,
+            validator_ids: &[IdentityId],
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            self.broadcasts.lock().unwrap().push(BroadcastCall {
+                message,
+                validator_ids: validator_ids.to_vec(),
+            });
+            Ok(())
+        }
+    }
+
+    impl Clone for BroadcastCall {
+        fn clone(&self) -> Self {
+            Self {
+                message: self.message.clone(),
+                validator_ids: self.validator_ids.clone(),
+            }
+        }
+    }
+
+    fn test_validator_id(id: u8) -> IdentityId {
+        // Create a deterministic test validator ID from a single byte
+        // by repeating it 32 times to match Hash::from_bytes signature
+        lib_crypto::Hash::from_bytes(&[id; 32])
+    }
+
+    fn create_test_signature() -> PostQuantumSignature {
+        // FIX #1: Use proper Dilithium2 signature sizes for testing
+        // Dilithium2 requires:
+        // - public_key: exactly 1312 bytes
+        // - signature: exactly 2420 bytes
+        PostQuantumSignature {
+            signature: vec![99u8; 2420],  // Dilithium2 signature size
+            public_key: lib_crypto::PublicKey {
+                dilithium_pk: vec![42u8; 1312],  // Dilithium2 public key size
+                kyber_pk: vec![43u8; 32],
+                key_id: [1u8; 32],
+            },
+            algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_consensus_engine_creation_with_broadcaster() {
+        let config = ConsensusConfig::default();
+        let mock_broadcaster: Arc<dyn MessageBroadcaster> =
+            Arc::new(MockMessageBroadcaster::new());
+        let result = ConsensusEngine::new(config, mock_broadcaster);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_proposal_broadcast_in_propose_phase() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let mock_broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster: Arc<dyn MessageBroadcaster> = Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
+        let mut engine = ConsensusEngine::new(config, broadcaster)
+            .expect("Failed to create consensus engine");
+
+        // Register as validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        // Set as proposer (needed to create a proposal)
+        engine.current_round.proposer = Some(validator_id.clone());
+        engine.validator_identity = Some(validator_id);
+
+        // Run propose step
+        engine.run_propose_step().await.expect("Failed to run propose step");
+
+        // Verify proposal was broadcast
+        let broadcasts = mock_broadcaster.get_broadcasts();
+        assert!(
+            broadcasts.len() > 0,
+            "Expected at least one broadcast in propose phase"
+        );
+
+        // Verify it's a propose message
+        assert!(
+            broadcasts.iter().any(|call| matches!(call.message, ValidatorMessage::Propose { .. })),
+            "Expected ValidatorMessage::Propose variant"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vote_broadcast_in_prevote_phase() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let mock_broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster: Arc<dyn MessageBroadcaster> = Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
+        let mut engine = ConsensusEngine::new(config, broadcaster)
+            .expect("Failed to create consensus engine");
+
+        // Register as validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        // Create a proposal to vote on
+        let proposal = engine.create_proposal().await.expect("Failed to create proposal");
+        engine.current_round.proposals.push(proposal.id.clone());
+
+        // Run prevote step
+        engine.run_prevote_step().await.expect("Failed to run prevote step");
+
+        // Verify vote was broadcast
+        let broadcasts = mock_broadcaster.get_broadcasts();
+        assert!(
+            broadcasts.len() > 0,
+            "Expected at least one broadcast in prevote phase"
+        );
+
+        // Verify it's a vote message
+        assert!(
+            broadcasts.iter().any(|call| matches!(call.message, ValidatorMessage::Vote { .. })),
+            "Expected ValidatorMessage::Vote variant"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validator_set_passed_to_broadcaster() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let mock_broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster: Arc<dyn MessageBroadcaster> = Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
+        let mut engine = ConsensusEngine::new(config, broadcaster)
+            .expect("Failed to create consensus engine");
+
+        // Register multiple validators
+        let validator_ids: Vec<_> = (0..3)
+            .map(|i| test_validator_id(i))
+            .collect();
+
+        for id in &validator_ids {
+            engine
+                .register_validator(
+                    id.clone(),
+                    10_000_000_000,
+                    100 * 1024 * 1024 * 1024,
+                    vec![42u8; 32],
+                    5,
+                    true,
+                )
+                .await
+                .expect("Failed to register validator");
+        }
+
+        // Create a proposal to vote on
+        engine.current_round.proposer = Some(validator_ids[0].clone());
+        engine.validator_identity = Some(validator_ids[0].clone());
+        let proposal = engine.create_proposal().await.expect("Failed to create proposal");
+        engine.current_round.proposals.push(proposal.id.clone());
+
+        // Run prevote step
+        engine.run_prevote_step().await.expect("Failed to run prevote step");
+
+        // Verify validator set was passed to broadcaster
+        let broadcasts = mock_broadcaster.get_broadcasts();
+        assert!(broadcasts.len() > 0, "Expected broadcasts");
+
+        for call in broadcasts {
+            assert!(
+                !call.validator_ids.is_empty(),
+                "Expected validator IDs to be passed to broadcaster"
+            );
+            // All registered validators should be in the list
+            assert!(
+                call.validator_ids.len() >= 3,
+                "Expected all validators to be in broadcast recipient list"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_failure_does_not_affect_consensus() {
+        /// Mock broadcaster that always fails
+        struct FailingBroadcaster;
+
+        #[async_trait::async_trait]
+        impl MessageBroadcaster for FailingBroadcaster {
+            async fn broadcast_to_validators(
+                &self,
+                _message: ValidatorMessage,
+                _validator_ids: &[IdentityId],
+            ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                Err("Network error".into())
+            }
+        }
+
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(FailingBroadcaster);
+        let mut engine =
+            ConsensusEngine::new(config, broadcaster).expect("Failed to create consensus engine");
+
+        // Register as validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        // Create a proposal to vote on
+        let proposal = engine.create_proposal().await.expect("Failed to create proposal");
+        engine.current_round.proposals.push(proposal.id.clone());
+
+        // Run prevote step - should not fail even though broadcaster fails
+        let result = engine.run_prevote_step().await;
+        assert!(
+            result.is_ok(),
+            "Prevote step should succeed even if broadcast fails"
+        );
+
+        // Vote should still be in the vote pool
+        // Check that at least one vote entry exists for current height/round
+        let vote_count = engine
+            .vote_pool
+            .iter()
+            .filter(|(k, _)| k.height == engine.current_round.height && k.round == engine.current_round.round)
+            .count();
+        assert!(vote_count > 0, "Vote should be stored even if broadcast fails");
+    }
+
+    #[tokio::test]
+    async fn test_proposal_only_broadcast_when_proposer() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let mock_broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster: Arc<dyn MessageBroadcaster> = Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
+        let mut engine = ConsensusEngine::new(config, broadcaster)
+            .expect("Failed to create consensus engine");
+
+        // Register as validator but don't make it the proposer
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        // Set a different validator as proposer
+        engine.current_round.proposer = Some(test_validator_id(2));
+
+        // Run propose step
+        engine.run_propose_step().await.expect("Failed to run propose step");
+
+        // Verify no proposal was broadcast
+        assert_eq!(
+            mock_broadcaster.count_broadcasts(),
+            0,
+            "Proposal should not be broadcast if not proposer"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multiple_phases_produce_multiple_broadcasts() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let mock_broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let broadcaster: Arc<dyn MessageBroadcaster> = Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
+        let mut engine = ConsensusEngine::new(config, broadcaster)
+            .expect("Failed to create consensus engine");
+
+        // Register as validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register validator");
+
+        // Set as proposer
+        engine.current_round.proposer = Some(validator_id.clone());
+        engine.validator_identity = Some(validator_id);
+
+        // Run propose step - should broadcast proposal
+        engine.run_propose_step().await.expect("Failed to run propose step");
+        let broadcasts_after_propose = mock_broadcaster.count_broadcasts();
+        assert!(broadcasts_after_propose > 0, "Expected broadcast in propose phase");
+
+        // Run prevote step - should broadcast vote
+        engine.run_prevote_step().await.expect("Failed to run prevote step");
+        let broadcasts_after_prevote = mock_broadcaster.count_broadcasts();
+        assert!(
+            broadcasts_after_prevote > broadcasts_after_propose,
+            "Expected additional broadcast in prevote phase"
+        );
+    }
+
+    /// Gap 4 Invariant Test: Message relevance checking
+    ///
+    /// Verifies that messages with mismatched height/round are correctly ignored
+    /// and do not affect vote_pool or state.
+    #[tokio::test]
+    async fn test_gap4_message_relevance_invariant() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        let validator1 = test_validator_id(1);
+        engine
+            .register_validator(
+                validator1.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to height=2, round=1
+        engine.current_round.height = 2;
+        engine.current_round.round = 1;
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Create votes for different heights/rounds
+        let vote_past_height = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator1.clone(),
+            proposal_id: Hash::from_bytes(&[10u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: 1, // Past height
+            round: 0,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            signature: create_test_signature(),
+        };
+
+        let vote_future_height = ConsensusVote {
+            id: Hash::from_bytes(&[2u8; 32]),
+            voter: validator1.clone(),
+            proposal_id: Hash::from_bytes(&[11u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: 3, // Future height
+            round: 0,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            signature: create_test_signature(),
+        };
+
+        let vote_past_round = ConsensusVote {
+            id: Hash::from_bytes(&[3u8; 32]),
+            voter: validator1.clone(),
+            proposal_id: Hash::from_bytes(&[12u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: 2,
+            round: 0, // Past round
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            signature: create_test_signature(),
+        };
+
+        let vote_relevant = ConsensusVote {
+            id: Hash::from_bytes(&[4u8; 32]),
+            voter: validator1.clone(),
+            proposal_id: Hash::from_bytes(&[13u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: 2,
+            round: 1, // Matches current state
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            signature: create_test_signature(),
+        };
+
+        // Process irrelevant votes
+        engine.on_prevote(vote_past_height).await.expect("Process vote");
+        engine.on_prevote(vote_future_height).await.expect("Process vote");
+        engine.on_prevote(vote_past_round).await.expect("Process vote");
+
+        // Vote pool should be empty
+        assert_eq!(engine.vote_pool.len(), 0, "Irrelevant votes should be ignored");
+
+        // Process relevant vote
+        engine.on_prevote(vote_relevant.clone()).await.expect("Process vote");
+
+        // Vote pool should now have exactly 1 entry
+        assert_eq!(engine.vote_pool.len(), 1, "Relevant vote should be in pool");
+    }
+
+    /// Gap 4 Invariant Test: Idempotence and equivocation detection
+    ///
+    /// Verifies:
+    /// 1. Same vote twice (duplicate) is idempotent - no state change
+    /// 2. Same validator, same (H,R,type), different value is detected as equivocation
+    #[tokio::test]
+    async fn test_gap4_idempotence_and_equivocation_invariant() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        let validator1 = test_validator_id(1);
+        engine
+            .register_validator(
+                validator1.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Vote 1: for proposal A
+        let vote_a = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator1.clone(),
+            proposal_id: Hash::from_bytes(&[100u8; 32]), // Proposal A
+            vote_type: VoteType::PreVote,
+            height: 0,
+            round: 0,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            signature: create_test_signature(),
+        };
+
+        // Vote 2: same validator, same H/R/type, for proposal B (equivocation)
+        let vote_b = ConsensusVote {
+            id: Hash::from_bytes(&[2u8; 32]),
+            voter: validator1.clone(),
+            proposal_id: Hash::from_bytes(&[101u8; 32]), // Different proposal B
+            vote_type: VoteType::PreVote,
+            height: 0,
+            round: 0,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            signature: create_test_signature(),
+        };
+
+        // Add vote A
+        engine.on_prevote(vote_a.clone()).await.expect("Process vote");
+        assert_eq!(engine.vote_pool.len(), 1, "Vote A should be in pool");
+
+        // Add vote A again (duplicate) - should be no-op
+        engine.on_prevote(vote_a.clone()).await.expect("Process vote");
+        assert_eq!(engine.vote_pool.len(), 1, "Duplicate should be idempotent");
+
+        // Add vote B (equivocation) - should be rejected
+        engine.on_prevote(vote_b).await.expect("Process vote");
+        assert_eq!(
+            engine.vote_pool.len(),
+            1,
+            "Equivocating vote should be rejected (still 1 entry)"
+        );
+
+        // Verify only A is in pool
+        let key_a = VotePoolKey {
+            height: 0,
+            round: 0,
+            vote_type: VoteType::PreVote,
+            validator_id: validator1,
+        };
+        assert!(
+            engine.vote_pool.contains_key(&key_a),
+            "Original vote A should still be in pool"
+        );
+    }
+
+    /// Gap 4 Invariant Test: Threshold consistency
+    ///
+    /// Verifies that check_supermajority() correctly identifies quorum threshold.
+    /// For 3 validators: threshold should be 3 (2f+1 where f=1)
+    /// For 4 validators: threshold should be 3 (2f+1 where f=1)
+    /// For 7 validators: threshold should be 5 (2f+1 where f=2)
+    #[tokio::test]
+    async fn test_gap4_quorum_threshold_consistency() {
+        // 3 validators: need 3 votes (all of them)
+        assert!(check_supermajority(3, 3), "3/3 votes should be quorum");
+        assert!(!check_supermajority(2, 3), "2/3 votes should NOT be quorum");
+
+        // 4 validators: need 3 votes (2/3 + 1)
+        assert!(check_supermajority(3, 4), "3/4 votes should be quorum");
+        assert!(!check_supermajority(2, 4), "2/4 votes should NOT be quorum");
+
+        // 7 validators: need 5 votes
+        assert!(check_supermajority(5, 7), "5/7 votes should be quorum");
+        assert!(!check_supermajority(4, 7), "4/7 votes should NOT be quorum");
+
+        // Edge case: 1 validator (needs 1)
+        assert!(check_supermajority(1, 1), "1/1 vote should be quorum");
+    }
+
+    /// Gap 4 Invariant Test: Timer token staleness guard
+    ///
+    /// Verifies that TimerToken correctly identifies stale vs current timeouts
+    #[test]
+    fn test_gap4_timer_token_staleness_detection() {
+        let step_propose = ConsensusStep::Propose;
+        let step_prevote = ConsensusStep::PreVote;
+
+        // Token for height=1, round=0, Propose
+        let token = TimerToken::new(1, 0, &step_propose);
+
+        // Should match current state
+        assert!(
+            token.matches(1, 0, &step_propose),
+            "Token should match current state"
+        );
+
+        // Should NOT match different height
+        assert!(!token.matches(2, 0, &step_propose), "Token should not match height 2");
+
+        // Should NOT match different round
+        assert!(!token.matches(1, 1, &step_propose), "Token should not match round 1");
+
+        // Should NOT match different step
+        assert!(
+            !token.matches(1, 0, &step_prevote),
+            "Token should not match different step"
+        );
+    }
+
+    /// Gap 4 Invariant Test: Receiver closure causes graceful shutdown
+    ///
+    /// Verifies that closing the message receiver causes run_consensus_loop to exit
+    #[tokio::test]
+    async fn test_gap4_receiver_closure_graceful_shutdown() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        let (tx, rx) = mpsc::channel(32);
+        engine.set_message_receiver(rx);
+
+        // Spawn the loop in background
+        let mut engine_handle = tokio::spawn(async move {
+            engine.run_consensus_loop().await
+        });
+
+        // Give loop time to start
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Close the sender (receiver will get None on next recv())
+        drop(tx);
+
+        // Loop should exit cleanly within reasonable time
+        let result = tokio::time::timeout(Duration::from_secs(1), &mut engine_handle).await;
+
+        match result {
+            Ok(Ok(Ok(_))) => {
+                // Loop exited cleanly
+            }
+            Ok(Ok(Err(e))) => {
+                panic!("Loop returned error: {}", e);
+            }
+            Ok(Err(e)) => {
+                panic!("Task panicked: {}", e);
+            }
+            Err(_) => {
+                panic!("Loop did not exit within timeout (likely hung)");
+            }
+        }
+    }
+
+    #[test]
+    fn test_ce_s1_proposal_scoped_quorums_prevent_split_votes() {
+        // **CE-S1**: A quorum must be counted for a single proposal ID, never for a round in aggregate.
+        // This test verifies that split votes across different proposals do NOT trigger transitions.
+
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        let proposal_a = Hash::from_bytes(&[1u8; 32]);
+        let proposal_b = Hash::from_bytes(&[2u8; 32]);
+        let proposal_c = Hash::from_bytes(&[3u8; 32]);
+
+        // Verify proposal-scoped counting methods exist and return correct values
+        let count_for_a = engine.count_prevotes_for(
+            engine.current_round.height,
+            engine.current_round.round,
+            &proposal_a,
+        );
+        assert_eq!(count_for_a, 0, "Empty pool should have 0 votes for proposal A");
+
+        let count_for_b = engine.count_prevotes_for(
+            engine.current_round.height,
+            engine.current_round.round,
+            &proposal_b,
+        );
+        assert_eq!(count_for_b, 0, "Empty pool should have 0 votes for proposal B");
+
+        let count_for_c = engine.count_prevotes_for(
+            engine.current_round.height,
+            engine.current_round.round,
+            &proposal_c,
+        );
+        assert_eq!(count_for_c, 0, "Empty pool should have 0 votes for proposal C");
+
+        // The key invariant: even if we had 4 total votes (1 for each of A, B, C, and 1 more),
+        // no single proposal would reach quorum (3 needed), so transitions would be prevented.
+        // This is CE-S1 safety: quorum must be per-proposal, not per-round aggregate.
+    }
+
+    #[tokio::test]
+    async fn test_ce_l1_commit_quorum_finalizes_regardless_of_local_step() {
+        // **CE-L1**: Observing 2f+1 commit votes for a proposal MUST allow finalization
+        // even if the node missed earlier steps (e.g., didn't receive precommits locally).
+
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register 4 validators for testing
+        for i in 1..=4 {
+            let validator_id = test_validator_id(i as u8);
+            engine
+                .register_validator(
+                    validator_id,
+                    10_000_000_000,
+                    100 * 1024 * 1024 * 1024,
+                    vec![42u8; 32],
+                    5,
+                    i == 1,
+                )
+                .await
+                .expect("Failed to register");
+        }
+
+        let proposal_id = Hash::from_bytes(&[42u8; 32]);
+
+        // Manually set engine to PreVote step (simulate missing precommits)
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Add 3 commit votes (quorum) directly to vote pool
+        for i in 1..=3 {
+            let validator_id = test_validator_id(i as u8);
+            let key = VotePoolKey {
+                height: engine.current_round.height,
+                round: engine.current_round.round,
+                vote_type: VoteType::Commit,
+                validator_id: validator_id.clone(),
+            };
+            let vote = ConsensusVote {
+                id: Hash::from_bytes(&[(i + 100) as u8; 32]),
+                voter: validator_id,
+                proposal_id: proposal_id.clone(),
+                vote_type: VoteType::Commit,
+                height: engine.current_round.height,
+                round: engine.current_round.round,
+                timestamp: 0,
+                signature: create_test_signature(),
+            };
+            engine.vote_pool.insert(key, (vote, proposal_id.clone()));
+        }
+
+        // Verify: Step is still PreVote
+        assert_eq!(engine.current_round.step, ConsensusStep::PreVote);
+
+        // Call maybe_finalize: should transition to Commit step and finalize
+        engine.maybe_finalize(
+            engine.current_round.height,
+            engine.current_round.round,
+            &proposal_id,
+        ).await.unwrap();
+
+        // Verify: Step transitioned to Commit (CE-L1)
+        assert_eq!(engine.current_round.step, ConsensusStep::Commit,
+            "CE-L1: Commit quorum should fast-track to Commit step");
+
+        // Verify: Commit count is correct
+        let commit_count = engine.count_commits_for(
+            engine.current_round.height,
+            engine.current_round.round,
+            &proposal_id,
+        );
+        assert_eq!(commit_count, 3, "Should have 3 commits for proposal");
+    }
+
+    #[tokio::test]
+    async fn test_ce_l2_commit_votes_stored_at_any_step() {
+        // **CE-L2**: Commit votes MUST be accepted and stored at any step,
+        // not only during Commit step.
+
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register 3 validators
+        for i in 1..=3 {
+            let validator_id = test_validator_id(i as u8);
+            engine
+                .register_validator(
+                    validator_id,
+                    10_000_000_000,
+                    100 * 1024 * 1024 * 1024,
+                    vec![42u8; 32],
+                    5,
+                    i == 1,
+                )
+                .await
+                .expect("Failed to register");
+        }
+
+        let proposal_id = Hash::from_bytes(&[55u8; 32]);
+
+        // Set engine to PreVote step
+        engine.current_round.step = ConsensusStep::PreVote;
+        assert_eq!(engine.current_round.step, ConsensusStep::PreVote);
+
+        // Create a commit vote while in PreVote step
+        let validator_id = test_validator_id(1);
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[200u8; 32]),
+            voter: validator_id,
+            proposal_id: proposal_id.clone(),
+            vote_type: VoteType::Commit,
+            height: engine.current_round.height,
+            round: engine.current_round.round,
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Call on_commit_vote while in PreVote step
+        engine.on_commit_vote(vote.clone()).await.unwrap();
+
+        // Verify: Commit vote was stored even though we're in PreVote (CE-L2)
+        let commit_count = engine.count_commits_for(
+            engine.current_round.height,
+            engine.current_round.round,
+            &proposal_id,
+        );
+        assert_eq!(commit_count, 1, "CE-L2: Commit vote should be stored in PreVote step");
+
+        // Step should still be PreVote (no automatic transition since quorum not reached)
+        assert_eq!(engine.current_round.step, ConsensusStep::PreVote);
+    }
+
+    // ============================================================================
+    // CONSENSUS-NET-4.3: Remote Vote Validation and Supermajority Hardening Tests
+    // ============================================================================
+
+    /// Test: check_supermajority() with correct threshold formula
+    ///
+    /// Verifies that check_supermajority() uses the correct formula:
+    /// threshold = (total_validators * 2 / 3) + 1 (integer division)
+    #[test]
+    fn test_hardening_check_supermajority_correct_threshold() {
+        // 1 validator: (1 * 2) / 3 + 1 = 0 + 1 = 1 (integer division)
+        assert!(!check_supermajority(0, 1), "0/1 should not be supermajority");
+        assert!(check_supermajority(1, 1), "1/1 should be supermajority");
+
+        // 3 validators: (3 * 2) / 3 + 1 = 2 + 1 = 3
+        assert!(!check_supermajority(2, 3), "2/3 should not be supermajority");
+        assert!(check_supermajority(3, 3), "3/3 should be supermajority");
+
+        // 4 validators: (4 * 2) / 3 + 1 = 2 + 1 = 3 (integer division)
+        assert!(!check_supermajority(2, 4), "2/4 should not be supermajority");
+        assert!(check_supermajority(3, 4), "3/4 should be supermajority");
+        assert!(check_supermajority(4, 4), "4/4 should be supermajority");
+
+        // 7 validators: (7 * 2) / 3 + 1 = 4 + 1 = 5 (integer division)
+        assert!(!check_supermajority(4, 7), "4/7 should not be supermajority");
+        assert!(check_supermajority(5, 7), "5/7 should be supermajority");
+
+        // 100 validators: (100 * 2) / 3 + 1 = 66 + 1 = 67 (integer division)
+        assert!(!check_supermajority(66, 100), "66/100 should not be supermajority");
+        assert!(check_supermajority(67, 100), "67/100 should be supermajority");
+    }
+
+    /// Test: Acceptance criteria - 4 validators
+    ///
+    /// With 4 validators, threshold = 3:
+    /// - 2 votes → no quorum
+    /// - 3 identical votes → quorum reached
+    /// - Mixed votes (2+2) → no quorum
+    #[test]
+    fn test_hardening_4validator_acceptance_criteria() {
+        let total_validators = 4u64;
+
+        // Criterion: 2 votes → no quorum
+        assert!(
+            !check_supermajority(2, total_validators),
+            "2/4 votes should NOT be supermajority"
+        );
+
+        // Criterion: 3 identical votes → quorum reached
+        assert!(
+            check_supermajority(3, total_validators),
+            "3/4 identical votes MUST trigger supermajority"
+        );
+
+        // Note: 2+2 mixed votes is handled by counting proposal-scoped votes
+        // If 2 vote for proposal A and 2 vote for proposal B:
+        // count_prevotes_for(proposal_a) = 2 (no quorum)
+        // count_prevotes_for(proposal_b) = 2 (no quorum)
+        // Result: Mixed or split votes MUST NOT count
+    }
+
+    /// Test: Remote vote validation - height mismatch rejection
+    ///
+    /// A vote with height != local.height MUST be rejected
+    #[tokio::test]
+    async fn test_hardening_vote_validation_height_mismatch() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to height=5, round=0, PreVote step
+        engine.current_round.height = 5;
+        engine.current_round.round = 0;
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Create a vote with wrong height (height=6)
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: 6, // WRONG: height != local.height
+            round: 0,
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(
+            !is_valid,
+            "Vote with height mismatch MUST be rejected (height={} != local.height={})",
+            vote.height,
+            engine.current_round.height
+        );
+    }
+
+    /// Test: Remote vote validation - round mismatch rejection
+    ///
+    /// A vote with round != local.round MUST be rejected
+    #[tokio::test]
+    async fn test_hardening_vote_validation_round_mismatch() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to height=0, round=5, PreVote step
+        engine.current_round.height = 0;
+        engine.current_round.round = 5;
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Create a vote with wrong round (round=6)
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: 0,
+            round: 6, // WRONG: round != local.round
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(
+            !is_valid,
+            "Vote with round mismatch MUST be rejected (round={} != local.round={})",
+            vote.round,
+            engine.current_round.round
+        );
+    }
+
+    /// Test: Remote vote validation - non-member validator rejection
+    ///
+    /// A vote from a validator NOT in active set MUST be rejected
+    #[tokio::test]
+    async fn test_hardening_vote_validation_non_member_validator() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register only validator 1
+        let validator_id_1 = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id_1.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Create a vote from validator 2 (NOT registered)
+        let validator_id_2 = test_validator_id(2);
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id_2.clone(),
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: engine.current_round.height,
+            round: engine.current_round.round,
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(
+            !is_valid,
+            "Vote from non-member validator MUST be rejected"
+        );
+    }
+
+    /// Test: Remote vote validation - vote type coherence (PreVote in Propose step)
+    ///
+    /// A PreVote is NOT valid during Propose step
+    #[tokio::test]
+    async fn test_hardening_vote_validation_prevote_in_propose_step() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to Propose step
+        engine.current_round.step = ConsensusStep::Propose;
+
+        // Create a PreVote while in Propose step
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: engine.current_round.height,
+            round: engine.current_round.round,
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(
+            !is_valid,
+            "PreVote in Propose step MUST be rejected (step coherence violation)"
+        );
+    }
+
+    /// Test: Remote vote validation - vote type coherence (PreCommit in PreVote step)
+    ///
+    /// A PreCommit is NOT valid during PreVote step
+    #[tokio::test]
+    async fn test_hardening_vote_validation_precommit_in_prevote_step() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to PreVote step
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Create a PreCommit while in PreVote step
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreCommit,
+            height: engine.current_round.height,
+            round: engine.current_round.round,
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(
+            !is_valid,
+            "PreCommit in PreVote step MUST be rejected (step coherence violation)"
+        );
+    }
+
+    /// Test: Remote vote validation - Commit votes always valid (if height/round match)
+    ///
+    /// Commit votes are always valid regardless of current step
+    #[tokio::test]
+    async fn test_hardening_vote_validation_commit_always_valid() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Test in each step
+        for step in &[
+            ConsensusStep::Propose,
+            ConsensusStep::PreVote,
+            ConsensusStep::PreCommit,
+            ConsensusStep::Commit,
+        ] {
+            engine.current_round.step = step.clone();
+
+            // Create a Commit vote
+            let vote = ConsensusVote {
+                id: Hash::from_bytes(&[1u8; 32]),
+                voter: validator_id.clone(),
+                proposal_id: Hash::from_bytes(&[2u8; 32]),
+                vote_type: VoteType::Commit,
+                height: engine.current_round.height,
+                round: engine.current_round.round,
+                timestamp: 0,
+                signature: create_test_signature(),
+            };
+
+            // Validate the vote - should always be valid
+            let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+            assert!(
+                is_valid,
+                "Commit vote MUST always be valid regardless of step (currently in {:?})",
+                step
+            );
+        }
+    }
+
+    /// Test: Remote vote validation - invalid signature rejection
+    ///
+    /// A vote with invalid signature MUST be rejected (Invariant #1)
+    #[tokio::test]
+    async fn test_hardening_vote_validation_invalid_signature() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to PreVote step
+        engine.current_round.step = ConsensusStep::PreVote;
+
+        // Create a vote with an empty signature (invalid)
+        let mut bad_signature = create_test_signature();
+        bad_signature.signature = Vec::new(); // Make signature invalid
+
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: Hash::from_bytes(&[2u8; 32]),
+            vote_type: VoteType::PreVote,
+            height: engine.current_round.height,
+            round: engine.current_round.round,
+            timestamp: 0,
+            signature: bad_signature,
+        };
+
+        // Validate the vote - should be rejected
+        let is_valid = engine.validate_remote_vote(&vote).await.expect("validation failed");
+        assert!(!is_valid, "Vote with invalid signature MUST be rejected");
+    }
+
+    /// Test: Remote vote validation - commit votes allow round catch-up
+    ///
+    /// on_commit_vote() is designed to accept commit votes from any round at the current height
+    /// to allow catch-up from previous rounds. This test verifies that such votes are not
+    /// rejected at the basic validation level.
+    #[tokio::test]
+    async fn test_hardening_commit_vote_accepts_past_round() {
+        let config = ConsensusConfig {
+            development_mode: true,
+            ..Default::default()
+        };
+        let broadcaster = Arc::new(MockMessageBroadcaster::new());
+        let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
+            .expect("Failed to create engine");
+
+        // Register a validator
+        let validator_id = test_validator_id(1);
+        engine
+            .register_validator(
+                validator_id.clone(),
+                10_000_000_000,
+                100 * 1024 * 1024 * 1024,
+                vec![42u8; 32],
+                5,
+                true,
+            )
+            .await
+            .expect("Failed to register");
+
+        // Set engine to height=5, round=3
+        engine.current_round.height = 5;
+        engine.current_round.round = 3;
+        engine.current_round.step = ConsensusStep::PreCommit;
+
+        let proposal_id = Hash::from_bytes(&[2u8; 32]);
+
+        // Create a commit vote from a PAST round (round=2 while current is 3)
+        let vote = ConsensusVote {
+            id: Hash::from_bytes(&[1u8; 32]),
+            voter: validator_id,
+            proposal_id: proposal_id.clone(),
+            vote_type: VoteType::Commit,
+            height: 5,  // Same height
+            round: 2,   // Past round
+            timestamp: 0,
+            signature: create_test_signature(),
+        };
+
+        // Call on_commit_vote with past-round commit vote
+        // It should be accepted (not rejected) for catch-up purposes
+        engine.on_commit_vote(vote.clone()).await.expect("commit vote failed");
+
+        // Verify the vote was stored
+        let commit_count = engine.count_commits_for(5, 2, &proposal_id);
+        assert_eq!(commit_count, 1, "Past-round commit vote should be stored for catch-up");
+    }

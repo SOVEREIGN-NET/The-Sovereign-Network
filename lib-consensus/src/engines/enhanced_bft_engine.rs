@@ -28,6 +28,7 @@ pub struct EnhancedBftEngine {
     /// Current consensus round
     current_round: ConsensusRound,
     /// Configuration
+    #[allow(dead_code)]
     config: ConsensusConfig,
     /// Validator manager
     validator_manager: ValidatorManager,
@@ -38,10 +39,12 @@ pub struct EnhancedBftEngine {
     /// Round history
     round_history: VecDeque<ConsensusRound>,
     /// Byzantine fault detector
+    #[allow(dead_code)]
     byzantine_detector: ByzantineFaultDetector,
     /// Local validator identity
     validator_identity: Option<IdentityId>,
     /// ZK proof system for verification
+    #[allow(dead_code)]
     zk_system: ZkProofSystem,
     /// Local validator keypair
     validator_keypair: Option<KeyPair>,
