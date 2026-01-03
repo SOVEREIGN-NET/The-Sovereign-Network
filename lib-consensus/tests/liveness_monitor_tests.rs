@@ -159,7 +159,7 @@ fn test_stall_recovery_cycle() {
     assert!(!monitor.watch_timeouts(&tracker));
     assert!(!monitor.is_stalled());
 
-    // Trigger stall: timeout 3 validators (3/7 > 1/3)
+    // Trigger stall: timeout 3 validators (stall threshold is floor(7/3) + 1 = 3, so 3 timeouts trigger a stall)
     let old_timestamp = current_timestamp() - 15;
     for i in 0..3 {
         tracker.record_heartbeat(&validators[i], old_timestamp);
@@ -209,7 +209,7 @@ fn test_multiple_validators_timeout() {
     // Gradually timeout validators
     let old_timestamp = current_timestamp() - 15;
     for i in 0..4 {
-        // After 4 timeouts (4/10 > 1/3), should stall
+        // After 4 timeouts, we reach the stall threshold (floor(10/3) + 1 = 4), so it should stall
         tracker.record_heartbeat(&validators[i], old_timestamp);
         monitor.watch_timeouts(&tracker);
 
