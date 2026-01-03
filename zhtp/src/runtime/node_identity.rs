@@ -1,17 +1,18 @@
 //! Runtime NodeId derivation from DID + device name.
 //!
-//! Formula (spec):
-//! NodeId = blake3("ZHTP_NODE_V2:" + DID + ":" + device_name) // 32-byte output
+//! Derivation delegates to `NodeId::from_did_device` to stay consistent with the
+//! legacy deterministic NodeId format in lib-identity.
 
 use anyhow::{anyhow, Result};
-use blake3;
 use lib_identity::types::NodeId;
 use once_cell::sync::OnceCell;
 use sysinfo::System;
 use tracing::info;
 
-const MAX_DEVICE_NAME_LEN: usize = 256;
+const MAX_DEVICE_NAME_LEN: usize = 64;
 const MAX_DID_LEN: usize = 512;
+const DID_PREFIX: &str = "did:zhtp:";
+const DID_IDENTIFIER_LEN: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeNodeIdentity {
@@ -22,13 +23,11 @@ pub struct RuntimeNodeIdentity {
 
 static RUNTIME_NODE_IDENTITY: OnceCell<RuntimeNodeIdentity> = OnceCell::new();
 
-/// Derive NodeId using the deterministic spec formula.
+/// Derive NodeId using the deterministic legacy formula (via NodeId::from_did_device).
 pub fn derive_node_id(did: &str, device_name: &str) -> Result<NodeId> {
     validate_did(did)?;
-    validate_device_name(device_name)?;
-    let preimage = format!("ZHTP_NODE_V2:{}:{}", did, device_name);
-    let hash = blake3::hash(preimage.as_bytes());
-    Ok(NodeId::from_bytes(*hash.as_bytes()))
+    let normalized_device = normalize_device_name(device_name)?;
+    NodeId::from_did_device(did, &normalized_device)
 }
 
 /// Resolve device name: env override -> provided -> hostname fallback.
@@ -50,7 +49,8 @@ pub fn try_get_runtime_node_id() -> Result<NodeId> {
         .ok_or_else(|| anyhow!("Runtime NodeId not initialized"))
 }
 
-/// Panics if the runtime NodeId has not been initialized by the startup path.
+/// Panics if the runtime NodeId has not been initialized by the startup path
+/// (set during runtime initialization in Phase 3).
 pub fn get_runtime_node_id() -> NodeId {
     try_get_runtime_node_id().expect("Runtime NodeId not initialized")
 }
@@ -63,38 +63,51 @@ pub fn log_runtime_node_identity() {
     }
 }
 
-fn validate_device_name(name: &str) -> Result<()> {
-    if name.is_empty() {
+fn normalize_device_name(name: &str) -> Result<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
         return Err(anyhow!("Device name cannot be empty"));
     }
-    if name.len() > MAX_DEVICE_NAME_LEN {
+    if trimmed.len() > MAX_DEVICE_NAME_LEN {
         return Err(anyhow!(
             "Device name too long (max {})",
             MAX_DEVICE_NAME_LEN
         ));
     }
-    if !name.chars().all(is_allowed_device_char) {
-        let invalid_chars: String = name
+    if !trimmed.chars().all(is_allowed_device_char) {
+        let invalid_chars: String = trimmed
             .chars()
             .filter(|c| !is_allowed_device_char(*c))
             .collect();
         return Err(anyhow!(
-            "Device name may only contain alphanumeric characters, '-' or '_'. Invalid characters: {:?}",
+            "Device name may only contain alphanumeric characters, '.', '-' or '_'. Invalid characters: {:?}",
             invalid_chars
         ));
     }
-    Ok(())
+    Ok(trimmed.to_lowercase())
 }
 
 fn validate_did(did: &str) -> Result<()> {
     if did.len() > MAX_DID_LEN {
         return Err(anyhow!("DID too long (max {})", MAX_DID_LEN));
     }
-    if !did.starts_with("did:zhtp:") {
+    if !did.starts_with(DID_PREFIX) {
         return Err(anyhow!("Invalid DID format (expected did:zhtp:<hash>)"));
     }
-    if did.len() == "did:zhtp:".len() {
+    let identifier = &did[DID_PREFIX.len()..];
+    if identifier.is_empty() {
         return Err(anyhow!("Invalid DID format (missing identifier)"));
+    }
+    if identifier.len() != DID_IDENTIFIER_LEN {
+        return Err(anyhow!(
+            "Invalid DID identifier length (expected {} hex characters)",
+            DID_IDENTIFIER_LEN
+        ));
+    }
+    if !identifier.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow!(
+            "Invalid DID identifier (must be hex-encoded Blake3 hash)"
+        ));
     }
     Ok(())
 }
@@ -106,34 +119,27 @@ fn resolve_device_name_with_host(
     if let Ok(env_name) = std::env::var("ZHTP_DEVICE_NAME") {
         let trimmed = env_name.trim();
         if !trimmed.is_empty() {
-            return normalize_configured_device_name(trimmed);
+            return normalize_device_name(trimmed);
         }
     }
 
     if let Some(p) = provided {
         let trimmed = p.trim();
         if !trimmed.is_empty() {
-            return normalize_configured_device_name(trimmed);
+            return normalize_device_name(trimmed);
         }
     }
 
     if let Some(host) = host_name {
         let sanitized = sanitize_device_name(host);
         if !sanitized.is_empty() {
-            validate_device_name(&sanitized)?;
-            return Ok(sanitized);
+            return normalize_device_name(&sanitized);
         }
     }
 
     Err(anyhow!(
         "Device name not provided; set ZHTP_DEVICE_NAME or configure device name"
     ))
-}
-
-fn normalize_configured_device_name(name: &str) -> Result<String> {
-    let trimmed = name.trim();
-    validate_device_name(trimmed)?;
-    Ok(trimmed.to_string())
 }
 
 fn sanitize_device_name(name: &str) -> String {
@@ -154,16 +160,20 @@ fn sanitize_device_name(name: &str) -> String {
 }
 
 fn is_allowed_device_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+    c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_'
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn sample_did() -> String {
+        format!("did:zhtp:{}", "a".repeat(64))
+    }
+
     #[test]
     fn deterministic() {
-        let did = "did:zhtp:test123";
+        let did = sample_did();
         let device = "device-1";
         let n1 = derive_node_id(did, device).unwrap();
         let n2 = derive_node_id(did, device).unwrap();
@@ -172,7 +182,7 @@ mod tests {
 
     #[test]
     fn different_device_changes_nodeid() {
-        let did = "did:zhtp:test123";
+        let did = sample_did();
         let a = derive_node_id(did, "device-1").unwrap();
         let b = derive_node_id(did, "device-2").unwrap();
         assert_ne!(a, b);
@@ -180,13 +190,19 @@ mod tests {
 
     #[test]
     fn empty_device_rejected() {
-        assert!(derive_node_id("did:zhtp:test123", "").is_err());
+        let did = sample_did();
+        assert!(derive_node_id(did, "").is_err());
     }
 
     #[test]
     fn hostname_with_invalid_chars_is_sanitized() {
         let resolved = resolve_device_name_with_host(None, Some("my-pc:01")).unwrap();
         assert_eq!(resolved, "my-pc-01");
+    }
+
+    #[test]
+    fn hostname_with_only_separators_is_rejected() {
+        assert!(resolve_device_name_with_host(None, Some("---")).is_err());
     }
 
     #[test]
@@ -198,5 +214,35 @@ mod tests {
     #[test]
     fn no_device_name_available_returns_error() {
         assert!(resolve_device_name_with_host(None, None).is_err());
+    }
+
+    #[test]
+    fn runtime_node_identity_singleton_lifecycle() {
+        assert!(try_get_runtime_node_id().is_err());
+
+        let did = sample_did();
+        let device = "device-1";
+        let node_id = derive_node_id(&did, device).unwrap();
+
+        set_runtime_node_identity(RuntimeNodeIdentity {
+            did: did.clone(),
+            device_name: device.to_string(),
+            node_id,
+        })
+        .unwrap();
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| std::thread::spawn(get_runtime_node_id))
+            .collect();
+        for handle in handles {
+            assert_eq!(handle.join().unwrap(), node_id);
+        }
+
+        let second = RuntimeNodeIdentity {
+            did,
+            device_name: device.to_string(),
+            node_id,
+        };
+        assert!(set_runtime_node_identity(second).is_err());
     }
 }
