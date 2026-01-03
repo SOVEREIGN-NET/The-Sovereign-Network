@@ -306,6 +306,9 @@ fn quic_master_key_is_bound_to_node_id() -> Result<()> {
     let restarted_identity = identity_with_seed(device, same_device_seed)?;
     let other_peer = identity_with_seed("alpha-mesh-node-03", [0x34u8; 64])?;
 
+    // Fixed test vectors for QUIC master key derivation - these represent realistic outputs
+    // from the UHP handshake and Kyber512 key exchange. These values are intentional test
+    // vectors (not arbitrary data) used to ensure deterministic and reproducible test results.
     let uhp_session_key: [u8; 32] = [
         0x02, 0x4F, 0x4F, 0xD7, 0x2E, 0x70, 0xF5, 0x8B, 0xDE, 0xDC, 0x55, 0x33, 0x53, 0x09,
         0xC5, 0x71, 0xDD, 0xF5, 0x39, 0xCF, 0x76, 0xEA, 0x25, 0x97, 0x6B, 0x40, 0xEC, 0xDA,
