@@ -9,6 +9,9 @@ use std::collections::HashMap;
 // Re-export proof types from proofs module
 pub use crate::proofs::{ProofOfUsefulWork, StakeProof, StorageChallenge, StorageProof, WorkProof};
 
+// Re-export heartbeat types from validator protocol module
+pub use crate::validators::validator_protocol::HeartbeatMessage;
+
 /// Consensus mechanism types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ConsensusType {
@@ -316,6 +319,20 @@ pub enum ConsensusEvent {
     ProposalReceived { proposal: ConsensusProposal },
     /// Vote received
     VoteReceived { vote: ConsensusVote },
+    /// Consensus stalled due to validator timeouts
+    ConsensusStalled {
+        height: u64,
+        round: u32,
+        timed_out_validators: Vec<IdentityId>,
+        total_validators: usize,
+        timestamp: u64,
+    },
+    /// Consensus recovered from stall
+    ConsensusRecovered {
+        height: u64,
+        round: u32,
+        timestamp: u64,
+    },
 }
 
 /// Canonical validator message for network broadcast
@@ -331,6 +348,10 @@ pub enum ValidatorMessage {
     /// Vote message (PreVote, PreCommit, or Commit votes)
     Vote {
         vote: ConsensusVote,
+    },
+    /// Heartbeat message for validator liveness detection
+    Heartbeat {
+        message: HeartbeatMessage,
     },
 }
 
