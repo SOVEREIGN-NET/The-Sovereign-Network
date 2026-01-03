@@ -294,29 +294,34 @@ impl NetworkState {
             let num_challenges = (node_id[(i + 2) % 32] % 5) + 1; // 1-5 challenges
 
             for j in 0..num_challenges {
-                let challenge = StorageChallenge {
-                    id: Hash::from_bytes(&lib_crypto::hash_blake3(
-                        &[&node_id[..], &[i as u8, j]].concat(),
+                let content_hash = Hash::from_bytes(&lib_crypto::hash_blake3(
+                    &[b"content".to_vec(), vec![i as u8, j]].concat(),
+                ));
+                let challenge_payload = vec![i as u8, j, node_id[j as usize % 32]];
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    - (j as u64 * 3600); // Challenges from last few hours
+
+                let challenge = StorageChallenge::new(
+                    content_hash,
+                    challenge_payload,
+                    Hash::from_bytes(&lib_crypto::hash_blake3(
+                        &[b"validator", &node_id[..], &[i as u8]].concat(),
                     )),
-                    content_hash: Hash::from_bytes(&lib_crypto::hash_blake3(
-                        &[b"content".to_vec(), vec![i as u8, j]].concat(),
-                    )),
-                    challenge: vec![i as u8, j, node_id[j as usize % 32]],
-                    response: vec![
-                        (i as u8)
-                            .wrapping_add(j)
-                            .wrapping_add(node_id[j as usize % 32]),
-                        j.wrapping_mul(2),
-                        node_id[(j as usize + 1) % 32],
-                    ],
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        - (j as u64 * 3600), // Challenges from last few hours
-                };
+                    timestamp,
+                )?;
                 challenges.push(challenge);
             }
+
+            let merkle_root = StorageProof::compute_merkle_root(
+                &challenges
+                    .iter()
+                    .map(|challenge| challenge.content_hash.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap_or_else(|| Hash::from_bytes(&[0u8; 32]));
 
             let proof = StorageProof {
                 validator: Hash::from_bytes(&lib_crypto::hash_blake3(
@@ -325,9 +330,7 @@ impl NetworkState {
                 storage_capacity,
                 utilization: utilization as u64,
                 challenges_passed: challenges,
-                merkle_proof: vec![Hash::from_bytes(&lib_crypto::hash_blake3(
-                    &[b"merkle_root", &node_id[..], &[i as u8]].concat(),
-                ))],
+                merkle_proof: vec![merkle_root],
             };
             proofs.push(proof);
         }

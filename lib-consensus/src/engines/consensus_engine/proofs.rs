@@ -265,30 +265,32 @@ impl ConsensusEngine {
             ]
             .concat();
 
-            let challenge = crate::proofs::StorageChallenge {
-                id: Hash::from_bytes(&hash_blake3(&challenge_data)),
-                content_hash: Hash::from_bytes(&hash_blake3(
-                    &[challenge_data.clone(), b"content".to_vec()].concat(),
-                )),
-                challenge: challenge_data[..16].to_vec(), // First 16 bytes as challenge
-                response: hash_blake3(&challenge_data).to_vec(), // Hash as response
-                timestamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|e| ConsensusError::TimeError(e))?
-                    .as_secs()
-                    - (i as u64 * 3600),
-            };
+            let content_hash = Hash::from_bytes(&hash_blake3(
+                &[challenge_data.clone(), b"content".to_vec()].concat(),
+            ));
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs()
+                - (i as u64 * 3600);
+            let challenge = crate::proofs::StorageChallenge::new(
+                content_hash,
+                challenge_data[..16].to_vec(), // First 16 bytes as challenge
+                Hash::from_bytes(validator_id.as_bytes()),
+                timestamp,
+            )
+            .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
             challenges.push(challenge);
         }
 
-        // Create merkle proof for stored data
-        let merkle_data = [
-            validator_id.as_bytes(),
-            &validator.storage_provided.to_le_bytes(),
-            b"merkle_root",
-        ]
-        .concat();
-        let merkle_proof = vec![Hash::from_bytes(&hash_blake3(&merkle_data))];
+        let merkle_root = StorageProof::compute_merkle_root(
+            &challenges
+                .iter()
+                .map(|challenge| challenge.content_hash.clone())
+                .collect::<Vec<_>>(),
+        )
+        .ok_or_else(|| ConsensusError::ProofVerificationFailed("Merkle root missing".to_string()))?;
+        let merkle_proof = vec![merkle_root];
 
         // Calculate realistic utilization based on validator activity
         let utilization = std::cmp::min(

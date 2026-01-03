@@ -109,21 +109,26 @@ fn test_storage_proof_creation_and_verification() -> Result<()> {
     // Create storage challenges
     let mut challenges = Vec::new();
     for i in 0..3 {
-        let challenge = StorageChallenge {
-            id: Hash::from_bytes(&hash_blake3(&format!("challenge_{}", i).as_bytes())),
-            content_hash: Hash::from_bytes(&hash_blake3(&format!("content_{}", i).as_bytes())),
-            challenge: vec![i as u8; 16],
-            response: vec![(i * 2) as u8; 16],
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() - (i as u64 * 3600),
-        };
+        let content_hash = Hash::from_bytes(&hash_blake3(&format!("content_{}", i).as_bytes()));
+        let challenge_payload = vec![i as u8; 16];
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() - (i as u64 * 3600);
+        let challenge = StorageChallenge::new(
+            content_hash,
+            challenge_payload,
+            validator_hash.clone(),
+            timestamp,
+        )?;
         challenges.push(challenge);
     }
 
-    // Create merkle proof
-    let merkle_proof = vec![
-        Hash::from_bytes(&hash_blake3(b"merkle_root_1")),
-        Hash::from_bytes(&hash_blake3(b"merkle_root_2")),
-    ];
+    let merkle_root = StorageProof::compute_merkle_root(
+        &challenges
+            .iter()
+            .map(|challenge| challenge.content_hash.clone())
+            .collect::<Vec<_>>(),
+    )
+    .expect("Merkle root should exist");
+    let merkle_proof = vec![merkle_root];
 
     let storage_proof = StorageProof::new(
         validator_hash,
@@ -136,7 +141,7 @@ fn test_storage_proof_creation_and_verification() -> Result<()> {
     assert_eq!(storage_proof.storage_capacity, storage_capacity);
     assert_eq!(storage_proof.utilization, utilization);
     assert_eq!(storage_proof.challenges_passed.len(), 3);
-    assert_eq!(storage_proof.merkle_proof.len(), 2);
+    assert_eq!(storage_proof.merkle_proof.len(), 1);
 
     // Test verification
     assert!(storage_proof.verify()?);
@@ -361,16 +366,18 @@ fn test_compute_result_verification_failure() -> Result<()> {
 
 #[test]
 fn test_storage_challenge_creation() {
-    let challenge = StorageChallenge {
-        id: Hash::from_bytes(&hash_blake3(b"challenge_id")),
-        content_hash: Hash::from_bytes(&hash_blake3(b"content")),
-        challenge: vec![1, 2, 3, 4],
-        response: vec![5, 6, 7, 8],
-        timestamp: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-    };
+    let validator = Hash::from_bytes(&hash_blake3(b"validator"));
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let challenge = StorageChallenge::new(
+        Hash::from_bytes(&hash_blake3(b"content")),
+        vec![1, 2, 3, 4],
+        validator,
+        timestamp,
+    )
+    .expect("Challenge should be valid");
 
     assert!(!challenge.challenge.is_empty());
     assert!(!challenge.response.is_empty());
