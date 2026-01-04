@@ -3,6 +3,9 @@
 use async_trait::async_trait;
 use lib_crypto::PublicKey;
 use lib_network::{NetworkOutput, global_output_queue};
+use lib_storage::UnifiedStorageSystem;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
@@ -173,4 +176,47 @@ pub fn spawn_network_output_processor(
             sleep(interval).await;
         }
     });
+}
+
+/// Wrapper type for Arc<RwLock<UnifiedStorageSystem>> to implement the UnifiedStorage trait.
+/// Kept here to avoid lib-storage depending on lib-network.
+pub struct UnifiedStorageWrapper(pub Arc<RwLock<UnifiedStorageSystem>>);
+
+#[async_trait]
+impl lib_network::storage_stub::UnifiedStorage for UnifiedStorageWrapper {
+    async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> anyhow::Result<()> {
+        let mut sys = self.0.write().await;
+        sys.store_domain_record(domain, &data).await
+    }
+
+    async fn load_domain_record(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let mut sys = self.0.write().await;
+        sys.get_domain_record(domain).await
+    }
+
+    async fn delete_domain_record(&self, domain: &str) -> anyhow::Result<()> {
+        let mut sys = self.0.write().await;
+        sys.delete_domain_record(domain).await
+    }
+
+    async fn list_domain_records(&self) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+        let mut sys = self.0.write().await;
+        sys.list_domain_records().await
+    }
+
+    async fn store_manifest(&self, domain: &str, manifest_data: Vec<u8>) -> anyhow::Result<()> {
+        let mut sys = self.0.write().await;
+        let manifest_key = format!("manifest:{}", domain);
+        sys.store_domain_record(&manifest_key, &manifest_data).await
+    }
+
+    async fn load_manifest(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let mut sys = self.0.write().await;
+        let manifest_key = format!("manifest:{}", domain);
+        sys.get_domain_record(&manifest_key).await
+    }
+
+    fn is_stub(&self) -> bool {
+        false
+    }
 }
