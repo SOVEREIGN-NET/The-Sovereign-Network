@@ -31,8 +31,9 @@ use crate::types::IdentityId;
 // Security Constants
 // =============================================================================
 
-/// Maximum stake amount per operation (1 billion SOV - prevents overflow attacks)
-pub const MAX_STAKE_AMOUNT: u64 = 1_000_000_000_000_000_000_000; // 1B SOV
+/// Maximum stake amount per operation (prevents overflow attacks)
+/// Note: u64 max in micro-SOV is ~18M SOV, so we cap at 1M SOV for safety
+pub const MAX_STAKE_AMOUNT: u64 = 1_000_000_000_000_000_000; // 1M SOV in micro-SOV
 
 /// Maximum lock period in blocks (~10 years at 1 block/second)
 pub const MAX_LOCK_PERIOD: u64 = 315_360_000; // ~10 years
