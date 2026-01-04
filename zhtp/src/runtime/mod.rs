@@ -10,7 +10,13 @@ use tokio::time::{Duration, Instant};
 use tracing::{info, warn, error, debug};
 
 use super::config::NodeConfig;
-use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
+use crate::runtime::node_identity::{
+    derive_node_id,
+    log_runtime_node_identity,
+    resolve_device_name,
+    set_runtime_node_identity,
+    RuntimeNodeIdentity,
+};
 // Removed ZK coordinator - using unified lib-proofs system directly
 
 /// Information about an existing network discovered during startup
@@ -38,6 +44,7 @@ pub mod dht_indexing;
 pub mod routing_rewards;
 pub mod storage_rewards;
 pub mod reward_orchestrator;
+pub mod node_identity;
 pub mod node_runtime;
 pub mod node_runtime_orchestrator;
 #[cfg(test)]
@@ -787,6 +794,18 @@ impl RuntimeOrchestrator {
         
         // Store wallet result for blockchain component
         self.set_user_wallet(wallet_result.clone()).await?;
+
+        // Derive deterministic NodeId from DID + device name and cache for runtime access
+        let device_name = resolve_device_name(Some(&wallet_result.node_identity.primary_device))
+            .context("Device name resolution failed (set ZHTP_DEVICE_NAME or configure device name)")?;
+        let node_id = derive_node_id(&wallet_result.node_identity.did, &device_name)
+            .context("Failed to derive NodeId from DID + device name")?;
+        set_runtime_node_identity(RuntimeNodeIdentity {
+            did: wallet_result.node_identity.did.clone(),
+            device_name,
+            node_id,
+        }).context("Failed to cache runtime NodeId")?;
+        log_runtime_node_identity();
         
         // Store user identity for blockchain registration in Phase 6
         self.set_pending_identity_registration(wallet_result.user_identity.clone()).await;
