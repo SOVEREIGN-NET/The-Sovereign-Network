@@ -12,7 +12,7 @@ use lib_crypto::{
     hashing::hash_blake3, keypair::generation::KeyPair, verification::verify_signature, Hash,
 };
 use lib_identity::IdentityId;
-use lib_proofs::{initialize_zk_system, ZkProofSystem};
+use lib_proofs::{initialize_zk_system, ZkProof, ZkProofSystem};
 
 use crate::byzantine::ByzantineFaultDetector;
 use crate::types::{
@@ -28,6 +28,7 @@ pub struct EnhancedBftEngine {
     /// Current consensus round
     current_round: ConsensusRound,
     /// Configuration
+    #[allow(dead_code)]
     config: ConsensusConfig,
     /// Validator manager
     validator_manager: ValidatorManager,
@@ -38,10 +39,12 @@ pub struct EnhancedBftEngine {
     /// Round history
     round_history: VecDeque<ConsensusRound>,
     /// Byzantine fault detector
+    #[allow(dead_code)]
     byzantine_detector: ByzantineFaultDetector,
     /// Local validator identity
     validator_identity: Option<IdentityId>,
     /// ZK proof system for verification
+    #[allow(dead_code)]
     zk_system: ZkProofSystem,
     /// Local validator keypair
     validator_keypair: Option<KeyPair>,
@@ -84,6 +87,32 @@ impl EnhancedBftEngine {
             zk_system,
             validator_keypair: None,
         })
+    }
+
+    fn derive_identity_inputs(
+        validator_id: &IdentityId,
+    ) -> Result<(u64, u64, u64, u64, u64, u64, u64)> {
+        let identity_hash = hash_blake3(validator_id.as_bytes());
+
+        let identity_secret = u64::from_le_bytes(identity_hash[0..8].try_into()?);
+        let age_seed = u64::from_le_bytes(identity_hash[8..16].try_into()?);
+        let jurisdiction_hash = u64::from_le_bytes(identity_hash[16..24].try_into()?);
+        let credential_hash = u64::from_le_bytes(identity_hash[24..32].try_into()?);
+
+        let min_age = 18;
+        let age = min_age + (age_seed % 83);
+        let required_jurisdiction = jurisdiction_hash;
+        let verification_level = 1;
+
+        Ok((
+            identity_secret,
+            age,
+            jurisdiction_hash,
+            credential_hash,
+            min_age,
+            required_jurisdiction,
+            verification_level,
+        ))
     }
 
     /// Initialize validator with keypair
@@ -289,25 +318,37 @@ impl EnhancedBftEngine {
             return Ok(false);
         }
 
-        // Extract proof components
-        if proof_data.len() < 8 {
+        let proof: ZkProof = match bincode::deserialize(proof_data) {
+            Ok(proof) => proof,
+            Err(_) => return Ok(false),
+        };
+
+        let verified = match proof.verify() {
+            Ok(valid) => valid,
+            Err(_) => false,
+        };
+
+        if !verified {
             return Ok(false);
         }
 
-        let proof_bytes = &proof_data[..proof_data.len() - 8];
-        let _timestamp_bytes = &proof_data[proof_data.len() - 8..];
+        let (expected_identity_secret, _, _, _, _, _, _) =
+            Self::derive_identity_inputs(validator_id)?;
 
-        // Verify proof structure
-        if proof_bytes.len() < 8 {
+        let Some(plonky2_proof) = proof.plonky2_proof.as_ref() else {
+            return Ok(false);
+        };
+
+        if plonky2_proof.proof_system != "ZHTP-Optimized-Identity" {
             return Ok(false);
         }
 
-        // Create expected identity hash
-        let expected_identity_hash = hash_blake3(validator_id.as_bytes());
-        let proof_hash = hash_blake3(proof_bytes);
+        if plonky2_proof.proof.len() < 8 {
+            return Ok(false);
+        }
 
-        // Simple verification (in production would use full ZK verification)
-        Ok(proof_hash[0] == expected_identity_hash[0])
+        let identity_secret = u64::from_le_bytes(plonky2_proof.proof[0..8].try_into()?);
+        Ok(identity_secret == expected_identity_secret)
     }
 
     /// Validate vote signature using post-quantum cryptography
@@ -796,6 +837,7 @@ pub mod testing {
     ) -> Result<ConsensusProposal> {
         let proposer = IdentityId::from_bytes(b"test_proposer_identity_32_bytes!");
         let proposal_id = lib_crypto::Hash::from_bytes(&hash_blake3(b"test_proposal"));
+        let zk_did_proof = create_test_zk_did_proof(&proposer)?;
 
         Ok(ConsensusProposal {
             id: proposal_id,
@@ -819,7 +861,7 @@ pub mod testing {
                 stake_proof: None,
                 storage_proof: None,
                 work_proof: None,
-                zk_did_proof: Some(vec![5, 6, 7, 8]),
+                zk_did_proof: Some(zk_did_proof),
                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             },
         })
@@ -850,5 +892,31 @@ pub mod testing {
                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             },
         })
+    }
+
+    fn create_test_zk_did_proof(validator_id: &IdentityId) -> Result<Vec<u8>> {
+        let zk_system = initialize_zk_system()?;
+        let (
+            identity_secret,
+            age,
+            jurisdiction_hash,
+            credential_hash,
+            min_age,
+            required_jurisdiction,
+            verification_level,
+        ) = EnhancedBftEngine::derive_identity_inputs(validator_id)?;
+
+        let plonky2_proof = zk_system.prove_identity(
+            identity_secret,
+            age,
+            jurisdiction_hash,
+            credential_hash,
+            min_age,
+            required_jurisdiction,
+            verification_level,
+        )?;
+
+        let proof = ZkProof::from_plonky2(plonky2_proof);
+        bincode::serialize(&proof).map_err(|e| anyhow::anyhow!("ZK proof serialization failed: {e}"))
     }
 }

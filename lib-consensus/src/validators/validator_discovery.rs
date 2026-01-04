@@ -4,6 +4,7 @@
 //! Validators publish their information for network-wide discovery and consensus participation.
 
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,6 +12,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use lib_crypto::{Hash, PublicKey};
+
+const MAX_CLOCK_SKEW_SECS: u64 = 300;
 
 /// Validator announcement for consensus network
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +44,72 @@ pub struct ValidatorAnnouncement {
 
     /// Signature over announcement data
     pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ValidatorAnnouncementPayload {
+    identity_id: Hash,
+    consensus_key: PublicKey,
+    stake: u64,
+    storage_provided: u64,
+    commission_rate: u16,
+    endpoints: Vec<ValidatorEndpoint>,
+    status: ValidatorStatus,
+    last_updated: u64,
+}
+
+impl ValidatorAnnouncement {
+    pub fn sign(mut self, keypair: &lib_crypto::keypair::generation::KeyPair) -> Result<Self> {
+        if keypair.public_key.dilithium_pk != self.consensus_key.dilithium_pk {
+            return Err(anyhow!(
+                "Keypair does not match announcement consensus key"
+            ));
+        }
+
+        self.endpoints = canonicalize_endpoints(&self.endpoints);
+        let payload = self.payload_bytes()?;
+        let signature = keypair.sign(&payload)?;
+        self.signature = signature.signature;
+        Ok(self)
+    }
+
+    pub fn verify_signature(&self) -> Result<bool> {
+        if self.consensus_key.dilithium_pk.is_empty() {
+            return Ok(false);
+        }
+
+        let payload = self.payload_bytes()?;
+        lib_crypto::verification::verify_signature(
+            &payload,
+            &self.signature,
+            &self.consensus_key.dilithium_pk,
+        )
+    }
+
+    fn payload_bytes(&self) -> Result<Vec<u8>> {
+        let payload = ValidatorAnnouncementPayload {
+            identity_id: self.identity_id.clone(),
+            consensus_key: self.consensus_key.clone(),
+            stake: self.stake,
+            storage_provided: self.storage_provided,
+            commission_rate: self.commission_rate,
+            endpoints: canonicalize_endpoints(&self.endpoints),
+            status: self.status,
+            last_updated: self.last_updated,
+        };
+        bincode::serialize(&payload).map_err(|e| anyhow!("ValidatorAnnouncement encode failed: {e}"))
+    }
+}
+
+fn canonicalize_endpoints(endpoints: &[ValidatorEndpoint]) -> Vec<ValidatorEndpoint> {
+    let mut endpoints = endpoints.to_vec();
+    endpoints.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then_with(|| a.protocol.cmp(&b.protocol))
+            .then_with(|| a.address.cmp(&b.address))
+    });
+    endpoints
 }
 
 /// Network endpoint for validator communication
@@ -98,6 +167,9 @@ pub struct ValidatorDiscoveryProtocol {
 
     /// Cache TTL in seconds
     cache_ttl: u64,
+
+    /// Optional transport for gossip/network discovery
+    transport: Option<Arc<dyn ValidatorDiscoveryTransport>>,
 }
 
 impl ValidatorDiscoveryProtocol {
@@ -106,6 +178,19 @@ impl ValidatorDiscoveryProtocol {
         Self {
             validator_cache: Arc::new(RwLock::new(HashMap::new())),
             cache_ttl,
+            transport: None,
+        }
+    }
+
+    /// Create a new discovery protocol with a transport implementation
+    pub fn with_transport(
+        cache_ttl: u64,
+        transport: Arc<dyn ValidatorDiscoveryTransport>,
+    ) -> Self {
+        Self {
+            validator_cache: Arc::new(RwLock::new(HashMap::new())),
+            cache_ttl,
+            transport: Some(transport),
         }
     }
 
@@ -116,8 +201,7 @@ impl ValidatorDiscoveryProtocol {
             announcement.identity_id, announcement.stake
         );
 
-        // Verify announcement is properly signed
-        // TODO: Add signature verification
+        self.validate_announcement(&announcement).await?;
 
         // Update local cache for consensus operations
         let mut cache = self.validator_cache.write().await;
@@ -128,9 +212,9 @@ impl ValidatorDiscoveryProtocol {
             announcement.identity_id
         );
 
-        // Note: Validators are synchronized from blockchain via
-        // ConsensusComponent.sync_validators_from_blockchain() (Gap 3)
-        // and can be shared across consensus nodes via network protocols
+        if let Some(transport) = &self.transport {
+            transport.publish_announcement(announcement).await?;
+        }
 
         Ok(())
     }
@@ -157,8 +241,16 @@ impl ValidatorDiscoveryProtocol {
             }
         }
 
-        // Validator not found in cache or expired
-        // Validators are populated via ConsensusComponent.sync_validators_from_blockchain()
+        drop(cache);
+
+        if let Some(transport) = &self.transport {
+            if let Some(remote) = transport.fetch_validator(identity_id).await? {
+                if self.ingest_announcement(remote.clone()).await? {
+                    return Ok(Some(remote));
+                }
+            }
+        }
+
         debug!("Validator {} not found in consensus cache", identity_id);
         Ok(None)
     }
@@ -179,6 +271,16 @@ impl ValidatorDiscoveryProtocol {
             .filter(|v| self.matches_filter(v, &filter))
             .cloned()
             .collect();
+        drop(cache);
+
+        if let Some(transport) = &self.transport {
+            let remote = transport.fetch_validators(filter.clone()).await?;
+            for announcement in remote {
+                if self.ingest_announcement(announcement.clone()).await? {
+                    results.push(announcement);
+                }
+            }
+        }
 
         // Sort by stake (descending) - higher stake validators get priority
         results.sort_by(|a, b| b.stake.cmp(&a.stake));
@@ -200,6 +302,7 @@ impl ValidatorDiscoveryProtocol {
         &self,
         identity_id: &Hash,
         new_status: ValidatorStatus,
+        keypair: &lib_crypto::keypair::generation::KeyPair,
     ) -> Result<()> {
         info!(
             "Updating validator {} status to {:?} in consensus",
@@ -212,22 +315,29 @@ impl ValidatorDiscoveryProtocol {
             .await?
             .ok_or_else(|| anyhow!("Validator not found in consensus: {}", identity_id))?;
 
-        // Update status and timestamp
+        if keypair.public_key.dilithium_pk != announcement.consensus_key.dilithium_pk {
+            return Err(anyhow!(
+                "Keypair does not match validator consensus key"
+            ));
+        }
+
         announcement.status = new_status;
         announcement.last_updated = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-
-        // Re-sign announcement
-        // TODO: Add signing logic
+        announcement = announcement.sign(keypair)?;
 
         // Re-announce to consensus network
         self.announce_validator(announcement).await
     }
 
     /// Remove validator from consensus network (called when unstaking completes)
-    pub async fn remove_validator(&self, identity_id: &Hash) -> Result<()> {
+    pub async fn remove_validator(
+        &self,
+        identity_id: &Hash,
+        keypair: &lib_crypto::keypair::generation::KeyPair,
+    ) -> Result<()> {
         info!("Removing validator {} from consensus network", identity_id);
 
         // Remove from local cache
@@ -237,7 +347,7 @@ impl ValidatorDiscoveryProtocol {
         // Update status to Offline for consensus tracking
         drop(cache); // Release lock before calling update_validator_status
 
-        self.update_validator_status(identity_id, ValidatorStatus::Offline)
+        self.update_validator_status(identity_id, ValidatorStatus::Offline, keypair)
             .await
     }
 
@@ -294,6 +404,9 @@ impl ValidatorDiscoveryProtocol {
         cache.clear();
 
         for validator in validators {
+            if self.validate_announcement(&validator).await.is_err() {
+                continue;
+            }
             cache.insert(validator.identity_id.clone(), validator);
         }
 
@@ -373,6 +486,17 @@ impl ValidatorDiscoveryProtocol {
         Ok(None)
     }
 
+    /// Ingest a remote announcement with validation
+    pub async fn ingest_announcement(&self, announcement: ValidatorAnnouncement) -> Result<bool> {
+        if self.validate_announcement(&announcement).await.is_err() {
+            return Ok(false);
+        }
+
+        let mut cache = self.validator_cache.write().await;
+        cache.insert(announcement.identity_id.clone(), announcement);
+        Ok(true)
+    }
+
     // Private helper methods
 
     /// Check if validator matches discovery filter
@@ -407,6 +531,80 @@ impl ValidatorDiscoveryProtocol {
 
         true
     }
+
+    async fn validate_announcement(&self, announcement: &ValidatorAnnouncement) -> Result<()> {
+        if announcement.commission_rate > 10_000 {
+            return Err(anyhow!("Invalid commission rate"));
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| anyhow!("System clock error: {}", e))?
+            .as_secs();
+
+        if announcement.last_updated > now + MAX_CLOCK_SKEW_SECS {
+            return Err(anyhow!("Announcement timestamp too far in future"));
+        }
+
+        if now.saturating_sub(announcement.last_updated) > self.cache_ttl {
+            return Err(anyhow!("Announcement is stale"));
+        }
+
+        if announcement.status == ValidatorStatus::Active && announcement.endpoints.is_empty() {
+            return Err(anyhow!("Active announcement has no endpoints"));
+        }
+
+        if !announcement.verify_signature()? {
+            return Err(anyhow!("Invalid announcement signature"));
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+pub trait ValidatorDiscoveryTransport: Send + Sync {
+    async fn publish_announcement(&self, announcement: ValidatorAnnouncement) -> Result<()>;
+    async fn fetch_validator(&self, identity_id: &Hash) -> Result<Option<ValidatorAnnouncement>>;
+    async fn fetch_validators(
+        &self,
+        filter: ValidatorDiscoveryFilter,
+    ) -> Result<Vec<ValidatorAnnouncement>>;
+}
+
+/// In-memory transport for tests or single-process deployments.
+pub struct InMemoryDiscoveryTransport {
+    entries: Arc<RwLock<HashMap<Hash, ValidatorAnnouncement>>>,
+}
+
+impl InMemoryDiscoveryTransport {
+    pub fn new() -> Self {
+        Self {
+            entries: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl ValidatorDiscoveryTransport for InMemoryDiscoveryTransport {
+    async fn publish_announcement(&self, announcement: ValidatorAnnouncement) -> Result<()> {
+        let mut entries = self.entries.write().await;
+        entries.insert(announcement.identity_id.clone(), announcement);
+        Ok(())
+    }
+
+    async fn fetch_validator(&self, identity_id: &Hash) -> Result<Option<ValidatorAnnouncement>> {
+        let entries = self.entries.read().await;
+        Ok(entries.get(identity_id).cloned())
+    }
+
+    async fn fetch_validators(
+        &self,
+        _filter: ValidatorDiscoveryFilter,
+    ) -> Result<Vec<ValidatorAnnouncement>> {
+        let entries = self.entries.read().await;
+        Ok(entries.values().cloned().collect())
+    }
 }
 
 /// Validator cache statistics for consensus monitoring
@@ -420,26 +618,50 @@ pub struct ValidatorCacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::keypair::generation::KeyPair;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn now_timestamp() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    fn create_signed_announcement(
+        identity_id: Hash,
+        endpoints: Vec<ValidatorEndpoint>,
+        status: ValidatorStatus,
+    ) -> ValidatorAnnouncement {
+        let keypair = KeyPair::generate().expect("keypair");
+        ValidatorAnnouncement {
+            identity_id,
+            consensus_key: keypair.public_key.clone(),
+            stake: 1_000_000,
+            storage_provided: 10_000_000_000,
+            commission_rate: 500,
+            endpoints,
+            status,
+            last_updated: now_timestamp(),
+            signature: Vec::new(),
+        }
+        .sign(&keypair)
+        .expect("signed")
+    }
 
     #[test]
     fn test_validator_discovery_filter() {
         let protocol = ValidatorDiscoveryProtocol::new(3600);
 
-        let validator = ValidatorAnnouncement {
-            identity_id: Hash::from_bytes(&[0u8; 32]),
-            consensus_key: PublicKey {
-                dilithium_pk: vec![0u8; 32],
-                kyber_pk: Vec::new(),
-                key_id: [0u8; 32],
-            },
-            stake: 1_000_000,
-            storage_provided: 10_000_000_000,
-            commission_rate: 500, // 5%
-            endpoints: vec![],
-            status: ValidatorStatus::Active,
-            last_updated: 0,
-            signature: vec![],
-        };
+        let validator = create_signed_announcement(
+            Hash::from_bytes(&[0u8; 32]),
+            vec![ValidatorEndpoint {
+                protocol: "quic".into(),
+                address: "1.2.3.4:1234".into(),
+                priority: 1,
+            }],
+            ValidatorStatus::Active,
+        );
 
         // Test minimum stake filter
         let filter = ValidatorDiscoveryFilter {
@@ -472,17 +694,9 @@ mod tests {
     async fn test_endpoint_priority_selection() {
         let protocol = ValidatorDiscoveryProtocol::new(3600);
 
-        let validator = ValidatorAnnouncement {
-            identity_id: Hash::from_bytes(&[1u8; 32]),
-            consensus_key: PublicKey {
-                dilithium_pk: vec![0u8; 32],
-                kyber_pk: Vec::new(),
-                key_id: [0u8; 32],
-            },
-            stake: 100,
-            storage_provided: 0,
-            commission_rate: 0,
-            endpoints: vec![
+        let validator = create_signed_announcement(
+            Hash::from_bytes(&[1u8; 32]),
+            vec![
                 ValidatorEndpoint {
                     protocol: "ble".into(),
                     address: "ble://a".into(),
@@ -494,10 +708,8 @@ mod tests {
                     priority: 10,
                 },
             ],
-            status: ValidatorStatus::Active,
-            last_updated: 0,
-            signature: vec![],
-        };
+            ValidatorStatus::Active,
+        );
 
         protocol.announce_validator(validator).await.unwrap();
 
@@ -517,18 +729,9 @@ mod tests {
     async fn test_endpoint_selection_with_tie_breaker() {
         let protocol = ValidatorDiscoveryProtocol::new(3600);
 
-        let validator = ValidatorAnnouncement {
-            identity_id: Hash::from_bytes(&[2u8; 32]),
-            consensus_key: PublicKey {
-                dilithium_pk: vec![0u8; 32],
-                kyber_pk: Vec::new(),
-                key_id: [0u8; 32],
-            },
-            stake: 100,
-            storage_provided: 0,
-            commission_rate: 0,
-            // Equal priority - tie-breaker selects first alphabetically: "quic" before "tcp"
-            endpoints: vec![
+        let validator = create_signed_announcement(
+            Hash::from_bytes(&[2u8; 32]),
+            vec![
                 ValidatorEndpoint {
                     protocol: "tcp".into(),
                     address: "1.2.3.4:1234".into(),
@@ -540,10 +743,8 @@ mod tests {
                     priority: 5,
                 },
             ],
-            status: ValidatorStatus::Active,
-            last_updated: 0,
-            signature: vec![],
-        };
+            ValidatorStatus::Active,
+        );
 
         protocol.announce_validator(validator).await.unwrap();
 
@@ -561,25 +762,15 @@ mod tests {
     async fn test_resolve_validator_route() {
         let protocol = ValidatorDiscoveryProtocol::new(3600);
 
-        let validator = ValidatorAnnouncement {
-            identity_id: Hash::from_bytes(&[3u8; 32]),
-            consensus_key: PublicKey {
-                dilithium_pk: vec![0u8; 32],
-                kyber_pk: Vec::new(),
-                key_id: [0u8; 32],
-            },
-            stake: 100,
-            storage_provided: 0,
-            commission_rate: 0,
-            endpoints: vec![ValidatorEndpoint {
+        let validator = create_signed_announcement(
+            Hash::from_bytes(&[3u8; 32]),
+            vec![ValidatorEndpoint {
                 protocol: "quic".into(),
                 address: "1.2.3.4:1234".into(),
                 priority: 10,
             }],
-            status: ValidatorStatus::Active,
-            last_updated: 0,
-            signature: vec![],
-        };
+            ValidatorStatus::Active,
+        );
 
         protocol.announce_validator(validator).await.unwrap();
 
@@ -598,21 +789,11 @@ mod tests {
     async fn test_endpoint_selection_no_endpoints() {
         let protocol = ValidatorDiscoveryProtocol::new(3600);
 
-        let validator = ValidatorAnnouncement {
-            identity_id: Hash::from_bytes(&[4u8; 32]),
-            consensus_key: PublicKey {
-                dilithium_pk: vec![0u8; 32],
-                kyber_pk: Vec::new(),
-                key_id: [0u8; 32],
-            },
-            stake: 100,
-            storage_provided: 0,
-            commission_rate: 0,
-            endpoints: vec![], // No endpoints
-            status: ValidatorStatus::Active,
-            last_updated: 0,
-            signature: vec![],
-        };
+        let validator = create_signed_announcement(
+            Hash::from_bytes(&[4u8; 32]),
+            vec![],
+            ValidatorStatus::Offline,
+        );
 
         protocol.announce_validator(validator).await.unwrap();
 

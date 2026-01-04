@@ -7,7 +7,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Re-export proof types from proofs module
-pub use crate::proofs::{ProofOfUsefulWork, StakeProof, StorageChallenge, StorageProof, WorkProof};
+pub use crate::proofs::{
+    ProofOfUsefulWork,
+    StakeProof,
+    StorageCapacityAttestation,
+    WorkProof,
+};
+
+// Re-export heartbeat types from validator protocol module
+pub use crate::validators::validator_protocol::HeartbeatMessage;
 
 /// Consensus mechanism types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -181,7 +189,7 @@ pub struct ConsensusProof {
     /// Stake proof (for PoS)
     pub stake_proof: Option<StakeProof>,
     /// Storage proof (for PoStorage)
-    pub storage_proof: Option<StorageProof>,
+    pub storage_proof: Option<StorageCapacityAttestation>,
     /// Useful work proof (for PoUW)
     pub work_proof: Option<WorkProof>,
     /// ZK-DID proof for validator identity
@@ -230,6 +238,8 @@ pub struct ConsensusConfig {
     pub max_validators: u32,
     /// Target block time in seconds
     pub block_time: u64,
+    /// Epoch length in blocks for validator set updates
+    pub epoch_length_blocks: u64,
     /// Proposal timeout in milliseconds
     pub propose_timeout: u64,
     /// Prevote timeout in milliseconds
@@ -260,6 +270,7 @@ impl Default for ConsensusConfig {
             min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
             max_validators: 100,
             block_time: 10,          // 10 seconds
+            epoch_length_blocks: 100,
             propose_timeout: 3000,   // 3 seconds
             prevote_timeout: 1000,   // 1 second
             precommit_timeout: 1000, // 1 second
@@ -316,6 +327,20 @@ pub enum ConsensusEvent {
     ProposalReceived { proposal: ConsensusProposal },
     /// Vote received
     VoteReceived { vote: ConsensusVote },
+    /// Consensus stalled due to validator timeouts
+    ConsensusStalled {
+        height: u64,
+        round: u32,
+        timed_out_validators: Vec<IdentityId>,
+        total_validators: usize,
+        timestamp: u64,
+    },
+    /// Consensus recovered from stall
+    ConsensusRecovered {
+        height: u64,
+        round: u32,
+        timestamp: u64,
+    },
 }
 
 /// Canonical validator message for network broadcast
@@ -331,6 +356,10 @@ pub enum ValidatorMessage {
     /// Vote message (PreVote, PreCommit, or Commit votes)
     Vote {
         vote: ConsensusVote,
+    },
+    /// Heartbeat message for validator liveness detection
+    Heartbeat {
+        message: HeartbeatMessage,
     },
 }
 

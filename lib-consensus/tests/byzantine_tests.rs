@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use lib_consensus::{
-    ByzantineFault, ByzantineFaultDetector, ByzantineFaultType, FaultSeverity, ValidatorManager,
+    ByzantineFaultDetector, ByzantineFaultType, FaultSeverity, ValidatorManager,
 };
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
@@ -212,13 +212,22 @@ fn test_fault_record_cleanup() {
     detector.record_liveness_violation(validator.clone(), 200, 5);
     detector.record_invalid_proposal(validator.clone(), 300, [1u8; 32], "test".to_string());
 
-    // Clean up old records (0 seconds means everything should be cleaned)
-    detector.cleanup_old_records(0);
-
-    // After cleanup, no faults should be detected
+    // Verify faults were recorded
     let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
-    let faults = detector.detect_faults(&validator_manager).unwrap();
-    assert_eq!(faults.len(), 0);
+    let faults_before = detector.detect_faults(&validator_manager).unwrap();
+    assert!(!faults_before.is_empty());
+
+    // Clean up old records: use current time + max_age + 1000 to ensure cleanup
+    let current_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let cleanup_time = current_time + 86400 + 1000; // Current time + 24h + buffer
+    detector.cleanup_old_records(cleanup_time);
+
+    // After cleanup with far future timestamp, old faults should be cleaned
+    let faults_after = detector.detect_faults(&validator_manager).unwrap();
+    assert_eq!(faults_after.len(), 0, "Expected cleanup to remove old faults");
 }
 
 #[test]

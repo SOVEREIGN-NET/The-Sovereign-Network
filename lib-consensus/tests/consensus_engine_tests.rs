@@ -1,15 +1,10 @@
 //! Integration tests for the main consensus engine
 
 use anyhow::Result;
-use lib_consensus::{
-    ConsensusConfig, ConsensusEngine, ConsensusError, ConsensusType, ValidatorStatus, VoteType,
-    NoOpBroadcaster,
-};
+use lib_consensus::{ConsensusConfig, ConsensusEngine, ConsensusError, ConsensusType, NoOpBroadcaster};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio_test;
 
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {
@@ -24,6 +19,7 @@ fn create_test_config() -> ConsensusConfig {
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 10,
         block_time: 1, // Fast for testing
+        epoch_length_blocks: 100,
         propose_timeout: 100,
         prevote_timeout: 50,
         precommit_timeout: 50,
