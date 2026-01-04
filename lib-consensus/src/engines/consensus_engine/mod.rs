@@ -75,6 +75,8 @@ use tokio::time::Sleep;
 
 use crate::byzantine::ByzantineFaultDetector;
 use crate::dao::DaoEngine;
+use crate::dao::dao_types::{DaoExecutionAction, DaoProposal};
+use crate::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue};
 use crate::rewards::RewardCalculator;
 use crate::types::*;
 use crate::validators::ValidatorManager;
@@ -187,6 +189,33 @@ struct ValidatorSetSnapshot {
     validators: HashSet<IdentityId>,
 }
 
+#[derive(Debug, Clone)]
+struct PendingValidatorAdd {
+    identity: IdentityId,
+    stake: u64,
+    storage_capacity: u64,
+    consensus_key: Vec<u8>,
+    commission_rate: u8,
+}
+
+#[derive(Debug, Clone)]
+enum ValidatorSetChange {
+    Add(PendingValidatorAdd),
+    Remove(IdentityId),
+}
+
+#[derive(Debug, Clone)]
+struct PendingValidatorChange {
+    effective_height: u64,
+    change: ValidatorSetChange,
+}
+
+#[derive(Debug, Clone)]
+struct PendingEpochLengthUpdate {
+    effective_height: u64,
+    new_length: u64,
+}
+
 /// Main ZHTP consensus engine combining all consensus mechanisms
 ///
 /// Debug is not derived because `MessageBroadcaster` is a trait object.
@@ -210,6 +239,12 @@ pub struct ConsensusEngine {
     round_history: VecDeque<ConsensusRound>,
     /// Validator membership snapshots by height (height-scoped validation)
     validator_set_history: VecDeque<ValidatorSetSnapshot>,
+    /// Pending validator set changes applied at epoch boundaries
+    pending_validator_changes: VecDeque<PendingValidatorChange>,
+    /// Pending epoch length updates applied at epoch boundaries
+    pending_epoch_length_update: Option<PendingEpochLengthUpdate>,
+    /// Whether consensus has begun (genesis window closed)
+    chain_started: bool,
     /// DAO governance engine
     dao_engine: DaoEngine,
     /// Byzantine fault detection
@@ -281,6 +316,9 @@ impl ConsensusEngine {
             vote_pool: HashMap::new(), // Composite key prevents equivocation
             round_history: VecDeque::new(),
             validator_set_history: VecDeque::new(),
+            pending_validator_changes: VecDeque::new(),
+            pending_epoch_length_update: None,
+            chain_started: false,
             dao_engine: DaoEngine::new(),
             byzantine_detector: ByzantineFaultDetector::new(),
             reward_calculator: RewardCalculator::new(),
@@ -325,6 +363,77 @@ impl ConsensusEngine {
         self.storage_proof_provider = Some(provider);
     }
 
+    /// Apply governance updates with delayed activation for epoch length changes.
+    pub fn apply_governance_update(
+        &mut self,
+        update: &GovernanceParameterUpdate,
+    ) -> ConsensusResult<()> {
+        self.dao_engine
+            .validate_governance_update(update)
+            .map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;
+
+        let mut passthrough_updates = Vec::new();
+
+        for param in &update.updates {
+            match param {
+                GovernanceParameterValue::EpochLengthBlocks(value) => {
+                    self.schedule_epoch_length_update(*value)?;
+                }
+                _ => passthrough_updates.push(param.clone()),
+            }
+        }
+
+        if !passthrough_updates.is_empty() {
+            let filtered = GovernanceParameterUpdate {
+                updates: passthrough_updates,
+            };
+            self.dao_engine
+                .apply_governance_update(&mut self.config, &filtered)
+                .map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    /// Apply governance updates from a DAO proposal with delayed activation
+    /// for epoch-length changes.
+    pub fn apply_governance_update_from_proposal(
+        &mut self,
+        proposal: &DaoProposal,
+    ) -> ConsensusResult<()> {
+        let params = proposal
+            .execution_params
+            .as_ref()
+            .ok_or_else(|| ConsensusError::ValidatorError("Proposal missing execution params".to_string()))?;
+        let decoded = self
+            .dao_engine
+            .decode_execution_params(params)
+            .map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;
+
+        match decoded.action {
+            DaoExecutionAction::GovernanceParameterUpdate(update) => {
+                self.apply_governance_update(&update)
+            }
+        }
+    }
+
+    /// Schedule an epoch length update at the next epoch boundary.
+    pub fn schedule_epoch_length_update(&mut self, new_length: u64) -> ConsensusResult<()> {
+        if new_length == 0 {
+            return Err(ConsensusError::ValidatorError(
+                "Epoch length must be greater than zero".to_string(),
+            ));
+        }
+
+        let effective_height = self.next_epoch_start(self.current_round.height);
+        self.pending_epoch_length_update = Some(PendingEpochLengthUpdate {
+            effective_height,
+            new_length,
+        });
+
+        Ok(())
+    }
+
     /// Register as a validator
     pub async fn register_validator(
         &mut self,
@@ -364,16 +473,27 @@ impl ConsensusEngine {
             }
         }
 
-        // Register with validator manager
-        self.validator_manager
-            .register_validator(
-                identity.clone(),
+        let register_immediately = is_genesis || !self.chain_started;
+
+        if register_immediately {
+            self.validator_manager
+                .register_validator(
+                    identity.clone(),
+                    stake,
+                    storage_capacity,
+                    consensus_key.clone(),
+                    commission_rate,
+                )
+                .map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;
+        } else {
+            self.queue_validator_add(PendingValidatorAdd {
+                identity: identity.clone(),
                 stake,
                 storage_capacity,
-                consensus_key,
+                consensus_key: consensus_key.clone(),
                 commission_rate,
-            )
-            .map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;
+            })?;
+        }
 
         // Set as local validator if this is the first one
         if self.validator_identity.is_none() {
@@ -383,10 +503,167 @@ impl ConsensusEngine {
         }
 
         tracing::info!(
-            "Registered validator {:?} with {} ZHTP stake",
+            "Registered validator {:?} with {} ZHTP stake{}",
             identity,
-            stake
+            stake,
+            if register_immediately {
+                ""
+            } else {
+                " (pending epoch activation)"
+            }
         );
+        Ok(())
+    }
+
+    fn epoch_length_blocks(&self) -> u64 {
+        if self.config.epoch_length_blocks == 0 {
+            tracing::warn!("Epoch length blocks is zero; defaulting to 1");
+            return 1;
+        }
+        self.config.epoch_length_blocks
+    }
+
+    fn is_epoch_boundary(&self, height: u64) -> bool {
+        height % self.epoch_length_blocks() == 0
+    }
+
+    fn next_epoch_start(&self, height: u64) -> u64 {
+        let epoch_len = self.epoch_length_blocks();
+        ((height / epoch_len) + 1) * epoch_len
+    }
+
+    fn queue_validator_add(&mut self, pending: PendingValidatorAdd) -> ConsensusResult<()> {
+        if self.validator_manager.get_validator(&pending.identity).is_some() {
+            return Err(ConsensusError::ValidatorError(
+                "Validator already registered".to_string(),
+            ));
+        }
+
+        let identity = pending.identity.clone();
+        let mut removed_pending_remove = false;
+        self.pending_validator_changes.retain(|entry| match &entry.change {
+            ValidatorSetChange::Remove(existing) if *existing == identity => {
+                removed_pending_remove = true;
+                false
+            }
+            ValidatorSetChange::Add(existing) if existing.identity == identity => false,
+            _ => true,
+        });
+
+        if removed_pending_remove {
+            tracing::info!(
+                "Removed pending validator removal for {:?} due to new registration request",
+                identity
+            );
+        }
+
+        let effective_height = self.next_epoch_start(self.current_round.height);
+        self.pending_validator_changes.push_back(PendingValidatorChange {
+            effective_height,
+            change: ValidatorSetChange::Add(pending),
+        });
+
+        Ok(())
+    }
+
+    fn queue_validator_removal(&mut self, identity: IdentityId) -> ConsensusResult<()> {
+        let mut removed_pending_add = false;
+        self.pending_validator_changes.retain(|entry| match &entry.change {
+            ValidatorSetChange::Add(existing) if existing.identity == identity => {
+                removed_pending_add = true;
+                false
+            }
+            _ => true,
+        });
+
+        if removed_pending_add {
+            tracing::info!(
+                "Removed pending validator add for {:?} due to removal request",
+                identity
+            );
+            return Ok(());
+        }
+
+        if self.validator_manager.get_validator(&identity).is_none() {
+            return Err(ConsensusError::ValidatorError(
+                "Validator not found for removal".to_string(),
+            ));
+        }
+
+        let effective_height = self.next_epoch_start(self.current_round.height);
+        self.pending_validator_changes.push_back(PendingValidatorChange {
+            effective_height,
+            change: ValidatorSetChange::Remove(identity),
+        });
+
+        Ok(())
+    }
+
+    fn apply_epoch_boundary_changes(&mut self, height: u64) -> ConsensusResult<()> {
+        if !self.is_epoch_boundary(height) {
+            return Ok(());
+        }
+
+        if let Some(update) = self.pending_epoch_length_update.clone() {
+            if update.effective_height == height {
+                self.config.epoch_length_blocks = update.new_length;
+                self.pending_epoch_length_update = None;
+                tracing::info!(
+                    "Epoch length updated to {} at height {}",
+                    update.new_length,
+                    height
+                );
+            }
+        }
+
+        let mut remaining = VecDeque::new();
+        let mut applied_changes = 0usize;
+
+        while let Some(entry) = self.pending_validator_changes.pop_front() {
+            if entry.effective_height != height {
+                remaining.push_back(entry);
+                continue;
+            }
+
+            match entry.change {
+                ValidatorSetChange::Add(add) => {
+                    if self.validator_manager.get_validator(&add.identity).is_none() {
+                        self.validator_manager
+                            .register_validator(
+                                add.identity.clone(),
+                                add.stake,
+                                add.storage_capacity,
+                                add.consensus_key,
+                                add.commission_rate,
+                            )
+                            .map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;
+                        applied_changes += 1;
+                    }
+                }
+                ValidatorSetChange::Remove(identity) => {
+                    if self.validator_manager.get_validator(&identity).is_some() {
+                        let _ = self
+                            .validator_manager
+                            .remove_validator(&identity)
+                            .map_err(|e| ConsensusError::ValidatorError(e.to_string()))?;
+                        applied_changes += 1;
+                    }
+                }
+            }
+        }
+
+        self.pending_validator_changes = remaining;
+
+        if applied_changes > 0 {
+            let active_validators: Vec<_> = self
+                .validator_manager
+                .get_active_validators()
+                .iter()
+                .map(|v| v.identity.clone())
+                .collect();
+            self.liveness_monitor.update_validator_set(&active_validators);
+        }
+
         Ok(())
     }
 

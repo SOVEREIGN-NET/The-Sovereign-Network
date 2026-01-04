@@ -115,7 +115,11 @@ fn test_storage_proof_creation_and_verification() -> Result<()> {
     let mut challenge_results = Vec::new();
 
     let blocks: Vec<Vec<u8>> = (0..4)
-        .map(|i| hash_blake3(&[b"block", &[i as u8]].concat()).to_vec())
+        .map(|i| {
+            let mut data = b"block".to_vec();
+            data.push(i as u8);
+            hash_blake3(&data).to_vec()
+        })
         .collect();
 
     for i in 0..3 {

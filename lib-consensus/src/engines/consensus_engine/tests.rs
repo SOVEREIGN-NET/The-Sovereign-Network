@@ -292,6 +292,8 @@
         engine
             .set_validator_keypair(local_keypair)
             .expect("Failed to set validator keypair");
+        engine.snapshot_validator_set(engine.current_round.height);
+        attach_storage_provider(&mut engine, validator_ids[0].clone()).await;
 
         // Create a proposal to vote on
         engine.current_round.proposer = Some(validator_ids[0].clone());
@@ -455,6 +457,7 @@
         engine.current_round.height = 2;
         engine.current_round.round = 1;
         engine.current_round.step = ConsensusStep::PreVote;
+        engine.snapshot_validator_set(2);
 
         // Create votes for different heights/rounds
         let vote_past_height = make_signed_vote(
@@ -532,6 +535,7 @@
         register_local_validator(&mut engine, validator1.clone(), &keypair, true).await;
 
         engine.current_round.step = ConsensusStep::PreVote;
+        engine.snapshot_validator_set(engine.current_round.height);
 
         // Vote 1: for proposal A
         let vote_a = make_signed_vote(
@@ -828,6 +832,7 @@
         // Set engine to PreVote step
         engine.current_round.step = ConsensusStep::PreVote;
         assert_eq!(engine.current_round.step, ConsensusStep::PreVote);
+        engine.snapshot_validator_set(engine.current_round.height);
 
         // Create a commit vote while in PreVote step
         let (validator_id, keypair) = validators[0].clone();
@@ -1150,6 +1155,7 @@
             ConsensusStep::Commit,
         ] {
             engine.current_round.step = step.clone();
+            engine.snapshot_validator_set(engine.current_round.height);
 
             // Create a Commit vote
             let vote = make_signed_vote(
@@ -1248,6 +1254,7 @@
         engine.current_round.height = 5;
         engine.current_round.round = 3;
         engine.current_round.step = ConsensusStep::PreCommit;
+        engine.snapshot_validator_set(5);
 
         let proposal_id = Hash::from_bytes(&[2u8; 32]);
 

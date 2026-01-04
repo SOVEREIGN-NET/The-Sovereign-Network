@@ -67,6 +67,7 @@ pub enum GovernanceParameterValue {
     MinStorage(u64),
     MaxValidators(u32),
     BlockTime(u64),
+    EpochLengthBlocks(u64),
     ProposeTimeout(u64),
     PrevoteTimeout(u64),
     PrecommitTimeout(u64),

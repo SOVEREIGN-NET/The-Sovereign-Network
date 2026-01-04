@@ -75,15 +75,12 @@ impl ConsensusEngine {
             return snapshot.contains(voter);
         }
 
-        tracing::debug!(
-            "Validator snapshot missing for height {}, falling back to active set",
+        tracing::warn!(
+            "Validator snapshot missing for height {}, rejecting vote for determinism",
             height
         );
 
-        self.validator_manager
-            .get_active_validators()
-            .iter()
-            .any(|v| v.identity == *voter)
+        false
     }
 
     /// Verify the cryptographic signature of a vote

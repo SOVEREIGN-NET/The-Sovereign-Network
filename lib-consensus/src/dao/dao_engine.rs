@@ -242,6 +242,9 @@ impl DaoEngine {
                 GovernanceParameterValue::MinStorage(value) => config.min_storage = *value,
                 GovernanceParameterValue::MaxValidators(value) => config.max_validators = *value,
                 GovernanceParameterValue::BlockTime(value) => config.block_time = *value,
+                GovernanceParameterValue::EpochLengthBlocks(value) => {
+                    config.epoch_length_blocks = *value;
+                }
                 GovernanceParameterValue::ProposeTimeout(value) => config.propose_timeout = *value,
                 GovernanceParameterValue::PrevoteTimeout(value) => config.prevote_timeout = *value,
                 GovernanceParameterValue::PrecommitTimeout(value) => config.precommit_timeout = *value,
@@ -288,6 +291,13 @@ impl DaoEngine {
                 GovernanceParameterValue::BlockTime(value) => {
                     if *value == 0 {
                         return Err(anyhow::anyhow!("Block time must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::EpochLengthBlocks(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!(
+                            "Epoch length blocks must be greater than zero"
+                        ));
                     }
                 }
                 GovernanceParameterValue::ProposeTimeout(value)

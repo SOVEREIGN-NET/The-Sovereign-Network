@@ -1505,6 +1505,7 @@ pub async fn initialize_consensus_integration(
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB minimum storage
         max_validators: 100,
         block_time: 10, // 10 second blocks
+        epoch_length_blocks: 100,
         propose_timeout: 3000,
         prevote_timeout: 1000,
         precommit_timeout: 1000,

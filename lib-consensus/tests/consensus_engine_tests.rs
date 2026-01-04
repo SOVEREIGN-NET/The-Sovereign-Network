@@ -19,6 +19,7 @@ fn create_test_config() -> ConsensusConfig {
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 10,
         block_time: 1, // Fast for testing
+        epoch_length_blocks: 100,
         propose_timeout: 100,
         prevote_timeout: 50,
         precommit_timeout: 50,

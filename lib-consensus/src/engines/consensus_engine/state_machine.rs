@@ -105,25 +105,14 @@ impl ConsensusEngine {
             ConsensusEvent::ValidatorJoin { identity, stake } => {
                 self.handle_validator_registration(identity.clone(), stake)
                     .await?;
-                // Update liveness monitor with new validator set
-                let active_validators: Vec<_> = self.validator_manager
-                    .get_active_validators()
-                    .iter()
-                    .map(|v| v.identity.clone())
-                    .collect();
-                self.liveness_monitor.update_validator_set(&active_validators);
                 Ok(vec![ConsensusEvent::ValidatorRegistered { identity }])
             }
             ConsensusEvent::ValidatorLeave { identity } => {
-                // Remove validator and update liveness monitor
-                let _ = self.validator_manager.remove_validator(&identity);
-                let active_validators: Vec<_> = self.validator_manager
-                    .get_active_validators()
-                    .iter()
-                    .map(|v| v.identity.clone())
-                    .collect();
-                self.liveness_monitor.update_validator_set(&active_validators);
-                tracing::info!("Validator {} left consensus", identity);
+                self.queue_validator_removal(identity.clone())?;
+                tracing::info!(
+                    "Validator {} scheduled for removal at next epoch boundary",
+                    identity
+                );
                 Ok(vec![])
             }
             _ => {
@@ -135,6 +124,8 @@ impl ConsensusEngine {
 
     /// Prepare for a consensus round (internal method)
     async fn prepare_consensus_round(&mut self, height: u64) -> ConsensusResult<()> {
+        self.chain_started = true;
+        self.apply_epoch_boundary_changes(height)?;
         if !self.validator_manager.has_sufficient_validators() {
             return Err(ConsensusError::ValidatorError(
                 "Insufficient validators for consensus".to_string(),
@@ -184,6 +175,9 @@ impl ConsensusEngine {
         }
 
         self.advance_to_next_round();
+        self.chain_started = true;
+        self.apply_epoch_boundary_changes(self.current_round.height)?;
+        self.snapshot_validator_set(self.current_round.height);
 
         // Select proposer for this round
         let proposer = self
@@ -227,7 +221,6 @@ impl ConsensusEngine {
         self.current_round.timed_out = false;
         self.current_round.locked_proposal = None;
         self.current_round.valid_proposal = None;
-        self.snapshot_validator_set(self.current_round.height);
     }
 
     /// Run the propose step
