@@ -32,8 +32,7 @@ pub fn derive_node_id(did: &str, device_name: &str) -> Result<NodeId> {
 
 /// Resolve device name: env override -> provided -> hostname fallback.
 pub fn resolve_device_name(provided: Option<&str>) -> Result<String> {
-    let sys = System::new_all();
-    resolve_device_name_with_host(provided, sys.host_name().as_deref())
+    resolve_device_name_with_host(provided, System::host_name().as_deref())
 }
 
 pub fn set_runtime_node_identity(ctx: RuntimeNodeIdentity) -> Result<()> {
