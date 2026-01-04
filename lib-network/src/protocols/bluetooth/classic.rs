@@ -1604,10 +1604,11 @@ impl BluetoothClassicProtocol {
             
             info!(" Windows: Connected to {} via RFCOMM", device_address);
             
-            // Track connection
+            // Track connection without awaiting to keep WinRT types out of the Send future.
+            let peer_address = device_address.to_string();
             let connection = RfcommConnection {
-                peer_id: device_address.to_string(),
-                peer_address: device_address.to_string(),
+                peer_id: peer_address.clone(),
+                peer_address: peer_address.clone(),
                 connected_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -1620,14 +1621,21 @@ impl BluetoothClassicProtocol {
                     .as_secs(),
                 is_outgoing: true,
             };
-            
-            // Update active connections using async write to avoid blocking the runtime
-            self.active_connections
-                .write()
-                .await
-                .insert(device_address.to_string(), connection);
 
-            Ok(RfcommStream::from_windows_socket(socket, reader, writer, device_address.to_string()))
+            match self.active_connections.try_write() {
+                Ok(mut connections) => {
+                    connections.insert(peer_address.clone(), connection);
+                }
+                Err(_) => {
+                    let connections = self.active_connections.clone();
+                    let peer = peer_address.clone();
+                    tokio::task::spawn(async move {
+                        connections.write().await.insert(peer, connection);
+                    });
+                }
+            }
+
+            Ok(RfcommStream::from_windows_socket(socket, reader, writer, peer_address))
         }
         
         #[cfg(not(feature = "windows-gatt"))]
