@@ -263,6 +263,18 @@ pub struct DaoEngine {
 - Calculates total voting power from components
 - Returns: Total voting power
 
+**`encode_execution_params(params: &DaoExecutionParams) -> Result<Vec<u8>>`**
+- Encodes execution parameters for on-chain proposal submission
+
+**`decode_execution_params(params: &[u8]) -> Result<DaoExecutionParams>`**
+- Decodes execution parameters from on-chain proposal data
+
+**`apply_execution_params(config: &mut ConsensusConfig, params: &DaoExecutionParams) -> Result<()>`**
+- Applies governance parameter updates to consensus configuration
+
+**`apply_governance_update_from_proposal(proposal: &DaoProposal, config: &mut ConsensusConfig) -> Result<()>`**
+- Applies governance parameter update proposal parameters to consensus configuration
+
 **`process_expired_proposals() -> Result<()>`**
 - Processes expired proposals (deprecated - use blockchain methods)
 
@@ -287,10 +299,45 @@ pub struct DaoProposal {
     pub vote_tally: DaoVoteTally,
     pub created_at: u64,
     pub created_at_height: u64,
-    pub execution_params: Option<DaoExecutionParams>,
+    pub execution_params: Option<Vec<u8>>,
     pub ubi_impact: Option<UbiImpact>,
     pub economic_impact: Option<EconomicImpact>,
     pub privacy_level: PrivacyLevel,
+}
+```
+
+### DaoExecutionParams
+
+Execution parameters encoded into DAO proposals (bincode).
+
+```rust
+pub struct DaoExecutionParams {
+    pub action: DaoExecutionAction,
+}
+
+pub enum DaoExecutionAction {
+    GovernanceParameterUpdate(GovernanceParameterUpdate),
+}
+
+pub struct GovernanceParameterUpdate {
+    pub updates: Vec<GovernanceParameterValue>,
+}
+
+pub enum GovernanceParameterValue {
+    MinStake(u64),
+    MinStorage(u64),
+    MaxValidators(u32),
+    BlockTime(u64),
+    ProposeTimeout(u64),
+    PrevoteTimeout(u64),
+    PrecommitTimeout(u64),
+    MaxTransactionsPerBlock(u32),
+    MaxDifficulty(u64),
+    TargetDifficulty(u64),
+    ByzantineThreshold(f64),
+    SlashDoubleSign(u8),
+    SlashLiveness(u8),
+    DevelopmentMode(bool),
 }
 ```
 

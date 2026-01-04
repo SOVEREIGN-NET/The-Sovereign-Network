@@ -41,6 +41,44 @@ pub struct DaoProposal {
     pub privacy_level: PrivacyLevel,
 }
 
+/// DAO execution parameters for proposal application
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaoExecutionParams {
+    pub action: DaoExecutionAction,
+}
+
+/// Execution action for a DAO proposal
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DaoExecutionAction {
+    /// Governance parameter update
+    GovernanceParameterUpdate(GovernanceParameterUpdate),
+}
+
+/// Governance parameter update payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceParameterUpdate {
+    pub updates: Vec<GovernanceParameterValue>,
+}
+
+/// Supported governance parameter updates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GovernanceParameterValue {
+    MinStake(u64),
+    MinStorage(u64),
+    MaxValidators(u32),
+    BlockTime(u64),
+    ProposeTimeout(u64),
+    PrevoteTimeout(u64),
+    PrecommitTimeout(u64),
+    MaxTransactionsPerBlock(u32),
+    MaxDifficulty(u64),
+    TargetDifficulty(u64),
+    ByzantineThreshold(f64),
+    SlashDoubleSign(u8),
+    SlashLiveness(u8),
+    DevelopmentMode(bool),
+}
+
 /// Types of DAO proposals
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DaoProposalType {

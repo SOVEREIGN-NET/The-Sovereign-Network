@@ -4,14 +4,16 @@
 //! The blockchain is now the source of truth for proposals, votes, and treasury state.
 
 use crate::dao::{
-    DaoProposal, DaoProposalStatus, DaoProposalType, DaoTreasury, DaoVote, DaoVoteChoice,
-    DaoVoteTally, PrivacyLevel,
+    DaoExecutionAction, DaoExecutionParams, DaoProposal, DaoProposalStatus, DaoProposalType,
+    DaoTreasury, DaoVote, DaoVoteChoice, DaoVoteTally, GovernanceParameterUpdate,
+    GovernanceParameterValue, PrivacyLevel,
 };
 use anyhow::Result;
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::types::ConsensusConfig;
 
 /// DAO governance engine (blockchain-backed)
 #[derive(Debug, Clone)]
@@ -199,6 +201,169 @@ impl DaoEngine {
         );
 
         Ok(vote_id)
+    }
+
+    /// Decode execution parameters from proposal bytes
+    pub fn decode_execution_params(&self, params: &[u8]) -> Result<DaoExecutionParams> {
+        bincode::deserialize(params)
+            .map_err(|e| anyhow::anyhow!("Failed to decode execution params: {}", e))
+    }
+
+    /// Encode execution parameters for proposal submission
+    pub fn encode_execution_params(&self, params: &DaoExecutionParams) -> Result<Vec<u8>> {
+        bincode::serialize(params)
+            .map_err(|e| anyhow::anyhow!("Failed to encode execution params: {}", e))
+    }
+
+    /// Apply execution parameters to consensus configuration
+    pub fn apply_execution_params(
+        &self,
+        config: &mut ConsensusConfig,
+        params: &DaoExecutionParams,
+    ) -> Result<()> {
+        match &params.action {
+            DaoExecutionAction::GovernanceParameterUpdate(update) => {
+                self.apply_governance_update(config, update)
+            }
+        }
+    }
+
+    /// Apply a governance parameter update to consensus configuration
+    pub fn apply_governance_update(
+        &self,
+        config: &mut ConsensusConfig,
+        update: &GovernanceParameterUpdate,
+    ) -> Result<()> {
+        self.validate_governance_update(update)?;
+
+        for param in &update.updates {
+            match param {
+                GovernanceParameterValue::MinStake(value) => config.min_stake = *value,
+                GovernanceParameterValue::MinStorage(value) => config.min_storage = *value,
+                GovernanceParameterValue::MaxValidators(value) => config.max_validators = *value,
+                GovernanceParameterValue::BlockTime(value) => config.block_time = *value,
+                GovernanceParameterValue::ProposeTimeout(value) => config.propose_timeout = *value,
+                GovernanceParameterValue::PrevoteTimeout(value) => config.prevote_timeout = *value,
+                GovernanceParameterValue::PrecommitTimeout(value) => config.precommit_timeout = *value,
+                GovernanceParameterValue::MaxTransactionsPerBlock(value) => {
+                    config.max_transactions_per_block = *value;
+                }
+                GovernanceParameterValue::MaxDifficulty(value) => config.max_difficulty = *value,
+                GovernanceParameterValue::TargetDifficulty(value) => config.target_difficulty = *value,
+                GovernanceParameterValue::ByzantineThreshold(value) => {
+                    config.byzantine_threshold = *value;
+                }
+                GovernanceParameterValue::SlashDoubleSign(value) => config.slash_double_sign = *value,
+                GovernanceParameterValue::SlashLiveness(value) => config.slash_liveness = *value,
+                GovernanceParameterValue::DevelopmentMode(value) => config.development_mode = *value,
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate governance parameter updates before application
+    pub fn validate_governance_update(&self, update: &GovernanceParameterUpdate) -> Result<()> {
+        if update.updates.is_empty() {
+            return Err(anyhow::anyhow!("Governance update must include at least one change"));
+        }
+
+        for param in &update.updates {
+            match param {
+                GovernanceParameterValue::MinStake(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Min stake must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::MinStorage(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Min storage must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::MaxValidators(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Max validators must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::BlockTime(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Block time must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::ProposeTimeout(value)
+                | GovernanceParameterValue::PrevoteTimeout(value)
+                | GovernanceParameterValue::PrecommitTimeout(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Timeouts must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::MaxTransactionsPerBlock(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!(
+                            "Max transactions per block must be greater than zero"
+                        ));
+                    }
+                }
+                GovernanceParameterValue::MaxDifficulty(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Max difficulty must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::TargetDifficulty(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Target difficulty must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::ByzantineThreshold(value) => {
+                    if *value <= 0.0 || *value > 0.5 {
+                        return Err(anyhow::anyhow!(
+                            "Byzantine threshold must be in (0.0, 0.5]"
+                        ));
+                    }
+                }
+                GovernanceParameterValue::SlashDoubleSign(value)
+                | GovernanceParameterValue::SlashLiveness(value) => {
+                    if *value > 100 {
+                        return Err(anyhow::anyhow!("Slashing percentage must be <= 100"));
+                    }
+                }
+                GovernanceParameterValue::DevelopmentMode(_) => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract and apply governance updates from a proposal
+    pub fn apply_governance_update_from_proposal(
+        &self,
+        proposal: &DaoProposal,
+        config: &mut ConsensusConfig,
+    ) -> Result<()> {
+        match proposal.proposal_type {
+            DaoProposalType::ProtocolUpgrade
+            | DaoProposalType::EconomicParams
+            | DaoProposalType::GovernanceRules
+            | DaoProposalType::FeeStructure
+            | DaoProposalType::Emergency => {}
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Proposal type does not support governance parameter updates"
+                ));
+            }
+        }
+
+        let params = proposal
+            .execution_params
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Proposal missing execution parameters"))?;
+        let decoded = self.decode_execution_params(params)?;
+
+        match decoded.action {
+            DaoExecutionAction::GovernanceParameterUpdate(_) => {
+                self.apply_execution_params(config, &decoded)
+            }
+        }
     }
 
     /// Calculate DAO voting power for a user
