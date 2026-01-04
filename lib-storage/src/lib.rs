@@ -37,8 +37,6 @@ pub mod integrity;
 
 // Multi-level caching system (Phase F - NEW)
 pub mod cache;
-#[cfg(feature = "network-integration")]
-pub mod network_integration;
 
 // Storage optimization (Phase F - NEW)
 pub mod optimization;
@@ -69,13 +67,6 @@ pub use erasure::*;
 pub use proofs::{StorageProof, RetrievalProof, generate_storage_proof, generate_retrieval_proof};
 pub use integrity::{IntegrityManager, IntegrityMetadata, IntegrityStatus, ChecksumAlgorithm};
 pub use cache::{CacheManager, CacheEntry, EvictionPolicy, CacheStats};
-#[cfg(feature = "network-integration")]
-pub use network_integration::{
-    NetworkOutputHandler,
-    NoopNetworkOutputHandler,
-    process_network_outputs,
-    process_network_outputs_with,
-};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
