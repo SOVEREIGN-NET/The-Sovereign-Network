@@ -7,6 +7,7 @@ use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use lib_proofs::{ZkProof, ZkProofSystem, ZkTransactionProof};
 
+#[cfg(any(test, feature = "dev-insecure"))]
 const VOTE_DOMAIN_TAG: &[u8] = b"ZHTP/CONSENSUS/VOTE/v1\0";
 
 /// ZK integration for consensus system
@@ -23,44 +24,80 @@ impl ZkConsensusIntegration {
         Ok(Self { zk_system })
     }
 
-    /// Generate ZK-DID proof for validator identity
-    pub async fn generate_zk_did_proof(&self, validator_id: &IdentityId) -> Result<Vec<u8>> {
-        // Create identity proof without revealing private key
-        let identity_data = validator_id.as_bytes();
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
+    fn derive_identity_inputs(validator_id: &IdentityId) -> Result<(u64, u64, u64, u64, u64, u64, u64)> {
+        let identity_hash = hash_blake3(validator_id.as_bytes());
 
-        // Generate simplified identity proof (in production would use identity verification)
-        let identity_secret: [u8; 8] = hash_blake3(identity_data)[..8]
-            .try_into()
-            .map_err(|_| ConsensusError::ZkError("Failed to convert hash".to_string()))?;
+        let identity_secret = u64::from_le_bytes(
+            identity_hash[0..8]
+                .try_into()
+                .map_err(|_| ConsensusError::ZkError("Invalid identity secret bytes".to_string()))?,
+        );
+        let age_seed = u64::from_le_bytes(
+            identity_hash[8..16]
+                .try_into()
+                .map_err(|_| ConsensusError::ZkError("Invalid age seed bytes".to_string()))?,
+        );
+        let jurisdiction_hash = u64::from_le_bytes(
+            identity_hash[16..24]
+                .try_into()
+                .map_err(|_| ConsensusError::ZkError("Invalid jurisdiction bytes".to_string()))?,
+        );
+        let credential_hash = u64::from_le_bytes(
+            identity_hash[24..32]
+                .try_into()
+                .map_err(|_| ConsensusError::ZkError("Invalid credential bytes".to_string()))?,
+        );
 
-        // Use simplified identity proof parameters - TODO: implement ZK proofs
-        let age = 25; // Default age for testing
-        let jurisdiction_hash = 12345; // Default jurisdiction
-        let credential_hash = 67890; // Default credential
         let min_age = 18;
-        let required_jurisdiction = 12345;
+        let age = min_age + (age_seed % 83);
+        let required_jurisdiction = jurisdiction_hash;
+        let verification_level = 1;
 
-        // Generate proof of identity ownership using Plonky2
-        let identity_secret_u64 = u64::from_le_bytes(identity_secret);
-        let zk_proof = self.zk_system.prove_identity(
-            identity_secret_u64,
+        Ok((
+            identity_secret,
             age,
             jurisdiction_hash,
             credential_hash,
             min_age,
             required_jurisdiction,
-            1, // default verification level
+            verification_level,
+        ))
+    }
+
+    fn serialize_zk_proof(proof: &ZkProof) -> Result<Vec<u8>> {
+        bincode::serialize(proof)
+            .map_err(|e| ConsensusError::ZkError(format!("Failed to serialize ZK proof: {e}")).into())
+    }
+
+    fn deserialize_zk_proof(data: &[u8]) -> Result<ZkProof> {
+        bincode::deserialize(data)
+            .map_err(|e| ConsensusError::ZkError(format!("Failed to deserialize ZK proof: {e}")).into())
+    }
+
+    /// Generate ZK-DID proof for validator identity
+    pub async fn generate_zk_did_proof(&self, validator_id: &IdentityId) -> Result<Vec<u8>> {
+        let (
+            identity_secret,
+            age,
+            jurisdiction_hash,
+            credential_hash,
+            min_age,
+            required_jurisdiction,
+            verification_level,
+        ) = Self::derive_identity_inputs(validator_id)?;
+
+        let zk_proof = self.zk_system.prove_identity(
+            identity_secret,
+            age,
+            jurisdiction_hash,
+            credential_hash,
+            min_age,
+            required_jurisdiction,
+            verification_level,
         )?;
 
-        // Return the proof data as serialized bytes
-        let mut proof_bytes = Vec::new();
-        proof_bytes.extend_from_slice(&zk_proof.proof);
-        proof_bytes.extend_from_slice(&timestamp.to_le_bytes());
-
-        Ok(proof_bytes)
+        let proof = ZkProof::from_plonky2(zk_proof);
+        Self::serialize_zk_proof(&proof)
     }
 
     /// Verify ZK-DID proof for validator identity
@@ -73,26 +110,42 @@ impl ZkConsensusIntegration {
             return Ok(false);
         }
 
-        // Extract timestamp from proof data
-        if proof_data.len() < 8 {
+        let proof = match Self::deserialize_zk_proof(proof_data) {
+            Ok(proof) => proof,
+            Err(_) => return Ok(false),
+        };
+
+        let verified = match proof.verify() {
+            Ok(valid) => valid,
+            Err(_) => false,
+        };
+
+        if !verified {
             return Ok(false);
         }
 
-        let proof_bytes = &proof_data[..proof_data.len() - 8];
-        let timestamp_bytes = &proof_data[proof_data.len() - 8..];
-        let _timestamp = u64::from_le_bytes(timestamp_bytes.try_into().unwrap());
+        let (expected_identity_secret, _, _, _, _, _, _) =
+            Self::derive_identity_inputs(validator_id)?;
 
-        // For testing with generated proofs, accept valid structure
-        if proof_bytes.len() >= 8 {
-            // In production, would verify the actual ZK proof
-            let expected_identity_hash = hash_blake3(validator_id.as_bytes());
-            let proof_hash = hash_blake3(proof_bytes);
+        let Some(plonky2_proof) = proof.plonky2_proof.as_ref() else {
+            return Ok(false);
+        };
 
-            // Simple verification based on hash relationships
-            Ok(proof_hash[0] == expected_identity_hash[0])
-        } else {
-            Ok(false)
+        if plonky2_proof.proof_system != "ZHTP-Optimized-Identity" {
+            return Ok(false);
         }
+
+        if plonky2_proof.proof.len() < 8 {
+            return Ok(false);
+        }
+
+        let identity_secret = u64::from_le_bytes(
+            plonky2_proof.proof[0..8]
+                .try_into()
+                .map_err(|_| ConsensusError::ZkError("Invalid identity proof bytes".to_string()))?,
+        );
+
+        Ok(identity_secret == expected_identity_secret)
     }
 
     /// Create enhanced consensus proof with ZK-DID integration
@@ -121,29 +174,39 @@ impl ZkConsensusIntegration {
 
     /// Generate ZK proof of voting eligibility
     pub async fn generate_voting_eligibility_proof(&self, voter: &IdentityId) -> Result<ZkProof> {
-        // Create basic eligibility proof
-        let voter_data = voter.as_bytes();
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
+        let (
+            identity_secret,
+            age,
+            jurisdiction_hash,
+            credential_hash,
+            min_age,
+            required_jurisdiction,
+            verification_level,
+        ) = Self::derive_identity_inputs(voter)?;
 
-        let proof_data = hash_blake3(&[voter_data, &timestamp.to_le_bytes()].concat());
+        let plonky2_proof = self.zk_system.prove_identity(
+            identity_secret,
+            age,
+            jurisdiction_hash,
+            credential_hash,
+            min_age,
+            required_jurisdiction,
+            verification_level,
+        )?;
 
-        Ok(ZkProof {
-            proof_system: "Plonky2".to_string(),
-            proof_data: proof_data.to_vec(),
-            public_inputs: vec![],
-            verification_key: vec![],
-            plonky2_proof: None,
-            proof: proof_data.to_vec(),
-        })
+        Ok(ZkProof::from_plonky2(plonky2_proof))
     }
 
     /// Verify voting eligibility without revealing voter identity
     pub async fn verify_voting_eligibility(&self, proof: &ZkProof) -> Result<bool> {
-        // Verify that the voter is eligible without revealing their identity
-        // In production, this would verify citizenship/identity proofs
-        Ok(!proof.proof.is_empty() && proof.proof.len() >= 32)
+        if proof.is_empty() {
+            return Ok(false);
+        }
+
+        match proof.verify() {
+            Ok(valid) => Ok(valid),
+            Err(_) => Ok(false),
+        }
     }
 
     /// Create ZK proof of useful work without revealing work details
@@ -153,17 +216,7 @@ impl ZkConsensusIntegration {
         node_id: &[u8; 32],
     ) -> Result<ZkProof> {
         // Create ZK proof that work was performed without revealing specific work details
-        let work_commitment = hash_blake3(
-            &[
-                work_data,
-                node_id,
-                &std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)?
-                    .as_secs()
-                    .to_le_bytes(),
-            ]
-            .concat(),
-        );
+        let work_commitment = hash_blake3(&[work_data, node_id].concat());
 
         // Generate ZK proof using Plonky2 range proof
         let work_value = u64::from_le_bytes(work_commitment[..8].try_into().unwrap());
@@ -173,23 +226,31 @@ impl ZkConsensusIntegration {
             .zk_system
             .prove_range(work_value, secret, 1, u64::MAX)?;
 
-        Ok(ZkProof {
-            proof: zk_proof.proof.clone(),
-            plonky2_proof: Some(zk_proof),
-            proof_data: vec![],
-            proof_system: "Plonky2".to_string(),
-            public_inputs: vec![],
-            verification_key: vec![],
-        })
+        Ok(ZkProof::from_plonky2(zk_proof))
     }
 
     /// Verify work proof without revealing work details
-    pub async fn verify_work_proof_zk(&self, proof: &ZkProof, _commitment: &[u8; 8]) -> Result<bool> {
-        // Verify the ZK proof of work using range proof verification
-        if let Some(plonky2_proof) = &proof.plonky2_proof {
-            return self.zk_system.verify_range(plonky2_proof);
+    pub async fn verify_work_proof_zk(&self, proof: &ZkProof, commitment: &[u8; 8]) -> Result<bool> {
+        let Some(plonky2_proof) = &proof.plonky2_proof else {
+            return Ok(false);
+        };
+
+        if !self.zk_system.verify_range(plonky2_proof)? {
+            return Ok(false);
         }
-        Ok(false)
+
+        if plonky2_proof.proof.len() < 8 {
+            return Ok(false);
+        }
+
+        let proof_value = u64::from_le_bytes(
+            plonky2_proof.proof[0..8]
+                .try_into()
+                .map_err(|_| ConsensusError::ZkError("Invalid work proof bytes".to_string()))?,
+        );
+        let expected_value = u64::from_le_bytes(*commitment);
+
+        Ok(proof_value == expected_value)
     }
 
     /// Enhanced proposal creation with ZK-DID integration
@@ -280,33 +341,72 @@ impl ZkConsensusIntegration {
             return Ok(false);
         }
 
-        // Verify block data integrity using ZK proofs
-        if block_data.len() >= 8 {
-            let block_commitment =
-                u64::from_le_bytes(hash_blake3(block_data)[..8].try_into().unwrap());
-            let secret = u64::from_le_bytes(
-                hash_blake3(&hash_blake3(block_data))[..8]
-                    .try_into()
-                    .unwrap(),
-            );
+        let mut offset = 0usize;
+        let mut chunk_count = 0u64;
 
-            // Create a range proof that the block structure is valid
-            let zk_proof = self
-                .zk_system
-                .prove_range(block_commitment, secret, 1, u64::MAX)?;
+        while offset + 4 <= block_data.len() {
+            let tx_len = u32::from_le_bytes([
+                block_data[offset],
+                block_data[offset + 1],
+                block_data[offset + 2],
+                block_data[offset + 3],
+            ]) as usize;
+            offset += 4;
 
-            // Verify the proof
-            return self.zk_system.verify_range(&zk_proof);
+            if offset + tx_len > block_data.len() {
+                return Ok(false);
+            }
+
+            offset += tx_len;
+            chunk_count += 1;
         }
 
-        Ok(false)
+        if offset != block_data.len() {
+            return Ok(false);
+        }
+
+        let total_size = block_data.len() as u64;
+        let block_hash = hash_blake3(block_data);
+        let data_hash = u64::from_le_bytes(block_hash[0..8].try_into().unwrap());
+        let checksum = u64::from_le_bytes(block_hash[8..16].try_into().unwrap());
+        let owner_secret = u64::from_le_bytes(block_hash[16..24].try_into().unwrap());
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        let max_chunk_count = chunk_count.max(1);
+        let max_size = total_size.max(1);
+
+        let zk_proof = self.zk_system.prove_data_integrity(
+            data_hash,
+            chunk_count,
+            total_size,
+            checksum,
+            owner_secret,
+            timestamp,
+            max_chunk_count,
+            max_size,
+        )?;
+
+        if !self.zk_system.verify_data_integrity(&zk_proof)? {
+            return Ok(false);
+        }
+
+        if zk_proof.proof.len() < 24 {
+            return Ok(false);
+        }
+
+        let proof_hash = u64::from_le_bytes(zk_proof.proof[0..8].try_into().unwrap());
+        let proof_total_size = u64::from_le_bytes(zk_proof.proof[16..24].try_into().unwrap());
+
+        Ok(proof_hash == data_hash && proof_total_size == total_size)
     }
 
     /// Enhanced vote validation with ZK privacy (dev/test only)
     #[cfg(any(test, feature = "dev-insecure"))]
     pub async fn validate_vote_zk(&self, vote: &ConsensusVote) -> Result<bool> {
         // Verify voter signature using post-quantum cryptography
-        let vote_data = self.serialize_vote_for_zk_verification(vote)?;
+        let _vote_data = self.serialize_vote_for_zk_verification(vote)?;
 
         // For testing, skip signature validation if using test signature
         let signature_valid = if vote.signature.signature == vec![1, 2, 3] {
@@ -343,6 +443,7 @@ impl ZkConsensusIntegration {
     }
 
     /// Serialize vote data for ZK verification
+    #[cfg(any(test, feature = "dev-insecure"))]
     fn serialize_vote_for_zk_verification(&self, vote: &ConsensusVote) -> Result<Vec<u8>> {
         let mut data = Vec::new();
         data.extend_from_slice(VOTE_DOMAIN_TAG);

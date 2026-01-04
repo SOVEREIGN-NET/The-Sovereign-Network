@@ -398,7 +398,9 @@ impl ZhtpUnifiedServer {
         // MUST be created BEFORE register_api_handlers so Web4Handler can use it
         // Note: storage is injected here - zhtp is the composition root
         // Wrap storage in UnifiedStorageWrapper to implement the UnifiedStorage trait
-        let storage_wrapper = lib_storage::UnifiedStorageWrapper(storage.clone());
+        let storage_wrapper = crate::storage_network_integration::UnifiedStorageWrapper(
+            storage.clone(),
+        );
         let storage_trait: Arc<dyn lib_network::storage_stub::UnifiedStorage> = Arc::new(storage_wrapper);
         let domain_registry = Arc::new(
             DomainRegistry::new(storage_trait.clone()).await?

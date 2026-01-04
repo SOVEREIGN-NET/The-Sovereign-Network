@@ -636,7 +636,7 @@ impl HybridEngine {
         &self,
         validator: &Validator,
         stake_proof: &StakeProof,
-        storage_proof: &StorageProof,
+        storage_proof: &StorageCapacityAttestation,
     ) -> Result<f64> {
         // Calculate PoS score
         let stake_score = self.pos_engine.calculate_stake_score(validator, stake_proof)?;

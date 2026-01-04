@@ -21,6 +21,7 @@
 use async_trait::async_trait;
 use anyhow::Result;
 use crate::types::mesh_message::MeshMessageEnvelope;
+use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 
 // ============================================================================
 // Type Definitions (organized in sub-modules)
@@ -242,6 +243,7 @@ pub trait Protocol: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
 
     #[test]
     fn test_session_id_generation() {

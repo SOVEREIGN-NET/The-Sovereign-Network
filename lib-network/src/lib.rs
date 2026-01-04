@@ -35,6 +35,11 @@ pub use crate::peer_registry::{
     RegistryConfig, DEFAULT_MAX_PEERS, DEFAULT_PEER_TTL_SECS,
 };
 
+// Peer Reputation System (Byzantine fault handling - Gap 6)
+pub use crate::peer_reputation::{
+    PeerReputation, PeerReputationManager, ReputationEvent,
+};
+
 // Unified Handshake Protocol exports
 // NOTE: NodeIdentity is a lightweight version containing only public fields from ZhtpIdentity
 pub use lib_identity::{ZhtpIdentity, types::NodeId};
@@ -85,6 +90,7 @@ pub mod protocols;
 pub mod bootstrap;
 pub mod identity; // Unified peer identity system
 pub mod peer_registry; // Unified peer registry (single source of truth)
+pub mod peer_reputation; // Peer reputation system for Byzantine fault handling (Gap 6)
 pub mod client; // Authenticated QUIC client for control-plane operations
 pub mod handshake; // Unified Handshake Protocol (UHP)
 pub mod encryption; // Unified protocol encryption

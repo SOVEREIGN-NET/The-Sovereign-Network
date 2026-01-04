@@ -15,7 +15,6 @@ lib-types = { path = "../lib-types" }
 lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
-lib-network = { path = "../lib-network", optional = true }
 
 # Production Dependencies for Storage System
 tokio = { version = "1.0", features = ["full"] }
@@ -42,4 +41,3 @@ tokio-test = "0.4"
 [features]
 default = []
 testing = []
-network-integration = ["lib-network"]

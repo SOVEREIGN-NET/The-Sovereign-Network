@@ -3,6 +3,7 @@
 use crate::types::NetworkState;
 use anyhow::Result;
 use lib_crypto::hash_blake3;
+use lib_storage::proofs::StorageCapacityAttestation;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -277,8 +278,11 @@ impl NetworkState {
     }
 
     /// Get storage proofs for a node from the network
-    pub fn get_node_storage_proofs(&self, node_id: &[u8; 32]) -> Result<Vec<super::StorageProof>> {
-        use super::{StorageChallenge, StorageProof};
+    pub fn get_node_storage_proofs(
+        &self,
+        node_id: &[u8; 32],
+    ) -> Result<Vec<StorageCapacityAttestation>> {
+        use super::{ChallengeResult, StorageChallenge, VerificationResult};
         use lib_crypto::Hash;
 
         // Simulate realistic storage proofs based on network state
@@ -294,42 +298,46 @@ impl NetworkState {
             let num_challenges = (node_id[(i + 2) % 32] % 5) + 1; // 1-5 challenges
 
             for j in 0..num_challenges {
-                let challenge = StorageChallenge {
-                    id: Hash::from_bytes(&lib_crypto::hash_blake3(
-                        &[&node_id[..], &[i as u8, j]].concat(),
-                    )),
-                    content_hash: Hash::from_bytes(&lib_crypto::hash_blake3(
-                        &[b"content".to_vec(), vec![i as u8, j]].concat(),
-                    )),
-                    challenge: vec![i as u8, j, node_id[j as usize % 32]],
-                    response: vec![
-                        (i as u8)
-                            .wrapping_add(j)
-                            .wrapping_add(node_id[j as usize % 32]),
-                        j.wrapping_mul(2),
-                        node_id[(j as usize + 1) % 32],
+                let content_hash = Hash::from_bytes(&lib_crypto::hash_blake3(
+                    &[b"content".to_vec(), vec![i as u8, j]].concat(),
+                ));
+
+                let challenge = StorageChallenge::new_storage_challenge(
+                    content_hash.clone(),
+                    (j as usize) % 3,
+                    format!("validator-{}", i),
+                    3600,
+                );
+
+                let proof = lib_storage::proofs::generate_storage_proof(
+                    content_hash,
+                    &vec![
+                        hash_blake3(&[&node_id[..], &[i as u8, 0]].concat()).to_vec(),
+                        hash_blake3(&[&node_id[..], &[i as u8, 1]].concat()).to_vec(),
+                        hash_blake3(&[&node_id[..], &[i as u8, 2]].concat()).to_vec(),
                     ],
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        - (j as u64 * 3600), // Challenges from last few hours
-                };
-                challenges.push(challenge);
+                    challenge.nonce,
+                    challenge.block_index.unwrap_or(0),
+                    format!("validator-{}", i),
+                )?;
+
+                let result = VerificationResult::Valid;
+                challenges.push(ChallengeResult {
+                    challenge,
+                    proof,
+                    result,
+                });
             }
 
-            let proof = StorageProof {
-                validator: Hash::from_bytes(&lib_crypto::hash_blake3(
+            let attestation = StorageCapacityAttestation::new(
+                Hash::from_bytes(&lib_crypto::hash_blake3(
                     &[b"validator", &node_id[..], &[i as u8]].concat(),
                 )),
                 storage_capacity,
-                utilization: utilization as u64,
-                challenges_passed: challenges,
-                merkle_proof: vec![Hash::from_bytes(&lib_crypto::hash_blake3(
-                    &[b"merkle_root", &node_id[..], &[i as u8]].concat(),
-                ))],
-            };
-            proofs.push(proof);
+                utilization as u64,
+                challenges,
+            );
+            proofs.push(attestation);
         }
 
         Ok(proofs)

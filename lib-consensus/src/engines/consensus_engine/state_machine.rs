@@ -1,0 +1,1130 @@
+use super::*;
+use lib_crypto::hash_blake3;
+
+impl ConsensusEngine {
+    /// Process a single consensus event (pure component method)
+    /// This replaces the standalone start_consensus() loop pattern
+    #[allow(deprecated)]
+    pub async fn handle_consensus_event(
+        &mut self,
+        event: ConsensusEvent,
+    ) -> ConsensusResult<Vec<ConsensusEvent>> {
+        match event {
+            ConsensusEvent::StartRound { height, trigger } => {
+                tracing::info!(
+                    " Starting consensus round {} (trigger: {})",
+                    height,
+                    trigger
+                );
+
+                // Log different trigger types for monitoring and debugging
+                match trigger.as_str() {
+                    "timeout" => tracing::warn!(
+                        "⏰ Consensus round triggered by timeout - potential network delays"
+                    ),
+                    "new_transaction" => {
+                        tracing::debug!("💳 New transaction triggered consensus round")
+                    }
+                    "validator_join" => {
+                        tracing::info!("New validator joining triggered consensus round")
+                    }
+                    "validator_leave" => {
+                        tracing::warn!(" Validator leaving triggered consensus round")
+                    }
+                    "force_restart" => tracing::warn!(" Manual consensus restart triggered"),
+                    _ => tracing::debug!("Custom trigger: {}", trigger),
+                }
+
+                self.prepare_consensus_round(height).await?;
+                Ok(vec![ConsensusEvent::RoundPrepared { height }])
+            }
+            ConsensusEvent::NewBlock {
+                height,
+                previous_hash,
+            } => {
+                tracing::info!(
+                    "🧱 Processing new block at height {} with previous hash: {}",
+                    height,
+                    previous_hash
+                );
+
+                // Validate blockchain continuity by checking previous hash
+                if let Err(e) = self.validate_previous_hash(height, &previous_hash).await {
+                    tracing::error!("Previous hash validation failed: {}", e);
+                    return Ok(vec![ConsensusEvent::RoundFailed {
+                        height,
+                        error: format!("Previous hash validation failed: {}", e),
+                    }]);
+                }
+
+                match self.run_consensus_round().await {
+                    Ok(_) => {
+                        let mut events = vec![ConsensusEvent::RoundCompleted { height }];
+
+                        // Process DAO proposals
+                        if let Err(e) = self.dao_engine.process_expired_proposals().await {
+                            tracing::warn!("DAO processing error: {}", e);
+                            events.push(ConsensusEvent::DaoError {
+                                error: e.to_string(),
+                            });
+                        }
+
+                        // Check for Byzantine faults
+                        if let Err(e) = self
+                            .byzantine_detector
+                            .detect_faults(&self.validator_manager)
+                        {
+                            tracing::warn!("Byzantine fault detection error: {}", e);
+                            events.push(ConsensusEvent::ByzantineFault {
+                                error: e.to_string(),
+                            });
+                        }
+
+                        // Calculate and distribute rewards
+                        if let Err(e) = self.reward_calculator.calculate_round_rewards(
+                            &self.validator_manager,
+                            self.current_round.height,
+                        ) {
+                            tracing::warn!("Reward calculation error: {}", e);
+                            events.push(ConsensusEvent::RewardError {
+                                error: e.to_string(),
+                            });
+                        }
+
+                        Ok(events)
+                    }
+                    Err(e) => {
+                        tracing::error!("Consensus round failed: {}", e);
+                        Ok(vec![ConsensusEvent::RoundFailed {
+                            height,
+                            error: e.to_string(),
+                        }])
+                    }
+                }
+            }
+            ConsensusEvent::ValidatorJoin { identity, stake } => {
+                self.handle_validator_registration(identity.clone(), stake)
+                    .await?;
+                Ok(vec![ConsensusEvent::ValidatorRegistered { identity }])
+            }
+            ConsensusEvent::ValidatorLeave { identity } => {
+                self.queue_validator_removal(identity.clone())?;
+                tracing::info!(
+                    "Validator {} scheduled for removal at next epoch boundary",
+                    identity
+                );
+                Ok(vec![])
+            }
+            _ => {
+                tracing::debug!("Unhandled consensus event: {:?}", event);
+                Ok(vec![])
+            }
+        }
+    }
+
+    /// Prepare for a consensus round (internal method)
+    async fn prepare_consensus_round(&mut self, height: u64) -> ConsensusResult<()> {
+        self.chain_started = true;
+        self.apply_epoch_boundary_changes(height)?;
+        if !self.validator_manager.has_sufficient_validators() {
+            return Err(ConsensusError::ValidatorError(
+                "Insufficient validators for consensus".to_string(),
+            ));
+        }
+
+        tracing::info!(" Preparing ZHTP consensus for height {}", height);
+        self.current_round.height = height;
+        self.snapshot_validator_set(height);
+        Ok(())
+    }
+
+    /// Handle validator registration event
+    async fn handle_validator_registration(
+        &mut self,
+        identity: lib_identity::IdentityId,
+        stake: u64,
+    ) -> ConsensusResult<()> {
+        self.register_validator(
+            identity.clone(),
+            stake,
+            1024 * 1024 * 1024, // Default storage capacity
+            vec![0u8; 32],      // Default consensus key
+            5,                  // Default commission rate
+            false,              // Not genesis
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Run a single consensus round (synchronous driver)
+    ///
+    /// **Invariant**: This method must NOT be used alongside `run_consensus_loop()`.
+    /// The consensus engine should have a single active driver to avoid conflicting
+    /// state transitions. This synchronous driver is intended for integrations that
+    /// do not run the event loop.
+    async fn run_consensus_round(&mut self) -> ConsensusResult<()> {
+        // **CRITICAL**: This method conflicts with run_consensus_loop()
+        // Both are consensus drivers and cannot coexist.
+        // Reject if message receiver has been set (indicating run_consensus_loop() is intended).
+        if self.message_rx.is_some() {
+            return Err(ConsensusError::ValidatorError(
+                "Cannot use run_consensus_round() with run_consensus_loop(). \
+                 These are incompatible consensus drivers. Use run_consensus_loop() instead."
+                    .to_string(),
+            ));
+        }
+
+        self.advance_to_next_round();
+        self.chain_started = true;
+        self.apply_epoch_boundary_changes(self.current_round.height)?;
+        self.snapshot_validator_set(self.current_round.height);
+
+        // Select proposer for this round
+        let proposer = self
+            .validator_manager
+            .select_proposer(self.current_round.height, self.current_round.round)
+            .ok_or_else(|| ConsensusError::ValidatorError("No proposer available".to_string()))?;
+
+        self.current_round.proposer = Some(proposer.identity.clone());
+
+        tracing::info!(
+            "Starting consensus round {} at height {} with proposer {:?}",
+            self.current_round.round,
+            self.current_round.height,
+            proposer.identity
+        );
+
+        // Run consensus steps
+        self.run_propose_step().await?;
+        self.run_prevote_step().await?;
+        self.run_precommit_step().await?;
+        self.run_commit_step().await?;
+
+        // Archive completed round
+        self.archive_completed_round();
+
+        Ok(())
+    }
+
+    /// Advance to the next consensus round
+    fn advance_to_next_round(&mut self) {
+        self.current_round.height += 1;
+        self.current_round.round = 0;
+        self.current_round.step = ConsensusStep::Propose;
+        self.current_round.start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        self.current_round.proposer = None;
+        self.current_round.proposals.clear();
+        self.current_round.votes.clear();
+        self.current_round.timed_out = false;
+        self.current_round.locked_proposal = None;
+        self.current_round.valid_proposal = None;
+    }
+
+    /// Run the propose step
+    pub(super) async fn run_propose_step(&mut self) -> ConsensusResult<()> {
+        self.current_round.step = ConsensusStep::Propose;
+
+        // If we are the proposer, create a proposal
+        if let Some(ref validator_id) = self.validator_identity {
+            if Some(validator_id) == self.current_round.proposer.as_ref() {
+                let proposal = self.create_proposal().await?;
+                self.current_round.proposals.push(proposal.id.clone());
+                self.pending_proposals.push_back(proposal.clone());
+
+                // Invariant CE-ENG-3: Broadcast after state transition (proposal now in state)
+                // Create canonical ValidatorMessage from already-formed proposal
+                let msg = ValidatorMessage::Propose {
+                    proposal,
+                };
+
+                // Invariant CE-ENG-5: Pass validator set explicitly, never query network
+                let validator_ids = self.get_active_validator_ids();
+
+                // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
+                // Log failures for observability without affecting consensus correctness
+                if let Err(e) = self.broadcaster
+                    .broadcast_to_validators(msg, &validator_ids)
+                    .await
+                {
+                    tracing::debug!(
+                        error = ?e,
+                        height = self.current_round.height,
+                        "Failed to broadcast proposal to validators (continuing per CE-ENG-4)"
+                    );
+                }
+            }
+        }
+
+        // Wait for proposals with timeout
+        self.wait_for_step_timeout(self.config.propose_timeout)
+            .await;
+
+        Ok(())
+    }
+
+    /// Run the prevote step
+    pub(super) async fn run_prevote_step(&mut self) -> ConsensusResult<()> {
+        self.current_round.step = ConsensusStep::PreVote;
+
+        // Cast prevote
+        if let Some(proposal_id) = self.current_round.proposals.first() {
+            let vote = self.cast_vote(proposal_id.clone(), VoteType::PreVote)
+                .await?;
+
+            // Invariant CE-ENG-3: Broadcast after state transition
+            // Create canonical ValidatorMessage from already-formed vote
+            let msg = ValidatorMessage::Vote { vote };
+
+            // Invariant CE-ENG-5: Pass validator set explicitly, never query network
+            let validator_ids = self.get_active_validator_ids();
+
+            // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
+            // Log failures for observability without affecting consensus correctness
+            if let Err(e) = self.broadcaster
+                .broadcast_to_validators(msg, &validator_ids)
+                .await
+            {
+                tracing::debug!(
+                    error = ?e,
+                    height = self.current_round.height,
+                    "Failed to broadcast prevote to validators (continuing per CE-ENG-4)"
+                );
+            }
+        }
+
+        // Wait for prevotes with timeout
+        self.wait_for_step_timeout(self.config.prevote_timeout)
+            .await;
+
+        Ok(())
+    }
+
+    /// Run the precommit step
+    async fn run_precommit_step(&mut self) -> ConsensusResult<()> {
+        self.current_round.step = ConsensusStep::PreCommit;
+
+        // Check if we received enough prevotes
+        if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
+            let prevote_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreVote);
+            let threshold = self.validator_manager.get_byzantine_threshold();
+
+            if prevote_count >= threshold {
+                let vote = self.cast_vote(proposal_id.clone(), VoteType::PreCommit)
+                    .await?;
+                self.current_round.valid_proposal = Some(proposal_id);
+
+                // Invariant CE-ENG-3: Broadcast after state transition
+                // Create canonical ValidatorMessage from already-formed vote
+                let msg = ValidatorMessage::Vote { vote };
+
+                // Invariant CE-ENG-5: Pass validator set explicitly, never query network
+                let validator_ids = self.get_active_validator_ids();
+
+                // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
+                // Log failures for observability without affecting consensus correctness
+                if let Err(e) = self.broadcaster
+                    .broadcast_to_validators(msg, &validator_ids)
+                    .await
+                {
+                    tracing::debug!(
+                        error = ?e,
+                        height = self.current_round.height,
+                        "Failed to broadcast precommit to validators (continuing per CE-ENG-4)"
+                    );
+                }
+            }
+        }
+
+        // Wait for precommits with timeout
+        self.wait_for_step_timeout(self.config.precommit_timeout)
+            .await;
+
+        Ok(())
+    }
+
+    /// Run the commit step
+    async fn run_commit_step(&mut self) -> ConsensusResult<()> {
+        self.current_round.step = ConsensusStep::Commit;
+
+        // Check if we received enough precommits
+        if let Some(proposal_id) = self.current_round.valid_proposal.as_ref().cloned() {
+            let precommit_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreCommit);
+            let threshold = self.validator_manager.get_byzantine_threshold();
+
+            if precommit_count >= threshold {
+                let vote = self.cast_vote(proposal_id.clone(), VoteType::Commit)
+                    .await?;
+
+                tracing::info!(
+                    "Block committed at height {} with proposal {:?}",
+                    self.current_round.height,
+                    proposal_id
+                );
+
+                // Invariant CE-ENG-3: Broadcast after state transition
+                // Create canonical ValidatorMessage from already-formed vote
+                let msg = ValidatorMessage::Vote { vote };
+
+                // Invariant CE-ENG-5: Pass validator set explicitly, never query network
+                let validator_ids = self.get_active_validator_ids();
+
+                // Invariant CE-ENG-4: Treat broadcast as best-effort telemetry
+                // Log failures for observability without affecting consensus correctness
+                if let Err(e) = self.broadcaster
+                    .broadcast_to_validators(msg, &validator_ids)
+                    .await
+                {
+                    tracing::debug!(
+                        error = ?e,
+                        height = self.current_round.height,
+                        proposal_id = ?proposal_id,
+                        "Failed to broadcast commit vote to validators (continuing per CE-ENG-4)"
+                    );
+                }
+
+                // Process the committed block
+                self.process_committed_block(&proposal_id).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Cast a vote
+    ///
+    /// Returns the created vote so that the caller can broadcast it.
+    /// Invariant CE-ENG-3: Broadcast happens after this state transition.
+    async fn cast_vote(&mut self, proposal_id: Hash, vote_type: VoteType) -> ConsensusResult<ConsensusVote> {
+        let validator_id = self
+            .validator_identity
+            .as_ref()
+            .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
+
+        let validator = self
+            .validator_manager
+            .get_validator(validator_id)
+            .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
+
+        // Create vote ID from deterministic data
+        let vote_id = Hash::from_bytes(&hash_blake3(
+            &[
+                proposal_id.as_bytes(),
+                validator_id.as_bytes(),
+                &(vote_type.clone() as u8).to_le_bytes(),
+                &self.current_round.height.to_le_bytes(),
+                &self.current_round.round.to_le_bytes(),
+            ]
+            .concat(),
+        ));
+
+        // Create vote data for signing
+        // Use current height/round since this vote is being created for the current consensus round
+        let vote_data = self.serialize_vote_data(
+            &vote_id,
+            validator_id,
+            &proposal_id,
+            &vote_type,
+            self.current_round.height,
+            self.current_round.round,
+        )?;
+
+        // Sign the vote
+        let signature = self.sign_vote_data(&vote_data, &validator).await?;
+
+        let vote = ConsensusVote {
+            id: vote_id.clone(),
+            voter: validator_id.clone(),
+            proposal_id: proposal_id.clone(),
+            vote_type: vote_type.clone(),
+            height: self.current_round.height,
+            round: self.current_round.round,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| ConsensusError::TimeError(e))?
+                .as_secs(),
+            signature,
+        };
+
+        // Store vote using composite key (height, round, vote_type, validator_id)
+        let key = VotePoolKey {
+            height: self.current_round.height,
+            round: self.current_round.round,
+            vote_type: vote_type.clone(),
+            validator_id: validator_id.clone(),
+        };
+        self.vote_pool.insert(key, (vote.clone(), proposal_id.clone()));
+
+        // Update validator activity
+        self.validator_manager
+            .update_validator_activity(validator_id);
+
+        tracing::debug!(
+            " Cast {:?} vote on proposal {:?} from validator {:?}",
+            vote_type,
+            proposal_id,
+            validator_id
+        );
+
+        Ok(vote)
+    }
+
+    /// Wait for step timeout
+    async fn wait_for_step_timeout(&mut self, timeout_ms: u64) {
+        tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms)).await;
+    }
+
+    /// Process committed block
+    #[allow(deprecated)]
+    async fn process_committed_block(&mut self, proposal_id: &Hash) -> ConsensusResult<()> {
+        // Find and process the committed proposal
+        if let Some(proposal_index) = self
+            .pending_proposals
+            .iter()
+            .position(|p| &p.id == proposal_id)
+        {
+            // Safe: index came from position() which found it
+            let proposal = self.pending_proposals.remove(proposal_index)
+                .expect("Proposal index came from position(), element must exist");
+
+            // Validate the block one more time before applying
+            self.validate_committed_block(&proposal).await?;
+
+            // Apply block to state
+            self.apply_block_to_state(&proposal).await?;
+
+            // Update validator activities and reputation
+            self.update_validator_metrics(&proposal).await?;
+
+            // Calculate and distribute block rewards
+            let reward_round = self
+                .reward_calculator
+                .calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
+            self.reward_calculator.distribute_rewards(&reward_round)?;
+
+            // Process any DAO proposals that may have expired
+            if let Err(e) = self.dao_engine.process_expired_proposals().await {
+                tracing::warn!("Error processing DAO proposals: {}", e);
+            }
+
+            tracing::info!(
+                " Successfully processed committed block: {:?} at height {}",
+                proposal.id,
+                proposal.height
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Validate committed block before applying
+    async fn validate_committed_block(&self, proposal: &ConsensusProposal) -> ConsensusResult<()> {
+        // Verify proposal signature
+        let proposal_data = self.serialize_proposal_data(
+            &proposal.id,
+            &proposal.proposer,
+            proposal.height,
+            &proposal.previous_hash,
+            &proposal.block_data,
+        )?;
+
+        let proposer = self.validator_manager.get_validator(&proposal.proposer).ok_or_else(|| {
+            ConsensusError::ValidatorError("Proposer not found for proposal validation".to_string())
+        })?;
+
+        if proposer.consensus_key != proposal.signature.public_key.dilithium_pk {
+            return Err(ConsensusError::ProofVerificationFailed(
+                "Proposal signature key does not match proposer consensus key".to_string(),
+            ));
+        }
+
+        if !self
+            .verify_signature(&proposal_data, &proposal.signature)
+            .await?
+        {
+            return Err(ConsensusError::ProofVerificationFailed(
+                "Invalid proposal signature".to_string(),
+            ));
+        }
+
+        // Verify consensus proof
+        if !self
+            .verify_consensus_proof(&proposal.consensus_proof)
+            .await?
+        {
+            return Err(ConsensusError::ProofVerificationFailed(
+                "Invalid consensus proof".to_string(),
+            ));
+        }
+
+        tracing::debug!("Block validation passed for {:?}", proposal.id);
+        Ok(())
+    }
+
+    /// Apply block to blockchain state
+    async fn apply_block_to_state(&mut self, proposal: &ConsensusProposal) -> ConsensusResult<()> {
+        // In production, this would:
+        // 1. Execute all transactions in the block
+        // 2. Update account balances and state
+        // 3. Update validator set if needed
+        // 4. Apply any governance changes
+        // 5. Store block in blockchain database
+
+        // For now, just log the application
+        tracing::info!(
+            " Applied block {:?} to state (height: {}, size: {} bytes)",
+            proposal.id,
+            proposal.height,
+            proposal.block_data.len()
+        );
+
+        Ok(())
+    }
+
+    /// Update validator metrics based on block participation
+    async fn update_validator_metrics(
+        &mut self,
+        proposal: &ConsensusProposal,
+    ) -> ConsensusResult<()> {
+        // Update proposer metrics
+        let proposer_id = proposal.proposer.clone();
+        if let Some(proposer) = self.validator_manager.get_validator_mut(&proposer_id) {
+            proposer.reputation = std::cmp::min(proposer.reputation + 1, 1000); // Cap at 1000
+            proposer.update_activity();
+        }
+
+        // Update metrics for validators who voted
+        let voter_ids: Vec<IdentityId> = self
+            .vote_pool
+            .iter()
+            .filter(|(k, _)| k.height == proposal.height)
+            .map(|(_, (vote, _))| vote.voter.clone())
+            .collect();
+        for voter_id in voter_ids {
+            if let Some(voter) = self.validator_manager.get_validator_mut(&voter_id) {
+                voter.reputation = std::cmp::min(voter.reputation + 1, 1000);
+                voter.update_activity();
+            }
+        }
+
+        tracing::debug!(" Updated validator metrics for block {:?}", proposal.id);
+        Ok(())
+    }
+
+    /// Archive completed round
+    fn archive_completed_round(&mut self) {
+        self.round_history.push_back(self.current_round.clone());
+
+        // Keep only recent history
+        if self.round_history.len() > 100 {
+            self.round_history.pop_front();
+        }
+    }
+
+    pub(super) async fn on_proposal(&mut self, proposal: ConsensusProposal) -> ConsensusResult<()> {
+        if !self.is_proposal_relevant(&proposal) {
+            return Ok(());
+        }
+
+        if !self.current_round.proposals.is_empty() {
+            return Ok(());
+        }
+
+        if Some(&proposal.proposer) != self.current_round.proposer.as_ref() {
+            return Ok(());
+        }
+
+        self.current_round.proposals.push(proposal.id.clone());
+        self.pending_proposals.push_back(proposal);
+
+        if self.current_round.step == ConsensusStep::Propose {
+            self.enter_prevote_step().await?;
+        }
+
+        Ok(())
+    }
+
+    pub(super) async fn on_prevote(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
+        // Harden: Validate remote vote against all BFT safety invariants
+        if !self.validate_remote_vote(&vote).await? {
+            return Ok(());
+        }
+
+        // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        if let Some(evidence) = self.byzantine_detector.detect_equivocation(
+            &vote,
+            &vote.proposal_id,
+            current_time,
+            None,
+        ) {
+            tracing::error!(
+                "🚨 EQUIVOCATION: Validator {} voted for two proposals at H={} R={} type=PreVote",
+                evidence.validator, evidence.height, evidence.round
+            );
+            return Ok(()); // REJECT vote
+        }
+
+        let key = VotePoolKey {
+            height: vote.height,
+            round: vote.round,
+            vote_type: VoteType::PreVote,
+            validator_id: vote.voter.clone(),
+        };
+
+        // Check for equivocation (same validator, same H/R/type, different value)
+        if let Some((_existing_vote, existing_proposal_id)) = self.vote_pool.get(&key) {
+            if existing_proposal_id == &vote.proposal_id {
+                // Duplicate vote - idempotent, no-op
+                return Ok(());
+            } else {
+                // Equivocation detected: same (H,R,type,validator), different values
+                tracing::warn!(
+                    "Equivocation detected: validator {:?} sent conflicting PreVotes for height {} round {}",
+                    vote.voter, vote.height, vote.round
+                );
+                // In production, would record as evidence for slashing
+                // For now, reject silently
+                return Ok(());
+            }
+        }
+
+        // Accept new vote
+        let proposal_id = vote.proposal_id.clone();
+        self.vote_pool.insert(key, (vote.clone(), proposal_id.clone()));
+
+        tracing::debug!(
+            "Added PreVote from {} for proposal {:?} at height {} round {}",
+            vote.voter,
+            proposal_id,
+            vote.height,
+            vote.round
+        );
+
+        // **CE-S1**: Check supermajority for THIS proposal, not the round aggregate
+        // Matching votes means: same height, round, proposal/block hash, and vote type
+        let prevote_count = self.count_prevotes_for(vote.height, vote.round, &proposal_id);
+        let total_validators = self.validator_manager.get_active_validators().len() as u64;
+
+        if check_supermajority(prevote_count, total_validators) && self.current_round.step == ConsensusStep::PreVote {
+            // **CE-S1**: Only transition if this proposal can be the valid proposal
+            // If valid_proposal is already set to a DIFFERENT proposal, we have conflicting quorums
+            // which violates safety - don't transition
+            if let Some(existing) = self.current_round.valid_proposal.as_ref() {
+                if existing != &proposal_id {
+                    tracing::warn!(
+                        "Conflicting quorum detected: proposal {:?} has quorum but valid_proposal is already {:?}",
+                        proposal_id, existing
+                    );
+                    // Don't transition - this violates BFT safety
+                    return Ok(());
+                }
+            } else {
+                // First proposal to reach quorum in this round
+                self.current_round.valid_proposal = Some(proposal_id.clone());
+            }
+            self.enter_precommit_step().await?;
+        }
+
+        // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreVote step
+        self.maybe_finalize(vote.height, vote.round, &proposal_id).await?;
+
+        Ok(())
+    }
+
+    pub(super) async fn on_precommit(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
+        // Harden: Validate remote vote against all BFT safety invariants
+        if !self.validate_remote_vote(&vote).await? {
+            return Ok(());
+        }
+
+        // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        if let Some(evidence) = self.byzantine_detector.detect_equivocation(
+            &vote,
+            &vote.proposal_id,
+            current_time,
+            None,
+        ) {
+            tracing::error!(
+                "🚨 EQUIVOCATION: Validator {} voted for two proposals at H={} R={} type=PreCommit",
+                evidence.validator, evidence.height, evidence.round
+            );
+            return Ok(()); // REJECT vote
+        }
+
+        let key = VotePoolKey {
+            height: vote.height,
+            round: vote.round,
+            vote_type: VoteType::PreCommit,
+            validator_id: vote.voter.clone(),
+        };
+
+        // Check for equivocation
+        if let Some((_existing_vote, existing_proposal_id)) = self.vote_pool.get(&key) {
+            if existing_proposal_id == &vote.proposal_id {
+                // Duplicate - idempotent
+                return Ok(());
+            } else {
+                // Equivocation detected
+                tracing::warn!(
+                    "Equivocation detected: validator {:?} sent conflicting PreCommits for height {} round {}",
+                    vote.voter, vote.height, vote.round
+                );
+                return Ok(());
+            }
+        }
+
+        // Accept new vote
+        let proposal_id = vote.proposal_id.clone();
+        self.vote_pool.insert(key, (vote.clone(), proposal_id.clone()));
+
+        tracing::debug!(
+            "Added PreCommit from {} for proposal {:?} at height {} round {}",
+            vote.voter,
+            proposal_id,
+            vote.height,
+            vote.round
+        );
+
+        // **CE-S1**: Check supermajority for THIS proposal, not the round aggregate
+        // Matching votes means: same height, round, proposal/block hash, and vote type
+        let precommit_count = self.count_precommits_for(vote.height, vote.round, &proposal_id);
+        let total_validators = self.validator_manager.get_active_validators().len() as u64;
+
+        if check_supermajority(precommit_count, total_validators) && self.current_round.step == ConsensusStep::PreCommit {
+            // **CE-S1**: Only transition if this proposal can be locked
+            // If locked_proposal is already set to a DIFFERENT proposal, we have conflicting quorums
+            if let Some(existing) = self.current_round.locked_proposal.as_ref() {
+                if existing != &proposal_id {
+                    tracing::warn!(
+                        "Conflicting precommit quorum detected: proposal {:?} has quorum but locked_proposal is already {:?}",
+                        proposal_id, existing
+                    );
+                    // Don't transition - this violates BFT safety
+                    return Ok(());
+                }
+            } else {
+                // First proposal to reach precommit quorum in this round
+                self.current_round.locked_proposal = Some(proposal_id.clone());
+            }
+            self.enter_commit_step().await?;
+        }
+
+        // **CE-L1, CE-L2**: Always check if commit quorum is reached, even in PreCommit step
+        self.maybe_finalize(vote.height, vote.round, &proposal_id).await?;
+
+        Ok(())
+    }
+
+    pub(super) async fn on_commit_vote(&mut self, vote: ConsensusVote) -> ConsensusResult<()> {
+        // **CE-L2**: Accept commit votes at ANY step, not only during Commit.
+        // Only reject votes from future heights. Accept current/past heights at any round
+        // to allow catch-up from previous rounds.
+        if vote.height > self.current_round.height {
+            return Ok(());
+        }
+
+        // Reject if we've already moved past this height entirely
+        // (height is locked in, no new consensus activity on old heights)
+        if vote.height < self.current_round.height {
+            tracing::debug!(
+                "Ignoring commit vote for past height {} (current: {})",
+                vote.height,
+                self.current_round.height
+            );
+            return Ok(());
+        }
+
+        // Harden: Verify signature and validator membership (core validation)
+        // Commit votes have special rules for height/round, so we only check signature + membership
+        if !self.verify_vote_signature(&vote).await? {
+            return Ok(());
+        }
+
+        // Verify validator membership
+        if !self.is_validator_member(&vote.voter, vote.height) {
+            tracing::warn!(
+                "Commit vote rejected: voter {} is not in active validator set for height {}",
+                vote.voter,
+                vote.height
+            );
+            return Ok(());
+        }
+
+        // NEW: Detect equivocation using Byzantine fault detector BEFORE vote pool check
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        if let Some(evidence) = self.byzantine_detector.detect_equivocation(
+            &vote,
+            &vote.proposal_id,
+            current_time,
+            None,
+        ) {
+            tracing::error!(
+                "🚨 EQUIVOCATION: Validator {} voted for two proposals at H={} R={} type=Commit",
+                evidence.validator, evidence.height, evidence.round
+            );
+            return Ok(()); // REJECT vote
+        }
+
+        let key = VotePoolKey {
+            height: vote.height,
+            round: vote.round,
+            vote_type: VoteType::Commit,
+            validator_id: vote.voter.clone(),
+        };
+
+        // Check for equivocation
+        if let Some((_, existing_proposal_id)) = self.vote_pool.get(&key) {
+            if existing_proposal_id == &vote.proposal_id {
+                // Duplicate - idempotent
+                return Ok(());
+            } else {
+                // Equivocation on commit (rare but possible in Byzantine scenario)
+                tracing::warn!(
+                    "Equivocation on Commit: validator {:?} for height {} round {}",
+                    vote.voter, vote.height, vote.round
+                );
+                return Ok(());
+            }
+        }
+
+        // Accept new commit vote (even if we're not in Commit step yet)
+        let proposal_id = vote.proposal_id.clone();
+        self.vote_pool.insert(key, (vote.clone(), proposal_id.clone()));
+
+        tracing::debug!(
+            "Stored commit vote from {} for proposal {:?} at height {} round {} (current step: {:?})",
+            vote.voter,
+            proposal_id,
+            vote.height,
+            vote.round,
+            self.current_round.step
+        );
+
+        // **CE-L1**: Check if commit quorum is reached and finalize immediately
+        self.maybe_finalize(vote.height, vote.round, &proposal_id).await?;
+
+        Ok(())
+    }
+
+    pub(super) async fn on_round_timeout(&mut self) -> ConsensusResult<()> {
+        tracing::debug!(
+            "Round timeout at height {} round {} step {:?}",
+            self.current_round.height,
+            self.current_round.round,
+            self.current_round.step
+        );
+
+        match self.current_round.step {
+            ConsensusStep::Propose => {
+                self.enter_prevote_step().await?;
+            }
+            ConsensusStep::PreVote => {
+                self.enter_precommit_step().await?;
+            }
+            ConsensusStep::PreCommit => {
+                self.enter_commit_step().await?;
+            }
+            ConsensusStep::Commit => {
+                self.advance_to_next_round();
+            }
+            ConsensusStep::NewRound => {}
+        }
+
+        Ok(())
+    }
+
+    async fn enter_prevote_step(&mut self) -> ConsensusResult<()> {
+        if self.current_round.step >= ConsensusStep::PreVote {
+            return Ok(());
+        }
+
+        self.current_round.step = ConsensusStep::PreVote;
+        tracing::info!(
+            "Entering PreVote step at height {} round {}",
+            self.current_round.height,
+            self.current_round.round
+        );
+
+        if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
+            let vote = self.cast_vote(proposal_id, VoteType::PreVote).await?;
+            let msg = ValidatorMessage::Vote { vote };
+            let validator_ids = self.get_active_validator_ids();
+
+            if let Err(e) = self.broadcaster
+                .broadcast_to_validators(msg, &validator_ids)
+                .await
+            {
+                tracing::debug!(
+                    error = ?e,
+                    "Failed to broadcast prevote (continuing per CE-ENG-4)"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn enter_precommit_step(&mut self) -> ConsensusResult<()> {
+        if self.current_round.step >= ConsensusStep::PreCommit {
+            return Ok(());
+        }
+
+        self.current_round.step = ConsensusStep::PreCommit;
+        tracing::info!(
+            "Entering PreCommit step at height {} round {}",
+            self.current_round.height,
+            self.current_round.round
+        );
+
+        if let Some(proposal_id) = self.current_round.proposals.first().cloned() {
+            let prevote_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreVote);
+            let total_validators = self.validator_manager.get_active_validators().len() as u64;
+
+            if check_supermajority(prevote_count, total_validators) {
+                let vote = self.cast_vote(proposal_id.clone(), VoteType::PreCommit).await?;
+                self.current_round.valid_proposal = Some(proposal_id);
+
+                let msg = ValidatorMessage::Vote { vote };
+                let validator_ids = self.get_active_validator_ids();
+
+                if let Err(e) = self.broadcaster
+                    .broadcast_to_validators(msg, &validator_ids)
+                    .await
+                {
+                    tracing::debug!(
+                        error = ?e,
+                        "Failed to broadcast precommit (continuing per CE-ENG-4)"
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn enter_commit_step(&mut self) -> ConsensusResult<()> {
+        if self.current_round.step >= ConsensusStep::Commit {
+            return Ok(());
+        }
+
+        self.current_round.step = ConsensusStep::Commit;
+        tracing::info!(
+            "Entering Commit step at height {} round {}",
+            self.current_round.height,
+            self.current_round.round
+        );
+
+        if let Some(proposal_id) = self.current_round.valid_proposal.as_ref().cloned() {
+            let precommit_count = self.count_votes_for_proposal(&proposal_id, &VoteType::PreCommit);
+            let total_validators = self.validator_manager.get_active_validators().len() as u64;
+
+            if check_supermajority(precommit_count, total_validators) {
+                let vote = self.cast_vote(proposal_id.clone(), VoteType::Commit).await?;
+
+                tracing::info!(
+                    "Block committed at height {} with proposal {:?}",
+                    self.current_round.height,
+                    proposal_id
+                );
+
+                let msg = ValidatorMessage::Vote { vote };
+                let validator_ids = self.get_active_validator_ids();
+
+                if let Err(e) = self.broadcaster
+                    .broadcast_to_validators(msg, &validator_ids)
+                    .await
+                {
+                    tracing::debug!(
+                        error = ?e,
+                        "Failed to broadcast commit vote (continuing per CE-ENG-4)"
+                    );
+                }
+
+                // Process the committed block (finalization)
+                // Note: maybe_finalize will be called by on_commit_vote after our vote is stored
+                self.process_committed_block(&proposal_id).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn is_proposal_relevant(&self, proposal: &ConsensusProposal) -> bool {
+        if proposal.height < self.current_round.height {
+            return false;
+        }
+        if proposal.height > self.current_round.height {
+            return false;
+        }
+        if self.current_round.step > ConsensusStep::Propose {
+            return false;
+        }
+        true
+    }
+
+    /// Check if commit quorum is reached for a proposal and finalize if so.
+    /// **CE-L1**: Commit quorum finalizes regardless of local step.
+    /// **CE-L2**: This is called from any step, not just Commit.
+    /// **Invariant**: Called from on_prevote, on_precommit, on_commit_vote, and enter_commit_step
+    /// to prevent "stored but never used" regressions.
+    pub(super) async fn maybe_finalize(&mut self, height: u64, round: u32, proposal_id: &Hash) -> ConsensusResult<()> {
+        // Count matching commit votes: all votes for this specific proposal at height/round
+        // This ensures supermajority is proposal-scoped, not round-scoped
+        let commit_count = self.count_commits_for(height, round, proposal_id);
+        let total_validators = self.validator_manager.get_active_validators().len() as u64;
+
+        if check_supermajority(commit_count, total_validators) {
+            tracing::info!(
+                "Finalization triggered: {} commits for proposal {:?} at height {} round {}",
+                commit_count,
+                proposal_id,
+                height,
+                round
+            );
+
+            // Finalize regardless of current step (CE-L1)
+            if self.current_round.height == height && self.current_round.round == round {
+                // Transition to Commit step if not already there
+                if self.current_round.step < ConsensusStep::Commit {
+                    self.current_round.step = ConsensusStep::Commit;
+                    tracing::info!(
+                        "Fast-tracked to Commit step via commit quorum at height {} round {}",
+                        height,
+                        round
+                    );
+                }
+
+                // Process the committed block (finalization) directly
+                // Note: This is safe even if we've already finalized once,
+                // process_committed_block is idempotent.
+                self.process_committed_block(proposal_id).await?;
+            } else {
+                tracing::debug!(
+                    "Commit quorum observed for past round (H={} R={}) while at H={} R={}",
+                    height,
+                    round,
+                    self.current_round.height,
+                    self.current_round.round
+                );
+            }
+        }
+
+        Ok(())
+    }
+}

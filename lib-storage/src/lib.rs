@@ -37,8 +37,6 @@ pub mod integrity;
 
 // Multi-level caching system (Phase F - NEW)
 pub mod cache;
-#[cfg(feature = "network-integration")]
-pub mod network_integration;
 
 // Storage optimization (Phase F - NEW)
 pub mod optimization;
@@ -69,13 +67,6 @@ pub use erasure::*;
 pub use proofs::{StorageProof, RetrievalProof, generate_storage_proof, generate_retrieval_proof};
 pub use integrity::{IntegrityManager, IntegrityMetadata, IntegrityStatus, ChecksumAlgorithm};
 pub use cache::{CacheManager, CacheEntry, EvictionPolicy, CacheStats};
-#[cfg(feature = "network-integration")]
-pub use network_integration::{
-    NetworkOutputHandler,
-    NoopNetworkOutputHandler,
-    process_network_outputs,
-    process_network_outputs_with,
-};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -884,58 +875,5 @@ mod tests {
         identity.created_at = created_at;
         identity.last_active = created_at;
         identity
-    }
-}
-
-/// Wrapper type for Arc<RwLock<UnifiedStorageSystem>> to implement the UnifiedStorage trait
-/// Needed due to Rust's orphan rule (can't implement external traits on external types)
-#[cfg(feature = "network-integration")]
-pub struct UnifiedStorageWrapper(pub std::sync::Arc<tokio::sync::RwLock<UnifiedStorageSystem>>);
-
-/// Implement the lib-network UnifiedStorage trait
-#[cfg(feature = "network-integration")]
-#[async_trait::async_trait]
-impl lib_network::storage_stub::UnifiedStorage for UnifiedStorageWrapper {
-    /// Store a domain record
-    async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> anyhow::Result<()> {
-        let mut sys = self.0.write().await;
-        sys.store_domain_record(domain, &data).await
-    }
-
-    /// Load a domain record
-    async fn load_domain_record(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
-        let mut sys = self.0.write().await;
-        sys.get_domain_record(domain).await
-    }
-
-    /// Delete a domain record
-    async fn delete_domain_record(&self, domain: &str) -> anyhow::Result<()> {
-        let mut sys = self.0.write().await;
-        sys.delete_domain_record(domain).await
-    }
-
-    /// List all domain records
-    async fn list_domain_records(&self) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
-        let mut sys = self.0.write().await;
-        sys.list_domain_records().await
-    }
-
-    /// Store manifest history for a domain
-    async fn store_manifest(&self, domain: &str, manifest_data: Vec<u8>) -> anyhow::Result<()> {
-        let mut sys = self.0.write().await;
-        let manifest_key = format!("manifest:{}", domain);
-        sys.store_domain_record(&manifest_key, &manifest_data).await
-    }
-
-    /// Load manifest history for a domain
-    async fn load_manifest(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
-        let mut sys = self.0.write().await;
-        let manifest_key = format!("manifest:{}", domain);
-        sys.get_domain_record(&manifest_key).await
-    }
-
-    /// Check if this is a stub (it's not - this is real storage)
-    fn is_stub(&self) -> bool {
-        false
     }
 }

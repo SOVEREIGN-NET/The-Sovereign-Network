@@ -83,28 +83,24 @@ fn test_validator_registration_insufficient_stake() {
 }
 
 #[test]
-fn test_validator_registration_insufficient_storage() {
+fn test_validator_registration_low_storage_allowed() {
     let mut manager = ValidatorManager::new(10, 1000 * 1_000_000);
 
     let identity = create_test_identity("charlie");
     let stake = 2000 * 1_000_000;
-    let insufficient_storage = 50 * 1024 * 1024 * 1024; // Below minimum
+    let low_storage = 50 * 1024 * 1024 * 1024; // Below consensus min, allowed in manager
     let consensus_key = vec![3u8; 32];
     let commission_rate = 5;
 
     let result = manager.register_validator(
         identity,
         stake,
-        insufficient_storage,
+        low_storage,
         consensus_key,
         commission_rate,
     );
 
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Insufficient storage"));
+    assert!(result.is_ok());
 }
 
 #[test]

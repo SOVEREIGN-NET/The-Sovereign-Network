@@ -1,12 +1,16 @@
 //! Tests for proof verification systems
 
 use anyhow::Result;
-use lib_consensus::{
-    ComputeResult, NetworkState, ProofOfUsefulWork, StakeProof, StorageChallenge, StorageProof,
-    WorkProof,
-};
+use lib_consensus::{ComputeResult, NetworkState, ProofOfUsefulWork, StakeProof, WorkProof};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
+use lib_storage::proofs::{
+    generate_storage_proof,
+    ChallengeResult,
+    ProofVerifier,
+    StorageCapacityAttestation,
+    StorageChallenge,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Helper function to create test identity
@@ -105,87 +109,71 @@ fn test_storage_proof_creation_and_verification() -> Result<()> {
     let validator_hash = Hash::from_bytes(&hash_blake3(b"validator_alice"));
     let storage_capacity = 500 * 1024 * 1024 * 1024; // 500 GB
     let utilization = 75; // 75%
+    let keypair = lib_crypto::keypair::generation::KeyPair::generate()?;
 
-    // Create storage challenges
-    let mut challenges = Vec::new();
+    let verifier = ProofVerifier::new(3600);
+    let mut challenge_results = Vec::new();
+
+    let blocks: Vec<Vec<u8>> = (0..4)
+        .map(|i| {
+            let mut data = b"block".to_vec();
+            data.push(i as u8);
+            hash_blake3(&data).to_vec()
+        })
+        .collect();
+
     for i in 0..3 {
-        let challenge = StorageChallenge {
-            id: Hash::from_bytes(&hash_blake3(&format!("challenge_{}", i).as_bytes())),
-            content_hash: Hash::from_bytes(&hash_blake3(&format!("content_{}", i).as_bytes())),
-            challenge: vec![i as u8; 16],
-            response: vec![(i * 2) as u8; 16],
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() - (i as u64 * 3600),
-        };
-        challenges.push(challenge);
+        let content_hash = Hash::from_bytes(&hash_blake3(&format!("content_{}", i).as_bytes()));
+        let challenge = StorageChallenge::new_storage_challenge(
+            content_hash.clone(),
+            i as usize % blocks.len(),
+            "validator-alice".to_string(),
+            3600,
+        );
+        let proof = generate_storage_proof(
+            content_hash.clone(),
+            &blocks,
+            challenge.nonce,
+            challenge.block_index.unwrap_or(0),
+            "validator-alice".to_string(),
+        )?;
+        let result = verifier.verify_storage_proof(&proof, &challenge);
+        challenge_results.push(ChallengeResult {
+            challenge,
+            proof,
+            result,
+        });
     }
 
-    // Create merkle proof
-    let merkle_proof = vec![
-        Hash::from_bytes(&hash_blake3(b"merkle_root_1")),
-        Hash::from_bytes(&hash_blake3(b"merkle_root_2")),
-    ];
-
-    let storage_proof = StorageProof::new(
+    let storage_attestation = StorageCapacityAttestation::new(
         validator_hash,
         storage_capacity,
         utilization,
-        challenges,
-        merkle_proof,
-    )?;
+        challenge_results,
+    )
+    .sign(&keypair)?;
 
-    assert_eq!(storage_proof.storage_capacity, storage_capacity);
-    assert_eq!(storage_proof.utilization, utilization);
-    assert_eq!(storage_proof.challenges_passed.len(), 3);
-    assert_eq!(storage_proof.merkle_proof.len(), 2);
-
-    // Test verification
-    assert!(storage_proof.verify()?);
+    assert_eq!(storage_attestation.storage_capacity, storage_capacity);
+    assert_eq!(storage_attestation.utilization, utilization);
+    assert_eq!(storage_attestation.challenge_results.len(), 3);
+    assert!(storage_attestation.verify()?);
 
     Ok(())
 }
 
 #[test]
-fn test_storage_proof_insufficient_capacity() -> Result<()> {
-    let validator_hash = Hash::from_bytes(&hash_blake3(b"validator_bob"));
-    let insufficient_capacity = 50 * 1024 * 1024 * 1024; // 50 GB (below minimum)
-    let utilization = 75;
-    let challenges = Vec::new();
-    let merkle_proof = Vec::new();
-
-    let storage_proof = StorageProof::new(
-        validator_hash,
-        insufficient_capacity,
-        utilization,
-        challenges,
-        merkle_proof,
-    )?;
-
-    // Verification should fail due to insufficient capacity
-    let result = storage_proof.verify()?;
-    assert!(!result); // Should return false for insufficient storage
-
-    Ok(())
-}
-
-#[test]
-fn test_storage_proof_invalid_utilization() -> Result<()> {
+fn test_storage_attestation_invalid_utilization() -> Result<()> {
     let validator_hash = Hash::from_bytes(&hash_blake3(b"validator_charlie"));
-    let storage_capacity = 200 * 1024 * 1024 * 1024;
-    let invalid_utilization = 105; // > 100%
-    let challenges = Vec::new();
-    let merkle_proof = Vec::new();
-
-    let result = StorageProof::new(
+    let keypair = lib_crypto::keypair::generation::KeyPair::generate()?;
+    let attestation = StorageCapacityAttestation::new(
         validator_hash,
-        storage_capacity,
-        invalid_utilization,
-        challenges,
-        merkle_proof,
+        200 * 1024 * 1024 * 1024,
+        105,
+        Vec::new(),
     );
 
-    // Construction should fail due to invalid utilization
+    let result = attestation.sign(&keypair);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("utilization"));
 
     Ok(())
 }
@@ -361,20 +349,15 @@ fn test_compute_result_verification_failure() -> Result<()> {
 
 #[test]
 fn test_storage_challenge_creation() {
-    let challenge = StorageChallenge {
-        id: Hash::from_bytes(&hash_blake3(b"challenge_id")),
-        content_hash: Hash::from_bytes(&hash_blake3(b"content")),
-        challenge: vec![1, 2, 3, 4],
-        response: vec![5, 6, 7, 8],
-        timestamp: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-    };
+    let challenge = StorageChallenge::new_storage_challenge(
+        Hash::from_bytes(&hash_blake3(b"content")),
+        0,
+        "validator-test".to_string(),
+        3600,
+    );
 
-    assert!(!challenge.challenge.is_empty());
-    assert!(!challenge.response.is_empty());
-    assert!(challenge.timestamp > 0);
+    assert_eq!(challenge.challenge_type, lib_storage::proofs::ChallengeType::ProofOfStorage);
+    assert!(challenge.created_at > 0);
 }
 
 #[test]
