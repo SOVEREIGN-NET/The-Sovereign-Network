@@ -16,7 +16,6 @@ use crate::{ConsensusError, ConsensusResult};
 use std::sync::Arc;
 
 /// Hybrid consensus engine combining Proof of Stake and Proof of Storage
-#[derive(Debug)]
 pub struct HybridEngine {
     /// Current consensus round
     current_round: ConsensusRound,
@@ -41,6 +40,24 @@ pub struct HybridEngine {
     storage_proof_provider: Option<Arc<dyn StorageProofProvider>>,
     /// Local validator keypair
     validator_keypair: Option<KeyPair>,
+}
+
+impl std::fmt::Debug for HybridEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HybridEngine")
+            .field("current_round", &self.current_round)
+            .field("config", &self.config)
+            .field("validator_manager", &self.validator_manager)
+            .field("pending_proposals", &self.pending_proposals)
+            .field("vote_pool", &self.vote_pool)
+            .field("round_history", &self.round_history)
+            .field("validator_identity", &self.validator_identity)
+            .field("stake_weight", &self.stake_weight)
+            .field("storage_weight", &self.storage_weight)
+            .field("storage_proof_provider", &"<dyn StorageProofProvider>")
+            .field("validator_keypair", &self.validator_keypair.is_some())
+            .finish()
+    }
 }
 
 impl HybridEngine {

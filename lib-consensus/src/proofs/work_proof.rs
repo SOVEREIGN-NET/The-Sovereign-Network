@@ -312,9 +312,9 @@ impl NetworkState {
                 let proof = lib_storage::proofs::generate_storage_proof(
                     content_hash,
                     &vec![
-                        hash_blake3(&[node_id, &[i as u8, 0]].concat()).to_vec(),
-                        hash_blake3(&[node_id, &[i as u8, 1]].concat()).to_vec(),
-                        hash_blake3(&[node_id, &[i as u8, 2]].concat()).to_vec(),
+                        hash_blake3(&[&node_id[..], &[i as u8, 0]].concat()).to_vec(),
+                        hash_blake3(&[&node_id[..], &[i as u8, 1]].concat()).to_vec(),
+                        hash_blake3(&[&node_id[..], &[i as u8, 2]].concat()).to_vec(),
                     ],
                     challenge.nonce,
                     challenge.block_index.unwrap_or(0),
