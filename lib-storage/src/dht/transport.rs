@@ -104,8 +104,8 @@ pub trait DhtTransport: Send + Sync {
 
     /// Get maximum transmission unit for this transport
     fn mtu(&self) -> usize {
-        // Use centralized MTU constants from lib-network
-        use lib_network::mtu::{
+        // Use centralized MTU constants from lib-types
+        use lib_types::mtu::{
             UDP_MTU, BLE_MAX_MTU, WIFI_DIRECT_MTU, LORAWAN_MAX_PAYLOAD, QUIC_MTU, MESH_MTU
         };
         
