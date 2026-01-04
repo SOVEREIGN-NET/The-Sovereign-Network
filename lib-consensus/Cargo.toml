@@ -22,7 +22,7 @@ bincode = "1.3"
 # ZHTP package dependencies
 lib-crypto = { path = "../lib-crypto" }
 lib-identity = { path = "../lib-identity" }
-# lib-storage = { path = "../lib-storage" }  # TODO: Implement storage module
+lib-storage = { path = "../lib-storage" }
 lib-proofs = { path = "../lib-proofs" }
 
 # Time handling

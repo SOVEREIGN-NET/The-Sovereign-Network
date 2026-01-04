@@ -43,6 +43,7 @@ async fn main() -> Result<()> {
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 10,
         block_time: 5, // 5 seconds for demo
+        epoch_length_blocks: 100,
         propose_timeout: 1000,
         prevote_timeout: 500,
         precommit_timeout: 500,
