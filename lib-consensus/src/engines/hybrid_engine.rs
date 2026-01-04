@@ -3,16 +3,17 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lib_crypto::{hash_blake3, Hash};
+use lib_crypto::{hash_blake3, Hash, KeyPair};
 use lib_identity::IdentityId;
 
-use crate::proofs::StakeProof;
+use crate::proofs::{StakeProof, StorageProofProvider};
 use crate::types::{
     ConsensusConfig, ConsensusEvent, ConsensusProof, ConsensusProposal, ConsensusRound,
     ConsensusStep, ConsensusType, ConsensusVote, VoteType,
 };
 use crate::validators::ValidatorManager;
 use crate::{ConsensusError, ConsensusResult};
+use std::sync::Arc;
 
 /// Hybrid consensus engine combining Proof of Stake and Proof of Storage
 #[derive(Debug)]
@@ -36,6 +37,10 @@ pub struct HybridEngine {
     stake_weight: f64,
     /// Storage weight in hybrid calculation (0.0 to 1.0)
     storage_weight: f64,
+    /// Storage proof provider
+    storage_proof_provider: Option<Arc<dyn StorageProofProvider>>,
+    /// Local validator keypair
+    validator_keypair: Option<KeyPair>,
 }
 
 impl HybridEngine {
@@ -72,12 +77,24 @@ impl HybridEngine {
             validator_identity: None,
             stake_weight: stake_weight.max(0.0).min(1.0),
             storage_weight: storage_weight.max(0.0).min(1.0),
+            storage_proof_provider: None,
+            validator_keypair: None,
         }
     }
 
     /// Set local validator identity
     pub fn set_validator_identity(&mut self, identity: IdentityId) {
         self.validator_identity = Some(identity);
+    }
+
+    /// Set storage proof provider for PoStorage attestations
+    pub fn set_storage_proof_provider(&mut self, provider: Arc<dyn StorageProofProvider>) {
+        self.storage_proof_provider = Some(provider);
+    }
+
+    /// Set validator keypair for signing storage attestations
+    pub fn set_validator_keypair(&mut self, keypair: KeyPair) {
+        self.validator_keypair = Some(keypair);
     }
 
     /// Handle consensus event (pure component method)
@@ -514,16 +531,27 @@ impl HybridEngine {
         )
         .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
 
-        let storage_proof = crate::proofs::StorageProof::new(
-            Hash::from_bytes(validator_id.as_bytes()),
-            validator.storage_provided,
-            80,         // 80% utilization
-            Vec::new(), // Simplified challenges
-            vec![Hash::from_bytes(&hash_blake3(
-                &[validator_id.as_bytes(), b"storage"].concat(),
-            ))],
-        )
-        .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+        let provider = self
+            .storage_proof_provider
+            .as_ref()
+            .ok_or_else(|| {
+                ConsensusError::ProofVerificationFailed(
+                    "No storage proof provider configured".to_string(),
+                )
+            })?;
+
+        let unsigned = provider
+            .capacity_attestation(&Hash::from_bytes(validator_id.as_bytes()))
+            .await
+            .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
+
+        let keypair = self.validator_keypair.as_ref().ok_or_else(|| {
+            ConsensusError::ValidatorError("No validator keypair configured".to_string())
+        })?;
+
+        let storage_proof = unsigned
+            .sign(keypair)
+            .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)

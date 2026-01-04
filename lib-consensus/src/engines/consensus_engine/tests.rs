@@ -1,5 +1,6 @@
     use super::*;
-    use lib_crypto::{KeyPair, PostQuantumSignature};
+    use lib_crypto::{hash_blake3, Hash, KeyPair, PostQuantumSignature};
+    use lib_storage::proofs::InMemoryStorageProofProvider;
     use std::sync::Mutex;
 
     /// Mock message broadcaster for testing
@@ -94,6 +95,30 @@
         engine
             .set_validator_keypair(keypair.clone())
             .expect("Failed to set validator keypair");
+
+        attach_storage_provider(engine, validator_id).await;
+    }
+
+    async fn attach_storage_provider(engine: &mut ConsensusEngine, validator_id: IdentityId) {
+        let provider = InMemoryStorageProofProvider::new(3600, 2, 3600);
+        provider
+            .register_validator_capacity(validator_id.clone(), 100 * 1024 * 1024 * 1024)
+            .await
+            .expect("Failed to register storage capacity");
+
+        let content_hash = Hash::from_bytes(&hash_blake3(b"test-content"));
+        let blocks = vec![
+            hash_blake3(b"block-0").to_vec(),
+            hash_blake3(b"block-1").to_vec(),
+            hash_blake3(b"block-2").to_vec(),
+        ];
+
+        provider
+            .register_content(validator_id.clone(), content_hash, blocks)
+            .await
+            .expect("Failed to register content");
+
+        engine.set_storage_proof_provider(Arc::new(provider));
     }
 
     async fn register_validator_with_keypair(

@@ -7,7 +7,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Re-export proof types from proofs module
-pub use crate::proofs::{ProofOfUsefulWork, StakeProof, StorageChallenge, StorageProof, WorkProof};
+pub use crate::proofs::{
+    ProofOfUsefulWork,
+    StakeProof,
+    StorageCapacityAttestation,
+    WorkProof,
+};
 
 // Re-export heartbeat types from validator protocol module
 pub use crate::validators::validator_protocol::HeartbeatMessage;
@@ -184,7 +189,7 @@ pub struct ConsensusProof {
     /// Stake proof (for PoS)
     pub stake_proof: Option<StakeProof>,
     /// Storage proof (for PoStorage)
-    pub storage_proof: Option<StorageProof>,
+    pub storage_proof: Option<StorageCapacityAttestation>,
     /// Useful work proof (for PoUW)
     pub work_proof: Option<WorkProof>,
     /// ZK-DID proof for validator identity

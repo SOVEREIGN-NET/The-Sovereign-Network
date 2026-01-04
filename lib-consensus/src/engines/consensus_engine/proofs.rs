@@ -1,4 +1,5 @@
 use super::*;
+use crate::proofs::StorageCapacityAttestation;
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature};
 
 impl ConsensusEngine {
@@ -242,7 +243,7 @@ impl ConsensusEngine {
     }
 
     /// Create storage proof
-    async fn create_storage_proof(&self) -> ConsensusResult<StorageProof> {
+    async fn create_storage_proof(&self) -> ConsensusResult<StorageCapacityAttestation> {
         let validator_id = self
             .validator_identity
             .as_ref()
@@ -253,61 +254,26 @@ impl ConsensusEngine {
             .get_validator(validator_id)
             .ok_or_else(|| ConsensusError::ValidatorError("Validator not found".to_string()))?;
 
-        // Create realistic storage challenges
-        let mut challenges = Vec::new();
-        let num_challenges = 3; // Standard number of challenges
+        let provider = self
+            .storage_proof_provider
+            .as_ref()
+            .ok_or_else(|| {
+                ConsensusError::ProofVerificationFailed(
+                    "No storage proof provider configured".to_string(),
+                )
+            })?;
 
-        for i in 0..num_challenges {
-            let challenge_data = [
-                validator_id.as_bytes(),
-                &(i as u32).to_le_bytes(),
-                &self.current_round.height.to_le_bytes(),
-            ]
-            .concat();
-
-            let content_hash = Hash::from_bytes(&hash_blake3(
-                &[challenge_data.clone(), b"content".to_vec()].concat(),
-            ));
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?
-                .as_secs()
-                - (i as u64 * 3600);
-            let challenge = crate::proofs::StorageChallenge::new(
-                content_hash,
-                challenge_data[..16].to_vec(), // First 16 bytes as challenge
-                Hash::from_bytes(validator_id.as_bytes()),
-                timestamp,
-            )
+        let unsigned = provider
+            .capacity_attestation(&Hash::from_bytes(validator_id.as_bytes()))
+            .await
             .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
-            challenges.push(challenge);
-        }
 
-        let merkle_root = StorageProof::compute_merkle_root(
-            &challenges
-                .iter()
-                .map(|challenge| challenge.content_hash.clone())
-                .collect::<Vec<_>>(),
-        )
-        .ok_or_else(|| ConsensusError::ProofVerificationFailed("Merkle root missing".to_string()))?;
-        let merkle_proof = vec![merkle_root];
+        let keypair = self.local_signing_keypair(validator)?;
+        let attestation = unsigned
+            .sign(keypair)
+            .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
 
-        // Calculate realistic utilization based on validator activity
-        let utilization = std::cmp::min(
-            90,                               // Max 90% utilization
-            50 + (validator.reputation / 10), // 50-90% based on reputation
-        ) as u64;
-
-        let storage_proof = StorageProof::new(
-            Hash::from_bytes(validator_id.as_bytes()),
-            validator.storage_provided,
-            utilization,
-            challenges,
-            merkle_proof,
-        )
-        .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;
-
-        Ok(storage_proof)
+        Ok(attestation)
     }
 
     /// Create work proof

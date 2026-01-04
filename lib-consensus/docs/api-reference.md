@@ -467,33 +467,31 @@ pub struct StakeProof {
 **`calculate_delegation_rewards(total_rewards: u64) -> Vec<(IdentityId, u64)>`**
 - Calculates rewards to distribute to delegators
 
-### StorageProof
+### StorageCapacityAttestation
 
-Proof of Storage for consensus.
+Consensus-facing storage capacity attestation (sourced from lib-storage).
 
 ```rust
-pub struct StorageProof {
-    pub validator: Hash,
+pub struct StorageCapacityAttestation {
+    pub validator_id: Hash,
     pub storage_capacity: u64,
     pub utilization: u64,
-    pub challenges_passed: Vec<StorageChallenge>,
-    pub merkle_proof: Vec<Hash>,
+    pub challenge_results: Vec<ChallengeResult>,
+    pub timestamp: u64,
+    pub signature: PostQuantumSignature,
 }
 ```
 
 #### Methods
 
-**`new(validator: Hash, storage_capacity: u64, utilization: u64, challenges_passed: Vec<StorageChallenge>, merkle_proof: Vec<Hash>) -> Result<Self>`**
-- Creates a new storage proof
+**`new(validator_id: Hash, storage_capacity: u64, utilization: u64, challenge_results: Vec<ChallengeResult>) -> Self`**
+- Creates a new storage capacity attestation
+
+**`sign(keypair: &KeyPair) -> Result<Self>`**
+- Signs the attestation with the validator keypair
 
 **`verify() -> Result<bool>`**
-- Verifies the storage proof is valid
-
-**`calculate_storage_score() -> f64`**
-- Calculates storage score based on capacity and utilization
-
-**`effective_storage() -> u64`**
-- Gets effective storage provided (capacity * utilization)
+- Verifies the attestation signature
 
 ### WorkProof
 
@@ -599,7 +597,7 @@ pub struct ConsensusVote {
 pub struct ConsensusProof {
     pub consensus_type: ConsensusType,
     pub stake_proof: Option<StakeProof>,
-    pub storage_proof: Option<StorageProof>,
+    pub storage_proof: Option<StorageCapacityAttestation>,
     pub work_proof: Option<WorkProof>,
     pub zk_did_proof: Option<Vec<u8>>,
     pub timestamp: u64,

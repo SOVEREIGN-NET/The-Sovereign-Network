@@ -235,6 +235,8 @@ pub struct ConsensusEngine {
     liveness_check_interval: Option<tokio::time::Interval>,
     /// Local validator signing keypair (required for proposal/vote signing)
     validator_keypair: Option<KeyPair>,
+    /// Storage proof provider (lib-storage backed)
+    storage_proof_provider: Option<Arc<dyn crate::proofs::StorageProofProvider>>,
 }
 
 impl ConsensusEngine {
@@ -290,6 +292,7 @@ impl ConsensusEngine {
             liveness_monitor: crate::network::LivenessMonitor::new(),
             liveness_check_interval: None,
             validator_keypair: None,
+            storage_proof_provider: None,
         })
     }
 
@@ -312,6 +315,14 @@ impl ConsensusEngine {
 
         self.validator_keypair = Some(keypair);
         Ok(())
+    }
+
+    /// Set storage proof provider for Proof-of-Storage attestations
+    pub fn set_storage_proof_provider(
+        &mut self,
+        provider: Arc<dyn crate::proofs::StorageProofProvider>,
+    ) {
+        self.storage_proof_provider = Some(provider);
     }
 
     /// Register as a validator
