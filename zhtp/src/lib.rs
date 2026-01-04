@@ -15,6 +15,7 @@ pub mod security;
 pub mod discovery_coordinator;
 pub mod utils;
 pub mod network_output_dispatcher;
+pub mod storage_network_integration;
 pub mod web4_stub;
 pub mod web4_manifest;
 pub mod keystore_names;

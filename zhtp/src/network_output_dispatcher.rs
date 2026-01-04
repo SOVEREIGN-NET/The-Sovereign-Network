@@ -1,5 +1,5 @@
 use std::time::Duration;
-use lib_storage::network_integration::{
+use crate::storage_network_integration::{
     channel_handler,
     spawn_network_output_processor,
     NetworkOutputHandler,

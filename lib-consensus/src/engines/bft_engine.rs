@@ -28,6 +28,7 @@ pub struct BftEngine {
     /// Vote pool by height and round
     vote_pool: HashMap<(u64, u32), HashMap<Hash, ConsensusVote>>,
     /// Round history
+    #[allow(dead_code)]
     round_history: VecDeque<ConsensusRound>,
     /// Byzantine fault detector
     byzantine_detector: ByzantineFaultDetector,
@@ -478,6 +479,7 @@ impl BftEngine {
     }
 
     /// Advance to next round
+    #[allow(dead_code)]
     async fn advance_to_next_round(&mut self) -> ConsensusResult<()> {
         // Save current round to history
         self.round_history.push_back(self.current_round.clone());
