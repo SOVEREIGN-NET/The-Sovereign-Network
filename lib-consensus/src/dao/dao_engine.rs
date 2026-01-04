@@ -4,14 +4,16 @@
 //! The blockchain is now the source of truth for proposals, votes, and treasury state.
 
 use crate::dao::{
-    DaoProposal, DaoProposalStatus, DaoProposalType, DaoTreasury, DaoVote, DaoVoteChoice,
-    DaoVoteTally, PrivacyLevel,
+    DaoExecutionAction, DaoExecutionParams, DaoProposal, DaoProposalStatus, DaoProposalType,
+    DaoTreasury, DaoVote, DaoVoteChoice, DaoVoteTally, GovernanceParameterUpdate,
+    GovernanceParameterValue, PrivacyLevel,
 };
 use anyhow::Result;
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::types::ConsensusConfig;
 
 /// DAO governance engine (blockchain-backed)
 #[derive(Debug, Clone)]
@@ -35,6 +37,7 @@ impl DaoEngine {
     /// Initialize DAO with production-ready data
     /// NOTE: This method is deprecated - data is loaded from blockchain
     #[deprecated(note = "DAO state is now read from blockchain, not initialized in memory")]
+    #[allow(dead_code)]
     fn initialize_production_dao(&mut self) {
         tracing::info!("DAO initialization skipped - data loaded from blockchain");
     }
@@ -42,6 +45,7 @@ impl DaoEngine {
     /// Load treasury state from blockchain
     /// NOTE: This method is deprecated - use blockchain.get_dao_treasury_balance()
     #[deprecated(note = "Use blockchain.get_dao_treasury_balance() instead")]
+    #[allow(dead_code)]
     fn load_treasury_from_blockchain(&mut self) {
         tracing::warn!(
             "load_treasury_from_blockchain is deprecated - treasury data comes from blockchain"
@@ -51,6 +55,7 @@ impl DaoEngine {
     /// Load active proposals from blockchain state
     /// NOTE: This method is deprecated - use blockchain.get_dao_proposals()
     #[deprecated(note = "Use blockchain.get_dao_proposals() instead")]
+    #[allow(dead_code)]
     fn load_proposals_from_blockchain(&mut self) {
         tracing::warn!(
             "load_proposals_from_blockchain is deprecated - proposals come from blockchain"
@@ -198,6 +203,179 @@ impl DaoEngine {
         Ok(vote_id)
     }
 
+    /// Decode execution parameters from proposal bytes
+    pub fn decode_execution_params(&self, params: &[u8]) -> Result<DaoExecutionParams> {
+        bincode::deserialize(params)
+            .map_err(|e| anyhow::anyhow!("Failed to decode execution params: {}", e))
+    }
+
+    /// Encode execution parameters for proposal submission
+    pub fn encode_execution_params(&self, params: &DaoExecutionParams) -> Result<Vec<u8>> {
+        bincode::serialize(params)
+            .map_err(|e| anyhow::anyhow!("Failed to encode execution params: {}", e))
+    }
+
+    /// Apply execution parameters to consensus configuration
+    pub fn apply_execution_params(
+        &self,
+        config: &mut ConsensusConfig,
+        params: &DaoExecutionParams,
+    ) -> Result<()> {
+        match &params.action {
+            DaoExecutionAction::GovernanceParameterUpdate(update) => {
+                self.apply_governance_update(config, update)
+            }
+        }
+    }
+
+    /// Apply a governance parameter update to consensus configuration
+    pub fn apply_governance_update(
+        &self,
+        config: &mut ConsensusConfig,
+        update: &GovernanceParameterUpdate,
+    ) -> Result<()> {
+        self.validate_governance_update(update)?;
+
+        for param in &update.updates {
+            match param {
+                GovernanceParameterValue::MinStake(value) => config.min_stake = *value,
+                GovernanceParameterValue::MinStorage(value) => config.min_storage = *value,
+                GovernanceParameterValue::MaxValidators(value) => config.max_validators = *value,
+                GovernanceParameterValue::BlockTime(value) => config.block_time = *value,
+                GovernanceParameterValue::EpochLengthBlocks(value) => {
+                    config.epoch_length_blocks = *value;
+                }
+                GovernanceParameterValue::ProposeTimeout(value) => config.propose_timeout = *value,
+                GovernanceParameterValue::PrevoteTimeout(value) => config.prevote_timeout = *value,
+                GovernanceParameterValue::PrecommitTimeout(value) => config.precommit_timeout = *value,
+                GovernanceParameterValue::MaxTransactionsPerBlock(value) => {
+                    config.max_transactions_per_block = *value;
+                }
+                GovernanceParameterValue::MaxDifficulty(value) => config.max_difficulty = *value,
+                GovernanceParameterValue::TargetDifficulty(value) => config.target_difficulty = *value,
+                GovernanceParameterValue::ByzantineThreshold(value) => {
+                    config.byzantine_threshold = *value;
+                }
+                GovernanceParameterValue::SlashDoubleSign(value) => config.slash_double_sign = *value,
+                GovernanceParameterValue::SlashLiveness(value) => config.slash_liveness = *value,
+                GovernanceParameterValue::DevelopmentMode(value) => config.development_mode = *value,
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate governance parameter updates before application
+    pub fn validate_governance_update(&self, update: &GovernanceParameterUpdate) -> Result<()> {
+        if update.updates.is_empty() {
+            return Err(anyhow::anyhow!("Governance update must include at least one change"));
+        }
+
+        for param in &update.updates {
+            match param {
+                GovernanceParameterValue::MinStake(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Min stake must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::MinStorage(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Min storage must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::MaxValidators(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Max validators must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::BlockTime(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Block time must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::EpochLengthBlocks(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!(
+                            "Epoch length blocks must be greater than zero"
+                        ));
+                    }
+                }
+                GovernanceParameterValue::ProposeTimeout(value)
+                | GovernanceParameterValue::PrevoteTimeout(value)
+                | GovernanceParameterValue::PrecommitTimeout(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Timeouts must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::MaxTransactionsPerBlock(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!(
+                            "Max transactions per block must be greater than zero"
+                        ));
+                    }
+                }
+                GovernanceParameterValue::MaxDifficulty(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Max difficulty must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::TargetDifficulty(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Target difficulty must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::ByzantineThreshold(value) => {
+                    if *value <= 0.0 || *value > 0.5 {
+                        return Err(anyhow::anyhow!(
+                            "Byzantine threshold must be in (0.0, 0.5]"
+                        ));
+                    }
+                }
+                GovernanceParameterValue::SlashDoubleSign(value)
+                | GovernanceParameterValue::SlashLiveness(value) => {
+                    if *value > 100 {
+                        return Err(anyhow::anyhow!("Slashing percentage must be <= 100"));
+                    }
+                }
+                GovernanceParameterValue::DevelopmentMode(_) => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract and apply governance updates from a proposal
+    pub fn apply_governance_update_from_proposal(
+        &self,
+        proposal: &DaoProposal,
+        config: &mut ConsensusConfig,
+    ) -> Result<()> {
+        match proposal.proposal_type {
+            DaoProposalType::ProtocolUpgrade
+            | DaoProposalType::EconomicParams
+            | DaoProposalType::GovernanceRules
+            | DaoProposalType::FeeStructure
+            | DaoProposalType::Emergency => {}
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Proposal type does not support governance parameter updates"
+                ));
+            }
+        }
+
+        let params = proposal
+            .execution_params
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Proposal missing execution parameters"))?;
+        let decoded = self.decode_execution_params(params)?;
+
+        match decoded.action {
+            DaoExecutionAction::GovernanceParameterUpdate(_) => {
+                self.apply_execution_params(config, &decoded)
+            }
+        }
+    }
+
     /// Calculate DAO voting power for a user
     ///
     /// Voting power is calculated from multiple factors:
@@ -258,6 +436,7 @@ impl DaoEngine {
     }
 
     /// Sign a DAO vote
+    #[allow(dead_code)]
     async fn sign_dao_vote(
         &self,
         voter: &IdentityId,
@@ -303,6 +482,7 @@ impl DaoEngine {
     /// DEPRECATED: Proposal execution now happens on blockchain layer via execute_dao_proposal()
     /// which creates proper DaoExecution transactions with real UTXO transfers
     #[deprecated(note = "Use blockchain.execute_dao_proposal() instead")]
+    #[allow(dead_code)]
     async fn execute_dao_proposal(&mut self, _proposal_id: &Hash) -> Result<()> {
         tracing::warn!(
             "execute_dao_proposal is deprecated - use blockchain.execute_dao_proposal() instead"
@@ -311,6 +491,7 @@ impl DaoEngine {
     }
 
     /// Parse treasury amount from proposal (helper method)
+    #[allow(dead_code)]
     fn parse_treasury_amount_from_proposal(&self, proposal: &DaoProposal) -> Result<u64> {
         // Look for amount in description (e.g., "amount:1000")
         let description = &proposal.description;
@@ -390,6 +571,7 @@ impl DaoEngine {
     }
 
     /// Calculate total eligible voting power in the network
+    #[allow(dead_code)]
     fn calculate_total_eligible_power(&self) -> u64 {
         // In production, this would sum up all eligible voters' power
         // For now, estimate based on active participants

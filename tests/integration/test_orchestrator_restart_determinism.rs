@@ -1,7 +1,7 @@
 use anyhow::Result;
 use lib_crypto::PrivateKey;
 use lib_identity::{types::IdentityType, NodeId, ZhtpIdentity};
-use lib_network::{dht::protocol::DhtPeerInfo, identity::UnifiedPeerId};
+use lib_network::{dht::protocol::DhtPeerInfo, UnifiedPeerId};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_writer_pretty};
 use std::{

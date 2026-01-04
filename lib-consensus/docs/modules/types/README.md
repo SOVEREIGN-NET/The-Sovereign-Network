@@ -283,7 +283,7 @@ pub struct ConsensusProof {
     /// Stake proof (for PoS)
     pub stake_proof: Option<StakeProof>,
     /// Storage proof (for PoStorage)
-    pub storage_proof: Option<StorageProof>,
+    pub storage_proof: Option<StorageCapacityAttestation>,
     /// Useful work proof (for PoUW)
     pub work_proof: Option<WorkProof>,
     /// ZK-DID proof for validator identity
