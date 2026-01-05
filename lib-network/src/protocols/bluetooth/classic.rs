@@ -12,6 +12,7 @@
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug};
 use serde::{Serialize, Deserialize};
@@ -25,6 +26,13 @@ use crate::types::mesh_message::{MeshMessageEnvelope, ZhtpMeshMessage};
 use super::common::{
     parse_mac_address, get_system_bluetooth_mac,
 };
+
+// V2 fragmentation imports for session-scoped reassembly
+use crate::fragmentation_v2::{
+    FragmentReassemblerV2, FragmentV1, ReassemblerConfig, 
+    fragment_message_v2, Protocol as FragProtocol,
+};
+use crate::protocols::types::SessionId;
 
 // Windows-specific imports removed - using local imports in methods
 
@@ -69,6 +77,48 @@ pub struct BluetoothClassicProtocol {
     pub enabled: Arc<std::sync::atomic::AtomicBool>,
     /// Whether discovery is currently active
     pub discovery_active: Arc<std::sync::atomic::AtomicBool>,
+    /// Per-connection RFCOMM sessions for v2 fragmentation (peer_address -> session)
+    pub rfcomm_sessions: Arc<RwLock<HashMap<String, RfcommSession>>>,
+}
+
+/// RFCOMM session for v2 fragmentation (per-connection state)
+/// 
+/// Each RFCOMM connection has its own session for proper session-scoped
+/// fragment reassembly, preventing collision attacks between connections.
+#[derive(Debug)]
+pub struct RfcommSession {
+    /// Unique session identifier (cryptographically random)
+    pub session_id: SessionId,
+    /// Per-session message sequence counter (monotonic, never reused)
+    pub message_seq: AtomicU32,
+    /// V2 fragment reassembler (session-bound)
+    pub reassembler: FragmentReassemblerV2,
+}
+
+impl RfcommSession {
+    /// Create a new RFCOMM session with v2 fragmentation
+    pub fn new() -> Self {
+        let session_id = SessionId::generate();
+        let config = ReassemblerConfig::from_protocol(FragProtocol::BluetoothClassic);
+        let reassembler = FragmentReassemblerV2::new(session_id.clone(), config);
+        
+        Self {
+            session_id,
+            message_seq: AtomicU32::new(0),
+            reassembler,
+        }
+    }
+    
+    /// Get next message sequence number (thread-safe, monotonic)
+    pub fn next_message_seq(&self) -> u32 {
+        self.message_seq.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+impl Default for RfcommSession {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -525,6 +575,7 @@ impl BluetoothClassicProtocol {
             message_handler: None,
             enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)), // Disabled by default
             discovery_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            rfcomm_sessions: Arc::new(RwLock::new(HashMap::new())), // V2 fragmentation sessions
         })
     }
     
@@ -1055,6 +1106,9 @@ impl BluetoothClassicProtocol {
     }
     
     /// Send mesh message via RFCOMM
+    /// 
+    /// Uses v2 fragmentation with session-scoped message sequencing for messages
+    /// larger than the RFCOMM MTU.
     pub async fn send_mesh_message(&self, target_address: &str, message: &[u8]) -> Result<()> {
         info!(" Sending RFCOMM message to {}: {} bytes", target_address, message.len());
         
@@ -1066,17 +1120,24 @@ impl BluetoothClassicProtocol {
         
         let connection = connections.get(target_address).unwrap();
         let mtu = connection.mtu as usize;
+        drop(connections);
         
         // RFCOMM has larger MTU (1000 bytes typical) - less fragmentation needed
         if message.len() <= mtu {
             self.transmit_rfcomm_packet(message, target_address).await?;
         } else {
-            // Fragment message using centralized fragmentation
-            use crate::fragmentation::fragment_message;
-            let chunk_size = mtu.saturating_sub(8); // Leave room for fragment headers
-            let fragments = fragment_message(message, chunk_size);
+            // Get or create session for this connection (v2 fragmentation)
+            let mut sessions = self.rfcomm_sessions.write().await;
+            let session = sessions.entry(target_address.to_string())
+                .or_insert_with(RfcommSession::new);
             
-            info!("Fragmenting RFCOMM message into {} parts", fragments.len());
+            // Fragment message using v2 fragmentation (session-scoped)
+            use crate::fragmentation_v2::FragmentHeaderV1;
+            let chunk_size = mtu.saturating_sub(FragmentHeaderV1::SIZE); // Leave room for v2 10-byte header
+            let message_seq = session.next_message_seq();
+            let fragments = fragment_message_v2(message_seq, message, chunk_size)?;
+            
+            info!("Fragmenting RFCOMM message into {} parts (msg_seq={})", fragments.len(), message_seq);
             
             for (i, fragment) in fragments.iter().enumerate() {
                 let wire_bytes = fragment.to_bytes();
@@ -1089,7 +1150,6 @@ impl BluetoothClassicProtocol {
         }
         
         // Update connection activity
-        drop(connections);
         let mut connections_mut = self.active_connections.write().await;
         if let Some(conn) = connections_mut.get_mut(target_address) {
             conn.last_seen = std::time::SystemTime::now()
@@ -1099,6 +1159,35 @@ impl BluetoothClassicProtocol {
         }
         
         Ok(())
+    }
+    
+    /// Add a fragment to the session's v2 reassembler
+    /// 
+    /// Returns the complete message if all fragments have been received.
+    pub async fn add_fragment_v2(&self, peer_address: &str, fragment: Vec<u8>) -> Result<Option<Vec<u8>>> {
+        let mut sessions = self.rfcomm_sessions.write().await;
+        let session = sessions.entry(peer_address.to_string())
+            .or_insert_with(RfcommSession::new);
+        
+        // Parse fragment using v2 format (10-byte header)
+        let parsed = FragmentV1::from_bytes(&fragment)?;
+        
+        debug!("RFCOMM fragment received: msg_seq={}, idx={}/{} from {}",
+               parsed.header.message_seq,
+               parsed.header.fragment_index,
+               parsed.header.total_fragments,
+               peer_address);
+        
+        // Delegate to session's v2 reassembler (handles timeout cleanup automatically)
+        let result = session.reassembler.add_fragment(parsed)?;
+        
+        if let Some(ref data) = result {
+            info!("✅ Reassembled RFCOMM message: {} bytes (session: {})",
+                  data.len(),
+                  session.session_id.to_short_string());
+        }
+        
+        Ok(result)
     }
     
     /// Send mesh message envelope via RFCOMM (NEW - Phase 1)

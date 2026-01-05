@@ -6,11 +6,59 @@ use anyhow::{Result, anyhow};
 use tracing::{info, debug, warn};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use crate::mtu::{BLE_MIN_MTU, BLE_MAX_MTU};
 use crate::fragmentation::{fragment_message, FragmentReassembler as CentralizedReassembler, Fragment};
+// V2 fragmentation imports for session-scoped reassembly
+use crate::fragmentation_v2::{
+    FragmentReassemblerV2, FragmentV1, ReassemblerConfig, 
+    fragment_message_v2, Protocol,
+};
+use crate::protocols::types::SessionId;
 
 // Placeholder until blockchain integration is relocated.
 type BlockHeader = Vec<u8>;
+
+/// GATT session for tracking per-connection state (v2 fragmentation)
+/// 
+/// Each BLE connection should have its own GattSession for proper
+/// session-scoped fragment reassembly. This prevents collision attacks
+/// where fragments from different connections could be mixed.
+#[derive(Debug)]
+pub struct GattSession {
+    /// Unique session identifier (cryptographically random)
+    pub session_id: SessionId,
+    /// Per-session message sequence counter (monotonic, never reused)
+    pub message_seq: AtomicU32,
+    /// V2 fragment reassembler (session-bound)
+    pub reassembler: FragmentReassemblerV2,
+}
+
+impl GattSession {
+    /// Create a new GATT session with v2 fragmentation
+    pub fn new() -> Self {
+        let session_id = SessionId::generate();
+        let config = ReassemblerConfig::from_protocol(Protocol::BluetoothLE);
+        let reassembler = FragmentReassemblerV2::new(session_id.clone(), config);
+        
+        Self {
+            session_id,
+            message_seq: AtomicU32::new(0),
+            reassembler,
+        }
+    }
+    
+    /// Get next message sequence number (thread-safe, monotonic)
+    pub fn next_message_seq(&self) -> u32 {
+        self.message_seq.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+impl Default for GattSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// GATT operation types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +125,8 @@ pub fn fragment_data(data: &[u8], mtu: u16) -> Vec<Vec<u8>> {
 /// 
 /// **REFACTORED**: Now uses centralized fragmentation with standardized 8-byte headers.
 /// Returns Vec of wire-format fragments ready for GATT transmission.
+/// 
+/// **DEPRECATED**: Use `fragment_large_message_v2` with a GattSession for new code.
 pub fn fragment_large_message(message_id: u64, data: &[u8], mtu: u16) -> Vec<Vec<u8>> {
     // ATT overhead is 3 bytes, leave room for our 8-byte header
     let chunk_size = (mtu as usize).saturating_sub(3 + 8).max(20);
@@ -90,10 +140,47 @@ pub fn fragment_large_message(message_id: u64, data: &[u8], mtu: u16) -> Vec<Vec
         .collect()
 }
 
+/// Fragment a large message for BLE transmission using v2 protocol (session-scoped)
+/// 
+/// This is the preferred method for new code. Uses v2 fragmentation with:
+/// - Session-scoped message sequencing (no collisions between sessions)
+/// - 10-byte versioned headers
+/// - Protocol-specific size limits
+/// 
+/// # Arguments
+/// * `session` - The GattSession for this connection
+/// * `data` - Message payload to fragment
+/// * `mtu` - Negotiated ATT MTU
+/// 
+/// # Returns
+/// Vec of wire-format fragments ready for GATT transmission
+pub fn fragment_large_message_v2(session: &GattSession, data: &[u8], mtu: u16) -> Result<Vec<Vec<u8>>> {
+    use crate::fragmentation_v2::FragmentHeaderV1;
+    
+    // ATT overhead is 3 bytes, leave room for v2 10-byte header
+    let chunk_size = (mtu as usize).saturating_sub(3 + FragmentHeaderV1::SIZE).max(20);
+    
+    // Get next message sequence from session (monotonic, never reused)
+    let message_seq = session.next_message_seq();
+    
+    // Use v2 fragmentation (produces 10-byte versioned headers)
+    let fragments = fragment_message_v2(message_seq, data, chunk_size)?;
+    
+    info!("Fragmenting BLE message: msg_seq={}, {} fragments, {} bytes total",
+          message_seq, fragments.len(), data.len());
+    
+    // Convert to wire format
+    Ok(fragments.into_iter()
+        .map(|f| f.to_bytes())
+        .collect())
+}
+
 /// Fragment reassembler for multi-part BLE messages
 /// 
 /// **REFACTORED**: Now delegates to centralized FragmentReassembler.
 /// Maintains backward compatibility with existing code.
+/// 
+/// **DEPRECATED**: Use `GattSession.reassembler` for new code (v2 protocol).
 #[derive(Debug)]
 pub struct FragmentReassembler {
     inner: CentralizedReassembler,
@@ -109,6 +196,7 @@ impl FragmentReassembler {
     /// Add a fragment and return complete message if all fragments received
     /// 
     /// **UPDATED**: Now uses centralized fragmentation (8-byte headers)
+    /// **DEPRECATED**: Use `add_fragment_v2` with a GattSession for new code.
     pub fn add_fragment(&mut self, fragment: Vec<u8>) -> Result<Option<Vec<u8>>> {
         // Parse fragment using centralized format
         let parsed = Fragment::from_bytes(&fragment)?;
@@ -130,6 +218,43 @@ impl FragmentReassembler {
         self.inner.clear();
         warn!("🗑️ Cleaned up all stale fragments");
     }
+}
+
+/// Add a fragment using v2 protocol (session-scoped reassembly)
+/// 
+/// This function uses the session's v2 reassembler which provides:
+/// - Collision-free reassembly (message_seq disambiguation)
+/// - Automatic timeout cleanup
+/// - Bounded memory usage
+/// - DoS resistance
+/// 
+/// # Arguments
+/// * `session` - The GattSession for this connection (must be mutable)
+/// * `fragment` - Raw fragment bytes from GATT notification
+/// 
+/// # Returns
+/// * `Ok(Some(data))` - Complete message reassembled
+/// * `Ok(None)` - Fragment added, message incomplete
+/// * `Err(_)` - Invalid fragment, duplicate, or timeout
+pub fn add_fragment_v2(session: &mut GattSession, fragment: Vec<u8>) -> Result<Option<Vec<u8>>> {
+    // Parse fragment using v2 format (10-byte header)
+    let parsed = FragmentV1::from_bytes(&fragment)?;
+    
+    debug!("BLE fragment received: msg_seq={}, idx={}/{}",
+           parsed.header.message_seq,
+           parsed.header.fragment_index,
+           parsed.header.total_fragments);
+    
+    // Delegate to session's v2 reassembler (handles timeout cleanup automatically)
+    let result = session.reassembler.add_fragment(parsed)?;
+    
+    if let Some(ref data) = result {
+        info!("✅ Reassembled BLE message: {} bytes (session: {})",
+              data.len(),
+              session.session_id.to_short_string());
+    }
+    
+    Ok(result)
 }
 
 /// Calculate optimal MTU for connection
