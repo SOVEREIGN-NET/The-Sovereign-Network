@@ -9,9 +9,6 @@ pub mod cost_savings;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::*;
-
     #[test]
     fn test_incentives_module_exists() {
         // Basic test to ensure the incentives module is properly configured

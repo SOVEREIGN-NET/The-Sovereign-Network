@@ -177,6 +177,10 @@ impl ConsensusEngine {
                         if let Some((is_stalled, timed_out_set)) = self.liveness_monitor.check_stall_transition() {
                             let timed_out_validators: Vec<_> = timed_out_set.into_iter().collect();
                             if is_stalled {
+                                let timestamp = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs();
                                 // NOTE: This represents a ConsensusStalled event.
                                 // Currently logged for observability; future work will emit as proper events.
                                 tracing::warn!(
@@ -190,7 +194,18 @@ impl ConsensusEngine {
                                     timed_out_validators.len(),
                                     self.liveness_monitor.total_validators,
                                 );
+                                self.emit_liveness_event(ConsensusEvent::ConsensusStalled {
+                                    height: self.current_round.height,
+                                    round: self.current_round.round,
+                                    timed_out_validators,
+                                    total_validators: self.liveness_monitor.total_validators as usize,
+                                    timestamp,
+                                });
                             } else {
+                                let timestamp = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs();
                                 // NOTE: This represents a ConsensusRecovered event.
                                 // Currently logged for observability; future work will emit as proper events.
                                 tracing::info!(
@@ -199,6 +214,11 @@ impl ConsensusEngine {
                                     round = self.current_round.round,
                                     "CONSENSUS RECOVERED: Sufficient validators responsive again"
                                 );
+                                self.emit_liveness_event(ConsensusEvent::ConsensusRecovered {
+                                    height: self.current_round.height,
+                                    round: self.current_round.round,
+                                    timestamp,
+                                });
                             }
                         }
                     }

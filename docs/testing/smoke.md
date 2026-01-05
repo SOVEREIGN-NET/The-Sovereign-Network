@@ -31,3 +31,6 @@
 
 ## Mesh identity integration (manual)
 - Run `cargo test -p lib-network --test mesh_network_integration` after changes to mesh identity or handshake code to verify NodeId determinism and key binding across mesh nodes.
+
+## Runtime identity environment
+- `ZHTP_DEVICE_NAME`: optional device-name override used for deterministic NodeId derivation during startup (useful for repeatable restarts and CI).

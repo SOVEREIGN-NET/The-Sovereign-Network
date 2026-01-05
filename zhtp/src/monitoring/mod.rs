@@ -10,6 +10,7 @@ pub mod dashboard;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::OnceCell;
 use tracing::info;
 // Removed unused: RwLock, warn, error
 
@@ -17,6 +18,18 @@ pub use metrics::*;
 pub use health_check::*;
 pub use alerting::*;
 pub use dashboard::*;
+
+static GLOBAL_ALERT_MANAGER: OnceCell<Arc<AlertManager>> = OnceCell::const_new();
+
+pub async fn set_global_alert_manager(manager: Arc<AlertManager>) {
+    let _ = GLOBAL_ALERT_MANAGER
+        .get_or_init(|| async { manager.clone() })
+        .await;
+}
+
+pub fn get_global_alert_manager() -> Option<Arc<AlertManager>> {
+    GLOBAL_ALERT_MANAGER.get().cloned()
+}
 
 /// Central monitoring system for ZHTP node
 #[derive(Clone)]
@@ -31,8 +44,12 @@ impl MonitoringSystem {
     /// Create a new monitoring system
     pub async fn new() -> Result<Self> {
         let metrics_collector = Arc::new(MetricsCollector::new().await?);
-        let health_monitor = Arc::new(HealthMonitor::new().await?);
-        let alert_manager = Arc::new(AlertManager::new().await?);
+        let alert_manager = Arc::new(
+            AlertManager::with_thresholds(alerting::AlertThresholds::default()).await?,
+        );
+        let mut health_monitor = HealthMonitor::new().await?;
+        health_monitor.set_alert_manager(alert_manager.clone());
+        let health_monitor = Arc::new(health_monitor);
         
         Ok(Self {
             metrics_collector,
@@ -54,9 +71,15 @@ impl MonitoringSystem {
         
         // Start alert manager
         self.alert_manager.start().await?;
+        set_global_alert_manager(self.alert_manager.clone()).await;
         
         // Start dashboard server if enabled
-        if let Ok(dashboard) = DashboardServer::new(8081).await {
+        if let Ok(mut dashboard) = DashboardServer::new(8081).await {
+            dashboard.set_monitors(
+                self.metrics_collector.clone(),
+                self.health_monitor.clone(),
+                self.alert_manager.clone(),
+            );
             let dashboard_arc = Arc::new(dashboard);
             dashboard_arc.start().await?;
             self.dashboard_server = Some(dashboard_arc);

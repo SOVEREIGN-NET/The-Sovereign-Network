@@ -6,7 +6,7 @@
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use crate::models::EconomicModel;
-use crate::transactions::Transaction;
+use crate::transactions::{calculate_dao_fee_distribution, Transaction};
 use crate::treasury_economics::DaoTreasury;
 use crate::wasm::logging::info;
 
@@ -33,7 +33,7 @@ pub trait BlockchainEconomics {
 pub struct EconomicBlockchainData {
     /// Network transaction fees
     pub transaction_fees: u64,
-    /// DAO fees for UBI/welfare
+    /// DAO fees for UBI/DAO allocations
     pub dao_fees: u64,
     /// Infrastructure provider rewards
     pub infrastructure_rewards: u64,
@@ -140,7 +140,8 @@ impl BlockchainIntegration {
             
             // Process the economic effects
             self.economic_model.process_network_fees(confirmed_data.transaction_fees)?;
-            self.dao_treasury.add_dao_fees(confirmed_data.dao_fees)?;
+            let distribution = calculate_dao_fee_distribution(confirmed_data.dao_fees);
+            self.dao_treasury.apply_fee_distribution(distribution)?;
             self.economic_model.mint_operational_tokens(confirmed_data.tokens_minted, "blockchain confirmation")?;
             
             self.total_processed += 1;
@@ -243,10 +244,11 @@ impl BlockchainEconomics for BlockchainIntegration {
     }
     
     fn process_dao_fees(&mut self, dao_fees: u64) -> Result<()> {
-        self.dao_treasury.add_dao_fees(dao_fees)?;
+        let distribution = calculate_dao_fee_distribution(dao_fees);
+        self.dao_treasury.apply_fee_distribution(distribution)?;
         
         info!(
-            " Processed {} ZHTP DAO fees for UBI/welfare",
+            " Processed {} ZHTP DAO fees for UBI/DAO allocations",
             dao_fees
         );
         

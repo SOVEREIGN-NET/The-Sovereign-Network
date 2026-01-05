@@ -43,6 +43,7 @@ use lib_identity::IdentityManager;
 use lib_economy::EconomicModel;
 use lib_crypto::PublicKey;
 use lib_network::web4::DomainRegistry;
+use crate::monitoring::MonitoringSystem;
 
 // Import keystore filename constants
 use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
@@ -117,6 +118,9 @@ pub struct ZhtpUnifiedServer {
     // All "should we?" decisions delegated to runtime
     runtime: Arc<dyn crate::runtime::NodeRuntime>,
     runtime_orchestrator: Arc<crate::runtime::NodeRuntimeOrchestrator>,
+
+    // Monitoring system (metrics, health, alerts, dashboard)
+    monitoring_system: Option<MonitoringSystem>,
 
     // Server state
     is_running: Arc<RwLock<bool>>,
@@ -299,6 +303,7 @@ impl ZhtpUnifiedServer {
         quic_port: Option<u16>,
     ) -> Result<Self> {
         let server_id = Uuid::new_v4();
+        let monitoring_system = Some(MonitoringSystem::new().await?);
 
         // Use configured ports or defaults
         let discovery_port = discovery_port.unwrap_or(9333);
@@ -478,6 +483,7 @@ impl ZhtpUnifiedServer {
             domain_registry,
             runtime,
             runtime_orchestrator,
+            monitoring_system,
             is_running: Arc::new(RwLock::new(false)),
             server_id,
             port,
@@ -713,6 +719,11 @@ impl ZhtpUnifiedServer {
     /// Start the unified server on port 9333
     pub async fn start(&mut self) -> Result<()> {
         info!("Starting ZHTP Unified Server on port {}", self.port);
+
+        if let Some(monitoring) = &mut self.monitoring_system {
+            monitoring.start().await?;
+            info!(" Monitoring system started");
+        }
 
         // Initialize global mesh router provider for API handlers
         let mesh_router_arc = self.mesh_router.clone();
@@ -1236,9 +1247,14 @@ impl ZhtpUnifiedServer {
     /// Stop the unified server
     pub async fn stop(&mut self) -> Result<()> {
         info!("Stopping ZHTP Unified Server...");
-        
+
         *self.is_running.write().await = false;
-        
+
+        if let Some(monitoring) = &mut self.monitoring_system {
+            monitoring.stop().await?;
+            info!(" Monitoring system stopped");
+        }
+
         info!("ZHTP Unified Server stopped");
         Ok(())
     }
