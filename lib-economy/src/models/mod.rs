@@ -38,7 +38,9 @@ mod tests {
         // Test treasury initialization
         assert_eq!(model.dao_treasury.treasury_balance, 2_500_000);
         assert_eq!(model.dao_treasury.ubi_allocated, 1_500_000);
-        assert_eq!(model.dao_treasury.welfare_allocated, 1_000_000);
+        assert_eq!(model.dao_treasury.sector_dao_allocated, 600_000);
+        assert_eq!(model.dao_treasury.emergency_allocated, 250_000);
+        assert_eq!(model.dao_treasury.dev_grants_allocated, 150_000);
     }
 
     #[test]
@@ -109,13 +111,13 @@ mod tests {
         // Test individual fee calculation functions
         let network_fee = calculate_network_fee(1000, Priority::Normal);
         assert!(network_fee >= crate::MINIMUM_NETWORK_FEE);
-        
+
         let dao_fee = super::fee_calculation::calculate_dao_fee(10000);
-        assert_eq!(dao_fee, 200); // 2% of 10000
-        
+        assert_eq!(dao_fee, 100); // 1% of 10000 (TRANSACTION_FEE_RATE)
+
         let small_dao_fee = super::fee_calculation::calculate_dao_fee(100);
         assert_eq!(small_dao_fee, crate::MINIMUM_DAO_FEE); // Minimum applied
-        
+
         // Test total fee calculation
         let (net, dao, total) = calculate_total_fee(1000, 10000, Priority::High);
         assert_eq!(total, net + dao);

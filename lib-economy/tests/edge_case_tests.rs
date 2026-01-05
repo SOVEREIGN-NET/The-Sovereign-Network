@@ -95,14 +95,20 @@ mod edge_case_tests {
         let mut treasury = DaoTreasury::new();
         
         // Test adding zero fees
-        treasury.add_dao_fees(0).unwrap();
+        treasury
+            .apply_fee_distribution(calculate_dao_fee_distribution(0))
+            .unwrap();
         assert_eq!(treasury.treasury_balance, 0);
         assert_eq!(treasury.ubi_allocated, 0);
-        assert_eq!(treasury.welfare_allocated, 0);
+        assert_eq!(treasury.sector_dao_allocated, 0);
+        assert_eq!(treasury.emergency_allocated, 0);
+        assert_eq!(treasury.dev_grants_allocated, 0);
         
         // Test maximum fee addition
         let max_fees = u64::MAX / 2; // Divide by 2 to avoid overflow in calculations
-        treasury.add_dao_fees(max_fees).unwrap();
+        treasury
+            .apply_fee_distribution(calculate_dao_fee_distribution(max_fees))
+            .unwrap();
         assert_eq!(treasury.treasury_balance, max_fees);
         
         // Test UBI calculation with zero citizens
@@ -384,11 +390,15 @@ mod edge_case_tests {
         
         // Verify system consistency
         assert!(model.current_supply > 0);
-        assert!(model.dao_treasury.treasury_balance >= 0);
-        
+        // Note: treasury_balance is u64 (unsigned), so >= 0 check is always true
+        // Instead verify it was actually updated
+        assert!(model.dao_treasury.treasury_balance > 0);
+
         // Check wallet states
         for wallet in &wallets {
-            assert!(wallet.total_balance() >= 0);
+            // Note: total_balance() is u64 (unsigned), so >= 0 check is always true
+            // Verify wallets exist and have state
+            let _ = wallet.total_balance();
         }
     }
 }

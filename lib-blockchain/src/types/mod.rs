@@ -11,6 +11,8 @@ pub mod mining;
 
 // DAO and SOV economy types
 pub mod dao;
+pub mod sov;
+pub mod dao_tokens;
 
 // Contract types (available when contracts feature is enabled)
 #[cfg(feature = "contracts")]
@@ -34,6 +36,8 @@ pub use mining::*;
 
 // Re-export DAO and SOV economy types
 pub use dao::{DAOType, TokenClass, DAOMetadata, TreasuryAllocation};
+pub use sov::{SOVToken, TokenAmount, TokenAmountError, SOV_MAX_SUPPLY};
+pub use dao_tokens::{DAOKind, DAOToken, DAOKindError};
 
 // Re-export contract types when contracts feature is enabled
 #[cfg(feature = "contracts")]
