@@ -1,9 +1,10 @@
 //! Treasury balance calculations and fund allocation algorithms
 //! 
 //! Provides calculation interfaces for DAO treasury operations including
-//! UBI distribution calculations, welfare fund allocation, and efficiency metrics.
+//! UBI distribution calculations, non-UBI allocation, and efficiency metrics.
 
 use anyhow::Result;
+use crate::transactions::calculate_dao_fee_distribution;
 use crate::treasury_economics::DaoTreasury;
 
 /// Calculate optimal UBI distribution amount per citizen
@@ -23,19 +24,28 @@ pub fn calculate_optimal_ubi_per_citizen(treasury: &DaoTreasury, total_citizens:
     }
 }
 
-/// Calculate welfare funding efficiency score
+/// Calculate non-UBI funding efficiency score
 pub fn calculate_welfare_efficiency(treasury: &DaoTreasury) -> f64 {
     if treasury.total_dao_fees_collected == 0 {
         return 1.0; // Perfect efficiency when no fees collected yet
     }
-    
-    let expected_welfare_distributed = (treasury.total_dao_fees_collected * crate::WELFARE_ALLOCATION_PERCENTAGE) / 100;
-    
-    if expected_welfare_distributed == 0 {
+
+    let expected_non_ubi_distributed = (treasury.total_dao_fees_collected
+        * (crate::DAO_ALLOCATION_PERCENTAGE
+            + crate::EMERGENCY_ALLOCATION_PERCENTAGE
+            + crate::DEV_GRANT_ALLOCATION_PERCENTAGE))
+        / 100;
+
+    if expected_non_ubi_distributed == 0 {
         return 1.0;
     }
-    
-    (treasury.total_welfare_distributed as f64 / expected_welfare_distributed as f64).min(1.0)
+
+    let total_non_ubi_distributed = treasury
+        .total_sector_dao_distributed
+        .saturating_add(treasury.total_emergency_distributed)
+        .saturating_add(treasury.total_dev_grants_distributed);
+
+    (total_non_ubi_distributed as f64 / expected_non_ubi_distributed as f64).min(1.0)
 }
 
 /// Calculate UBI distribution efficiency score  
@@ -55,7 +65,10 @@ pub fn calculate_ubi_efficiency(treasury: &DaoTreasury) -> f64 {
 
 /// Calculate treasury sustainability metrics
 pub fn calculate_treasury_sustainability(treasury: &DaoTreasury, monthly_burn_rate: u64) -> serde_json::Value {
-    let total_allocated = treasury.ubi_allocated + treasury.welfare_allocated;
+    let total_allocated = treasury.ubi_allocated
+        + treasury.sector_dao_allocated
+        + treasury.emergency_allocated
+        + treasury.dev_grants_allocated;
     
     let months_sustainable = if monthly_burn_rate > 0 {
         total_allocated / monthly_burn_rate
@@ -111,7 +124,8 @@ pub fn calculate_ubi_funding_gap(treasury: &DaoTreasury, total_citizens: u64, ta
         0
     };
     
-    let estimated_monthly_ubi_allocation = (estimated_monthly_fees * crate::UBI_ALLOCATION_PERCENTAGE) / 100;
+    let estimated_monthly_distribution = calculate_dao_fee_distribution(estimated_monthly_fees);
+    let estimated_monthly_ubi_allocation = estimated_monthly_distribution.ubi;
     
     let months_to_close_gap = if funding_gap > 0 && estimated_monthly_ubi_allocation > 0 {
         funding_gap / estimated_monthly_ubi_allocation
@@ -134,21 +148,26 @@ pub fn calculate_ubi_funding_gap(treasury: &DaoTreasury, total_citizens: u64, ta
 pub fn calculate_treasury_projections(treasury: &DaoTreasury, projected_monthly_fees: u64, months: u64) -> serde_json::Value {
     let mut projected_balance = treasury.treasury_balance;
     let mut projected_ubi_allocated = treasury.ubi_allocated;
-    let mut projected_welfare_allocated = treasury.welfare_allocated;
+    let mut projected_sector_dao_allocated = treasury.sector_dao_allocated;
+    let mut projected_emergency_allocated = treasury.emergency_allocated;
+    let mut projected_dev_grants_allocated = treasury.dev_grants_allocated;
     
     for _ in 0..months {
-        let monthly_ubi_allocation = (projected_monthly_fees * crate::UBI_ALLOCATION_PERCENTAGE) / 100;
-        let monthly_welfare_allocation = (projected_monthly_fees * crate::WELFARE_ALLOCATION_PERCENTAGE) / 100;
-        
+        let monthly_distribution = calculate_dao_fee_distribution(projected_monthly_fees);
+
         projected_balance += projected_monthly_fees;
-        projected_ubi_allocated += monthly_ubi_allocation;
-        projected_welfare_allocated += monthly_welfare_allocation;
+        projected_ubi_allocated += monthly_distribution.ubi;
+        projected_sector_dao_allocated += monthly_distribution.sector_daos;
+        projected_emergency_allocated += monthly_distribution.emergency_reserve;
+        projected_dev_grants_allocated += monthly_distribution.dev_grants;
     }
     
     serde_json::json!({
         "projected_balance": projected_balance,
         "projected_ubi_allocated": projected_ubi_allocated,
-        "projected_welfare_allocated": projected_welfare_allocated,
+        "projected_sector_dao_allocated": projected_sector_dao_allocated,
+        "projected_emergency_allocated": projected_emergency_allocated,
+        "projected_dev_grants_allocated": projected_dev_grants_allocated,
         "projection_months": months,
         "monthly_fee_assumption": projected_monthly_fees,
         "total_projected_fees": projected_monthly_fees * months

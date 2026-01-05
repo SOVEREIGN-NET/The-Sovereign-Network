@@ -38,7 +38,9 @@ mod tests {
         // Test treasury initialization
         assert_eq!(model.dao_treasury.treasury_balance, 2_500_000);
         assert_eq!(model.dao_treasury.ubi_allocated, 1_500_000);
-        assert_eq!(model.dao_treasury.welfare_allocated, 1_000_000);
+        assert_eq!(model.dao_treasury.sector_dao_allocated, 600_000);
+        assert_eq!(model.dao_treasury.emergency_allocated, 250_000);
+        assert_eq!(model.dao_treasury.dev_grants_allocated, 150_000);
     }
 
     #[test]

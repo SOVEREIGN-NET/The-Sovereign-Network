@@ -34,6 +34,8 @@ pub mod integration;
 pub mod testing;
 pub mod rewards;
 pub mod network_types;
+pub mod tokens;
+pub mod fee_distribution;
 
 // Re-export main types and functions
 pub use types::*;
@@ -46,6 +48,8 @@ pub use treasury_economics::*;
 pub use supply::{management, total_supply}; // Module-level exports to avoid conflicts
 pub use pricing::*;
 pub use rewards::*;
+pub use tokens::*;
+pub use fee_distribution::{distribute_fee, FeeDistribution, FeeDistributionError, SectorDao};
 
 /// Economic constants - aligned with financial projections (docs/sov_final/)
 ///
@@ -74,10 +78,15 @@ pub const DAO_ALLOCATION_PERCENTAGE: u64 = 30; // 30% → Sector DAOs (5 DAOs ×
 pub const EMERGENCY_ALLOCATION_PERCENTAGE: u64 = 15; // 15% → Emergency Reserve Fund
 pub const DEV_GRANT_ALLOCATION_PERCENTAGE: u64 = 10; // 10% → Development Grants
 
-// Legacy constant: kept for backwards compatibility during Phase 1
-// Will be removed once all code migrates to individual allocation percentages
-#[deprecated(since = "0.2.0", note = "Use UBI_ALLOCATION_PERCENTAGE, DAO_ALLOCATION_PERCENTAGE, EMERGENCY_ALLOCATION_PERCENTAGE, DEV_GRANT_ALLOCATION_PERCENTAGE instead")]
-pub const WELFARE_ALLOCATION_PERCENTAGE: u64 = 40; // DEPRECATED - was 40% in old system
+/// Phase 1 temporary allocation (kept for compatibility)
+///
+/// Phase 1 allocation: 45% UBI + 40% Welfare = 85% (15% reserved)
+/// Phase 2+ allocation: 45% UBI + 30% DAOs + 15% Emergency + 10% Dev Grants = 100%
+///
+/// This constant represents the temporary Phase 1 welfare bucket that will be
+/// split into separate DAOs, Emergency Reserves, and Dev Grants contracts in Phase 2.
+/// The 40% value is a transitional value kept for backwards compatibility.
+pub const WELFARE_ALLOCATION_PERCENTAGE: u64 = 40; // Phase 1 temporary - superseded in Phase 2+
 
 /// ISP replacement economic constants
 pub const DEFAULT_ROUTING_RATE: u64 = 1; // SOV per MB routed
