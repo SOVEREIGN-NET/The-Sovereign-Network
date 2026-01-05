@@ -39,9 +39,13 @@ impl EconomicPeriod {
     ///
     /// These values are hardcoded chain constants.
     /// Invariant A1 (Deterministic Mapping): same input always yields same output
+    /// Invariant A2 (Epoch Alignment): all boundaries are multiples of 100 (epoch_length)
     pub fn block_height(&self) -> u64 {
         match self {
-            EconomicPeriod::Daily => 8_640,       // 86,400 seconds / 10 = 8,640 blocks
+            // 8,600 = 86 epochs of 100 blocks each (~23.89 hours, aligned to epoch boundaries)
+            // Changed from 8,640 to enforce Invariant A2 (epoch alignment)
+            // Represents daily treasury accounting aligned to validator set transitions
+            EconomicPeriod::Daily => 8_600,       // 86,000 seconds / 10 = 8,600 blocks
             EconomicPeriod::Monthly => 259_200,   // 2,592,000 seconds / 10 = 259,200 blocks
             EconomicPeriod::Quarterly => 777_600, // 7,776,000 seconds / 10 = 777,600 blocks
         }
@@ -371,8 +375,8 @@ mod tests {
     #[test]
     fn test_economic_period_deterministic_mapping() {
         // Invariant A1: Same input always yields same output
-        assert_eq!(EconomicPeriod::Daily.block_height(), 8_640);
-        assert_eq!(EconomicPeriod::Daily.block_height(), 8_640);
+        assert_eq!(EconomicPeriod::Daily.block_height(), 8_600);
+        assert_eq!(EconomicPeriod::Daily.block_height(), 8_600);
         
         assert_eq!(EconomicPeriod::Monthly.block_height(), 259_200);
         assert_eq!(EconomicPeriod::Monthly.block_height(), 259_200);
@@ -384,7 +388,7 @@ mod tests {
     #[test]
     fn test_economic_period_is_boundary() {
         // Height 8640 is a Daily boundary
-        assert!(EconomicPeriod::Daily.is_boundary(8_640));
+        assert!(EconomicPeriod::Daily.is_boundary(8_600));
         // Height 8641 is not
         assert!(!EconomicPeriod::Daily.is_boundary(8_641));
         // Height 0 is not a boundary
@@ -402,11 +406,11 @@ mod tests {
     #[test]
     fn test_economic_period_next_boundary() {
         // Next Daily boundary after 1 is 8,640
-        assert_eq!(EconomicPeriod::Daily.next_boundary(1), 8_640);
+        assert_eq!(EconomicPeriod::Daily.next_boundary(1), 8_600);
         // Next Daily boundary after 8,640 is 17,280
-        assert_eq!(EconomicPeriod::Daily.next_boundary(8_640), 17_280);
+        assert_eq!(EconomicPeriod::Daily.next_boundary(8_600), 17_200);
         // Next Daily boundary after 8,639 is 8,640
-        assert_eq!(EconomicPeriod::Daily.next_boundary(8_639), 8_640);
+        assert_eq!(EconomicPeriod::Daily.next_boundary(8_599), 8_600);
         
         // Monthly boundaries
         assert_eq!(EconomicPeriod::Monthly.next_boundary(1), 259_200);
@@ -424,26 +428,26 @@ mod tests {
         
         let id_at_0 = period.period_id_for_height(0);
         let id_at_1 = period.period_id_for_height(1);
-        let id_at_8640 = period.period_id_for_height(8_640);
+        let id_at_8600 = period.period_id_for_height(8_600);
         let id_at_8641 = period.period_id_for_height(8_641);
-        let id_at_17280 = period.period_id_for_height(17_280);
+        let id_at_17200 = period.period_id_for_height(17_200);
         
         // All in first period (0)
         assert_eq!(id_at_0, 0);
         assert_eq!(id_at_1, 0);
         
         // Boundary: moves to period 1
-        assert_eq!(id_at_8640, 1);
+        assert_eq!(id_at_8600, 1);
         assert_eq!(id_at_8641, 1);
         
         // Next boundary: moves to period 2
-        assert_eq!(id_at_17280, 2);
+        assert_eq!(id_at_17200, 2);
         
         // Verify monotonicity
         assert!(id_at_0 <= id_at_1);
-        assert!(id_at_1 <= id_at_8640);
-        assert!(id_at_8640 <= id_at_8641);
-        assert!(id_at_8641 < id_at_17280);
+        assert!(id_at_1 <= id_at_8600);
+        assert!(id_at_8600 <= id_at_8641);
+        assert!(id_at_8641 < id_at_17200);
     }
 
     #[test]
@@ -462,17 +466,60 @@ mod tests {
 
     #[test]
     fn test_economic_period_alignment_with_epoch() {
-        // Invariant A2: Periods must align to epoch boundaries
-        // Assuming epoch_length = 100 blocks
+        // CRITICAL: Invariant A2 - Periods must align to epoch boundaries
+        // Economic disbursements must occur at validator set transition boundaries
+        // to prevent straddle across validator changes.
+        // Assuming epoch_length = 100 blocks (standard validator epoch length)
         let epoch_length = 100u64;
         
-        // Daily (8,640) should be divisible by epoch_length
-        assert_eq!(EconomicPeriod::Daily.block_height() % epoch_length, 40);
-        // This means Daily needs adjustment to align, OR we verify periods are multiples
+        // All period heights must be exact multiples of epoch_length
+        // This enforces alignment to validator set transitions
+        assert_eq!(
+            EconomicPeriod::Daily.block_height() % epoch_length,
+            0,
+            "Daily period must align to epoch boundaries (invariant A2)"
+        );
+        assert_eq!(
+            EconomicPeriod::Monthly.block_height() % epoch_length,
+            0,
+            "Monthly period must align to epoch boundaries (invariant A2)"
+        );
+        assert_eq!(
+            EconomicPeriod::Quarterly.block_height() % epoch_length,
+            0,
+            "Quarterly period must align to epoch boundaries (invariant A2)"
+        );
         
-        // For now, verify that boundaries are consistent
-        for height in [8_640, 17_280, 25_920] {
-            assert!(EconomicPeriod::Daily.is_boundary(height));
+        // Verify that all boundaries are exact multiples of epoch_length
+        for period in [EconomicPeriod::Daily, EconomicPeriod::Monthly, EconomicPeriod::Quarterly] {
+            let period_height = period.block_height();
+            assert_eq!(
+                period_height % epoch_length,
+                0,
+                "Period {} height {} must be divisible by epoch_length {}",
+                period.as_str(),
+                period_height,
+                epoch_length
+            );
+            
+            // Verify that all calculated boundaries respect the alignment invariant
+            for multiple in 1..=3 {
+                let boundary = period_height * multiple;
+                assert_eq!(
+                    boundary % epoch_length,
+                    0,
+                    "Boundary {} for period {} must align to epoch_length {}",
+                    boundary,
+                    period.as_str(),
+                    epoch_length
+                );
+                assert!(
+                    period.is_boundary(boundary),
+                    "Height {} should be recognized as boundary for period {}",
+                    boundary,
+                    period.as_str()
+                );
+            }
         }
     }
 }

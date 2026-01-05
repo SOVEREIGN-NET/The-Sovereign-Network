@@ -1359,7 +1359,7 @@ mod tests {
         assert!(!token.is_disbursement_due(8_639));
         
         // Exact boundary
-        assert!(token.is_disbursement_due(8_640));
+        assert!(token.is_disbursement_due(8_600));
         
         // Past boundary (but next disbursement not yet recorded)
         assert!(!token.is_disbursement_due(8_641));
@@ -1387,13 +1387,13 @@ mod tests {
         .unwrap();
 
         let first_next = token.next_disbursement_height().unwrap();
-        assert_eq!(first_next, 8_640); // First Daily boundary
+        assert_eq!(first_next, 8_600); // First Daily boundary
 
         // Execute disbursement at boundary
-        token.record_disbursement_executed(8_640).unwrap();
+        token.record_disbursement_executed(8_600).unwrap();
 
         let second_next = token.next_disbursement_height().unwrap();
-        assert_eq!(second_next, 17_280); // Second Daily boundary
+        assert_eq!(second_next, 17_200); // Second Daily boundary
 
         // Verify monotonic increase
         assert!(second_next > first_next);
@@ -1425,13 +1425,13 @@ mod tests {
         .unwrap();
 
         // First execution at boundary succeeds
-        token.record_disbursement_executed(8_640).unwrap();
-        assert_eq!(token.last_executed_disbursement_height(), Some(8_640));
-        assert_eq!(token.next_disbursement_height(), Some(17_280)); // advanced
+        token.record_disbursement_executed(8_600).unwrap();
+        assert_eq!(token.last_executed_disbursement_height(), Some(8_600));
+        assert_eq!(token.next_disbursement_height(), Some(17_200)); // advanced
 
         // Second attempt at the same height (8640) fails with B3 check
         // because 8640 is no longer the due height (due is now 17280)
-        let result = token.record_disbursement_executed(8_640);
+        let result = token.record_disbursement_executed(8_600);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1460,7 +1460,7 @@ mod tests {
         .unwrap();
 
         // Execute at first boundary
-        token.record_disbursement_executed(8_640).unwrap();
+        token.record_disbursement_executed(8_600).unwrap();
 
         // Try to execute at earlier height
         let result = token.record_disbursement_executed(8_639);
@@ -1491,22 +1491,22 @@ mod tests {
         .unwrap();
 
         // Cycle 1
-        assert_eq!(token.next_disbursement_height(), Some(8_640));
-        assert!(token.is_disbursement_due(8_640));
-        token.record_disbursement_executed(8_640).unwrap();
+        assert_eq!(token.next_disbursement_height(), Some(8_600));
+        assert!(token.is_disbursement_due(8_600));
+        token.record_disbursement_executed(8_600).unwrap();
 
         // Cycle 2
-        assert_eq!(token.next_disbursement_height(), Some(17_280));
-        assert!(token.is_disbursement_due(17_280));
-        token.record_disbursement_executed(17_280).unwrap();
+        assert_eq!(token.next_disbursement_height(), Some(17_200));
+        assert!(token.is_disbursement_due(17_200));
+        token.record_disbursement_executed(17_200).unwrap();
 
         // Cycle 3
-        assert_eq!(token.next_disbursement_height(), Some(25_920));
-        assert!(token.is_disbursement_due(25_920));
-        token.record_disbursement_executed(25_920).unwrap();
+        assert_eq!(token.next_disbursement_height(), Some(25_800));
+        assert!(token.is_disbursement_due(25_800));
+        token.record_disbursement_executed(25_800).unwrap();
 
         // Verify last executed height
-        assert_eq!(token.last_executed_disbursement_height(), Some(25_920));
+        assert_eq!(token.last_executed_disbursement_height(), Some(25_800));
     }
 
     #[test]
@@ -1531,7 +1531,7 @@ mod tests {
         .unwrap();
 
         // Never due, regardless of height
-        assert!(!token.is_disbursement_due(8_640));
+        assert!(!token.is_disbursement_due(8_600));
         assert!(!token.is_disbursement_due(259_200));
         assert!(!token.is_disbursement_due(777_600));
     }
@@ -1557,7 +1557,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = token.record_disbursement_executed(8_640);
+        let result = token.record_disbursement_executed(8_600);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1594,7 +1594,7 @@ mod tests {
         .unwrap();
 
         // Verify initial state
-        assert_eq!(token.next_disbursement_height(), Some(8_640));
+        assert_eq!(token.next_disbursement_height(), Some(8_600));
         assert_eq!(token.last_executed_disbursement_height(), None);
 
         // Try to execute EARLY (at height 8639, one block before boundary)
@@ -1607,7 +1607,7 @@ mod tests {
             .contains("Disbursement not due at height"));
 
         // CRITICAL: State must be UNCHANGED after failed attempt
-        assert_eq!(token.next_disbursement_height(), Some(8_640)); // unchanged
+        assert_eq!(token.next_disbursement_height(), Some(8_600)); // unchanged
         assert_eq!(token.last_executed_disbursement_height(), None); // unchanged
     }
 
@@ -1634,7 +1634,7 @@ mod tests {
         .unwrap();
 
         // Verify initial state
-        assert_eq!(token.next_disbursement_height(), Some(8_640));
+        assert_eq!(token.next_disbursement_height(), Some(8_600));
 
         // Try to execute LATE (at height 8641, one block after boundary)
         let result = token.record_disbursement_executed(8_641);
@@ -1646,7 +1646,7 @@ mod tests {
             .contains("Disbursement not due at height"));
 
         // CRITICAL: State must be UNCHANGED after failed attempt
-        assert_eq!(token.next_disbursement_height(), Some(8_640)); // unchanged
+        assert_eq!(token.next_disbursement_height(), Some(8_600)); // unchanged
         assert_eq!(token.last_executed_disbursement_height(), None); // unchanged
     }
 
@@ -1673,22 +1673,22 @@ mod tests {
         .unwrap();
 
         // Verify initial state
-        assert_eq!(token.next_disbursement_height(), Some(8_640));
+        assert_eq!(token.next_disbursement_height(), Some(8_600));
         assert_eq!(token.last_executed_disbursement_height(), None);
 
         // Execute at EXACT boundary
-        let result = token.record_disbursement_executed(8_640);
+        let result = token.record_disbursement_executed(8_600);
         assert!(result.is_ok()); // Must succeed
 
         // CRITICAL: State must be ADVANCED after successful execution
-        assert_eq!(token.next_disbursement_height(), Some(17_280)); // advanced to next boundary
-        assert_eq!(token.last_executed_disbursement_height(), Some(8_640)); // recorded execution
+        assert_eq!(token.next_disbursement_height(), Some(17_200)); // advanced to next boundary
+        assert_eq!(token.last_executed_disbursement_height(), Some(8_600)); // recorded execution
 
         // Verify we can call again at the new boundary
-        let result2 = token.record_disbursement_executed(17_280);
+        let result2 = token.record_disbursement_executed(17_200);
         assert!(result2.is_ok());
-        assert_eq!(token.next_disbursement_height(), Some(25_920)); // next boundary
-        assert_eq!(token.last_executed_disbursement_height(), Some(17_280));
+        assert_eq!(token.next_disbursement_height(), Some(25_800)); // next boundary
+        assert_eq!(token.last_executed_disbursement_height(), Some(17_200));
     }
 
     #[test]
@@ -1714,9 +1714,9 @@ mod tests {
         .unwrap();
 
         // Daily: first boundary 8640
-        assert_eq!(token_daily.next_disbursement_height(), Some(8_640));
-        assert!(token_daily.record_disbursement_executed(8_640).is_ok());
-        assert!(token_daily.record_disbursement_executed(17_280).is_ok());
+        assert_eq!(token_daily.next_disbursement_height(), Some(8_600));
+        assert!(token_daily.record_disbursement_executed(8_600).is_ok());
+        assert!(token_daily.record_disbursement_executed(17_200).is_ok());
 
         // Test with Monthly period
         let mut token_monthly = DAOToken::init_dao_token(
