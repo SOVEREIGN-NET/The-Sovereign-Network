@@ -1,10 +1,35 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::integration::crypto_integration::PublicKey;
-use crate::types::dao::DAOType;
+use crate::types::dao::{DAOType, EconomicPeriod};
 use super::token_id::derive_token_id;
 
 /// Core DAO token contract with locked-down invariants
+///
+/// # Invariant B1: Disbursement State Existence Invariant
+/// Every DAOToken that supports scheduled disbursement must store:
+/// - allocation_period: EconomicPeriod (or None if no scheduled disbursement)
+/// - next_disbursement_height: BlockHeight (or None)
+/// If a token has no scheduled disbursement, this must be explicit (None), not implicit absence.
+///
+/// # Invariant B2: Monotonic Disbursement Invariant
+/// next_disbursement_height must only move forward.
+/// new_next_height > old_next_height
+/// Rollback, replay, or backward movement is forbidden.
+///
+/// # Invariant B3: Boundary-Trigger Invariant
+/// A DAOToken may only disburse if:
+/// current_height == next_disbursement_height (exact match, not >=, not >)
+/// This ensures:
+/// - deterministic replay
+/// - no "late" or "early" payouts
+///
+/// # Invariant B4: Single-Execution Invariant
+/// For any disbursement boundary:
+/// exactly one disbursement may occur
+/// Even if the block is reprocessed or messages are reordered,
+/// the disbursement function is called twice.
+/// This implies an internal "already executed for height H" guard.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DAOToken {
     // Immutable fields (set at init, never change)
@@ -20,6 +45,11 @@ pub struct DAOToken {
     decimals: u8,
     total_supply: u64,
     balances: HashMap<PublicKey, u64>,
+    
+    // Economic period scheduling (Invariants B1-B4)
+    allocation_period: Option<EconomicPeriod>,
+    next_disbursement_height: Option<u64>,
+    last_executed_disbursement_height: Option<u64>, // Invariant B4: single-execution guard
 }
 
 impl DAOToken {
@@ -28,12 +58,17 @@ impl DAOToken {
     /// NP: 100% to treasury
     /// FP: 20% to treasury, 80% (+ remainder) to initial_holder (caller)
     ///
+    /// # Parameters:
+    /// - allocation_period: If Some, enables scheduled disbursements. If None, no schedule.
+    /// - allocation_period must align to block boundaries (EconomicPeriod).
+    ///
     /// # Invariants enforced:
     /// - DAOType is immutable once set
     /// - Initialization runs exactly once
     /// - Treasury and staking addresses are non-zero and valid
     /// - Supply allocation is deterministic
     /// - sum(balances) == total_supply always holds
+    /// - Disbursement period and height are explicit (Invariant B1)
     pub fn init_dao_token(
         dao_type: DAOType,
         name: String,
@@ -43,6 +78,7 @@ impl DAOToken {
         treasury_addr: PublicKey,
         staking_contract_addr: PublicKey,
         caller: PublicKey, // Used as initial_holder for FP tokens
+        allocation_period: Option<EconomicPeriod>,
     ) -> Result<Self, String> {
         // Validate inputs
         if name.is_empty() {
@@ -79,6 +115,9 @@ impl DAOToken {
         // - name, symbol, dao_type (prevents NP/FP collision)
         // - decimals (prevents precision confusion)
         let token_id = derive_token_id(&name, &symbol, dao_type, decimals);
+        
+        // Calculate initial next disbursement height if period is set (Invariant B1)
+        let next_disbursement_height = allocation_period.map(|period| period.next_boundary(0));
 
         let mut token = DAOToken {
             dao_type,
@@ -91,6 +130,9 @@ impl DAOToken {
             decimals,
             total_supply: 0, // Will be set by allocation
             balances: HashMap::new(),
+            allocation_period,
+            next_disbursement_height,
+            last_executed_disbursement_height: None, // Invariant B4: no execution yet
         };
 
         // Allocate supply based on DAO type
@@ -297,6 +339,99 @@ impl DAOToken {
             .collect()
     }
 
+    // ============================================================================
+    // DISBURSEMENT SCHEDULE METHODS (Invariants B1-B4)
+    // ============================================================================
+
+    /// Check if a disbursement is due at the current block height
+    ///
+    /// # Invariant B3: Boundary-Trigger Invariant
+    /// Returns true only if current_height == next_disbursement_height (exact match).
+    /// Not >=, not approximate.
+    pub fn is_disbursement_due(&self, current_height: u64) -> bool {
+        match (self.next_disbursement_height, self.last_executed_disbursement_height) {
+            (Some(next_height), Some(last_height)) => {
+                // Invariant B4: Already executed this height
+                if last_height == current_height {
+                    return false;
+                }
+                current_height == next_height
+            }
+            (Some(next_height), None) => {
+                // First disbursement
+                current_height == next_height
+            }
+            (None, _) => {
+                // No schedule
+                false
+            }
+        }
+    }
+
+    /// Mark a disbursement as executed at the given height
+    ///
+    /// # Invariant B2: Monotonic Disbursement Invariant
+    /// Enforces that we only move forward in time.
+    ///
+    /// # Invariant B4: Single-Execution Invariant
+    /// Records that we executed a disbursement at this height to prevent re-execution.
+    ///
+    /// # Panics if:
+    /// - no allocation_period is set
+    /// - disbursement was already executed at this height
+    pub fn record_disbursement_executed(&mut self, height: u64) -> Result<(), String> {
+        if self.allocation_period.is_none() {
+            return Err("Token has no scheduled disbursement period".to_string());
+        }
+
+        // Invariant B4: Prevent double execution at same height
+        if let Some(last_height) = self.last_executed_disbursement_height {
+            if last_height == height {
+                return Err(format!(
+                    "Disbursement already executed at height {}",
+                    height
+                ));
+            }
+            // Invariant B2: Must move forward
+            if height <= last_height {
+                return Err(format!(
+                    "Cannot execute disbursement at height {} (last was {})",
+                    height, last_height
+                ));
+            }
+        }
+
+        let period = self.allocation_period.unwrap(); // Already checked above
+        let next_boundary = period.next_boundary(height);
+
+        // Invariant B2: Monotonic increase
+        if let Some(prev_next) = self.next_disbursement_height {
+            if next_boundary <= prev_next {
+                return Err("Next disbursement height must increase".to_string());
+            }
+        }
+
+        self.last_executed_disbursement_height = Some(height);
+        self.next_disbursement_height = Some(next_boundary);
+
+        Ok(())
+    }
+
+    /// Get the allocation period (if set)
+    pub fn allocation_period(&self) -> Option<EconomicPeriod> {
+        self.allocation_period
+    }
+
+    /// Get the next disbursement height (if scheduled)
+    pub fn next_disbursement_height(&self) -> Option<u64> {
+        self.next_disbursement_height
+    }
+
+    /// Get the last executed disbursement height (if any)
+    pub fn last_executed_disbursement_height(&self) -> Option<u64> {
+        self.last_executed_disbursement_height
+    }
+
 
 }
 
@@ -327,6 +462,7 @@ mod tests {
             treasury.clone(),
             staking,
             caller,
+            None, // No scheduled disbursement
         )
         .unwrap();
 
@@ -349,6 +485,7 @@ mod tests {
             treasury.clone(),
             staking,
             caller,
+            None,
         )
         .unwrap();
 
@@ -371,6 +508,7 @@ mod tests {
             treasury.clone(),
             staking,
             caller.clone(),
+            None,
         )
         .unwrap();
 
@@ -399,6 +537,7 @@ mod tests {
             treasury.clone(),
             staking,
             caller.clone(),
+            None,
         )
         .unwrap();
 
@@ -429,6 +568,7 @@ mod tests {
             zero_addr,
             staking,
             caller,
+            None,
         );
 
         assert!(result.is_err());
@@ -450,6 +590,7 @@ mod tests {
             treasury,
             zero_addr,
             caller,
+            None,
         );
 
         assert!(result.is_err());
@@ -471,6 +612,7 @@ mod tests {
             treasury.clone(),
             staking.clone(),
             caller.clone(),
+            None,
         )
         .unwrap();
 
@@ -485,6 +627,7 @@ mod tests {
             treasury,
             staking,
             caller,
+            None,
         )
         .unwrap();
 
@@ -512,6 +655,7 @@ mod tests {
             treasury,
             staking,
             caller,
+            None,
         )
         .unwrap();
 
@@ -536,6 +680,7 @@ mod tests {
             treasury,
             staking.clone(),
             caller,
+            None,
         )
         .unwrap();
 
@@ -563,6 +708,7 @@ mod tests {
             treasury,
             staking.clone(),
             caller,
+            None,
         )
         .unwrap();
 
@@ -587,6 +733,7 @@ mod tests {
             treasury,
             staking.clone(),
             caller,
+            None,
         )
         .unwrap();
 
@@ -614,6 +761,7 @@ mod tests {
             treasury.clone(),
             staking.clone(),
             caller,
+            None,
         )
         .unwrap();
 
@@ -643,6 +791,7 @@ mod tests {
             treasury.clone(),
             staking,
             caller,
+            None,
         )
         .unwrap();
 
@@ -666,6 +815,7 @@ mod tests {
             treasury.clone(),
             staking.clone(),
             caller,
+            None,
         )
         .unwrap();
 
@@ -690,6 +840,7 @@ mod tests {
             treasury,
             staking.clone(),
             caller,
+            None,
         )
         .unwrap();
 
@@ -718,6 +869,7 @@ mod tests {
             treasury.clone(),
             staking,
             caller,
+            None,
         )
         .unwrap();
 
@@ -741,6 +893,7 @@ mod tests {
             treasury,
             staking.clone(),
             caller,
+            None,
         )
         .unwrap();
 
@@ -765,6 +918,7 @@ mod tests {
             treasury.clone(),
             staking.clone(),
             caller,
+            None,
         )
         .unwrap();
 
@@ -790,6 +944,7 @@ mod tests {
             treasury.clone(),
             staking,
             caller,
+            None,
         )
         .unwrap();
 
@@ -816,6 +971,7 @@ mod tests {
             treasury.clone(),
             staking.clone(),
             caller.clone(),
+            None,
         )
         .unwrap();
 
@@ -861,6 +1017,7 @@ mod tests {
             treasury.clone(),
             staking,
             caller,
+            None,
         )
         .unwrap();
 
@@ -907,6 +1064,7 @@ mod tests {
             treasury.clone(),
             staking.clone(),
             caller.clone(),
+            None,
         )
         .unwrap();
 
@@ -919,6 +1077,7 @@ mod tests {
             treasury.clone(),
             staking.clone(),
             caller,
+            None,
         )
         .unwrap();
 
@@ -946,6 +1105,7 @@ mod tests {
             treasury.clone(),
             staking.clone(),
             caller.clone(),
+            None,
         )
         .unwrap();
 
@@ -958,6 +1118,7 @@ mod tests {
             treasury,
             staking,
             caller,
+            None,
         )
         .unwrap();
 
@@ -983,6 +1144,7 @@ mod tests {
             treasury,
             staking,
             zero_caller,
+            None,
         );
 
         // Must reject zero caller for FP
@@ -1014,6 +1176,7 @@ mod tests {
             treasury.clone(),
             staking,
             caller,
+            None,
         )
         .unwrap();
 
@@ -1042,9 +1205,280 @@ mod tests {
             treasury,
             staking,
             caller,
+            None,
         )
         .unwrap();
 
         assert!(token.is_initialized());
+    }
+
+    // ============================================================================
+    // DISBURSEMENT INVARIANT TESTS (Invariants B1-B4)
+    // ============================================================================
+
+    #[test]
+    fn test_invariant_b1_disbursement_state_existence_none() {
+        // Invariant B1: Explicit None, not implicit absence
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            None,
+        )
+        .unwrap();
+
+        // No allocation period set
+        assert_eq!(token.allocation_period(), None);
+        assert_eq!(token.next_disbursement_height(), None);
+    }
+
+    #[test]
+    fn test_invariant_b1_disbursement_state_existence_some() {
+        // Invariant B1: Explicit Some with both period and height
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            Some(EconomicPeriod::Monthly),
+        )
+        .unwrap();
+
+        // Period is set
+        assert_eq!(token.allocation_period(), Some(EconomicPeriod::Monthly));
+        // Next disbursement height calculated from first boundary
+        assert_eq!(token.next_disbursement_height(), Some(259_200));
+    }
+
+    #[test]
+    fn test_invariant_b3_boundary_trigger_exact_match() {
+        // Invariant B3: Only exact match triggers disbursement
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            Some(EconomicPeriod::Daily),
+        )
+        .unwrap();
+
+        // Not at boundary yet
+        assert!(!token.is_disbursement_due(8_639));
+        
+        // Exact boundary
+        assert!(token.is_disbursement_due(8_640));
+        
+        // Past boundary (but next disbursement not yet recorded)
+        assert!(!token.is_disbursement_due(8_641));
+    }
+
+    #[test]
+    fn test_invariant_b2_monotonic_disbursement() {
+        // Invariant B2: next_disbursement_height only moves forward
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let mut token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            Some(EconomicPeriod::Daily),
+        )
+        .unwrap();
+
+        let first_next = token.next_disbursement_height().unwrap();
+        assert_eq!(first_next, 8_640); // First Daily boundary
+
+        // Execute disbursement at boundary
+        token.record_disbursement_executed(8_640).unwrap();
+
+        let second_next = token.next_disbursement_height().unwrap();
+        assert_eq!(second_next, 17_280); // Second Daily boundary
+
+        // Verify monotonic increase
+        assert!(second_next > first_next);
+    }
+
+    #[test]
+    fn test_invariant_b4_single_execution_guard() {
+        // Invariant B4: Cannot execute twice at same height
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let mut token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            Some(EconomicPeriod::Daily),
+        )
+        .unwrap();
+
+        // First execution succeeds
+        token.record_disbursement_executed(8_640).unwrap();
+
+        // Second execution at same height fails
+        let result = token.record_disbursement_executed(8_640);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Disbursement already executed at height"));
+    }
+
+    #[test]
+    fn test_invariant_b2_rejects_backward_movement() {
+        // Invariant B2: Cannot move backward in time
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let mut token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            Some(EconomicPeriod::Daily),
+        )
+        .unwrap();
+
+        // Execute at first boundary
+        token.record_disbursement_executed(8_640).unwrap();
+
+        // Try to execute at earlier height
+        let result = token.record_disbursement_executed(8_639);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Cannot execute disbursement at height"));
+    }
+
+    #[test]
+    fn test_disbursement_schedule_multiple_cycles() {
+        // Test Invariant B3 and B4 across multiple disbursement cycles
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let mut token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            Some(EconomicPeriod::Daily),
+        )
+        .unwrap();
+
+        // Cycle 1
+        assert_eq!(token.next_disbursement_height(), Some(8_640));
+        assert!(token.is_disbursement_due(8_640));
+        token.record_disbursement_executed(8_640).unwrap();
+
+        // Cycle 2
+        assert_eq!(token.next_disbursement_height(), Some(17_280));
+        assert!(token.is_disbursement_due(17_280));
+        token.record_disbursement_executed(17_280).unwrap();
+
+        // Cycle 3
+        assert_eq!(token.next_disbursement_height(), Some(25_920));
+        assert!(token.is_disbursement_due(25_920));
+        token.record_disbursement_executed(25_920).unwrap();
+
+        // Verify last executed height
+        assert_eq!(token.last_executed_disbursement_height(), Some(25_920));
+    }
+
+    #[test]
+    fn test_no_scheduled_disbursement_never_due() {
+        // Token without schedule never reports disbursement due
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            None, // No schedule
+        )
+        .unwrap();
+
+        // Never due, regardless of height
+        assert!(!token.is_disbursement_due(8_640));
+        assert!(!token.is_disbursement_due(259_200));
+        assert!(!token.is_disbursement_due(777_600));
+    }
+
+    #[test]
+    fn test_record_disbursement_without_schedule_fails() {
+        // Cannot record execution if no schedule is set
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let mut token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            None,
+        )
+        .unwrap();
+
+        let result = token.record_disbursement_executed(8_640);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Token has no scheduled disbursement period"));
     }
 }
