@@ -74,9 +74,7 @@ pub const MINIMUM_NETWORK_FEE: u64 = 10;
 /// - Emergency Reserve (15%): $750K
 /// - Dev Grants (10%): $500K
 pub const UBI_ALLOCATION_PERCENTAGE: u64 = 45; // 45% → Universal Basic Income
-pub const SECTOR_DAO_ALLOCATION_PERCENTAGE: u64 = 30; // 30% → Sector DAOs (5 DAOs × 6% each)
-#[deprecated(note = "Use SECTOR_DAO_ALLOCATION_PERCENTAGE instead; this constant refers specifically to Sector DAOs.")]
-pub const DAO_ALLOCATION_PERCENTAGE: u64 = SECTOR_DAO_ALLOCATION_PERCENTAGE; // Backwards-compatible alias
+pub const DAO_ALLOCATION_PERCENTAGE: u64 = 30; // 30% → Sector DAOs (5 DAOs × 6% each)
 pub const EMERGENCY_ALLOCATION_PERCENTAGE: u64 = 15; // 15% → Emergency Reserve Fund
 pub const DEV_GRANT_ALLOCATION_PERCENTAGE: u64 = 10; // 10% → Development Grants
 

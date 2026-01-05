@@ -108,7 +108,7 @@ impl DaoTreasury {
             "last_dev_grants_distribution": self.last_dev_grants_distribution,
             "allocation_percentages": {
                 "ubi_percentage": crate::UBI_ALLOCATION_PERCENTAGE,
-                "sector_dao_percentage": crate::SECTOR_DAO_ALLOCATION_PERCENTAGE,
+                "sector_dao_percentage": crate::DAO_ALLOCATION_PERCENTAGE,
                 "emergency_percentage": crate::EMERGENCY_ALLOCATION_PERCENTAGE,
                 "dev_grants_percentage": crate::DEV_GRANT_ALLOCATION_PERCENTAGE
             }

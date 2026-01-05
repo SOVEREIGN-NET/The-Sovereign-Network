@@ -47,7 +47,7 @@ pub fn process_dao_fees(dao_fees: u64) -> Result<u64> {
 /// Calculate DAO fee distribution breakdown (single source of truth for allocation)
 pub fn calculate_dao_fee_distribution(dao_fees: u64) -> DaoFeeDistribution {
     let ubi_allocation = (dao_fees * crate::UBI_ALLOCATION_PERCENTAGE) / 100;
-    let dao_allocation = (dao_fees * crate::SECTOR_DAO_ALLOCATION_PERCENTAGE) / 100;
+    let dao_allocation = (dao_fees * crate::DAO_ALLOCATION_PERCENTAGE) / 100;
     let emergency_allocation = (dao_fees * crate::EMERGENCY_ALLOCATION_PERCENTAGE) / 100;
     let dev_grant_allocation = (dao_fees * crate::DEV_GRANT_ALLOCATION_PERCENTAGE) / 100;
 
@@ -108,7 +108,7 @@ pub fn calculate_fee_distribution(network_fees: u64, dao_fees: u64) -> serde_jso
         },
         "allocation_percentages": {
             "ubi": crate::UBI_ALLOCATION_PERCENTAGE,
-            "sector_daos": crate::SECTOR_DAO_ALLOCATION_PERCENTAGE,
+            "sector_daos": crate::DAO_ALLOCATION_PERCENTAGE,
             "emergency_reserve": crate::EMERGENCY_ALLOCATION_PERCENTAGE,
             "dev_grants": crate::DEV_GRANT_ALLOCATION_PERCENTAGE
         }

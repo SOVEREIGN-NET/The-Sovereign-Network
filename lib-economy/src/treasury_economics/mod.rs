@@ -174,7 +174,7 @@ mod tests {
 
         // Check allocation percentages
         assert_eq!(stats["allocation_percentages"]["ubi_percentage"], crate::UBI_ALLOCATION_PERCENTAGE);
-        assert_eq!(stats["allocation_percentages"]["sector_dao_percentage"], crate::SECTOR_DAO_ALLOCATION_PERCENTAGE);
+        assert_eq!(stats["allocation_percentages"]["sector_dao_percentage"], crate::DAO_ALLOCATION_PERCENTAGE);
         assert_eq!(stats["allocation_percentages"]["emergency_percentage"], crate::EMERGENCY_ALLOCATION_PERCENTAGE);
         assert_eq!(stats["allocation_percentages"]["dev_grants_percentage"], crate::DEV_GRANT_ALLOCATION_PERCENTAGE);
     }
