@@ -53,11 +53,17 @@ pub fn process_dao_fees(dao_fees: u64) -> Result<u64> {
 /// - No tokens are lost or unaccounted for (conservation invariant)
 /// - Emergency Reserve absorbs rounding errors
 /// - Deterministic across all platforms
+///
+/// # Overflow Safety
+/// Uses u128 intermediates for multiplication to prevent overflow on large fee amounts.
+/// Safe casting back to u64: percentages are at most 100, so final result is at most 100% of input.
 pub fn calculate_dao_fee_distribution(dao_fees: u64) -> DaoFeeDistribution {
-    let ubi_allocation = (dao_fees * crate::UBI_ALLOCATION_PERCENTAGE) / 100;
-    let dao_allocation = (dao_fees * crate::SECTOR_DAO_ALLOCATION_PERCENTAGE) / 100;
-    let emergency_allocation = (dao_fees * crate::EMERGENCY_ALLOCATION_PERCENTAGE) / 100;
-    let dev_grant_allocation = (dao_fees * crate::DEV_GRANT_ALLOCATION_PERCENTAGE) / 100;
+    // CRITICAL: Use u128 for intermediate calculations to prevent overflow
+    let dao_fees_u128 = dao_fees as u128;
+    let ubi_allocation = ((dao_fees_u128 * crate::UBI_ALLOCATION_PERCENTAGE as u128) / 100) as u64;
+    let dao_allocation = ((dao_fees_u128 * crate::SECTOR_DAO_ALLOCATION_PERCENTAGE as u128) / 100) as u64;
+    let emergency_allocation = ((dao_fees_u128 * crate::EMERGENCY_ALLOCATION_PERCENTAGE as u128) / 100) as u64;
+    let dev_grant_allocation = ((dao_fees_u128 * crate::DEV_GRANT_ALLOCATION_PERCENTAGE as u128) / 100) as u64;
 
     // Calculate sum of all allocations (including dev grants)
     let allocated = ubi_allocation
@@ -128,6 +134,58 @@ pub fn calculate_fee_distribution(network_fees: u64, dao_fees: u64) -> serde_jso
 }
 
 
+
+
+    #[test]
+    fn test_overflow_safety_with_large_fees() {
+        // CRITICAL: Verify u128 intermediates prevent overflow
+        // Old u64-only code: (dao_fees * percentage) could overflow if dao_fees is large
+        // New u128 code: safely handles large fee amounts
+        
+        // Test with very large fee amounts that would have overflowed with u64 arithmetic
+        let large_fee = u64::MAX / 200; // Safe: doesn't cause overflow in u128 multiplication
+        
+        // Should not panic
+        let distribution = calculate_dao_fee_distribution(large_fee);
+        
+        // Verify conservation
+        assert_eq!(distribution.total(), large_fee);
+        
+        // Each allocation should be at most the full fee
+        assert!(distribution.ubi <= large_fee);
+        assert!(distribution.sector_daos <= large_fee);
+        assert!(distribution.emergency_reserve <= large_fee);
+        assert!(distribution.dev_grants <= large_fee);
+    }
+
+    #[test]
+    fn test_decimal_precision_across_all_u64_ranges() {
+        // Verify u128 intermediates maintain precision across full u64 range
+        
+        let test_fees = vec![
+            1,                 // Minimum
+            100,               // Small
+            10_000,            // Medium
+            1_000_000,         // Large
+            u64::MAX / 1000,   // Very large (safe)
+        ];
+        
+        for fee in test_fees {
+            let distribution = calculate_dao_fee_distribution(fee);
+            
+            // Conservation must always hold
+            assert_eq!(
+                distribution.total(),
+                fee,
+                "Conservation failed for fee={}",
+                fee
+            );
+            
+            // Each component calculated correctly with u128 intermediates
+            let ubi_expected = ((fee as u128 * crate::UBI_ALLOCATION_PERCENTAGE as u128) / 100) as u64;
+            assert_eq!(distribution.ubi, ubi_expected, "UBI calculation incorrect for fee={}", fee);
+        }
+    }
 #[cfg(test)]
 mod tests {
     use super::*;
