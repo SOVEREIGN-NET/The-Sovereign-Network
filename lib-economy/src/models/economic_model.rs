@@ -7,6 +7,7 @@ use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use crate::types::*;
 use crate::treasury_economics::DaoTreasury;
+use crate::transactions::calculate_dao_fee_distribution;
 use crate::wasm::logging::info;
 
 /// Core economic model for the ZHTP network
@@ -30,7 +31,7 @@ pub struct EconomicModel {
     pub current_supply: u64,
     /// Token burn rate (zero for utility focus)
     pub burn_rate: f64,
-    /// DAO treasury for UBI and welfare (economics interface only)
+    /// DAO treasury for UBI and DAO allocations (economics interface only)
     pub dao_treasury: DaoTreasury,
 }
 
@@ -43,9 +44,13 @@ impl EconomicModel {
         dao_treasury.treasury_balance = 2_500_000; // 2.5M ZHTP
         dao_treasury.total_dao_fees_collected = 5_000_000; // 5M ZHTP collected
         dao_treasury.ubi_allocated = 1_500_000; // 1.5M allocated to UBI
-        dao_treasury.welfare_allocated = 1_000_000; // 1M allocated to welfare
+        dao_treasury.sector_dao_allocated = 600_000; // 0.6M allocated to sector DAOs
+        dao_treasury.emergency_allocated = 250_000; // 0.25M allocated to emergency reserves
+        dao_treasury.dev_grants_allocated = 150_000; // 0.15M allocated to dev grants
         dao_treasury.total_ubi_distributed = 800_000; // 800K distributed
-        dao_treasury.total_welfare_distributed = 600_000; // 600K distributed
+        dao_treasury.total_sector_dao_distributed = 400_000; // 400K distributed
+        dao_treasury.total_emergency_distributed = 120_000; // 120K distributed
+        dao_treasury.total_dev_grants_distributed = 80_000; // 80K distributed
         
         EconomicModel {
             // INTERNET INFRASTRUCTURE ECONOMICS (like ISP/CDN revenue sharing)
@@ -113,7 +118,7 @@ impl EconomicModel {
         Ok(())
     }
     
-    /// Calculate transaction fees including mandatory DAO fee for UBI/welfare
+    /// Calculate transaction fees including mandatory DAO fee for UBI/DAO allocations
     pub fn calculate_fee(&self, tx_size: u64, amount: u64, priority: Priority) -> (u64, u64, u64) {
         // NETWORK INFRASTRUCTURE FEE (covers bandwidth, storage, compute)
         let base_fee = tx_size * 1; // 1 token per byte (minimal infrastructure cost)
@@ -123,9 +128,9 @@ impl EconomicModel {
         let network_fee = ((base_fee as f64) * priority_multiplier) as u64;
         let network_fee = network_fee.max(crate::MINIMUM_NETWORK_FEE); // Minimum network fee
         
-        // MANDATORY DAO FEE FOR UNIVERSAL BASIC INCOME & WELFARE
-        // 2% of transaction amount goes to DAO treasury for UBI/welfare services
-        let dao_fee = (amount * crate::DEFAULT_DAO_FEE_RATE) / 10000; // 2.00% mandatory DAO fee
+        // MANDATORY DAO FEE FOR UNIVERSAL BASIC INCOME & DAO ALLOCATIONS
+        // 1% of transaction amount goes to DAO treasury for UBI/DAO services
+        let dao_fee = (amount * crate::DEFAULT_DAO_FEE_RATE) / 10000; // 1.00% mandatory DAO fee
         let dao_fee = dao_fee.max(crate::MINIMUM_DAO_FEE); // Minimum DAO fee
         
         let total_fee = network_fee + dao_fee;
@@ -144,13 +149,13 @@ impl EconomicModel {
         Ok(total_fees) // All fees stay in circulation for infrastructure
     }
     
-    /// Process DAO fees for Universal Basic Income and welfare services
+    /// Process DAO fees for Universal Basic Income and DAO allocations
     pub fn process_dao_fees(&mut self, dao_fees: u64) -> Result<u64> {
-        // Add DAO fees to treasury (economics calculation only)
-        self.dao_treasury.add_dao_fees(dao_fees)?;
+        let distribution = calculate_dao_fee_distribution(dao_fees);
+        self.dao_treasury.apply_fee_distribution(distribution)?;
         
         info!(
-            " Processed {} SOV tokens in DAO fees - added to UBI/welfare treasury (Total: {})",
+            " Processed {} SOV tokens in DAO fees - added to treasury (Total: {})",
             dao_fees, self.dao_treasury.treasury_balance
         );
         

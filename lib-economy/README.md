@@ -151,17 +151,21 @@ Economic rewards are calculated based on actual infrastructure contribution:
 ```rust
 pub struct DaoTreasury {
     pub treasury_balance: u64,        // Total available funds
-    pub ubi_allocated: u64,           // 60% allocation to UBI
-    pub welfare_allocated: u64,       // 40% allocation to welfare
+    pub ubi_allocated: u64,           // 45% allocation to UBI
+    pub sector_dao_allocated: u64,    // 30% allocation to sector DAOs
+    pub emergency_allocated: u64,     // 15% allocation to emergency reserves
+    pub dev_grants_allocated: u64,    // 10% allocation to dev grants
     pub total_dao_fees_collected: u64, // Historical collection
 }
 
 impl DaoTreasury {
-    pub fn add_dao_fees(&mut self, amount: u64) -> Result<()> {
-        self.treasury_balance += amount;
-        self.ubi_allocated += (amount * 60) / 100;      // 60% to UBI
-        self.welfare_allocated += (amount * 40) / 100;  // 40% to welfare
-        self.total_dao_fees_collected += amount;
+    pub fn apply_fee_distribution(&mut self, dist: DaoFeeDistribution) -> Result<()> {
+        self.treasury_balance += dist.total();
+        self.ubi_allocated += dist.ubi;
+        self.sector_dao_allocated += dist.sector_daos;
+        self.emergency_allocated += dist.emergency_reserve;
+        self.dev_grants_allocated += dist.dev_grants;
+        self.total_dao_fees_collected += dist.total();
         Ok(())
     }
 }

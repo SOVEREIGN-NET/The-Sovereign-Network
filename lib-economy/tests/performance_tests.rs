@@ -3,7 +3,6 @@
 //! Benchmarks critical economic operations to ensure performance scalability.
 
 use lib_economy::*;
-use lib_economy::testing::*;
 use lib_economy::incentives::infrastructure_rewards::InfrastructureRewards;
 use std::time::{Duration, Instant};
 
@@ -145,7 +144,7 @@ mod benchmarks {
         let start = Instant::now();
         for i in 0..ITERATIONS {
             let amount = (i % 1000) as u64 + 10;
-            let _ = treasury.add_dao_fees(amount);
+            let _ = treasury.apply_fee_distribution(calculate_dao_fee_distribution(amount));
         }
         let duration = start.elapsed();
         
@@ -158,7 +157,9 @@ mod benchmarks {
         // Verify final state
         assert!(treasury.treasury_balance > 0);
         assert!(treasury.ubi_allocated > 0);
-        assert!(treasury.welfare_allocated > 0);
+        assert!(treasury.sector_dao_allocated > 0);
+        assert!(treasury.emergency_allocated > 0);
+        assert!(treasury.dev_grants_allocated > 0);
     }
 
     #[test]

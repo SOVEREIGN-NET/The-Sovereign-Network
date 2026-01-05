@@ -20,10 +20,10 @@ pub fn calculate_network_fee(tx_size: u64, priority: Priority) -> u64 {
 
 /// Calculate mandatory DAO fee for UBI and welfare funding
 pub fn calculate_dao_fee(amount: u64) -> u64 {
-    // 2% of transaction amount goes to DAO treasury for UBI/welfare services
+    // 1% of transaction amount goes to DAO treasury (Phase 1: UBI and welfare services)
     // Use saturating arithmetic to prevent overflow
-    let dao_fee = amount.saturating_mul(crate::DEFAULT_DAO_FEE_RATE) / 10000; // 2.00% mandatory
-    
+    let dao_fee = amount.saturating_mul(crate::DEFAULT_DAO_FEE_RATE) / 10000; // 1.00% mandatory (TRANSACTION_FEE_RATE)
+
     // Ensure minimum DAO fee contribution
     dao_fee.max(crate::MINIMUM_DAO_FEE)
 }
@@ -71,9 +71,9 @@ mod tests {
     fn test_dao_fee_calculation() {
         let fee_small = calculate_dao_fee(100);
         let fee_large = calculate_dao_fee(10000);
-        
+
         assert_eq!(fee_small, crate::MINIMUM_DAO_FEE); // Minimum applied
-        assert_eq!(fee_large, 200); // 2% of 10000
+        assert_eq!(fee_large, 100); // 1% of 10000 (TRANSACTION_FEE_RATE)
     }
 
     #[test]
