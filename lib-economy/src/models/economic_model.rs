@@ -129,8 +129,8 @@ impl EconomicModel {
         let network_fee = network_fee.max(crate::MINIMUM_NETWORK_FEE); // Minimum network fee
         
         // MANDATORY DAO FEE FOR UNIVERSAL BASIC INCOME & DAO ALLOCATIONS
-        // 2% of transaction amount goes to DAO treasury for UBI/DAO services
-        let dao_fee = (amount * crate::DEFAULT_DAO_FEE_RATE) / 10000; // 2.00% mandatory DAO fee
+        // 1% of transaction amount goes to DAO treasury for UBI/DAO services
+        let dao_fee = (amount * crate::DEFAULT_DAO_FEE_RATE) / 10000; // 1.00% mandatory DAO fee
         let dao_fee = dao_fee.max(crate::MINIMUM_DAO_FEE); // Minimum DAO fee
         
         let total_fee = network_fee + dao_fee;

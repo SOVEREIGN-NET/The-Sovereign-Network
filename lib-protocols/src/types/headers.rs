@@ -89,7 +89,7 @@ pub struct ZhtpHeaders {
     // Web4 Economic Extensions
     /// Network operation fee (covers bandwidth, storage, compute)
     pub network_fee: Option<u64>,
-    /// Mandatory DAO fee for Universal Basic Income and welfare (2% of transaction value)
+    /// Mandatory DAO fee for Universal Basic Income and welfare (1% of transaction value)
     pub dao_fee: u64,
     /// Total transaction fees (network_fee + dao_fee)
     pub total_fees: u64,

@@ -31,7 +31,7 @@ pub fn calculate_welfare_efficiency(treasury: &DaoTreasury) -> f64 {
     }
 
     let expected_non_ubi_distributed = (treasury.total_dao_fees_collected
-        * (crate::DAO_ALLOCATION_PERCENTAGE
+        * (crate::SECTOR_DAO_ALLOCATION_PERCENTAGE
             + crate::EMERGENCY_ALLOCATION_PERCENTAGE
             + crate::DEV_GRANT_ALLOCATION_PERCENTAGE))
         / 100;
