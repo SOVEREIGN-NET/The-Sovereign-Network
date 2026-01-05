@@ -301,6 +301,7 @@ mod tests {
     // REGISTRY INITIALIZATION TESTS
     // ============================================================================
 
+    #[test]
     fn test_registry_init_all_five_sectors() {
         let admin = create_test_public_key(1);
         let fee_collector = create_test_public_key(2);
@@ -328,6 +329,7 @@ mod tests {
         assert!(registry.validate_registry().is_ok());
     }
 
+    #[test]
     fn test_registry_rejects_missing_sector() {
         let admin = create_test_public_key(1);
         let fee_collector = create_test_public_key(2);
@@ -345,6 +347,7 @@ mod tests {
         assert!(result.unwrap_err().contains("food"));
     }
 
+    #[test]
     fn test_registry_rejects_duplicate_addresses() {
         let admin = create_test_public_key(1);
         let fee_collector = create_test_public_key(2);
@@ -353,32 +356,34 @@ mod tests {
 
         let mut sector_map = HashMap::new();
         sector_map.insert("healthcare".to_string(), healthcare);
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), shared.clone());
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), shared.clone()); // Duplicate!
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), create_test_public_key(13));
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), create_test_public_key(14));
+        sector_map.insert("education".to_string(), shared.clone());
+        sector_map.insert("energy".to_string(), shared.clone()); // Duplicate!
+        sector_map.insert("housing".to_string(), create_test_public_key(13));
+        sector_map.insert("food".to_string(), create_test_public_key(14));
 
         let result = TreasuryRegistry::init(admin, fee_collector, sector_map);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Duplicate"));
     }
 
+    #[test]
     fn test_registry_rejects_zero_admin() {
         let zero_admin = PublicKey::new(vec![0u8; 1312]);
         let fee_collector = create_test_public_key(2);
 
         let mut sector_map = HashMap::new();
         sector_map.insert("healthcare".to_string(), create_test_public_key(10));
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), create_test_public_key(11));
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), create_test_public_key(12));
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), create_test_public_key(13));
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), create_test_public_key(14));
+        sector_map.insert("education".to_string(), create_test_public_key(11));
+        sector_map.insert("energy".to_string(), create_test_public_key(12));
+        sector_map.insert("housing".to_string(), create_test_public_key(13));
+        sector_map.insert("food".to_string(), create_test_public_key(14));
 
         let result = TreasuryRegistry::init(zero_admin, fee_collector, sector_map);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("admin cannot be zero"));
     }
 
+    #[test]
     fn test_registry_rejects_zero_fee_collector() {
         let admin = create_test_public_key(1);
         let zero_fee_collector = PublicKey::new(vec![0u8; 1312]);
@@ -399,6 +404,7 @@ mod tests {
     // REGISTRY ROUTING TESTS (Pure Routing - Invariant A3)
     // ============================================================================
 
+    #[test]
     fn test_registry_resolve_returns_correct_address_per_sector() {
         let admin = create_test_public_key(1);
         let fee_collector = create_test_public_key(2);
@@ -426,6 +432,7 @@ mod tests {
         assert_eq!(registry.get_treasury(&SectorDao::Food), Some(food));
     }
 
+    #[test]
     fn test_registry_resolve_deterministic() {
         let admin = create_test_public_key(1);
         let fee_collector = create_test_public_key(2);
@@ -454,6 +461,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn test_registry_all_resolved_addresses_distinct() {
         let admin = create_test_public_key(1);
         let fee_collector = create_test_public_key(2);
@@ -499,13 +507,35 @@ mod tests {
     // REGISTRY IMMUTABILITY TESTS (Phase 1: Invariant A3)
     // ============================================================================
 
+    #[test]
     fn test_registry_is_immutable_after_init() {
         let admin = create_test_public_key(1);
         let fee_collector = create_test_public_key(2);
         let healthcare = create_test_public_key(10);
         let education = create_test_public_key(11);
         let energy = create_test_public_key(12);
+        let housing = create_test_public_key(13);
+        let food = create_test_public_key(14);
 
+        let mut sector_map = HashMap::new();
+        sector_map.insert("healthcare".to_string(), healthcare.clone());
+        sector_map.insert("education".to_string(), education.clone());
+        sector_map.insert("energy".to_string(), energy.clone());
+        sector_map.insert("housing".to_string(), housing.clone());
+        sector_map.insert("food".to_string(), food.clone());
+
+        let registry = TreasuryRegistry::init(admin, fee_collector, sector_map)
+            .expect("Registry init should succeed");
+
+        // Verify initialized flag is set
+        assert!(registry.is_initialized());
+
+        // In Phase 1, no mutation methods exist.
+        // This test documents the invariant: initialized == true → mapping immutable.
+        // Future phases can add governance-gated mutations that check initialized flag.
+    }
+
+    #[test]
     fn test_initialize_five_sector_treasuries_creates_all_instances() {
         // INVARIANT A1: Five distinct treasuries, one per sector
         let fee_collector = create_test_public_key(100);
@@ -522,6 +552,7 @@ mod tests {
         assert!(treasuries.contains_key("food"));
     }
 
+    #[test]
     fn test_sector_treasuries_are_immutably_bound_to_sectors() {
         // INVARIANT A2: Each treasury is permanently bound to its sector
         let fee_collector = create_test_public_key(101);
@@ -537,6 +568,7 @@ mod tests {
         assert_eq!(treasuries["food"].sector(), crate::types::dao::SectorDao::Food);
     }
 
+    #[test]
     fn test_sector_treasuries_share_same_fee_collector() {
         // All treasuries have the same authorized fee_collector
         let fee_collector = create_test_public_key(102);
@@ -554,6 +586,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn test_sector_treasuries_start_with_zero_balance() {
         // All newly initialized treasuries have total_received = 0
         let fee_collector = create_test_public_key(103);
@@ -571,6 +604,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn test_registry_routes_to_correct_treasury_addresses() {
         // INVARIANT A3: Registry deterministically routes sectors to treasury addresses
         let admin = create_test_public_key(104);
@@ -613,6 +647,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn test_year_5_scenario_allocation_projection() {
         // INVARIANT B3: Integration test - Year 5 example
         // $5B volume → $50M fees → $15M DAOs (30% allocation) → $3M per DAO
@@ -637,27 +672,8 @@ mod tests {
             assert_eq!(_treasury.total_received(), 0);
         }
     }
-        let housing = create_test_public_key(13);
-        let food = create_test_public_key(14);
 
-        let mut sector_map = HashMap::new();
-        sector_map.insert("healthcare".to_string(), healthcare.clone());
-        sector_map.insert("education".to_string(), education.clone());
-        sector_map.insert("energy".to_string(), energy.clone());
-        sector_map.insert("housing".to_string(), housing.clone());
-        sector_map.insert("food".to_string(), food.clone());
-
-        let registry = TreasuryRegistry::init(admin, fee_collector, sector_map)
-            .expect("Registry init should succeed");
-
-        // Verify initialized flag is set
-        assert!(registry.is_initialized());
-
-        // In Phase 1, no mutation methods exist.
-        // This test documents the invariant: initialized == true → mapping immutable.
-        // Future phases can add governance-gated mutations that check initialized flag.
-    }
-
+    #[test]
     fn test_registry_validation_passes_after_init() {
         let admin = create_test_public_key(1);
         let fee_collector = create_test_public_key(2);
@@ -669,6 +685,10 @@ mod tests {
 
         let mut sector_map = HashMap::new();
         sector_map.insert("healthcare".to_string(), healthcare);
+        sector_map.insert("education".to_string(), education);
+        sector_map.insert("energy".to_string(), energy);
+        sector_map.insert("housing".to_string(), housing);
+        sector_map.insert("food".to_string(), food);
 
         let registry = TreasuryRegistry::init(admin, fee_collector, sector_map)
             .expect("Registry init should succeed");
