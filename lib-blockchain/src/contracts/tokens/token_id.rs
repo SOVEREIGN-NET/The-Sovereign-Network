@@ -29,25 +29,35 @@ use crate::types::dao::DAOType;
 /// # Invariants (protocol guarantees)
 /// 1. **Determinism**: Given identical inputs, all nodes produce identical token_id
 /// 2. **Collision resistance**: Different inputs produce different IDs with extremely high probability
-/// 3. **Semantic inclusion**: All dimensions that affect token economics are included:
+/// 3. **Injectivity**: Distinct input tuples must map to distinct token IDs (no collisions)
+/// 4. **Semantic inclusion**: All dimensions that affect token economics are included:
 ///    - name: human-readable token name
 ///    - symbol: ticker symbol
 ///    - dao_type: NP vs FP classification (prevents NP/FP collision)
 ///    - decimals: precision (prevents economic confusion at different scales)
 ///
 /// # Domain Separation
-/// Uses a versioned domain string "SOV_TOKEN_ID_V1" to:
+/// Uses a versioned domain string "SOV_TOKEN_ID_V2" to:
 /// - Prevent cross-protocol collisions
 /// - Enable future algorithm changes (V2, V3, etc.)
 /// - Protect against replay attacks
 ///
-/// # Input Encoding
-/// Deterministic byte order:
-/// 1. Domain: UTF-8 bytes of "SOV_TOKEN_ID_V1"
-/// 2. Name: UTF-8 bytes of token name
-/// 3. Symbol: UTF-8 bytes of token symbol (typically uppercase)
-/// 4. DAOType: Stable enum encoding (as_str() UTF-8 bytes: "np" or "fp")
-/// 5. Decimals: Single byte (0-18)
+/// # Input Encoding (Length-Prefixed Canonical Format)
+/// Deterministic, unambiguous byte order with length separators:
+/// 1. Domain: UTF-8 bytes of "SOV_TOKEN_ID_V2"
+/// 2. Name length: u16 big-endian (0-65535 bytes)
+/// 3. Name: UTF-8 bytes of token name
+/// 4. Symbol length: u16 big-endian (0-65535 bytes)
+/// 5. Symbol: UTF-8 bytes of token symbol (typically uppercase)
+/// 6. DAOType: Fixed 2-byte ASCII ("np" or "fp")
+/// 7. Decimals: Single byte (0-18)
+///
+/// Length-prefixing ensures injectivity: distinct (name, symbol) pairs
+/// cannot serialize to the same preimage, even if concatenation would be ambiguous.
+///
+/// Example:
+/// - ("ab", "c") → [0x00, 0x02] + "ab" + [0x00, 0x01] + "c" = unique encoding
+/// - ("a", "bc") → [0x00, 0x01] + "a" + [0x00, 0x02] + "bc" = distinct encoding
 ///
 /// # Hash Function
 /// blake3 hash of the combined input, full 32-byte output.
@@ -71,15 +81,29 @@ pub fn derive_token_id(
     dao_type: DAOType,
     decimals: u8,
 ) -> [u8; 32] {
-    // Domain separation prefix (versioned for future migrations)
-    let domain = b"SOV_TOKEN_ID_V1";
+    // Domain separation prefix (versioned for migration from V1)
+    let domain = b"SOV_TOKEN_ID_V2";
 
-    // Build deterministic input in stable byte order
+    // Build deterministic, unambiguous input with length prefixes
     let mut data = Vec::new();
+    
+    // Domain
     data.extend_from_slice(domain);
-    data.extend_from_slice(name.as_bytes());
-    data.extend_from_slice(symbol.as_bytes());
+    
+    // Name: length-prefixed (u16 big-endian) + UTF-8 bytes
+    let name_bytes = name.as_bytes();
+    data.extend_from_slice(&(name_bytes.len() as u16).to_be_bytes());
+    data.extend_from_slice(name_bytes);
+    
+    // Symbol: length-prefixed (u16 big-endian) + UTF-8 bytes
+    let symbol_bytes = symbol.as_bytes();
+    data.extend_from_slice(&(symbol_bytes.len() as u16).to_be_bytes());
+    data.extend_from_slice(symbol_bytes);
+    
+    // DAOType: fixed 2-byte ASCII encoding ("np" or "fp")
     data.extend_from_slice(dao_type.as_str().as_bytes());
+    
+    // Decimals: single byte (0-18)
     data.push(decimals);
 
     // blake3 produces full 32-byte output deterministically
@@ -219,24 +243,51 @@ mod tests {
 
     #[test]
     fn test_derive_token_id_golden_np_token() {
-        // Golden test: verify known input produces expected hash
+        // Golden test: verify known input produces expected hash (V2 with length-prefixes)
         // This catches algorithm changes and ensures cross-node consistency
         let id = derive_token_id("Healthcare DAO", "HEALTH", DAOType::NP, 8);
 
-        // The hash value is computed once and should never change
-        // If this test fails, the algorithm has changed (which requires explicit migration)
-        let expected = blake3::hash(b"SOV_TOKEN_ID_V1Healthcare DAOHEALTHnp\x08");
+        // Reconstruct the V2 canonical encoding with length prefixes
+        let mut expected_input = Vec::new();
+        expected_input.extend_from_slice(b"SOV_TOKEN_ID_V2");
+        expected_input.extend_from_slice(&(14u16).to_be_bytes()); // "Healthcare DAO" length
+        expected_input.extend_from_slice(b"Healthcare DAO");
+        expected_input.extend_from_slice(&(6u16).to_be_bytes()); // "HEALTH" length
+        expected_input.extend_from_slice(b"HEALTH");
+        expected_input.extend_from_slice(b"np"); // DAOType::NP as 2 bytes
+        expected_input.push(8); // decimals
+        
+        let expected = blake3::hash(&expected_input);
         assert_eq!(id, *expected.as_bytes());
     }
 
     #[test]
     fn test_derive_token_id_golden_fp_token() {
-        // Golden test: FP token with same name/symbol as NP must differ
+        // Golden test: FP token with same name/symbol as NP must differ (V2)
         let id_np = derive_token_id("Economic DAO", "ECO", DAOType::NP, 18);
         let id_fp = derive_token_id("Economic DAO", "ECO", DAOType::FP, 18);
 
-        let expected_np = blake3::hash(b"SOV_TOKEN_ID_V1Economic DAOECO\x6e\x70\x12"); // np = \x6e\x70
-        let expected_fp = blake3::hash(b"SOV_TOKEN_ID_V1Economic DAOECO\x66\x70\x12"); // fp = \x66\x70
+        // Reconstruct V2 encodings
+        let mut expected_np_input = Vec::new();
+        expected_np_input.extend_from_slice(b"SOV_TOKEN_ID_V2");
+        expected_np_input.extend_from_slice(&(12u16).to_be_bytes()); // "Economic DAO" length
+        expected_np_input.extend_from_slice(b"Economic DAO");
+        expected_np_input.extend_from_slice(&(3u16).to_be_bytes()); // "ECO" length
+        expected_np_input.extend_from_slice(b"ECO");
+        expected_np_input.extend_from_slice(b"np");
+        expected_np_input.push(18);
+
+        let mut expected_fp_input = Vec::new();
+        expected_fp_input.extend_from_slice(b"SOV_TOKEN_ID_V2");
+        expected_fp_input.extend_from_slice(&(12u16).to_be_bytes());
+        expected_fp_input.extend_from_slice(b"Economic DAO");
+        expected_fp_input.extend_from_slice(&(3u16).to_be_bytes());
+        expected_fp_input.extend_from_slice(b"ECO");
+        expected_fp_input.extend_from_slice(b"fp");
+        expected_fp_input.push(18);
+
+        let expected_np = blake3::hash(&expected_np_input);
+        let expected_fp = blake3::hash(&expected_fp_input);
 
         assert_eq!(id_np, *expected_np.as_bytes());
         assert_eq!(id_fp, *expected_fp.as_bytes());
@@ -253,11 +304,66 @@ mod tests {
         let id = derive_token_id("Test", "TST", DAOType::NP, 8);
 
         // If domain was not included, this would collide with non-SOV token systems
-        // The test verifies domain is part of the hash
-        let without_domain = blake3::hash(b"TestTSTnp\x08");
+        // The test verifies domain is part of the hash (using V2 format)
+        let mut without_domain_input = Vec::new();
+        without_domain_input.extend_from_slice(&(4u16).to_be_bytes()); // "Test" length
+        without_domain_input.extend_from_slice(b"Test");
+        without_domain_input.extend_from_slice(&(3u16).to_be_bytes()); // "TST" length
+        without_domain_input.extend_from_slice(b"TST");
+        without_domain_input.extend_from_slice(b"np");
+        without_domain_input.push(8);
 
-        // Must NOT equal the hash without domain
+        let without_domain = blake3::hash(&without_domain_input);
+
+        // Must NOT equal the hash without domain prefix
         assert_ne!(id, *without_domain.as_bytes());
+    }
+
+    // ============================================================================
+    // CRITICAL INJECTIVITY TEST (Collision Prevention)
+    // ============================================================================
+
+    #[test]
+    fn test_derive_token_id_injectivity_prevents_concatenation_collision() {
+        // CRITICAL: Prevent collision from ambiguous concatenation.
+        // Without length-prefixes, ("ab", "c") and ("a", "bc") both produce "abc".
+        // With length-prefixes, they must produce different preimages and thus different hashes.
+        //
+        // This is a protocol-critical invariant: token identity must be injective.
+        let id_ab_c = derive_token_id("ab", "c", DAOType::NP, 8);
+        let id_a_bc = derive_token_id("a", "bc", DAOType::NP, 8);
+
+        // These MUST be different (injectivity invariant)
+        assert_ne!(id_ab_c, id_a_bc);
+
+        // Verify the preimages are indeed different (length-prefixes distinguish them)
+        // ("ab", "c"): len(2) + "ab" + len(1) + "c"
+        let mut preimage_ab_c = Vec::new();
+        preimage_ab_c.extend_from_slice(b"SOV_TOKEN_ID_V2");
+        preimage_ab_c.extend_from_slice(&(2u16).to_be_bytes());
+        preimage_ab_c.extend_from_slice(b"ab");
+        preimage_ab_c.extend_from_slice(&(1u16).to_be_bytes());
+        preimage_ab_c.extend_from_slice(b"c");
+        preimage_ab_c.extend_from_slice(b"np");
+        preimage_ab_c.push(8);
+
+        // ("a", "bc"): len(1) + "a" + len(2) + "bc"
+        let mut preimage_a_bc = Vec::new();
+        preimage_a_bc.extend_from_slice(b"SOV_TOKEN_ID_V2");
+        preimage_a_bc.extend_from_slice(&(1u16).to_be_bytes());
+        preimage_a_bc.extend_from_slice(b"a");
+        preimage_a_bc.extend_from_slice(&(2u16).to_be_bytes());
+        preimage_a_bc.extend_from_slice(b"bc");
+        preimage_a_bc.extend_from_slice(b"np");
+        preimage_a_bc.push(8);
+
+        // Preimages must be different
+        assert_ne!(preimage_ab_c, preimage_a_bc);
+
+        // And thus hashes must be different
+        let hash_ab_c = blake3::hash(&preimage_ab_c);
+        let hash_a_bc = blake3::hash(&preimage_a_bc);
+        assert_ne!(hash_ab_c.as_bytes(), hash_a_bc.as_bytes());
     }
 
     // ============================================================================
@@ -316,8 +422,17 @@ mod tests {
         // Verify full hash is used (not truncated)
         let id = derive_token_id("Healthcare", "HEALTH", DAOType::NP, 8);
 
-        // Create expected hash with full blake3
-        let full_hash = blake3::hash(b"SOV_TOKEN_ID_V1HealthcareHEALTHnp\x08");
+        // Create expected hash with full blake3 (V2 length-prefixed format)
+        let mut expected_input = Vec::new();
+        expected_input.extend_from_slice(b"SOV_TOKEN_ID_V2");
+        expected_input.extend_from_slice(&(10u16).to_be_bytes()); // "Healthcare" length
+        expected_input.extend_from_slice(b"Healthcare");
+        expected_input.extend_from_slice(&(6u16).to_be_bytes()); // "HEALTH" length
+        expected_input.extend_from_slice(b"HEALTH");
+        expected_input.extend_from_slice(b"np");
+        expected_input.push(8);
+
+        let full_hash = blake3::hash(&expected_input);
 
         // Must match exactly (no truncation)
         assert_eq!(id, *full_hash.as_bytes());
