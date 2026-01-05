@@ -79,6 +79,7 @@ impl DAOToken {
         staking_contract_addr: PublicKey,
         caller: PublicKey, // Used as initial_holder for FP tokens
         allocation_period: Option<EconomicPeriod>,
+        current_height: u64, // Block height at initialization (supports post-genesis init)
     ) -> Result<Self, String> {
         // Validate inputs
         if name.is_empty() {
@@ -117,7 +118,14 @@ impl DAOToken {
         let token_id = derive_token_id(&name, &symbol, dao_type, decimals);
         
         // Calculate initial next disbursement height if period is set (Invariant B1)
-        let next_disbursement_height = allocation_period.map(|period| period.next_boundary(0));
+        // CRITICAL: Compute from current_height, not genesis (height 0)
+        // This supports post-genesis initialization (new DAOs, upgrades, redeployments)
+        let next_disbursement_height = allocation_period.map(|period| {
+            let boundary = period.next_boundary(current_height);
+            // Invariant: next disbursement must be >= current height
+            // (satisfies "next boundary is at or after current height")
+            boundary
+        });
 
         let mut token = DAOToken {
             dao_type,
@@ -491,6 +499,7 @@ mod tests {
             staking,
             caller,
             None, // No scheduled disbursement
+            0, // genesis height
         )
         .unwrap();
 
@@ -514,6 +523,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -537,6 +547,7 @@ mod tests {
             staking,
             caller.clone(),
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -566,6 +577,7 @@ mod tests {
             staking,
             caller.clone(),
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -597,6 +609,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         );
 
         assert!(result.is_err());
@@ -619,6 +632,7 @@ mod tests {
             zero_addr,
             caller,
             None,
+            0, // genesis height
         );
 
         assert!(result.is_err());
@@ -641,6 +655,7 @@ mod tests {
             staking.clone(),
             caller.clone(),
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -656,6 +671,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -684,6 +700,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -709,6 +726,7 @@ mod tests {
             staking.clone(),
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -737,6 +755,7 @@ mod tests {
             staking.clone(),
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -762,6 +781,7 @@ mod tests {
             staking.clone(),
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -790,6 +810,7 @@ mod tests {
             staking.clone(),
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -820,6 +841,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -844,6 +866,7 @@ mod tests {
             staking.clone(),
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -869,6 +892,7 @@ mod tests {
             staking.clone(),
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -898,6 +922,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -922,6 +947,7 @@ mod tests {
             staking.clone(),
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -947,6 +973,7 @@ mod tests {
             staking.clone(),
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -973,6 +1000,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1000,6 +1028,7 @@ mod tests {
             staking.clone(),
             caller.clone(),
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1046,6 +1075,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1093,6 +1123,7 @@ mod tests {
             staking.clone(),
             caller.clone(),
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1106,6 +1137,7 @@ mod tests {
             staking.clone(),
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1134,6 +1166,7 @@ mod tests {
             staking.clone(),
             caller.clone(),
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1147,6 +1180,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1173,6 +1207,7 @@ mod tests {
             staking,
             zero_caller,
             None,
+            0, // genesis height
         );
 
         // Must reject zero caller for FP
@@ -1205,6 +1240,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1234,6 +1270,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1261,6 +1298,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1286,6 +1324,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Monthly),
+            0, // genesis height
         )
         .unwrap();
 
@@ -1312,6 +1351,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily),
+            0, // genesis height
         )
         .unwrap();
 
@@ -1342,6 +1382,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily),
+            0, // genesis height
         )
         .unwrap();
 
@@ -1379,6 +1420,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily),
+            0, // genesis height
         )
         .unwrap();
 
@@ -1413,6 +1455,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily),
+            0, // genesis height
         )
         .unwrap();
 
@@ -1443,6 +1486,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily),
+            0, // genesis height
         )
         .unwrap();
 
@@ -1482,6 +1526,7 @@ mod tests {
             staking,
             caller,
             None, // No schedule
+            0, // genesis height
         )
         .unwrap();
 
@@ -1508,6 +1553,7 @@ mod tests {
             staking,
             caller,
             None,
+            0, // genesis height
         )
         .unwrap();
 
@@ -1543,6 +1589,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily), // First boundary: 8640
+            0, // genesis height
         )
         .unwrap();
 
@@ -1582,6 +1629,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily), // First boundary: 8640
+            0, // genesis height
         )
         .unwrap();
 
@@ -1620,6 +1668,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily), // First boundary: 8640
+            0, // genesis height
         )
         .unwrap();
 
@@ -1660,6 +1709,7 @@ mod tests {
             staking.clone(),
             caller.clone(),
             Some(EconomicPeriod::Daily),
+            0, // genesis height
         )
         .unwrap();
 
@@ -1679,6 +1729,7 @@ mod tests {
             staking.clone(),
             caller.clone(),
             Some(EconomicPeriod::Monthly),
+            0, // genesis height
         )
         .unwrap();
 
@@ -1698,6 +1749,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Quarterly),
+            0, // genesis height
         )
         .unwrap();
 
