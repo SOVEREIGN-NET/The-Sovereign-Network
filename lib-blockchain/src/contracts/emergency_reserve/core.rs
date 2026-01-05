@@ -653,6 +653,9 @@ mod tests {
         let recipient = create_test_public_key(200);
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
+            public_key: PublicKey::new(vec![0u8; 1312]),
+            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
         };
 
         // Try nonce 5 when next_nonce is 1
@@ -687,6 +690,9 @@ mod tests {
         let recipient = create_test_public_key(200);
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
+            public_key: PublicKey::new(vec![0u8; 1312]),
+            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
         };
 
         let result = reserve.withdraw(
@@ -719,6 +725,9 @@ mod tests {
         let recipient = create_test_public_key(200);
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
+            public_key: PublicKey::new(vec![0u8; 1312]),
+            algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
         };
 
         // Try to withdraw more than balance
@@ -833,7 +842,12 @@ mod tests {
             1,
             10,
             5,
-            &[Signature { signature: vec![0u8; 64] }], // Invalid
+            &[Signature { 
+                signature: vec![0u8; 64],
+                public_key: PublicKey::new(vec![0u8; 1312]),
+                algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
+                timestamp: 0,
+            }], // Invalid
         );
 
         // Verify NO state changed
