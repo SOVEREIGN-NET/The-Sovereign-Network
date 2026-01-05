@@ -370,18 +370,46 @@ impl DAOToken {
 
     /// Mark a disbursement as executed at the given height
     ///
+    /// # Invariant B3: Boundary-Trigger Invariant (CRITICAL)
+    /// Disbursement execution is permitted ONLY when current_height == next_disbursement_height.
+    /// Execution at any other height is rejected.
+    /// This ensures deterministic, consensus-agreed payout timing.
+    ///
     /// # Invariant B2: Monotonic Disbursement Invariant
-    /// Enforces that we only move forward in time.
+    /// Enforces that next_disbursement_height only moves forward.
     ///
     /// # Invariant B4: Single-Execution Invariant
-    /// Records that we executed a disbursement at this height to prevent re-execution.
+    /// Records execution height to prevent re-execution at the same boundary.
     ///
-    /// # Panics if:
+    /// # Errors:
     /// - no allocation_period is set
-    /// - disbursement was already executed at this height
+    /// - height != next_disbursement_height (violates B3: boundary trigger)
+    /// - disbursement was already executed at this height (violates B4)
     pub fn record_disbursement_executed(&mut self, height: u64) -> Result<(), String> {
         if self.allocation_period.is_none() {
             return Err("Token has no scheduled disbursement period".to_string());
+        }
+
+        // CRITICAL: Invariant B3 - Boundary-Trigger Enforement
+        // Disbursement must occur ONLY at the exact scheduled boundary height.
+        // Not before (height < next), not after (height > next), only at exact match.
+        if let Some(next_height) = self.next_disbursement_height {
+            if height != next_height {
+                return Err(format!(
+                    "Disbursement not due at height {}: next boundary is at height {}",
+                    height, next_height
+                ));
+            }
+        } else {
+            // First disbursement: must be at the period's first boundary
+            let period = self.allocation_period.unwrap();
+            let first_boundary = period.next_boundary(0);
+            if height != first_boundary {
+                return Err(format!(
+                    "First disbursement must occur at boundary height {}, not {}",
+                    first_boundary, height
+                ));
+            }
         }
 
         // Invariant B4: Prevent double execution at same height
@@ -392,7 +420,7 @@ impl DAOToken {
                     height
                 ));
             }
-            // Invariant B2: Must move forward
+            // Invariant B2: Must move forward (height > last, not just !=)
             if height <= last_height {
                 return Err(format!(
                     "Cannot execute disbursement at height {} (last was {})",
@@ -404,7 +432,7 @@ impl DAOToken {
         let period = self.allocation_period.unwrap(); // Already checked above
         let next_boundary = period.next_boundary(height);
 
-        // Invariant B2: Monotonic increase
+        // Invariant B2: Verify next boundary moves forward monotonically
         if let Some(prev_next) = self.next_disbursement_height {
             if next_boundary <= prev_next {
                 return Err("Next disbursement height must increase".to_string());
@@ -1332,7 +1360,11 @@ mod tests {
 
     #[test]
     fn test_invariant_b4_single_execution_guard() {
-        // Invariant B4: Cannot execute twice at same height
+        // Invariant B4: Cannot execute at a height where execution already occurred
+        // (Note: With B3 boundary enforcement, we can't naturally hit this by calling at
+        // the same height twice, since the schedule advances. But the guard is still there.)
+        // This test verifies the B3 + B4 interaction: after execution at 8640,
+        // attempting to execute at 8640 again fails B3 (not the current due height anymore).
         let treasury = create_test_public_key(1);
         let staking = create_test_public_key(2);
         let caller = create_test_public_key(3);
@@ -1350,20 +1382,23 @@ mod tests {
         )
         .unwrap();
 
-        // First execution succeeds
+        // First execution at boundary succeeds
         token.record_disbursement_executed(8_640).unwrap();
+        assert_eq!(token.last_executed_disbursement_height(), Some(8_640));
+        assert_eq!(token.next_disbursement_height(), Some(17_280)); // advanced
 
-        // Second execution at same height fails
+        // Second attempt at the same height (8640) fails with B3 check
+        // because 8640 is no longer the due height (due is now 17280)
         let result = token.record_disbursement_executed(8_640);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
-            .contains("Disbursement already executed at height"));
+            .contains("Disbursement not due at height")); // B3 violation
     }
 
     #[test]
     fn test_invariant_b2_rejects_backward_movement() {
-        // Invariant B2: Cannot move backward in time
+        // Invariant B2: Cannot execute at a height <= last_executed_disbursement_height
         let treasury = create_test_public_key(1);
         let staking = create_test_public_key(2);
         let caller = create_test_public_key(3);
@@ -1387,7 +1422,8 @@ mod tests {
         // Try to execute at earlier height
         let result = token.record_disbursement_executed(8_639);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Cannot execute disbursement at height"));
+        // Will fail B3 check first (8639 != 17280 which is current due height)
+        assert!(result.unwrap_err().contains("Disbursement not due at height"));
     }
 
     #[test]
@@ -1480,5 +1516,198 @@ mod tests {
         assert!(result
             .unwrap_err()
             .contains("Token has no scheduled disbursement period"));
+    }
+
+    // ============================================================================
+    // CRITICAL: BOUNDARY ENFORCEMENT TESTS (Invariant B3)
+    // ============================================================================
+    // These tests ensure the B3 invariant is enforced:
+    // "Disbursement execution is permitted ONLY when current_height == next_disbursement_height"
+    // Any deviation (early or late) must be rejected to maintain consensus-deterministic timing.
+
+    #[test]
+    fn test_invariant_b3_rejects_early_execution() {
+        // CRITICAL: Calling record_disbursement_executed() before the scheduled boundary
+        // must fail and NOT update any state.
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let mut token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            Some(EconomicPeriod::Daily), // First boundary: 8640
+        )
+        .unwrap();
+
+        // Verify initial state
+        assert_eq!(token.next_disbursement_height(), Some(8_640));
+        assert_eq!(token.last_executed_disbursement_height(), None);
+
+        // Try to execute EARLY (at height 8639, one block before boundary)
+        let result = token.record_disbursement_executed(8_639);
+
+        // Must fail
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Disbursement not due at height"));
+
+        // CRITICAL: State must be UNCHANGED after failed attempt
+        assert_eq!(token.next_disbursement_height(), Some(8_640)); // unchanged
+        assert_eq!(token.last_executed_disbursement_height(), None); // unchanged
+    }
+
+    #[test]
+    fn test_invariant_b3_rejects_late_execution() {
+        // CRITICAL: Calling record_disbursement_executed() after the scheduled boundary
+        // must fail and NOT update any state (prevents "catch-up" execution).
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let mut token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            Some(EconomicPeriod::Daily), // First boundary: 8640
+        )
+        .unwrap();
+
+        // Verify initial state
+        assert_eq!(token.next_disbursement_height(), Some(8_640));
+
+        // Try to execute LATE (at height 8641, one block after boundary)
+        let result = token.record_disbursement_executed(8_641);
+
+        // Must fail
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Disbursement not due at height"));
+
+        // CRITICAL: State must be UNCHANGED after failed attempt
+        assert_eq!(token.next_disbursement_height(), Some(8_640)); // unchanged
+        assert_eq!(token.last_executed_disbursement_height(), None); // unchanged
+    }
+
+    #[test]
+    fn test_invariant_b3_accepts_exact_boundary_and_advances() {
+        // CRITICAL: Calling record_disbursement_executed() at the EXACT boundary
+        // must succeed and advance the schedule to the next boundary.
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        let mut token = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Token".to_string(),
+            "TKN".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            Some(EconomicPeriod::Daily), // First boundary: 8640
+        )
+        .unwrap();
+
+        // Verify initial state
+        assert_eq!(token.next_disbursement_height(), Some(8_640));
+        assert_eq!(token.last_executed_disbursement_height(), None);
+
+        // Execute at EXACT boundary
+        let result = token.record_disbursement_executed(8_640);
+        assert!(result.is_ok()); // Must succeed
+
+        // CRITICAL: State must be ADVANCED after successful execution
+        assert_eq!(token.next_disbursement_height(), Some(17_280)); // advanced to next boundary
+        assert_eq!(token.last_executed_disbursement_height(), Some(8_640)); // recorded execution
+
+        // Verify we can call again at the new boundary
+        let result2 = token.record_disbursement_executed(17_280);
+        assert!(result2.is_ok());
+        assert_eq!(token.next_disbursement_height(), Some(25_920)); // next boundary
+        assert_eq!(token.last_executed_disbursement_height(), Some(17_280));
+    }
+
+    #[test]
+    fn test_invariant_b3_boundary_enforcement_survives_multiple_periods() {
+        // Test B3 enforcement across all period types
+        let treasury = create_test_public_key(1);
+        let staking = create_test_public_key(2);
+        let caller = create_test_public_key(3);
+
+        // Test with Daily period
+        let mut token_daily = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Daily".to_string(),
+            "DAILY".to_string(),
+            8,
+            1_000_000,
+            treasury.clone(),
+            staking.clone(),
+            caller.clone(),
+            Some(EconomicPeriod::Daily),
+        )
+        .unwrap();
+
+        // Daily: first boundary 8640
+        assert_eq!(token_daily.next_disbursement_height(), Some(8_640));
+        assert!(token_daily.record_disbursement_executed(8_640).is_ok());
+        assert!(token_daily.record_disbursement_executed(17_280).is_ok());
+
+        // Test with Monthly period
+        let mut token_monthly = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Monthly".to_string(),
+            "MONTHLY".to_string(),
+            8,
+            1_000_000,
+            treasury.clone(),
+            staking.clone(),
+            caller.clone(),
+            Some(EconomicPeriod::Monthly),
+        )
+        .unwrap();
+
+        // Monthly: first boundary 259200
+        assert_eq!(token_monthly.next_disbursement_height(), Some(259_200));
+        assert!(token_monthly.record_disbursement_executed(259_200).is_ok());
+        assert!(token_monthly.record_disbursement_executed(518_400).is_ok());
+
+        // Test with Quarterly period
+        let mut token_quarterly = DAOToken::init_dao_token(
+            DAOType::NP,
+            "Quarterly".to_string(),
+            "QUARTERLY".to_string(),
+            8,
+            1_000_000,
+            treasury,
+            staking,
+            caller,
+            Some(EconomicPeriod::Quarterly),
+        )
+        .unwrap();
+
+        // Quarterly: first boundary 777600
+        assert_eq!(token_quarterly.next_disbursement_height(), Some(777_600));
+        assert!(token_quarterly
+            .record_disbursement_executed(777_600)
+            .is_ok());
+        assert!(token_quarterly
+            .record_disbursement_executed(1_555_200)
+            .is_ok());
     }
 }
