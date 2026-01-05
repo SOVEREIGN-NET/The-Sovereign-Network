@@ -5,6 +5,58 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Sector classification for SOV DAO treasuries
+/// Each sector receives an equal share of DAO fee allocations.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum SectorDao {
+    /// Healthcare sector
+    Healthcare,
+    /// Education sector
+    Education,
+    /// Energy sector
+    Energy,
+    /// Housing sector
+    Housing,
+    /// Food security sector
+    Food,
+}
+
+impl SectorDao {
+    /// String representation of the sector
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SectorDao::Healthcare => "healthcare",
+            SectorDao::Education => "education",
+            SectorDao::Energy => "energy",
+            SectorDao::Housing => "housing",
+            SectorDao::Food => "food",
+        }
+    }
+
+    /// Parse a sector from a string (case-insensitive)
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "healthcare" => Some(SectorDao::Healthcare),
+            "education" => Some(SectorDao::Education),
+            "energy" => Some(SectorDao::Energy),
+            "housing" => Some(SectorDao::Housing),
+            "food" => Some(SectorDao::Food),
+            _ => None,
+        }
+    }
+
+    /// Get all available sectors
+    pub fn all() -> &'static [SectorDao] {
+        &[
+            SectorDao::Healthcare,
+            SectorDao::Education,
+            SectorDao::Energy,
+            SectorDao::Housing,
+            SectorDao::Food,
+        ]
+    }
+}
+
 /// Classification of DAO entities
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum DAOType {
