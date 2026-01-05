@@ -5,6 +5,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::RwLock;
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
@@ -17,6 +18,13 @@ use crate::network_utils::get_local_ip;
 use crate::protocols::enhanced_wifi_direct::{
     MacOSWiFiDirectManager, AdvancedWPSSecurity, MacOSWiFiInterface, MacOSP2PGroup
 };
+
+// V2 fragmentation imports for session-scoped reassembly
+use crate::fragmentation_v2::{
+    FragmentReassemblerV2, FragmentV1, ReassemblerConfig, 
+    fragment_message_v2, Protocol as FragProtocol,
+};
+use crate::protocols::types::SessionId;
 
 // Network and time imports removed - using system commands instead
 
@@ -189,6 +197,48 @@ pub struct WiFiDirectMeshProtocol {
     pub hidden_ssid: bool,
     /// WiFi Direct enabled state (starts OFF by default for security)
     pub enabled: Arc<RwLock<bool>>,
+    /// Per-device WiFi Direct sessions for v2 fragmentation (mac_address -> session)
+    pub wifi_sessions: Arc<RwLock<HashMap<String, WiFiDirectSession>>>,
+}
+
+/// WiFi Direct session for v2 fragmentation (per-device state)
+/// 
+/// Each WiFi Direct connection has its own session for proper session-scoped
+/// fragment reassembly, preventing collision attacks between devices.
+#[derive(Debug)]
+pub struct WiFiDirectSession {
+    /// Unique session identifier (cryptographically random)
+    pub session_id: SessionId,
+    /// Per-session message sequence counter (monotonic, never reused)
+    pub message_seq: AtomicU32,
+    /// V2 fragment reassembler (session-bound)
+    pub reassembler: FragmentReassemblerV2,
+}
+
+impl WiFiDirectSession {
+    /// Create a new WiFi Direct session with v2 fragmentation
+    pub fn new() -> Self {
+        let session_id = SessionId::generate();
+        let config = ReassemblerConfig::from_protocol(FragProtocol::WiFiDirect);
+        let reassembler = FragmentReassemblerV2::new(session_id.clone(), config);
+        
+        Self {
+            session_id,
+            message_seq: AtomicU32::new(0),
+            reassembler,
+        }
+    }
+    
+    /// Get next message sequence number (thread-safe, monotonic)
+    pub fn next_message_seq(&self) -> u32 {
+        self.message_seq.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+impl Default for WiFiDirectSession {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Persistent P2P Group information
@@ -300,6 +350,7 @@ impl WiFiDirectMeshProtocol {
             authenticated_peers: Arc::new(RwLock::new(HashMap::new())),
             hidden_ssid: true, // SECURITY: Hidden SSID by default to prevent non-ZHTP connections
             enabled: Arc::new(RwLock::new(false)), // SECURITY: WiFi Direct starts OFF for privacy/security
+            wifi_sessions: Arc::new(RwLock::new(HashMap::new())), // V2 fragmentation sessions
         })
     }
     
@@ -3068,6 +3119,78 @@ impl WiFiDirectMeshProtocol {
         } else {
             return Err(anyhow::anyhow!("Device not connected: {}", target_address));
         }
+    }
+    
+    /// Send large message with v2 fragmentation (session-scoped)
+    /// 
+    /// For messages that exceed WiFi Direct MTU, this method provides v2 fragmentation
+    /// with session-scoped message sequencing.
+    /// 
+    /// # Arguments
+    /// * `target_address` - Device MAC address or IP
+    /// * `message` - Message payload to send
+    /// * `chunk_size` - Maximum fragment payload size (default: 64KB for WiFi Direct)
+    pub async fn send_fragmented_message_v2(&self, target_address: &str, message: &[u8], chunk_size: usize) -> Result<()> {
+        use crate::fragmentation_v2::FragmentHeaderV1;
+        
+        info!("📶 Sending fragmented WiFi Direct message to {}: {} bytes", target_address, message.len());
+        
+        // Get or create session for this device (v2 fragmentation)
+        let mut sessions = self.wifi_sessions.write().await;
+        let session = sessions.entry(target_address.to_string())
+            .or_insert_with(WiFiDirectSession::new);
+        
+        // Get next message sequence from session counter
+        let message_seq = session.next_message_seq();
+        
+        // Calculate effective chunk size
+        let effective_chunk_size = chunk_size.saturating_sub(FragmentHeaderV1::SIZE);
+        
+        // Fragment using v2 protocol
+        let fragments = fragment_message_v2(message_seq, message, effective_chunk_size)?;
+        info!("📶 Fragmenting WiFi Direct message into {} parts (msg_seq={})", fragments.len(), message_seq);
+        
+        drop(sessions); // Release lock before transmission
+        
+        for (i, fragment) in fragments.iter().enumerate() {
+            let wire_bytes = fragment.to_bytes();
+            
+            // Send fragment via existing mesh message mechanism
+            self.send_mesh_message(target_address, &wire_bytes).await?;
+            
+            debug!("📶 WiFi Direct fragment {}/{} sent ({} bytes)", i + 1, fragments.len(), wire_bytes.len());
+        }
+        
+        Ok(())
+    }
+    
+    /// Add a received fragment to the session's v2 reassembler
+    /// 
+    /// Returns the complete message if all fragments have been received.
+    pub async fn add_fragment_v2(&self, mac_address: &str, fragment: Vec<u8>) -> Result<Option<Vec<u8>>> {
+        let mut sessions = self.wifi_sessions.write().await;
+        let session = sessions.entry(mac_address.to_string())
+            .or_insert_with(WiFiDirectSession::new);
+        
+        // Parse fragment using v2 format (10-byte header)
+        let parsed = FragmentV1::from_bytes(&fragment)?;
+        
+        debug!("📶 WiFi Direct fragment received: msg_seq={}, idx={}/{} from {}",
+               parsed.header.message_seq,
+               parsed.header.fragment_index,
+               parsed.header.total_fragments,
+               mac_address);
+        
+        // Delegate to session's v2 reassembler (handles timeout cleanup automatically)
+        let result = session.reassembler.add_fragment(parsed)?;
+        
+        if let Some(ref data) = result {
+            info!("✅ Reassembled WiFi Direct message: {} bytes (session: {})",
+                  data.len(),
+                  session.session_id.to_short_string());
+        }
+        
+        Ok(result)
     }
     
     /// Transmit data over established WiFi Direct connection

@@ -43,6 +43,7 @@ use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug, error};
 
@@ -66,6 +67,13 @@ use super::quic_handshake;
 
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::messaging::message_handler::MeshMessageHandler;
+
+// V2 fragmentation imports for session-scoped reassembly
+use crate::fragmentation_v2::{
+    FragmentReassemblerV2, FragmentV1, ReassemblerConfig, 
+    fragment_message_v2, Protocol as FragProtocol,
+};
+use crate::protocols::types::SessionId;
 
 /// Default path for TLS certificate
 pub const DEFAULT_TLS_CERT_PATH: &str = "./data/tls/server.crt";
@@ -112,6 +120,7 @@ pub struct QuicMeshProtocol {
 /// - **Verified peer identity**: Dilithium signatures verified via UHP
 /// - **Master key**: Derived from UHP session key + Kyber shared secret
 /// - **Replay protection**: Nonces checked against shared cache
+/// - **V2 fragmentation**: Session-scoped message sequencing for large payloads
 pub struct PqcQuicConnection {
     /// Underlying QUIC connection
     quic_conn: Connection,
@@ -133,6 +142,15 @@ pub struct PqcQuicConnection {
     /// New nodes connecting for first time can only request blockchain data
     /// NOTE: Even in bootstrap mode, UHP handshake is performed for identity verification
     pub bootstrap_mode: bool,
+    
+    /// V2 fragmentation session ID (derived from UHP session for consistency)
+    frag_session_id: SessionId,
+    
+    /// Per-session message sequence counter for v2 fragmentation
+    message_seq: AtomicU32,
+    
+    /// V2 fragment reassembler (session-bound, for receiving large messages)
+    reassembler: Option<FragmentReassemblerV2>,
 }
 
 // NOTE: PqcHandshakeMessage has been REMOVED - authentication bypass vulnerability
@@ -787,6 +805,7 @@ impl PqcQuicConnection {
     /// Create a new PqcQuicConnection from a verified peer and derived keys.
     ///
     /// This is the ONLY way to create an authenticated connection.
+    /// V2 fragmentation session is automatically initialized from the UHP session ID.
     pub fn from_verified_peer(
         quic_conn: Connection,
         peer_addr: SocketAddr,
@@ -795,6 +814,17 @@ impl PqcQuicConnection {
         session_id: [u8; 16],
         bootstrap_mode: bool,
     ) -> Self {
+        // Derive fragmentation session ID from UHP session for consistency
+        // Extend 16-byte session_id to 32 bytes for SessionId
+        let mut frag_session_bytes = [0u8; 32];
+        frag_session_bytes[..16].copy_from_slice(&session_id);
+        frag_session_bytes[16..].copy_from_slice(&session_id); // Mirror for 32 bytes
+        let frag_session_id = SessionId::from_bytes(frag_session_bytes);
+        
+        // Create v2 reassembler for receiving fragmented messages
+        let config = ReassemblerConfig::from_protocol(FragProtocol::QUIC);
+        let reassembler = FragmentReassemblerV2::new(frag_session_id.clone(), config);
+        
         Self {
             quic_conn,
             master_key: Some(master_key),
@@ -802,7 +832,20 @@ impl PqcQuicConnection {
             session_id: Some(session_id),
             peer_addr,
             bootstrap_mode,
+            frag_session_id,
+            message_seq: AtomicU32::new(0),
+            reassembler: Some(reassembler),
         }
+    }
+    
+    /// Get next message sequence number for v2 fragmentation (thread-safe, monotonic)
+    pub fn next_message_seq(&self) -> u32 {
+        self.message_seq.fetch_add(1, Ordering::SeqCst)
+    }
+    
+    /// Get the v2 fragmentation session ID
+    pub fn frag_session_id(&self) -> &SessionId {
+        &self.frag_session_id
     }
 
     /// Get the underlying QUIC connection
@@ -900,6 +943,79 @@ impl PqcQuicConnection {
 
         debug!("📥 Received {} bytes (double-decrypted: TLS 1.3 + UHP+Kyber)", decrypted.len());
         Ok(decrypted)
+    }
+    
+    /// Send large message with v2 fragmentation (session-scoped)
+    /// 
+    /// For messages that need to be split across multiple QUIC streams or
+    /// exceed typical stream buffer sizes, this method provides v2 fragmentation
+    /// with session-scoped message sequencing.
+    /// 
+    /// # Arguments
+    /// * `message` - Message payload to send
+    /// * `chunk_size` - Maximum fragment payload size (default: 64KB for QUIC)
+    pub async fn send_fragmented_message(&mut self, message: &[u8], chunk_size: usize) -> Result<()> {
+        let master_key = self.master_key
+            .ok_or_else(|| anyhow!("UHP+Kyber handshake not complete"))?;
+        
+        // Get next message sequence from session counter
+        let message_seq = self.next_message_seq();
+        
+        // Fragment using v2 protocol
+        let fragments = fragment_message_v2(message_seq, message, chunk_size)?;
+        
+        info!("📤 Sending fragmented QUIC message: msg_seq={}, {} fragments, {} bytes",
+              message_seq, fragments.len(), message.len());
+        
+        for (i, fragment) in fragments.iter().enumerate() {
+            let wire_bytes = fragment.to_bytes();
+            
+            // Encrypt fragment with master key
+            let encrypted = encrypt_data(&wire_bytes, &master_key)?;
+            
+            // Send over QUIC stream
+            let mut stream = self.quic_conn.open_uni().await?;
+            stream.write_all(&encrypted).await?;
+            stream.finish()?;
+            
+            debug!("📤 Sent QUIC fragment {}/{} ({} bytes)", i + 1, fragments.len(), wire_bytes.len());
+        }
+        
+        Ok(())
+    }
+    
+    /// Add a received fragment to the v2 reassembler
+    /// 
+    /// Returns the complete message if all fragments have been received.
+    /// Call this for each incoming fragment from QUIC streams.
+    pub fn add_fragment_v2(&mut self, encrypted_fragment: &[u8]) -> Result<Option<Vec<u8>>> {
+        let master_key = self.master_key
+            .ok_or_else(|| anyhow!("UHP+Kyber handshake not complete"))?;
+        
+        // Decrypt fragment
+        let wire_bytes = decrypt_data(encrypted_fragment, &master_key)?;
+        
+        // Parse v2 fragment
+        let fragment = FragmentV1::from_bytes(&wire_bytes)?;
+        
+        debug!("📥 QUIC fragment received: msg_seq={}, idx={}/{}",
+               fragment.header.message_seq,
+               fragment.header.fragment_index,
+               fragment.header.total_fragments);
+        
+        // Add to reassembler
+        let reassembler = self.reassembler.as_mut()
+            .ok_or_else(|| anyhow!("V2 reassembler not initialized"))?;
+        
+        let result = reassembler.add_fragment(fragment)?;
+        
+        if let Some(ref data) = result {
+            info!("✅ Reassembled QUIC message: {} bytes (session: {})",
+                  data.len(),
+                  self.frag_session_id.to_short_string());
+        }
+        
+        Ok(result)
     }
 
     // ========================================================================

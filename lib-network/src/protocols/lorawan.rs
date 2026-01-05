@@ -5,12 +5,63 @@
 mod gateway_auth;
 
 use anyhow::{Result, anyhow};
-use tracing::{info, warn};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use tokio::sync::RwLock;
+use tracing::{info, warn, debug};
 use lib_crypto::symmetric::chacha20::{encrypt_data};
 
 pub use gateway_auth::{
     GatewayAttestation, LoRaDeviceMessage, LoRaWANGatewayAuth, LoRaWanUhpBinding,
 };
+
+// V2 fragmentation imports for session-scoped reassembly
+use crate::fragmentation_v2::{
+    FragmentReassemblerV2, FragmentV1, ReassemblerConfig, 
+    fragment_message_v2, Protocol as FragProtocol,
+};
+use crate::protocols::types::SessionId;
+
+/// LoRaWAN session for v2 fragmentation (per-device state)
+/// 
+/// Each LoRaWAN device connection has its own session for proper session-scoped
+/// fragment reassembly, preventing collision attacks between devices.
+#[derive(Debug)]
+pub struct LoRaWANSession {
+    /// Unique session identifier (cryptographically random)
+    pub session_id: SessionId,
+    /// Per-session message sequence counter (monotonic, never reused)
+    pub message_seq: AtomicU32,
+    /// V2 fragment reassembler (session-bound)
+    pub reassembler: FragmentReassemblerV2,
+}
+
+impl LoRaWANSession {
+    /// Create a new LoRaWAN session with v2 fragmentation
+    pub fn new() -> Self {
+        let session_id = SessionId::generate();
+        let config = ReassemblerConfig::from_protocol(FragProtocol::LoRaWAN);
+        let reassembler = FragmentReassemblerV2::new(session_id.clone(), config);
+        
+        Self {
+            session_id,
+            message_seq: AtomicU32::new(0),
+            reassembler,
+        }
+    }
+    
+    /// Get next message sequence number (thread-safe, monotonic)
+    pub fn next_message_seq(&self) -> u32 {
+        self.message_seq.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+impl Default for LoRaWANSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// LoRaWAN mesh protocol handler
 pub struct LoRaWANMeshProtocol {
@@ -26,6 +77,8 @@ pub struct LoRaWANMeshProtocol {
     pub discovery_active: bool,
     /// Optional trust anchor for gateway-mediated auth (ARCH-D-1.9)
     pub gateway_auth: Option<LoRaWANGatewayAuth>,
+    /// Per-device LoRaWAN sessions for v2 fragmentation (dev_addr -> session)
+    pub lora_sessions: Arc<RwLock<HashMap<String, LoRaWANSession>>>,
 }
 
 impl LoRaWANMeshProtocol {
@@ -49,6 +102,7 @@ impl LoRaWANMeshProtocol {
             app_key,
             discovery_active: false,
             gateway_auth: Some(LoRaWANGatewayAuth::new()?),
+            lora_sessions: Arc::new(RwLock::new(HashMap::new())), // V2 fragmentation sessions
         })
     }
 
@@ -464,27 +518,71 @@ impl LoRaWANMeshProtocol {
         Ok(LORAWAN_MAX_PAYLOAD) // Conservative estimate for SF7/SF8
     }
     
+    /// Send fragmented message using v2 protocol (session-scoped)
+    /// 
+    /// Uses v2 fragmentation with session-scoped message sequencing for
+    /// messages larger than the LoRaWAN payload limit.
     async fn send_fragmented_message(&self, target_address: &str, message: &[u8]) -> Result<()> {
-        use crate::fragmentation::fragment_message;
+        use crate::fragmentation_v2::FragmentHeaderV1;
         
         let max_payload = self.get_max_payload_size().await?;
-        let chunk_size = max_payload.saturating_sub(8); // Leave room for fragment headers
+        let chunk_size = max_payload.saturating_sub(FragmentHeaderV1::SIZE); // Leave room for v2 10-byte header
         
-        let fragments = fragment_message(message, chunk_size);
-        info!(" Fragmenting LoRaWAN message into {} parts", fragments.len());
+        // Get or create session for this device (v2 fragmentation)
+        let mut sessions = self.lora_sessions.write().await;
+        let session = sessions.entry(target_address.to_string())
+            .or_insert_with(LoRaWANSession::new);
+        
+        // Get next message sequence from session counter
+        let message_seq = session.next_message_seq();
+        
+        // Fragment using v2 protocol
+        let fragments = fragment_message_v2(message_seq, message, chunk_size)?;
+        info!("📡 Fragmenting LoRaWAN message into {} parts (msg_seq={})", fragments.len(), message_seq);
+        
+        drop(sessions); // Release lock before transmission
         
         for (i, fragment) in fragments.iter().enumerate() {
             let wire_bytes = fragment.to_bytes();
             let frame = self.prepare_lorawan_frame(target_address, &wire_bytes).await?;
             self.transmit_frame(&frame).await?;
             
-            info!("LoRa fragment {}/{} transmitted", i + 1, fragments.len());
+            info!("📡 LoRa fragment {}/{} transmitted", i + 1, fragments.len());
             
             // Delay between fragments to respect duty cycle
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         
         Ok(())
+    }
+    
+    /// Add a received fragment to the session's v2 reassembler
+    /// 
+    /// Returns the complete message if all fragments have been received.
+    pub async fn add_fragment_v2(&self, dev_address: &str, fragment: Vec<u8>) -> Result<Option<Vec<u8>>> {
+        let mut sessions = self.lora_sessions.write().await;
+        let session = sessions.entry(dev_address.to_string())
+            .or_insert_with(LoRaWANSession::new);
+        
+        // Parse fragment using v2 format (10-byte header)
+        let parsed = FragmentV1::from_bytes(&fragment)?;
+        
+        debug!("📡 LoRaWAN fragment received: msg_seq={}, idx={}/{} from {}",
+               parsed.header.message_seq,
+               parsed.header.fragment_index,
+               parsed.header.total_fragments,
+               dev_address);
+        
+        // Delegate to session's v2 reassembler (handles timeout cleanup automatically)
+        let result = session.reassembler.add_fragment(parsed)?;
+        
+        if let Some(ref data) = result {
+            info!("✅ Reassembled LoRaWAN message: {} bytes (session: {})",
+                  data.len(),
+                  session.session_id.to_short_string());
+        }
+        
+        Ok(result)
     }
     
     async fn prepare_lorawan_frame(&self, target_address: &str, payload: &[u8]) -> Result<Vec<u8>> {
