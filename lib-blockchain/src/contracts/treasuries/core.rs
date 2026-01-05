@@ -390,10 +390,10 @@ mod tests {
 
         let mut sector_map = HashMap::new();
         sector_map.insert("healthcare".to_string(), create_test_public_key(10));
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), create_test_public_key(11));
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), create_test_public_key(12));
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), create_test_public_key(13));
-        sector_map.insert("$1".to_lowercase().as_str().to_string(), create_test_public_key(14));
+        sector_map.insert("education".to_string(), create_test_public_key(11));
+        sector_map.insert("energy".to_string(), create_test_public_key(12));
+        sector_map.insert("housing".to_string(), create_test_public_key(13));
+        sector_map.insert("food".to_string(), create_test_public_key(14));
 
         let result = TreasuryRegistry::init(admin, zero_fee_collector, sector_map);
         assert!(result.is_err());
