@@ -25,6 +25,8 @@ pub mod tokens;
 #[cfg(feature = "contracts")]
 pub mod treasuries;
 #[cfg(feature = "contracts")]
+pub mod emergency_reserve;
+#[cfg(feature = "contracts")]
 pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod web4;
@@ -60,6 +62,8 @@ pub use messaging::{WhisperMessage, MessageContract, MessageThread, GroupThread}
 pub use tokens::{TokenContract, functions};
 #[cfg(feature = "contracts")]
 pub use treasuries::SovDaoTreasury;
+#[cfg(feature = "contracts")]
+pub use emergency_reserve::EmergencyReserve;
 #[cfg(feature = "contracts")]
 pub use utils::*;
 #[cfg(feature = "contracts")]
