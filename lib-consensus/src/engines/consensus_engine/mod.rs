@@ -258,6 +258,8 @@ pub struct ConsensusEngine {
     broadcaster: Arc<dyn MessageBroadcaster>,
     /// Message receiver from network layer (Gap 4)
     message_rx: Option<mpsc::Receiver<ValidatorMessage>>,
+    /// Optional event sender for liveness transitions
+    liveness_event_tx: Option<mpsc::UnboundedSender<ConsensusEvent>>,
     /// Round timer for phase timeouts
     round_timer: RoundTimer,
     /// Heartbeat tracker for validator liveness detection
@@ -324,6 +326,7 @@ impl ConsensusEngine {
             reward_calculator: RewardCalculator::new(),
             broadcaster,
             message_rx: None,
+            liveness_event_tx: None,
             round_timer,
             heartbeat_tracker: crate::network::HeartbeatTracker::new(Duration::from_secs(10)),
             heartbeat_interval: None,
@@ -337,6 +340,17 @@ impl ConsensusEngine {
     /// Set the message receiver (from network layer)
     pub fn set_message_receiver(&mut self, rx: mpsc::Receiver<ValidatorMessage>) {
         self.message_rx = Some(rx);
+    }
+
+    /// Set liveness event sender for monitoring/alert bridges.
+    pub fn set_liveness_event_sender(&mut self, tx: mpsc::UnboundedSender<ConsensusEvent>) {
+        self.liveness_event_tx = Some(tx);
+    }
+
+    fn emit_liveness_event(&self, event: ConsensusEvent) {
+        if let Some(tx) = &self.liveness_event_tx {
+            let _ = tx.send(event);
+        }
     }
 
     /// Set the local validator signing keypair (required for proposal/vote signing)
