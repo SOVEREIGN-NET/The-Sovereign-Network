@@ -227,9 +227,12 @@ impl DAORegistry {
                     })
             }
             None => {
+                // CRITICAL: Use full DAO ID hash, never slice variable-length key material
+                // Slicing would panic if PublicKey is shorter than slice length
+                let full_key_hash = derive_dao_id(token_addr, DAOType::NP, token_addr);
                 Err(format!(
-                    "Token address not registered: {}",
-                    hex::encode(&token_addr.as_bytes()[..8])
+                    "Token address not registered (DAO ID: {})",
+                    hex::encode(&full_key_hash)
                 ))
             }
         }
@@ -250,19 +253,40 @@ impl DAORegistry {
     ///
     /// # Invariant
     /// Order is guaranteed to be insertion order and stable across upgrades
+    ///
+    /// # Panics
+    /// If dao_list and entries diverge (catastrophic registry corruption)
+    /// This is the correct behavior: silent data loss is unacceptable
     pub fn list_daos(&self) -> Vec<DAOEntry> {
         self.dao_list
             .iter()
-            .filter_map(|&dao_id| self.entries.get(&dao_id).cloned())
+            .map(|&dao_id| {
+                self.entries.get(&dao_id)
+                    .cloned()
+                    .expect(&format!(
+                        "CRITICAL: DAO registry corrupted - dao_list contains ID {} but entry not found. \
+                         This indicates data structure desynchronization.",
+                        hex::encode(&dao_id)
+                    ))
+            })
             .collect()
     }
 
     /// List all DAOs with their IDs
+    ///
+    /// # Panics
+    /// If dao_list and entries diverge (catastrophic registry corruption)
     pub fn list_daos_with_ids(&self) -> Vec<(DAOEntry, [u8; 32])> {
         self.dao_list
             .iter()
-            .filter_map(|&dao_id| {
-                self.entries.get(&dao_id).cloned().map(|entry| (entry, dao_id))
+            .map(|&dao_id| {
+                let entry = self.entries.get(&dao_id)
+                    .cloned()
+                    .expect(&format!(
+                        "CRITICAL: DAO registry corrupted - dao_list contains ID {} but entry not found",
+                        hex::encode(&dao_id)
+                    ));
+                (entry, dao_id)
             })
             .collect()
     }
@@ -827,15 +851,25 @@ mod tests {
 
     #[test]
     fn test_length_prefix_collision_prevention() {
-        let token_ab = test_public_key_distinct(0xAB);
-        let token_a = test_public_key_distinct(0x0A);
+        // CRITICAL: Test with DIFFERENT length keys to verify length-prefixing works
+        // Without length-prefixes, ("ab", "c") would collide with ("a", "bc")
+        let short_token = PublicKey::new(vec![0x01, 0x02, 0x03, 0x04]); // 4 bytes
+        let long_token = PublicKey::new(vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]); // 8 bytes
         let treasury = test_public_key(2);
 
-        let id_ab = derive_dao_id(&token_ab, DAOType::NP, &treasury);
-        let id_a = derive_dao_id(&token_a, DAOType::NP, &treasury);
+        let id_short = derive_dao_id(&short_token, DAOType::NP, &treasury);
+        let id_long = derive_dao_id(&long_token, DAOType::NP, &treasury);
 
-        // Different length prefixes must produce different hashes
-        assert_ne!(id_ab, id_a);
+        // CRITICAL: Different length inputs MUST produce different hashes
+        // This proves length-prefixing is working (not just concatenation)
+        assert_ne!(
+            id_short, id_long,
+            "Length-prefixing failed: different length keys produced same DAO ID"
+        );
+
+        // Verify consistency (same inputs always same output)
+        let id_short_2 = derive_dao_id(&short_token, DAOType::NP, &treasury);
+        assert_eq!(id_short, id_short_2);
     }
 
     #[test]
