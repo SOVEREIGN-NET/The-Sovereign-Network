@@ -169,11 +169,7 @@ impl DAORegistry {
 
         // I2: token_addr must not already be registered
         if self.token_to_dao.contains_key(&token_addr) {
-            let existing_dao_id = self.token_to_dao[&token_addr];
-            return Err(format!(
-                "Token address already registered for DAO ID {}",
-                hex::encode(&existing_dao_id)
-            ));
+            return Err("Token address already registered".to_string());
         }
 
         // Derive canonical DAO ID from (token, class, treasury)
@@ -227,13 +223,9 @@ impl DAORegistry {
                     })
             }
             None => {
-                // CRITICAL: Use full DAO ID hash, never slice variable-length key material
-                // Slicing would panic if PublicKey is shorter than slice length
-                let full_key_hash = derive_dao_id(token_addr, DAOType::NP, token_addr);
-                Err(format!(
-                    "Token address not registered (DAO ID: {})",
-                    hex::encode(&full_key_hash)
-                ))
+                // CRITICAL: Do not derive or expose DAO IDs in error messages
+                // Prevents enumeration attacks where callers learn DAO IDs from errors
+                Err("Token address not registered".to_string())
             }
         }
     }
@@ -329,15 +321,17 @@ impl DAORegistry {
         }
 
         // === MUTATION PHASE ===
-        let _old_hash = entry.metadata_hash;
+        let old_hash = entry.metadata_hash;
         entry.metadata_hash = new_metadata_hash;
 
         // Emit event (if logging is available)
+        // Include both old and new hash for audit trail and compliance
         #[cfg(feature = "logging")]
         {
             tracing::info!(
-                "DAO metadata updated: {} (new_hash: {})",
+                "DAO metadata updated: {} (old_hash: {} → new_hash: {})",
                 hex::encode(&dao_id),
+                hex::encode(&old_hash),
                 hex::encode(&new_metadata_hash)
             );
         }
@@ -509,7 +503,8 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("already registered"));
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("already registered") || err_msg.contains("Token address already registered"));
     }
 
     #[test]
@@ -637,7 +632,8 @@ mod tests {
 
         let result = registry.get_dao(&unknown_token);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not registered"));
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("not registered") || err_msg.contains("Token address not registered"));
     }
 
     #[test]
@@ -1008,5 +1004,221 @@ mod tests {
         for entry in np_daos {
             assert_eq!(entry.class, DAOType::NP);
         }
+    }
+
+    // ============================================================================
+    // CRITICAL MISSING TESTS (Added to Fix Coverage Gaps)
+    // ============================================================================
+
+    #[test]
+    fn test_get_dao_by_id_success() {
+        let mut registry = DAORegistry::new();
+        let token = test_public_key(1);
+        let treasury = test_public_key(2);
+        let owner = test_public_key(3);
+        let metadata = [42u8; 32];
+
+        let dao_id = registry.register_dao(
+            token.clone(),
+            DAOType::NP,
+            treasury.clone(),
+            metadata,
+            owner.clone(),
+            100,
+        ).unwrap();
+
+        // Should be able to look up by ID
+        let entry = registry.get_dao_by_id(dao_id).unwrap();
+        assert_eq!(entry.token_addr, token);
+        assert_eq!(entry.treasury, treasury);
+        assert_eq!(entry.owner, owner);
+        assert_eq!(entry.metadata_hash, metadata);
+        assert_eq!(entry.class, DAOType::NP);
+    }
+
+    #[test]
+    fn test_get_dao_by_id_not_found() {
+        let registry = DAORegistry::new();
+        let nonexistent_id = [99u8; 32];
+
+        let result = registry.get_dao_by_id(nonexistent_id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn test_entries_token_to_dao_sync() {
+        // CRITICAL: Verify the three data structures stay in sync
+        // entries: DAO ID → Entry
+        // token_to_dao: Token → DAO ID
+        // dao_list: Vec of DAO IDs (in order)
+        let mut registry = DAORegistry::new();
+        let owner = test_public_key(10);
+
+        // Register 5 DAOs
+        for i in 1..=5 {
+            let token = test_public_key(i);
+            let treasury = test_public_key(i + 100);
+            registry.register_dao(
+                token.clone(),
+                DAOType::NP,
+                treasury,
+                [i as u8; 32],
+                owner.clone(),
+                100 + i as u64,
+            ).unwrap();
+
+            // After each registration, verify consistency:
+            // - token_to_dao should have an entry
+            assert!(registry.token_to_dao.contains_key(&token));
+            let dao_id = registry.token_to_dao[&token];
+
+            // - entries should have that DAO ID
+            assert!(registry.entries.contains_key(&dao_id));
+
+            // - dao_list should contain the ID
+            assert!(registry.dao_list.contains(&dao_id));
+        }
+
+        // Verify list_daos() returns all without panic
+        let daos = registry.list_daos();
+        assert_eq!(daos.len(), 5);
+
+        // Verify list_daos_with_ids() returns all without panic
+        let daos_with_ids = registry.list_daos_with_ids();
+        assert_eq!(daos_with_ids.len(), 5);
+
+        // Verify counts match
+        assert_eq!(registry.dao_count(), 5);
+    }
+
+    #[test]
+    fn test_owner_cannot_be_changed() {
+        // CRITICAL: Verify owner is truly immutable
+        // This is by design (owner field is never updated)
+        let mut registry = DAORegistry::new();
+        let token = test_public_key(1);
+        let treasury = test_public_key(2);
+        let owner1 = test_public_key(3);
+        let owner2 = test_public_key(4);
+
+        let dao_id = registry.register_dao(
+            token.clone(),
+            DAOType::NP,
+            treasury,
+            [1u8; 32],
+            owner1.clone(),
+            100,
+        ).unwrap();
+
+        // Get initial owner
+        let entry1 = registry.get_dao(&token).unwrap();
+        assert_eq!(entry1.owner, owner1);
+
+        // Try to update metadata as different owner (should fail)
+        let result = registry.update_metadata(dao_id, [2u8; 32], &owner2);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Only owner"));
+
+        // Verify owner is still owner1 (not owner2)
+        let entry2 = registry.get_dao(&token).unwrap();
+        assert_eq!(entry2.owner, owner1);
+        assert_ne!(entry2.owner, owner2);
+    }
+
+    #[test]
+    fn test_field_immutability_after_operations() {
+        // CRITICAL: Verify immutable fields don't change after metadata updates
+        let mut registry = DAORegistry::new();
+        let token = test_public_key(1);
+        let treasury = test_public_key(2);
+        let owner = test_public_key(3);
+        let initial_metadata = [1u8; 32];
+
+        let dao_id = registry.register_dao(
+            token.clone(),
+            DAOType::NP,
+            treasury.clone(),
+            initial_metadata,
+            owner.clone(),
+            100,
+        ).unwrap();
+
+        // Get initial state
+        let before = registry.get_dao(&token).unwrap();
+        assert_eq!(before.token_addr, token);
+        assert_eq!(before.class, DAOType::NP);
+        assert_eq!(before.treasury, treasury);
+        assert_eq!(before.owner, owner);
+        assert_eq!(before.created_at, 100);
+
+        // Update metadata multiple times
+        registry.update_metadata(dao_id, [2u8; 32], &owner).unwrap();
+        registry.update_metadata(dao_id, [3u8; 32], &owner).unwrap();
+        registry.update_metadata(dao_id, [4u8; 32], &owner).unwrap();
+
+        // Get final state
+        let after = registry.get_dao(&token).unwrap();
+
+        // Verify immutable fields haven't changed
+        assert_eq!(after.token_addr, before.token_addr);
+        assert_eq!(after.class, before.class);
+        assert_eq!(after.treasury, before.treasury);
+        assert_eq!(after.owner, before.owner);
+        assert_eq!(after.created_at, before.created_at);
+
+        // Verify only metadata changed
+        assert_ne!(after.metadata_hash, before.metadata_hash);
+        assert_eq!(after.metadata_hash, [4u8; 32]);
+    }
+
+    #[test]
+    fn test_error_recovery_after_failed_registration() {
+        // CRITICAL: Verify registry is in valid state after a failed registration
+        let mut registry = DAORegistry::new();
+        let owner = test_public_key(10);
+
+        // Successful registration
+        let token1 = test_public_key(1);
+        let treasury1 = test_public_key(101);
+        registry.register_dao(
+            token1.clone(),
+            DAOType::NP,
+            treasury1,
+            [1u8; 32],
+            owner.clone(),
+            100,
+        ).unwrap();
+
+        // Failed registration (token already registered)
+        let token2 = test_public_key(1); // Same as token1
+        let treasury2 = test_public_key(102);
+        let result = registry.register_dao(
+            token2,
+            DAOType::NP,
+            treasury2,
+            [2u8; 32],
+            owner.clone(),
+            200,
+        );
+        assert!(result.is_err());
+
+        // Registry should still be valid - new registration should work
+        let token3 = test_public_key(3);
+        let treasury3 = test_public_key(103);
+        let result = registry.register_dao(
+            token3.clone(),
+            DAOType::NP,
+            treasury3,
+            [3u8; 32],
+            owner.clone(),
+            300,
+        );
+        assert!(result.is_ok());
+
+        // Verify both registrations are present
+        assert_eq!(registry.dao_count(), 2);
+        assert!(registry.get_dao(&token1).is_ok());
+        assert!(registry.get_dao(&token3).is_ok());
     }
 }
