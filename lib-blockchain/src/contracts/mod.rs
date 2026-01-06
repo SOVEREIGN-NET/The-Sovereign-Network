@@ -29,6 +29,8 @@ pub mod emergency_reserve;
 #[cfg(feature = "contracts")]
 pub mod dao_registry;
 #[cfg(feature = "contracts")]
+pub mod sov_swap;
+#[cfg(feature = "contracts")]
 pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod web4;
@@ -68,6 +70,8 @@ pub use treasuries::SovDaoTreasury;
 pub use emergency_reserve::EmergencyReserve;
 #[cfg(feature = "contracts")]
 pub use dao_registry::{DAORegistry, DAOEntry, derive_dao_id};
+#[cfg(feature = "contracts")]
+pub use sov_swap::{SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError};
 #[cfg(feature = "contracts")]
 pub use utils::*;
 #[cfg(feature = "contracts")]

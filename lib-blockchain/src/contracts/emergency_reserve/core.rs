@@ -469,7 +469,7 @@ mod tests {
         
         Ok(Signature {
             signature: signature_obj.signature,
-            public_key: keypair.public_key,
+            public_key: keypair.public_key.clone(),
             algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         })
@@ -868,11 +868,11 @@ mod tests {
         // Create keypairs for signers
         let signer1_keypair = KeyPair::generate()
             .expect("Should create keypair 1");
-        let signer1_pubkey = signer1_keypair.public_key;
+        let signer1_pubkey = signer1_keypair.public_key.clone();
         
         let signer2_keypair = KeyPair::generate()
             .expect("Should create keypair 2");
-        let signer2_pubkey = signer2_keypair.public_key;
+        let signer2_pubkey = signer2_keypair.public_key.clone();
         
         let contract_id = create_test_contract_id(100);
 
@@ -936,10 +936,10 @@ mod tests {
         let fee_collector = create_test_public_key(1);
         
         let signer1_keypair = KeyPair::generate().expect("Should create keypair 1");
-        let signer1_pubkey = signer1_keypair.public_key;
+        let signer1_pubkey = signer1_keypair.public_key.clone();
         
         let signer2_keypair = KeyPair::generate().expect("Should create keypair 2");
-        let signer2_pubkey = signer2_keypair.public_key;
+        let signer2_pubkey = signer2_keypair.public_key.clone();
         
         let contract_id = create_test_contract_id(100);
 
@@ -992,7 +992,7 @@ mod tests {
         let fee_collector = create_test_public_key(1);
         
         let signer_keypair = KeyPair::generate().expect("Should create keypair");
-        let signer_pubkey = signer_keypair.public_key;
+        let signer_pubkey = signer_keypair.public_key.clone();
         
         let contract_id = create_test_contract_id(100);
 
@@ -1046,7 +1046,7 @@ mod tests {
         let fee_collector = create_test_public_key(1);
         
         let signer_keypair = KeyPair::generate().expect("Should create keypair");
-        let signer_pubkey = signer_keypair.public_key;
+        let signer_pubkey = signer_keypair.public_key.clone();
         
         let contract_id = create_test_contract_id(100);
 
@@ -1116,10 +1116,10 @@ mod tests {
         let fee_collector = create_test_public_key(1);
         
         let signer_keypair = KeyPair::generate().expect("Should create keypair");
-        let signer_pubkey = signer_keypair.public_key;
+        let signer_pubkey = signer_keypair.public_key.clone();
         
         let signer2_keypair = KeyPair::generate().expect("Should create keypair 2");
-        let signer2_pubkey = signer2_keypair.public_key;
+        let signer2_pubkey = signer2_keypair.public_key.clone();
         
         let contract_id = create_test_contract_id(100);
 
@@ -1173,7 +1173,7 @@ mod tests {
         let fee_collector = create_test_public_key(1);
         
         let signer_keypair = KeyPair::generate().expect("Should create keypair");
-        let signer_pubkey = signer_keypair.public_key;
+        let signer_pubkey = signer_keypair.public_key.clone();
         
         let contract_id = create_test_contract_id(100);
 
@@ -1228,10 +1228,10 @@ mod tests {
         let fee_collector = create_test_public_key(1);
         
         let signer1_keypair = KeyPair::generate().expect("Should create keypair 1");
-        let signer1_pubkey = signer1_keypair.public_key;
+        let signer1_pubkey = signer1_keypair.public_key.clone();
         
         let signer2_keypair = KeyPair::generate().expect("Should create keypair 2");
-        let signer2_pubkey = signer2_keypair.public_key;
+        let signer2_pubkey = signer2_keypair.public_key.clone();
         
         let contract_id = create_test_contract_id(100);
 

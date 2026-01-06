@@ -329,6 +329,32 @@ pub enum ContractEvent {
         owner: PublicKey,
         filename: String,
     },
+    /// Swap executed event (SOV↔DAO token swap)
+    SwapExecuted {
+        pool_id: [u8; 32],
+        trader: PublicKey,
+        sov_amount: u64,
+        token_amount: u64,
+        /// True if SOV→Token, false if Token→SOV
+        sov_to_token: bool,
+        fee_amount: u64,
+    },
+    /// Pool created event
+    PoolCreated {
+        pool_id: [u8; 32],
+        token_id: [u8; 32],
+        /// "NP" or "FP"
+        dao_type: String,
+        initial_sov: u64,
+        initial_token: u64,
+    },
+    /// Fee collected and sent to treasury
+    FeeCollected {
+        pool_id: [u8; 32],
+        sov_fees: u64,
+        token_fees: u64,
+        treasury_addr: PublicKey,
+    },
 }
 
 impl ContractEvent {
@@ -340,6 +366,9 @@ impl ContractEvent {
             ContractEvent::ContactAdded { .. } => "ContactAdded",
             ContractEvent::GroupCreated { .. } => "GroupCreated",
             ContractEvent::FileShared { .. } => "FileShared",
+            ContractEvent::SwapExecuted { .. } => "SwapExecuted",
+            ContractEvent::PoolCreated { .. } => "PoolCreated",
+            ContractEvent::FeeCollected { .. } => "FeeCollected",
         }
     }
 
