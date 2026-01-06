@@ -53,3 +53,7 @@ tempfile = "3.0"
 [[example]]
 name = "full_consensus_integration"
 path = "examples/full_consensus_integration.rs"
+
+# Local DAO registry (Phase-0 contract module)
+[dependencies.dao-registry]
+path = "src/contracts/dao_registry"
