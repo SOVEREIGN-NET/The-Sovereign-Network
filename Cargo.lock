@@ -2754,6 +2754,7 @@ dependencies = [
  "quick-xml 0.31.0",
  "quinn",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "rcgen 0.14.6",
  "regex",
  "rocksdb",
@@ -2772,6 +2773,7 @@ dependencies = [
  "tokio-test",
  "tracing",
  "tracing-subscriber",
+ "turmoil",
  "urlencoding",
  "uuid",
  "windows 0.51.1",
@@ -3362,6 +3364,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+ "libm",
 ]
 
 [[package]]
@@ -4108,6 +4111,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
  "getrandom 0.3.4",
+]
+
+[[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -5511,6 +5524,26 @@ dependencies = [
  "thiserror 1.0.69",
  "url",
  "utf-8",
+]
+
+[[package]]
+name = "turmoil"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96a12fe7cc665cf1ac3f34a80ae5b93d81485be7c28b8005014ceda1bd37620f"
+dependencies = [
+ "bytes",
+ "futures",
+ "indexmap 1.9.3",
+ "rand 0.8.5",
+ "rand_distr",
+ "scoped-tls",
+ "tokio",
+ "tokio-stream",
+ "tokio-test",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
