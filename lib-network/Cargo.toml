@@ -183,6 +183,9 @@ tokio-test = "0.4"
 tracing-subscriber = "0.3"
 futures = "0.3"
 tempfile = "3.23.0"
+turmoil = "0.4"
+rand_chacha = "0.3"
+parking_lot = "0.12"
 
 [lib]
 name = "lib_network"
@@ -204,3 +207,4 @@ chain-integration = []
 unsafe-bootstrap = []             # Explicit opt-in for insecure TLS verification paths
 ble-mock = []                     # Enable BLE mock testing framework (Issue #141)
 allow-net-tests = []              # Enable network integration tests (only for ZHTP_ALLOW_NET_TESTS scenarios)
+use_turmoil = []                  # Opt-in to compile-time Turmoil-enabled tests
