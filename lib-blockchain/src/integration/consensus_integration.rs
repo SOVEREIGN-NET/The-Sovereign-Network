@@ -16,7 +16,8 @@ use lib_consensus::{
     DaoEngine, DaoProposalType, DaoVoteChoice,
     RewardCalculator, RewardRound,
     ConsensusProposal, ConsensusVote, VoteType, ConsensusStep,
-    ConsensusType, ConsensusProof, NoOpBroadcaster
+    ConsensusType, ConsensusProof, NoOpBroadcaster,
+    DifficultyConfig, DifficultyManager,
 };
 use lib_crypto::{Hash, hash_blake3, KeyPair};
 use lib_identity::IdentityId;
@@ -80,6 +81,8 @@ pub struct BlockchainConsensusCoordinator {
     pending_proposals: Arc<RwLock<VecDeque<ConsensusProposal>>>,
     /// Active consensus votes
     active_votes: Arc<RwLock<HashMap<Hash, Vec<ConsensusVote>>>>,
+    /// Difficulty manager (owns difficulty adjustment policy)
+    difficulty_manager: Arc<RwLock<DifficultyManager>>,
 }
 
 // Manual Debug implementation because ConsensusEngine doesn't derive Debug
@@ -107,6 +110,9 @@ impl BlockchainConsensusCoordinator {
         ));
 
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        
+        // Initialize difficulty manager with default configuration
+        let difficulty_manager = Arc::new(RwLock::new(DifficultyManager::default()));
 
         Ok(Self {
             consensus_engine,
@@ -119,6 +125,38 @@ impl BlockchainConsensusCoordinator {
             current_round_cache: Arc::new(RwLock::new(None)),
             pending_proposals: Arc::new(RwLock::new(VecDeque::new())),
             active_votes: Arc::new(RwLock::new(HashMap::new())),
+            difficulty_manager,
+        })
+    }
+    
+    /// Create a new blockchain consensus coordinator with custom difficulty configuration
+    pub async fn new_with_difficulty_config(
+        blockchain: Arc<RwLock<Blockchain>>,
+        mempool: Arc<RwLock<Mempool>>,
+        consensus_config: ConsensusConfig,
+        difficulty_config: DifficultyConfig,
+    ) -> Result<Self> {
+        let consensus_engine = Arc::new(RwLock::new(
+            ConsensusEngine::new(consensus_config, Arc::new(NoOpBroadcaster))?
+        ));
+
+        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        
+        // Initialize difficulty manager with provided configuration
+        let difficulty_manager = Arc::new(RwLock::new(DifficultyManager::new(difficulty_config)));
+
+        Ok(Self {
+            consensus_engine,
+            blockchain,
+            mempool,
+            local_validator_id: None,
+            event_sender,
+            event_receiver: Arc::new(RwLock::new(event_receiver)),
+            is_producing_blocks: false,
+            current_round_cache: Arc::new(RwLock::new(None)),
+            pending_proposals: Arc::new(RwLock::new(VecDeque::new())),
+            active_votes: Arc::new(RwLock::new(HashMap::new())),
+            difficulty_manager,
         })
     }
 
@@ -212,7 +250,67 @@ impl BlockchainConsensusCoordinator {
             current_round_cache: self.current_round_cache.clone(),
             pending_proposals: self.pending_proposals.clone(),
             active_votes: self.active_votes.clone(),
+            difficulty_manager: self.difficulty_manager.clone(),
         }
+    }
+    
+    /// Get the difficulty manager
+    pub fn difficulty_manager(&self) -> &Arc<RwLock<DifficultyManager>> {
+        &self.difficulty_manager
+    }
+    
+    /// Get the current difficulty configuration
+    pub async fn get_difficulty_config(&self) -> DifficultyConfig {
+        let manager = self.difficulty_manager.read().await;
+        manager.config().clone()
+    }
+    
+    /// Calculate new difficulty using the consensus-owned algorithm
+    ///
+    /// This is the entry point for blockchain difficulty adjustment.
+    /// The blockchain calls this method and the consensus engine owns the algorithm.
+    pub async fn calculate_difficulty_adjustment(
+        &self,
+        height: u64,
+        current_difficulty: u32,
+        interval_start_time: u64,
+        interval_end_time: u64,
+    ) -> Result<Option<u32>> {
+        let manager = self.difficulty_manager.read().await;
+        manager
+            .adjust_difficulty(height, current_difficulty, interval_start_time, interval_end_time)
+            .map_err(|e| anyhow!("Difficulty adjustment failed: {}", e))
+    }
+    
+    /// Check if difficulty should be adjusted at the given height
+    pub async fn should_adjust_difficulty(&self, height: u64) -> bool {
+        let manager = self.difficulty_manager.read().await;
+        manager.should_adjust(height)
+    }
+    
+    /// Get the initial difficulty value from consensus policy
+    pub async fn get_initial_difficulty(&self) -> u32 {
+        let manager = self.difficulty_manager.read().await;
+        manager.initial_difficulty()
+    }
+    
+    /// Get the difficulty adjustment interval from consensus policy
+    pub async fn get_difficulty_adjustment_interval(&self) -> u64 {
+        let manager = self.difficulty_manager.read().await;
+        manager.adjustment_interval()
+    }
+    
+    /// Apply DAO governance updates to difficulty parameters
+    pub async fn apply_difficulty_governance_update(
+        &self,
+        initial_difficulty: Option<u32>,
+        adjustment_interval: Option<u64>,
+        target_timespan: Option<u64>,
+    ) -> Result<()> {
+        let mut manager = self.difficulty_manager.write().await;
+        manager
+            .apply_governance_update(initial_difficulty, adjustment_interval, target_timespan)
+            .map_err(|e| anyhow!("Failed to apply difficulty governance update: {}", e))
     }
 
     /// Main consensus event processing loop

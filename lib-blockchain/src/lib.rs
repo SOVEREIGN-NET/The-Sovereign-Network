@@ -62,6 +62,9 @@ pub use integration::consensus_integration::{
     create_dao_vote_transaction,
 };
 
+// Re-export difficulty types from lib-consensus for convenience
+pub use lib_consensus::{DifficultyConfig, DifficultyManager, DifficultyError, DifficultyResult};
+
 // Re-export contracts when feature is enabled
 #[cfg(feature = "contracts")]
 pub use contracts::*;

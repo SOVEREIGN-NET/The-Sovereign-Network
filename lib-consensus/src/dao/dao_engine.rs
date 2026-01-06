@@ -259,6 +259,14 @@ impl DaoEngine {
                 GovernanceParameterValue::SlashDoubleSign(value) => config.slash_double_sign = *value,
                 GovernanceParameterValue::SlashLiveness(value) => config.slash_liveness = *value,
                 GovernanceParameterValue::DevelopmentMode(value) => config.development_mode = *value,
+                // Blockchain difficulty parameters are handled by DifficultyManager,
+                // not ConsensusConfig. These are validated here but applied separately.
+                GovernanceParameterValue::BlockchainInitialDifficulty(_)
+                | GovernanceParameterValue::BlockchainAdjustmentInterval(_)
+                | GovernanceParameterValue::BlockchainTargetTimespan(_) => {
+                    // These are applied via DifficultyManager, not ConsensusConfig
+                    // See BlockchainConsensusCoordinator::apply_difficulty_governance_update()
+                }
             }
         }
 
@@ -338,6 +346,22 @@ impl DaoEngine {
                     }
                 }
                 GovernanceParameterValue::DevelopmentMode(_) => {}
+                // Blockchain difficulty parameters validation
+                GovernanceParameterValue::BlockchainInitialDifficulty(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Initial difficulty must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::BlockchainAdjustmentInterval(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Adjustment interval must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::BlockchainTargetTimespan(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Target timespan must be greater than zero"));
+                    }
+                }
             }
         }
 

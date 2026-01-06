@@ -35,6 +35,4 @@ codegen-units = 1
 opt-level = 0
 debug = true
 
-[package.metadata.dev-tools]
-# Helper metadata for developers: local test runner script path
-run-tests = "scripts/run_tests.sh"
+[workspace.metadata.dev-tools]

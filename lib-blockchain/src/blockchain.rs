@@ -783,33 +783,100 @@ impl Blockchain {
         crate::types::hash::blake3_hash(&data)
     }
 
-    /// Adjust mining difficulty based on block times
+    /// Adjust mining difficulty based on block times.
+    /// 
+    /// This method delegates to the consensus coordinator's DifficultyManager when available,
+    /// falling back to the legacy hardcoded constants for backward compatibility.
+    /// 
+    /// The consensus engine owns the difficulty policy per architectural design.
     fn adjust_difficulty(&mut self) -> Result<()> {
-        if self.height % crate::DIFFICULTY_ADJUSTMENT_INTERVAL != 0 {
+        // Get adjustment parameters from consensus coordinator if available
+        let (adjustment_interval, target_timespan) = if let Some(coordinator) = &self.consensus_coordinator {
+            // Use tokio block_in_place to call async methods from sync context
+            // This is safe because we're not holding any locks when calling this
+            let interval = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let coord = coordinator.read().await;
+                    coord.get_difficulty_adjustment_interval().await
+                })
+            });
+            let timespan = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let coord = coordinator.read().await;
+                    let config = coord.get_difficulty_config().await;
+                    config.target_timespan
+                })
+            });
+            (interval, timespan)
+        } else {
+            // Fallback to hardcoded constants for backward compatibility
+            (crate::DIFFICULTY_ADJUSTMENT_INTERVAL, crate::TARGET_TIMESPAN)
+        };
+
+        // Check if we should adjust at this height
+        if self.height % adjustment_interval != 0 {
             return Ok(());
         }
 
-        if self.height < crate::DIFFICULTY_ADJUSTMENT_INTERVAL {
+        if self.height < adjustment_interval {
             return Ok(());
         }
 
         let current_block = &self.blocks[self.height as usize];
-        let interval_start = &self.blocks[(self.height - crate::DIFFICULTY_ADJUSTMENT_INTERVAL) as usize];
+        let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
         
-        let actual_timespan = current_block.timestamp() - interval_start.timestamp();
-        let actual_timespan = actual_timespan.max(crate::TARGET_TIMESPAN / 4).min(crate::TARGET_TIMESPAN * 4);
+        let interval_start_time = interval_start.timestamp();
+        let interval_end_time = current_block.timestamp();
 
-        let new_difficulty_bits = (self.difficulty.bits() as u64 * crate::TARGET_TIMESPAN / actual_timespan) as u32;
+        // Calculate new difficulty using consensus coordinator if available
+        let new_difficulty_bits = if let Some(coordinator) = &self.consensus_coordinator {
+            let result = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let coord = coordinator.read().await;
+                    coord.calculate_difficulty_adjustment(
+                        self.height,
+                        self.difficulty.bits(),
+                        interval_start_time,
+                        interval_end_time,
+                    ).await
+                })
+            });
+            
+            match result {
+                Ok(Some(new_bits)) => new_bits,
+                Ok(None) => return Ok(()), // No adjustment needed
+                Err(e) => {
+                    tracing::warn!("Difficulty adjustment via coordinator failed: {}, using fallback", e);
+                    // Fallback to legacy calculation
+                    self.calculate_difficulty_legacy(interval_start_time, interval_end_time, target_timespan)
+                }
+            }
+        } else {
+            // Legacy calculation without coordinator
+            self.calculate_difficulty_legacy(interval_start_time, interval_end_time, target_timespan)
+        };
+
+        let old_difficulty = self.difficulty.bits();
         self.difficulty = Difficulty::from_bits(new_difficulty_bits);
 
         tracing::info!(
             "Difficulty adjusted from {} to {} at height {}",
-            self.difficulty.bits(),
+            old_difficulty,
             new_difficulty_bits,
             self.height
         );
 
         Ok(())
+    }
+    
+    /// Legacy difficulty calculation using hardcoded constants.
+    /// Used when consensus coordinator is not available.
+    fn calculate_difficulty_legacy(&self, interval_start_time: u64, interval_end_time: u64, target_timespan: u64) -> u32 {
+        let actual_timespan = interval_end_time - interval_start_time;
+        // Clamp to prevent extreme adjustments (4x range)
+        let actual_timespan = actual_timespan.max(target_timespan / 4).min(target_timespan * 4);
+        
+        (self.difficulty.bits() as u64 * target_timespan / actual_timespan) as u32
     }
 
     /// Get the latest block
