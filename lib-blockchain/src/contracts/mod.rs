@@ -27,6 +27,8 @@ pub mod treasuries;
 #[cfg(feature = "contracts")]
 pub mod emergency_reserve;
 #[cfg(feature = "contracts")]
+pub mod dao_registry;
+#[cfg(feature = "contracts")]
 pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod web4;
@@ -64,6 +66,8 @@ pub use tokens::{TokenContract, functions};
 pub use treasuries::SovDaoTreasury;
 #[cfg(feature = "contracts")]
 pub use emergency_reserve::EmergencyReserve;
+#[cfg(feature = "contracts")]
+pub use dao_registry::{DAORegistry, DAOEntry, derive_dao_id};
 #[cfg(feature = "contracts")]
 pub use utils::*;
 #[cfg(feature = "contracts")]
