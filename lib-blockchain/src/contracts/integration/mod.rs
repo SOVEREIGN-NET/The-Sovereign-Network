@@ -355,6 +355,21 @@ pub enum ContractEvent {
         token_fees: u64,
         treasury_addr: PublicKey,
     },
+    /// New DAO registered
+    DaoRegistered {
+        dao_id: [u8; 32],
+        token_addr: [u8; 32],
+        owner: PublicKey,
+        treasury: PublicKey,
+        class: String,
+        metadata_hash: Option<[u8; 32]>,
+    },
+    /// DAO metadata updated
+    DaoUpdated {
+        dao_id: [u8; 32],
+        updater: PublicKey,
+        metadata_hash: Option<[u8; 32]>,
+    },
 }
 
 impl ContractEvent {
@@ -369,6 +384,8 @@ impl ContractEvent {
             ContractEvent::SwapExecuted { .. } => "SwapExecuted",
             ContractEvent::PoolCreated { .. } => "PoolCreated",
             ContractEvent::FeeCollected { .. } => "FeeCollected",
+            ContractEvent::DaoRegistered { .. } => "DaoRegistered",
+            ContractEvent::DaoUpdated { .. } => "DaoUpdated",
         }
     }
 
@@ -507,6 +524,37 @@ mod tests {
 
         match deserialized {
             ContractEvent::TokenTransfer { amount, .. } => assert_eq!(amount, 1000),
+            _ => panic!("Wrong event type"),
+        }
+    }
+
+    #[test]
+    fn test_dao_event_serialization() {
+        let keypair1 = KeyPair::generate().unwrap();
+        let owner = keypair1.public_key.clone();
+        let treasury = PublicKey::new(vec![3u8; 32]);
+
+        let event = ContractEvent::DaoRegistered {
+            dao_id: [9u8; 32],
+            token_addr: [8u8; 32],
+            owner: owner.clone(),
+            treasury: treasury.clone(),
+            class: "NP".to_string(),
+            metadata_hash: Some([1u8; 32]),
+        };
+
+        let serialized = event.to_bytes().unwrap();
+        let deserialized = ContractEvent::from_bytes(&serialized).unwrap();
+
+        match deserialized {
+            ContractEvent::DaoRegistered { dao_id, token_addr, owner: o, treasury: t, class, metadata_hash } => {
+                assert_eq!(dao_id, [9u8; 32]);
+                assert_eq!(token_addr, [8u8; 32]);
+                assert_eq!(o, owner);
+                assert_eq!(t, treasury);
+                assert_eq!(class, "NP".to_string());
+                assert_eq!(metadata_hash, Some([1u8; 32]));
+            }
             _ => panic!("Wrong event type"),
         }
     }
