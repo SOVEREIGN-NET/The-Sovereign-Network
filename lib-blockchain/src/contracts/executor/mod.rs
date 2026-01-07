@@ -188,6 +188,8 @@ pub struct ContractExecutor<S: ContractStorage> {
     storage: S,
     token_contracts: HashMap<[u8; 32], TokenContract>,
     web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
+    ubi_contracts: HashMap<[u8; 32], crate::contracts::UbiDistributor>,
+    dev_grants_contracts: HashMap<[u8; 32], crate::contracts::DevGrants>,
     logs: Vec<ContractLog>,
     runtime_factory: RuntimeFactory,
     runtime_config: RuntimeConfig,
@@ -202,20 +204,22 @@ impl<S: ContractStorage> ContractExecutor<S> {
     /// Create new contract executor with runtime configuration
     pub fn with_runtime_config(storage: S, runtime_config: RuntimeConfig) -> Self {
         let runtime_factory = RuntimeFactory::new(runtime_config.clone());
-        
+
         let mut executor = Self {
             storage,
             token_contracts: HashMap::new(),
             web4_contracts: HashMap::new(),
+            ubi_contracts: HashMap::new(),
+            dev_grants_contracts: HashMap::new(),
             logs: Vec::new(),
             runtime_factory,
             runtime_config,
         };
-        
+
         // Initialize ZHTP native token
         let lib_token = TokenContract::new_zhtp();
         executor.token_contracts.insert(lib_token.token_id, lib_token);
-        
+
         executor
     }
 
@@ -240,6 +244,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
             ContractType::FileSharing => self.execute_file_call(call, context),
             ContractType::Governance => self.execute_governance_call(call, context),
             ContractType::Web4Website => self.execute_web4_call(call, context),
+            ContractType::UbiDistribution => self.execute_ubi_call(call, context),
+            ContractType::DevGrants => self.execute_dev_grants_call(call, context),
         };
 
         // Log the execution
@@ -824,6 +830,212 @@ impl<S: ContractStorage> ContractExecutor<S> {
         Ok(result)
     }
 
+    /// Execute UBI Distribution contract call
+    fn execute_ubi_call(
+        &mut self,
+        call: ContractCall,
+        context: &mut ExecutionContext,
+    ) -> Result<ContractResult> {
+        context.consume_gas(crate::GAS_TOKEN)?;
+
+        // Derive stable contract address for UBI Distribution
+        let contract_id = generate_contract_id(&[
+            &bincode::serialize(&ContractType::UbiDistribution).unwrap_or_default(),
+            b"ubi_distribution",
+        ]);
+
+        // Create contract address PublicKey (stable for this contract type)
+        let contract_address = PublicKey {
+            dilithium_pk: contract_id.to_vec(),
+            kyber_pk: contract_id.to_vec(),
+            key_id: contract_id,
+        };
+
+        // Build capability-bound context for contract-origin execution
+        // This ensures token.transfer() will debit ctx.contract, not ctx.caller
+        let mut contract_context = ExecutionContext::with_contract(
+            context.caller.clone(),
+            contract_address,
+            context.block_number,
+            context.timestamp,
+            context.gas_limit,
+            context.tx_hash,
+        );
+        contract_context.gas_used = context.gas_used;
+
+        // Get or create UBI contract instance
+        if !self.ubi_contracts.contains_key(&contract_id) {
+            // Create new UBI Distribution contract (default zero-governance for bootstrap)
+            let zero_gov = PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: [0u8; 32],
+            };
+            let ubi = crate::contracts::UbiDistributor::new(zero_gov, 100)
+                .map_err(|e| anyhow!("{:?}", e))?;
+            self.ubi_contracts.insert(contract_id, ubi);
+        }
+
+        let ubi = self.ubi_contracts.get_mut(&contract_id).unwrap();
+
+        let result = match call.method.as_str() {
+            "claim_ubi" => {
+                let params: (PublicKey, u64) = bincode::deserialize(&call.params)?;
+                let (citizen, current_height) = params;
+
+                // Get mutable reference to token for transfer
+                if let Some(token) = self.token_contracts.get_mut(&TokenContract::new_zhtp().token_id) {
+                    ubi.claim_ubi(&citizen, current_height, token, &contract_context)
+                        .map_err(|e| anyhow!("{:?}", e))?;
+
+                    // Update storage
+                    let storage_key = generate_storage_key("ubi", &contract_id);
+                    let ubi_data = bincode::serialize(&ubi)?;
+                    self.storage.set(&storage_key, &ubi_data)?;
+
+                    Ok(ContractResult::with_return_data(&"Claim UBI successful", contract_context.gas_used)?)
+                } else {
+                    Err(anyhow!("ZHTP token not found"))
+                }
+            },
+            "register" => {
+                let params: PublicKey = bincode::deserialize(&call.params)?;
+
+                ubi.register(&params)
+                    .map_err(|e| anyhow!("{:?}", e))?;
+
+                // Update storage
+                let storage_key = generate_storage_key("ubi", &contract_id);
+                let ubi_data = bincode::serialize(&ubi)?;
+                self.storage.set(&storage_key, &ubi_data)?;
+
+                ContractResult::with_return_data(&"Citizen registered", contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            },
+            "receive_funds" => {
+                let amount: u64 = bincode::deserialize(&call.params)?;
+
+                ubi.receive_funds(amount)
+                    .map_err(|e| anyhow!("{:?}", e))?;
+
+                // Update storage
+                let storage_key = generate_storage_key("ubi", &contract_id);
+                let ubi_data = bincode::serialize(&ubi)?;
+                self.storage.set(&storage_key, &ubi_data)?;
+
+                ContractResult::with_return_data(&"Funds received", contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            },
+            _ => Err(anyhow!("Unknown UBI method: {}", call.method)),
+        };
+
+        // Update main context gas tracking
+        context.gas_used = contract_context.gas_used;
+        result
+    }
+
+    /// Execute Development Grants contract call
+    fn execute_dev_grants_call(
+        &mut self,
+        call: ContractCall,
+        context: &mut ExecutionContext,
+    ) -> Result<ContractResult> {
+        context.consume_gas(crate::GAS_TOKEN)?;
+
+        // Derive stable contract address for DevGrants
+        let contract_id = generate_contract_id(&[
+            &bincode::serialize(&ContractType::DevGrants).unwrap_or_default(),
+            b"dev_grants",
+        ]);
+
+        // Create contract address PublicKey (stable for this contract type)
+        let contract_address = PublicKey {
+            dilithium_pk: contract_id.to_vec(),
+            kyber_pk: contract_id.to_vec(),
+            key_id: contract_id,
+        };
+
+        // Build capability-bound context for contract-origin execution
+        // This ensures token.transfer() will debit ctx.contract, not ctx.caller
+        let mut contract_context = ExecutionContext::with_contract(
+            context.caller.clone(),
+            contract_address,
+            context.block_number,
+            context.timestamp,
+            context.gas_limit,
+            context.tx_hash,
+        );
+        contract_context.gas_used = context.gas_used;
+
+        // Get or create DevGrants contract instance
+        if !self.dev_grants_contracts.contains_key(&contract_id) {
+            // Create new DevGrants contract (default zero-governance for bootstrap)
+            let zero_gov = PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: [0u8; 32],
+            };
+            let dev_grants = crate::contracts::DevGrants::new(zero_gov);
+            self.dev_grants_contracts.insert(contract_id, dev_grants);
+        }
+
+        let dev_grants = self.dev_grants_contracts.get_mut(&contract_id).unwrap();
+
+        let result = match call.method.as_str() {
+            "receive_fees" => {
+                let amount: u64 = bincode::deserialize(&call.params)?;
+
+                dev_grants.receive_fees(amount)
+                    .map_err(|e| anyhow!("{:?}", e))?;
+
+                // Update storage
+                let storage_key = generate_storage_key("dev_grants", &contract_id);
+                let dg_data = bincode::serialize(&dev_grants)?;
+                self.storage.set(&storage_key, &dg_data)?;
+
+                Ok(ContractResult::with_return_data(&"Fees received", contract_context.gas_used)?)
+            },
+            "approve_grant" => {
+                let params: (u64, PublicKey, u64) = bincode::deserialize(&call.params)?;
+                let (proposal_id, recipient, amount) = params;
+
+                dev_grants.approve_grant(&context.caller, proposal_id, &recipient, amount, context.block_number)
+                    .map_err(|e| anyhow!("{:?}", e))?;
+
+                // Update storage
+                let storage_key = generate_storage_key("dev_grants", &contract_id);
+                let dg_data = bincode::serialize(&dev_grants)?;
+                self.storage.set(&storage_key, &dg_data)?;
+
+                Ok(ContractResult::with_return_data(&"Grant approved", contract_context.gas_used)?)
+            },
+            "execute_grant" => {
+                let params: (u64, PublicKey) = bincode::deserialize(&call.params)?;
+                let (proposal_id, recipient) = params;
+
+                // Get mutable reference to token for transfer
+                if let Some(token) = self.token_contracts.get_mut(&TokenContract::new_zhtp().token_id) {
+                    dev_grants.execute_grant(&context.caller, proposal_id, &recipient, context.block_number, token, &contract_context)
+                        .map_err(|e| anyhow!("{:?}", e))?;
+
+                    // Update storage
+                    let storage_key = generate_storage_key("dev_grants", &contract_id);
+                    let dg_data = bincode::serialize(&dev_grants)?;
+                    self.storage.set(&storage_key, &dg_data)?;
+
+                    Ok(ContractResult::with_return_data(&"Grant executed", contract_context.gas_used)?)
+                } else {
+                    Err(anyhow!("ZHTP token not found"))
+                }
+            },
+            _ => Err(anyhow!("Unknown DevGrants method: {}", call.method)),
+        };
+
+        // Update main context gas tracking
+        context.gas_used = contract_context.gas_used;
+        result
+    }
+
     /// Get contract logs
     pub fn get_logs(&self) -> &[ContractLog] {
         &self.logs
@@ -882,8 +1094,10 @@ impl<S: ContractStorage> ContractExecutor<S> {
             ContractType::FileSharing => crate::GAS_BASE,
             ContractType::Governance => crate::GAS_GROUP,
             ContractType::Web4Website => 3000, // Web4 website contract gas
+            ContractType::UbiDistribution => crate::GAS_TOKEN, // Token-like operations
+            ContractType::DevGrants => crate::GAS_TOKEN, // Token-like operations
         };
-        
+
         base_gas + specific_gas
     }
 

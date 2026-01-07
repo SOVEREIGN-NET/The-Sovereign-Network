@@ -7,6 +7,8 @@
 #[cfg(feature = "contracts")]
 pub mod base;
 #[cfg(feature = "contracts")]
+pub mod types;
+#[cfg(feature = "contracts")]
 pub mod contacts;
 #[cfg(feature = "contracts")]
 pub mod executor;
