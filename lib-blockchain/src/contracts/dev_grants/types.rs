@@ -1,5 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+/// Governance authority identifier (e.g., contract address or module ID)
+/// Consensus-critical: Only the governance authority may execute disbursements
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GovernanceAuthority(pub u128);
+
+impl GovernanceAuthority {
+    pub fn new(id: u128) -> Self {
+        GovernanceAuthority(id)
+    }
+}
+
 /// Unique identifier for a governance proposal
 /// Invariant: ProposalId must be globally unique and non-repeating
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -11,14 +22,28 @@ pub struct ProposalId(pub u64);
 pub struct Amount(pub u128);
 
 impl Amount {
-    /// Create a new Amount, panicking if zero
-    pub fn new(value: u128) -> Self {
-        assert!(value > 0, "Amount must be greater than zero");
-        Amount(value)
+    /// Create a new Amount with validation (non-zero)
+    ///
+    /// # Errors
+    /// Returns error if value is zero
+    pub fn try_new(value: u128) -> Result<Self, String> {
+        if value == 0 {
+            return Err("Amount must be greater than zero".to_string());
+        }
+        Ok(Amount(value))
     }
 
     /// Create Amount from u128, allowing zero
+    ///
+    /// Only use when zero is explicitly valid (e.g., initial state)
     pub fn from_u128(value: u128) -> Self {
+        Amount(value)
+    }
+
+    /// Create a new Amount, panicking if zero (deprecated - use try_new)
+    #[deprecated(since = "1.0.0", note = "use try_new() instead")]
+    pub fn new(value: u128) -> Self {
+        assert!(value > 0, "Amount must be greater than zero");
         Amount(value)
     }
 
