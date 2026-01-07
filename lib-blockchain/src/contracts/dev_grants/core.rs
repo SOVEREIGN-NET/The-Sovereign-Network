@@ -97,7 +97,7 @@ impl DevGrants {
     ///
     /// **Called by:** Protocol fee router (upstream)
     ///
-    /// **Invariant F2:** This contract is a passive receiver.
+    /// **Design Constraint:** This contract is a passive receiver.
     /// - Validates amount > 0
     /// - Updates balance
     /// - Does NOT compute percentages (upstream enforces 10% routing)
@@ -257,7 +257,7 @@ impl DevGrants {
         // Update internal balances
         self.balance = self.balance
             .checked_sub(amt)
-            .ok_or(Error::Overflow)?;
+            .ok_or(Error::Underflow)?;
 
         self.total_disbursed = self.total_disbursed
             .checked_add(amt)

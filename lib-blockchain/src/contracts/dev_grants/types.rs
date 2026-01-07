@@ -45,7 +45,7 @@ impl Amount {
     pub fn checked_sub(self, other: Amount) -> Result<Amount, Error> {
         self.0.checked_sub(other.0)
             .map(Amount)
-            .ok_or(Error::Overflow)
+            .ok_or(Error::Underflow)
     }
 
     /// Check if amount is zero
@@ -135,8 +135,11 @@ pub enum Error {
     /// Amount is zero (not allowed)
     ZeroAmount,
 
-    /// Arithmetic overflow/underflow
+    /// Arithmetic overflow
     Overflow,
+
+    /// Arithmetic underflow
+    Underflow,
 
     /// Recipient key_id does not match approved grant
     InvalidRecipient,
@@ -154,7 +157,8 @@ impl std::fmt::Display for Error {
             Error::ProposalAlreadyExecuted => write!(f, "Proposal already executed"),
             Error::InsufficientBalance => write!(f, "Insufficient balance"),
             Error::ZeroAmount => write!(f, "Amount must be greater than zero"),
-            Error::Overflow => write!(f, "Arithmetic overflow/underflow"),
+            Error::Overflow => write!(f, "Arithmetic overflow"),
+            Error::Underflow => write!(f, "Arithmetic underflow"),
             Error::InvalidRecipient => write!(f, "Recipient key_id mismatch"),
             Error::TokenTransferFailed => write!(f, "Token transfer failed"),
         }
