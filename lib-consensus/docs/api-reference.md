@@ -282,88 +282,7 @@ pub struct DaoEngine {
 **`get_dao_treasury() -> DaoTreasury`**
 - Gets DAO treasury state (deprecated - use blockchain methods)
 
-### Difficulty Management
-
-The `DifficultyManager` handles blockchain difficulty adjustment logic and parameters. It is owned by the consensus engine but used by the blockchain layer.
-
-```rust
-pub struct DifficultyManager {
-    // Current configuration
-    config: DifficultyConfig,
-}
-```
-
-#### Methods
-
-**`new(config: DifficultyConfig) -> Self`**
-- Creates a new difficulty manager with custom configuration
-
-**`adjust_difficulty(height: u64, current_difficulty: u32, interval_start_time: u64, interval_end_time: u64) -> DifficultyResult<Option<u32>>`**
-- Main entry point for difficulty adjustment
-- Checks if adjustment is needed at current height
-- Calculates new difficulty if interval is complete
-- Returns: `Ok(Some(new_difficulty))` if adjusted, `Ok(None)` if no adjustment needed
-
-**`calculate_new_difficulty(current_difficulty: u32, actual_timespan: u64) -> DifficultyResult<u32>`**
-- Core difficulty adjustment algorithm (Bitcoin-style)
-- Clamps actual timespan to prevent extreme adjustments (4x factor)
-- Formula: `new_difficulty = current_difficulty * target_timespan / clamped_actual_timespan`
-
-**`apply_governance_update(initial_difficulty: Option<u32>, adjustment_interval: Option<u64>, target_timespan: Option<u64>) -> DifficultyResult<()>`**
-- Updates difficulty parameters from DAO governance decisions
-- Validates new parameters before applying
-
-**`set_max_adjustment_factor(factor: u64) -> DifficultyResult<()>`**
-- Sets the maximum adjustment factor per interval
-- `factor`: Maximum multiplier/divisor for difficulty changes
-- Default: `4` (difficulty can at most quadruple or quarter per interval)
-
-### DifficultyConfig
-
-Configuration for blockchain difficulty adjustment.
-
-```rust
-pub struct DifficultyConfig {
-    pub initial_difficulty: u32,
-    pub adjustment_interval: u64,
-    pub target_timespan: u64,
-    pub min_difficulty: u32,
-    pub max_difficulty: u32,
-    pub max_adjustment_factor: u64,
-}
-```
-
-**Fields:**
-- `initial_difficulty`: Initial difficulty for genesis block (Bitcoin compact format)
-- `adjustment_interval`: Number of blocks between difficulty adjustments
-- `target_timespan`: Target time for completing an adjustment interval (seconds)
-- `min_difficulty`: Minimum allowed difficulty (default: `1`)
-- `max_difficulty`: Maximum allowed difficulty (default: `0xFFFFFFFF`)
-- `max_adjustment_factor`: Maximum change per interval (default: `4`)
-
-**Default Values (Bitcoin-compatible):**
-```rust
-DifficultyConfig {
-    initial_difficulty: 0x1d00ffff,          // Bitcoin's initial difficulty
-    adjustment_interval: 2016,                // 2016 blocks
-    target_timespan: 14 * 24 * 60 * 60,      // 2 weeks in seconds
-    min_difficulty: 1,
-    max_difficulty: 0xFFFFFFFF,
-    max_adjustment_factor: 4,
-}
-```
-
-#### Methods
-
-**`new(initial_difficulty: u32, adjustment_interval: u64, target_timespan: u64) -> DifficultyResult<Self>`**
-- Creates a new difficulty configuration with custom values
-- Validates all parameters before creation
-- Returns: Error if any parameter is invalid (e.g., zero values)
-
-**`validate() -> DifficultyResult<()>`**
-- Validates the configuration
-- Checks: non-zero values, min <= max, valid ranges
-- Returns: `Ok(())` if valid, `Err(...)` with specific validation error
+> **Note:** For full documentation on Difficulty Management, see the [Difficulty Management](#difficulty-management) section below.
 
 ### DaoProposal
 
@@ -477,10 +396,6 @@ pub struct DifficultyManager {
 **`config() -> &DifficultyConfig`**
 - Gets the current difficulty configuration
 - Returns: Reference to DifficultyConfig
-
-**`config_mut() -> &mut DifficultyConfig`**
-- Gets a mutable reference to the difficulty configuration (for internal updates)
-- Returns: Mutable reference to DifficultyConfig
 
 **`initial_difficulty() -> u32`**
 - Gets the initial difficulty value

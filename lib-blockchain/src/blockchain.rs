@@ -792,22 +792,16 @@ impl Blockchain {
     fn adjust_difficulty(&mut self) -> Result<()> {
         // Get adjustment parameters from consensus coordinator if available
         let (adjustment_interval, target_timespan) = if let Some(coordinator) = &self.consensus_coordinator {
-            // Use tokio block_in_place to call async methods from sync context
-            // This is safe because we're not holding any locks when calling this
-            let interval = tokio::task::block_in_place(|| {
+            // Use a single tokio block_in_place to call async methods from sync context
+            // Acquire the coordinator read lock once to avoid race conditions and redundant locking
+            tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     let coord = coordinator.read().await;
-                    coord.get_difficulty_adjustment_interval().await
-                })
-            });
-            let timespan = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let coord = coordinator.read().await;
+                    let interval = coord.get_difficulty_adjustment_interval().await;
                     let config = coord.get_difficulty_config().await;
-                    config.target_timespan
+                    (interval, config.target_timespan)
                 })
-            });
-            (interval, timespan)
+            })
         } else {
             // Fallback to hardcoded constants for backward compatibility
             (crate::DIFFICULTY_ADJUSTMENT_INTERVAL, crate::TARGET_TIMESPAN)
@@ -872,9 +866,31 @@ impl Blockchain {
     /// Legacy difficulty calculation using hardcoded constants.
     /// Used when consensus coordinator is not available.
     fn calculate_difficulty_legacy(&self, interval_start_time: u64, interval_end_time: u64, target_timespan: u64) -> u32 {
-        let actual_timespan = interval_end_time - interval_start_time;
+        // Defensive check: target_timespan should be validated to be non-zero upstream,
+        // but avoid panicking here if that validation is ever bypassed.
+        if target_timespan == 0 {
+            tracing::warn!(
+                "calculate_difficulty_legacy called with target_timespan = 0; \
+                 returning current difficulty without adjustment"
+            );
+            return self.difficulty.bits();
+        }
+        
+        let actual_timespan = interval_end_time.saturating_sub(interval_start_time);
         // Clamp to prevent extreme adjustments (4x range)
-        let actual_timespan = actual_timespan.max(target_timespan / 4).min(target_timespan * 4);
+        let actual_timespan = actual_timespan
+            .max(target_timespan / 4)
+            .min(target_timespan * 4);
+        
+        // Additional defensive check in case clamping still results in zero
+        // (can happen if target_timespan / 4 == 0 due to integer division with small values)
+        if actual_timespan == 0 {
+            tracing::warn!(
+                "calculate_difficulty_legacy computed actual_timespan = 0 after clamping; \
+                 returning current difficulty without adjustment"
+            );
+            return self.difficulty.bits();
+        }
         
         (self.difficulty.bits() as u64 * target_timespan / actual_timespan) as u32
     }

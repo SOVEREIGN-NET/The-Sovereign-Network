@@ -175,8 +175,11 @@ impl DifficultyManager {
         &self.config
     }
 
-    /// Get a mutable reference to the configuration (for DAO updates)
-    pub fn config_mut(&mut self) -> &mut DifficultyConfig {
+    /// Get a mutable reference to the configuration (for internal updates).
+    ///
+    /// This is intentionally private to ensure all external updates go through
+    /// validated governance or setter methods that enforce configuration invariants.
+    fn config_mut(&mut self) -> &mut DifficultyConfig {
         &mut self.config
     }
 
@@ -197,8 +200,9 @@ impl DifficultyManager {
 
     /// Check if difficulty should be adjusted at the given height
     pub fn should_adjust(&self, height: u64) -> bool {
-        height > 0 
-            && height >= self.config.adjustment_interval 
+        // Note: height >= adjustment_interval implies height > 0
+        // since adjustment_interval is validated to be > 0
+        height >= self.config.adjustment_interval 
             && height % self.config.adjustment_interval == 0
     }
 
@@ -237,6 +241,9 @@ impl DifficultyManager {
         // Clamp actual timespan to prevent extreme adjustments
         let min_timespan = self.config.target_timespan / self.config.max_adjustment_factor;
         let max_timespan = self.config.target_timespan * self.config.max_adjustment_factor;
+        // Ensure min_timespan is at least 1 to prevent division by zero
+        // (can happen if target_timespan < max_adjustment_factor due to integer division)
+        let min_timespan = min_timespan.max(1);
         let clamped_timespan = actual_timespan.max(min_timespan).min(max_timespan);
 
         // Calculate new difficulty: current * target / actual
@@ -556,5 +563,71 @@ mod tests {
             .calculate_new_difficulty(200, manager.target_timespan() * 1000)
             .unwrap();
         assert!(result >= 100);
+    }
+
+    #[test]
+    fn test_set_min_difficulty_validation() {
+        let mut manager = DifficultyManager::default();
+        
+        // Valid: set min below current max
+        assert!(manager.set_min_difficulty(100).is_ok());
+        assert_eq!(manager.config().min_difficulty, 100);
+        
+        // Test min > max scenario
+        manager.set_max_difficulty(500).unwrap();
+        let result = manager.set_min_difficulty(600);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_max_difficulty_validation() {
+        let mut manager = DifficultyManager::default();
+        
+        // Set a min first
+        manager.set_min_difficulty(100).unwrap();
+        
+        // Valid: set max above current min
+        assert!(manager.set_max_difficulty(1000).is_ok());
+        assert_eq!(manager.config().max_difficulty, 1000);
+        
+        // Invalid: set max below current min
+        let result = manager.set_max_difficulty(50);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_max_adjustment_factor_validation() {
+        let mut manager = DifficultyManager::default();
+        
+        // Valid: set factor to a positive value
+        assert!(manager.set_max_adjustment_factor(8).is_ok());
+        assert_eq!(manager.config().max_adjustment_factor, 8);
+        
+        // Valid: set factor to 1
+        assert!(manager.set_max_adjustment_factor(1).is_ok());
+        
+        // Invalid: set factor to zero
+        let result = manager.set_max_adjustment_factor(0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_min_timespan_cannot_be_zero() {
+        // Test edge case where target_timespan < max_adjustment_factor
+        // could cause min_timespan to be 0 due to integer division
+        let config = DifficultyConfig {
+            initial_difficulty: 0x1d00ffff,
+            adjustment_interval: 10,
+            target_timespan: 3, // Small value
+            min_difficulty: 1,
+            max_difficulty: 0xFFFFFFFF,
+            max_adjustment_factor: 10, // Larger than target_timespan
+        };
+        let manager = DifficultyManager::new(config);
+        
+        // This should not panic or return division by zero error
+        // Even though 3 / 10 = 0 in integer division, we protect against this
+        let result = manager.calculate_new_difficulty(1000, 1);
+        assert!(result.is_ok());
     }
 }

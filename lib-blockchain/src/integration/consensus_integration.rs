@@ -1626,6 +1626,46 @@ pub async fn initialize_consensus_integration(
     Ok(coordinator)
 }
 
+/// Initialize consensus integration with custom difficulty configuration
+/// 
+/// This variant allows specifying a custom `DifficultyConfig` for the blockchain
+/// mining difficulty adjustment policy.
+pub async fn initialize_consensus_integration_with_difficulty_config(
+    blockchain: Arc<RwLock<Blockchain>>,
+    mempool: Arc<RwLock<Mempool>>,
+    consensus_type: ConsensusType,
+    difficulty_config: DifficultyConfig,
+) -> Result<BlockchainConsensusCoordinator> {
+    let consensus_config = ConsensusConfig {
+        consensus_type,
+        min_stake: 1000 * 1_000_000, // 1000 ZHTP minimum stake
+        min_storage: 100 * 1024 * 1024 * 1024, // 100 GB minimum storage
+        max_validators: 100,
+        block_time: 10, // 10 second blocks
+        epoch_length_blocks: 100,
+        propose_timeout: 3000,
+        prevote_timeout: 1000,
+        precommit_timeout: 1000,
+        max_transactions_per_block: 1000,
+        max_difficulty: 0x00000000FFFFFFFF,
+        target_difficulty: 0x00000FFF,
+        byzantine_threshold: 1.0 / 3.0,
+        slash_double_sign: 5,
+        slash_liveness: 1,
+        development_mode: false, // Production mode by default
+    };
+
+    let coordinator = BlockchainConsensusCoordinator::new_with_difficulty_config(
+        blockchain,
+        mempool,
+        consensus_config,
+        difficulty_config,
+    ).await?;
+
+    info!("Consensus integration initialized with custom difficulty config");
+    Ok(coordinator)
+}
+
 /// Create a DAO proposal transaction (delegated to consensus engine)
 pub fn create_dao_proposal_transaction(
     proposer_keypair: &KeyPair,
