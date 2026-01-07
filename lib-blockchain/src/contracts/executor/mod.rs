@@ -259,7 +259,10 @@ impl<S: ContractStorage> ContractExecutor<S> {
     /// 2. Storage is corrupted (error)
     ///
     /// Never allow in-memory defaults to create phantom configuration.
-    pub fn get_system_config(&mut self) -> Result<&mut SystemConfig> {
+    ///
+    /// **Consensus-Critical**: Returns immutable reference to prevent accidental mutations
+    /// without persistence. SystemConfig is initialized once and never changes.
+    pub fn get_system_config(&mut self) -> Result<&SystemConfig> {
         if self.system_config.is_none() {
             // Attempt to load from storage
             let storage_key = SYSTEM_CONFIG_KEY.to_vec();
@@ -274,7 +277,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 return Err(anyhow!("SystemConfig not found in storage - chain not initialized. Call init_system() first."));
             }
         }
-        Ok(self.system_config.as_mut().unwrap())
+        Ok(self.system_config.as_ref().unwrap())
     }
 
     /// Initialize system configuration at genesis
@@ -290,10 +293,23 @@ impl<S: ContractStorage> ContractExecutor<S> {
             return Err(anyhow!("blocks_per_month must be > 0"));
         }
 
-        // Prevent reinitialize
+        // CRITICAL: Prevent reinitialize by checking both in-memory and persistent storage
+        // A fresh executor with the same storage could bypass the in-memory check
+        let storage_key = SYSTEM_CONFIG_KEY.to_vec();
+        if let Some(data) = self.storage.get(&storage_key)? {
+            // Config already exists in storage - check if it matches
+            let existing: SystemConfig = bincode::deserialize(&data)?;
+            if existing.governance_authority != config.governance_authority {
+                return Err(anyhow!("SystemConfig already persisted with different governance authority - cannot reinitialize"));
+            }
+            // Same governance authority - idempotent initialization is OK
+            return Ok(());
+        }
+
+        // Also check in-memory state for consistency
         if let Some(existing) = &self.system_config {
             if existing.governance_authority != config.governance_authority {
-                return Err(anyhow!("SystemConfig already initialized with different governance authority - cannot reinitialize"));
+                return Err(anyhow!("SystemConfig already initialized (in-memory) with different governance authority - cannot reinitialize"));
             }
         }
 
@@ -1017,13 +1033,21 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         let result = match call.method.as_str() {
             "claim_ubi" => {
-                let params: (PublicKey, u64) = bincode::deserialize(&call.params)?;
-                let (citizen, current_height) = params;
+                // CRITICAL: Use context.block_number for month computation, NOT user-supplied param
+                // This prevents callers from picking arbitrary months and claiming multiple times
+                let citizen: PublicKey = bincode::deserialize(&call.params)?;
 
                 // Get mutable reference to token for transfer
                 if let Some(token) = self.token_contracts.get_mut(&TokenContract::new_zhtp().token_id) {
-                    ubi.claim_ubi(&citizen, current_height, token, &contract_context)
+                    ubi.claim_ubi(&citizen, context.block_number, token, &contract_context)
                         .map_err(|e| anyhow!("{:?}", e))?;
+
+                    // CRITICAL: Persist token contract after mutations
+                    // Without this, token balances revert on restart even though UBI state persists
+                    let token_id = TokenContract::new_zhtp().token_id;
+                    let storage_key = generate_storage_key("token", &token_id);
+                    let token_data = bincode::serialize(token)?;
+                    self.storage.set(&storage_key, &token_data)?;
 
                     Ok(ContractResult::with_return_data(&"Claim UBI successful", contract_context.gas_used)?)
                 } else {
@@ -1040,6 +1064,13 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     .map_err(|e| anyhow!("{:?}", e))
             },
             "receive_funds" => {
+                // CRITICAL: Gate fund reception to governance authority
+                // Prevents anyone from inflating internal balance without actual token backing
+                let config = self.get_system_config()?;
+                if context.caller != config.governance_authority {
+                    return Err(anyhow!("Only governance authority can receive funds into UBI"));
+                }
+
                 let amount: u64 = bincode::deserialize(&call.params)?;
 
                 ubi.receive_funds(amount)
@@ -1125,6 +1156,13 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         let result = match call.method.as_str() {
             "receive_fees" => {
+                // CRITICAL: Gate fee reception to governance authority
+                // Prevents anyone from inflating the grant fund without actual fee income
+                let config = self.get_system_config()?;
+                if context.caller != config.governance_authority {
+                    return Err(anyhow!("Only governance authority can receive fees into DevGrants"));
+                }
+
                 let amount: u64 = bincode::deserialize(&call.params)?;
 
                 dev_grants.receive_fees(amount)
@@ -1149,6 +1187,13 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 if let Some(token) = self.token_contracts.get_mut(&TokenContract::new_zhtp().token_id) {
                     dev_grants.execute_grant(&context.caller, proposal_id, &recipient, context.block_number, token, &contract_context)
                         .map_err(|e| anyhow!("{:?}", e))?;
+
+                    // CRITICAL: Persist token contract after mutations
+                    // Without this, token balances revert on restart even though DevGrants state persists
+                    let token_id = TokenContract::new_zhtp().token_id;
+                    let storage_key = generate_storage_key("token", &token_id);
+                    let token_data = bincode::serialize(token)?;
+                    self.storage.set(&storage_key, &token_data)?;
 
                     Ok(ContractResult::with_return_data(&"Grant executed", contract_context.gas_used)?)
                 } else {
@@ -1462,10 +1507,19 @@ mod tests {
         let balance = ubi.balance();
         assert_eq!(balance, 10000, "Balance should be 10000");
 
-        // **CRITICAL TEST**: All state changes were persisted to storage.
-        // If we were to create a new executor with the same storage,
-        // it would reload this exact same state (verified by the consensus-critical
-        // persistence architecture where persist_ubi() is called after every mutation).
+        // **CRITICAL VALIDATION**: Architecture ensures persistence
+        //
+        // The consensus-critical architecture guarantees persistence works:
+        // 1. SystemConfig is persisted in init_system() to SYSTEM_CONFIG_KEY
+        // 2. UBI state is persisted after every successful mutation (register, receive_funds, claim_ubi, set_month_amount, set_amount_range)
+        // 3. DevGrants state is persisted after every successful mutation
+        // 4. Token contracts are persisted after UBI/DevGrants transfers
+        // 5. get_or_load methods reload from storage on executor restart
+        //
+        // This test validates that all these persist calls execute successfully.
+        // True end-to-end restart validation would require shared mutable storage reference
+        // or actual persistent storage backend (RocksDB, etc). The get_or_load_ubi() and
+        // get_or_load_dev_grants() methods are designed to verify storage on next executor instance.
     }
 
     #[test]
