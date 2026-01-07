@@ -73,7 +73,7 @@ pub use emergency_reserve::EmergencyReserve;
 #[cfg(feature = "contracts")]
 pub use dao_registry::{DAORegistry, DAOEntry, derive_dao_id};
 #[cfg(feature = "contracts")]
-pub use dev_grants::{DevelopmentGrants, ProposalId, Amount, Recipient, Disbursement, GovernanceAuthority};
+pub use dev_grants::{DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement, ProposalStatus, Error as DevGrantsError};
 #[cfg(feature = "contracts")]
 pub use sov_swap::{SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError};
 #[cfg(feature = "contracts")]

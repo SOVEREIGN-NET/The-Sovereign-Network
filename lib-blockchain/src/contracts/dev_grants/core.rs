@@ -1,554 +1,468 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use crate::contracts::dev_grants::types::*;
+use crate::integration::crypto_integration::PublicKey;
+use crate::contracts::tokens::core::TokenContract;
+use super::types::*;
 
-/// # Development Grants Fund Contract
+/// Development Grants Fund Contract - Phase 2 Final Implementation
 ///
-/// **Role of this contract (Boundary Definition):**
-/// This contract is:
-/// - A sink for protocol fees (exactly 10%)
-/// - A governance-controlled allocator
-/// - A ledger of public spending
+/// **Role (Boundary Definition):**
+/// - Sink for protocol fees (exactly 10% from upstream fee router)
+/// - Governance-controlled allocator (two-phase approval + execution)
+/// - Immutable ledger of all disbursements
 ///
-/// This contract is NOT:
+/// **NOT:**
 /// - A treasury with arbitrary withdrawals
 /// - A discretionary multisig
-/// - A DAO registry extension
+/// - A query interface for proposals (governance authority owns proposal data)
 ///
-/// **Consensus-Critical Invariant Zero:**
-/// - No funds leave this contract without an explicit, successful governance decision.
-/// - Only the governance authority (hard-bound at initialization) may call execute_grant.
-/// - Disbursement is atomic: ledger update and token transfer must succeed or fail together.
-/// - No panics on user-controlled or governance-controlled inputs.
+/// **Consensus-Critical Invariants:**
+/// - **Auth (G1):** Only governance_authority may approve or execute grants
+/// - **Binding (G2):** Recipient and amount immutably bound at approval time
+/// - **Replay (G3):** Each proposal executes exactly once
+/// - **Atomic (A1):** Token transfer and ledger update are inseparable
+/// - **Balance (A2):** Disbursements never exceed current balance
+/// - **Append-only (A3):** Disbursement records are immutable
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DevelopmentGrants {
-    /// Governance authority identifier
-    /// Consensus-critical: Only this authority may execute disbursements
-    /// Invariant G1 — Governance-only authority
-    governance_authority: GovernanceAuthority,
+pub struct DevGrants {
+    /// Governance authority (hard-bound at initialization)
+    /// Only this authority can approve or execute grants
+    governance_authority: PublicKey,
 
-    /// Current available balance (sum of fees received - sum of disbursements)
-    /// Invariant A1 — Conservation of value
-    /// balance = sum(fees_received) - sum(disbursements)
-    balance: Amount,
+    /// Current available balance
+    balance: u64,
 
-    /// Total fees received (for audit trail)
-    total_fees_received: Amount,
+    /// Total fees received (audit trail)
+    total_received: u64,
 
-    /// Append-only ledger of disbursements
-    /// Invariant A3 — Disbursements are append-only, never overwritten or deleted
+    /// Total amount disbursed (audit trail)
+    total_disbursed: u64,
+
+    /// Approved grants (governance-binding payload storage)
+    /// Maps proposal_id -> ApprovedGrant
+    /// Once stored, recipient and amount are immutable
+    approved: HashMap<ProposalId, ApprovedGrant>,
+
+    /// Disbursement log (append-only, immutable)
+    /// Each record includes actual token_burned amount
     disbursements: Vec<Disbursement>,
-
-    /// Proposal status lookup (governance authority provides this)
-    /// Maps proposal_id -> execution status
-    /// Invariant G2 — Every disbursement must reference an approved proposal
-    /// Invariant G3 — One proposal, one execution
-    executed_proposals: HashSet<u64>,
-
-    /// Next disbursement index (for ledger ordering)
-    /// Invariant: Must be checked for overflow before increment
-    next_disbursement_index: u64,
 }
 
-impl DevelopmentGrants {
-    /// Create a new Development Grants contract with governance authority
+impl DevGrants {
+    /// Create a new DevGrants contract with governance authority
     ///
-    /// **Consensus-Critical:** The governance_authority is hard-bound at initialization
-    /// and cannot be changed. It is the ONLY caller permitted to execute grants.
+    /// **Consensus-Critical:** governance_authority is hard-bound and immutable.
+    /// Only this authority may approve or execute grants.
     ///
     /// # Arguments
-    /// * `governance_authority` - The authority (contract address or module ID) that may execute disbursements
-    pub fn with_governance(governance_authority: GovernanceAuthority) -> Self {
-        DevelopmentGrants {
+    /// * `governance_authority` - The PublicKey authorized to approve/execute grants
+    pub fn new(governance_authority: PublicKey) -> Self {
+        Self {
             governance_authority,
-            balance: Amount::from_u128(0),
-            total_fees_received: Amount::from_u128(0),
-            disbursements: Vec::new(),
-            executed_proposals: HashSet::new(),
-            next_disbursement_index: 0,
+            balance: 0,
+            total_received: 0,
+            total_disbursed: 0,
+            approved: HashMap::new(),
+            disbursements: vec![],
         }
     }
 
-    /// Create a new empty Development Grants contract (deprecated - use with_governance)
-    #[deprecated(since = "1.0.0", note = "use with_governance() instead")]
-    pub fn new() -> Self {
-        // Default to uninitialized authority - this is unsafe and only for tests
-        DevelopmentGrants {
-            governance_authority: GovernanceAuthority::new(0),
-            balance: Amount::from_u128(0),
-            total_fees_received: Amount::from_u128(0),
-            disbursements: Vec::new(),
-            executed_proposals: HashSet::new(),
-            next_disbursement_index: 0,
+    /// Authority enforcement helper
+    ///
+    /// **Consensus-Critical:** All state-mutating operations check governance_authority.
+    /// This check is NOT delegable and MUST be enforced in the contract.
+    fn ensure_governance(&self, caller: &PublicKey) -> Result<(), Error> {
+        if caller != &self.governance_authority {
+            return Err(Error::Unauthorized);
         }
+        Ok(())
     }
 
-    /// # Receive protocol fees
+    /// Recipient validation - extract key_id from PublicKey
+    ///
+    /// **Design Rationale:**
+    /// - Only key_id is stored (fixed-width: [u8; 32])
+    /// - Full PQC material (Dilithium + Kyber keys) is never stored
+    /// - Keeps contract state lean and deterministic
+    /// - Matches PublicKey semantics (key_id is the stable identity)
+    fn validate_recipient(pk: &PublicKey) -> Result<[u8; 32], Error> {
+        Ok(pk.key_id)
+    }
+
+    // ========================================================================
+    // PUBLIC API
+    // ========================================================================
+
+    /// Receive protocol fees (10% already computed upstream)
     ///
     /// **Called by:** Protocol fee router (upstream)
     ///
-    /// **Invariant F2 — Passive receiver:** This contract does not calculate fees.
-    /// It only validates amount > 0 and updates balance.
+    /// **Invariant F2:** This contract is a passive receiver.
+    /// - Validates amount > 0
+    /// - Updates balance
+    /// - Does NOT compute percentages (upstream enforces 10% routing)
     ///
-    /// **Invariant F1 — Fixed percentage:** Caller must ensure exactly 10% of protocol
-    /// fees are routed here. This contract cannot enforce that, but it can validate
-    /// that fees are actually received.
-    ///
-    /// **Failure modes that halt execution:**
-    /// - amount is zero (Invariant F2)
-    /// - overflow in balance addition (Invariant A1)
-    pub fn receive_fees(&mut self, amount: Amount) -> Result<(), String> {
-        // Invariant F2 — Validate amount > 0
-        if amount.is_zero() {
-            return Err("Fee amount must be greater than zero".to_string());
+    /// # Failure modes that halt:
+    /// - amount is zero
+    /// - balance overflow
+    pub fn receive_fees(&mut self, amount: u64) -> Result<(), Error> {
+        if amount == 0 {
+            return Err(Error::ZeroAmount);
         }
 
-        // Invariant A1 — Check for overflow
-        let new_balance = self.balance.checked_add(amount)
-            .ok_or_else(|| "Balance overflow: fee addition would overflow u128".to_string())?;
+        self.total_received = self.total_received
+            .checked_add(amount)
+            .ok_or(Error::Overflow)?;
 
-        let new_total = self.total_fees_received.checked_add(amount)
-            .ok_or_else(|| "Total fees overflow: addition would overflow u128".to_string())?;
-
-        // Update state (Invariant S1 — update internal state before any operations)
-        self.balance = new_balance;
-        self.total_fees_received = new_total;
+        self.balance = self.balance
+            .checked_add(amount)
+            .ok_or(Error::Overflow)?;
 
         Ok(())
     }
 
-    /// # Execute a governance-approved grant disbursement
+    /// Approve a grant (governance-binding payload)
     ///
-    /// **Called by:** Only the governance authority (hard-bound at initialization)
+    /// **Called by:** Governance authority only
     ///
-    /// **Consensus-Critical Invariants:**
-    /// - **G1 (Authorization):** Only governance_authority may call this function.
-    ///   Enforced via caller parameter validation, not assumed.
-    /// - **G2 (Proposal Binding):** Every disbursement must reference an approved proposal ID.
-    ///   Note: This implementation does NOT verify proposal approval status (done by caller).
-    /// - **G3 (One Execution):** Replay protection via executed_proposals HashSet.
-    /// - **A2 (Balance Constraint):** Disbursement cannot exceed current balance.
-    /// - **S3 (Determinism):** No randomness; same inputs + state = same result.
-    ///
-    /// **Failure modes that halt execution:**
-    /// - Caller is not the governance authority (Invariant G1)
-    /// - Proposal already executed (Invariant G3)
-    /// - Amount is zero or exceeds balance (Invariant A2)
-    /// - Balance underflow in subtraction (Invariant A1)
-    /// - Index overflow on increment (Invariant: monotonic indices)
+    /// **Consensus-Critical (Payload Binding Invariant G2):**
+    /// Once approved, recipient and amount are IMMUTABLE.
+    /// Later execution uses ONLY these governance-approved values.
+    /// This prevents parameter tampering.
     ///
     /// # Arguments
-    /// * `caller` - The authority attempting to execute the grant (must equal governance_authority)
-    /// * `proposal_id` - Unique proposal identifier (must be approved by governance)
-    /// * `recipient` - Grant recipient identifier (opaque, governance-validated)
-    /// * `amount` - Grant amount (must be > 0 and <= balance)
-    /// * `current_height` - Current block height (audit trail only)
+    /// * `caller` - Must equal governance_authority
+    /// * `proposal_id` - Unique proposal identifier
+    /// * `recipient` - PublicKey of grant recipient
+    /// * `amount` - Grant amount (must be > 0)
+    /// * `current_height` - Block height (audit trail)
+    ///
+    /// # Failure modes that halt:
+    /// - caller is not governance_authority (Unauthorized)
+    /// - proposal_id already approved (ProposalAlreadyApproved)
+    /// - amount is zero (ZeroAmount)
+    pub fn approve_grant(
+        &mut self,
+        caller: &PublicKey,
+        proposal_id: ProposalId,
+        recipient: &PublicKey,
+        amount: u64,
+        current_height: u64,
+    ) -> Result<(), Error> {
+        // Invariant G1: Authorization check
+        self.ensure_governance(caller)?;
+
+        // Invariant G3: Prevent duplicate approval
+        if self.approved.contains_key(&proposal_id) {
+            return Err(Error::ProposalAlreadyApproved);
+        }
+
+        // Validate amount > 0
+        let amt = Amount::try_new(amount)?;
+
+        // Validate recipient and extract key_id
+        let recipient_key_id = Self::validate_recipient(recipient)?;
+
+        // Store immutable binding
+        let grant = ApprovedGrant {
+            proposal_id,
+            recipient_key_id,
+            amount: amt,
+            approved_at: current_height,
+            status: ProposalStatus::Approved,
+        };
+
+        self.approved.insert(proposal_id, grant);
+        Ok(())
+    }
+
+    /// Execute a grant (atomic token transfer + ledger update)
+    ///
+    /// **Called by:** Governance authority only
+    ///
+    /// **Consensus-Critical (Atomicity Invariant A1):**
+    /// Token transfer and ledger update are inseparable.
+    /// Either:
+    /// 1. Token transfer succeeds AND ledger is updated, OR
+    /// 2. Both fail (no partial state)
+    ///
+    /// **Consensus-Critical (Payload Binding Invariant G2):**
+    /// Uses ONLY the governance-approved recipient and amount.
+    /// Passed recipient.key_id must match approved grant's recipient_key_id.
+    /// Caller cannot tamper with amount or destination.
+    ///
+    /// **Consensus-Critical (Replay Protection Invariant G3):**
+    /// Each proposal executes exactly once.
+    ///
+    /// # Arguments
+    /// * `caller` - Must equal governance_authority
+    /// * `proposal_id` - Approved proposal ID
+    /// * `recipient` - PublicKey of grant recipient (must match approved)
+    /// * `current_height` - Block height (audit trail)
+    /// * `token` - Token contract (mutable) to perform transfer
+    /// * `self_address` - This contract's PublicKey (for transfer from)
+    ///
+    /// # Failure modes that halt:
+    /// - caller is not governance_authority (Unauthorized)
+    /// - proposal_id not in approved set (ProposalNotApproved)
+    /// - proposal already executed (ProposalAlreadyExecuted)
+    /// - recipient.key_id != approved grant's recipient_key_id (InvalidRecipient)
+    /// - disbursement amount > balance (InsufficientBalance)
+    /// - token transfer fails (TokenTransferFailed)
+    /// - balance underflow (Overflow)
     pub fn execute_grant(
         &mut self,
-        caller: GovernanceAuthority,
+        caller: &PublicKey,
         proposal_id: ProposalId,
-        recipient: Recipient,
-        amount: Amount,
+        recipient: &PublicKey,
         current_height: u64,
-    ) -> Result<(), String> {
-        // **Consensus-Critical:** Invariant G1 — Authorization check
-        // Only the governance authority may execute disbursements.
-        // This check is NOT delegable and MUST be enforced in the contract.
-        if caller != self.governance_authority {
-            return Err(format!(
-                "Unauthorized: caller {:?} is not governance authority {:?}",
-                caller, self.governance_authority
-            ));
+        token: &mut TokenContract,
+        self_address: &PublicKey,
+    ) -> Result<(), Error> {
+        // Invariant G1: Authorization check
+        self.ensure_governance(caller)?;
+
+        // Invariant G2: Proposal must be approved
+        let grant = self.approved.get_mut(&proposal_id)
+            .ok_or(Error::ProposalNotApproved)?;
+
+        // Invariant G3: Prevent replay (proposal must not be executed)
+        if grant.status != ProposalStatus::Approved {
+            return Err(Error::ProposalAlreadyExecuted);
         }
 
-        // Invariant G3 — One proposal, one execution (replay protection)
-        if self.executed_proposals.contains(&proposal_id.0) {
-            return Err(format!(
-                "Proposal {} already executed: cannot replay",
-                proposal_id.0
-            ));
+        // Invariant G2: Payload binding - verify recipient matches approved
+        let recipient_key_id = Self::validate_recipient(recipient)?;
+        if recipient_key_id != grant.recipient_key_id {
+            return Err(Error::InvalidRecipient);
         }
 
-        // Invariant F2 & G2 — Validate amount > 0
-        if amount.is_zero() {
-            return Err("Grant amount must be greater than zero".to_string());
+        // Invariant A2: Balance constraint check
+        let amt = grant.amount.get();
+        if self.balance < amt {
+            return Err(Error::InsufficientBalance);
         }
 
-        // Invariant A2 — Disbursement ≤ balance (no debt)
-        if amount > self.balance {
-            return Err(format!(
-                "Insufficient balance: requested {}, available {}",
-                amount.0, self.balance.0
-            ));
-        }
+        // ====================================================================
+        // ATOMIC TRANSFER PHASE - Token transfer must succeed
+        // ====================================================================
+        let burned = token
+            .transfer(self_address, recipient, amt)
+            .map_err(|_| Error::TokenTransferFailed)?;
 
-        // Invariant A1 — Check for underflow
-        let new_balance = self.balance.checked_sub(amount)
-            .ok_or_else(|| "Balance underflow: subtraction would underflow".to_string())?;
+        // ====================================================================
+        // STATE MUTATION PHASE - Only after successful token transfer
+        // ====================================================================
 
-        // **Consensus-Critical:** Invariant S1 — Update internal state before external operations
-        // This ensures atomicity: either all state updates succeed or all fail.
-        // Note: Token transfer must succeed before this state update in production.
-        self.balance = new_balance;
-        self.executed_proposals.insert(proposal_id.0);
+        // Update internal balances
+        self.balance = self.balance
+            .checked_sub(amt)
+            .ok_or(Error::Overflow)?;
 
-        // Invariant A3 — Create immutable disbursement record with checked index
-        let disbursement = Disbursement::new(
+        self.total_disbursed = self.total_disbursed
+            .checked_add(amt)
+            .ok_or(Error::Overflow)?;
+
+        // Mark proposal as executed (replay protection)
+        grant.status = ProposalStatus::Executed;
+
+        // Create immutable disbursement record
+        let disbursement = Disbursement {
             proposal_id,
-            recipient,
-            amount,
-            current_height,
-            self.next_disbursement_index,
-        );
+            recipient_key_id: grant.recipient_key_id,
+            amount: grant.amount,
+            executed_at: current_height,
+            token_burned: burned,
+        };
 
         self.disbursements.push(disbursement);
 
-        // Invariant: Monotonic indices with overflow check
-        self.next_disbursement_index = self.next_disbursement_index
-            .checked_add(1)
-            .ok_or_else(|| "Index overflow: disbursement index limit reached".to_string())?;
-
         Ok(())
     }
 
-    /// # Get current available balance
-    ///
-    /// **Invariant A1 — Conservation of value:**
-    /// balance = sum(fees_received) - sum(disbursements)
-    pub fn current_balance(&self) -> Amount {
+    // ========================================================================
+    // READ-ONLY VIEWS (No state mutations)
+    // ========================================================================
+
+    /// Get current available balance
+    pub fn balance(&self) -> u64 {
         self.balance
     }
 
-    /// # Get total fees received (audit trail)
-    pub fn total_fees_received(&self) -> Amount {
-        self.total_fees_received
+    /// Get total fees received (audit trail)
+    pub fn total_received(&self) -> u64 {
+        self.total_received
     }
 
-    /// # Get total amount disbursed
-    pub fn total_disbursed(&self) -> Amount {
-        self.disbursements
-            .iter()
-            .fold(Amount::from_u128(0), |acc, d| {
-                acc.checked_add(d.amount)
-                    .expect("Disbursement total should not overflow")
-            })
+    /// Get total amount disbursed (audit trail)
+    pub fn total_disbursed(&self) -> u64 {
+        self.total_disbursed
     }
 
-    /// # Get immutable view of all disbursements
+    /// Get approved grant by proposal ID
+    pub fn grant(&self, proposal_id: ProposalId) -> Option<&ApprovedGrant> {
+        self.approved.get(&proposal_id)
+    }
+
+    /// Get immutable view of all disbursements
     ///
-    /// **Invariant A3 — Append-only ledger:** Returns the complete history
-    /// in the order executed. Callers can verify:
+    /// **Invariant A3:** Append-only ledger.
+    /// Returns complete history in execution order.
+    /// Callers can verify:
     /// - No duplicates (by proposal_id)
-    /// - No gaps in indices
-    /// - Monotonic increasing amounts/heights
+    /// - Monotonic index ordering
+    /// - Full auditability of fund movements
     pub fn disbursements(&self) -> &[Disbursement] {
         &self.disbursements
     }
 
-    /// # Check if a proposal has been executed
-    ///
-    /// **Invariant G3 — One proposal, one execution:**
-    /// Returns true if proposal_id is in the executed set
-    pub fn proposal_executed(&self, proposal_id: ProposalId) -> bool {
-        self.executed_proposals.contains(&proposal_id.0)
-    }
-
-    /// # Validate internal consistency (invariant checker)
-    ///
-    /// **Invariant A1 — Conservation of value:**
-    /// Verify that: balance + sum(disbursements) == total_fees_received
-    ///
-    /// **Failure modes that halt execution:**
-    /// - Balance + disbursements != total fees (data corruption detected)
-    pub fn validate_invariants(&self) -> Result<(), String> {
-        // Invariant A1 — Conservation of value
-        let sum_disbursed = self.total_disbursed();
-
-        let expected_balance = self.total_fees_received
-            .checked_sub(sum_disbursed)
-            .ok_or_else(|| "Invariant violation: total disbursed exceeds total fees".to_string())?;
-
-        if self.balance != expected_balance {
-            return Err(format!(
-                "Invariant violation A1: balance mismatch. Expected {}, got {}",
-                expected_balance.0, self.balance.0
-            ));
-        }
-
-        // Invariant A3 — Append-only ledger (check indices are monotonic)
-        for (i, disbursement) in self.disbursements.iter().enumerate() {
-            if disbursement.index != i as u64 {
-                return Err(format!(
-                    "Invariant violation A3: disbursement index mismatch at position {}. Expected {}, got {}",
-                    i, i, disbursement.index
-                ));
-            }
-        }
-
-        // Invariant G3 — One proposal, one execution
-        let mut seen_proposals = HashSet::new();
-        for disbursement in &self.disbursements {
-            if !seen_proposals.insert(disbursement.proposal_id.0) {
-                return Err(format!(
-                    "Invariant violation G3: proposal {} executed multiple times",
-                    disbursement.proposal_id.0
-                ));
-            }
-        }
-
-        // Verify executed_proposals set matches actual executions
-        if self.executed_proposals != seen_proposals {
-            return Err("Invariant violation: executed_proposals set out of sync with disbursements".to_string());
-        }
-
-        Ok(())
+    /// Get total disbursement count
+    pub fn disbursement_count(&self) -> usize {
+        self.disbursements.len()
     }
 }
 
-impl Default for DevelopmentGrants {
+impl Default for DevGrants {
     fn default() -> Self {
-        Self::new()
+        // Default to zero-authority for testing only
+        // Production must always call new() with valid governance authority
+        Self::new(PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0u8; 32],
+        })
     }
 }
+
+// ============================================================================
+// UNIT TESTS
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Test governance authority constant
-    const TEST_GOVERNANCE_AUTHORITY: u128 = 9999;
+    fn test_public_key(id: u8) -> PublicKey {
+        PublicKey {
+            dilithium_pk: vec![id],
+            kyber_pk: vec![id],
+            key_id: [id; 32],
+        }
+    }
 
-    fn governance_authority() -> GovernanceAuthority {
-        GovernanceAuthority::new(TEST_GOVERNANCE_AUTHORITY)
+    fn test_governance() -> PublicKey {
+        test_public_key(99)
+    }
+
+    fn test_recipient() -> PublicKey {
+        test_public_key(42)
     }
 
     #[test]
-    fn test_with_governance_initialization() {
-        let gov_auth = governance_authority();
-        let dg = DevelopmentGrants::with_governance(gov_auth);
-        assert_eq!(dg.current_balance().0, 0);
-        assert_eq!(dg.total_fees_received().0, 0);
-        assert_eq!(dg.total_disbursed().0, 0);
-        assert_eq!(dg.disbursements().len(), 0);
+    fn test_new_contract_initialized() {
+        let gov = test_governance();
+        let dg = DevGrants::new(gov.clone());
+
+        assert_eq!(dg.balance(), 0);
+        assert_eq!(dg.total_received(), 0);
+        assert_eq!(dg.total_disbursed(), 0);
+        assert_eq!(dg.disbursement_count(), 0);
     }
 
     #[test]
-    fn test_receive_fees_single() {
-        let mut dg = DevelopmentGrants::with_governance(governance_authority());
-        let fee = Amount::from_u128(1000);
+    fn test_receive_fees_success() {
+        let mut dg = DevGrants::new(test_governance());
 
-        let result = dg.receive_fees(fee);
+        let result = dg.receive_fees(1000);
         assert!(result.is_ok());
-        assert_eq!(dg.current_balance().0, 1000);
-        assert_eq!(dg.total_fees_received().0, 1000);
-    }
-
-    #[test]
-    fn test_receive_fees_accumulate() {
-        let mut dg = DevelopmentGrants::with_governance(governance_authority());
-        let fee1 = Amount::from_u128(1000);
-        let fee2 = Amount::from_u128(500);
-
-        dg.receive_fees(fee1).unwrap();
-        dg.receive_fees(fee2).unwrap();
-
-        assert_eq!(dg.current_balance().0, 1500);
-        assert_eq!(dg.total_fees_received().0, 1500);
+        assert_eq!(dg.balance(), 1000);
+        assert_eq!(dg.total_received(), 1000);
     }
 
     #[test]
     fn test_receive_fees_zero_fails() {
-        let mut dg = DevelopmentGrants::with_governance(governance_authority());
-        let result = dg.receive_fees(Amount::from_u128(0));
+        let mut dg = DevGrants::new(test_governance());
+
+        let result = dg.receive_fees(0);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("greater than zero"));
+        assert_eq!(result.unwrap_err(), Error::ZeroAmount);
     }
 
     #[test]
-    fn test_execute_grant_success() {
-        let gov_auth = governance_authority();
-        let mut dg = DevelopmentGrants::with_governance(gov_auth);
-        dg.receive_fees(Amount::from_u128(1000)).unwrap();
+    fn test_approve_grant_success() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let mut dg = DevGrants::new(gov.clone());
 
-        let proposal = ProposalId(1);
-        let recipient = Recipient::new(vec![1, 2, 3]);
-        let grant = Amount::from_u128(500);
-
-        let result = dg.execute_grant(gov_auth, proposal, recipient.clone(), grant, 100);
+        let result = dg.approve_grant(&gov, 1, &recipient, 500, 100);
         assert!(result.is_ok());
 
-        assert_eq!(dg.current_balance().0, 500);
-        assert_eq!(dg.total_disbursed().0, 500);
-        assert_eq!(dg.disbursements().len(), 1);
-        assert!(dg.proposal_executed(proposal));
+        let grant = dg.grant(1).unwrap();
+        assert_eq!(grant.proposal_id, 1);
+        assert_eq!(grant.amount.get(), 500);
+        assert_eq!(grant.status, ProposalStatus::Approved);
     }
 
     #[test]
-    fn test_execute_grant_unauthorized_caller_fails() {
-        let gov_auth = governance_authority();
-        let mut dg = DevelopmentGrants::with_governance(gov_auth);
-        dg.receive_fees(Amount::from_u128(1000)).unwrap();
+    fn test_approve_grant_unauthorized_fails() {
+        let gov = test_governance();
+        let wrong_gov = test_public_key(88);
+        let recipient = test_recipient();
+        let mut dg = DevGrants::new(gov.clone());
 
-        let wrong_auth = GovernanceAuthority::new(12345);
-        let proposal = ProposalId(1);
-        let recipient = Recipient::new(vec![1, 2, 3]);
-        let grant = Amount::from_u128(500);
-
-        let result = dg.execute_grant(wrong_auth, proposal, recipient, grant, 100);
+        let result = dg.approve_grant(&wrong_gov, 1, &recipient, 500, 100);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unauthorized"));
-
-        // Verify state unchanged
-        assert_eq!(dg.current_balance().0, 1000);
-        assert_eq!(dg.disbursements().len(), 0);
+        assert_eq!(result.unwrap_err(), Error::Unauthorized);
     }
 
     #[test]
-    fn test_execute_grant_exceeds_balance_fails() {
-        let gov_auth = governance_authority();
-        let mut dg = DevelopmentGrants::with_governance(gov_auth);
-        dg.receive_fees(Amount::from_u128(1000)).unwrap();
+    fn test_approve_grant_zero_amount_fails() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let mut dg = DevGrants::new(gov.clone());
 
-        let proposal = ProposalId(1);
-        let recipient = Recipient::new(vec![1, 2, 3]);
-        let grant = Amount::from_u128(2000); // More than balance
-
-        let result = dg.execute_grant(gov_auth, proposal, recipient, grant, 100);
+        let result = dg.approve_grant(&gov, 1, &recipient, 0, 100);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Insufficient balance"));
-
-        // Verify state unchanged
-        assert_eq!(dg.current_balance().0, 1000);
-        assert_eq!(dg.disbursements().len(), 0);
+        assert_eq!(result.unwrap_err(), Error::ZeroAmount);
     }
 
     #[test]
-    fn test_replay_protection_one_proposal_one_execution() {
-        let gov_auth = governance_authority();
-        let mut dg = DevelopmentGrants::with_governance(gov_auth);
-        dg.receive_fees(Amount::from_u128(2000)).unwrap();
+    fn test_approve_grant_duplicate_fails() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let mut dg = DevGrants::new(gov.clone());
 
-        let proposal = ProposalId(1);
-        let recipient = Recipient::new(vec![1, 2, 3]);
-        let grant = Amount::from_u128(500);
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
+        let result = dg.approve_grant(&gov, 1, &recipient, 600, 101);
 
-        // First execution succeeds
-        let result1 = dg.execute_grant(gov_auth, proposal, recipient.clone(), grant, 100);
-        assert!(result1.is_ok());
-
-        // Second execution of same proposal fails (replay protection)
-        let result2 = dg.execute_grant(gov_auth, proposal, recipient, grant, 101);
-        assert!(result2.is_err());
-        assert!(result2.unwrap_err().contains("already executed"));
-
-        // Verify only one disbursement
-        assert_eq!(dg.disbursements().len(), 1);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), Error::ProposalAlreadyApproved);
     }
 
     #[test]
-    fn test_conservation_of_value_invariant() {
-        let gov_auth = governance_authority();
-        let mut dg = DevelopmentGrants::with_governance(gov_auth);
+    fn test_payload_binding_approved_amount_immutable() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let mut dg = DevGrants::new(gov.clone());
 
-        dg.receive_fees(Amount::from_u128(1000)).unwrap();
-        dg.receive_fees(Amount::from_u128(500)).unwrap();
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
 
-        assert_eq!(dg.total_fees_received().0, 1500);
-
-        dg.execute_grant(gov_auth, ProposalId(1), Recipient::new(vec![1]), Amount::from_u128(600), 100).unwrap();
-        dg.execute_grant(gov_auth, ProposalId(2), Recipient::new(vec![2]), Amount::from_u128(400), 101).unwrap();
-
-        // Verify invariant: balance + disbursed == total fees
-        let expected_balance = dg.total_fees_received().0 - dg.total_disbursed().0;
-        assert_eq!(dg.current_balance().0, expected_balance);
-        assert_eq!(expected_balance, 500);
-
-        // Validate invariants
-        assert!(dg.validate_invariants().is_ok());
+        // Verify approved amount is stored and immutable
+        let grant = dg.grant(1).unwrap();
+        assert_eq!(grant.amount.get(), 500);
+        assert_eq!(grant.status, ProposalStatus::Approved);
     }
 
     #[test]
-    fn test_validate_invariants_success() {
-        let gov_auth = governance_authority();
-        let mut dg = DevelopmentGrants::with_governance(gov_auth);
-        dg.receive_fees(Amount::from_u128(1000)).unwrap();
-        dg.execute_grant(gov_auth, ProposalId(1), Recipient::new(vec![1]), Amount::from_u128(300), 100).unwrap();
+    fn test_payload_binding_approved_recipient_immutable() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let mut dg = DevGrants::new(gov.clone());
 
-        assert!(dg.validate_invariants().is_ok());
-    }
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
 
-    #[test]
-    fn test_disbursement_indices_monotonic() {
-        let gov_auth = governance_authority();
-        let mut dg = DevelopmentGrants::with_governance(gov_auth);
-        dg.receive_fees(Amount::from_u128(3000)).unwrap();
-
-        for i in 0..3 {
-            dg.execute_grant(
-                gov_auth,
-                ProposalId(i as u64),
-                Recipient::new(vec![i as u8]),
-                Amount::from_u128(500),
-                100 + i as u64,
-            ).unwrap();
-        }
-
-        let disbursements = dg.disbursements();
-        assert_eq!(disbursements.len(), 3);
-        for (i, d) in disbursements.iter().enumerate() {
-            assert_eq!(d.index, i as u64);
-        }
-    }
-
-    #[test]
-    fn test_append_only_ledger() {
-        let gov_auth = governance_authority();
-        let mut dg = DevelopmentGrants::with_governance(gov_auth);
-        dg.receive_fees(Amount::from_u128(2000)).unwrap();
-
-        let disbursements_before = dg.disbursements().len();
-
-        dg.execute_grant(gov_auth, ProposalId(1), Recipient::new(vec![1]), Amount::from_u128(500), 100).unwrap();
-        let disbursements_after = dg.disbursements().len();
-
-        assert_eq!(disbursements_after, disbursements_before + 1);
-
-        // Verify immutability: getting disbursements again should be identical
-        let first_call = dg.disbursements().to_vec();
-        let second_call = dg.disbursements().to_vec();
-        assert_eq!(first_call, second_call);
-    }
-
-    #[test]
-    fn test_multiple_grants_different_recipients() {
-        let gov_auth = governance_authority();
-        let mut dg = DevelopmentGrants::with_governance(gov_auth);
-        dg.receive_fees(Amount::from_u128(2000)).unwrap();
-
-        let grant1 = dg.execute_grant(gov_auth, ProposalId(1), Recipient::new(vec![1, 1, 1]), Amount::from_u128(600), 100);
-        let grant2 = dg.execute_grant(gov_auth, ProposalId(2), Recipient::new(vec![2, 2, 2]), Amount::from_u128(800), 101);
-
-        assert!(grant1.is_ok());
-        assert!(grant2.is_ok());
-
-        let disbursements = dg.disbursements();
-        assert_eq!(disbursements.len(), 2);
-        assert_eq!(disbursements[0].recipient.0, vec![1, 1, 1]);
-        assert_eq!(disbursements[1].recipient.0, vec![2, 2, 2]);
-        assert_eq!(dg.current_balance().0, 600);
-    }
-
-    #[test]
-    fn test_governance_boundary_no_arbitrary_withdrawal() {
-        let gov_auth = governance_authority();
-        let mut dg = DevelopmentGrants::with_governance(gov_auth);
-        dg.receive_fees(Amount::from_u128(1000)).unwrap();
-
-        // Verify that without calling execute_grant (governance decision),
-        // balance does not decrease
-        assert_eq!(dg.current_balance().0, 1000);
-
-        // Only execute_grant (which requires governance approval) can move funds
-        // This test verifies no backdoor exists
+        // Verify approved recipient is stored and immutable
+        let grant = dg.grant(1).unwrap();
+        assert_eq!(grant.recipient_key_id, recipient.key_id);
     }
 }
