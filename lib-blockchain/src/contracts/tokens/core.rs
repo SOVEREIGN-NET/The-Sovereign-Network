@@ -1,6 +1,35 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use crate::integration::crypto_integration::PublicKey;
+use crate::contracts::executor::{ExecutionContext, CallOrigin};
+
+/// Errors for token contract operations
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Error {
+    /// Caller is not authorized to perform this operation
+    Unauthorized,
+    /// Insufficient balance to perform transfer
+    InsufficientBalance,
+    /// Insufficient allowance for transfer_from
+    InsufficientAllowance,
+    /// Transfer would exceed maximum supply
+    ExceedsMaxSupply,
+    /// Insufficient balance to burn
+    InsufficientBurn,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Unauthorized => write!(f, "Unauthorized: not token owner"),
+            Error::InsufficientBalance => write!(f, "Insufficient balance"),
+            Error::InsufficientAllowance => write!(f, "Insufficient allowance"),
+            Error::ExceedsMaxSupply => write!(f, "Would exceed maximum supply"),
+            Error::InsufficientBurn => write!(f, "Insufficient balance to burn"),
+        }
+    }
+}
 
 /// Core token contract structure supporting both ZHTP native and custom tokens
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,11 +141,35 @@ impl TokenContract {
             .unwrap_or(0)
     }
 
-    /// Transfer tokens between accounts
-    pub fn transfer(&mut self, from: &PublicKey, to: &PublicKey, amount: u64) -> Result<u64, String> {
-        let from_balance = self.balance_of(from);
-        if from_balance < amount {
-            return Err("Insufficient balance".to_string());
+    /// Transfer tokens from the execution source to a recipient
+    ///
+    /// Authorization is determined by the execution context, not user input:
+    /// - User calls: debit from ctx.caller
+    /// - Contract calls: debit from ctx.contract
+    ///
+    /// This implements capability-bound authorization where token spending authority
+    /// is exclusively derived from the immutable execution context, preventing parameter tampering.
+    ///
+    /// # Arguments
+    /// - `ctx`: Immutable execution context providing authorization information
+    /// - `to`: Recipient address (must not be zero)
+    /// - `amount`: Amount to transfer
+    ///
+    /// # Errors
+    /// - `Error::Unauthorized`: If call_origin is System (reserved)
+    /// - `Error::InsufficientBalance`: If source account has insufficient balance
+    pub fn transfer(&mut self, ctx: &ExecutionContext, to: &PublicKey, amount: u64) -> Result<u64, Error> {
+        // Determine the source account based on execution context
+        let source = match ctx.call_origin {
+            CallOrigin::User => ctx.caller.clone(),
+            CallOrigin::Contract => ctx.contract.clone(),
+            CallOrigin::System => return Err(Error::Unauthorized),
+        };
+
+        // Check source balance
+        let source_balance = self.balance_of(&source);
+        if source_balance < amount {
+            return Err(Error::InsufficientBalance);
         }
 
         // Calculate burn amount if deflationary
@@ -127,7 +180,7 @@ impl TokenContract {
         };
 
         // Perform transfer
-        self.balances.insert(from.clone(), from_balance - amount);
+        self.balances.insert(source.clone(), source_balance - amount);
         let to_balance = self.balance_of(to);
         self.balances.insert(to.clone(), to_balance + amount);
 
@@ -139,17 +192,39 @@ impl TokenContract {
         Ok(burn_amount)
     }
 
-    /// Transfer from an allowance
+    /// Transfer from an allowance using execution context-based authorization
+    ///
+    /// The spender is derived from the execution context (ctx.caller or ctx.contract),
+    /// and the allowance is checked against the source account (derived from ctx) and the spender.
+    ///
+    /// # Arguments
+    /// - `ctx`: Immutable execution context providing authorization information
+    /// - `owner`: The account from which tokens should be transferred
+    /// - `to`: Recipient address
+    /// - `amount`: Amount to transfer
+    ///
+    /// # Errors
+    /// - `Error::Unauthorized`: If execution context is invalid
+    /// - `Error::InsufficientAllowance`: If spender doesn't have enough allowance from owner
+    /// - `Error::InsufficientBalance`: If owner doesn't have enough balance
     pub fn transfer_from(
         &mut self,
+        ctx: &ExecutionContext,
         owner: &PublicKey,
         to: &PublicKey,
         amount: u64,
-        spender: &PublicKey,
-    ) -> Result<u64, String> {
-        let allowance = self.allowance(owner, spender);
+    ) -> Result<u64, Error> {
+        // Determine the spender from execution context
+        let spender = match ctx.call_origin {
+            CallOrigin::User => ctx.caller.clone(),
+            CallOrigin::Contract => ctx.contract.clone(),
+            CallOrigin::System => return Err(Error::Unauthorized),
+        };
+
+        // Check allowance from owner to spender
+        let allowance = self.allowance(owner, &spender);
         if allowance < amount {
-            return Err("Insufficient allowance".to_string());
+            return Err(Error::InsufficientAllowance);
         }
 
         // Reduce allowance
@@ -158,8 +233,18 @@ impl TokenContract {
             .or_insert_with(HashMap::new)
             .insert(spender.clone(), allowance - amount);
 
-        // Perform transfer
-        self.transfer(owner, to, amount)
+        // Perform transfer from owner to recipient
+        // We need to create a temporary context for the transfer
+        let transfer_ctx = ExecutionContext::with_contract(
+            ctx.caller.clone(),
+            owner.clone(), // Use owner as the contract for transfer purposes
+            ctx.block_number,
+            ctx.timestamp,
+            ctx.gas_limit,
+            ctx.tx_hash,
+        );
+
+        self.transfer(&transfer_ctx, to, amount)
     }
 
     /// Approve spending allowance
@@ -282,9 +367,21 @@ pub struct TokenInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::executor::{ExecutionContext, CallOrigin};
 
     fn create_test_public_key(id: u8) -> PublicKey {
         PublicKey::new(vec![id; 32])
+    }
+
+    fn create_test_execution_context(contract: PublicKey, caller: PublicKey) -> ExecutionContext {
+        ExecutionContext::with_contract(
+            caller,
+            contract,
+            1,           // block_number
+            1000,        // timestamp
+            100000,      // gas_limit
+            [1u8; 32],   // tx_hash
+        )
     }
 
     #[test]
@@ -351,14 +448,15 @@ mod tests {
         // Mint some tokens
         token.mint(&public_key1, 500).unwrap();
 
-        // Transfer
-        let burn_amount = token.transfer(&public_key1, &public_key2, 200).unwrap();
+        // Transfer using ExecutionContext
+        let ctx = create_test_execution_context(public_key1.clone(), public_key1.clone());
+        let burn_amount = token.transfer(&ctx, &public_key2, 200).unwrap();
         assert_eq!(burn_amount, 0); // Non-deflationary
         assert_eq!(token.balance_of(&public_key1), 300);
         assert_eq!(token.balance_of(&public_key2), 200);
 
-        // Test insufficient balance
-        assert!(token.transfer(&public_key2, &public_key1, 300).is_err());
+        // Test insufficient balance - try to transfer 301 when only 300 available
+        assert!(token.transfer(&ctx, &public_key1, 301).is_err());
     }
 
     #[test]
@@ -379,7 +477,8 @@ mod tests {
         token.mint(&public_key1, 500).unwrap();
         let initial_supply = token.total_supply;
 
-        let burn_amount = token.transfer(&public_key1, &public_key2, 100).unwrap();
+        let ctx = create_test_execution_context(public_key1.clone(), public_key1.clone());
+        let burn_amount = token.transfer(&ctx, &public_key2, 100).unwrap();
         assert_eq!(burn_amount, 10);
         assert_eq!(token.total_supply, initial_supply - 10);
     }
@@ -402,12 +501,13 @@ mod tests {
         token.approve(&public_key1, &public_key2, 100);
         assert_eq!(token.allowance(&public_key1, &public_key2), 100);
 
-        // Transfer from allowance
+        // Transfer from allowance using ExecutionContext
+        let ctx = create_test_execution_context(public_key2.clone(), public_key2.clone());
         let burn_amount = token.transfer_from(
+            &ctx,
             &public_key1,
             &public_key3,
             50,
-            &public_key2,
         ).unwrap();
         assert_eq!(burn_amount, 0);
         assert_eq!(token.balance_of(&public_key3), 50);
@@ -415,10 +515,10 @@ mod tests {
 
         // Test insufficient allowance
         assert!(token.transfer_from(
+            &ctx,
             &public_key1,
             &public_key3,
             100,
-            &public_key2,
         ).is_err());
     }
 

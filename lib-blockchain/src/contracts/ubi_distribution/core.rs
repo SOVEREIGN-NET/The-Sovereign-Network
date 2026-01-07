@@ -254,7 +254,7 @@ impl UbiDistributor {
 
     /// Claim monthly UBI (pull-based, citizen initiates)
     ///
-    /// **Called by:** Citizen or on citizen's behalf
+    /// **Called by:** Citizen or on citizen's behalf (via ExecutionContext)
     ///
     /// **Consensus-Critical (Atomicity A1):**
     /// Payment record is written only after token.transfer succeeds.
@@ -268,11 +268,16 @@ impl UbiDistributor {
     /// **Consensus-Critical (Payment P1):**
     /// Payment record created only for registered citizens.
     ///
+    /// **Capability-Bound Authorization:**
+    /// Token transfer source is derived from ctx.call_origin:
+    /// - User calls: debit from ctx.caller
+    /// - Contract calls: debit from ctx.contract (this UBI contract address)
+    ///
     /// # Arguments
     /// * `citizen` - PublicKey of claiming citizen (only key_id used)
     /// * `current_height` - Block height (for month computation)
     /// * `token` - Token contract (mutable) to perform transfer
-    /// * `self_address` - This contract's PublicKey (for transfer from)
+    /// * `ctx` - Execution context providing authorization and contract address
     ///
     /// # Errors
     /// - `NotRegistered` if citizen not registered
@@ -286,7 +291,7 @@ impl UbiDistributor {
         citizen: &PublicKey,
         current_height: u64,
         token: &mut TokenContract,
-        self_address: &PublicKey,
+        ctx: &crate::contracts::executor::ExecutionContext,
     ) -> Result<(), Error> {
         let id = Self::key_id(citizen);
 
@@ -317,9 +322,10 @@ impl UbiDistributor {
 
         // ====================================================================
         // ATOMIC TRANSFER PHASE - Token transfer must succeed first
+        // Capability-bound: source is derived from ctx, not from parameter
         // ====================================================================
         let _burned = token
-            .transfer(self_address, citizen, amount)
+            .transfer(ctx, citizen, amount)
             .map_err(|_| Error::TokenTransferFailed)?;
 
         // ====================================================================
@@ -405,6 +411,7 @@ impl Default for UbiDistributor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::executor::{ExecutionContext, CallOrigin};
 
     fn test_public_key(id: u8) -> PublicKey {
         PublicKey {
@@ -420,6 +427,17 @@ mod tests {
 
     fn test_citizen(id: u8) -> PublicKey {
         test_public_key(id)
+    }
+
+    fn test_execution_context_for_contract(contract_address: &PublicKey) -> ExecutionContext {
+        ExecutionContext::with_contract(
+            test_governance().clone(),  // caller
+            contract_address.clone(),   // contract address
+            1,                          // block_number
+            1000,                       // timestamp
+            100000,                     // gas_limit
+            [1u8; 32],                  // tx_hash
+        )
     }
 
     #[test]
@@ -555,7 +573,8 @@ mod tests {
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &gov);
+        let ctx = test_execution_context_for_contract(&gov);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::NotRegistered);
@@ -572,7 +591,8 @@ mod tests {
         // Note: don't set amount for month 0 (defaults to 0)
 
         let mut mock_token = create_mock_token_with_balance(&gov);
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &gov);
+        let ctx = test_execution_context_for_contract(&gov);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::ZeroAmount);
@@ -589,7 +609,8 @@ mod tests {
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &gov);
+        let ctx = test_execution_context_for_contract(&gov);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
 
         assert!(result.is_ok());
         assert_eq!(ubi.balance(), 900);
@@ -608,13 +629,14 @@ mod tests {
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
+        let ctx = test_execution_context_for_contract(&gov);
 
         // First claim succeeds
-        ubi.claim_ubi(&citizen, 100, &mut mock_token, &gov)
+        ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx)
             .expect("first claim failed");
 
         // Second claim same month fails
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &gov);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::AlreadyPaidThisMonth);
     }
@@ -631,14 +653,15 @@ mod tests {
         ubi.set_amount_range(&gov, 0, 2, 100).expect("set_amount_range failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
+        let ctx = test_execution_context_for_contract(&gov);
 
         // Claim in month 0 (height 100)
-        ubi.claim_ubi(&citizen, 100, &mut mock_token, &gov)
+        ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx)
             .expect("claim month 0 failed");
         assert_eq!(ubi.month_paid_count(0), 1);
 
         // Claim in month 1 (height 1100)
-        let result = ubi.claim_ubi(&citizen, 1100, &mut mock_token, &gov);
+        let result = ubi.claim_ubi(&citizen, 1100, &mut mock_token, &ctx);
         assert!(result.is_ok());
         assert_eq!(ubi.month_paid_count(1), 1);
         assert_eq!(ubi.total_paid(), 200);
@@ -655,7 +678,8 @@ mod tests {
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &gov);
+        let ctx = test_execution_context_for_contract(&gov);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::InsufficientFunds);
@@ -673,7 +697,8 @@ mod tests {
 
         // Use a token with insufficient balance to simulate transfer failure
         let mut mock_token = create_mock_token_with_insufficient_balance(&gov);
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &gov);
+        let ctx = test_execution_context_for_contract(&gov);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
 
         // Transfer failed (insufficient balance in token), so claim should fail
         assert!(result.is_err());
@@ -711,11 +736,12 @@ mod tests {
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
+        let ctx = test_execution_context_for_contract(&gov);
 
         // Both citizens claim in same month
-        ubi.claim_ubi(&citizen1, 100, &mut mock_token, &gov)
+        ubi.claim_ubi(&citizen1, 100, &mut mock_token, &ctx)
             .expect("citizen1 claim failed");
-        ubi.claim_ubi(&citizen2, 100, &mut mock_token, &gov)
+        ubi.claim_ubi(&citizen2, 100, &mut mock_token, &ctx)
             .expect("citizen2 claim failed");
 
         assert_eq!(ubi.month_paid_count(0), 2);
@@ -753,9 +779,10 @@ mod tests {
         ubi.set_month_amount(&gov, 0, 200).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
+        let ctx = test_execution_context_for_contract(&gov);
 
         // This should fail due to total_paid overflow when adding 200
-        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &gov);
+        let result = ubi.claim_ubi(&citizen, 100, &mut mock_token, &ctx);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::Overflow);
     }

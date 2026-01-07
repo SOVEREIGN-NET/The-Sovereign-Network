@@ -178,7 +178,7 @@ impl DevGrants {
 
     /// Execute a grant (atomic token transfer + ledger update)
     ///
-    /// **Called by:** Governance authority only
+    /// **Called by:** Governance authority only (via ExecutionContext)
     ///
     /// **Consensus-Critical (Atomicity Invariant A1):**
     /// Token transfer and ledger update are inseparable.
@@ -194,13 +194,18 @@ impl DevGrants {
     /// **Consensus-Critical (Replay Protection Invariant G3):**
     /// Each proposal executes exactly once.
     ///
+    /// **Capability-Bound Authorization:**
+    /// Token transfer source is derived from ctx.call_origin:
+    /// - User calls: debit from ctx.caller
+    /// - Contract calls: debit from ctx.contract (this DevGrants contract address)
+    ///
     /// # Arguments
     /// * `caller` - Must equal governance_authority
     /// * `proposal_id` - Approved proposal ID
     /// * `recipient` - PublicKey of grant recipient (must match approved)
     /// * `current_height` - Block height (audit trail)
     /// * `token` - Token contract (mutable) to perform transfer
-    /// * `self_address` - This contract's PublicKey (for transfer from)
+    /// * `ctx` - Execution context providing authorization and contract address
     ///
     /// # Failure modes that halt:
     /// - caller is not governance_authority (Unauthorized)
@@ -217,7 +222,7 @@ impl DevGrants {
         recipient: &PublicKey,
         current_height: u64,
         token: &mut TokenContract,
-        self_address: &PublicKey,
+        ctx: &crate::contracts::executor::ExecutionContext,
     ) -> Result<(), Error> {
         // Invariant G1: Authorization check
         self.ensure_governance(caller)?;
@@ -245,9 +250,10 @@ impl DevGrants {
 
         // ====================================================================
         // ATOMIC TRANSFER PHASE - Token transfer must succeed
+        // Capability-bound: source is derived from ctx, not from parameter
         // ====================================================================
         let burned = token
-            .transfer(self_address, recipient, amt)
+            .transfer(ctx, recipient, amt)
             .map_err(|_| Error::TokenTransferFailed)?;
 
         // ====================================================================

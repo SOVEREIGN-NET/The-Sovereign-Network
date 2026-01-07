@@ -15,11 +15,34 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use crate::integration::crypto_integration::{PublicKey, Signature};
 
+/// Discriminates the origin of a contract call for authorization purposes
+///
+/// Determines where token spending authority is derived from:
+/// - User: Caller initiated the call directly, debit from ctx.caller
+/// - Contract: Call originated from another contract, debit from ctx.contract
+/// - System: Reserved for system-level calls
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CallOrigin {
+    /// User-initiated call: debit from ctx.caller
+    User,
+    /// Contract-to-contract call: debit from ctx.contract
+    Contract,
+    /// System-level call: reserved
+    System,
+}
+
 /// Contract execution environment state
+///
+/// Immutable context passed to all contract calls, enabling capability-bound authorization
+/// where token spending authority is determined by the execution context, not user-supplied parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionContext {
     /// Current caller's public key
     pub caller: PublicKey,
+    /// Currently executing contract address (populated for contract-to-contract calls)
+    pub contract: PublicKey,
+    /// Origin of this call: User, Contract, or System
+    pub call_origin: CallOrigin,
     /// Current block number
     pub block_number: u64,
     /// Current block timestamp
@@ -33,7 +56,16 @@ pub struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    /// Create new execution context
+    /// Create new execution context for user-initiated calls
+    ///
+    /// # Arguments
+    /// - `caller`: The user or contract initiating the call
+    /// - `block_number`: Current block height
+    /// - `timestamp`: Current block timestamp
+    /// - `gas_limit`: Maximum gas allowed for this execution
+    /// - `tx_hash`: Hash of the transaction triggering this execution
+    ///
+    /// The created context will have `call_origin = CallOrigin::User` and `contract` as a zero address.
     pub fn new(
         caller: PublicKey,
         block_number: u64,
@@ -43,6 +75,43 @@ impl ExecutionContext {
     ) -> Self {
         Self {
             caller,
+            contract: PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: [0u8; 32],
+            }, // Zero address for user calls
+            call_origin: CallOrigin::User,
+            block_number,
+            timestamp,
+            gas_limit,
+            gas_used: 0,
+            tx_hash,
+        }
+    }
+
+    /// Create new execution context for contract-to-contract calls
+    ///
+    /// # Arguments
+    /// - `caller`: The user or external origin
+    /// - `contract`: The currently executing contract address
+    /// - `block_number`: Current block height
+    /// - `timestamp`: Current block timestamp
+    /// - `gas_limit`: Maximum gas allowed for this execution
+    /// - `tx_hash`: Hash of the transaction triggering this execution
+    ///
+    /// The created context will have `call_origin = CallOrigin::Contract`.
+    pub fn with_contract(
+        caller: PublicKey,
+        contract: PublicKey,
+        block_number: u64,
+        timestamp: u64,
+        gas_limit: u64,
+        tx_hash: [u8; 32],
+    ) -> Self {
+        Self {
+            caller,
+            contract,
+            call_origin: CallOrigin::Contract,
             block_number,
             timestamp,
             gas_limit,
@@ -269,20 +338,18 @@ impl<S: ContractStorage> ContractExecutor<S> {
             "transfer" => {
                 let params: ([u8; 32], PublicKey, u64) = bincode::deserialize(&call.params)?;
                 let (token_id, to, amount) = params;
-                
+
                 if let Some(token) = self.token_contracts.get_mut(&token_id) {
-                    let _burn_amount = crate::contracts::tokens::functions::transfer_tokens(
-                        token,
-                        &context.caller,
-                        &to,
-                        amount,
-                    ).map_err(|e| anyhow!("{}", e))?;
-                    
+                    // Use new capability-bound transfer API with ExecutionContext
+                    let _burn_amount = token
+                        .transfer(context, &to, amount)
+                        .map_err(|e| anyhow!("{}", e))?;
+
                     // Update storage
                     let storage_key = generate_storage_key("token", &token_id);
                     let token_data = bincode::serialize(token)?;
                     self.storage.set(&storage_key, &token_data)?;
-                    
+
                     Ok(ContractResult::with_return_data(&"Transfer successful", context.gas_used)?)
                 } else {
                     Err(anyhow!("Token not found"))

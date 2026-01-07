@@ -337,14 +337,19 @@ mod tests {
         let education = create_test_public_key(11);
         let energy = create_test_public_key(12);
         let housing = create_test_public_key(13);
-        // Missing Food!
+        let food = create_test_public_key(14);
+        // Missing Energy!
 
         let mut sector_map = HashMap::new();
         sector_map.insert("healthcare".to_string(), healthcare);
+        sector_map.insert("education".to_string(), education);
+        sector_map.insert("housing".to_string(), housing);
+        sector_map.insert("food".to_string(), food);
+        // Deliberately not adding energy
 
         let result = TreasuryRegistry::init(admin, fee_collector, sector_map);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("food"));
+        assert!(result.unwrap_err().contains("energy"));
     }
 
     #[test]
