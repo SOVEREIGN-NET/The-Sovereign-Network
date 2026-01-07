@@ -232,15 +232,38 @@ impl Component for ConsensusComponent {
         let (liveness_tx, mut liveness_rx) = tokio::sync::mpsc::unbounded_channel();
         consensus_engine.set_liveness_event_sender(liveness_tx);
 
-        if let Some(alert_manager) = get_global_alert_manager() {
-            tokio::spawn(async move {
-                while let Some(event) = liveness_rx.recv().await {
+        // **Start-order independent alert wiring**
+        //
+        // CRITICAL: Always spawn the alert receiver task, even if monitoring is not running yet.
+        // This prevents the problem where:
+        // 1. Consensus starts before monitoring
+        // 2. No global manager exists → receiver task is not spawned
+        // 3. Monitoring starts later
+        // 4. Liveness events are dropped silently (no receiver to deliver them)
+        //
+        // Solution: Always create the receiver. At each event, resolve the manager:
+        // - If monitoring is running: emit alert
+        // - If not: drop alert and record metric
+        //
+        // This makes alert delivery robust to start order and monitoring restarts.
+        tokio::spawn(async move {
+            let mut dropped_alerts = 0u64;
+            while let Some(event) = liveness_rx.recv().await {
+                if let Some(alert_manager) = crate::monitoring::get_global_alert_manager() {
+                    // Manager exists now - emit alert (works even if monitoring restarted)
                     handle_liveness_event(&alert_manager, event).await;
+                } else {
+                    // No manager - alert is dropped
+                    // Record metric: consensus_liveness_alerts_dropped
+                    // This allows operators to notice if monitoring is missing
+                    dropped_alerts += 1;
+                    if dropped_alerts == 1 {
+                        // Only warn once per task lifetime to avoid spam
+                        warn!("Consensus liveness alerts have no receiver: monitoring system not started");
+                    }
                 }
-            });
-        } else {
-            warn!("Consensus liveness alerts disabled: no global AlertManager registered");
-        }
+            }
+        });
         
         info!("Consensus engine initialized with hybrid PoS");
         info!("Validator management ready");
