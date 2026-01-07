@@ -97,7 +97,7 @@ impl DevGrants {
     ///
     /// **Called by:** Protocol fee router (upstream)
     ///
-    /// **Invariant F2:** This contract is a passive receiver.
+    /// **Design Constraint:** This contract is a passive receiver.
     /// - Validates amount > 0
     /// - Updates balance
     /// - Does NOT compute percentages (upstream enforces 10% routing)
@@ -257,7 +257,7 @@ impl DevGrants {
         // Update internal balances
         self.balance = self.balance
             .checked_sub(amt)
-            .ok_or(Error::Overflow)?;
+            .ok_or(Error::Underflow)?;
 
         self.total_disbursed = self.total_disbursed
             .checked_add(amt)
@@ -464,5 +464,281 @@ mod tests {
         // Verify approved recipient is stored and immutable
         let grant = dg.grant(1).unwrap();
         assert_eq!(grant.recipient_key_id, recipient.key_id);
+    }
+
+    // ========================================================================
+    // EXECUTE_GRANT TESTS - Comprehensive coverage for atomic execution
+    // ========================================================================
+
+    fn setup_token_contract() -> TokenContract {
+        let creator = test_public_key(1);
+        TokenContract::new_custom(
+            "TestToken".to_string(),
+            "TEST".to_string(),
+            100_000, // Initial supply to creator
+            creator,
+        )
+    }
+
+    #[test]
+    fn test_execute_grant_success() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let contract_addr = test_public_key(10);
+        let mut dg = DevGrants::new(gov.clone());
+        let mut token = setup_token_contract();
+
+        // Setup: Add fees to contract, mint tokens to contract address
+        dg.receive_fees(1000).unwrap();
+        token.mint(&contract_addr, 1000).unwrap();
+
+        // Approve grant
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
+
+        // Execute grant
+        let result = dg.execute_grant(&gov, 1, &recipient, 200, &mut token, &contract_addr);
+        assert!(result.is_ok());
+
+        // Verify balance changes
+        assert_eq!(dg.balance(), 500); // 1000 - 500
+        assert_eq!(dg.total_disbursed(), 500);
+        assert_eq!(token.balance_of(&recipient), 500);
+        assert_eq!(token.balance_of(&contract_addr), 500); // 1000 - 500
+
+        // Verify disbursement record
+        assert_eq!(dg.disbursement_count(), 1);
+        let disbursements = dg.disbursements();
+        assert_eq!(disbursements[0].proposal_id, 1);
+        assert_eq!(disbursements[0].recipient_key_id, recipient.key_id);
+        assert_eq!(disbursements[0].amount.get(), 500);
+        assert_eq!(disbursements[0].executed_at, 200);
+        assert_eq!(disbursements[0].token_burned, 0); // Non-deflationary token
+
+        // Verify proposal status changed
+        let grant = dg.grant(1).unwrap();
+        assert_eq!(grant.status, ProposalStatus::Executed);
+    }
+
+    #[test]
+    fn test_execute_grant_unauthorized_fails() {
+        let gov = test_governance();
+        let wrong_caller = test_public_key(88);
+        let recipient = test_recipient();
+        let contract_addr = test_public_key(10);
+        let mut dg = DevGrants::new(gov.clone());
+        let mut token = setup_token_contract();
+
+        // Setup
+        dg.receive_fees(1000).unwrap();
+        token.mint(&contract_addr, 1000).unwrap();
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
+
+        // Try to execute with wrong caller
+        let result = dg.execute_grant(&wrong_caller, 1, &recipient, 200, &mut token, &contract_addr);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), Error::Unauthorized);
+
+        // Verify no state changes occurred
+        assert_eq!(dg.balance(), 1000);
+        assert_eq!(dg.total_disbursed(), 0);
+        assert_eq!(dg.disbursement_count(), 0);
+    }
+
+    #[test]
+    fn test_execute_grant_not_approved_fails() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let contract_addr = test_public_key(10);
+        let mut dg = DevGrants::new(gov.clone());
+        let mut token = setup_token_contract();
+
+        // Setup but don't approve
+        dg.receive_fees(1000).unwrap();
+        token.mint(&contract_addr, 1000).unwrap();
+
+        // Try to execute without approval
+        let result = dg.execute_grant(&gov, 1, &recipient, 200, &mut token, &contract_addr);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), Error::ProposalNotApproved);
+
+        // Verify no state changes occurred
+        assert_eq!(dg.balance(), 1000);
+        assert_eq!(dg.total_disbursed(), 0);
+        assert_eq!(dg.disbursement_count(), 0);
+    }
+
+    #[test]
+    fn test_execute_grant_already_executed_fails() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let contract_addr = test_public_key(10);
+        let mut dg = DevGrants::new(gov.clone());
+        let mut token = setup_token_contract();
+
+        // Setup
+        dg.receive_fees(1000).unwrap();
+        token.mint(&contract_addr, 1000).unwrap();
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
+
+        // Execute once (should succeed)
+        dg.execute_grant(&gov, 1, &recipient, 200, &mut token, &contract_addr).unwrap();
+
+        // Try to execute again (replay protection)
+        let result = dg.execute_grant(&gov, 1, &recipient, 201, &mut token, &contract_addr);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), Error::ProposalAlreadyExecuted);
+
+        // Verify state only changed once
+        assert_eq!(dg.balance(), 500);
+        assert_eq!(dg.total_disbursed(), 500);
+        assert_eq!(dg.disbursement_count(), 1);
+    }
+
+    #[test]
+    fn test_execute_grant_recipient_mismatch_fails() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let wrong_recipient = test_public_key(77);
+        let contract_addr = test_public_key(10);
+        let mut dg = DevGrants::new(gov.clone());
+        let mut token = setup_token_contract();
+
+        // Setup - approve for one recipient
+        dg.receive_fees(1000).unwrap();
+        token.mint(&contract_addr, 1000).unwrap();
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
+
+        // Try to execute with different recipient (payload binding protection)
+        let result = dg.execute_grant(&gov, 1, &wrong_recipient, 200, &mut token, &contract_addr);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), Error::InvalidRecipient);
+
+        // Verify no state changes occurred
+        assert_eq!(dg.balance(), 1000);
+        assert_eq!(dg.total_disbursed(), 0);
+        assert_eq!(dg.disbursement_count(), 0);
+    }
+
+    #[test]
+    fn test_execute_grant_insufficient_balance_fails() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let contract_addr = test_public_key(10);
+        let mut dg = DevGrants::new(gov.clone());
+        let mut token = setup_token_contract();
+
+        // Setup with insufficient balance
+        dg.receive_fees(100).unwrap(); // Only 100, but need 500
+        token.mint(&contract_addr, 1000).unwrap();
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
+
+        // Try to execute with insufficient balance
+        let result = dg.execute_grant(&gov, 1, &recipient, 200, &mut token, &contract_addr);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), Error::InsufficientBalance);
+
+        // Verify no state changes occurred
+        assert_eq!(dg.balance(), 100);
+        assert_eq!(dg.total_disbursed(), 0);
+        assert_eq!(dg.disbursement_count(), 0);
+    }
+
+    #[test]
+    fn test_execute_grant_token_transfer_fails() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let contract_addr = test_public_key(10);
+        let mut dg = DevGrants::new(gov.clone());
+        let mut token = setup_token_contract();
+
+        // Setup - contract has balance but no tokens
+        dg.receive_fees(1000).unwrap();
+        // DO NOT mint tokens to contract_addr - this will cause transfer to fail
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
+
+        // Try to execute - token transfer will fail
+        let result = dg.execute_grant(&gov, 1, &recipient, 200, &mut token, &contract_addr);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), Error::TokenTransferFailed);
+
+        // Verify no state changes occurred (atomicity)
+        assert_eq!(dg.balance(), 1000); // Balance unchanged
+        assert_eq!(dg.total_disbursed(), 0);
+        assert_eq!(dg.disbursement_count(), 0);
+
+        // Verify proposal still approved (not executed)
+        let grant = dg.grant(1).unwrap();
+        assert_eq!(grant.status, ProposalStatus::Approved);
+    }
+
+    #[test]
+    fn test_execute_grant_records_token_burned() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let contract_addr = test_public_key(10);
+        let mut dg = DevGrants::new(gov.clone());
+        
+        // Create deflationary token with burn rate
+        let creator = test_public_key(1);
+        let mut token = TokenContract::new(
+            [1u8; 32],
+            "BurnToken".to_string(),
+            "BURN".to_string(),
+            8,
+            1_000_000,
+            true,  // is_deflationary
+            10,    // burn_rate per transfer
+            creator,
+        );
+        
+        // Setup
+        dg.receive_fees(1000).unwrap();
+        token.mint(&contract_addr, 1000).unwrap();
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
+
+        // Execute grant
+        let result = dg.execute_grant(&gov, 1, &recipient, 200, &mut token, &contract_addr);
+        assert!(result.is_ok());
+
+        // Verify token_burned was recorded
+        assert_eq!(dg.disbursement_count(), 1);
+        let disbursements = dg.disbursements();
+        assert_eq!(disbursements[0].token_burned, 10); // burn_rate from deflationary token
+    }
+
+    #[test]
+    fn test_execute_grant_disbursement_record_immutable() {
+        let gov = test_governance();
+        let recipient = test_recipient();
+        let contract_addr = test_public_key(10);
+        let mut dg = DevGrants::new(gov.clone());
+        let mut token = setup_token_contract();
+
+        // Setup
+        dg.receive_fees(2000).unwrap();
+        token.mint(&contract_addr, 2000).unwrap();
+
+        // Approve and execute two grants
+        dg.approve_grant(&gov, 1, &recipient, 500, 100).unwrap();
+        dg.execute_grant(&gov, 1, &recipient, 200, &mut token, &contract_addr).unwrap();
+
+        dg.approve_grant(&gov, 2, &recipient, 300, 101).unwrap();
+        dg.execute_grant(&gov, 2, &recipient, 201, &mut token, &contract_addr).unwrap();
+
+        // Verify disbursements are append-only and ordered
+        assert_eq!(dg.disbursement_count(), 2);
+        let disbursements = dg.disbursements();
+        
+        assert_eq!(disbursements[0].proposal_id, 1);
+        assert_eq!(disbursements[0].amount.get(), 500);
+        assert_eq!(disbursements[0].executed_at, 200);
+        
+        assert_eq!(disbursements[1].proposal_id, 2);
+        assert_eq!(disbursements[1].amount.get(), 300);
+        assert_eq!(disbursements[1].executed_at, 201);
+
+        // Verify total accounting
+        assert_eq!(dg.balance(), 1200); // 2000 - 500 - 300
+        assert_eq!(dg.total_disbursed(), 800); // 500 + 300
     }
 }
