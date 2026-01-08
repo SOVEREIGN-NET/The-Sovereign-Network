@@ -327,6 +327,32 @@ Web4 Architecture:
 └─────────────────────────────────────────────────┘
 ```
 
+## Consensus Architecture
+
+### Adaptive Difficulty Adjustment
+
+The blockchain uses governance-controlled difficulty parameters through `DifficultyConfig`:
+
+- **Configurable Parameters**: Target timespan, adjustment interval, and adjustment factors
+- **Default Settings**: 14-day timespan, 2016-block interval, 4x max adjustment (Bitcoin-style)
+- **Governance Updates**: Parameters can be modified via DAO proposals
+- **Audit Trail**: `last_updated_at_height` tracks parameter changes
+
+```rust
+pub struct DifficultyConfig {
+    pub target_timespan: u64,         // Default: 14 days
+    pub adjustment_interval: u64,      // Default: 2016 blocks
+    pub min_adjustment_factor: u64,    // Default: 4
+    pub max_adjustment_factor: u64,    // Default: 4
+    pub last_updated_at_height: u64,
+}
+```
+
+**Key Methods:**
+- `target_block_time()` - Calculates target seconds per block (default: 600s)
+- `clamp_timespan()` - Prevents extreme difficulty changes
+- `validate()` - Ensures parameters are within safe ranges
+
 ## Economic Architecture
 
 ### Universal Basic Income System

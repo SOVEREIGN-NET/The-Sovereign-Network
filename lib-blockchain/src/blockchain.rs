@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use tracing::{info, warn, error, debug};
-use crate::types::{Hash, Difficulty};
+use crate::types::{Hash, Difficulty, DifficultyConfig};
 use crate::transaction::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData};
 use crate::types::transaction_type::TransactionType;
 use crate::block::Block;
@@ -40,6 +40,8 @@ pub struct Blockchain {
     pub height: u64,
     /// Current mining difficulty
     pub difficulty: Difficulty,
+    /// Difficulty adjustment configuration (governance-controlled)
+    pub difficulty_config: DifficultyConfig,
     /// Total work done (cumulative difficulty)
     pub total_work: u128,
     /// UTXO set for transaction validation
@@ -162,6 +164,7 @@ impl Blockchain {
             blocks: vec![genesis_block.clone()],
             height: 0,
             difficulty: Difficulty::from_bits(crate::INITIAL_DIFFICULTY),
+            difficulty_config: DifficultyConfig::default(),
             total_work: 0,
             utxo_set: HashMap::new(),
             nullifier_set: HashSet::new(),
@@ -828,6 +831,11 @@ impl Blockchain {
     /// Get current blockchain height
     pub fn get_height(&self) -> u64 {
         self.height
+    }
+
+    /// Get the current difficulty configuration
+    pub fn get_difficulty_config(&self) -> &DifficultyConfig {
+        &self.difficulty_config
     }
 
     /// Check if a nullifier has been used
