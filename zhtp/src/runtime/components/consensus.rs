@@ -7,7 +7,7 @@ use tracing::{info, warn, debug, error};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use lib_consensus::{ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorManager, NoOpBroadcaster};
-use crate::monitoring::{get_global_alert_manager, Alert, AlertLevel, AlertManager};
+use crate::monitoring::{Alert, AlertLevel, AlertManager};
 use lib_blockchain::Blockchain;
 
 /// Adapter to make blockchain ValidatorInfo compatible with consensus ValidatorInfo trait

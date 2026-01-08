@@ -82,7 +82,7 @@ impl ExecutionContext {
     ///
     /// # Arguments
     /// - `caller`: The user or contract initiating the call
-    /// - `block_number`: Current block height
+    /// - `block_number`: Block height at execution time (used for deterministic month computation in UBI/DevGrants)
     /// - `timestamp`: Current block timestamp
     /// - `gas_limit`: Maximum gas allowed for this execution
     /// - `tx_hash`: Hash of the transaction triggering this execution
@@ -116,7 +116,7 @@ impl ExecutionContext {
     /// # Arguments
     /// - `caller`: The user or external origin
     /// - `contract`: The currently executing contract address
-    /// - `block_number`: Current block height
+    /// - `block_number`: Block height at execution time (used for deterministic month computation in UBI/DevGrants)
     /// - `timestamp`: Current block timestamp
     /// - `gas_limit`: Maximum gas allowed for this execution
     /// - `tx_hash`: Hash of the transaction triggering this execution
@@ -1507,19 +1507,23 @@ mod tests {
         let balance = ubi.balance();
         assert_eq!(balance, 10000, "Balance should be 10000");
 
-        // **CRITICAL VALIDATION**: Architecture ensures persistence
+        // **TEST SCOPE**: Persistence call execution (not full restart validation)
         //
-        // The consensus-critical architecture guarantees persistence works:
-        // 1. SystemConfig is persisted in init_system() to SYSTEM_CONFIG_KEY
-        // 2. UBI state is persisted after every successful mutation (register, receive_funds, claim_ubi, set_month_amount, set_amount_range)
-        // 3. DevGrants state is persisted after every successful mutation
-        // 4. Token contracts are persisted after UBI/DevGrants transfers
-        // 5. get_or_load methods reload from storage on executor restart
+        // This test verifies the persistence invariant: contract state changes must be
+        // written to storage synchronously. The test validates that all persist calls
+        // execute without error:
         //
-        // This test validates that all these persist calls execute successfully.
-        // True end-to-end restart validation would require shared mutable storage reference
-        // or actual persistent storage backend (RocksDB, etc). The get_or_load_ubi() and
-        // get_or_load_dev_grants() methods are designed to verify storage on next executor instance.
+        // 1. SystemConfig persisted in init_system() → SYSTEM_CONFIG_KEY
+        // 2. UBI state persisted after each mutation (register, receive_funds, claim_ubi, set_month_amount, set_amount_range)
+        // 3. DevGrants state persisted after each mutation
+        // 4. Token contracts persisted after UBI/DevGrants transfers
+        // 5. get_or_load methods use persistence to reload state after mutations
+        //
+        // **Limitation**: Full end-to-end restart validation would require a fresh
+        // executor instance reading from the same storage backend. This test uses
+        // in-memory storage and the same executor instance, so it cannot simulate
+        // actual process restart. See test_ubi_operations_persist_through_reload() for
+        // practical restart validation using separate executor instances.
     }
 
     #[test]

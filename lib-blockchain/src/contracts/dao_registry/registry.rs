@@ -178,7 +178,7 @@ impl DAORegistry {
         // Defensive check: DAO ID should not already exist (extremely unlikely with BLAKE3)
         if self.entries.contains_key(&dao_id) {
             return Err(format!(
-                "DAO ID collision detected (probability ~1 in 2^256): {}",
+                "DAO ID collision detected (cryptographically implausible): {}",
                 hex::encode(&dao_id)
             ));
         }

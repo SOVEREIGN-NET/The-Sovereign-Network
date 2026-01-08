@@ -7,8 +7,12 @@ pub type ProposalId = u64;
 ///
 /// Uses u64 (not u128) for alignment with token contract transfer signature:
 /// `transfer(&mut self, from: &PublicKey, to: &PublicKey, amount: u64)`
+///
+/// **Invariant Encapsulation:** The inner u64 is private. Use `get()` or arithmetic
+/// methods (`checked_add`, `checked_sub`) to access/modify values. This prevents
+/// direct bypassing of any future invariants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Amount(pub u64);
+pub struct Amount(u64);
 
 impl Amount {
     /// Create a new Amount with validation (non-zero)
@@ -108,7 +112,12 @@ pub struct Disbursement {
     pub executed_at: u64,
 
     /// Tokens burned (from token contract's transfer return value)
-    /// For deflationary tokens; 0 for fixed-supply tokens
+    ///
+    /// **Invariant Relationship:**
+    /// - For fixed-supply tokens: `token_burned == 0` (amount fully transferred)
+    /// - For deflationary tokens: `token_burned > 0` (amount transferred + fee burned)
+    /// - Total deducted from sender: `amount.get() + token_burned`
+    /// - Invariant: `amount.get() + token_burned <= balance_deducted`
     pub token_burned: u64,
 }
 

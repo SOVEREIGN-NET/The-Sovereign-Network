@@ -54,10 +54,12 @@ pub struct UbiDistributor {
 
     /// Schedule: month_index -> per-citizen amount
     /// Governance controls this; if not set, amount defaults to 0
-    /// Year-by-year mapping is done via month ranges:
-    /// - Year 1: months 0..=11
-    /// - Year 3: months 24..=35
-    /// - Year 5: months 48..=59
+    ///
+    /// **Mapping:** MonthIndex is a pure function of block height:
+    /// - month_index = current_height / blocks_per_month
+    /// - Not tied to calendar years or dates
+    /// - Governance sets amounts for specific month indices
+    /// - Examples: months 0-11 (year 1), 12-23 (year 2), 24-35 (year 3), etc.
     schedule: HashMap<MonthIndex, u64>,
 }
 

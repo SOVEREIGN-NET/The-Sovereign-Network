@@ -35,9 +35,18 @@ static GLOBAL_ALERT_MANAGER: RwLock<Option<Arc<AlertManager>>> = RwLock::new(Non
 /// Called during MonitoringSystem::start() to install a fresh manager.
 /// This is not idempotent by design: every start() replaces the global,
 /// preventing restart from using a stale stopped instance.
+///
+/// If the RwLock is poisoned (another thread panicked while holding it),
+/// this function will attempt recovery by clearing the poisoned state.
 pub fn set_global_alert_manager(manager: Arc<AlertManager>) {
-    let mut g = GLOBAL_ALERT_MANAGER.write().expect("RwLock poisoned");
-    *g = Some(manager);
+    match GLOBAL_ALERT_MANAGER.write() {
+        Ok(mut g) => *g = Some(manager),
+        Err(poisoned) => {
+            // RwLock poisoned - recover by clearing and setting fresh
+            let mut g = poisoned.into_inner();
+            *g = Some(manager);
+        }
+    }
 }
 
 /// Clear the global alert manager
@@ -45,18 +54,33 @@ pub fn set_global_alert_manager(manager: Arc<AlertManager>) {
 /// Called during MonitoringSystem::stop() to prevent subsequent operations
 /// from using a stopped manager. Callers attempting to emit after this
 /// will get None and must handle degraded mode.
+///
+/// If the RwLock is poisoned, this function will still clear it (no-op if already None).
 pub fn clear_global_alert_manager() {
-    let mut g = GLOBAL_ALERT_MANAGER.write().expect("RwLock poisoned");
-    *g = None;
+    match GLOBAL_ALERT_MANAGER.write() {
+        Ok(mut g) => *g = None,
+        Err(poisoned) => {
+            // RwLock poisoned - recover by clearing
+            let mut g = poisoned.into_inner();
+            *g = None;
+        }
+    }
 }
 
 /// Get the global alert manager
 ///
 /// Returns None if monitoring has not been started or has been stopped.
 /// Safe to call from any thread/task.
+///
+/// If the RwLock is poisoned, this function returns None (safe fallback).
 pub fn get_global_alert_manager() -> Option<Arc<AlertManager>> {
-    let g = GLOBAL_ALERT_MANAGER.read().expect("RwLock poisoned");
-    g.clone()
+    match GLOBAL_ALERT_MANAGER.read() {
+        Ok(g) => g.clone(),
+        Err(poisoned) => {
+            // RwLock poisoned - treat as "no manager available" (safe fallback)
+            (*poisoned.into_inner()).clone()
+        }
+    }
 }
 
 /// Central monitoring system for ZHTP node

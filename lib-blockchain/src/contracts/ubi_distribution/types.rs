@@ -6,8 +6,12 @@ use std::fmt;
 pub type MonthIndex = u64;
 
 /// Amount in smallest token units with overflow checking
+///
+/// **Invariant Encapsulation:** The inner u64 is private. Use `get()` or arithmetic
+/// methods (`checked_add`, `checked_sub`) to access/modify values. This prevents
+/// direct bypassing of any future invariants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Amount(pub u64);
+pub struct Amount(u64);
 
 impl Amount {
     /// Create a new Amount with validation (non-zero)
