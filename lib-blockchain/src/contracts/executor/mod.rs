@@ -313,8 +313,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
             }
         }
 
-        // Persist the configuration
-        let storage_key = SYSTEM_CONFIG_KEY.to_vec();
+        // Persist the configuration (reuse storage_key from above)
         let config_data = bincode::serialize(&config)?;
         self.storage.set(&storage_key, &config_data)?;
 
@@ -1064,16 +1063,11 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     .map_err(|e| anyhow!("{:?}", e))
             },
             "receive_funds" => {
-                // CRITICAL: Gate fund reception to governance authority
-                // Prevents anyone from inflating internal balance without actual token backing
-                let config = self.get_system_config()?;
-                if context.caller != config.governance_authority {
-                    return Err(anyhow!("Only governance authority can receive funds into UBI"));
-                }
-
                 let amount: u64 = bincode::deserialize(&call.params)?;
 
-                ubi.receive_funds(amount)
+                // Authorization check delegated to UbiDistributor.receive_funds()
+                // (consistent with set_month_amount, set_amount_range pattern)
+                ubi.receive_funds(&context.caller, amount)
                     .map_err(|e| anyhow!("{:?}", e))?;
 
                 ContractResult::with_return_data(&"Funds received", contract_context.gas_used)
@@ -1156,16 +1150,11 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         let result = match call.method.as_str() {
             "receive_fees" => {
-                // CRITICAL: Gate fee reception to governance authority
-                // Prevents anyone from inflating the grant fund without actual fee income
-                let config = self.get_system_config()?;
-                if context.caller != config.governance_authority {
-                    return Err(anyhow!("Only governance authority can receive fees into DevGrants"));
-                }
-
                 let amount: u64 = bincode::deserialize(&call.params)?;
 
-                dev_grants.receive_fees(amount)
+                // Authorization check delegated to DevGrants.receive_fees()
+                // (consistent with approve_grant, execute_grant pattern)
+                dev_grants.receive_fees(&context.caller, amount)
                     .map_err(|e| anyhow!("{:?}", e))?;
 
                 Ok(ContractResult::with_return_data(&"Fees received", contract_context.gas_used)?)
@@ -1530,7 +1519,7 @@ mod tests {
     fn test_governance_authority_enforcement() {
         use crate::integration::crypto_integration::KeyPair;
 
-        let mut storage = MemoryStorage::default();
+        let storage = MemoryStorage::default();
         let mut executor = ContractExecutor::new(storage);
 
         // Create governance authority and non-governance caller

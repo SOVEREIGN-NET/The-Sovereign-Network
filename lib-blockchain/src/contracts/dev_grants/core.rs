@@ -95,17 +95,28 @@ impl DevGrants {
 
     /// Receive protocol fees (10% already computed upstream)
     ///
-    /// **Called by:** Protocol fee router (upstream)
+    /// **Called by:** Protocol fee router (upstream) - governance-controlled
+    ///
+    /// **Consensus-Critical (G1):** Only governance_authority may receive fees.
+    /// Prevents unauthorized balance inflation without actual fee income.
     ///
     /// **Invariant F2:** This contract is a passive receiver.
     /// - Validates amount > 0
     /// - Updates balance
     /// - Does NOT compute percentages (upstream enforces 10% routing)
     ///
+    /// # Arguments
+    /// * `caller` - Must equal governance_authority
+    /// * `amount` - Amount to receive (must be > 0)
+    ///
     /// # Failure modes that halt:
-    /// - amount is zero
-    /// - balance overflow
-    pub fn receive_fees(&mut self, amount: u64) -> Result<(), Error> {
+    /// - caller is not governance_authority (Unauthorized)
+    /// - amount is zero (ZeroAmount)
+    /// - balance overflow (Overflow)
+    pub fn receive_fees(&mut self, caller: &PublicKey, amount: u64) -> Result<(), Error> {
+        // Invariant G1: Authorization check
+        self.ensure_governance(caller)?;
+
         if amount == 0 {
             return Err(Error::ZeroAmount);
         }
@@ -382,9 +393,10 @@ mod tests {
 
     #[test]
     fn test_receive_fees_success() {
-        let mut dg = DevGrants::new(test_governance());
+        let gov = test_governance();
+        let mut dg = DevGrants::new(gov.clone());
 
-        let result = dg.receive_fees(1000);
+        let result = dg.receive_fees(&gov, 1000);
         assert!(result.is_ok());
         assert_eq!(dg.balance(), 1000);
         assert_eq!(dg.total_received(), 1000);
@@ -392,9 +404,10 @@ mod tests {
 
     #[test]
     fn test_receive_fees_zero_fails() {
-        let mut dg = DevGrants::new(test_governance());
+        let gov = test_governance();
+        let mut dg = DevGrants::new(gov.clone());
 
-        let result = dg.receive_fees(0);
+        let result = dg.receive_fees(&gov, 0);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::ZeroAmount);
     }

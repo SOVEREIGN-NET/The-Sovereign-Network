@@ -130,16 +130,25 @@ impl UbiDistributor {
 
     /// Receive funds (no minting, only external transfer in)
     ///
+    /// **Called by:** Governance authority only
     /// Called after upstream transfer into this contract address.
     /// Accumulates funds for distribution.
     ///
+    /// **Consensus-Critical (G1):** Only governance_authority may receive funds.
+    /// Prevents unauthorized balance inflation without actual token backing.
+    ///
     /// # Arguments
+    /// * `caller` - Must equal governance_authority
     /// * `amount` - Amount to add to balance (must be > 0)
     ///
     /// # Errors
+    /// - `Unauthorized` if caller is not governance_authority
     /// - `ZeroAmount` if amount == 0
     /// - `Overflow` if balance would exceed u64::MAX
-    pub fn receive_funds(&mut self, amount: u64) -> Result<(), Error> {
+    pub fn receive_funds(&mut self, caller: &PublicKey, amount: u64) -> Result<(), Error> {
+        // Invariant G1: Authorization check
+        self.ensure_governance(caller)?;
+
         if amount == 0 {
             return Err(Error::ZeroAmount);
         }
@@ -473,7 +482,7 @@ mod tests {
         let gov = test_governance();
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
-        let result = ubi.receive_funds(1000);
+        let result = ubi.receive_funds(&gov, 1000);
         assert!(result.is_ok());
         assert_eq!(ubi.balance(), 1000);
         assert_eq!(ubi.total_received(), 1000);
@@ -484,7 +493,7 @@ mod tests {
         let gov = test_governance();
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
-        let result = ubi.receive_funds(0);
+        let result = ubi.receive_funds(&gov, 0);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::ZeroAmount);
     }
@@ -576,7 +585,7 @@ mod tests {
         let citizen = test_citizen(1);
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
-        ubi.receive_funds(1000).expect("fund failed");
+        ubi.receive_funds(&gov, 1000).expect("fund failed");
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
@@ -594,7 +603,7 @@ mod tests {
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
         ubi.register(&citizen).expect("register failed");
-        ubi.receive_funds(1000).expect("fund failed");
+        ubi.receive_funds(&gov, 1000).expect("fund failed");
         // Note: don't set amount for month 0 (defaults to 0)
 
         let mut mock_token = create_mock_token_with_balance(&gov);
@@ -612,7 +621,7 @@ mod tests {
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
         ubi.register(&citizen).expect("register failed");
-        ubi.receive_funds(1000).expect("fund failed");
+        ubi.receive_funds(&gov, 1000).expect("fund failed");
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
@@ -632,7 +641,7 @@ mod tests {
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
         ubi.register(&citizen).expect("register failed");
-        ubi.receive_funds(2000).expect("fund failed");
+        ubi.receive_funds(&gov, 2000).expect("fund failed");
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
@@ -656,7 +665,7 @@ mod tests {
         let mut ubi = UbiDistributor::new(gov.clone(), blocks_per_month).expect("init failed");
 
         ubi.register(&citizen).expect("register failed");
-        ubi.receive_funds(2000).expect("fund failed");
+        ubi.receive_funds(&gov, 2000).expect("fund failed");
         ubi.set_amount_range(&gov, 0, 2, 100).expect("set_amount_range failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
@@ -681,7 +690,7 @@ mod tests {
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
         ubi.register(&citizen).expect("register failed");
-        ubi.receive_funds(50).expect("fund failed"); // Only 50, but trying to pay 100
+        ubi.receive_funds(&gov, 50).expect("fund failed"); // Only 50, but trying to pay 100
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
@@ -699,7 +708,7 @@ mod tests {
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
         ubi.register(&citizen).expect("register failed");
-        ubi.receive_funds(1000).expect("fund failed");
+        ubi.receive_funds(&gov, 1000).expect("fund failed");
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         // Use a token with insufficient balance to simulate transfer failure
@@ -739,7 +748,7 @@ mod tests {
 
         ubi.register(&citizen1).expect("register citizen1 failed");
         ubi.register(&citizen2).expect("register citizen2 failed");
-        ubi.receive_funds(2000).expect("fund failed");
+        ubi.receive_funds(&gov, 2000).expect("fund failed");
         ubi.set_month_amount(&gov, 0, 100).expect("set_month failed");
 
         let mut mock_token = create_mock_token_with_balance(&gov);
@@ -762,10 +771,10 @@ mod tests {
         let mut ubi = UbiDistributor::new(gov.clone(), 1000).expect("init failed");
 
         // Simulate large amount close to u64::MAX
-        ubi.receive_funds(u64::MAX - 100).expect("first receive failed");
+        ubi.receive_funds(&gov, u64::MAX - 100).expect("first receive failed");
 
         // Try to add 200 more (should overflow)
-        let result = ubi.receive_funds(200);
+        let result = ubi.receive_funds(&gov, 200);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::Overflow);
     }

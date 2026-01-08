@@ -338,14 +338,13 @@ mod tests {
         let energy = create_test_public_key(12);
         let housing = create_test_public_key(13);
         let food = create_test_public_key(14);
-        // Missing Energy!
 
         let mut sector_map = HashMap::new();
         sector_map.insert("healthcare".to_string(), healthcare);
         sector_map.insert("education".to_string(), education);
         sector_map.insert("housing".to_string(), housing);
         sector_map.insert("food".to_string(), food);
-        // Deliberately not adding energy
+        // Deliberately omitting energy sector to test validation of required sectors
 
         let result = TreasuryRegistry::init(admin, fee_collector, sector_map);
         assert!(result.is_err());

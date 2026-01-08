@@ -234,10 +234,21 @@ impl TokenContract {
             .insert(spender.clone(), allowance - amount);
 
         // Perform transfer from owner to recipient
-        // We need to create a temporary context for the transfer
+        //
+        // **Design Note (Workaround for Allowance Pattern):**
+        // The capability-bound transfer API requires either ctx.caller or ctx.contract as the source.
+        // For transfer_from, we need owner as the source, not ctx.caller or ctx.contract.
+        // We work around this by creating a temporary ExecutionContext with:
+        // - owner as the pseudo-contract address (CallOrigin::Contract)
+        // This makes transfer debit from owner (via the capability-bound logic).
+        //
+        // This approach is semantically unusual: owner's PublicKey is used as a contract address.
+        // If transfer is enhanced with contract-specific logic in the future, this could have
+        // unintended consequences. Consider refactoring to support allowance-based transfers
+        // natively in the capability-bound model (e.g., add a dedicated transfer_from_allowed method).
         let transfer_ctx = ExecutionContext::with_contract(
             ctx.caller.clone(),
-            owner.clone(), // Use owner as the contract for transfer purposes
+            owner.clone(), // Pseudo-contract: source will be owner via CallOrigin::Contract
             ctx.block_number,
             ctx.timestamp,
             ctx.gas_limit,
@@ -455,7 +466,9 @@ mod tests {
         assert_eq!(token.balance_of(&public_key1), 300);
         assert_eq!(token.balance_of(&public_key2), 200);
 
-        // Test insufficient balance - try to transfer 301 when only 300 available
+        // Test insufficient balance - try to transfer 301 tokens from public_key1
+        // (ctx has public_key1 as contract via CallOrigin::Contract, so debit comes from public_key1)
+        // public_key1 only has 300 tokens left, so transfer of 301 should fail
         assert!(token.transfer(&ctx, &public_key1, 301).is_err());
     }
 
