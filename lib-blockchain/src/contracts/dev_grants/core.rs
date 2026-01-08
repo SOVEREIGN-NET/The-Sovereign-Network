@@ -328,10 +328,15 @@ impl DevGrants {
     }
 }
 
-impl Default for DevGrants {
-    fn default() -> Self {
-        // Default to zero-authority for testing only
-        // Production must always call new() with valid governance authority
+// DEPRECATED: Do not use Default::default() - it creates invalid zero-authority state.
+// For tests, use DevGrants::new() with a valid test governance authority.
+// Use test_new_with_zero_authority() in test modules instead.
+
+#[cfg(test)]
+impl DevGrants {
+    /// Test-only constructor that creates zero-authority DevGrants for unit test isolation.
+    /// This violates invariants and must NEVER be used in production.
+    pub fn test_new_with_zero_authority() -> Self {
         Self::new(PublicKey {
             dilithium_pk: vec![],
             kyber_pk: vec![],

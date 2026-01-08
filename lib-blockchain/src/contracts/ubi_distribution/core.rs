@@ -388,10 +388,15 @@ impl UbiDistributor {
     }
 }
 
-impl Default for UbiDistributor {
-    fn default() -> Self {
-        // Default to zero-authority for testing only
-        // Production must always call new() with valid governance authority
+// DEPRECATED: Do not use Default::default() - it creates invalid zero-authority state.
+// For tests, use UbiDistributor::new() with a valid test governance authority.
+// Use test_new_with_zero_authority() in test modules instead.
+
+#[cfg(test)]
+impl UbiDistributor {
+    /// Test-only constructor that creates zero-authority UbiDistributor for unit test isolation.
+    /// This violates invariants and must NEVER be used in production.
+    pub fn test_new_with_zero_authority() -> Self {
         Self::new(
             PublicKey {
                 dilithium_pk: vec![],
@@ -400,7 +405,7 @@ impl Default for UbiDistributor {
             },
             1000,
         )
-        .expect("default construction failed")
+        .expect("test construction failed")
     }
 }
 
