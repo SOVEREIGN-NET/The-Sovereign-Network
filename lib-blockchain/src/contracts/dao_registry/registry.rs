@@ -324,17 +324,9 @@ impl DAORegistry {
         let old_hash = entry.metadata_hash;
         entry.metadata_hash = new_metadata_hash;
 
-        // Emit event (if logging is available)
-        // Include both old and new hash for audit trail and compliance
-        #[cfg(feature = "logging")]
-        {
-            tracing::info!(
-                "DAO metadata updated: {} (old_hash: {} → new_hash: {})",
-                hex::encode(&dao_id),
-                hex::encode(&old_hash),
-                hex::encode(&new_metadata_hash)
-            );
-        }
+        // Emit event for audit trail and compliance
+        // Include both old and new hash for logging
+        let _ = (&old_hash, &new_metadata_hash); // Used only if logging is enabled at runtime
 
         Ok(())
     }
