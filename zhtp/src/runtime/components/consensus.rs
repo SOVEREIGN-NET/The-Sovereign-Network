@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{info, warn, debug};
+use tracing::{info, warn, debug, error};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use lib_consensus::{ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorManager, NoOpBroadcaster};
@@ -243,23 +243,38 @@ impl Component for ConsensusComponent {
         //
         // Solution: Always create the receiver. At each event, resolve the manager:
         // - If monitoring is running: emit alert
-        // - If not: drop alert and record metric
+        // - If not: drop alert and log at ERROR level (not WARN - these are critical events)
         //
         // This makes alert delivery robust to start order and monitoring restarts.
         tokio::spawn(async move {
-            let mut dropped_alerts = 0u64;
+            let mut dropped_events = Vec::new();
+            let mut drop_warning_emitted = false;
+
             while let Some(event) = liveness_rx.recv().await {
                 if let Some(alert_manager) = crate::monitoring::get_global_alert_manager() {
                     // Manager exists now - emit alert (works even if monitoring restarted)
+                    // Also catch up on any previously dropped events
+                    if !dropped_events.is_empty() {
+                        error!(
+                            "Consensus recovery: {} liveness events were dropped while monitoring was unavailable",
+                            dropped_events.len()
+                        );
+                        dropped_events.clear();
+                        drop_warning_emitted = false;
+                    }
+
                     handle_liveness_event(&alert_manager, event).await;
                 } else {
-                    // No manager - alert is dropped
-                    // Record metric: consensus_liveness_alerts_dropped
-                    // This allows operators to notice if monitoring is missing
-                    dropped_alerts += 1;
-                    if dropped_alerts == 1 {
-                        // Only warn once per task lifetime to avoid spam
-                        warn!("Consensus liveness alerts have no receiver: monitoring system not started");
+                    // CRITICAL: No manager - this is a Byzantine fault event that cannot be delivered
+                    // Log at ERROR level because this is a consensus-critical failure
+                    dropped_events.push(event.clone());
+
+                    if !drop_warning_emitted {
+                        error!(
+                            "CRITICAL: Consensus liveness alert cannot be delivered - monitoring system not started. \
+                             Byzantine faults occurring now will not be reported to operators."
+                        );
+                        drop_warning_emitted = true;
                     }
                 }
             }
