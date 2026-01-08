@@ -159,7 +159,9 @@ impl Web4Client {
         };
 
         std::fs::create_dir_all(&cache_dir)?;
-        let nonce_cache = NonceCache::open(&cache_dir.join("nonces"), 3600, 10_000)
+        // TODO: Pass network epoch from blockchain context (genesis hash)
+        let network_epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let nonce_cache = NonceCache::open(&cache_dir.join("nonces"), 3600, 10_000, network_epoch)
             .context("Failed to create nonce cache")?;
         let handshake_ctx = HandshakeContext::new(nonce_cache);
 

@@ -462,7 +462,9 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
     let cache_path = cache_dir.join("nonce_cache.db");
     
     // Use the standard open_default method for secure nonce cache
-    let nonce_cache = crate::handshake::NonceCache::open_default(&cache_path, 300)
+    // TODO: Pass network epoch from blockchain context (genesis hash)
+    let network_epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+    let nonce_cache = crate::handshake::NonceCache::open_default(&cache_path, 300, network_epoch)
         .map_err(|e| {
             tracing::warn!("Failed to open secure nonce cache, bootstrap may be vulnerable to replay attacks: {}", e);
             anyhow!("Nonce cache initialization failed: {}", e)

@@ -138,7 +138,9 @@ impl ZhtpClient {
             std::fs::create_dir_all(parent)?;
         }
 
-        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 10_000)
+        // TODO: Pass network epoch from blockchain context (genesis hash)
+        let network_epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
             .context("Failed to open nonce cache")?;
 
         let handshake_ctx = HandshakeContext::new(nonce_cache);
