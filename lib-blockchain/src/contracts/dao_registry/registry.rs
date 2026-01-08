@@ -325,12 +325,7 @@ impl DAORegistry {
         }
 
         // === MUTATION PHASE ===
-        let old_hash = entry.metadata_hash;
         entry.metadata_hash = new_metadata_hash;
-
-        // Emit event for audit trail and compliance
-        // Include both old and new hash for logging
-        let _ = (&old_hash, &new_metadata_hash); // Used only if logging is enabled at runtime
 
         Ok(())
     }
