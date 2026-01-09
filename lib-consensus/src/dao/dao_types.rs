@@ -78,6 +78,13 @@ pub enum GovernanceParameterValue {
     SlashDoubleSign(u8),
     SlashLiveness(u8),
     DevelopmentMode(bool),
+    // Blockchain difficulty parameters (owned by consensus, used by blockchain)
+    /// Initial difficulty for new chains (Bitcoin-style compact representation)
+    BlockchainInitialDifficulty(u32),
+    /// Number of blocks between difficulty adjustments
+    BlockchainAdjustmentInterval(u64),
+    /// Target time for difficulty adjustment interval (seconds)
+    BlockchainTargetTimespan(u64),
 }
 
 /// Types of DAO proposals

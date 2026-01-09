@@ -5,6 +5,7 @@
 - [Consensus Engine](#consensus-engine)
 - [Validator Management](#validator-management)
 - [DAO Governance](#dao-governance)
+- [Difficulty Management](#difficulty-management)
 - [Reward System](#reward-system)
 - [Byzantine Fault Detection](#byzantine-fault-detection)
 - [Proof Systems](#proof-systems)
@@ -281,6 +282,8 @@ pub struct DaoEngine {
 **`get_dao_treasury() -> DaoTreasury`**
 - Gets DAO treasury state (deprecated - use blockchain methods)
 
+> **Note:** For full documentation on Difficulty Management, see the [Difficulty Management](#difficulty-management) section below.
+
 ### DaoProposal
 
 Represents a DAO proposal.
@@ -324,6 +327,7 @@ pub struct GovernanceParameterUpdate {
 }
 
 pub enum GovernanceParameterValue {
+    // Consensus engine parameters
     MinStake(u64),
     MinStorage(u64),
     MaxValidators(u32),
@@ -332,12 +336,16 @@ pub enum GovernanceParameterValue {
     PrevoteTimeout(u64),
     PrecommitTimeout(u64),
     MaxTransactionsPerBlock(u32),
-    MaxDifficulty(u64),
-    TargetDifficulty(u64),
+    MaxDifficulty(u64),              // PoUW difficulty (not blockchain mining)
+    TargetDifficulty(u64),           // PoUW difficulty (not blockchain mining)
     ByzantineThreshold(f64),
     SlashDoubleSign(u8),
     SlashLiveness(u8),
     DevelopmentMode(bool),
+    // Blockchain mining difficulty parameters (delegated to DifficultyManager)
+    BlockchainInitialDifficulty(u32),    // Initial difficulty for genesis block
+    BlockchainAdjustmentInterval(u64),   // Blocks between difficulty adjustments
+    BlockchainTargetTimespan(u64),       // Target time for adjustment interval (seconds)
 }
 ```
 
@@ -356,6 +364,202 @@ pub struct DaoVote {
     pub justification: Option<String>,
     pub signature: Option<Signature>,
 }
+```
+
+## Difficulty Management
+
+The consensus package owns the blockchain mining difficulty adjustment policy. This ensures that difficulty parameters can be governed via DAO proposals and maintains clear separation of concerns.
+
+### DifficultyManager
+
+Manages blockchain mining difficulty calculations and DAO governance updates.
+
+```rust
+pub struct DifficultyManager {
+    config: DifficultyConfig,
+}
+```
+
+#### Methods
+
+**`new(config: DifficultyConfig) -> Self`**
+- Creates a new difficulty manager with the given configuration
+- `config`: Initial difficulty configuration
+- Returns: New DifficultyManager instance
+
+**`default() -> Self`**
+- Creates a new difficulty manager with Bitcoin-compatible defaults
+- Initial difficulty: `0x1d00ffff`
+- Adjustment interval: `2016` blocks
+- Target timespan: `1209600` seconds (2 weeks)
+
+**`config() -> &DifficultyConfig`**
+- Gets the current difficulty configuration
+- Returns: Reference to DifficultyConfig
+
+**`initial_difficulty() -> u32`**
+- Gets the initial difficulty value
+- Returns: Initial difficulty in Bitcoin compact format
+
+**`adjustment_interval() -> u64`**
+- Gets the adjustment interval (blocks between difficulty adjustments)
+- Returns: Number of blocks
+
+**`target_timespan() -> u64`**
+- Gets the target timespan for adjustment intervals
+- Returns: Target time in seconds
+
+**`should_adjust(height: u64) -> bool`**
+- Checks if difficulty should be adjusted at the given block height
+- `height`: Current blockchain height
+- Returns: `true` if adjustment should occur
+
+**`calculate_new_difficulty(current_difficulty: u32, actual_timespan: u64) -> DifficultyResult<u32>`**
+- Calculates new difficulty based on actual vs target timespan
+- `current_difficulty`: Current difficulty in compact format
+- `actual_timespan`: Actual time taken for the last interval (seconds)
+- Returns: New difficulty value, clamped to prevent extreme changes (4x max)
+- Algorithm: `new_difficulty = current * target_timespan / actual_timespan`
+
+**`adjust_difficulty(height: u64, current_difficulty: u32, interval_start_time: u64, interval_end_time: u64) -> DifficultyResult<Option<u32>>`**
+- Main entry point for difficulty adjustment
+- `height`: Current blockchain height
+- `current_difficulty`: Current difficulty value
+- `interval_start_time`: Timestamp of block at start of interval
+- `interval_end_time`: Timestamp of current block
+- Returns: `Some(new_difficulty)` if adjustment occurred, `None` otherwise
+
+**`apply_governance_update(initial_difficulty: Option<u32>, adjustment_interval: Option<u64>, target_timespan: Option<u64>) -> DifficultyResult<()>`**
+- Applies DAO governance updates to difficulty parameters
+- All parameters are optional (only specified parameters are updated)
+- Validates configuration before applying (no zero values, no invalid ranges)
+- Returns: `Ok(())` if successful, `Err(...)` if validation fails
+
+**`set_min_difficulty(min_difficulty: u32) -> DifficultyResult<()>`**
+- Sets the minimum difficulty bound
+- `min_difficulty`: Minimum allowed difficulty
+- Returns: Error if `min_difficulty > max_difficulty`
+
+**`set_max_difficulty(max_difficulty: u32) -> DifficultyResult<()>`**
+- Sets the maximum difficulty bound
+- `max_difficulty`: Maximum allowed difficulty
+- Returns: Error if `max_difficulty < min_difficulty`
+
+**`set_max_adjustment_factor(factor: u64) -> DifficultyResult<()>`**
+- Sets the maximum adjustment factor per interval
+- `factor`: Maximum multiplier/divisor for difficulty changes
+- Default: `4` (difficulty can at most quadruple or quarter per interval)
+
+### DifficultyConfig
+
+Configuration for blockchain difficulty adjustment.
+
+```rust
+pub struct DifficultyConfig {
+    pub initial_difficulty: u32,
+    pub adjustment_interval: u64,
+    pub target_timespan: u64,
+    pub min_difficulty: u32,
+    pub max_difficulty: u32,
+    pub max_adjustment_factor: u64,
+}
+```
+
+**Fields:**
+- `initial_difficulty`: Initial difficulty for genesis block (Bitcoin compact format)
+- `adjustment_interval`: Number of blocks between difficulty adjustments
+- `target_timespan`: Target time for completing an adjustment interval (seconds)
+- `min_difficulty`: Minimum allowed difficulty (default: `1`)
+- `max_difficulty`: Maximum allowed difficulty (default: `0xFFFFFFFF`)
+- `max_adjustment_factor`: Maximum change per interval (default: `4`)
+
+**Default Values (Bitcoin-compatible):**
+```rust
+DifficultyConfig {
+    initial_difficulty: 0x1d00ffff,          // Bitcoin's initial difficulty
+    adjustment_interval: 2016,                // 2016 blocks
+    target_timespan: 14 * 24 * 60 * 60,      // 2 weeks in seconds
+    min_difficulty: 1,
+    max_difficulty: 0xFFFFFFFF,
+    max_adjustment_factor: 4,
+}
+```
+
+#### Methods
+
+**`new(initial_difficulty: u32, adjustment_interval: u64, target_timespan: u64) -> DifficultyResult<Self>`**
+- Creates a new difficulty configuration with custom values
+- Validates all parameters before creation
+- Returns: Error if any parameter is invalid (e.g., zero values)
+
+**`validate() -> DifficultyResult<()>`**
+- Validates the configuration
+- Checks: non-zero values, min <= max, valid ranges
+- Returns: `Ok(())` if valid, `Err(...)` with specific validation error
+
+### DifficultyError
+
+Errors that can occur during difficulty operations.
+
+```rust
+pub enum DifficultyError {
+    InvalidDifficulty(String),
+    InvalidConfig(String),
+    CalculationError(String),
+}
+```
+
+### Integration with Blockchain
+
+The `BlockchainConsensusCoordinator` (in `lib-blockchain`) manages a `DifficultyManager` instance:
+
+```rust
+// In BlockchainConsensusCoordinator
+pub async fn get_difficulty_config(&self) -> DifficultyConfig { ... }
+pub async fn calculate_difficulty_adjustment(...) -> Result<Option<u32>> { ... }
+pub async fn apply_difficulty_governance_update(...) -> Result<()> { ... }
+```
+
+The blockchain delegates difficulty calculations to the consensus coordinator:
+
+```rust
+// In Blockchain::adjust_difficulty()
+if let Some(coordinator) = &self.consensus_coordinator {
+    let new_difficulty = coordinator.calculate_difficulty_adjustment(
+        height, current_difficulty, start_time, end_time
+    ).await?;
+    // Apply new difficulty
+}
+```
+
+### DAO Governance Integration
+
+Difficulty parameters can be updated via DAO proposals:
+
+```rust
+// Create a DAO proposal to adjust difficulty parameters
+let params = DaoExecutionParams {
+    action: DaoExecutionAction::GovernanceParameterUpdate(
+        GovernanceParameterUpdate {
+            updates: vec![
+                GovernanceParameterValue::BlockchainInitialDifficulty(0x1d00fffe),
+                GovernanceParameterValue::BlockchainAdjustmentInterval(1000),
+                GovernanceParameterValue::BlockchainTargetTimespan(604800), // 1 week
+            ]
+        }
+    )
+};
+
+// Submit proposal
+let proposal_id = dao_engine.create_dao_proposal(
+    proposer,
+    "Adjust Mining Difficulty Parameters".to_string(),
+    "Reduce adjustment interval to 1000 blocks...".to_string(),
+    DaoProposalType::GovernanceRules,
+    14, // 14 day voting period
+)?;
+
+// After proposal passes, parameters are automatically applied to DifficultyManager
 ```
 
 ## Reward System

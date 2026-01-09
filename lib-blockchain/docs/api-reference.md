@@ -757,7 +757,7 @@ pub const INITIAL_DIFFICULTY: u64 = 0x00000FFF;
 pub const MAX_BLOCK_SIZE: usize = 1_048_576; // 1MB
 pub const MAX_TRANSACTIONS_PER_BLOCK: usize = 1000;
 pub const TARGET_BLOCK_TIME: u64 = 10; // seconds
-pub const DIFFICULTY_ADJUSTMENT_INTERVAL: u64 = 2016; // blocks
+pub const DIFFICULTY_ADJUSTMENT_INTERVAL: u64 = 2016; // blocks (fallback if consensus coordinator unavailable)
 ```
 
 ### Contract Constants

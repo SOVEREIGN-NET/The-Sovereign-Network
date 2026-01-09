@@ -259,6 +259,26 @@ impl DaoEngine {
                 GovernanceParameterValue::SlashDoubleSign(value) => config.slash_double_sign = *value,
                 GovernanceParameterValue::SlashLiveness(value) => config.slash_liveness = *value,
                 GovernanceParameterValue::DevelopmentMode(value) => config.development_mode = *value,
+                // Blockchain difficulty parameters are handled by DifficultyManager,
+                // not ConsensusConfig. These parameters are validated here but applied 
+                // separately through the following flow:
+                //
+                // 1. DAO proposal with BlockchainInitialDifficulty/AdjustmentInterval/TargetTimespan
+                //    parameters is validated by validate_governance_update()
+                // 2. After proposal passes voting, execute_passed_proposal() is called
+                // 3. For blockchain difficulty params, the caller (typically node runtime)
+                //    extracts these values from the passed proposal
+                // 4. Caller invokes BlockchainConsensusCoordinator::apply_difficulty_governance_update()
+                //    which delegates to DifficultyManager::apply_governance_update()
+                //
+                // See: lib-blockchain/src/integration/consensus_integration.rs
+                //      BlockchainConsensusCoordinator::apply_difficulty_governance_update()
+                GovernanceParameterValue::BlockchainInitialDifficulty(_)
+                | GovernanceParameterValue::BlockchainAdjustmentInterval(_)
+                | GovernanceParameterValue::BlockchainTargetTimespan(_) => {
+                    // No-op here: these are applied via the DifficultyManager pathway
+                    // described in the comment above, not via ConsensusConfig mutation
+                }
             }
         }
 
@@ -338,6 +358,22 @@ impl DaoEngine {
                     }
                 }
                 GovernanceParameterValue::DevelopmentMode(_) => {}
+                // Blockchain difficulty parameters validation
+                GovernanceParameterValue::BlockchainInitialDifficulty(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Initial difficulty must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::BlockchainAdjustmentInterval(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Adjustment interval must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::BlockchainTargetTimespan(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Target timespan must be greater than zero"));
+                    }
+                }
             }
         }
 
