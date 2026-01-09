@@ -11,6 +11,35 @@ async fn test_bluetooth_mesh_creation() {
     assert!(!protocol.discovery_active);
 }
 
+#[tokio::test]
+async fn test_bluetooth_disabled_guard() {
+    // RUNTIME ASSERTION TEST: Verify defensive guard prevents execution when disabled
+    // This ensures that even if config filtering fails, Bluetooth still refuses to start
+
+    let node_id = [1u8; 32];
+    let keypair = KeyPair::generate().unwrap();
+    let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key.clone()).unwrap();
+
+    // SETUP: Simulate config disabling Bluetooth (as would be done by mesh server)
+    protocol.set_enabled(false);
+
+    // ASSERTION: Attempting to start discovery should fail with clear error
+    let result = protocol.start_discovery().await;
+
+    assert!(
+        result.is_err(),
+        "start_discovery() should fail when enabled=false (defensive guard)"
+    );
+
+    // ASSERTION: Error message should indicate config reason
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("disabled in configuration"),
+        "Error should mention config reason, got: {}",
+        error_msg
+    );
+}
+
 // TECH DEBT: This test is ignored due to macOS Core Bluetooth cleanup issue
 //
 // Problem: On macOS, initializing Core Bluetooth creates Objective-C objects and system

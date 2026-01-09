@@ -1,8 +1,12 @@
-use blake3;
+use blake3::hash;
 use hex;
 use rand::{rngs::StdRng, SeedableRng, RngCore};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::str::FromStr;
+use std::time::Duration;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -62,21 +66,15 @@ impl Node {
         }
 
         // Simulate KEM by deriving an ephemeral shared token using blake3 over both node ids
-        let mut ctx = blake3::Hasher::new();
-        ctx.update(self.node_id.as_bytes());
-        ctx.update(remote.node_id.as_bytes());
-        let shared = ctx.finalize();
-        // Convert to hex and verify both sides produce same value (deterministic)
+        let shared = hash(format!("{}{}", self.node_id, remote.node_id).as_bytes());
         let shared_hex = hex::encode(shared.as_bytes());
-        let mut ctx2 = blake3::Hasher::new();
-        ctx2.update(remote.node_id.as_bytes());
-        ctx2.update(self.node_id.as_bytes());
-        let shared2 = hex::encode(ctx2.finalize().as_bytes());
+        let shared2_hash = hash(format!("{}{}", remote.node_id, self.node_id).as_bytes());
+        let shared2 = hex::encode(shared2_hash.as_bytes());
         shared_hex == shared2
     }
 }
 
-/// Very small in-memory multicast fabric for deterministic tests
+/// Simulated multicast fabric for feature-gated tests
 #[derive(Clone, Debug)]
 pub struct MulticastFabric {
     pub messages: Arc<Mutex<Vec<String>>>,
@@ -107,59 +105,41 @@ impl MulticastFabric {
 
 /// Deterministic NodeId derived using Blake3("ZHTP_NODE_V2:" + DID + ":" + device)
 pub fn deterministic_node_id(did: &str, device: &str) -> String {
-    let mut ctx = blake3::Hasher::new();
-    ctx.update(b"ZHTP_NODE_V2:");
-    ctx.update(did.as_bytes());
-    ctx.update(b":");
-    ctx.update(device.as_bytes());
-    hex::encode(ctx.finalize().as_bytes())
+    let input = format!("ZHTP_NODE_V2:{}:{}", did, device);
+    hex::encode(hash(input.as_bytes()).as_bytes())
 }
 
 /// Utility: create a deterministic RNG seeded by a reproducible seed (for reproducible simulations)
 pub fn deterministic_rng_for_run(seed: u64) -> StdRng {
     StdRng::seed_from_u64(seed)
 }
-use blake3;
-use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha20Rng;
-use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::time::Duration;
-use tokio::sync::mpsc;
 
 pub const MULTICAST_ADDR: &str = "224.0.1.75";
 pub const MULTICAST_PORT: u16 = 37775;
 
-pub fn deterministic_rng(seed: u64) -> ChaCha20Rng {
+pub fn deterministic_rng(seed: u64) -> rand_chacha::ChaCha20Rng {
+    use rand_chacha::ChaCha20Rng;
     ChaCha20Rng::seed_from_u64(seed)
 }
 
 pub fn compute_node_id(did: &str, device: &str) -> String {
     let input = format!("ZHTP_NODE_V2:{}:{}", did, device);
-    let hash = blake3::hash(input.as_bytes());
-    hex::encode(hash.as_bytes())
+    hex::encode(hash(input.as_bytes()).as_bytes())
 }
 
 pub fn make_multicast_socket(bind_ip: Ipv4Addr, bind_port: u16) -> std::net::UdpSocket {
-    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).expect("create socket");
-    socket.set_reuse_address(true).ok();
-    #[cfg(target_family = "unix")]
-    socket.set_reuse_port(true).ok();
-
-    let addr = SockAddr::from(SocketAddr::new(IpAddr::V4(bind_ip), bind_port));
-    socket.bind(&addr).expect("bind socket");
+    let addr = SocketAddr::new(IpAddr::V4(bind_ip), bind_port);
+    let socket = std::net::UdpSocket::bind(addr).expect("bind socket");
 
     // Join multicast group on all interfaces
-    let multi = Ipv4Addr::from_str(MULTICAST_ADDR).expect("valid multicast" );
+    let multi = Ipv4Addr::from_str(MULTICAST_ADDR).expect("valid multicast");
     socket.join_multicast_v4(&multi, &bind_ip).ok();
 
     socket.set_read_timeout(Some(Duration::from_secs(2))).ok();
     socket.set_nonblocking(true).ok();
 
-    socket.into_udp_socket()
+    socket
 }
-
-use std::str::FromStr;
 
 pub async fn spawn_simple_node(
     did: String,
@@ -171,7 +151,7 @@ pub async fn spawn_simple_node(
     let node_id = compute_node_id(&did, &device);
     let bind_ip = Ipv4Addr::new(0, 0, 0, 0);
     let socket = make_multicast_socket(bind_ip, 0);
-    let local_addr = socket.local_addr().expect("local addr");
+    let _local_addr = socket.local_addr().expect("local addr");
     let udp = tokio::net::UdpSocket::from_std(socket).expect("tokio udp");
 
     // deterministic RNG for message delays and timing

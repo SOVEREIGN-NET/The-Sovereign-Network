@@ -256,7 +256,7 @@ impl Component for ProtocolsComponent {
         
         info!("Creating ZHTP Unified Server...");
         let (peer_discovery_tx, _peer_discovery_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-        
+
         let mut unified_server = crate::unified_server::ZhtpUnifiedServer::new_with_peer_notification(
             blockchain.clone(),
             storage.clone(),
@@ -266,6 +266,7 @@ impl Component for ProtocolsComponent {
             Some(peer_discovery_tx),
             None,  // discovery_port - use default
             None,  // quic_port - use default
+            None,  // protocols_config - will use defaults (Bluetooth disabled by default)
         ).await?;
         
         // Initialize blockchain provider
