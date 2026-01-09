@@ -17,6 +17,10 @@ pub enum ContractType {
     Governance,
     /// Web4 website contract - decentralized website hosting
     Web4Website,
+    /// UBI Distribution contract - universal basic income distribution
+    UbiDistribution,
+    /// Development Grants contract - protocol fee allocation and disbursement
+    DevGrants,
 }
 
 impl ContractType {
@@ -30,6 +34,8 @@ impl ContractType {
             ContractType::FileSharing => crate::contracts::GAS_MESSAGING, // Same as messaging due to complexity
             ContractType::Governance => crate::contracts::GAS_GROUP, // Same as group due to voting complexity
             ContractType::Web4Website => crate::contracts::GAS_MESSAGING, // Similar to file sharing complexity
+            ContractType::UbiDistribution => crate::contracts::GAS_TOKEN, // Token-like operations (transfers)
+            ContractType::DevGrants => crate::contracts::GAS_TOKEN, // Token-like operations (transfers)
         }
     }
 
@@ -56,6 +62,8 @@ impl ContractType {
             ContractType::FileSharing => "File Sharing Contract",
             ContractType::Governance => "Governance Contract",
             ContractType::Web4Website => "Web4 Website Contract",
+            ContractType::UbiDistribution => "UBI Distribution Contract",
+            ContractType::DevGrants => "Development Grants Contract",
         }
     }
 }
@@ -73,6 +81,8 @@ mod tests {
         assert_eq!(ContractType::FileSharing.gas_cost(), 3000);
         assert_eq!(ContractType::Governance.gas_cost(), 2500);
         assert_eq!(ContractType::Web4Website.gas_cost(), 3000);
+        assert_eq!(ContractType::UbiDistribution.gas_cost(), 2000); // Token-like costs
+        assert_eq!(ContractType::DevGrants.gas_cost(), 2000); // Token-like costs
     }
 
     #[test]
@@ -95,6 +105,14 @@ mod tests {
         assert_eq!(
             ContractType::ContactRegistry.name(),
             "Contact Registry Contract"
+        );
+        assert_eq!(
+            ContractType::UbiDistribution.name(),
+            "UBI Distribution Contract"
+        );
+        assert_eq!(
+            ContractType::DevGrants.name(),
+            "Development Grants Contract"
         );
     }
 

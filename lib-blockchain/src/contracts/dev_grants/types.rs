@@ -7,8 +7,12 @@ pub type ProposalId = u64;
 ///
 /// Uses u64 (not u128) for alignment with token contract transfer signature:
 /// `transfer(&mut self, from: &PublicKey, to: &PublicKey, amount: u64)`
+///
+/// **Invariant Encapsulation:** The inner u64 is private. Use `get()` or arithmetic
+/// methods (`checked_add`, `checked_sub`) to access/modify values. This prevents
+/// direct bypassing of any future invariants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Amount(pub u64);
+pub struct Amount(u64);
 
 impl Amount {
     /// Create a new Amount with validation (non-zero)
@@ -45,7 +49,7 @@ impl Amount {
     pub fn checked_sub(self, other: Amount) -> Result<Amount, Error> {
         self.0.checked_sub(other.0)
             .map(Amount)
-            .ok_or(Error::Underflow)
+            .ok_or(Error::Overflow)
     }
 
     /// Check if amount is zero
@@ -108,7 +112,12 @@ pub struct Disbursement {
     pub executed_at: u64,
 
     /// Tokens burned (from token contract's transfer return value)
-    /// For deflationary tokens; 0 for fixed-supply tokens
+    ///
+    /// **Invariant Relationship:**
+    /// - For fixed-supply tokens: `token_burned == 0` (amount fully transferred)
+    /// - For deflationary tokens: `token_burned > 0` (amount transferred + fee burned)
+    /// - Total deducted from sender: `amount.get() + token_burned`
+    /// - Invariant: `amount.get() + token_burned <= balance_deducted`
     pub token_burned: u64,
 }
 
@@ -135,11 +144,8 @@ pub enum Error {
     /// Amount is zero (not allowed)
     ZeroAmount,
 
-    /// Arithmetic overflow
+    /// Arithmetic overflow/underflow
     Overflow,
-
-    /// Arithmetic underflow
-    Underflow,
 
     /// Recipient key_id does not match approved grant
     InvalidRecipient,
@@ -157,8 +163,7 @@ impl std::fmt::Display for Error {
             Error::ProposalAlreadyExecuted => write!(f, "Proposal already executed"),
             Error::InsufficientBalance => write!(f, "Insufficient balance"),
             Error::ZeroAmount => write!(f, "Amount must be greater than zero"),
-            Error::Overflow => write!(f, "Arithmetic overflow"),
-            Error::Underflow => write!(f, "Arithmetic underflow"),
+            Error::Overflow => write!(f, "Arithmetic overflow/underflow"),
             Error::InvalidRecipient => write!(f, "Recipient key_id mismatch"),
             Error::TokenTransferFailed => write!(f, "Token transfer failed"),
         }
