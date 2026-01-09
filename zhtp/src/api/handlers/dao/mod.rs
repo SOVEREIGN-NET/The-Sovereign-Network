@@ -211,6 +211,7 @@ impl DaoHandler {
             "emergency" => Ok(DaoProposalType::Emergency),
             "community_funding" => Ok(DaoProposalType::CommunityFunding),
             "research_grants" => Ok(DaoProposalType::ResearchGrants),
+            "difficulty_parameter_update" => Ok(DaoProposalType::DifficultyParameterUpdate),
             _ => Err(anyhow::anyhow!("Invalid proposal type: {}", type_str)),
         }
     }
