@@ -781,6 +781,12 @@ impl ZhtpMeshServer {
         info!("🚀 QUIC mesh protocol active with PQC encryption on port 9334");
         
         // Connect to bootstrap peers if configured
+        // ARCHITECTURE NOTE: Bootstrap peers use QUIC exclusively because:
+        // 1. QUIC is the required transport for mesh bootstrap (enable_quic: true in ProtocolsConfig)
+        // 2. Mesh protocols (Bluetooth, WiFi, etc.) are optional and can be disabled
+        // 3. Bootstrap must work even when other protocols are disabled
+        // This means bootstrap_peers should always specify QUIC port (9334), but we support
+        // automatic conversion from mesh port (33444) for backward compatibility with configs
         let bootstrap_peers = self.mesh_node.read().await.bootstrap_peers.clone();
         if !bootstrap_peers.is_empty() {
             info!("📡 Connecting to {} bootstrap peer(s) via QUIC...", bootstrap_peers.len());
@@ -789,15 +795,15 @@ impl ZhtpMeshServer {
             for peer_str in &bootstrap_peers {
                 // Parse address - might be:
                 // - "192.168.1.245:9334" (correct QUIC port)
-                // - "192.168.1.245:33444" (mesh port - needs conversion)
-                // - "192.168.1.245" (IP only - use QUIC default port)
+                // - "192.168.1.245:33444" (mesh port - converts to QUIC port for compatibility)
+                // - "192.168.1.245" (IP only - uses QUIC default port 9334)
                 // - "zhtp://192.168.1.245:9334" (URL format)
                 let addr_str = peer_str.trim_start_matches("zhtp://").trim_start_matches("http://");
 
                 // Parse the address and fix port if needed
                 let peer_addr = if let Some(colon_pos) = addr_str.rfind(':') {
                     let ip_part = &addr_str[..colon_pos];
-                    let port_str = &addr_str[colon_pos+1..];
+                    let port_str = &addr_str[colon_pos + 1..];
 
                     // If port is mesh port (33444), convert to QUIC port (9334)
                     let port = match port_str.parse::<u16>() {

@@ -166,12 +166,24 @@ pub struct ProtocolsConfig {
     pub request_timeout_ms: u64,
 
     // Mesh protocol settings (authoritative config from config.toml)
+    /// Enable QUIC protocol (required, default: true)
+    /// QUIC is the mandatory transport for mesh bootstrap and is always enabled
     #[serde(default = "default_enable_quic")]
     pub enable_quic: bool,
+
+    /// Enable Bluetooth LE protocol (default: false)
+    /// When false, Bluetooth discovery is skipped (defensive guard prevents execution)
     #[serde(default = "default_enable_bluetooth")]
     pub enable_bluetooth: bool,
+
+    /// Enable mDNS discovery (reserved for future use, default: true)
+    /// Currently not integrated but available for mDNS-based peer discovery
     #[serde(default = "default_enable_mdns")]
     pub enable_mdns: bool,
+
+    /// QUIC protocol priority weight (reserved for future use, default: 1)
+    /// When multiple protocols are available, higher priority is preferred
+    /// Currently not used - future implementation for dynamic protocol selection
     #[serde(default = "default_quic_priority")]
     pub quic_priority: u8,
 }
@@ -511,6 +523,10 @@ impl Default for NodeConfig {
                 api_port: 9333,
                 max_connections: 1000,
                 request_timeout_ms: 30000,
+                enable_quic: true,          // QUIC is required
+                enable_bluetooth: false,    // Bluetooth disabled by default
+                enable_mdns: true,          // mDNS enabled for peer discovery
+                quic_priority: 1,           // Default priority weight
             },
             
             rewards_config: RewardsConfig::default(),

@@ -217,7 +217,7 @@ impl BluetoothMeshProtocol {
         if !self.enabled {
             return Err(anyhow!(
                 "Bluetooth LE discovery refused: disabled in configuration (enable_bluetooth=false). \
-                This is a safety violation - Bluetooth should not reach this layer if properly filtered at config boundary."
+                Defensive guard preventing disabled protocol from starting."
             ));
         }
 
