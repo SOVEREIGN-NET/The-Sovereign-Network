@@ -164,6 +164,73 @@ pub struct ProtocolsConfig {
     pub api_port: u16,
     pub max_connections: usize,
     pub request_timeout_ms: u64,
+
+    // Mesh protocol settings (authoritative config from config.toml)
+    #[serde(default = "default_enable_quic")]
+    pub enable_quic: bool,
+    #[serde(default = "default_enable_bluetooth")]
+    pub enable_bluetooth: bool,
+    #[serde(default = "default_enable_mdns")]
+    pub enable_mdns: bool,
+    #[serde(default = "default_quic_priority")]
+    pub quic_priority: u8,
+}
+
+fn default_enable_quic() -> bool {
+    true
+}
+
+fn default_enable_bluetooth() -> bool {
+    false
+}
+
+fn default_enable_mdns() -> bool {
+    true
+}
+
+fn default_quic_priority() -> u8 {
+    1
+}
+
+impl ProtocolsConfig {
+    /// Filter mesh protocols based on config settings (AUTHORITATIVE CONFIG LAYER)
+    ///
+    /// This is the policy enforcement point. Disabled protocols must NEVER reach lib-network.
+    /// Configuration must be resolved at the zhtp boundary before lib-network is invoked.
+    pub fn filter_mesh_protocols(&self, requested: Vec<lib_network::protocols::NetworkProtocol>) -> Vec<lib_network::protocols::NetworkProtocol> {
+        use lib_network::protocols::NetworkProtocol;
+
+        requested
+            .into_iter()
+            .filter(|protocol| {
+                let allowed = match protocol {
+                    NetworkProtocol::BluetoothLE => {
+                        if !self.enable_bluetooth {
+                            tracing::info!("⊘ FILTERED: Bluetooth LE disabled by config (enable_bluetooth=false)");
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    NetworkProtocol::QUIC => {
+                        if !self.enable_quic {
+                            tracing::info!("⊘ FILTERED: QUIC disabled by config (enable_quic=false)");
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    // Add other protocol filters as needed
+                    _ => true,
+                };
+
+                if allowed {
+                    tracing::debug!("✓ Protocol allowed: {:?}", protocol);
+                }
+                allowed
+            })
+            .collect()
+    }
 }
 
 /// Automatic rewards configuration
