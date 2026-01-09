@@ -34,3 +34,5 @@ codegen-units = 1
 [profile.dev]
 opt-level = 0
 debug = true
+
+[workspace.metadata.dev-tools]

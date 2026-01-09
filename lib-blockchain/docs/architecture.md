@@ -195,6 +195,7 @@ Coordinates with lib-consensus for:
 
 - **Validator Management**: Register and manage blockchain validators
 - **Block Production**: Coordinate block proposal and validation
+- **Difficulty Management**: Coordinate difficulty adjustment and target calculation
 - **DAO Governance**: On-chain governance with proposal and voting
 - **Reward Distribution**: Distribute consensus rewards to participants
 - **Byzantine Fault Tolerance**: Handle malicious validators and network partitions
