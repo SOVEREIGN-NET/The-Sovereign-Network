@@ -838,6 +838,28 @@ impl Blockchain {
         &self.difficulty_config
     }
 
+    /// Update the difficulty configuration (for governance updates)
+    ///
+    /// This method validates the new configuration before applying it.
+    /// The `last_updated_at_height` field will be set to the current blockchain height.
+    ///
+    /// # Errors
+    /// Returns an error if the configuration parameters are invalid.
+    pub fn set_difficulty_config(&mut self, mut config: DifficultyConfig) -> Result<()> {
+        config.validate().map_err(|e| anyhow::anyhow!("Invalid difficulty config: {}", e))?;
+        config.last_updated_at_height = self.height;
+        info!(
+            "Updating difficulty config at height {}: target_timespan={}, adjustment_interval={}, max_decrease={}, max_increase={}",
+            self.height,
+            config.target_timespan,
+            config.adjustment_interval,
+            config.max_decrease_factor,
+            config.max_increase_factor
+        );
+        self.difficulty_config = config;
+        Ok(())
+    }
+
     /// Check if a nullifier has been used
     pub fn is_nullifier_used(&self, nullifier: &Hash) -> bool {
         self.nullifier_set.contains(nullifier)

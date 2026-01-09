@@ -5,6 +5,7 @@
 
 use crate::types::Hash;
 use serde::{Serialize, Deserialize};
+use tracing::warn;
 
 /// Difficulty representation for proof-of-work
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -72,7 +73,7 @@ impl std::fmt::Display for Difficulty {
 }
 
 /// Governance-controlled difficulty adjustment parameters for PoUW consensus
-/// 
+///
 /// This struct stores configurable parameters that control how mining difficulty
 /// adjusts over time. These parameters can be updated through governance proposals
 /// to adapt to changing network conditions.
@@ -81,21 +82,23 @@ pub struct DifficultyConfig {
     /// Target timespan for difficulty adjustment period (in seconds)
     /// Default: 14 days (1,209,600 seconds)
     pub target_timespan: u64,
-    
+
     /// Number of blocks between difficulty adjustments
     /// Default: 2016 blocks (Bitcoin-style)
     pub adjustment_interval: u64,
-    
-    /// Minimum adjustment factor (maximum difficulty decrease per adjustment)
+
+    /// Maximum factor by which difficulty can decrease per adjustment
     /// Value of 4 means difficulty can decrease by at most 4x per adjustment
+    /// (i.e., actual_timespan is clamped to at most target_timespan * 4)
     /// Default: 4
-    pub min_adjustment_factor: u64,
-    
-    /// Maximum adjustment factor (maximum difficulty increase per adjustment)
+    pub max_decrease_factor: u64,
+
+    /// Maximum factor by which difficulty can increase per adjustment
     /// Value of 4 means difficulty can increase by at most 4x per adjustment
+    /// (i.e., actual_timespan is clamped to at least target_timespan / 4)
     /// Default: 4
-    pub max_adjustment_factor: u64,
-    
+    pub max_increase_factor: u64,
+
     /// Block height at which this configuration was last updated
     /// Used for governance tracking and auditability
     pub last_updated_at_height: u64,
@@ -111,15 +114,15 @@ impl DifficultyConfig {
     pub fn with_params(
         target_timespan: u64,
         adjustment_interval: u64,
-        min_adjustment_factor: u64,
-        max_adjustment_factor: u64,
+        max_decrease_factor: u64,
+        max_increase_factor: u64,
         last_updated_at_height: u64,
     ) -> Self {
         Self {
             target_timespan,
             adjustment_interval,
-            min_adjustment_factor,
-            max_adjustment_factor,
+            max_decrease_factor,
+            max_increase_factor,
             last_updated_at_height,
         }
     }
@@ -128,40 +131,43 @@ impl DifficultyConfig {
     /// Calculated as target_timespan / adjustment_interval
     pub fn target_block_time(&self) -> u64 {
         if self.adjustment_interval == 0 {
+            warn!("DifficultyConfig has adjustment_interval=0, using default 10 minute block time");
             return 600; // Default to 10 minutes if misconfigured
         }
         self.target_timespan / self.adjustment_interval
     }
 
     /// Calculate the clamped timespan for difficulty adjustment
-    /// 
+    ///
     /// This prevents extreme difficulty changes by clamping the actual timespan
-    /// to be within [target_timespan / min_factor, target_timespan * max_factor]
+    /// to be within [target_timespan / max_increase_factor, target_timespan * max_decrease_factor]
     pub fn clamp_timespan(&self, actual_timespan: u64) -> u64 {
-        let max_timespan = self.target_timespan.saturating_mul(self.max_adjustment_factor);
-        let min_timespan = self.target_timespan / self.min_adjustment_factor.max(1);
-        
+        // If blocks came too fast, difficulty increases (timespan clamped to minimum)
+        let min_timespan = self.target_timespan / self.max_increase_factor.max(1);
+        // If blocks came too slow, difficulty decreases (timespan clamped to maximum)
+        let max_timespan = self.target_timespan.saturating_mul(self.max_decrease_factor);
+
         actual_timespan.clamp(min_timespan, max_timespan)
     }
 
     /// Validate the configuration parameters
-    /// 
+    ///
     /// Returns an error if any parameters are invalid or would cause issues
     pub fn validate(&self) -> Result<(), String> {
         if self.target_timespan == 0 {
             return Err("target_timespan must be greater than 0".to_string());
         }
-        
+
         if self.adjustment_interval == 0 {
             return Err("adjustment_interval must be greater than 0".to_string());
         }
-        
-        if self.min_adjustment_factor == 0 {
-            return Err("min_adjustment_factor must be greater than 0".to_string());
+
+        if self.max_decrease_factor == 0 {
+            return Err("max_decrease_factor must be greater than 0".to_string());
         }
-        
-        if self.max_adjustment_factor == 0 {
-            return Err("max_adjustment_factor must be greater than 0".to_string());
+
+        if self.max_increase_factor == 0 {
+            return Err("max_increase_factor must be greater than 0".to_string());
         }
 
         // Check for reasonable limits
@@ -173,10 +179,10 @@ impl DifficultyConfig {
             return Err("adjustment_interval cannot exceed 1,000,000 blocks".to_string());
         }
 
-        if self.min_adjustment_factor > 100 || self.max_adjustment_factor > 100 {
+        if self.max_decrease_factor > 100 || self.max_increase_factor > 100 {
             return Err("adjustment factors cannot exceed 100".to_string());
         }
-        
+
         Ok(())
     }
 }
@@ -186,16 +192,16 @@ impl Default for DifficultyConfig {
         Self {
             // 14 days in seconds (same as Bitcoin)
             target_timespan: 14 * 24 * 60 * 60,
-            
+
             // 2016 blocks (Bitcoin-style)
             adjustment_interval: 2016,
-            
-            // Maximum 4x decrease per adjustment
-            min_adjustment_factor: 4,
-            
-            // Maximum 4x increase per adjustment
-            max_adjustment_factor: 4,
-            
+
+            // Maximum 4x decrease per adjustment (difficulty can quarter)
+            max_decrease_factor: 4,
+
+            // Maximum 4x increase per adjustment (difficulty can quadruple)
+            max_increase_factor: 4,
+
             // Genesis block
             last_updated_at_height: 0,
         }
@@ -265,25 +271,41 @@ pub fn min_target() -> [u8; 32] {
     target
 }
 
-/// Difficulty adjustment calculation
+/// Difficulty adjustment calculation using DifficultyConfig
+///
+/// This is the preferred method that uses governance-controlled parameters.
+pub fn adjust_difficulty_with_config(
+    current_difficulty: u32,
+    actual_timespan: u64,
+    config: &DifficultyConfig,
+) -> u32 {
+    let clamped_timespan = config.clamp_timespan(actual_timespan);
+
+    // Calculate new difficulty
+    let new_difficulty =
+        (current_difficulty as u64 * config.target_timespan / clamped_timespan) as u32;
+
+    // Ensure difficulty doesn't go to zero
+    new_difficulty.max(1)
+}
+
+/// Difficulty adjustment calculation (legacy function for backward compatibility)
+///
+/// For new code, prefer using `adjust_difficulty_with_config` with a `DifficultyConfig`.
 pub fn adjust_difficulty(
     current_difficulty: u32,
     actual_timespan: u64,
     target_timespan: u64,
 ) -> u32 {
-    // Clamp the adjustment to prevent extreme changes
-    let max_adjustment = target_timespan * 4;
-    let min_adjustment = target_timespan / 4;
-    
-    let clamped_timespan = actual_timespan
-        .max(min_adjustment)
-        .min(max_adjustment);
-    
-    // Calculate new difficulty
-    let new_difficulty = (current_difficulty as u64 * target_timespan / clamped_timespan) as u32;
-    
-    // Ensure difficulty doesn't go to zero
-    new_difficulty.max(1)
+    // Use default config factors for backward compatibility
+    let config = DifficultyConfig {
+        target_timespan,
+        adjustment_interval: 2016, // Not used in this calculation
+        max_decrease_factor: 4,
+        max_increase_factor: 4,
+        last_updated_at_height: 0,
+    };
+    adjust_difficulty_with_config(current_difficulty, actual_timespan, &config)
 }
 
 /// Calculate work done for a given difficulty
@@ -349,11 +371,11 @@ mod tests {
     #[test]
     fn test_difficulty_config_default() {
         let config = DifficultyConfig::default();
-        
+
         assert_eq!(config.target_timespan, 14 * 24 * 60 * 60); // 14 days
         assert_eq!(config.adjustment_interval, 2016);
-        assert_eq!(config.min_adjustment_factor, 4);
-        assert_eq!(config.max_adjustment_factor, 4);
+        assert_eq!(config.max_decrease_factor, 4);
+        assert_eq!(config.max_increase_factor, 4);
         assert_eq!(config.last_updated_at_height, 0);
     }
 
@@ -393,25 +415,25 @@ mod tests {
         // Valid config should pass
         let valid_config = DifficultyConfig::default();
         assert!(valid_config.validate().is_ok());
-        
+
         // Invalid target_timespan
         let mut invalid = DifficultyConfig::default();
         invalid.target_timespan = 0;
         assert!(invalid.validate().is_err());
-        
+
         // Invalid adjustment_interval
         let mut invalid = DifficultyConfig::default();
         invalid.adjustment_interval = 0;
         assert!(invalid.validate().is_err());
-        
-        // Invalid min_adjustment_factor
+
+        // Invalid max_decrease_factor
         let mut invalid = DifficultyConfig::default();
-        invalid.min_adjustment_factor = 0;
+        invalid.max_decrease_factor = 0;
         assert!(invalid.validate().is_err());
-        
-        // Invalid max_adjustment_factor
+
+        // Invalid max_increase_factor
         let mut invalid = DifficultyConfig::default();
-        invalid.max_adjustment_factor = 0;
+        invalid.max_increase_factor = 0;
         assert!(invalid.validate().is_err());
     }
 
@@ -433,16 +455,38 @@ mod tests {
     fn test_difficulty_config_with_params() {
         let config = DifficultyConfig::with_params(
             7 * 24 * 60 * 60, // 7 days
-            1008,              // Half of Bitcoin's interval
-            2,                 // Max 2x decrease
-            2,                 // Max 2x increase
-            1000,              // Updated at block 1000
+            1008,             // Half of Bitcoin's interval
+            2,                // Max 2x decrease
+            2,                // Max 2x increase
+            1000,             // Updated at block 1000
         );
-        
+
         assert_eq!(config.target_timespan, 7 * 24 * 60 * 60);
         assert_eq!(config.adjustment_interval, 1008);
-        assert_eq!(config.min_adjustment_factor, 2);
-        assert_eq!(config.max_adjustment_factor, 2);
+        assert_eq!(config.max_decrease_factor, 2);
+        assert_eq!(config.max_increase_factor, 2);
         assert_eq!(config.last_updated_at_height, 1000);
+    }
+
+    #[test]
+    fn test_adjust_difficulty_with_config() {
+        let config = DifficultyConfig::default();
+        let current_difficulty = 1000u32;
+
+        // If blocks come too fast (half the expected time), difficulty should increase
+        let fast_timespan = config.target_timespan / 2;
+        let new_difficulty = adjust_difficulty_with_config(current_difficulty, fast_timespan, &config);
+        assert!(new_difficulty > current_difficulty);
+
+        // If blocks come too slow (double the expected time), difficulty should decrease
+        let slow_timespan = config.target_timespan * 2;
+        let new_difficulty = adjust_difficulty_with_config(current_difficulty, slow_timespan, &config);
+        assert!(new_difficulty < current_difficulty);
+
+        // Extreme fast should be clamped to 4x max increase
+        let very_fast = 1000u64; // Much faster than target
+        let new_difficulty = adjust_difficulty_with_config(current_difficulty, very_fast, &config);
+        // Due to clamping, max increase is 4x
+        assert!(new_difficulty <= current_difficulty * 4);
     }
 }

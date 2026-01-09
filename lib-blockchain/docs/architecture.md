@@ -335,15 +335,15 @@ The blockchain uses governance-controlled difficulty parameters through `Difficu
 
 - **Configurable Parameters**: Target timespan, adjustment interval, and adjustment factors
 - **Default Settings**: 14-day timespan, 2016-block interval, 4x max adjustment (Bitcoin-style)
-- **Governance Updates**: Parameters can be modified via DAO proposals
+- **Governance Updates**: Parameters can be modified via DAO proposals using `set_difficulty_config()`
 - **Audit Trail**: `last_updated_at_height` tracks parameter changes
 
 ```rust
 pub struct DifficultyConfig {
-    pub target_timespan: u64,         // Default: 14 days
+    pub target_timespan: u64,         // Default: 14 days (1,209,600 seconds)
     pub adjustment_interval: u64,      // Default: 2016 blocks
-    pub min_adjustment_factor: u64,    // Default: 4
-    pub max_adjustment_factor: u64,    // Default: 4
+    pub max_decrease_factor: u64,      // Default: 4 (difficulty can decrease by 4x max)
+    pub max_increase_factor: u64,      // Default: 4 (difficulty can increase by 4x max)
     pub last_updated_at_height: u64,
 }
 ```
@@ -352,6 +352,7 @@ pub struct DifficultyConfig {
 - `target_block_time()` - Calculates target seconds per block (default: 600s)
 - `clamp_timespan()` - Prevents extreme difficulty changes
 - `validate()` - Ensures parameters are within safe ranges
+- `adjust_difficulty_with_config()` - Calculates new difficulty using config parameters
 
 ## Economic Architecture
 
