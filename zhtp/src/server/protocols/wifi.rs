@@ -58,11 +58,18 @@ impl WiFiRouter {
         // SECURITY (HIGH-2): Persistent RocksDB cache for cross-restart replay protection
         // Uses open_default() with 5-minute TTL
         let db_path = PathBuf::from("./nonce_cache_wifi");
-        let nonce_cache = NonceCache::open_default(&db_path, 300)
+        let network_epoch = match lib_identity::types::node_id::get_network_genesis() {
+            Ok(genesis) => lib_network::handshake::NetworkEpoch::from_genesis(genesis),
+            Err(_) => {
+                warn!("Network genesis not set, using fallback chain_id=0 for development");
+                lib_network::handshake::NetworkEpoch::from_chain_id(0)
+            }
+        };
+        let nonce_cache = NonceCache::open_default(&db_path, 300, network_epoch)
             .unwrap_or_else(|e| {
                 warn!("Failed to initialize persistent nonce cache: {}, using fallback", e);
                 // Fallback: try again with different path
-                NonceCache::open_default(&PathBuf::from("/tmp/nonce_cache_wifi"), 300)
+                NonceCache::open_default(&PathBuf::from("/tmp/nonce_cache_wifi"), 300, network_epoch)
                     .expect("Failed to create WiFi nonce cache even with fallback path")
             });
         let handshake_context = HandshakeContext::new(nonce_cache);
