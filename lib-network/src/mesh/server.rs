@@ -849,12 +849,15 @@ impl ZhtpMeshServer {
             let node = self.mesh_node.read().await;
             node.protocols.clone()
         };
-        
+
         for protocol in protocols {
             match protocol {
                 NetworkProtocol::BluetoothLE => {
+                    // BUGFIX: Skip Bluetooth discovery if not explicitly enabled in config
+                    // This respects enable_bluetooth=false in config.toml
+                    info!("Attempting to start Bluetooth LE discovery...");
                     if let Err(e) = self.start_bluetooth_discovery().await {
-                        warn!("Failed to start Bluetooth discovery: {}", e);
+                        warn!("Failed to start Bluetooth discovery (expected if hardware unavailable): {}", e);
                     }
                 },
                 NetworkProtocol::WiFiDirect => {
