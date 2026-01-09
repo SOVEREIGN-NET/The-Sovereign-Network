@@ -721,7 +721,7 @@ async fn load_package_config<T: for<'de> Deserialize<'de>>(
     package_name: &str,
 ) -> Result<T> {
     let config_file = config_dir.join(format!("{}.toml", package_name));
-    
+
     if config_file.exists() {
         let content = tokio::fs::read_to_string(&config_file).await?;
         let config: T = toml::from_str(&content)?;
@@ -730,5 +730,146 @@ async fn load_package_config<T: for<'de> Deserialize<'de>>(
         Err(ConfigError::PackageMissing {
             package: package_name.to_string()
         }.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lib_network::protocols::NetworkProtocol;
+
+    #[test]
+    fn test_protocol_filtering_bluetooth_disabled() {
+        // REGRESSION TEST: Verify that disabled protocols are filtered out
+        // This prevents accidental re-enablement of Bluetooth when disabled in config
+
+        let config = ProtocolsConfig {
+            lib_enabled: true,
+            zdns_enabled: true,
+            api_port: 8080,
+            max_connections: 100,
+            request_timeout_ms: 5000,
+            enable_quic: true,
+            enable_bluetooth: false,  // POLICY: Bluetooth disabled
+            enable_mdns: true,
+            quic_priority: 1,
+        };
+
+        let requested = vec![
+            NetworkProtocol::BluetoothLE,
+            NetworkProtocol::QUIC,
+            NetworkProtocol::WiFiDirect,
+        ];
+
+        let filtered = config.filter_mesh_protocols(requested);
+
+        // ASSERTION: Bluetooth must NOT be in filtered list
+        assert!(
+            !filtered.contains(&NetworkProtocol::BluetoothLE),
+            "REGRESSION: Bluetooth LE should be filtered when enable_bluetooth=false"
+        );
+
+        // ASSERTION: QUIC must still be in filtered list
+        assert!(
+            filtered.contains(&NetworkProtocol::QUIC),
+            "QUIC should be allowed when enable_quic=true"
+        );
+
+        // ASSERTION: WiFiDirect should pass through (no explicit disable)
+        assert!(
+            filtered.contains(&NetworkProtocol::WiFiDirect),
+            "WiFiDirect should be allowed when not explicitly disabled"
+        );
+    }
+
+    #[test]
+    fn test_protocol_filtering_bluetooth_enabled() {
+        // NORMAL CASE: When Bluetooth is enabled, it should NOT be filtered
+
+        let config = ProtocolsConfig {
+            lib_enabled: true,
+            zdns_enabled: true,
+            api_port: 8080,
+            max_connections: 100,
+            request_timeout_ms: 5000,
+            enable_quic: true,
+            enable_bluetooth: true,  // POLICY: Bluetooth enabled
+            enable_mdns: true,
+            quic_priority: 1,
+        };
+
+        let requested = vec![
+            NetworkProtocol::BluetoothLE,
+            NetworkProtocol::QUIC,
+        ];
+
+        let filtered = config.filter_mesh_protocols(requested);
+
+        // ASSERTION: Bluetooth must be in filtered list when enabled
+        assert!(
+            filtered.contains(&NetworkProtocol::BluetoothLE),
+            "Bluetooth LE should be allowed when enable_bluetooth=true"
+        );
+    }
+
+    #[test]
+    fn test_protocol_filtering_quic_disabled() {
+        // Edge case: QUIC disabled should be filtered
+
+        let config = ProtocolsConfig {
+            lib_enabled: true,
+            zdns_enabled: true,
+            api_port: 8080,
+            max_connections: 100,
+            request_timeout_ms: 5000,
+            enable_quic: false,  // POLICY: QUIC disabled
+            enable_bluetooth: true,
+            enable_mdns: true,
+            quic_priority: 1,
+        };
+
+        let requested = vec![
+            NetworkProtocol::QUIC,
+            NetworkProtocol::BluetoothLE,
+        ];
+
+        let filtered = config.filter_mesh_protocols(requested);
+
+        // ASSERTION: QUIC must NOT be in filtered list
+        assert!(
+            !filtered.contains(&NetworkProtocol::QUIC),
+            "QUIC should be filtered when enable_quic=false"
+        );
+
+        // ASSERTION: Bluetooth must be in filtered list
+        assert!(
+            filtered.contains(&NetworkProtocol::BluetoothLE),
+            "Bluetooth should be allowed when enable_bluetooth=true"
+        );
+    }
+
+    #[test]
+    fn test_protocol_filtering_empty_list() {
+        // Edge case: Empty protocol list should remain empty
+
+        let config = ProtocolsConfig {
+            lib_enabled: true,
+            zdns_enabled: true,
+            api_port: 8080,
+            max_connections: 100,
+            request_timeout_ms: 5000,
+            enable_quic: true,
+            enable_bluetooth: false,
+            enable_mdns: true,
+            quic_priority: 1,
+        };
+
+        let requested = vec![];
+        let filtered = config.filter_mesh_protocols(requested);
+
+        assert!(
+            filtered.is_empty(),
+            "Filtering empty list should return empty list"
+        );
     }
 }
