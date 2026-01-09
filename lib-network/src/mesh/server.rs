@@ -756,8 +756,10 @@ impl ZhtpMeshServer {
         // TODO: This should use a persistent server identity from config
         let identity = Arc::new(create_default_mesh_identity());
 
-        // Bind to QUIC mesh port 9334 (PQC encrypted)
-        let bind_addr = "0.0.0.0:9334".parse().unwrap();
+        // Bind to configured QUIC mesh port (default 9334, but configurable via mesh_port)
+        // Use mesh_port from configuration if available, otherwise fall back to 9334
+        let mesh_port = self.mesh_node.read().await.mesh_port;
+        let bind_addr = format!("0.0.0.0:{}", mesh_port).parse().unwrap();
 
         // Initialize QUIC mesh protocol with UHP+Kyber authentication
         let mut quic_protocol = QuicMeshProtocol::new(identity, bind_addr)?;
@@ -778,15 +780,15 @@ impl ZhtpMeshServer {
         // Mark protocol as active
         self.active_protocols.write().await.insert(NetworkProtocol::QUIC, true);
         
-        info!("🚀 QUIC mesh protocol active with PQC encryption on port 9334");
+        info!("🚀 QUIC mesh protocol active with PQC encryption on port {}", mesh_port);
         
         // Connect to bootstrap peers if configured
         // ARCHITECTURE NOTE: Bootstrap peers use QUIC exclusively because:
         // 1. QUIC is the required transport for mesh bootstrap (enable_quic: true in ProtocolsConfig)
         // 2. Mesh protocols (Bluetooth, WiFi, etc.) are optional and can be disabled
         // 3. Bootstrap must work even when other protocols are disabled
-        // This means bootstrap_peers should always specify QUIC port (9334), but we support
-        // automatic conversion from mesh port (33444) for backward compatibility with configs
+        // Bootstrap peers should specify the configured mesh_port (default 33444)
+        // This is the port for node-to-node QUIC communication
         let bootstrap_peers = self.mesh_node.read().await.bootstrap_peers.clone();
         if !bootstrap_peers.is_empty() {
             info!("📡 Connecting to {} bootstrap peer(s) via QUIC...", bootstrap_peers.len());
@@ -794,24 +796,22 @@ impl ZhtpMeshServer {
 
             for peer_str in &bootstrap_peers {
                 // Parse address - might be:
-                // - "192.168.1.245:9334" (correct QUIC port)
-                // - "192.168.1.245:33444" (mesh port - converts to QUIC port for compatibility)
-                // - "192.168.1.245" (IP only - uses QUIC default port 9334)
-                // - "zhtp://192.168.1.245:9334" (URL format)
+                // - "192.168.1.245:33444" (mesh port - correct for node-to-node)
+                // - "192.168.1.245" (IP only - uses configured mesh_port)
+                // - "zhtp://192.168.1.245:33444" (URL format)
                 let addr_str = peer_str.trim_start_matches("zhtp://").trim_start_matches("http://");
+                let default_mesh_port = self.mesh_node.read().await.mesh_port;
 
-                // Parse the address and fix port if needed
+                // Parse the address - use configured mesh_port if no port specified
                 let peer_addr = if let Some(colon_pos) = addr_str.rfind(':') {
                     let ip_part = &addr_str[..colon_pos];
                     let port_str = &addr_str[colon_pos + 1..];
 
-                    // If port is mesh port (33444), convert to QUIC port (9334)
                     let port = match port_str.parse::<u16>() {
-                        Ok(p) if p == 33444 => {
-                            info!("   ⚠️  Peer has mesh port 33444, converting to QUIC port 9334: {}", peer_str);
-                            9334
+                        Ok(p) => {
+                            info!("   Using explicit peer port {}: {}", p, peer_str);
+                            p
                         }
-                        Ok(p) => p,
                         Err(_) => {
                             warn!("   Failed to parse port from bootstrap peer address '{}': invalid port", peer_str);
                             continue;
@@ -826,9 +826,9 @@ impl ZhtpMeshServer {
                         }
                     }
                 } else {
-                    // No port specified - use IP with QUIC default port 9334
-                    info!("   ℹ️  Peer has no port, using QUIC default port 9334: {}", peer_str);
-                    match format!("{}:9334", addr_str).parse::<std::net::SocketAddr>() {
+                    // No port specified - use configured mesh_port (default 33444)
+                    info!("   ℹ️  Peer has no port, using configured mesh_port {}: {}", default_mesh_port, peer_str);
+                    match format!("{}:{}", addr_str, default_mesh_port).parse::<std::net::SocketAddr>() {
                         Ok(addr) => addr,
                         Err(e) => {
                             warn!("   Failed to parse bootstrap peer address '{}': {}", peer_str, e);
