@@ -183,8 +183,8 @@ impl DaoEngine {
     ///     proposer_id,
     ///     14 * 24 * 60 * 60,  // 2 weeks target timespan
     ///     2016,               // blocks between adjustments
-    ///     Some(25),           // min factor (25% = max 75% decrease)
-    ///     Some(400),          // max factor (400% = max 4x increase)
+    ///     Some(4),            // min factor (4x = max 1/4 decrease)
+    ///     Some(4),            // max factor (4x = max 4x increase)
     ///     7,                  // 7 day voting period
     /// ).await?;
     /// ```
@@ -248,9 +248,10 @@ impl DaoEngine {
             GovernanceParameterValue::BlockchainAdjustmentInterval(adjustment_interval),
         ];
 
-        // Note: min/max adjustment factors are not directly supported in GovernanceParameterValue
-        // They are included in the description for informational purposes and can be
-        // extracted from the proposal during execution if needed
+        // Note: min/max adjustment factors are stored in description for now.
+        // DifficultyConfig uses a single symmetric max_adjustment_factor for both directions.
+        // Future enhancement: extend GovernanceParameterValue to support separate min/max factors
+        // and update DifficultyConfig accordingly. See DifficultyParameterUpdateData in lib-blockchain.
 
         let execution_params = DaoExecutionParams {
             action: DaoExecutionAction::GovernanceParameterUpdate(GovernanceParameterUpdate {

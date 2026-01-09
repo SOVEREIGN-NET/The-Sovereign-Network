@@ -325,16 +325,16 @@ pub struct DifficultyParameterUpdateData {
     /// e.g., Bitcoin uses 2016 blocks between adjustments.
     pub adjustment_interval: u64,
 
-    /// Minimum adjustment factor (percentage, >= 100)
+    /// Minimum adjustment factor (multiplier, >= 1)
     /// Limits how much difficulty can decrease in a single adjustment.
-    /// e.g., 25 means difficulty can decrease by at most 75% (multiply by 0.25)
-    /// Default: None (no minimum limit)
+    /// e.g., 4 means difficulty can decrease by at most 1/4 (divide by 4)
+    /// Default: None (use DifficultyConfig's symmetric max_adjustment_factor)
     pub min_adjustment_factor: Option<u64>,
 
-    /// Maximum adjustment factor (percentage, >= 100)
+    /// Maximum adjustment factor (multiplier, >= 1)
     /// Limits how much difficulty can increase in a single adjustment.
-    /// e.g., 400 means difficulty can increase by at most 4x
-    /// Default: None (no maximum limit)
+    /// e.g., 4 means difficulty can increase by at most 4x
+    /// Default: None (use DifficultyConfig's symmetric max_adjustment_factor)
     pub max_adjustment_factor: Option<u64>,
 }
 
@@ -363,8 +363,8 @@ impl DifficultyParameterUpdateData {
     /// # Arguments
     /// * `target_timespan` - Target time for the adjustment interval (seconds)
     /// * `adjustment_interval` - Number of blocks between adjustments
-    /// * `min_adjustment_factor` - Minimum adjustment factor (percentage)
-    /// * `max_adjustment_factor` - Maximum adjustment factor (percentage)
+    /// * `min_adjustment_factor` - Minimum adjustment factor (multiplier, >= 1)
+    /// * `max_adjustment_factor` - Maximum adjustment factor (multiplier, >= 1)
     ///
     /// # Errors
     /// Returns an error if validation fails
