@@ -64,7 +64,7 @@ pub use integration::consensus_integration::{
 };
 
 // Re-export difficulty types from lib-consensus for convenience
-pub use lib_consensus::{DifficultyManager, DifficultyError, DifficultyResult};
+pub use lib_consensus::{DifficultyConfig, DifficultyManager, DifficultyError, DifficultyResult};
 
 // Re-export contracts when feature is enabled
 #[cfg(feature = "contracts")]

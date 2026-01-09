@@ -294,9 +294,13 @@ impl DifficultyManager {
         // Calculate actual timespan
         let actual_timespan = interval_end_time.saturating_sub(interval_start_time);
         if actual_timespan == 0 {
-            return Err(DifficultyError::CalculationError(
-                "Actual timespan cannot be zero".to_string(),
-            ));
+            // Edge case: identical timestamps between adjustment interval blocks
+            // Return None to indicate no adjustment needed (defensive behavior matching legacy fallback)
+            tracing::warn!(
+                "Difficulty adjustment skipped: actual_timespan is zero at height {}",
+                height
+            );
+            return Ok(None);
         }
 
         // Calculate and return new difficulty

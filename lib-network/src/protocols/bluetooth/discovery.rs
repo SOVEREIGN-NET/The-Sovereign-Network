@@ -212,6 +212,15 @@ impl BluetoothMeshProtocol {
 
     /// Start Bluetooth LE discovery
     pub async fn start_discovery(&mut self) -> Result<()> {
+        // DEFENSIVE GUARD: Check if Bluetooth is enabled (SAFETY LAYER)
+        // This prevents accidental execution even if filtering misses it at the boundary
+        if !self.enabled {
+            return Err(anyhow!(
+                "Bluetooth LE discovery refused: disabled in configuration (enable_bluetooth=false). \
+                Defensive guard preventing disabled protocol from starting."
+            ));
+        }
+
         info!("Starting Bluetooth LE mesh discovery...");
 
         // Initialize Bluetooth stack for mesh networking
