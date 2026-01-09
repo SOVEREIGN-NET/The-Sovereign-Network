@@ -122,6 +122,9 @@ pub struct ZhtpUnifiedServer {
     // Monitoring system (metrics, health, alerts, dashboard)
     monitoring_system: Option<MonitoringSystem>,
 
+    // Protocol configuration (AUTHORITATIVE CONFIG LAYER)
+    protocols_config: Option<crate::config::aggregation::ProtocolsConfig>,
+
     // Server state
     is_running: Arc<RwLock<bool>>,
     server_id: Uuid,
@@ -288,7 +291,7 @@ impl ZhtpUnifiedServer {
         economic_model: Arc<RwLock<EconomicModel>>,
         port: u16, // Port from configuration
     ) -> Result<Self> {
-        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None, None, None).await
+        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None, None, None, None).await
     }
     
     /// Create new unified server with peer discovery notification channel
@@ -301,6 +304,7 @@ impl ZhtpUnifiedServer {
         peer_discovery_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
         discovery_port: Option<u16>,
         quic_port: Option<u16>,
+        protocols_config: Option<crate::config::aggregation::ProtocolsConfig>,
     ) -> Result<Self> {
         let server_id = Uuid::new_v4();
         let monitoring_system = Some(MonitoringSystem::new().await?);
@@ -484,6 +488,7 @@ impl ZhtpUnifiedServer {
             runtime,
             runtime_orchestrator,
             monitoring_system,
+            protocols_config,
             is_running: Arc::new(RwLock::new(false)),
             server_id,
             port,
@@ -889,8 +894,19 @@ impl ZhtpUnifiedServer {
         let mesh_router_clone = self.mesh_router.clone();
         let mesh_router_bluetooth_protocol = self.mesh_router.bluetooth_protocol.clone();
 
+        // Get Bluetooth enabled flag from config (AUTHORITATIVE CONFIG LAYER)
+        let enable_bluetooth_from_config = self.protocols_config.as_ref().map(|cfg| cfg.enable_bluetooth).unwrap_or(false);
+
         tokio::spawn(async move {
-            // Check if Bluetooth should be disabled via environment variable
+            // AUTHORITATIVE CONFIG LAYER: Check if Bluetooth should be disabled via configuration
+            // This is the policy enforcement point where config decisions override defaults
+            if !enable_bluetooth_from_config {
+                warn!(" Bluetooth disabled by configuration (enable_bluetooth=false)");
+                warn!(" Skipping Bluetooth initialization");
+                return;
+            }
+
+            // FALLBACK: Also check environment variable for backward compatibility
             if std::env::var("DISABLE_BLUETOOTH").is_ok() {
                 warn!(" Bluetooth disabled via DISABLE_BLUETOOTH environment variable");
                 warn!(" Skipping Bluetooth initialization");
@@ -905,6 +921,7 @@ impl ZhtpUnifiedServer {
                 bluetooth_provider,
                 sync_coordinator_clone,
                 mesh_router_clone,
+                enable_bluetooth_from_config,
             ).await {
                 Ok(_) => {
                     // Store bluetooth protocol in mesh router for send_to_peer()
