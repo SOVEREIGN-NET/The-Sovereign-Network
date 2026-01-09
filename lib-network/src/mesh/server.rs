@@ -210,6 +210,7 @@ use crate::storage_stub::UnifiedStorageSystem;
 pub struct NetworkConfig {
     pub node_id: [u8; 32],
     pub listen_port: u16,
+    pub mesh_port: u16,
     pub max_peers: usize,
     pub protocols: Vec<NetworkProtocol>,
     pub listen_addresses: Vec<String>,
@@ -764,8 +765,8 @@ impl ZhtpMeshServer {
         // TODO: This should use a persistent server identity from config
         let identity = Arc::new(create_default_mesh_identity());
 
-        // Bind to QUIC mesh port (PQC encrypted)
-        let bind_addr = format!("0.0.0.0:{}", QUIC_MESH_PORT).parse().unwrap();
+        // Bind to configured QUIC mesh port (PQC encrypted)
+        let bind_addr = format!("0.0.0.0:{}", self.config.mesh_port).parse().unwrap();
 
         // Initialize QUIC mesh protocol with UHP+Kyber authentication
         let mut quic_protocol = QuicMeshProtocol::new(identity, bind_addr)?;
@@ -786,7 +787,7 @@ impl ZhtpMeshServer {
         // Mark protocol as active
         self.active_protocols.write().await.insert(NetworkProtocol::QUIC, true);
         
-        info!("🚀 QUIC mesh protocol active with PQC encryption on port {}", QUIC_MESH_PORT);
+        info!("🚀 QUIC mesh protocol active with PQC encryption on port {}", self.config.mesh_port);
         
         // Connect to bootstrap peers if configured
         // ARCHITECTURE NOTE: Bootstrap peers use QUIC exclusively because:
@@ -813,11 +814,11 @@ impl ZhtpMeshServer {
                     let ip_part = &addr_str[..colon_pos];
                     let port_str = &addr_str[colon_pos + 1..];
 
-                    // If port is mesh port, convert to QUIC port
+                    // If port is legacy mesh port (33444), convert to configured QUIC port
                     let port = match port_str.parse::<u16>() {
                         Ok(p) if p == MESH_BOOTSTRAP_PORT => {
-                            info!("   ⚠️  Peer has mesh port {}, converting to QUIC port {}: {}", MESH_BOOTSTRAP_PORT, QUIC_MESH_PORT, peer_str);
-                            QUIC_MESH_PORT
+                            info!("   ⚠️  Peer has legacy mesh port {}, converting to configured QUIC port {}: {}", MESH_BOOTSTRAP_PORT, self.config.mesh_port, peer_str);
+                            self.config.mesh_port
                         }
                         Ok(p) => p,
                         Err(_) => {
@@ -834,9 +835,9 @@ impl ZhtpMeshServer {
                         }
                     }
                 } else {
-                    // No port specified - use IP with QUIC default port
-                    info!("   ℹ️  Peer has no port, using QUIC default port {}: {}", QUIC_MESH_PORT, peer_str);
-                    match format!("{}:{}", addr_str, QUIC_MESH_PORT).parse::<std::net::SocketAddr>() {
+                    // No port specified - use configured QUIC mesh port
+                    info!("   ℹ️  Peer has no port, using configured QUIC mesh port {}: {}", self.config.mesh_port, peer_str);
+                    match format!("{}:{}", addr_str, self.config.mesh_port).parse::<std::net::SocketAddr>() {
                         Ok(addr) => addr,
                         Err(e) => {
                             warn!("   Failed to parse bootstrap peer address '{}': {}", peer_str, e);
@@ -945,6 +946,7 @@ impl ZhtpMeshServer {
         let network_config = NetworkConfig {
             node_id,
             listen_port: 0, // No TCP port needed for pure mesh
+            mesh_port: QUIC_MESH_PORT, // Configurable QUIC binding port
             max_peers: 1000, // Support many mesh connections
             protocols: protocols.clone(),
             listen_addresses: vec![], // No IP addresses needed
