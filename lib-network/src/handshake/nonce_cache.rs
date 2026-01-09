@@ -399,7 +399,12 @@ impl NonceCache {
     ///
     /// DEPRECATED: Use `mark_nonce_seen` with `compute_nonce_fingerprint` instead.
     /// This method is kept for backward compatibility during migration.
-    pub fn check_and_store(&self, nonce: &[u8; 32], message_timestamp: u64) -> Result<()> {
+    ///
+    /// # Breaking Change
+    /// The `message_timestamp` parameter is now ignored and current system time is used instead.
+    /// This aligns with the new persistent replay protection design.
+    #[deprecated(since = "0.2.0", note = "Use `mark_nonce_seen` with `compute_nonce_fingerprint` instead")]
+    pub fn check_and_store(&self, nonce: &[u8; 32], _message_timestamp: u64) -> Result<()> {
         // Use raw nonce as fingerprint for backward compatibility
         // This is less secure than using compute_nonce_fingerprint but maintains API
         let now = SystemTime::now()

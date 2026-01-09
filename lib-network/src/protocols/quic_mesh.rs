@@ -226,8 +226,14 @@ impl QuicMeshProtocol {
             .unwrap_or(Path::new("./data"))
             .join("quic_nonce_cache");
 
-        // TODO: Pass network epoch from blockchain context (genesis hash)
-        let network_epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        // Derive network epoch from genesis hash if available, otherwise fall back to dev chain_id
+        let network_epoch = match lib_identity::types::node_id::get_network_genesis() {
+            Ok(genesis) => crate::handshake::NetworkEpoch::from_genesis(genesis),
+            Err(_) => {
+                tracing::warn!("Network genesis not set, using fallback chain_id=0 for development");
+                crate::handshake::NetworkEpoch::from_chain_id(0)
+            }
+        };
         let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 100_000, network_epoch)
             .context("Failed to open QUIC nonce cache database")?;
 
