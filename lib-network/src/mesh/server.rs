@@ -785,23 +785,57 @@ impl ZhtpMeshServer {
         if !bootstrap_peers.is_empty() {
             info!("📡 Connecting to {} bootstrap peer(s) via QUIC...", bootstrap_peers.len());
             let quic = quic_arc.read().await;
-            
+
             for peer_str in &bootstrap_peers {
-                // Parse address - might be "192.168.1.245:9334" or "zhtp://192.168.1.245:9334"
+                // Parse address - might be:
+                // - "192.168.1.245:9334" (correct QUIC port)
+                // - "192.168.1.245:33444" (mesh port - needs conversion)
+                // - "192.168.1.245" (IP only - use QUIC default port)
+                // - "zhtp://192.168.1.245:9334" (URL format)
                 let addr_str = peer_str.trim_start_matches("zhtp://").trim_start_matches("http://");
-                
-                match addr_str.parse::<std::net::SocketAddr>() {
-                    Ok(peer_addr) => {
-                        info!("   Connecting to bootstrap peer: {}", peer_addr);
-                        if let Err(e) = quic.connect_to_peer(peer_addr).await {
-                            warn!("   Failed to connect to bootstrap peer {}: {}", peer_addr, e);
-                        } else {
-                            info!("   ✓ Connected to bootstrap peer {}", peer_addr);
+
+                // Parse the address and fix port if needed
+                let peer_addr = if let Some(colon_pos) = addr_str.rfind(':') {
+                    let ip_part = &addr_str[..colon_pos];
+                    let port_str = &addr_str[colon_pos+1..];
+
+                    // If port is mesh port (33444), convert to QUIC port (9334)
+                    let port = match port_str.parse::<u16>() {
+                        Ok(p) if p == 33444 => {
+                            info!("   ⚠️  Peer has mesh port 33444, converting to QUIC port 9334: {}", peer_str);
+                            9334
+                        }
+                        Ok(p) => p,
+                        Err(_) => {
+                            warn!("   Failed to parse port from bootstrap peer address '{}': invalid port", peer_str);
+                            continue;
+                        }
+                    };
+
+                    match format!("{}:{}", ip_part, port).parse::<std::net::SocketAddr>() {
+                        Ok(addr) => addr,
+                        Err(e) => {
+                            warn!("   Failed to parse bootstrap peer address '{}': {}", peer_str, e);
+                            continue;
                         }
                     }
-                    Err(e) => {
-                        warn!("   Failed to parse bootstrap peer address '{}': {}", peer_str, e);
+                } else {
+                    // No port specified - use IP with QUIC default port 9334
+                    info!("   ℹ️  Peer has no port, using QUIC default port 9334: {}", peer_str);
+                    match format!("{}:9334", addr_str).parse::<std::net::SocketAddr>() {
+                        Ok(addr) => addr,
+                        Err(e) => {
+                            warn!("   Failed to parse bootstrap peer address '{}': {}", peer_str, e);
+                            continue;
+                        }
                     }
+                };
+
+                info!("   Connecting to bootstrap peer: {}", peer_addr);
+                if let Err(e) = quic.connect_to_peer(peer_addr).await {
+                    warn!("   Failed to connect to bootstrap peer {}: {}", peer_addr, e);
+                } else {
+                    info!("   ✓ Connected to bootstrap peer {}", peer_addr);
                 }
             }
         }
