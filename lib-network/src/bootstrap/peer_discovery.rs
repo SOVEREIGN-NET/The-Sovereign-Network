@@ -462,14 +462,8 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
     let cache_path = cache_dir.join("nonce_cache.db");
     
     // Use the standard open_default method for secure nonce cache
-    // Derive network epoch from genesis hash if available, otherwise fall back to dev chain_id
-    let network_epoch = match lib_identity::types::node_id::get_network_genesis() {
-        Ok(genesis) => crate::handshake::NetworkEpoch::from_genesis(genesis),
-        Err(_) => {
-            tracing::warn!("Network genesis not set, using fallback chain_id=0 for development");
-            crate::handshake::NetworkEpoch::from_chain_id(0)
-        }
-    };
+    // Derive network epoch from genesis hash (uses environment-appropriate fallback)
+    let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
     let nonce_cache = crate::handshake::NonceCache::open_default(&cache_path, 300, network_epoch)
         .map_err(|e| {
             tracing::warn!("Failed to open secure nonce cache, bootstrap may be vulnerable to replay attacks: {}", e);

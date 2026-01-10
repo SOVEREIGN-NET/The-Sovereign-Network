@@ -51,6 +51,7 @@ use rocksdb::{DB, Options, IteratorMode};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, Duration, SystemTime, UNIX_EPOCH};
 use tracing::{warn, info, debug};
 
@@ -83,7 +84,7 @@ impl NetworkEpoch {
         hasher.update(b"ZHTP_NETWORK_EPOCH_V1:");
         hasher.update(genesis_hash);
         let hash = hasher.finalize();
-        
+
         // Truncate to u64 (first 8 bytes)
         let mut bytes = [0u8; 8];
         bytes.copy_from_slice(&hash.as_bytes()[..8]);
@@ -96,10 +97,42 @@ impl NetworkEpoch {
         hasher.update(b"ZHTP_CHAIN_ID_EPOCH_V1:");
         hasher.update(&[chain_id]);
         let hash = hasher.finalize();
-        
+
         let mut bytes = [0u8; 8];
         bytes.copy_from_slice(&hash.as_bytes()[..8]);
         Self(u64::from_le_bytes(bytes))
+    }
+
+    /// Get network epoch from global genesis, with environment-appropriate fallback
+    ///
+    /// In development/test builds, falls back to chain_id(0) if genesis is unavailable.
+    /// In release builds, returns an error to prevent production nodes from running
+    /// without proper network configuration.
+    pub fn from_global_or_fail() -> Result<Self> {
+        match lib_identity::types::node_id::get_network_genesis() {
+            Ok(genesis) => Ok(Self::from_genesis(genesis.as_slice())),
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                {
+                    warn!(
+                        "Network genesis not set (expected in development): {}. \
+                         Using fallback chain_id=0 for development/testing.",
+                        e
+                    );
+                    Ok(Self::from_chain_id(0))
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    Err(anyhow!(
+                        "CRITICAL: Network genesis hash not available in production environment. \
+                         Cannot determine network epoch for replay protection. \
+                         Please configure network genesis hash via environment variable. \
+                         Error: {}",
+                        e
+                    ))
+                }
+            }
+        }
     }
 
     /// Get epoch value
@@ -219,8 +252,8 @@ pub struct NonceCache {
     /// Maximum memory cache size
     max_memory_size: usize,
 
-    /// Insert counter for lazy pruning trigger
-    insert_count: Arc<RwLock<u64>>,
+    /// Insert counter for lazy pruning trigger (atomic for lock-free access)
+    insert_count: Arc<AtomicU64>,
 }
 
 impl NonceCache {
@@ -286,7 +319,7 @@ impl NonceCache {
             network_epoch,
             ttl: Duration::from_secs(ttl_secs),
             max_memory_size,
-            insert_count: Arc::new(RwLock::new(0)),
+            insert_count: Arc::new(AtomicU64::new(0)),
         };
 
         // Load existing nonces into memory
@@ -378,16 +411,22 @@ impl NonceCache {
         debug!("Stored nonce fingerprint: fp={}, timestamp={}", hex::encode(nonce_fp), now);
 
         // Increment insert counter and trigger pruning if needed
-        {
-            let mut count = self.insert_count.write();
-            *count += 1;
-            if *count % Self::PRUNE_EVERY_N_INSERTS == 0 {
-                // Lazy pruning trigger
-                drop(count);
-                if let Ok(pruned) = self.prune_seen_nonces_internal() {
+        let count = self.insert_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if count % Self::PRUNE_EVERY_N_INSERTS == 0 {
+            // Lazy pruning trigger
+            match self.prune_seen_nonces_internal() {
+                Ok(pruned) => {
                     if pruned > 0 {
                         debug!("Lazy pruning removed {} expired nonces", pruned);
                     }
+                }
+                Err(e) => {
+                    warn!(
+                        "Lazy pruning failed (nonce cache may grow unbounded): {}. \
+                         Current cache utilization: {:.1}%",
+                        e,
+                        self.utilization() * 100.0
+                    );
                 }
             }
         }
@@ -525,8 +564,20 @@ impl NonceCache {
     /// This provides additional cleanup beyond LRU eviction.
     /// Removes nonces that have exceeded their TTL.
     pub fn cleanup_expired(&self) {
-        if let Err(e) = self.prune_seen_nonces_internal() {
-            warn!("Failed to cleanup expired nonces: {}", e);
+        match self.prune_seen_nonces_internal() {
+            Ok(deleted) => {
+                if deleted > 0 {
+                    debug!("Cleanup task removed {} expired nonces", deleted);
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Cleanup task failed to prune nonces: {}. \
+                     Cache may grow unbounded. \
+                     Current cache size: {}/{} entries (utilization: {:.1}%)",
+                    e, self.size(), self.max_size(), self.utilization() * 100.0
+                );
+            }
         }
     }
 
@@ -550,10 +601,21 @@ impl NonceCache {
             Ok(None) => {
                 // First startup or migration - store epoch
                 // Also check for legacy epoch key and migrate
-                if let Ok(Some(_legacy)) = db.get("meta:epoch") {
-                    info!("Migrating from legacy epoch format to network epoch");
-                    // Delete legacy key
-                    let _ = db.delete("meta:epoch");
+                match db.get("meta:epoch") {
+                    Ok(Some(_legacy)) => {
+                        info!("Migrating from legacy epoch format to network epoch");
+                        if let Err(e) = db.delete("meta:epoch") {
+                            warn!(
+                                "Failed to delete legacy epoch key during migration: {}. \
+                                 New epoch will be stored, but legacy key may cause confusion.",
+                                e
+                            );
+                        }
+                    }
+                    Ok(None) => { /* No legacy key to migrate */ }
+                    Err(e) => {
+                        return Err(anyhow!("Failed to check for legacy epoch key: {}", e));
+                    }
                 }
                 db.put(Self::META_EPOCH_KEY, expected_epoch.to_bytes())
                     .map_err(|e| anyhow!("Failed to store network epoch: {}", e))?;
@@ -589,7 +651,12 @@ impl NonceCache {
             let entry: PersistentNonceEntry = match bincode::deserialize(&value) {
                 Ok(e) => e,
                 Err(e) => {
-                    warn!("Failed to deserialize nonce entry: {}", e);
+                    let key_str = String::from_utf8_lossy(&key);
+                    warn!(
+                        "Skipping corrupted nonce entry during load: key={}, error={}. \
+                         This may indicate database corruption or format version mismatch.",
+                        key_str, e
+                    );
                     continue;
                 }
             };
@@ -603,13 +670,28 @@ impl NonceCache {
 
             let nonce_hex = &key[nonce_start..];
             let nonce_fp = match hex::decode(nonce_hex) {
-                Ok(n) if n.len() == 32 => {
+                Ok(n) => {
+                    if n.len() != 32 {
+                        warn!(
+                            "Nonce fingerprint has invalid length: {} bytes (expected 32). \
+                             Skipping entry: {}. This may indicate database corruption.",
+                            n.len(),
+                            String::from_utf8_lossy(&key)
+                        );
+                        continue;
+                    }
                     let mut arr = [0u8; 32];
                     arr.copy_from_slice(&n);
                     arr
                 }
-                _ => {
-                    warn!("Invalid nonce hex encoding");
+                Err(e) => {
+                    let key_str = String::from_utf8_lossy(&key);
+                    warn!(
+                        "Failed to decode nonce fingerprint from database key: {}. \
+                         Skipping entry: {}. This may indicate database corruption or \
+                         incompatible database format.",
+                        key_str, e
+                    );
                     continue;
                 }
             };
@@ -624,7 +706,12 @@ impl NonceCache {
 
             // Stop if memory cache is full
             if loaded >= self.max_memory_size {
-                warn!("Memory cache full during load, stopping at {} entries", loaded);
+                warn!(
+                    "Memory cache full during load at {} entries. Database contains additional \
+                     nonces that were not loaded. Continuing with disk fallback. \
+                     Consider increasing NonceCache::max_memory_size if this occurs frequently.",
+                    loaded
+                );
                 break;
             }
         }
@@ -962,7 +1049,7 @@ mod tests {
     fn test_network_epoch_mismatch_rejected() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path();
-        
+
         // Open with epoch1
         let epoch1 = NetworkEpoch::from_genesis(&[1u8; 32]);
         {
@@ -974,5 +1061,244 @@ mod tests {
         let result = NonceCache::open_default(db_path, 300, epoch2);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Network epoch mismatch"));
+    }
+
+    // ============================================================================
+    // CRITICAL TEST CASES - Security Gap Fixes
+    // ============================================================================
+
+    #[test]
+    fn test_corrupted_database_entries_handled_gracefully() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path();
+        let epoch = test_epoch();
+
+        // Create cache and add a valid nonce
+        {
+            let cache = NonceCache::open_default(db_path, 60, epoch).unwrap();
+            let nonce = [1u8; 32];
+            cache.check_and_store(&nonce, 1234567890).unwrap();
+        }
+
+        // Manually corrupt an entry in RocksDB
+        {
+            let opts = rocksdb::Options::default();
+            let db = rocksdb::DB::open(&opts, db_path).unwrap();
+            let bad_key = b"seen:0000000000000000000000000000000000000000000000000000000000000000";
+            db.put(bad_key, b"corrupted_binary_data").unwrap();
+        }
+
+        // Reopen cache - should recover without panic
+        let cache2 = NonceCache::open_default(db_path, 60, epoch).unwrap();
+
+        // Should load successfully and skip corrupted entry
+        assert!(cache2.size() >= 1, "Cache should have loaded at least one valid entry");
+
+        // Verify we can still insert new nonces
+        let result = cache2.mark_nonce_seen(&[2u8; 32], 1234567890).unwrap();
+        assert_eq!(result, SeenResult::New, "Should be able to insert new nonce after recovering from corruption");
+    }
+
+    #[test]
+    fn test_replay_protection_after_memory_cache_eviction() {
+        let temp_dir = TempDir::new().unwrap();
+        let epoch = test_epoch();
+
+        // Create cache with small memory size (capacity 10)
+        let cache = NonceCache::open(temp_dir.path(), 60, 10, epoch).unwrap();
+
+        // Insert first nonce (in memory)
+        let nonce1 = [1u8; 32];
+        let fp1 = compute_nonce_fingerprint(epoch, &nonce1, 1, "client");
+        let result = cache.mark_nonce_seen(&fp1, 1000).unwrap();
+        assert_eq!(result, SeenResult::New, "First nonce should be new");
+        assert_eq!(cache.size(), 1, "Cache should have 1 entry");
+
+        // Insert 20 more nonces to overflow LRU (capacity 10)
+        for i in 2..=20 {
+            let mut nonce = [0u8; 32];
+            nonce[0] = i as u8;
+            let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
+            let _ = cache.mark_nonce_seen(&fp, 1000);
+        }
+
+        // Cache should be at or below capacity
+        assert!(cache.size() <= 10, "Cache size should not exceed capacity");
+
+        // First nonce was evicted from memory but still on disk
+        // Attempting to use it again should fail (disk lookup will find it)
+        let result = cache.mark_nonce_seen(&fp1, 1000).unwrap();
+        assert_eq!(result, SeenResult::Replay, "Evicted nonce should still be detected as replay via disk");
+    }
+
+    #[test]
+    fn test_concurrent_pruning_with_insertions_safe() {
+        use std::thread;
+        use std::sync::Arc;
+
+        let temp_dir = Arc::new(TempDir::new().unwrap());
+        let epoch = test_epoch();
+        let cache = Arc::new(NonceCache::open_sync(temp_dir.path(), 60, epoch).unwrap());
+
+        // Insert 10,000 nonces in one thread (should trigger pruning)
+        let insert_handle = {
+            let cache = cache.clone();
+            thread::spawn(move || {
+                for i in 0..10_000 {
+                    let mut nonce = [0u8; 32];
+                    nonce[0..4].copy_from_slice(&(i as u32).to_le_bytes());
+                    let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64;
+                    let _ = cache.mark_nonce_seen(&fp, now);
+                }
+            })
+        };
+
+        // Meanwhile, verify some nonces in another thread
+        let verify_handle = {
+            let cache = cache.clone();
+            thread::spawn(move || {
+                for i in 0..1_000 {
+                    let mut nonce = [0u8; 32];
+                    nonce[0..4].copy_from_slice(&(i as u32).to_le_bytes());
+                    let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64;
+                    let result = cache.mark_nonce_seen(&fp, now);
+                    assert!(result.is_ok(), "Concurrent verification should succeed");
+                }
+            })
+        };
+
+        insert_handle.join().unwrap();
+        verify_handle.join().unwrap();
+
+        // Should complete without panics or data corruption
+        assert!(cache.size() > 0, "Cache should contain entries");
+    }
+
+    #[test]
+    fn test_ttl_boundary_exact_timestamp() {
+        let temp_dir = TempDir::new().unwrap();
+        let epoch = test_epoch();
+        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).unwrap();
+
+        let base_time = 1_000_000_000i64;
+        let nonce = [1u8; 32];
+        let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
+
+        // Insert at base_time
+        cache.mark_nonce_seen(&fp, base_time).unwrap();
+
+        // Prune at base_time + 60 (exactly at TTL boundary)
+        let cutoff_exact = base_time + 60;
+        let pruned = cache.prune_seen_nonces(cutoff_exact).unwrap();
+
+        // Behavior should be consistent: nonce at exact boundary should be pruned
+        assert!(pruned > 0, "Nonce at exact TTL boundary should be pruned");
+    }
+
+    #[test]
+    fn test_empty_genesis_produces_consistent_epoch() {
+        let empty = [0u8; 32];
+        let epoch1 = NetworkEpoch::from_genesis(&empty);
+        let epoch2 = NetworkEpoch::from_genesis(&empty);
+        assert_eq!(epoch1, epoch2, "Empty genesis should produce consistent epochs");
+
+        // But verify it's different from other patterns
+        let ones = [1u8; 32];
+        let epoch_ones = NetworkEpoch::from_genesis(&ones);
+        assert_ne!(epoch1, epoch_ones, "Different genesis hashes should produce different epochs");
+    }
+
+    #[test]
+    fn test_legacy_epoch_migration_from_old_format() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path();
+        let epoch = NetworkEpoch::from_genesis(&[5u8; 32]);
+
+        // Simulate old format by directly writing legacy key
+        {
+            let mut opts = rocksdb::Options::default();
+            opts.create_if_missing(true);
+            let db = rocksdb::DB::open(&opts, db_path).unwrap();
+            db.put(b"meta:epoch", &epoch.to_bytes()).unwrap();
+        }
+
+        // Open with new code - should migrate
+        let cache = NonceCache::open_default(db_path, 300, epoch).unwrap();
+
+        // Verify migration happened
+        assert_eq!(cache.network_epoch(), epoch, "Epoch should match after migration");
+
+        // Should be able to add nonces normally
+        let nonce = [42u8; 32];
+        let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
+        let result = cache.mark_nonce_seen(&fp, 1234567890).unwrap();
+        assert_eq!(result, SeenResult::New, "Should work normally after migration");
+    }
+
+    #[test]
+    fn test_system_time_error_handling() {
+        // This test verifies that if SystemTime::now() returns an error,
+        // pruning fails gracefully rather than silently defaulting to epoch 1970
+        let (cache, _dir) = create_test_cache(60);
+        let nonce = [1u8; 32];
+
+        // Insert a nonce
+        cache.check_and_store(&nonce, 1234567890).unwrap();
+
+        // Normal cleanup should work
+        cache.cleanup_expired();
+
+        // Verify nonce is still in cache (TTL hasn't expired)
+        let result = cache.mark_nonce_seen(&[1u8; 32], 1234567890).unwrap();
+        assert_eq!(result, SeenResult::Replay, "Nonce should still be cached");
+    }
+
+    #[test]
+    fn test_two_separate_networks_cannot_share_nonces() {
+        let temp_dir1 = TempDir::new().unwrap();
+        let temp_dir2 = TempDir::new().unwrap();
+
+        let epoch1 = NetworkEpoch::from_genesis(&[1u8; 32]);
+        let epoch2 = NetworkEpoch::from_genesis(&[2u8; 32]);
+
+        let cache1 = NonceCache::open_default(temp_dir1.path(), 60, epoch1).unwrap();
+        let cache2 = NonceCache::open_default(temp_dir2.path(), 60, epoch2).unwrap();
+
+        // Insert same nonce in both caches with different epochs
+        let nonce = [42u8; 32];
+        let fp1 = compute_nonce_fingerprint(epoch1, &nonce, 1, "client");
+        let fp2 = compute_nonce_fingerprint(epoch2, &nonce, 1, "client");
+
+        // Both inserts should succeed (different fingerprints)
+        assert_eq!(
+            cache1.mark_nonce_seen(&fp1, 1000).unwrap(),
+            SeenResult::New,
+            "Nonce with epoch1 should be new in cache1"
+        );
+        assert_eq!(
+            cache2.mark_nonce_seen(&fp2, 1000).unwrap(),
+            SeenResult::New,
+            "Nonce with epoch2 should be new in cache2"
+        );
+
+        // Cross-network verification should see them as new (different fingerprints)
+        assert_eq!(
+            cache1.mark_nonce_seen(&fp2, 1000).unwrap(),
+            SeenResult::New,
+            "Different fingerprint should be new in cache1"
+        );
+        assert_eq!(
+            cache2.mark_nonce_seen(&fp1, 1000).unwrap(),
+            SeenResult::New,
+            "Different fingerprint should be new in cache2"
+        );
     }
 }

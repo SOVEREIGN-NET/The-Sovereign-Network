@@ -159,14 +159,8 @@ impl Web4Client {
         };
 
         std::fs::create_dir_all(&cache_dir)?;
-        // Derive network epoch from genesis hash if available, otherwise fall back to dev chain_id
-        let network_epoch = match lib_identity::types::node_id::get_network_genesis() {
-            Ok(genesis) => crate::handshake::NetworkEpoch::from_genesis(genesis),
-            Err(_) => {
-                tracing::warn!("Network genesis not set, using fallback chain_id=0 for development");
-                crate::handshake::NetworkEpoch::from_chain_id(0)
-            }
-        };
+        // Derive network epoch from genesis hash (uses environment-appropriate fallback)
+        let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
         let nonce_cache = NonceCache::open(&cache_dir.join("nonces"), 3600, 10_000, network_epoch)
             .context("Failed to create nonce cache")?;
         let handshake_ctx = HandshakeContext::new(nonce_cache);

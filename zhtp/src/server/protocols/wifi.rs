@@ -59,10 +59,26 @@ impl WiFiRouter {
         // Uses open_default() with 5-minute TTL
         let db_path = PathBuf::from("./nonce_cache_wifi");
         let network_epoch = match lib_identity::types::node_id::get_network_genesis() {
-            Ok(genesis) => lib_network::handshake::NetworkEpoch::from_genesis(genesis),
-            Err(_) => {
-                warn!("Network genesis not set, using fallback chain_id=0 for development");
-                lib_network::handshake::NetworkEpoch::from_chain_id(0)
+            Ok(genesis) => lib_network::handshake::NetworkEpoch::from_genesis(genesis.as_slice()),
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                {
+                    warn!(
+                        "Network genesis not set (expected in development): {}. \
+                         Using fallback chain_id=0 for development/testing.",
+                        e
+                    );
+                    lib_network::handshake::NetworkEpoch::from_chain_id(0)
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    error!(
+                        "CRITICAL: Network genesis not set in production. \
+                         Cannot determine network epoch for replay protection. \
+                         Defaulting to chain_id=0, but this is a configuration error."
+                    );
+                    lib_network::handshake::NetworkEpoch::from_chain_id(0)
+                }
             }
         };
         let nonce_cache = NonceCache::open_default(&db_path, 300, network_epoch)
