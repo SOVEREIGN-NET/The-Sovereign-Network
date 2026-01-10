@@ -801,8 +801,8 @@ impl Blockchain {
                 tokio::runtime::Handle::current().block_on(async {
                     let coord = coordinator.read().await;
                     let interval = coord.get_difficulty_adjustment_interval().await;
-                    let config = coord.get_difficulty_config().await;
-                    (interval, config.target_timespan)
+                    let target_timespan = coord.get_difficulty_target_timespan().await;
+                    (interval, target_timespan)
                 })
             })
         } else {
