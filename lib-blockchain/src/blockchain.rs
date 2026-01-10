@@ -936,8 +936,8 @@ impl Blockchain {
             self.height,
             config.target_timespan,
             config.adjustment_interval,
-            config.max_decrease_factor,
-            config.max_increase_factor
+            config.max_difficulty_decrease_factor,
+            config.max_difficulty_increase_factor
         );
         self.difficulty_config = config;
         Ok(())
