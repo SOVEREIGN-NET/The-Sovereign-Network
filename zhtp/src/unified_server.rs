@@ -291,7 +291,7 @@ impl ZhtpUnifiedServer {
         economic_model: Arc<RwLock<EconomicModel>>,
         port: u16, // Port from configuration
     ) -> Result<Self> {
-        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None, None, None, None).await
+        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None, None, None, None, None).await
     }
     
     /// Create new unified server with peer discovery notification channel
@@ -305,6 +305,7 @@ impl ZhtpUnifiedServer {
         discovery_port: Option<u16>,
         quic_port: Option<u16>,
         protocols_config: Option<crate::config::aggregation::ProtocolsConfig>,
+        bootstrap_peers: Option<Vec<String>>,
     ) -> Result<Self> {
         let server_id = Uuid::new_v4();
         let monitoring_system = Some(MonitoringSystem::new().await?);
@@ -330,7 +331,17 @@ impl ZhtpUnifiedServer {
         session_manager.start_cleanup_task();
         
         // Initialize discovery coordinator (Phase 3 consolidation)
-        let discovery_coordinator = Arc::new(crate::discovery_coordinator::DiscoveryCoordinator::new());
+        // Create DiscoveryConfig from runtime bootstrap peers (ARCHITECTURE: Runtime topology, not Environment defaults)
+        let discovery_config = crate::discovery_coordinator::DiscoveryConfig::new(
+            bootstrap_peers.unwrap_or_default(),
+            discovery_port,
+            vec![
+                crate::discovery_coordinator::DiscoveryProtocol::UdpMulticast,
+                crate::discovery_coordinator::DiscoveryProtocol::MDns,
+                crate::discovery_coordinator::DiscoveryProtocol::DHT,
+            ],
+        );
+        let discovery_coordinator = Arc::new(crate::discovery_coordinator::DiscoveryCoordinator::new(discovery_config));
         discovery_coordinator.start_event_listener().await;
         info!(" Discovery coordinator initialized - all protocols will report to single coordinator");
         
