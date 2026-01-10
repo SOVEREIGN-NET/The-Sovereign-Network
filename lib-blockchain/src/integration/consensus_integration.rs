@@ -260,11 +260,21 @@ impl BlockchainConsensusCoordinator {
     }
     
     /// Get the current difficulty configuration
+    ///
+    /// **Note**: This clones the entire DifficultyConfig. For better performance,
+    /// use specific field getters like `get_difficulty_target_timespan()` when you
+    /// only need individual fields.
     pub async fn get_difficulty_config(&self) -> DifficultyConfig {
         let manager = self.difficulty_manager.read().await;
         manager.config().clone()
     }
-    
+
+    /// Get the target timespan for difficulty adjustment without cloning the entire config
+    pub async fn get_difficulty_target_timespan(&self) -> u64 {
+        let manager = self.difficulty_manager.read().await;
+        manager.target_timespan()
+    }
+
     /// Calculate new difficulty using the consensus-owned algorithm
     ///
     /// This is the entry point for blockchain difficulty adjustment.

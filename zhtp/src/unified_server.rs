@@ -321,14 +321,6 @@ impl ZhtpUnifiedServer {
             ));
         }
 
-        // Validate port numbers are in valid range
-        if quic_port > 65535 {
-            return Err(anyhow::anyhow!(
-                "QUIC port ({}) exceeds maximum valid port (65535)",
-                quic_port
-            ));
-        }
-
         info!("Creating ZHTP Unified Server (ID: {})", server_id);
         info!("Port: {} (HTTP + UDP + WiFi + Bootstrap)", port);
         info!("Discovery port: {}, QUIC port: {}", discovery_port, quic_port);
