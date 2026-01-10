@@ -8,7 +8,7 @@ use lib_identity::{ZhtpIdentity, IdentityType, NodeId};
 use lib_network::{
     ClientHello, HandshakeCapabilities,
 };
-use lib_network::handshake::{HandshakeContext, NonceCache};
+use lib_network::handshake::{HandshakeContext, NonceCache, NetworkEpoch};
 use tempfile::TempDir;
 
 /// Helper to create test identity
@@ -24,7 +24,8 @@ fn create_test_identity(device: &str, seed: Option<[u8; 64]>) -> Result<ZhtpIden
 
 fn create_test_context() -> Result<(HandshakeContext, TempDir)> {
     let temp_dir = TempDir::new()?;
-    let cache = NonceCache::open_default(temp_dir.path(), 300)?;
+    let network_epoch = NetworkEpoch::from_chain_id(0); // Test network
+    let cache = NonceCache::open_default(temp_dir.path(), 300, network_epoch)?;
     let ctx = HandshakeContext::new(cache).with_channel_binding(vec![0u8; 32]);
     Ok((ctx, temp_dir))
 }
