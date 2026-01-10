@@ -111,20 +111,28 @@ impl DifficultyConfig {
     }
 
     /// Create a new DifficultyConfig with custom parameters
+    ///
+    /// Validates all parameters before creating the configuration.
+    /// Returns an error if any parameters are invalid.
+    ///
+    /// # Errors
+    /// Returns a string error if validation fails (e.g., zero values, values exceeding limits)
     pub fn with_params(
         target_timespan: u64,
         adjustment_interval: u64,
         max_decrease_factor: u64,
         max_increase_factor: u64,
         last_updated_at_height: u64,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        let config = Self {
             target_timespan,
             adjustment_interval,
             max_decrease_factor,
             max_increase_factor,
             last_updated_at_height,
-        }
+        };
+        config.validate()?;
+        Ok(config)
     }
 
     /// Get the target block time in seconds
@@ -459,13 +467,33 @@ mod tests {
             2,                // Max 2x decrease
             2,                // Max 2x increase
             1000,             // Updated at block 1000
-        );
+        ).expect("Valid parameters should not fail");
 
         assert_eq!(config.target_timespan, 7 * 24 * 60 * 60);
         assert_eq!(config.adjustment_interval, 1008);
         assert_eq!(config.max_decrease_factor, 2);
         assert_eq!(config.max_increase_factor, 2);
         assert_eq!(config.last_updated_at_height, 1000);
+    }
+
+    #[test]
+    fn test_difficulty_config_with_params_invalid() {
+        // Test that with_params validates parameters
+
+        // Invalid: target_timespan = 0
+        assert!(DifficultyConfig::with_params(0, 1008, 2, 2, 0).is_err());
+
+        // Invalid: adjustment_interval = 0
+        assert!(DifficultyConfig::with_params(7 * 24 * 60 * 60, 0, 2, 2, 0).is_err());
+
+        // Invalid: max_decrease_factor = 0
+        assert!(DifficultyConfig::with_params(7 * 24 * 60 * 60, 1008, 0, 2, 0).is_err());
+
+        // Invalid: max_increase_factor = 0
+        assert!(DifficultyConfig::with_params(7 * 24 * 60 * 60, 1008, 2, 0, 0).is_err());
+
+        // Invalid: target_timespan exceeds 1 year
+        assert!(DifficultyConfig::with_params(365 * 24 * 60 * 60 + 1, 1008, 2, 2, 0).is_err());
     }
 
     #[test]
