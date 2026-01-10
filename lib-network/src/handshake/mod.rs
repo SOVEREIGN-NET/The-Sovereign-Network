@@ -84,7 +84,10 @@ pub use security::{
     validate_timestamp, current_timestamp,
     derive_session_key_hkdf, ct_eq_bytes, ct_verify_eq,
 };
-pub use nonce_cache::{NonceCache, start_nonce_cleanup_task};
+pub use nonce_cache::{
+    NonceCache, start_nonce_cleanup_task, NetworkEpoch,
+    SeenResult, compute_nonce_fingerprint,
+};
 pub use observability::{
     HandshakeObserver, HandshakeEvent, HandshakeMetrics, FailureReason,
     NoOpObserver, LoggingObserver, Timer,
@@ -353,8 +356,9 @@ impl HandshakeContext {
     /// Create a default context for testing (no rate limiting)
     #[cfg(test)]
     pub fn new_test() -> Self {
+        let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
         Self {
-            nonce_cache: NonceCache::new_test(300, 1000),
+            nonce_cache: NonceCache::new_test(300, 1000, epoch),
             timestamp_config: TimestampConfig::default(),
             observer: std::sync::Arc::new(NoOpObserver),
             rate_limiter: None,
@@ -2346,7 +2350,8 @@ mod tests {
     #[test]
     fn test_concurrent_handshakes_with_shared_cache() -> Result<()> {
         // Create shared context
-        let ctx = HandshakeContext::new(NonceCache::new_test(60, 10000))
+        let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let ctx = HandshakeContext::new(NonceCache::new_test(60, 10000, epoch))
             .with_channel_binding(vec![1u8; 32]);
 
         // Launch 50 concurrent handshakes

@@ -226,7 +226,9 @@ impl QuicMeshProtocol {
             .unwrap_or(Path::new("./data"))
             .join("quic_nonce_cache");
 
-        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 100_000)
+        // Derive network epoch from genesis hash (uses environment-appropriate fallback)
+        let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
+        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 100_000, network_epoch)
             .context("Failed to open QUIC nonce cache database")?;
 
         let handshake_ctx = HandshakeContext::new(nonce_cache);
