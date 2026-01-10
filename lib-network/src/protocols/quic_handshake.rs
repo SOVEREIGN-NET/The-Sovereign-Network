@@ -854,7 +854,8 @@ mod tests {
     }
 
     fn test_ctx_pair() -> (HandshakeContext, HandshakeContext) {
-        let nonce_cache = NonceCache::new_test(300, 1000);
+        let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let nonce_cache = NonceCache::new_test(300, 1000, epoch);
         let base = HandshakeContext::new(nonce_cache)
             .with_channel_binding(vec![1u8; 32])
             .with_required_capabilities(vec!["quic".to_string()])

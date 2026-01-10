@@ -495,7 +495,8 @@ impl QuicHandler {
 
         // Create handshake context with nonce cache
         let nonce_db_path = std::path::Path::new(nonce_cache_path);
-        let nonce_cache = lib_network::handshake::NonceCache::open(nonce_db_path, 3600, 100_000)
+        let network_epoch = lib_network::handshake::NetworkEpoch::from_global_or_fail()?;
+        let nonce_cache = lib_network::handshake::NonceCache::open(nonce_db_path, 3600, 100_000, network_epoch)
             .context("Failed to open nonce cache")?;
         let handshake_ctx = lib_network::handshake::HandshakeContext::new(nonce_cache);
 
@@ -976,7 +977,8 @@ impl QuicHandler {
 
         // Create handshake context with nonce cache
         let nonce_db_path = std::path::Path::new("./data/tls/quic_handler_nonce_cache");
-        let nonce_cache = NonceCache::open(nonce_db_path, 3600, 100_000)
+        let network_epoch = lib_network::handshake::NetworkEpoch::from_global_or_fail()?;
+        let nonce_cache = NonceCache::open(nonce_db_path, 3600, 100_000, network_epoch)
             .context("Failed to open nonce cache")?;
         let handshake_ctx = HandshakeContext::new(nonce_cache);
 
