@@ -58,9 +58,13 @@ pub use integration::consensus_integration::{
     BlockchainConsensusCoordinator,
     ConsensusStatus,
     initialize_consensus_integration,
+    initialize_consensus_integration_with_difficulty_config,
     create_dao_proposal_transaction,
     create_dao_vote_transaction,
 };
+
+// Re-export difficulty types from lib-consensus for convenience
+pub use lib_consensus::{DifficultyConfig, DifficultyManager, DifficultyError, DifficultyResult};
 
 // Re-export contracts when feature is enabled
 #[cfg(feature = "contracts")]

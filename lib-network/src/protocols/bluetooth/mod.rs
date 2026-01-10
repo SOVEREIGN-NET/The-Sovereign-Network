@@ -135,6 +135,9 @@ pub struct BluetoothMeshProtocol {
     pub current_connections: Arc<RwLock<HashMap<String, BluetoothConnection>>>,
     /// Discovery active flag
     pub discovery_active: bool,
+    /// SAFETY: Whether Bluetooth is enabled in config (defensive guard)
+    /// If false, all discovery/advertising must refuse to start
+    pub enabled: bool,
     /// Tracked devices for address resolution
     pub tracked_devices: Arc<RwLock<HashMap<String, BleDevice>>>,
     /// Address to device mapping

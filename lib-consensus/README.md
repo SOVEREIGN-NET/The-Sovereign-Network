@@ -36,6 +36,13 @@ A modularized, multi-layered consensus system combining Proof of Stake, Proof of
 - **Delegation Support**: Stake delegation with commission rates
 - **UBI Integration**: Universal Basic Income distribution through governance
 
+### Difficulty Management
+
+- **Consensus-Owned Policy**: Difficulty adjustment logic owned by consensus engine
+- **Bitcoin-Compatible**: Proven difficulty adjustment algorithm
+- **DAO Governable**: Parameters (interval, target timespan) modifiable via governance
+- **Safety Bounds**: Built-in clamping to prevent extreme difficulty swings
+
 ## Architecture
 
 ```
@@ -54,6 +61,7 @@ lib-consensus/
 │   │   ├── proposals.rs
 │   │   ├── voting.rs
 │   │   └── treasury.rs
+│   ├── difficulty.rs     # Difficulty management
 │   ├── proofs/           # Cryptographic proof systems
 │   │   ├── work_proof.rs
 │   │   ├── stake_proof.rs

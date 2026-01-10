@@ -29,7 +29,7 @@ pub mod message_type;
 // Re-export blockchain core types
 pub use transaction_type::*;
 pub use hash::*;
-pub use difficulty::*;
+pub use difficulty::{Difficulty, DifficultyConfig, calculate_target, meets_difficulty, target_to_difficulty, max_target, min_target, adjust_difficulty, adjust_difficulty_with_config, difficulty_to_work};
 pub use mining::*;
 
 // Re-export DAO and SOV economy types
