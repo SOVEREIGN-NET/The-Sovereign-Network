@@ -14,6 +14,35 @@ use serde::{Serialize, Deserialize};
 use lib_crypto::PublicKey;
 use lib_network::network_utils::get_local_ip;
 
+/// Runtime discovery configuration (topology, not behavior)
+///
+/// This struct contains ONLY runtime network topology configuration
+/// extracted from NodeConfig. Environment should never be passed to discovery.
+#[derive(Debug, Clone)]
+pub struct DiscoveryConfig {
+    /// Bootstrap peers to connect to (runtime topology)
+    pub bootstrap_peers: Vec<String>,
+    /// Discovery port for announcing this node
+    pub discovery_port: u16,
+    /// Active discovery protocols
+    pub protocols: Vec<DiscoveryProtocol>,
+}
+
+impl DiscoveryConfig {
+    /// Create discovery config from runtime topology
+    pub fn new(
+        bootstrap_peers: Vec<String>,
+        discovery_port: u16,
+        protocols: Vec<DiscoveryProtocol>,
+    ) -> Self {
+        Self {
+            bootstrap_peers,
+            discovery_port,
+            protocols,
+        }
+    }
+}
+
 /// Discovery protocol types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DiscoveryProtocol {
@@ -189,6 +218,10 @@ pub struct ProtocolStats {
 
 /// Central discovery coordinator
 pub struct DiscoveryCoordinator {
+    /// Runtime topology configuration (bootstrap peers, ports, protocols)
+    /// This is the ONLY network configuration that should exist in discovery.
+    config: DiscoveryConfig,
+
     /// All discovered peers (deduplicated by public key)
     peers: Arc<RwLock<HashMap<Vec<u8>, DiscoveredPeer>>>,
 
@@ -222,11 +255,15 @@ pub struct DiscoveryCoordinator {
 }
 
 impl DiscoveryCoordinator {
-    /// Create a new discovery coordinator with security limits
-    pub fn new() -> Self {
+    /// Create a new discovery coordinator with runtime topology configuration
+    ///
+    /// ARCHITECTURE: Only accepts DiscoveryConfig, never Environment.
+    /// Bootstrap peers and network topology are runtime concerns, not compile-time behavior.
+    pub fn new(config: DiscoveryConfig) -> Self {
         let (discovery_tx, discovery_rx) = mpsc::unbounded_channel();
 
         Self {
+            config,
             peers: Arc::new(RwLock::new(HashMap::new())),
             active_protocols: Arc::new(RwLock::new(HashSet::new())),
             discovery_tx,
@@ -538,49 +575,51 @@ impl DiscoveryCoordinator {
     // ========================================================================
     
     /// Discover ZHTP network using all available methods
-    /// 
+    ///
     /// This is the main entry point for network discovery. It tries:
-    /// 1. DHT/mDNS discovery
-    /// 2. UDP multicast announcements
-    /// 3. Port scanning on common ZHTP ports
-    /// 
+    /// 1. Bootstrap peers from runtime config
+    /// 2. DHT/mDNS discovery
+    /// 3. UDP multicast announcements
+    /// 4. Port scanning on common ZHTP ports
+    ///
+    /// ARCHITECTURE: No Environment parameter. Only uses runtime config passed at construction.
     /// Returns network information if peers are found
     pub async fn discover_network(
         &self,
         environment: &crate::config::Environment,
     ) -> Result<crate::runtime::ExistingNetworkInfo> {
         info!("📡 Discovering ZHTP peers on local network...");
-        info!("   Methods: DHT, mDNS, port scanning");
-        
+        info!("   Methods: Bootstrap config, DHT, mDNS, port scanning");
+
         // Create node identity for DHT
         let node_identity = crate::runtime::create_or_load_node_identity(environment).await?;
-        
+
         // Initialize DHT
         info!("   → Initializing DHT for peer discovery...");
         crate::runtime::shared_dht::initialize_global_dht_safe(node_identity.clone()).await?;
-        
-        // Perform active discovery
+
+        // Perform active discovery (uses self.config, not environment defaults)
         info!("   → Scanning network (timeout: 30 seconds)...");
-        let discovered_peers = self.perform_active_discovery(&node_identity, environment).await?;
-        
+        let discovered_peers = self.perform_active_discovery(&node_identity).await?;
+
         if discovered_peers.is_empty() {
             warn!("✗ No ZHTP peers discovered on local network");
             return Err(anyhow::anyhow!("No network peers found"));
         }
-        
+
         info!("✓ Discovered {} ZHTP peer(s)!", discovered_peers.len());
         for (i, peer) in discovered_peers.iter().enumerate() {
             info!("   {}. {}", i + 1, peer);
         }
-        
+
         // Give peers time to respond to handshakes
         info!("   ⏳ Waiting 5 seconds for peer handshakes...");
         tokio::time::sleep(Duration::from_secs(5)).await;
-        
+
         // Query blockchain status
         info!("   📊 Querying blockchain status from peers...");
         let blockchain_info = self.fetch_blockchain_info(&discovered_peers).await?;
-        
+
         Ok(crate::runtime::ExistingNetworkInfo {
             peer_count: discovered_peers.len() as u32,
             blockchain_height: blockchain_info.height,
@@ -592,17 +631,18 @@ impl DiscoveryCoordinator {
     
 
     /// Perform active peer discovery using all methods
+    ///
+    /// Uses only the runtime DiscoveryConfig passed at construction.
+    /// Never consults Environment enum (which contains compile-time defaults).
     async fn perform_active_discovery(
         &self,
         _node_identity: &lib_identity::ZhtpIdentity,
-        environment: &crate::config::Environment,
     ) -> Result<Vec<String>> {
         let mut discovered_peers = Vec::new();
-        
-        // Method 0: Bootstrap peers from config (ALWAYS TRY FIRST)
-        let env_config = environment.get_default_config();
-        if !env_config.network_settings.bootstrap_peers.is_empty() {
-            info!("   → Trying configured bootstrap peers ({} addresses)...", env_config.network_settings.bootstrap_peers.len());
+
+        // Method 0: Bootstrap peers from runtime config (ALWAYS TRY FIRST)
+        if !self.config.bootstrap_peers.is_empty() {
+            info!("   → Trying configured bootstrap peers ({} addresses)...", self.config.bootstrap_peers.len());
 
             // SECURITY (MEDIUM #8): Hash peer IPs before logging to prevent information disclosure
             // Hashing reveals nothing about which IPs are actually used, but allows correlation
@@ -611,7 +651,7 @@ impl DiscoveryCoordinator {
                 format!("peer_{}", hex::encode(&hash.as_bytes()[..4]))
             };
 
-            for peer in &env_config.network_settings.bootstrap_peers {
+            for peer in &self.config.bootstrap_peers {
                 let peer_hash = hash_peer_for_logging(peer);
                 debug!("      Checking bootstrap peer: {}", peer_hash);
 
@@ -794,7 +834,12 @@ struct BlockchainInfo {
 
 impl Default for DiscoveryCoordinator {
     fn default() -> Self {
-        Self::new()
+        let config = DiscoveryConfig::new(
+            vec![],
+            9333,
+            vec![DiscoveryProtocol::UdpMulticast, DiscoveryProtocol::DHT],
+        );
+        Self::new(config)
     }
 }
 
@@ -804,7 +849,12 @@ mod tests {
     
     #[tokio::test]
     async fn test_coordinator_deduplication() {
-        let coordinator = DiscoveryCoordinator::new();
+        let config = DiscoveryConfig::new(
+            vec!["192.168.1.1:9333".to_string()],
+            9333,
+            vec![DiscoveryProtocol::UdpMulticast, DiscoveryProtocol::DHT],
+        );
+        let coordinator = DiscoveryCoordinator::new(config);
         coordinator.start_event_listener().await;
         
         let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
@@ -844,7 +894,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_protocol_stats() {
-        let coordinator = DiscoveryCoordinator::new();
+        let config = DiscoveryConfig::new(vec![], 9333, vec![]);
+        let coordinator = DiscoveryCoordinator::new(config);
         
         coordinator.record_attempt(DiscoveryProtocol::UdpMulticast, true, 50.0).await;
         coordinator.record_attempt(DiscoveryProtocol::UdpMulticast, true, 100.0).await;

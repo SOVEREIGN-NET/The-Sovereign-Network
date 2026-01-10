@@ -267,6 +267,7 @@ impl Component for ProtocolsComponent {
             None,  // discovery_port - use default
             None,  // quic_port - use default
             None,  // protocols_config - will use defaults (Bluetooth disabled by default)
+            None,  // bootstrap_peers - will use defaults
         ).await?;
         
         // Initialize blockchain provider
