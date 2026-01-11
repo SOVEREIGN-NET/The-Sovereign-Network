@@ -12,7 +12,6 @@
 //! - Verifies timestamp freshness (rejects messages > 5 min old)
 //! - Verifies sender public key matches claimed sender_id
 
-use anyhow::Result;
 use lib_crypto::{KeyPair, Signature, PublicKey};
 use crate::types::dht_types::{DhtMessage, MAX_MESSAGE_AGE_SECS};
 use tracing::{debug, warn};
@@ -50,13 +49,19 @@ impl MessageSigner {
     ///
     /// # Returns
     /// * `Ok(())` if signing succeeded
-    /// * `Err(...)` if signing failed
-    pub fn sign_message(&self, message: &mut DhtMessage) -> Result<()> {
+    /// * `Err(SigningError)` if signing failed
+    pub fn sign_message(&self, message: &mut DhtMessage) -> Result<(), SigningError> {
+        // Check if message is already signed
+        if message.signature.is_some() {
+            return Err(SigningError::AlreadySigned);
+        }
+
         // Get signable data (excludes signature field)
         let signable_data = message.signable_data();
 
         // Sign with Dilithium
-        let signature = self.keypair.sign(&signable_data)?;
+        let signature = self.keypair.sign(&signable_data)
+            .map_err(|e| SigningError::SigningFailed(e.to_string()))?;
 
         // Store signature bytes in message
         message.signature = Some(signature.signature);
@@ -73,7 +78,7 @@ impl MessageSigner {
     /// Create a signed DHT message
     ///
     /// Convenience method that signs a message and returns it.
-    pub fn sign(&self, mut message: DhtMessage) -> Result<DhtMessage> {
+    pub fn sign(&self, mut message: DhtMessage) -> Result<DhtMessage, SigningError> {
         self.sign_message(&mut message)?;
         Ok(message)
     }
@@ -93,12 +98,12 @@ impl MessageSigner {
 ///
 /// # Returns
 /// * `Ok(true)` if signature is valid
-/// * `Ok(false)` if signature is invalid
-/// * `Err(...)` if verification could not be performed
+/// * `Ok(false)` if signature is invalid but verification completed
+/// * `Err(VerificationError)` for critical verification failures
 pub fn verify_message_signature(
     message: &DhtMessage,
     sender_public_key: &PublicKey,
-) -> Result<bool> {
+) -> Result<bool, VerificationError> {
     // Check message has a signature
     let signature_bytes = match &message.signature {
         Some(sig) => sig,
@@ -107,18 +112,49 @@ pub fn verify_message_signature(
                 message_id = %message.message_id,
                 "Message has no signature"
             );
-            return Ok(false);
+            return Err(VerificationError::NoSignature);
         }
     };
 
-    // Validate freshness first (fast path rejection)
-    if let Err(e) = message.validate_freshness() {
+    // Validate nonce is non-zero
+    if message.nonce.iter().all(|&b| b == 0) {
         warn!(
             message_id = %message.message_id,
-            error = %e,
-            "Message failed freshness validation"
+            "Message has zero nonce"
         );
-        return Ok(false);
+        return Err(VerificationError::InvalidNonce);
+    }
+
+    // Validate freshness first (fast path rejection)
+    if let Err(e) = message.validate_freshness() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| {
+                // System clock is set before Unix epoch - use timestamp 0
+                // This should never happen in practice on modern systems
+                warn!("System clock is before Unix epoch");
+                std::time::Duration::from_secs(0)
+            })
+            .as_secs();
+        
+        if message.timestamp > now {
+            let delta_secs = message.timestamp - now;
+            warn!(
+                message_id = %message.message_id,
+                error = %e,
+                "Message timestamp is in the future"
+            );
+            return Err(VerificationError::FutureTimestamp { delta_secs });
+        } else {
+            let age_secs = now.saturating_sub(message.timestamp);
+            warn!(
+                message_id = %message.message_id,
+                error = %e,
+                "Message is too old"
+            );
+            return Err(VerificationError::MessageTooOld { age_secs });
+        }
     }
 
     // Get signable data
@@ -136,14 +172,15 @@ pub fn verify_message_signature(
                     msg_type = ?message.message_type,
                     "Message signature verified"
                 );
+                Ok(true)
             } else {
                 warn!(
                     message_id = %message.message_id,
                     msg_type = ?message.message_type,
                     "Message signature verification failed"
                 );
+                Ok(false)
             }
-            Ok(valid)
         }
         Err(e) => {
             warn!(
@@ -162,7 +199,7 @@ pub fn verify_message_signature(
 pub fn verify_message_signature_bytes(
     message: &DhtMessage,
     dilithium_pk: &[u8],
-) -> Result<bool> {
+) -> Result<bool, VerificationError> {
     let public_key = PublicKey::new(dilithium_pk.to_vec());
     verify_message_signature(message, &public_key)
 }
@@ -298,10 +335,13 @@ mod tests {
         let keypair = KeyPair::generate().expect("Failed to generate keypair");
         let message = create_test_message();
 
-        // Unsigned message should fail
-        let result = verify_message_signature(&message, &keypair.public_key)
-            .expect("Verification should not error");
-        assert!(!result, "Unsigned message should fail verification");
+        // Unsigned message should return NoSignature error
+        let result = verify_message_signature(&message, &keypair.public_key);
+        assert!(result.is_err(), "Unsigned message should return error");
+        match result {
+            Err(VerificationError::NoSignature) => {},
+            _ => panic!("Expected NoSignature error"),
+        }
     }
 
     #[test]
@@ -319,10 +359,13 @@ mod tests {
 
         signer.sign_message(&mut message).expect("Failed to sign message");
 
-        // Stale message should fail
-        let result = verify_message_signature(&message, &keypair.public_key)
-            .expect("Verification should not error");
-        assert!(!result, "Stale message should fail verification");
+        // Stale message should return MessageTooOld error
+        let result = verify_message_signature(&message, &keypair.public_key);
+        assert!(result.is_err(), "Stale message should return error");
+        match result {
+            Err(VerificationError::MessageTooOld { .. }) => {},
+            _ => panic!("Expected MessageTooOld error"),
+        }
     }
 
     #[test]
@@ -340,10 +383,13 @@ mod tests {
 
         signer.sign_message(&mut message).expect("Failed to sign message");
 
-        // Future message should fail
-        let result = verify_message_signature(&message, &keypair.public_key)
-            .expect("Verification should not error");
-        assert!(!result, "Future timestamp message should fail verification");
+        // Future message should return FutureTimestamp error
+        let result = verify_message_signature(&message, &keypair.public_key);
+        assert!(result.is_err(), "Future timestamp message should return error");
+        match result {
+            Err(VerificationError::FutureTimestamp { .. }) => {},
+            _ => panic!("Expected FutureTimestamp error"),
+        }
     }
 
     #[test]
@@ -356,10 +402,13 @@ mod tests {
 
         signer.sign_message(&mut message).expect("Failed to sign message");
 
-        // Zero nonce should fail
-        let result = verify_message_signature(&message, &keypair.public_key)
-            .expect("Verification should not error");
-        assert!(!result, "Zero nonce message should fail verification");
+        // Zero nonce should return InvalidNonce error
+        let result = verify_message_signature(&message, &keypair.public_key);
+        assert!(result.is_err(), "Zero nonce message should return error");
+        match result {
+            Err(VerificationError::InvalidNonce) => {},
+            _ => panic!("Expected InvalidNonce error"),
+        }
     }
 
     #[test]
@@ -422,10 +471,13 @@ mod tests {
 
         signer.sign_message(&mut message).expect("Failed to sign message");
 
-        // Should fail - over the limit
-        let result = verify_message_signature(&message, &keypair.public_key)
-            .expect("Verification should not error");
-        assert!(!result, "Message at 301 seconds should fail verification");
+        // Should fail - over the limit  
+        let result = verify_message_signature(&message, &keypair.public_key);
+        assert!(result.is_err(), "Message at 301 seconds should return error");
+        match result {
+            Err(VerificationError::MessageTooOld { .. }) => {},
+            _ => panic!("Expected MessageTooOld error"),
+        }
     }
 
     #[test]
@@ -501,6 +553,26 @@ mod tests {
         let result = verify_message_signature(&message, &keypair.public_key)
             .expect("Verification should not error");
         assert!(!result, "Corrupted signature should fail verification");
+    }
+
+    #[test]
+    fn test_already_signed_error() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_test_message();
+        
+        // Sign the message once
+        signer.sign_message(&mut message).expect("Failed to sign message");
+        assert!(message.signature.is_some());
+
+        // Try to sign again - should return AlreadySigned error
+        let result = signer.sign_message(&mut message);
+        assert!(result.is_err(), "Signing already-signed message should return error");
+        match result {
+            Err(SigningError::AlreadySigned) => {},
+            _ => panic!("Expected AlreadySigned error"),
+        }
     }
 
     #[test]
