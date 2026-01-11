@@ -4,4 +4,4 @@
 
 pub mod traits;
 
-pub use traits::{BatchOp, StorageBackend};
+pub use traits::{BackendStats, BatchOp, StorageBackend, StorageKey};

@@ -66,7 +66,7 @@ pub use economic::{
 };
 pub use content::{ContentManager, UploadRequest, DownloadRequest, SearchQuery, AccessControlSettings, ContentStorageRequirements};
 pub use wallet_content_integration::{WalletContentManager, WalletContentStatistics};
-pub use backend::{BatchOp, StorageBackend};
+pub use backend::{BackendStats, BatchOp, StorageBackend, StorageKey};
 pub use erasure::*;
 pub use proofs::{StorageProof, RetrievalProof, generate_storage_proof, generate_retrieval_proof};
 pub use integrity::{IntegrityManager, IntegrityMetadata, IntegrityStatus, ChecksumAlgorithm};
