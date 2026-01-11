@@ -63,8 +63,8 @@ parking_lot = "0.12"
 # CRITICAL FIX C1: BLAKE3 for proof-of-work
 blake3 = "1.5"
 
-# CRITICAL FIX C4: Persistent nonce cache with RocksDB
-rocksdb = "0.21"
+# CRITICAL FIX C4: Persistent nonce cache with sled
+sled = "0.34"
 
 # X25519 for ephemeral key exchange (forward secrecy)
 x25519-dalek = "2.0"
