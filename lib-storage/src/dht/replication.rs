@@ -9,6 +9,23 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// DHT replication manager
+///
+/// ## Sequence Counter Behavior
+///
+/// The sequence counter starts at 0 on every node initialization and increments monotonically
+/// with each outgoing replication message. This provides replay protection for the current session.
+///
+/// **Important**: After a node restart, the sequence counter resets to 0. This means:
+/// - Replication messages from a restarted node will have low sequence numbers
+/// - Remote peers that still have high last_sequence values will reject these messages
+/// - The wraparound window (1024) provides some tolerance for this scenario
+/// - If a node frequently restarts, legitimate replication operations may fail
+///
+/// **Mitigation strategies** (not yet implemented):
+/// 1. Persist sequence counters across restarts
+/// 2. Add a connection reset protocol to signal sequence counter reset
+/// 3. Use timestamp-based validation in addition to sequence numbers
+/// 4. Implement session tokens that change on restart
 #[derive(Debug)]
 pub struct DhtReplication {
     /// Local node ID

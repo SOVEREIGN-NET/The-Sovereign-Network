@@ -33,6 +33,30 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
+// ========== ERROR TYPES ==========
+
+/// Errors specific to sequence tracking and replay detection
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SequenceError {
+    /// Replay attack detected: sequence number is not greater than last seen
+    ReplayDetected { sequence: u64, last_sequence: u64 },
+    /// Peer not found in registry
+    PeerNotFound,
+}
+
+impl std::fmt::Display for SequenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SequenceError::ReplayDetected { sequence, last_sequence } => {
+                write!(f, "Replay detected: sequence {} <= {}", sequence, last_sequence)
+            }
+            SequenceError::PeerNotFound => write!(f, "Peer not found in registry"),
+        }
+    }
+}
+
+impl std::error::Error for SequenceError {}
+
 // ========== CONFIGURABLE CONSTANTS ==========
 
 /// Number of K-buckets in Kademlia routing table (for 256-bit NodeIds)
@@ -382,21 +406,25 @@ impl DhtPeerRegistry {
     ///
     /// Rejects messages with sequence numbers less than or equal to the last seen.
     /// Allows a small wraparound window for u64 overflow.
-    pub fn check_and_update_sequence(&mut self, node_id: &NodeId, sequence: u64) -> Result<()> {
+    ///
+    /// ## Wraparound Handling
+    ///
+    /// When a counter wraps from u64::MAX to 0, we accept sequences in a small window (0..1024)
+    /// only if the last_sequence is very close to u64::MAX (within 1024 of overflow).
+    /// This prevents replay attacks that try to exploit the wraparound window.
+    pub fn check_and_update_sequence(&mut self, node_id: &NodeId, sequence: u64) -> Result<(), SequenceError> {
         let entry = self.peers.get_mut(node_id)
-            .ok_or_else(|| anyhow!("Unknown peer {}", hex::encode(&node_id.as_bytes()[..4])))?;
+            .ok_or(SequenceError::PeerNotFound)?;
 
         if let Some(last_sequence) = entry.last_sequence {
             if sequence <= last_sequence {
+                // Check if this is a legitimate wraparound
+                // Only accept low sequences if last_sequence is close to u64::MAX
                 let is_wraparound = last_sequence > u64::MAX - SEQUENCE_WRAPAROUND_WINDOW
                     && sequence < SEQUENCE_WRAPAROUND_WINDOW;
 
                 if !is_wraparound {
-                    return Err(anyhow!(
-                        "Replay detected: sequence {} <= {}",
-                        sequence,
-                        last_sequence
-                    ));
+                    return Err(SequenceError::ReplayDetected { sequence, last_sequence });
                 }
             }
         }
@@ -823,6 +851,86 @@ mod tests {
         registry.upsert(entry).unwrap();
 
         assert!(registry.check_and_update_sequence(&node_id, 0).is_ok());
+    }
+
+    #[test]
+    fn test_sequence_wraparound_exact_max() {
+        let mut registry = DhtPeerRegistry::new(20);
+        let node = create_test_node("seq-wrap-max", 4102);
+        let node_id = node.peer.node_id().clone();
+
+        let entry = DhtPeerEntry {
+            node,
+            distance: 1,
+            bucket_index: 0,
+            last_contact: 0,
+            failed_attempts: 0,
+            last_sequence: Some(u64::MAX),
+        };
+
+        registry.upsert(entry).unwrap();
+
+        // Should allow wraparound from u64::MAX to 0
+        assert!(registry.check_and_update_sequence(&node_id, 0).is_ok());
+        // Should allow sequential increases after wraparound
+        assert!(registry.check_and_update_sequence(&node_id, 1).is_ok());
+    }
+
+    #[test]
+    fn test_sequence_wraparound_prevents_replay_attack() {
+        let mut registry = DhtPeerRegistry::new(20);
+        let node = create_test_node("seq-replay", 4103);
+        let node_id = node.peer.node_id().clone();
+
+        // Set last_sequence to a value far from u64::MAX
+        let entry = DhtPeerEntry {
+            node,
+            distance: 1,
+            bucket_index: 0,
+            last_contact: 0,
+            failed_attempts: 0,
+            last_sequence: Some(1000),
+        };
+
+        registry.upsert(entry).unwrap();
+
+        // Should reject sequence 0 because it's not actually a wraparound
+        let err = registry.check_and_update_sequence(&node_id, 0).unwrap_err();
+        assert_eq!(err, SequenceError::ReplayDetected { sequence: 0, last_sequence: 1000 });
+    }
+
+    #[test]
+    fn test_sequence_custom_error_type() {
+        let mut registry = DhtPeerRegistry::new(20);
+        let node = create_test_node("seq-error", 4104);
+        let node_id = node.peer.node_id().clone();
+
+        let entry = DhtPeerEntry {
+            node,
+            distance: 1,
+            bucket_index: 0,
+            last_contact: 0,
+            failed_attempts: 0,
+            last_sequence: Some(100),
+        };
+
+        registry.upsert(entry).unwrap();
+
+        // Test that we get the correct custom error type
+        let err = registry.check_and_update_sequence(&node_id, 50).unwrap_err();
+        match err {
+            SequenceError::ReplayDetected { sequence, last_sequence } => {
+                assert_eq!(sequence, 50);
+                assert_eq!(last_sequence, 100);
+            }
+            _ => panic!("Expected ReplayDetected error"),
+        }
+
+        // Test PeerNotFound error
+        let unknown_node = create_test_node("unknown", 4105);
+        let unknown_id = unknown_node.peer.node_id().clone();
+        let err = registry.check_and_update_sequence(&unknown_id, 1).unwrap_err();
+        assert_eq!(err, SequenceError::PeerNotFound);
     }
 
     #[test]
