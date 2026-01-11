@@ -412,16 +412,14 @@ impl SqliteBackend {
         .map_err(|e| anyhow!("Failed to ensure schema_migrations table: {}", e))?;
 
         // Determine the currently applied schema version (if any)
-        let current_version: Option<i64> = sqlx::query_scalar(
+        let current_version: i64 = sqlx::query_scalar(
             r#"
-            SELECT MAX(version) FROM schema_migrations
+            SELECT COALESCE(MAX(version), 0) FROM schema_migrations
             "#,
         )
-        .fetch_optional(pool)
+        .fetch_one(pool)
         .await
         .map_err(|e| anyhow!("Failed to query current schema version: {}", e))?;
-
-        let current_version = current_version.unwrap_or(0);
 
         if current_version < CURRENT_SCHEMA_VERSION {
             // Embedded migration SQL for [DB-009]
