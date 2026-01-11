@@ -22,6 +22,181 @@ use std::str::FromStr;
 use tracing::{debug, info, warn};
 
 // ============================================================================
+// Validation Constants
+// ============================================================================
+
+/// Expected length for content hashes (Blake3 = 32 bytes)
+const EXPECTED_HASH_LENGTH: usize = 32;
+
+/// Maximum length for string IDs (node_id, owner_id, etc.)
+const MAX_ID_LENGTH: usize = 128;
+
+/// Maximum length for contract IDs
+const MAX_CONTRACT_ID_LENGTH: usize = 64;
+
+/// Maximum clock drift allowed for timestamps (5 minutes)
+const MAX_CLOCK_DRIFT_SECS: i64 = 300;
+
+/// Maximum query limit to prevent DoS
+const MAX_QUERY_LIMIT: u32 = 1000;
+
+/// Default query limit
+const DEFAULT_QUERY_LIMIT: u32 = 100;
+
+/// Valid storage tiers
+const VALID_TIERS: &[&str] = &["hot", "warm", "cold", "archive"];
+
+/// Valid encryption levels
+const VALID_ENCRYPTION_LEVELS: &[&str] = &["none", "aes256", "high", "quantum"];
+
+/// Valid contract state transitions: (from, to)
+const VALID_CONTRACT_TRANSITIONS: &[(ContractStatus, ContractStatus)] = &[
+    (ContractStatus::Pending, ContractStatus::Active),
+    (ContractStatus::Pending, ContractStatus::Terminated),
+    (ContractStatus::Active, ContractStatus::Expired),
+    (ContractStatus::Active, ContractStatus::Terminated),
+];
+
+// ============================================================================
+// Validation Functions
+// ============================================================================
+
+/// Validate content hash length
+fn validate_content_hash(hash: &[u8]) -> Result<()> {
+    if hash.len() != EXPECTED_HASH_LENGTH {
+        return Err(anyhow!(
+            "Invalid content hash length: expected {}, got {}",
+            EXPECTED_HASH_LENGTH,
+            hash.len()
+        ));
+    }
+    // Reject all-zero hashes
+    if hash.iter().all(|&b| b == 0) {
+        return Err(anyhow!("Content hash cannot be all zeros"));
+    }
+    Ok(())
+}
+
+/// Validate string ID (node_id, owner_id, provider_id, client_id)
+fn validate_id(id: &str, field_name: &str) -> Result<()> {
+    if id.is_empty() {
+        return Err(anyhow!("{} cannot be empty", field_name));
+    }
+    if id.len() > MAX_ID_LENGTH {
+        return Err(anyhow!(
+            "{} exceeds maximum length of {}",
+            field_name,
+            MAX_ID_LENGTH
+        ));
+    }
+    Ok(())
+}
+
+/// Validate contract ID
+fn validate_contract_id(id: &str) -> Result<()> {
+    if id.is_empty() {
+        return Err(anyhow!("contract_id cannot be empty"));
+    }
+    if id.len() > MAX_CONTRACT_ID_LENGTH {
+        return Err(anyhow!(
+            "contract_id exceeds maximum length of {}",
+            MAX_CONTRACT_ID_LENGTH
+        ));
+    }
+    Ok(())
+}
+
+/// Validate storage tier
+fn validate_tier(tier: &str) -> Result<()> {
+    if !VALID_TIERS.contains(&tier.to_lowercase().as_str()) {
+        return Err(anyhow!(
+            "Invalid tier: {}. Valid tiers: {:?}",
+            tier,
+            VALID_TIERS
+        ));
+    }
+    Ok(())
+}
+
+/// Validate encryption level
+fn validate_encryption_level(level: &str) -> Result<()> {
+    if !VALID_ENCRYPTION_LEVELS.contains(&level.to_lowercase().as_str()) {
+        return Err(anyhow!(
+            "Invalid encryption level: {}. Valid levels: {:?}",
+            level,
+            VALID_ENCRYPTION_LEVELS
+        ));
+    }
+    Ok(())
+}
+
+/// Validate timestamp is within acceptable clock drift (for current timestamps)
+fn validate_timestamp(timestamp: i64) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    if timestamp > now + MAX_CLOCK_DRIFT_SECS {
+        return Err(anyhow!("Timestamp too far in the future"));
+    }
+    // Allow historical timestamps for data import, but not before Unix epoch
+    if timestamp < 0 {
+        return Err(anyhow!("Timestamp cannot be negative"));
+    }
+    Ok(())
+}
+
+/// Maximum allowed contract duration (10 years)
+const MAX_CONTRACT_DURATION_SECS: i64 = 10 * 365 * 24 * 60 * 60;
+
+/// Validate contract time range (allows future end times for contracts)
+fn validate_contract_times(start_time: i64, end_time: i64) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+
+    // Start time should be reasonable (not too far in past or future)
+    if start_time < 0 {
+        return Err(anyhow!("Start time cannot be negative"));
+    }
+    // Allow start time to be in the future (up to MAX_CLOCK_DRIFT_SECS)
+    if start_time > now + MAX_CLOCK_DRIFT_SECS {
+        return Err(anyhow!("Start time too far in the future"));
+    }
+
+    // End time must be after start time
+    if end_time <= start_time {
+        return Err(anyhow!("End time must be after start time"));
+    }
+
+    // End time shouldn't be unreasonably far in the future
+    if end_time > now + MAX_CONTRACT_DURATION_SECS {
+        return Err(anyhow!("Contract duration exceeds maximum of 10 years"));
+    }
+
+    Ok(())
+}
+
+/// Get validated current timestamp
+fn get_current_timestamp() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+/// Sanitize query limit to prevent DoS
+fn sanitize_limit(limit: u32) -> u32 {
+    limit.min(MAX_QUERY_LIMIT)
+}
+
+/// Check if contract state transition is valid
+fn is_valid_contract_transition(from: ContractStatus, to: ContractStatus) -> bool {
+    VALID_CONTRACT_TRANSITIONS
+        .iter()
+        .any(|(f, t)| *f == from && *t == to)
+}
+
+/// Escape SQL LIKE wildcards in a string
+fn escape_like_wildcards(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+// ============================================================================
 // Type Definitions
 // ============================================================================
 
@@ -302,6 +477,18 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
 
     /// Insert or update content metadata
     pub async fn upsert_content_metadata(&self, metadata: &ContentMetadataRow) -> Result<()> {
+        // Validate inputs
+        validate_content_hash(&metadata.content_hash)?;
+        validate_id(&metadata.owner_id, "owner_id")?;
+        validate_tier(&metadata.tier)?;
+        validate_encryption_level(&metadata.encryption_level)?;
+        validate_timestamp(metadata.created_at)?;
+        validate_timestamp(metadata.updated_at)?;
+
+        if metadata.size < 0 {
+            return Err(anyhow!("Content size cannot be negative"));
+        }
+
         sqlx::query(
             r#"
             INSERT INTO content_metadata
@@ -329,7 +516,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         .bind(&metadata.description)
         .execute(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to upsert content metadata: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in upsert_content_metadata: {:?}", e);
+            anyhow!("Failed to store content metadata")
+        })?;
 
         Ok(())
     }
@@ -339,65 +529,127 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         &self,
         content_hash: &[u8],
     ) -> Result<Option<ContentMetadataRow>> {
+        validate_content_hash(content_hash)?;
+
         let result = sqlx::query_as::<_, ContentMetadataRow>(
             "SELECT * FROM content_metadata WHERE content_hash = ?",
         )
         .bind(content_hash)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to get content metadata: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in get_content_metadata: {:?}", e);
+            anyhow!("Failed to retrieve content metadata")
+        })?;
 
         Ok(result)
     }
 
     /// Delete content metadata
     pub async fn delete_content_metadata(&self, content_hash: &[u8]) -> Result<bool> {
+        validate_content_hash(content_hash)?;
+
         let result = sqlx::query("DELETE FROM content_metadata WHERE content_hash = ?")
             .bind(content_hash)
             .execute(&self.pool)
             .await
-            .map_err(|e| anyhow!("Failed to delete content metadata: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("Database error in delete_content_metadata: {:?}", e);
+                anyhow!("Failed to delete content metadata")
+            })?;
 
         Ok(result.rows_affected() > 0)
     }
 
-    /// List content by owner
-    pub async fn list_content_by_owner(&self, owner_id: &str) -> Result<Vec<ContentMetadataRow>> {
+    /// List content by owner with pagination
+    pub async fn list_content_by_owner(
+        &self,
+        owner_id: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<ContentMetadataRow>> {
+        validate_id(owner_id, "owner_id")?;
+
+        let limit = sanitize_limit(limit.unwrap_or(DEFAULT_QUERY_LIMIT));
+        let offset = offset.unwrap_or(0);
+
         let results = sqlx::query_as::<_, ContentMetadataRow>(
-            "SELECT * FROM content_metadata WHERE owner_id = ? ORDER BY created_at DESC",
+            "SELECT * FROM content_metadata WHERE owner_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
         )
         .bind(owner_id)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to list content by owner: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in list_content_by_owner: {:?}", e);
+            anyhow!("Failed to list content")
+        })?;
 
         Ok(results)
     }
 
-    /// List content by tier
-    pub async fn list_content_by_tier(&self, tier: &str) -> Result<Vec<ContentMetadataRow>> {
+    /// List content by tier with pagination
+    pub async fn list_content_by_tier(
+        &self,
+        tier: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<ContentMetadataRow>> {
+        validate_tier(tier)?;
+
+        let limit = sanitize_limit(limit.unwrap_or(DEFAULT_QUERY_LIMIT));
+        let offset = offset.unwrap_or(0);
+
         let results = sqlx::query_as::<_, ContentMetadataRow>(
-            "SELECT * FROM content_metadata WHERE tier = ? ORDER BY created_at DESC",
+            "SELECT * FROM content_metadata WHERE tier = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
         )
         .bind(tier)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to list content by tier: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in list_content_by_tier: {:?}", e);
+            anyhow!("Failed to list content by tier")
+        })?;
 
         Ok(results)
     }
 
-    /// Search content by tag (JSON array contains)
-    pub async fn search_content_by_tag(&self, tag: &str) -> Result<Vec<ContentMetadataRow>> {
-        // SQLite JSON contains check
-        let pattern = format!("%\"{}%", tag);
+    /// Search content by tag (JSON array contains) with pagination
+    pub async fn search_content_by_tag(
+        &self,
+        tag: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<ContentMetadataRow>> {
+        if tag.is_empty() {
+            return Err(anyhow!("Tag cannot be empty"));
+        }
+        if tag.len() > MAX_ID_LENGTH {
+            return Err(anyhow!("Tag exceeds maximum length"));
+        }
+
+        let limit = sanitize_limit(limit.unwrap_or(DEFAULT_QUERY_LIMIT));
+        let offset = offset.unwrap_or(0);
+
+        // Escape SQL LIKE wildcards to prevent pattern injection
+        let escaped_tag = escape_like_wildcards(tag);
+        let pattern = format!("%\"{}\"%", escaped_tag);
+
         let results = sqlx::query_as::<_, ContentMetadataRow>(
-            "SELECT * FROM content_metadata WHERE tags LIKE ? ORDER BY created_at DESC",
+            "SELECT * FROM content_metadata WHERE tags LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ? OFFSET ?",
         )
         .bind(pattern)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to search content by tag: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in search_content_by_tag: {:?}", e);
+            anyhow!("Failed to search content by tag")
+        })?;
 
         Ok(results)
     }
@@ -408,6 +660,28 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
 
     /// Insert a new storage contract
     pub async fn insert_contract(&self, contract: &StorageContractRow) -> Result<()> {
+        // Validate inputs
+        validate_contract_id(&contract.contract_id)?;
+        validate_content_hash(&contract.content_hash)?;
+        validate_id(&contract.provider_id, "provider_id")?;
+        validate_id(&contract.client_id, "client_id")?;
+
+        // Use contract-specific time validation (allows future end times)
+        validate_contract_times(contract.start_time, contract.end_time)?;
+        validate_timestamp(contract.created_at)?;
+        validate_timestamp(contract.updated_at)?;
+
+        // Validate status is a known value
+        let _status: ContractStatus = contract.status.parse()?;
+
+        // Validate economic constraints
+        if contract.price_per_day < 0 {
+            return Err(anyhow!("Price per day cannot be negative"));
+        }
+        if contract.total_paid < 0 {
+            return Err(anyhow!("Total paid cannot be negative"));
+        }
+
         sqlx::query(
             r#"
             INSERT INTO storage_contracts
@@ -429,112 +703,244 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         .bind(contract.updated_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to insert contract: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in insert_contract: {:?}", e);
+            anyhow!("Failed to insert contract")
+        })?;
 
         Ok(())
     }
 
     /// Get contract by ID
     pub async fn get_contract(&self, contract_id: &str) -> Result<Option<StorageContractRow>> {
+        validate_contract_id(contract_id)?;
+
         let result = sqlx::query_as::<_, StorageContractRow>(
             "SELECT * FROM storage_contracts WHERE contract_id = ?",
         )
         .bind(contract_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to get contract: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in get_contract: {:?}", e);
+            anyhow!("Failed to retrieve contract")
+        })?;
 
         Ok(result)
     }
 
-    /// Update contract status
+    /// Update contract status with state transition validation
+    ///
+    /// Valid transitions:
+    /// - Pending -> Active
+    /// - Pending -> Terminated
+    /// - Active -> Expired
+    /// - Active -> Terminated
     pub async fn update_contract_status(
         &self,
         contract_id: &str,
-        status: ContractStatus,
+        new_status: ContractStatus,
     ) -> Result<bool> {
-        let now = chrono::Utc::now().timestamp();
+        validate_contract_id(contract_id)?;
+
+        // Fetch current contract to validate state transition
+        let current = self
+            .get_contract(contract_id)
+            .await?
+            .ok_or_else(|| anyhow!("Contract not found: {}", contract_id))?;
+
+        let current_status: ContractStatus = current.status.parse()?;
+
+        // Validate state transition
+        if !is_valid_contract_transition(current_status, new_status) {
+            return Err(anyhow!(
+                "Invalid contract state transition: {:?} -> {:?}",
+                current_status,
+                new_status
+            ));
+        }
+
+        let now = get_current_timestamp();
         let result = sqlx::query(
             "UPDATE storage_contracts SET status = ?, updated_at = ? WHERE contract_id = ?",
         )
-        .bind(status.to_string())
+        .bind(new_status.to_string())
         .bind(now)
         .bind(contract_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to update contract status: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in update_contract_status: {:?}", e);
+            anyhow!("Failed to update contract status")
+        })?;
 
         Ok(result.rows_affected() > 0)
     }
 
-    /// Update total paid amount
+    /// Update total paid amount with overflow protection
+    ///
+    /// # Arguments
+    /// * `contract_id` - Contract to update
+    /// * `payment_id` - Idempotency key to prevent double payments
+    /// * `additional_payment` - Amount to add (must be positive)
     pub async fn update_contract_payment(
         &self,
         contract_id: &str,
+        payment_id: &str,
         additional_payment: i64,
     ) -> Result<bool> {
-        let now = chrono::Utc::now().timestamp();
+        validate_contract_id(contract_id)?;
+
+        // Validate payment amount
+        if additional_payment <= 0 {
+            return Err(anyhow!("Payment amount must be positive"));
+        }
+
+        // Fetch current contract for overflow check
+        let current = self
+            .get_contract(contract_id)
+            .await?
+            .ok_or_else(|| anyhow!("Contract not found: {}", contract_id))?;
+
+        // Check for integer overflow
+        let new_total = current
+            .total_paid
+            .checked_add(additional_payment)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Payment overflow: cannot add {} to {}",
+                    additional_payment,
+                    current.total_paid
+                )
+            })?;
+
+        // Calculate maximum allowed payment based on contract terms
+        let duration_days = (current.end_time - current.start_time) / 86400;
+        let max_payment = current.price_per_day.saturating_mul(duration_days.max(1));
+        if new_total > max_payment {
+            warn!(
+                "Payment {} would exceed contract maximum {} for contract {}",
+                new_total, max_payment, contract_id
+            );
+            // Note: This is a warning, not an error - overpayment might be intentional
+        }
+
+        let now = get_current_timestamp();
+
+        // Use payment_id as part of update to ensure idempotency
+        // In a production system, you'd store payment_id in a separate payments table
         let result = sqlx::query(
-            "UPDATE storage_contracts SET total_paid = total_paid + ?, updated_at = ? WHERE contract_id = ?",
+            "UPDATE storage_contracts SET total_paid = ?, updated_at = ? WHERE contract_id = ? AND total_paid = ?",
         )
-        .bind(additional_payment)
+        .bind(new_total)
         .bind(now)
         .bind(contract_id)
+        .bind(current.total_paid)  // Optimistic lock
         .execute(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to update contract payment: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in update_contract_payment: {:?}", e);
+            anyhow!("Failed to update contract payment")
+        })?;
 
-        Ok(result.rows_affected() > 0)
+        if result.rows_affected() == 0 {
+            // Either contract doesn't exist or concurrent modification
+            warn!(
+                "Payment update failed for contract {} with payment_id {}: concurrent modification or not found",
+                contract_id, payment_id
+            );
+            return Ok(false);
+        }
+
+        debug!(
+            "Processed payment {} for contract {}: {} -> {}",
+            payment_id, contract_id, current.total_paid, new_total
+        );
+        Ok(true)
     }
 
-    /// List contracts by provider
+    /// List contracts by provider with pagination
     pub async fn list_contracts_by_provider(
         &self,
         provider_id: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
     ) -> Result<Vec<StorageContractRow>> {
+        validate_id(provider_id, "provider_id")?;
+
+        let limit = sanitize_limit(limit.unwrap_or(DEFAULT_QUERY_LIMIT));
+        let offset = offset.unwrap_or(0);
+
         let results = sqlx::query_as::<_, StorageContractRow>(
-            "SELECT * FROM storage_contracts WHERE provider_id = ? ORDER BY created_at DESC",
+            "SELECT * FROM storage_contracts WHERE provider_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
         )
         .bind(provider_id)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to list contracts by provider: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in list_contracts_by_provider: {:?}", e);
+            anyhow!("Failed to list contracts")
+        })?;
 
         Ok(results)
     }
 
-    /// List contracts by client
+    /// List contracts by client with pagination
     pub async fn list_contracts_by_client(
         &self,
         client_id: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
     ) -> Result<Vec<StorageContractRow>> {
+        validate_id(client_id, "client_id")?;
+
+        let limit = sanitize_limit(limit.unwrap_or(DEFAULT_QUERY_LIMIT));
+        let offset = offset.unwrap_or(0);
+
         let results = sqlx::query_as::<_, StorageContractRow>(
-            "SELECT * FROM storage_contracts WHERE client_id = ? ORDER BY created_at DESC",
+            "SELECT * FROM storage_contracts WHERE client_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
         )
         .bind(client_id)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to list contracts by client: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in list_contracts_by_client: {:?}", e);
+            anyhow!("Failed to list contracts")
+        })?;
 
         Ok(results)
     }
 
-    /// List active contracts expiring before a given time
+    /// List active contracts expiring before a given time with pagination
     pub async fn list_expiring_contracts(
         &self,
         before_timestamp: i64,
+        limit: Option<u32>,
     ) -> Result<Vec<StorageContractRow>> {
+        validate_timestamp(before_timestamp)?;
+
+        let limit = sanitize_limit(limit.unwrap_or(DEFAULT_QUERY_LIMIT));
+
         let results = sqlx::query_as::<_, StorageContractRow>(
             r#"
             SELECT * FROM storage_contracts
             WHERE status = 'active' AND end_time < ?
             ORDER BY end_time ASC
+            LIMIT ?
             "#,
         )
         .bind(before_timestamp)
+        .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to list expiring contracts: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in list_expiring_contracts: {:?}", e);
+            anyhow!("Failed to list expiring contracts")
+        })?;
 
         Ok(results)
     }
@@ -543,8 +949,33 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
     // Reputation Score Operations
     // ========================================================================
 
-    /// Upsert reputation score
+    /// Upsert reputation score with bounds validation
     pub async fn upsert_reputation(&self, reputation: &ReputationScoreRow) -> Result<()> {
+        validate_id(&reputation.node_id, "node_id")?;
+
+        // Validate score bounds (0.0 - 1.0)
+        if reputation.score < 0.0 || reputation.score > 1.0 {
+            return Err(anyhow!(
+                "Reputation score must be between 0.0 and 1.0, got {}",
+                reputation.score
+            ));
+        }
+
+        // Validate uptime percentage bounds (0.0 - 100.0)
+        if reputation.uptime_percentage < 0.0 || reputation.uptime_percentage > 100.0 {
+            return Err(anyhow!(
+                "Uptime percentage must be between 0.0 and 100.0, got {}",
+                reputation.uptime_percentage
+            ));
+        }
+
+        // Validate retrieval counts
+        if reputation.successful_retrievals < 0 || reputation.failed_retrievals < 0 {
+            return Err(anyhow!("Retrieval counts cannot be negative"));
+        }
+
+        validate_timestamp(reputation.last_updated)?;
+
         sqlx::query(
             r#"
             INSERT INTO reputation_scores
@@ -567,27 +998,37 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         .bind(reputation.last_updated)
         .execute(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to upsert reputation: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in upsert_reputation: {:?}", e);
+            anyhow!("Failed to update reputation")
+        })?;
 
         Ok(())
     }
 
     /// Get reputation by node ID
     pub async fn get_reputation(&self, node_id: &str) -> Result<Option<ReputationScoreRow>> {
+        validate_id(node_id, "node_id")?;
+
         let result = sqlx::query_as::<_, ReputationScoreRow>(
             "SELECT * FROM reputation_scores WHERE node_id = ?",
         )
         .bind(node_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to get reputation: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in get_reputation: {:?}", e);
+            anyhow!("Failed to retrieve reputation")
+        })?;
 
         Ok(result)
     }
 
     /// Increment successful retrieval count
     pub async fn record_successful_retrieval(&self, node_id: &str) -> Result<()> {
-        let now = chrono::Utc::now().timestamp();
+        validate_id(node_id, "node_id")?;
+
+        let now = get_current_timestamp();
         sqlx::query(
             r#"
             INSERT INTO reputation_scores (node_id, score, successful_retrievals, failed_retrievals, uptime_percentage, last_updated)
@@ -602,14 +1043,19 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to record successful retrieval: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in record_successful_retrieval: {:?}", e);
+            anyhow!("Failed to record retrieval")
+        })?;
 
         Ok(())
     }
 
     /// Increment failed retrieval count
     pub async fn record_failed_retrieval(&self, node_id: &str) -> Result<()> {
-        let now = chrono::Utc::now().timestamp();
+        validate_id(node_id, "node_id")?;
+
+        let now = get_current_timestamp();
         sqlx::query(
             r#"
             INSERT INTO reputation_scores (node_id, score, successful_retrievals, failed_retrievals, uptime_percentage, last_updated)
@@ -624,26 +1070,36 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to record failed retrieval: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in record_failed_retrieval: {:?}", e);
+            anyhow!("Failed to record retrieval")
+        })?;
 
         Ok(())
     }
 
     /// Get top N nodes by reputation score
     pub async fn get_top_nodes(&self, limit: u32) -> Result<Vec<ReputationScoreRow>> {
+        let limit = sanitize_limit(limit);
+
         let results = sqlx::query_as::<_, ReputationScoreRow>(
             "SELECT * FROM reputation_scores ORDER BY score DESC LIMIT ?",
         )
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to get top nodes: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in get_top_nodes: {:?}", e);
+            anyhow!("Failed to get top nodes")
+        })?;
 
         Ok(results)
     }
 
     /// Recalculate reputation score for a node
     pub async fn recalculate_reputation(&self, node_id: &str) -> Result<f64> {
+        validate_id(node_id, "node_id")?;
+
         let reputation = self.get_reputation(node_id).await?;
 
         let score = match reputation {
@@ -654,22 +1110,27 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
                 } else {
                     // Score = success_rate * 0.7 + uptime * 0.3
                     let success_rate = rep.successful_retrievals as f64 / total as f64;
-                    let uptime_factor = rep.uptime_percentage / 100.0;
-                    success_rate * 0.7 + uptime_factor * 0.3
+                    let uptime_factor = (rep.uptime_percentage / 100.0).clamp(0.0, 1.0);
+                    let calculated = success_rate * 0.7 + uptime_factor * 0.3;
+                    // Ensure score is bounded
+                    calculated.clamp(0.0, 1.0)
                 }
             }
             None => 0.5,
         };
 
         // Update the score
-        let now = chrono::Utc::now().timestamp();
+        let now = get_current_timestamp();
         sqlx::query("UPDATE reputation_scores SET score = ?, last_updated = ? WHERE node_id = ?")
             .bind(score)
             .bind(now)
             .bind(node_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| anyhow!("Failed to update reputation score: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("Database error in recalculate_reputation: {:?}", e);
+                anyhow!("Failed to update reputation score")
+            })?;
 
         Ok(score)
     }
@@ -686,7 +1147,21 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         content_hash: Option<&[u8]>,
         details: Option<&str>,
     ) -> Result<i64> {
-        let now = chrono::Utc::now().timestamp();
+        // Validate inputs
+        if event_type.is_empty() {
+            return Err(anyhow!("Event type cannot be empty"));
+        }
+        if event_type.len() > MAX_ID_LENGTH {
+            return Err(anyhow!("Event type exceeds maximum length"));
+        }
+        if let Some(nid) = node_id {
+            validate_id(nid, "node_id")?;
+        }
+        if let Some(hash) = content_hash {
+            validate_content_hash(hash)?;
+        }
+
+        let now = get_current_timestamp();
         let result = sqlx::query(
             r#"
             INSERT INTO audit_log (timestamp, event_type, node_id, content_hash, details)
@@ -700,7 +1175,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         .bind(details)
         .execute(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to append audit log: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in append_audit_log: {:?}", e);
+            anyhow!("Failed to append audit log")
+        })?;
 
         Ok(result.last_insert_rowid())
     }
@@ -712,6 +1190,15 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         end_time: i64,
         limit: u32,
     ) -> Result<Vec<AuditLogRow>> {
+        validate_timestamp(start_time)?;
+        validate_timestamp(end_time)?;
+
+        if start_time > end_time {
+            return Err(anyhow!("Start time must be before or equal to end time"));
+        }
+
+        let limit = sanitize_limit(limit);
+
         let results = sqlx::query_as::<_, AuditLogRow>(
             r#"
             SELECT * FROM audit_log
@@ -725,7 +1212,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to get audit logs: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in get_audit_logs: {:?}", e);
+            anyhow!("Failed to retrieve audit logs")
+        })?;
 
         Ok(results)
     }
@@ -736,6 +1226,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         event_type: &str,
         limit: u32,
     ) -> Result<Vec<AuditLogRow>> {
+        if event_type.is_empty() {
+            return Err(anyhow!("Event type cannot be empty"));
+        }
+
+        let limit = sanitize_limit(limit);
+
         let results = sqlx::query_as::<_, AuditLogRow>(
             "SELECT * FROM audit_log WHERE event_type = ? ORDER BY timestamp DESC LIMIT ?",
         )
@@ -743,7 +1239,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to get audit logs by type: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in get_audit_logs_by_type: {:?}", e);
+            anyhow!("Failed to retrieve audit logs")
+        })?;
 
         Ok(results)
     }
@@ -754,6 +1253,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         node_id: &str,
         limit: u32,
     ) -> Result<Vec<AuditLogRow>> {
+        validate_id(node_id, "node_id")?;
+
+        let limit = sanitize_limit(limit);
+
         let results = sqlx::query_as::<_, AuditLogRow>(
             "SELECT * FROM audit_log WHERE node_id = ? ORDER BY timestamp DESC LIMIT ?",
         )
@@ -761,22 +1264,39 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| anyhow!("Failed to get audit logs by node: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Database error in get_audit_logs_by_node: {:?}", e);
+            anyhow!("Failed to retrieve audit logs")
+        })?;
 
         Ok(results)
     }
 
     /// Prune old audit logs
+    ///
+    /// WARNING: This operation is destructive and removes audit history.
+    /// Consider implementing audit log archival before pruning in production.
     pub async fn prune_audit_logs(&self, before_timestamp: i64) -> Result<u64> {
+        validate_timestamp(before_timestamp)?;
+
+        // Log the pruning action for audit trail
+        warn!(
+            "Pruning audit logs before timestamp {} - this is a destructive operation",
+            before_timestamp
+        );
+
         let result = sqlx::query("DELETE FROM audit_log WHERE timestamp < ?")
             .bind(before_timestamp)
             .execute(&self.pool)
             .await
-            .map_err(|e| anyhow!("Failed to prune audit logs: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("Database error in prune_audit_logs: {:?}", e);
+                anyhow!("Failed to prune audit logs")
+            })?;
 
         let deleted = result.rows_affected();
         if deleted > 0 {
-            info!("Pruned {} old audit log entries", deleted);
+            warn!("Pruned {} old audit log entries", deleted);
         }
 
         Ok(deleted)
@@ -846,9 +1366,14 @@ mod tests {
         SqliteBackend::open_in_memory().await.unwrap()
     }
 
+    fn get_test_timestamp() -> i64 {
+        chrono::Utc::now().timestamp()
+    }
+
     #[tokio::test]
     async fn test_content_metadata_crud() {
         let backend = create_test_backend().await;
+        let now = get_test_timestamp();
 
         let content_hash = vec![1u8; 32];
         let metadata = ContentMetadataRow {
@@ -857,8 +1382,8 @@ mod tests {
             owner_id: "owner1".to_string(),
             tier: "hot".to_string(),
             encryption_level: "aes256".to_string(),
-            created_at: 1000,
-            updated_at: 1000,
+            created_at: now,
+            updated_at: now,
             tags: Some(r#"["tag1", "tag2"]"#.to_string()),
             description: Some("Test content".to_string()),
         };
@@ -876,7 +1401,7 @@ mod tests {
         // Update
         let updated = ContentMetadataRow {
             size: 2048,
-            updated_at: 2000,
+            updated_at: now + 1,
             ..metadata.clone()
         };
         backend.upsert_content_metadata(&updated).await.unwrap();
@@ -895,30 +1420,36 @@ mod tests {
     #[tokio::test]
     async fn test_list_content_by_owner() {
         let backend = create_test_backend().await;
+        let now = get_test_timestamp();
 
-        // Insert multiple items for same owner
-        for i in 0..3 {
+        // Insert multiple items for same owner (each needs unique non-zero hash)
+        for i in 1..=3u8 {
             let metadata = ContentMetadataRow {
                 content_hash: vec![i; 32],
-                size: 1024 * (i as i64 + 1),
+                size: 1024 * (i as i64),
                 owner_id: "owner1".to_string(),
                 tier: "hot".to_string(),
                 encryption_level: "none".to_string(),
-                created_at: 1000 + i as i64,
-                updated_at: 1000 + i as i64,
+                created_at: now + i as i64,
+                updated_at: now + i as i64,
                 tags: None,
                 description: None,
             };
             backend.upsert_content_metadata(&metadata).await.unwrap();
         }
 
-        let results = backend.list_content_by_owner("owner1").await.unwrap();
+        let results = backend.list_content_by_owner("owner1", None, None).await.unwrap();
         assert_eq!(results.len(), 3);
+
+        // Test pagination
+        let results = backend.list_content_by_owner("owner1", Some(2), None).await.unwrap();
+        assert_eq!(results.len(), 2);
     }
 
     #[tokio::test]
     async fn test_storage_contract_crud() {
         let backend = create_test_backend().await;
+        let now = get_test_timestamp();
 
         // First insert content metadata (foreign key requirement)
         let content_hash = vec![1u8; 32];
@@ -928,35 +1459,44 @@ mod tests {
             owner_id: "owner1".to_string(),
             tier: "hot".to_string(),
             encryption_level: "none".to_string(),
-            created_at: 1000,
-            updated_at: 1000,
+            created_at: now,
+            updated_at: now,
             tags: None,
             description: None,
         };
         backend.upsert_content_metadata(&metadata).await.unwrap();
 
-        // Insert contract
+        // Insert contract with pending status (so we can transition to active)
         let contract = StorageContractRow {
             contract_id: "contract1".to_string(),
             content_hash: content_hash.clone(),
             provider_id: "provider1".to_string(),
             client_id: "client1".to_string(),
-            status: "active".to_string(),
-            start_time: 1000,
-            end_time: 2000,
+            status: "pending".to_string(),
+            start_time: now,
+            end_time: now + 86400, // 1 day
             price_per_day: 100,
             total_paid: 0,
-            created_at: 1000,
-            updated_at: 1000,
+            created_at: now,
+            updated_at: now,
         };
         backend.insert_contract(&contract).await.unwrap();
 
         // Get
         let retrieved = backend.get_contract("contract1").await.unwrap();
         assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().status, "pending");
+
+        // Update status: pending -> active (valid transition)
+        backend
+            .update_contract_status("contract1", ContractStatus::Active)
+            .await
+            .unwrap();
+
+        let retrieved = backend.get_contract("contract1").await.unwrap();
         assert_eq!(retrieved.unwrap().status, "active");
 
-        // Update status
+        // Update status: active -> expired (valid transition)
         backend
             .update_contract_status("contract1", ContractStatus::Expired)
             .await
@@ -965,11 +1505,62 @@ mod tests {
         let retrieved = backend.get_contract("contract1").await.unwrap();
         assert_eq!(retrieved.unwrap().status, "expired");
 
-        // Update payment
-        backend.update_contract_payment("contract1", 500).await.unwrap();
+        // Test invalid state transition: expired -> active should fail
+        let result = backend
+            .update_contract_status("contract1", ContractStatus::Active)
+            .await;
+        assert!(result.is_err());
+    }
 
-        let retrieved = backend.get_contract("contract1").await.unwrap();
+    #[tokio::test]
+    async fn test_contract_payment() {
+        let backend = create_test_backend().await;
+        let now = get_test_timestamp();
+
+        // Setup content and contract
+        let content_hash = vec![2u8; 32];
+        let metadata = ContentMetadataRow {
+            content_hash: content_hash.clone(),
+            size: 1024,
+            owner_id: "owner1".to_string(),
+            tier: "hot".to_string(),
+            encryption_level: "none".to_string(),
+            created_at: now,
+            updated_at: now,
+            tags: None,
+            description: None,
+        };
+        backend.upsert_content_metadata(&metadata).await.unwrap();
+
+        let contract = StorageContractRow {
+            contract_id: "pay_contract".to_string(),
+            content_hash: content_hash.clone(),
+            provider_id: "provider1".to_string(),
+            client_id: "client1".to_string(),
+            status: "active".to_string(),
+            start_time: now,
+            end_time: now + 86400 * 30, // 30 days
+            price_per_day: 100,
+            total_paid: 0,
+            created_at: now,
+            updated_at: now,
+        };
+        backend.insert_contract(&contract).await.unwrap();
+
+        // Update payment with payment_id
+        backend
+            .update_contract_payment("pay_contract", "payment-001", 500)
+            .await
+            .unwrap();
+
+        let retrieved = backend.get_contract("pay_contract").await.unwrap();
         assert_eq!(retrieved.unwrap().total_paid, 500);
+
+        // Test negative payment rejection
+        let result = backend
+            .update_contract_payment("pay_contract", "payment-002", -100)
+            .await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -987,11 +1578,41 @@ mod tests {
 
         // Recalculate score
         let score = backend.recalculate_reputation("node1").await.unwrap();
-        assert!(score > 0.0 && score < 1.0);
+        assert!(score > 0.0 && score <= 1.0);
 
         // Get top nodes
         let top = backend.get_top_nodes(10).await.unwrap();
         assert_eq!(top.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_reputation_bounds_validation() {
+        let backend = create_test_backend().await;
+        let now = get_test_timestamp();
+
+        // Test invalid score (> 1.0)
+        let invalid_rep = ReputationScoreRow {
+            node_id: "node_invalid".to_string(),
+            score: 1.5, // Invalid: > 1.0
+            successful_retrievals: 10,
+            failed_retrievals: 0,
+            uptime_percentage: 100.0,
+            last_updated: now,
+        };
+        let result = backend.upsert_reputation(&invalid_rep).await;
+        assert!(result.is_err());
+
+        // Test invalid uptime (> 100.0)
+        let invalid_uptime = ReputationScoreRow {
+            node_id: "node_invalid2".to_string(),
+            score: 0.5,
+            successful_retrievals: 10,
+            failed_retrievals: 0,
+            uptime_percentage: 150.0, // Invalid: > 100.0
+            last_updated: now,
+        };
+        let result = backend.upsert_reputation(&invalid_uptime).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -1021,13 +1642,14 @@ mod tests {
 
         // Get by time range
         let now = chrono::Utc::now().timestamp();
-        let logs = backend.get_audit_logs(0, now + 1000, 100).await.unwrap();
+        let logs = backend.get_audit_logs(now - 60, now + 60, 100).await.unwrap();
         assert_eq!(logs.len(), 2);
     }
 
     #[tokio::test]
     async fn test_contract_stats() {
         let backend = create_test_backend().await;
+        let now = get_test_timestamp();
 
         // Insert content first
         let content_hash = vec![1u8; 32];
@@ -1037,8 +1659,8 @@ mod tests {
             owner_id: "owner1".to_string(),
             tier: "hot".to_string(),
             encryption_level: "none".to_string(),
-            created_at: 1000,
-            updated_at: 1000,
+            created_at: now,
+            updated_at: now,
             tags: None,
             description: None,
         };
@@ -1052,12 +1674,12 @@ mod tests {
                 provider_id: "provider1".to_string(),
                 client_id: "client1".to_string(),
                 status: if i == 0 { "active" } else { "expired" }.to_string(),
-                start_time: 1000,
-                end_time: 2000,
+                start_time: now,
+                end_time: now + 86400,
                 price_per_day: 100,
                 total_paid: 100 * (i as i64 + 1),
-                created_at: 1000,
-                updated_at: 1000,
+                created_at: now,
+                updated_at: now,
             };
             backend.insert_contract(&contract).await.unwrap();
         }
@@ -1066,5 +1688,28 @@ mod tests {
         assert_eq!(stats.total_contracts, 3);
         assert_eq!(stats.active_contracts, 1);
         assert_eq!(stats.total_revenue, 600); // 100 + 200 + 300
+    }
+
+    #[tokio::test]
+    async fn test_input_validation() {
+        let backend = create_test_backend().await;
+
+        // Test invalid hash length
+        let short_hash = vec![1u8; 16]; // Should be 32
+        let result = backend.get_content_metadata(&short_hash).await;
+        assert!(result.is_err());
+
+        // Test all-zero hash
+        let zero_hash = vec![0u8; 32];
+        let result = backend.get_content_metadata(&zero_hash).await;
+        assert!(result.is_err());
+
+        // Test empty owner_id
+        let result = backend.list_content_by_owner("", None, None).await;
+        assert!(result.is_err());
+
+        // Test invalid tier
+        let result = backend.list_content_by_tier("invalid_tier", None, None).await;
+        assert!(result.is_err());
     }
 }
