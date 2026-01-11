@@ -614,7 +614,7 @@ impl NonceCache {
                         return Err(anyhow!("Failed to check for legacy epoch key: {}", e));
                     }
                 }
-                db.insert(Self::META_EPOCH_KEY.as_bytes(), expected_epoch.to_bytes().to_vec())
+                db.insert(Self::META_EPOCH_KEY.as_bytes(), &expected_epoch.to_bytes())
                     .map_err(|e| anyhow!("Failed to store network epoch: {}", e))?;
                 info!("Stored new network epoch: 0x{:016x}", expected_epoch.value());
             }
