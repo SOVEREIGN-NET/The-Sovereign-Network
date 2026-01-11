@@ -70,7 +70,8 @@ pub struct KademliaRouter {
     local_id: NodeId,
     /// Internal peer registry (for standalone/legacy use only)
     /// In production, use unified registry directly via DhtPeerRegistryTrait
-    registry: DhtPeerRegistry,
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) registry: DhtPeerRegistry,
     /// K-bucket size (standard Kademlia K value)
     k: usize,
     /// External unified registry reference (Ticket #1.14)
@@ -277,7 +278,7 @@ impl KademliaRouter {
     }
 
     /// Validate and record per-peer sequence number for replay protection
-    pub fn check_and_update_sequence(&mut self, node_id: &NodeId, sequence: u64) -> Result<()> {
+    pub fn check_and_update_sequence(&mut self, node_id: &NodeId, sequence: u64) -> Result<(), crate::dht::peer_registry::SequenceError> {
         self.registry.check_and_update_sequence(node_id, sequence)
     }
     
