@@ -390,8 +390,42 @@ impl SqliteBackend {
     async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         debug!("Running SQLite migrations...");
 
-        // Embedded migration SQL for [DB-009]
-        const MIGRATION_V1: &str = r#"
+        const CURRENT_SCHEMA_VERSION: i64 = 1;
+
+        // Ensure foreign key constraints are enforced by SQLite during and after migration
+        sqlx::raw_sql("PRAGMA foreign_keys = ON;")
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow!("Enabling foreign key enforcement failed: {}", e))?;
+
+        // Ensure schema_migrations table exists for tracking applied migrations
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+            );
+            "#,
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| anyhow!("Failed to ensure schema_migrations table: {}", e))?;
+
+        // Determine the currently applied schema version (if any)
+        let current_version: Option<i64> = sqlx::query_scalar(
+            r#"
+            SELECT MAX(version) FROM schema_migrations
+            "#,
+        )
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| anyhow!("Failed to query current schema version: {}", e))?;
+
+        let current_version = current_version.unwrap_or(0);
+
+        if current_version < CURRENT_SCHEMA_VERSION {
+            // Embedded migration SQL for [DB-009]
+            const MIGRATION_V1: &str = r#"
 -- Content metadata table
 CREATE TABLE IF NOT EXISTS content_metadata (
     content_hash BLOB PRIMARY KEY,
@@ -408,6 +442,7 @@ CREATE TABLE IF NOT EXISTS content_metadata (
 CREATE INDEX IF NOT EXISTS idx_content_owner ON content_metadata(owner_id);
 CREATE INDEX IF NOT EXISTS idx_content_tier ON content_metadata(tier);
 CREATE INDEX IF NOT EXISTS idx_content_created ON content_metadata(created_at);
+CREATE INDEX IF NOT EXISTS idx_content_tags ON content_metadata(tags);
 
 -- Storage contracts table
 CREATE TABLE IF NOT EXISTS storage_contracts (
@@ -457,10 +492,39 @@ CREATE INDEX IF NOT EXISTS idx_audit_event_type ON audit_log(event_type);
 CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
 "#;
 
-        sqlx::raw_sql(MIGRATION_V1)
-            .execute(pool)
+            // Apply initial migration V1 and record it as applied, all within a transaction
+            let mut tx = pool
+                .begin()
+                .await
+                .map_err(|e| anyhow!("Failed to begin migration transaction: {}", e))?;
+
+            sqlx::raw_sql(MIGRATION_V1)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| anyhow!("Migration V1 failed: {}", e))?;
+
+            sqlx::query(
+                r#"
+                INSERT INTO schema_migrations (version)
+                VALUES (?)
+                "#,
+            )
+            .bind(CURRENT_SCHEMA_VERSION)
+            .execute(&mut *tx)
             .await
-            .map_err(|e| anyhow!("Migration failed: {}", e))?;
+            .map_err(|e| anyhow!("Failed to record schema migration version: {}", e))?;
+
+            tx.commit()
+                .await
+                .map_err(|e| anyhow!("Failed to commit migration transaction: {}", e))?;
+
+            debug!("Applied migration V1 successfully");
+        } else {
+            debug!(
+                "Skipping migration V1; current schema version is {}",
+                current_version
+            );
+        }
 
         debug!("Migrations completed successfully");
         Ok(())
@@ -1121,7 +1185,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
 
         // Update the score
         let now = get_current_timestamp();
-        sqlx::query("UPDATE reputation_scores SET score = ?, last_updated = ? WHERE node_id = ?")
+        let result = sqlx::query("UPDATE reputation_scores SET score = ?, last_updated = ? WHERE node_id = ?")
             .bind(score)
             .bind(now)
             .bind(node_id)
@@ -1131,6 +1195,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
                 tracing::error!("Database error in recalculate_reputation: {:?}", e);
                 anyhow!("Failed to update reputation score")
             })?;
+
+        if result.rows_affected() == 0 {
+            return Err(anyhow!(
+                "No reputation row found for node_id '{}'",
+                node_id
+            ));
+        }
 
         Ok(score)
     }
