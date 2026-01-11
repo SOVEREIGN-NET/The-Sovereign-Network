@@ -1196,7 +1196,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
 
         if result.rows_affected() == 0 {
             return Err(anyhow!(
-                "No reputation row found for node_id '{}'",
+                "No reputation row found for node_id: {}",
                 node_id
             ));
         }
