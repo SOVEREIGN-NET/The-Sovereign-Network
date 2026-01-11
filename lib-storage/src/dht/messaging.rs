@@ -295,29 +295,13 @@ fn generate_response_id(original_id: &str) -> String {
 }
 
 /// Generate a cryptographically secure random nonce
+///
+/// Uses a cryptographically secure random number generator (CSPRNG)
+/// to generate nonces suitable for replay protection.
 fn generate_nonce() -> [u8; 32] {
-    use std::hash::{Hash, Hasher};
-    use std::collections::hash_map::DefaultHasher;
-
+    use rand::RngCore;
     let mut nonce = [0u8; 32];
-    let now = SystemTime::now();
-    let mut hasher = DefaultHasher::new();
-    now.hash(&mut hasher);
-    std::process::id().hash(&mut hasher);
-    std::thread::current().id().hash(&mut hasher);
-    let h1 = hasher.finish().to_le_bytes();
-    nonce[0..8].copy_from_slice(&h1);
-
-    let mut hasher2 = DefaultHasher::new();
-    now.hash(&mut hasher2);
-    hasher2.write_u64(0xDEADBEEF_CAFEBABE);
-    let h2 = hasher2.finish().to_le_bytes();
-    nonce[8..16].copy_from_slice(&h2);
-
-    let nanos = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-    nonce[16..24].copy_from_slice(&(nanos as u64).to_le_bytes());
-    nonce[24..32].copy_from_slice(&((nanos >> 64) as u64).to_le_bytes());
-
+    rand::thread_rng().fill_bytes(&mut nonce);
     nonce
 }
 

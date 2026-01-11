@@ -211,23 +211,52 @@ impl DhtNetwork {
         self.signer.is_some()
     }
 
-    /// Register a known peer's public key for signature verification
+    /// Register a peer's public key for future signature verification
     ///
     /// When a message is received from a peer, their public key is looked up
     /// in this cache to verify the signature.
-    pub fn register_peer_key(&self, node_id: &NodeId, public_key: PublicKey) {
-        if let Ok(mut peers) = self.known_peers.write() {
-            peers.insert(*node_id.as_bytes(), public_key);
-            debug!(
-                node_id = %hex::encode(&node_id.as_bytes()[..8]),
-                "Registered peer public key"
-            );
+    ///
+    /// # Returns
+    /// - `true` if the key was successfully registered
+    /// - `false` if the registration failed (lock poisoned)
+    pub fn register_peer_key(&self, node_id: &NodeId, public_key: PublicKey) -> bool {
+        match self.known_peers.write() {
+            Ok(mut peers) => {
+                peers.insert(*node_id.as_bytes(), public_key);
+                debug!(
+                    node_id = %hex::encode(&node_id.as_bytes()[..8]),
+                    "Registered peer public key"
+                );
+                true
+            }
+            Err(e) => {
+                warn!(
+                    node_id = %hex::encode(&node_id.as_bytes()[..8]),
+                    error = %e,
+                    "Failed to register peer public key: lock poisoned"
+                );
+                false
+            }
         }
     }
 
     /// Get a peer's public key from the cache
+    ///
+    /// # Returns
+    /// - `Some(PublicKey)` if the peer is known
+    /// - `None` if the peer is unknown or the lock is poisoned
     pub fn get_peer_key(&self, node_id: &NodeId) -> Option<PublicKey> {
-        self.known_peers.read().ok()?.get(node_id.as_bytes()).cloned()
+        match self.known_peers.read() {
+            Ok(peers) => peers.get(node_id.as_bytes()).cloned(),
+            Err(e) => {
+                warn!(
+                    node_id = %hex::encode(&node_id.as_bytes()[..8]),
+                    error = %e,
+                    "Failed to read peer public key: lock poisoned"
+                );
+                None
+            }
+        }
     }
 
     /// Sign a message if signing is enabled
@@ -245,8 +274,27 @@ impl DhtNetwork {
 
     /// Verify a message signature if the sender's public key is known
     ///
-    /// Returns Ok(true) if signature is valid or signing is disabled,
-    /// Ok(false) if signature is invalid, Err if verification failed.
+    /// # Returns
+    /// - `Ok(true)` if signature is valid or signing is disabled
+    /// - `Ok(false)` if signature is invalid
+    /// - `Err(...)` if verification failed due to an error
+    ///
+    /// # Security Notes
+    ///
+    /// **SECURITY WARNING**: This function has lenient behavior for unknown senders
+    /// to support bootstrap and peer discovery. In high-security environments,
+    /// consider using strict mode (TODO: implement strict_verification config).
+    ///
+    /// The verification flow:
+    /// 1. If signing is disabled, all messages are accepted (backward compatibility)
+    /// 2. If sender's public key is cached, verify signature against it
+    /// 3. If sender's key is in message.nodes, cache it and verify (bootstrap)
+    /// 4. If sender is completely unknown, accept if message is fresh (lenient mode)
+    ///
+    /// **Known Limitations** (tracked in Issue #676):
+    /// - No cryptographic binding between node_id and public_key
+    /// - Self-asserted keys from nodes list are trusted during bootstrap
+    /// - No nonce replay cache (messages can be replayed within freshness window)
     fn verify_message_if_possible(&self, message: &DhtMessage) -> Result<bool> {
         // If signing is not enabled, skip verification (backward compatibility)
         if self.signer.is_none() {
@@ -260,6 +308,9 @@ impl DhtNetwork {
 
         // If sender is not in cache, check if it's in the message's nodes list
         // (for bootstrap scenarios where we learn about peers)
+        // SECURITY: This trusts self-asserted public keys during bootstrap.
+        // A malicious node could claim any node_id with their own key.
+        // TODO: Implement node_id = hash(public_key) binding for security.
         if let Some(ref nodes) = message.nodes {
             for node in nodes {
                 if node.peer.node_id() == &message.sender_id {
@@ -271,51 +322,27 @@ impl DhtNetwork {
         }
 
         // Sender not known - warn but don't reject (may be first contact)
-        // In strict mode, this should return Ok(false)
+        // SECURITY: This is lenient mode for bootstrap. In strict mode,
+        // unknown senders should be rejected (return Ok(false)).
         warn!(
             sender_id = %hex::encode(&message.sender_id.as_bytes()[..8]),
             message_id = %message.message_id,
-            "Cannot verify signature: sender public key not known"
+            "Cannot verify signature: sender public key not known (lenient mode)"
         );
 
-        // For now, accept messages from unknown senders if they pass freshness check
+        // Accept messages from unknown senders if they pass freshness check
         // This allows bootstrap and peer discovery to work
         message.validate_freshness().map(|_| true)
     }
 
     /// Generate a cryptographically secure random nonce
+    ///
+    /// Uses a cryptographically secure random number generator (CSPRNG)
+    /// to generate nonces suitable for replay protection.
     fn generate_nonce() -> [u8; 32] {
-        use std::hash::{Hash, Hasher};
-        use std::collections::hash_map::DefaultHasher;
-
+        use rand::RngCore;
         let mut nonce = [0u8; 32];
-        // Use multiple entropy sources
-        let now = SystemTime::now();
-        let mut hasher = DefaultHasher::new();
-        now.hash(&mut hasher);
-
-        // Add process-specific entropy
-        let pid = std::process::id();
-        pid.hash(&mut hasher);
-
-        // Add thread-specific entropy
-        std::thread::current().id().hash(&mut hasher);
-
-        let h1 = hasher.finish().to_le_bytes();
-        nonce[0..8].copy_from_slice(&h1);
-
-        // Second hash with different seed
-        let mut hasher2 = DefaultHasher::new();
-        now.hash(&mut hasher2);
-        hasher2.write_u64(0xDEADBEEF_CAFEBABE);
-        let h2 = hasher2.finish().to_le_bytes();
-        nonce[8..16].copy_from_slice(&h2);
-
-        // Third and fourth using nanoseconds
-        let nanos = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-        nonce[16..24].copy_from_slice(&(nanos as u64).to_le_bytes());
-        nonce[24..32].copy_from_slice(&((nanos >> 64) as u64).to_le_bytes());
-
+        rand::thread_rng().fill_bytes(&mut nonce);
         nonce
     }
 

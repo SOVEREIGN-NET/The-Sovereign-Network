@@ -179,63 +179,41 @@ pub fn requires_signature(_message: &DhtMessage) -> bool {
 }
 
 /// Signing error types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum SigningError {
     /// No keypair available for signing
+    #[error("No keypair available for signing")]
     NoKeypair,
     /// Signing operation failed
+    #[error("Signing failed: {0}")]
     SigningFailed(String),
     /// Message already has a signature
+    #[error("Message is already signed")]
     AlreadySigned,
 }
 
-impl std::fmt::Display for SigningError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SigningError::NoKeypair => write!(f, "No keypair available for signing"),
-            SigningError::SigningFailed(msg) => write!(f, "Signing failed: {}", msg),
-            SigningError::AlreadySigned => write!(f, "Message is already signed"),
-        }
-    }
-}
-
-impl std::error::Error for SigningError {}
-
 /// Verification error types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum VerificationError {
     /// Message has no signature
+    #[error("Message has no signature")]
     NoSignature,
     /// Signature is invalid
+    #[error("Signature verification failed")]
     InvalidSignature,
     /// Message is too old
+    #[error("Message is {age_secs} seconds old (max {max_age})", max_age = MAX_MESSAGE_AGE_SECS)]
     MessageTooOld { age_secs: u64 },
     /// Message timestamp is in the future
+    #[error("Message timestamp is {delta_secs} seconds in the future")]
     FutureTimestamp { delta_secs: u64 },
     /// Nonce is invalid (zero)
+    #[error("Message has zero/invalid nonce")]
     InvalidNonce,
     /// Public key is invalid
+    #[error("Invalid public key: {0}")]
     InvalidPublicKey(String),
 }
-
-impl std::fmt::Display for VerificationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VerificationError::NoSignature => write!(f, "Message has no signature"),
-            VerificationError::InvalidSignature => write!(f, "Signature verification failed"),
-            VerificationError::MessageTooOld { age_secs } => {
-                write!(f, "Message is {} seconds old (max {})", age_secs, MAX_MESSAGE_AGE_SECS)
-            }
-            VerificationError::FutureTimestamp { delta_secs } => {
-                write!(f, "Message timestamp is {} seconds in the future", delta_secs)
-            }
-            VerificationError::InvalidNonce => write!(f, "Message has zero/invalid nonce"),
-            VerificationError::InvalidPublicKey(msg) => write!(f, "Invalid public key: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for VerificationError {}
 
 #[cfg(test)]
 mod tests {
@@ -405,5 +383,156 @@ mod tests {
         let signer = MessageSigner::new(keypair.clone());
 
         assert_eq!(signer.public_key(), &keypair.public_key);
+    }
+
+    #[test]
+    fn test_boundary_timestamp_just_under_max_age() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_test_message();
+        // Set timestamp to 299 seconds ago (just under 300 max)
+        message.timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_sub(299);
+
+        signer.sign_message(&mut message).expect("Failed to sign message");
+
+        // Should pass - just under the limit
+        let result = verify_message_signature(&message, &keypair.public_key)
+            .expect("Verification should not error");
+        assert!(result, "Message at 299 seconds should pass verification");
+    }
+
+    #[test]
+    fn test_boundary_timestamp_over_max_age() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_test_message();
+        // Set timestamp to 301 seconds ago (just over 300 max)
+        // The check is > MAX_MESSAGE_AGE_SECS, so exactly 300 passes but 301 fails
+        message.timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_sub(301);
+
+        signer.sign_message(&mut message).expect("Failed to sign message");
+
+        // Should fail - over the limit
+        let result = verify_message_signature(&message, &keypair.public_key)
+            .expect("Verification should not error");
+        assert!(!result, "Message at 301 seconds should fail verification");
+    }
+
+    #[test]
+    fn test_boundary_future_timestamp_at_tolerance() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_test_message();
+        // Set timestamp to 59 seconds in the future (just under 60 max)
+        message.timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 59;
+
+        signer.sign_message(&mut message).expect("Failed to sign message");
+
+        // Should pass - just under the limit
+        let result = verify_message_signature(&message, &keypair.public_key)
+            .expect("Verification should not error");
+        assert!(result, "Message at 59 seconds in future should pass verification");
+    }
+
+    #[test]
+    fn test_verify_message_signature_bytes() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_test_message();
+        signer.sign_message(&mut message).expect("Failed to sign message");
+
+        // Verify using raw bytes function
+        let result = verify_message_signature_bytes(&message, &keypair.public_key.dilithium_pk)
+            .expect("Verification should not error");
+        assert!(result, "verify_message_signature_bytes should work correctly");
+    }
+
+    #[test]
+    fn test_requires_signature_returns_true() {
+        let message = create_test_message();
+        assert!(requires_signature(&message), "requires_signature should always return true");
+    }
+
+    #[test]
+    fn test_empty_signature_bytes_fails() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+
+        let mut message = create_test_message();
+        message.signature = Some(vec![]); // Empty signature
+
+        // Empty signature should fail
+        let result = verify_message_signature(&message, &keypair.public_key)
+            .expect("Verification should not error");
+        assert!(!result, "Empty signature should fail verification");
+    }
+
+    #[test]
+    fn test_corrupted_signature_bytes_fails() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_test_message();
+        signer.sign_message(&mut message).expect("Failed to sign message");
+
+        // Corrupt the signature
+        if let Some(ref mut sig) = message.signature {
+            if !sig.is_empty() {
+                sig[0] ^= 0xFF; // Flip bits in first byte
+            }
+        }
+
+        // Corrupted signature should fail
+        let result = verify_message_signature(&message, &keypair.public_key)
+            .expect("Verification should not error");
+        assert!(!result, "Corrupted signature should fail verification");
+    }
+
+    #[test]
+    fn test_signing_error_display() {
+        let err = SigningError::NoKeypair;
+        assert_eq!(format!("{}", err), "No keypair available for signing");
+
+        let err = SigningError::SigningFailed("test error".to_string());
+        assert_eq!(format!("{}", err), "Signing failed: test error");
+
+        let err = SigningError::AlreadySigned;
+        assert_eq!(format!("{}", err), "Message is already signed");
+    }
+
+    #[test]
+    fn test_verification_error_display() {
+        let err = VerificationError::NoSignature;
+        assert_eq!(format!("{}", err), "Message has no signature");
+
+        let err = VerificationError::InvalidSignature;
+        assert_eq!(format!("{}", err), "Signature verification failed");
+
+        let err = VerificationError::MessageTooOld { age_secs: 400 };
+        assert!(format!("{}", err).contains("400"));
+
+        let err = VerificationError::FutureTimestamp { delta_secs: 120 };
+        assert!(format!("{}", err).contains("120"));
+
+        let err = VerificationError::InvalidNonce;
+        assert_eq!(format!("{}", err), "Message has zero/invalid nonce");
+
+        let err = VerificationError::InvalidPublicKey("bad key".to_string());
+        assert!(format!("{}", err).contains("bad key"));
     }
 }
