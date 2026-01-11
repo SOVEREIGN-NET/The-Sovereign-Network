@@ -989,7 +989,7 @@ pub async fn start_nonce_cleanup_task(cache: NonceCache, interval_secs: u64) {
         })
         .await
         .unwrap_or_else(|e| {
-            warn!("Cleanup task panicked: {}", e);
+            warn!("Nonce cleanup task panicked, expired nonces may accumulate: {}", e);
         });
     }
 }
