@@ -27,7 +27,7 @@ use std::io::Write;
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
 use serde::{Serialize, Deserialize};
-use tracing::{debug, warn, info, error, instrument};
+use tracing::{debug, warn, error, instrument, info};
 
 /// Current version of DHT storage persistence format
 const DHT_STORAGE_VERSION: u32 = 1;
@@ -253,6 +253,57 @@ impl DhtStorage<HashMapBackend> {
     }
 }
 
+impl DhtStorage<crate::dht::backend::SledBackend> {
+    /// Create a new persistent DHT storage manager with sled backend
+    ///
+    /// **DB-010**: Creates DhtStorage with persistent sled backend.
+    /// Data is automatically persisted to disk and survives restarts.
+    ///
+    /// # Arguments
+    /// - `local_node_id`: This node's identity
+    /// - `max_storage_size`: Maximum storage capacity in bytes
+    /// - `persist_path`: Directory path for sled database
+    ///
+    /// # Returns
+    /// DhtStorage instance with sled persistence, data restored if it exists
+    pub fn new_persistent<P: AsRef<std::path::Path>>(
+        local_node_id: NodeId,
+        max_storage_size: u64,
+        persist_path: P,
+    ) -> Result<Self> {
+        Self::new_persistent_with_config(
+            local_node_id,
+            max_storage_size,
+            persist_path,
+            ZkVerificationConfig::default(),
+        )
+    }
+
+    /// Create persistent storage with custom ZK verification config
+    pub fn new_persistent_with_config<P: AsRef<std::path::Path>>(
+        local_node_id: NodeId,
+        max_storage_size: u64,
+        persist_path: P,
+        zk_config: ZkVerificationConfig,
+    ) -> Result<Self> {
+        // Open or create sled database
+        let backend = crate::dht::backend::SledBackend::open(persist_path)?;
+
+        // Create storage with backend
+        let mut storage = Self::with_backend_and_config(
+            backend,
+            local_node_id,
+            max_storage_size,
+            zk_config,
+        );
+
+        // Restore existing data from backend
+        storage.restore_from_backend()?;
+
+        Ok(storage)
+    }
+}
+
 impl<B: StorageBackend> DhtStorage<B> {
     /// Create DhtStorage with a custom backend
     ///
@@ -329,6 +380,46 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// **DEPRECATED**: Persistence is now handled automatically by the storage backend
     async fn maybe_persist(&self) -> Result<()> {
         // No-op: persistence is handled automatically by backend on each mutation
+        Ok(())
+    }
+
+    /// Restore storage data from backend
+    ///
+    /// Loads all entries from the backend into the storage_cache and rebuilds metadata.
+    /// Used during initialization to populate storage_cache with persisted data.
+    ///
+    /// # DB-010
+    /// This is called automatically by `new_persistent()` constructors.
+    fn restore_from_backend(&mut self) -> Result<()> {
+        let mut total_size = 0u64;
+        let metadata_overhead_per_entry = 256u64;
+
+        // Iterate through all keys in backend
+        for key_bytes in self.backend.keys()? {
+            if let Ok(key_str) = String::from_utf8(key_bytes.clone()) {
+                // Fetch the entry from backend
+                if let Some(entry_bytes) = self.backend.get(&key_bytes)? {
+                    // Decode the entry
+                    let entry = Self::decode_entry(&entry_bytes)?;
+
+                    // Calculate size: value size + metadata overhead
+                    total_size += entry.value.len() as u64 + metadata_overhead_per_entry;
+
+                    // Store in cache
+                    self.storage_cache.insert(key_str.clone(), entry);
+                }
+            }
+        }
+
+        // Update current_usage
+        self.current_usage = total_size.min(self.max_storage_size);
+
+        info!(
+            "Restored DHT storage from backend: {} entries, {} bytes used",
+            self.storage_cache.len(),
+            self.current_usage
+        );
+
         Ok(())
     }
 

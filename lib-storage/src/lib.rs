@@ -186,31 +186,31 @@ impl UnifiedStorageSystem {
         )?;
 
         // Initialize DHT storage with optional persistence
-        let dht_storage = match &config.storage_config.dht_persist_path {
-            Some(persist_path) => {
-                let mut storage = dht::storage::DhtStorage::new_with_persistence(
-                    node_id.clone(),
-                    config.storage_config.max_storage_size,
-                    persist_path.clone(),
-                );
-                // Load existing data from disk (async to avoid blocking runtime)
-                if let Err(e) = storage.load_from_file(persist_path).await {
-                    tracing::warn!("Failed to load DHT storage from {:?}: {}", persist_path, e);
-                }
-                storage
-            }
-            None => {
-                // PERSISTENCE WARNING: In-memory only storage will lose all data on restart
-                tracing::warn!(
-                    "DHT storage persistence is NOT configured - data will be lost on restart! \
-                     Set dht_persist_path in storage_config for production use."
-                );
-                dht::storage::DhtStorage::new(
-                    node_id.clone(),
-                    config.storage_config.max_storage_size,
-                )
-            }
-        };
+        // [DB-010] UnifiedStorageSystem uses in-memory storage by default.
+        // For persistent storage, use DhtStorage::new_persistent() directly.
+        let dht_storage = dht::storage::DhtStorage::new(
+            node_id.clone(),
+            config.storage_config.max_storage_size,
+        );
+
+        if config.storage_config.dht_persist_path.is_some() {
+            // TODO [DB-010]: Make UnifiedStorageSystem generic over StorageBackend
+            // to support persistent SledBackend while maintaining backward compatibility.
+            // Currently, UnifiedStorageSystem uses DhtStorage<HashMapBackend> (in-memory).
+            // To enable persistence, either:
+            // 1. Refactor UnifiedStorageSystem to be generic: UnifiedStorageSystem<B: StorageBackend>
+            // 2. Or create separate PersistentUnifiedStorageSystem<DhtStorage<SledBackend>>
+            tracing::warn!(
+                "DHT persistence path is configured but UnifiedStorageSystem uses in-memory storage. \
+                 To use persistent storage, directly instantiate DhtStorage::new_persistent(). \
+                 Tracked as [DB-010] Phase 4."
+            );
+        } else {
+            tracing::warn!(
+                "DHT storage persistence is NOT configured - data will be lost on restart! \
+                 Set dht_persist_path in storage_config for production use."
+            );
+        }
 
         // Initialize economic manager
         let economic_manager = economic::manager::EconomicStorageManager::new(
@@ -218,29 +218,11 @@ impl UnifiedStorageSystem {
         );
 
         // Initialize content manager with same persistence config
-        let content_dht_storage = match &config.storage_config.dht_persist_path {
-            Some(persist_path) => {
-                // Use a separate file for content storage
-                let content_persist_path = persist_path.with_file_name(
-                    format!("{}_content", persist_path.file_stem().unwrap_or_default().to_string_lossy())
-                ).with_extension("bin");
-                let mut storage = dht::storage::DhtStorage::new_with_persistence(
-                    node_id.clone(),
-                    config.storage_config.max_storage_size,
-                    content_persist_path.clone(),
-                );
-                if let Err(e) = storage.load_from_file(&content_persist_path).await {
-                    tracing::warn!("Failed to load content DHT storage from {:?}: {}", content_persist_path, e);
-                }
-                storage
-            }
-            None => {
-                dht::storage::DhtStorage::new(
-                    node_id.clone(),
-                    config.storage_config.max_storage_size,
-                )
-            }
-        };
+        // [DB-010] Content storage also uses in-memory by default (same as dht_storage)
+        let content_dht_storage = dht::storage::DhtStorage::new(
+            node_id.clone(),
+            config.storage_config.max_storage_size,
+        );
         let content_manager = content::ContentManager::new(
             content_dht_storage,
             config.economic_config.clone(),
