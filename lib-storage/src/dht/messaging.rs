@@ -19,6 +19,23 @@ pub struct QueuedMessage {
 }
 
 /// DHT message router and queue manager
+///
+/// ## Sequence Counter Behavior
+///
+/// The sequence counter starts at 0 on every node initialization and increments monotonically
+/// with each outgoing message. This provides replay protection for the current session.
+///
+/// **Important**: After a node restart, the sequence counter resets to 0. This means:
+/// - Messages from a restarted node will have low sequence numbers
+/// - Remote peers that still have high last_sequence values will reject these messages
+/// - The wraparound window (1024) provides some tolerance for this scenario
+/// - If a node frequently restarts, legitimate messages may be rejected as replays
+///
+/// **Mitigation strategies** (not yet implemented):
+/// 1. Persist sequence counters across restarts
+/// 2. Add a connection reset protocol to signal sequence counter reset
+/// 3. Use timestamp-based validation in addition to sequence numbers
+/// 4. Implement session tokens that change on restart
 #[derive(Debug)]
 pub struct DhtMessaging {
     /// Outgoing message queue
@@ -30,6 +47,8 @@ pub struct DhtMessaging {
     retry_delay: Duration,
     /// Local node ID
     local_node_id: NodeId,
+    /// Monotonic sequence counter for outgoing messages
+    sequence_counter: u64,
 }
 
 impl DhtMessaging {
@@ -41,6 +60,7 @@ impl DhtMessaging {
             max_retries: 3,
             retry_delay: Duration::from_secs(2),
             local_node_id,
+            sequence_counter: 0,
         }
     }
     
@@ -151,6 +171,13 @@ impl DhtMessaging {
         // For now, we'll use a simple correlation based on message type and sender
         Some(message.message_id.clone())
     }
+
+    /// Get next sequence number for outgoing messages
+    fn next_sequence(&mut self) -> u64 {
+        let sequence = self.sequence_counter;
+        self.sequence_counter = self.sequence_counter.wrapping_add(1);
+        sequence
+    }
     
     /// Create PONG response
     ///
@@ -158,7 +185,7 @@ impl DhtMessaging {
     ///
     /// - Includes nonce and sequence_number for replay protection
     /// - Caller should sign message before sending (Issue #676)
-    fn create_pong_response(&self, ping: &DhtMessage) -> Result<DhtMessage> {
+    fn create_pong_response(&mut self, ping: &DhtMessage) -> Result<DhtMessage> {
         Ok(DhtMessage {
             message_id: generate_response_id(&ping.message_id),
             message_type: DhtMessageType::Pong,
@@ -170,8 +197,8 @@ impl DhtMessaging {
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers (DB-003)
-            signature: None, // Caller signs via MessageSigner
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
         })
     }
 
@@ -181,7 +208,7 @@ impl DhtMessaging {
     ///
     /// - Includes nonce and sequence_number for replay protection
     /// - Caller should sign message before sending (Issue #676)
-    fn create_find_node_response(&self, find_node: &DhtMessage) -> Result<DhtMessage> {
+    fn create_find_node_response(&mut self, find_node: &DhtMessage) -> Result<DhtMessage> {
         // In a implementation, this would query the routing table
         // For now, return empty node list
         Ok(DhtMessage {
@@ -195,8 +222,8 @@ impl DhtMessaging {
             nodes: Some(Vec::new()),
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers (DB-003)
-            signature: None, // Caller signs via MessageSigner
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
         })
     }
 
@@ -206,7 +233,7 @@ impl DhtMessaging {
     ///
     /// - Includes nonce and sequence_number for replay protection
     /// - Caller should sign message before sending (Issue #676)
-    fn create_find_value_response(&self, find_value: &DhtMessage) -> Result<DhtMessage> {
+    fn create_find_value_response(&mut self, find_value: &DhtMessage) -> Result<DhtMessage> {
         // In a implementation, this would check local storage
         Ok(DhtMessage {
             message_id: generate_response_id(&find_value.message_id),
@@ -219,8 +246,8 @@ impl DhtMessaging {
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers (DB-003)
-            signature: None, // Caller signs via MessageSigner
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
         })
     }
 
@@ -230,7 +257,7 @@ impl DhtMessaging {
     ///
     /// - Includes nonce and sequence_number for replay protection
     /// - Caller should sign message before sending (Issue #676)
-    fn create_store_response(&self, store: &DhtMessage) -> Result<DhtMessage> {
+    fn create_store_response(&mut self, store: &DhtMessage) -> Result<DhtMessage> {
         Ok(DhtMessage {
             message_id: generate_response_id(&store.message_id),
             message_type: DhtMessageType::StoreResponse,
@@ -242,8 +269,8 @@ impl DhtMessaging {
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers (DB-003)
-            signature: None, // Caller signs via MessageSigner
+            sequence_number: self.next_sequence(),
+            signature: None, // TODO (HIGH-5): Sign message
         })
     }
     

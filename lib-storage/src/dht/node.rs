@@ -214,14 +214,19 @@ impl DhtNodeManager {
     
     /// Get DHT statistics including storage and routing info
     pub fn get_statistics(&self) -> DhtStats {
-        let (total_nodes, storage_utilization, routing_table_size) = if let Some(storage) = &self.storage {
+        let (total_nodes, storage_utilization, routing_table_size, replay_rejections) = if let Some(storage) = &self.storage {
             let routing_stats = storage.get_routing_stats();
             let storage_stats = storage.get_storage_stats();
             let utilization = (storage_stats.total_size as f64 / storage_stats.max_capacity as f64) * 100.0;
             
-            (routing_stats.total_nodes, utilization, routing_stats.total_nodes)
+            (
+                routing_stats.total_nodes,
+                utilization,
+                routing_stats.total_nodes,
+                storage.get_replay_rejection_count(),
+            )
         } else {
-            (0, 0.0, 0)
+            (0, 0.0, 0, 0)
         };
         
         DhtStats {
@@ -229,6 +234,7 @@ impl DhtNodeManager {
             total_connections: total_nodes, // Simplified - all known nodes are considered connected
             total_messages_sent: self.message_stats.sent_count,
             total_messages_received: self.message_stats.received_count,
+            replay_rejections,
             routing_table_size,
             storage_utilization,
             network_health: if total_nodes > 0 { 1.0 } else { 0.0 }, // Simplified health metric
