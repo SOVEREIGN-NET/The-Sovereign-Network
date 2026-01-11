@@ -157,6 +157,7 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
+    /// - Caller should sign message before sending (Issue #676)
     fn create_pong_response(&self, ping: &DhtMessage) -> Result<DhtMessage> {
         Ok(DhtMessage {
             message_id: generate_response_id(&ping.message_id),
@@ -169,8 +170,8 @@ impl DhtMessaging {
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers
-            signature: None, // TODO (HIGH-5): Sign message
+            sequence_number: 0, // TODO: Track per-peer sequence numbers (DB-003)
+            signature: None, // Caller signs via MessageSigner
         })
     }
 
@@ -179,6 +180,7 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
+    /// - Caller should sign message before sending (Issue #676)
     fn create_find_node_response(&self, find_node: &DhtMessage) -> Result<DhtMessage> {
         // In a implementation, this would query the routing table
         // For now, return empty node list
@@ -193,8 +195,8 @@ impl DhtMessaging {
             nodes: Some(Vec::new()),
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers
-            signature: None, // TODO (HIGH-5): Sign message
+            sequence_number: 0, // TODO: Track per-peer sequence numbers (DB-003)
+            signature: None, // Caller signs via MessageSigner
         })
     }
 
@@ -203,6 +205,7 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
+    /// - Caller should sign message before sending (Issue #676)
     fn create_find_value_response(&self, find_value: &DhtMessage) -> Result<DhtMessage> {
         // In a implementation, this would check local storage
         Ok(DhtMessage {
@@ -216,8 +219,8 @@ impl DhtMessaging {
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers
-            signature: None, // TODO (HIGH-5): Sign message
+            sequence_number: 0, // TODO: Track per-peer sequence numbers (DB-003)
+            signature: None, // Caller signs via MessageSigner
         })
     }
 
@@ -226,6 +229,7 @@ impl DhtMessaging {
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
+    /// - Caller should sign message before sending (Issue #676)
     fn create_store_response(&self, store: &DhtMessage) -> Result<DhtMessage> {
         Ok(DhtMessage {
             message_id: generate_response_id(&store.message_id),
@@ -238,8 +242,8 @@ impl DhtMessaging {
             contract_data: None,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: generate_nonce(),
-            sequence_number: 0, // TODO: Track per-peer sequence numbers
-            signature: None, // TODO (HIGH-5): Sign message
+            sequence_number: 0, // TODO: Track per-peer sequence numbers (DB-003)
+            signature: None, // Caller signs via MessageSigner
         })
     }
     
