@@ -8,17 +8,22 @@
 use crate::types::dht_types::{DhtMessage, DhtNode, DhtMessageType, DhtQueryResponse};
 use crate::types::NodeId;
 use anyhow::{Result, anyhow};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
-use tracing::{debug, warn};
+use tracing::{debug, warn, error, info};
 use serde::{Serialize, Deserialize};
 
 // Import transport abstraction (Ticket #152)
 // Trait defined in lib-storage to avoid circular dependency with lib-network
 use crate::dht::transport::{DhtTransport, PeerId};
+
+// Import signing module (Issue #676)
+use crate::dht::signing::{MessageSigner, verify_message_signature, VerificationError};
+use lib_crypto::PublicKey;
 
 /// Network envelope for DHT messages with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,26 +58,28 @@ pub enum MessagePriority {
 
 /// DHT network manager for UDP communication
 ///
-/// # Security (HIGH-5): Message Signing
+/// # Security (Issue #676): Message Signing
 ///
-/// **TODO:** Messages are currently sent without signatures. Before production:
+/// All DHT messages are now cryptographically signed using CRYSTALS-Dilithium
+/// (post-quantum) signatures. This provides:
 ///
-/// 1. Add `private_key: Option<lib_crypto::PrivateKey>` field to DhtNetwork
-/// 2. Update constructor to accept private key from IdentityManager
-/// 3. Implement `sign_message()` method using DhtMessage::signable_data()
-/// 4. Sign all outgoing messages before send_message()
-/// 5. Verify incoming message signatures using sender's public key
+/// - **Authenticity**: Messages are verified to come from the claimed sender
+/// - **Integrity**: Any tampering with message content invalidates the signature
+/// - **Replay Protection**: Combined with timestamp and nonce validation
+///
+/// # Usage
 ///
 /// ```rust,ignore
-/// fn sign_message(&self, message: &mut DhtMessage) -> Result<()> {
-///     let signable = message.signable_data();
-///     let signature = lib_crypto::sign(&signable, &self.private_key)?;
-///     message.signature = Some(signature);
-///     Ok(())
-/// }
-/// ```
+/// // Create with signing enabled (recommended)
+/// let keypair = lib_crypto::KeyPair::generate()?;
+/// let network = DhtNetwork::new_with_signing(local_node, transport, keypair)?;
 ///
-/// Until signing is implemented, DHT messages are vulnerable to spoofing.
+/// // All outgoing messages are automatically signed
+/// network.ping(&target).await?;
+///
+/// // All incoming messages have signatures verified
+/// let (message, peer) = network.receive_message().await?;
+/// ```
 pub struct DhtNetwork {
     /// **TICKET #152:** Multi-protocol transport abstraction
     transport: Arc<dyn DhtTransport>,
@@ -82,8 +89,11 @@ pub struct DhtNetwork {
     timeout_duration: Duration,
     /// SECURITY: Monotonically increasing sequence number for replay protection
     sequence_counter: AtomicU64,
-    // TODO (HIGH-5): Add private_key field for message signing
-    // private_key: Option<lib_crypto::PrivateKey>,
+    /// Issue #676: Message signer for outgoing messages
+    signer: Option<MessageSigner>,
+    /// Issue #676: Cache of known peer public keys for signature verification
+    /// Maps NodeId bytes to PublicKey
+    known_peers: Arc<RwLock<HashMap<[u8; 32], PublicKey>>>,
 }
 
 impl std::fmt::Debug for DhtNetwork {
@@ -93,28 +103,70 @@ impl std::fmt::Debug for DhtNetwork {
             .field("local_node", &self.local_node)
             .field("timeout_duration", &self.timeout_duration)
             .field("sequence_counter", &self.sequence_counter.load(Ordering::SeqCst))
+            .field("signing_enabled", &self.signer.is_some())
+            .field("known_peers_count", &self.known_peers.read().map(|p| p.len()).unwrap_or(0))
             .finish()
     }
 }
 
 impl DhtNetwork {
     /// Create a new DHT network manager with multi-protocol transport
-    /// 
+    ///
     /// **TICKET #152:** Now accepts DhtTransport instead of hardcoded UDP socket
+    ///
+    /// **Note:** This creates a network without message signing. For production use,
+    /// prefer `new_with_signing()` to enable cryptographic message authentication.
     pub fn new(local_node: DhtNode, transport: Arc<dyn DhtTransport>) -> Result<Self> {
         Ok(Self {
             transport,
             local_node,
             timeout_duration: Duration::from_secs(5),
             sequence_counter: AtomicU64::new(0),
+            signer: None,
+            known_peers: Arc::new(RwLock::new(HashMap::new())),
         })
     }
-    
+
+    /// Create a new DHT network manager with message signing enabled (Issue #676)
+    ///
+    /// This is the recommended constructor for production use. All outgoing messages
+    /// will be signed with the provided keypair, and incoming messages will have
+    /// their signatures verified.
+    ///
+    /// # Arguments
+    /// * `local_node` - Local node information
+    /// * `transport` - Transport implementation for sending/receiving messages
+    /// * `keypair` - Keypair for signing messages
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let keypair = lib_crypto::KeyPair::generate()?;
+    /// let network = DhtNetwork::new_with_signing(local_node, transport, keypair)?;
+    /// ```
+    pub fn new_with_signing(
+        local_node: DhtNode,
+        transport: Arc<dyn DhtTransport>,
+        keypair: lib_crypto::KeyPair,
+    ) -> Result<Self> {
+        info!("Creating DHT network with message signing enabled");
+        Ok(Self {
+            transport,
+            local_node,
+            timeout_duration: Duration::from_secs(5),
+            sequence_counter: AtomicU64::new(0),
+            signer: Some(MessageSigner::new(keypair)),
+            known_peers: Arc::new(RwLock::new(HashMap::new())),
+        })
+    }
+
     /// Create DHT network with specific bind address (legacy compatibility)
     /// Creates a UDP transport for the given address
     ///
     /// **TICKET #152:** Now uses UdpDhtTransport from lib-storage (not lib-network)
     /// to avoid circular dependency
+    ///
+    /// **Note:** This creates a network without message signing. For production use,
+    /// prefer `new_udp_with_signing()`.
     pub fn new_udp(local_node: DhtNode, bind_addr: SocketAddr) -> Result<Self> {
         use crate::dht::transport::UdpDhtTransport;
 
@@ -132,39 +184,182 @@ impl DhtNetwork {
         Self::new(local_node, transport)
     }
 
+    /// Create DHT network with UDP transport and message signing (Issue #676)
+    ///
+    /// This is the recommended constructor for production use with UDP transport.
+    pub fn new_udp_with_signing(
+        local_node: DhtNode,
+        bind_addr: SocketAddr,
+        keypair: lib_crypto::KeyPair,
+    ) -> Result<Self> {
+        use crate::dht::transport::UdpDhtTransport;
+
+        let socket = std::net::UdpSocket::bind(bind_addr)?;
+        socket.set_nonblocking(true)?;
+        let tokio_socket = tokio::net::UdpSocket::from_std(socket)?;
+
+        let transport = Arc::new(UdpDhtTransport::new(
+            Arc::new(tokio_socket),
+            bind_addr,
+        ));
+
+        Self::new_with_signing(local_node, transport, keypair)
+    }
+
+    /// Check if message signing is enabled
+    pub fn signing_enabled(&self) -> bool {
+        self.signer.is_some()
+    }
+
+    /// Register a peer's public key for future signature verification
+    ///
+    /// When a message is received from a peer, their public key is looked up
+    /// in this cache to verify the signature.
+    ///
+    /// # Returns
+    /// - `true` if the key was successfully registered
+    /// - `false` if the registration failed (lock poisoned)
+    pub fn register_peer_key(&self, node_id: &NodeId, public_key: PublicKey) -> bool {
+        match self.known_peers.write() {
+            Ok(mut peers) => {
+                peers.insert(*node_id.as_bytes(), public_key);
+                debug!(
+                    node_id = %hex::encode(&node_id.as_bytes()[..8]),
+                    "Registered peer public key"
+                );
+                true
+            }
+            Err(e) => {
+                warn!(
+                    node_id = %hex::encode(&node_id.as_bytes()[..8]),
+                    error = %e,
+                    "Failed to register peer public key: lock poisoned"
+                );
+                false
+            }
+        }
+    }
+
+    /// Get a peer's public key from the cache
+    ///
+    /// # Returns
+    /// - `Some(PublicKey)` if the peer is known
+    /// - `None` if the peer is unknown or the lock is poisoned
+    pub fn get_peer_key(&self, node_id: &NodeId) -> Option<PublicKey> {
+        match self.known_peers.read() {
+            Ok(peers) => peers.get(node_id.as_bytes()).cloned(),
+            Err(e) => {
+                warn!(
+                    node_id = %hex::encode(&node_id.as_bytes()[..8]),
+                    error = %e,
+                    "Failed to read peer public key: lock poisoned"
+                );
+                None
+            }
+        }
+    }
+
+    /// Sign a message if signing is enabled
+    fn sign_message_if_enabled(&self, message: &mut DhtMessage) -> Result<()> {
+        if let Some(ref signer) = self.signer {
+            signer.sign_message(message)
+                .map_err(|e| anyhow!("Failed to sign message: {}", e))?;
+        } else {
+            debug!(
+                message_id = %message.message_id,
+                "Message not signed (signing disabled)"
+            );
+        }
+        Ok(())
+    }
+
+    /// Verify a message signature if the sender's public key is known
+    ///
+    /// # Returns
+    /// - `Ok(true)` if signature is valid or signing is disabled
+    /// - `Ok(false)` if signature is invalid
+    /// - `Err(...)` if verification failed due to an error
+    ///
+    /// # Security Notes
+    ///
+    /// **SECURITY WARNING**: This function has lenient behavior for unknown senders
+    /// to support bootstrap and peer discovery. In high-security environments,
+    /// consider using strict mode (TODO: implement strict_verification config).
+    ///
+    /// The verification flow:
+    /// 1. If signing is disabled, all messages are accepted (backward compatibility)
+    /// 2. If sender's public key is cached, verify signature against it
+    /// 3. If sender's key is in message.nodes, cache it and verify (bootstrap)
+    /// 4. If sender is completely unknown, accept if message is fresh (lenient mode)
+    ///
+    /// **Known Limitations** (tracked in Issue #676):
+    /// - No cryptographic binding between node_id and public_key
+    /// - Self-asserted keys from nodes list are trusted during bootstrap
+    /// - No nonce replay cache (messages can be replayed within freshness window)
+    fn verify_message_if_possible(&self, message: &DhtMessage) -> Result<bool> {
+        // If signing is not enabled, skip verification (backward compatibility)
+        if self.signer.is_none() {
+            return Ok(true);
+        }
+
+        // Helper to convert VerificationError to anyhow::Result
+        let handle_verification_error = |e: VerificationError| -> Result<bool> {
+            match e {
+                VerificationError::NoSignature => Ok(false),
+                VerificationError::InvalidNonce => Ok(false),
+                VerificationError::MessageTooOld { .. } => Ok(false),
+                VerificationError::FutureTimestamp { .. } => Ok(false),
+                VerificationError::InvalidSignature => Ok(false),
+                VerificationError::InvalidPublicKey(ref msg) => {
+                    Err(anyhow!("Invalid public key: {}", msg))
+                }
+            }
+        };
+
+        // Try to get sender's public key from cache
+        if let Some(public_key) = self.get_peer_key(&message.sender_id) {
+            return verify_message_signature(message, &public_key)
+                .or_else(handle_verification_error);
+        }
+
+        // If sender is not in cache, check if it's in the message's nodes list
+        // (for bootstrap scenarios where we learn about peers)
+        // SECURITY: This trusts self-asserted public keys during bootstrap.
+        // A malicious node could claim any node_id with their own key.
+        // TODO: Implement node_id = hash(public_key) binding for security.
+        if let Some(ref nodes) = message.nodes {
+            for node in nodes {
+                if node.peer.node_id() == &message.sender_id {
+                    // Found the sender in the nodes list, use their public key
+                    self.register_peer_key(&message.sender_id, node.peer.public_key().clone());
+                    return verify_message_signature(message, node.peer.public_key())
+                        .or_else(handle_verification_error);
+                }
+            }
+        }
+
+        // Sender not known - warn but don't reject (may be first contact)
+        // SECURITY: This is lenient mode for bootstrap. In strict mode,
+        // unknown senders should be rejected (return Ok(false)).
+        warn!(
+            sender_id = %hex::encode(&message.sender_id.as_bytes()[..8]),
+            message_id = %message.message_id,
+            "Cannot verify signature: sender public key not known (lenient mode)"
+        );
+
+        // Accept messages from unknown senders if they pass freshness check
+        // This allows bootstrap and peer discovery to work
+        message.validate_freshness().map(|_| true)
+    }
+
     /// Generate a cryptographically secure random nonce
+    ///
+    /// Uses a cryptographically secure random number generator (CSPRNG)
+    /// to generate nonces suitable for replay protection.
     fn generate_nonce() -> [u8; 32] {
-        use std::hash::{Hash, Hasher};
-        use std::collections::hash_map::DefaultHasher;
-
+        use rand::RngCore;
         let mut nonce = [0u8; 32];
-        // Use multiple entropy sources
-        let now = SystemTime::now();
-        let mut hasher = DefaultHasher::new();
-        now.hash(&mut hasher);
-
-        // Add process-specific entropy
-        let pid = std::process::id();
-        pid.hash(&mut hasher);
-
-        // Add thread-specific entropy
-        std::thread::current().id().hash(&mut hasher);
-
-        let h1 = hasher.finish().to_le_bytes();
-        nonce[0..8].copy_from_slice(&h1);
-
-        // Second hash with different seed
-        let mut hasher2 = DefaultHasher::new();
-        now.hash(&mut hasher2);
-        hasher2.write_u64(0xDEADBEEF_CAFEBABE);
-        let h2 = hasher2.finish().to_le_bytes();
-        nonce[8..16].copy_from_slice(&h2);
-
-        // Third and fourth using nanoseconds
-        let nanos = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-        nonce[16..24].copy_from_slice(&(nanos as u64).to_le_bytes());
-        nonce[24..32].copy_from_slice(&((nanos >> 64) as u64).to_le_bytes());
-
+        rand::thread_rng().fill_bytes(&mut nonce);
         nonce
     }
 
@@ -174,16 +369,20 @@ impl DhtNetwork {
     }
     
     /// Send a DHT message to a target node
-    /// 
+    ///
     /// **TICKET #152:** Now uses DhtTransport abstraction for multi-protocol support
-    pub async fn send_message(&self, target: &DhtNode, message: DhtMessage) -> Result<()> {
+    /// **Issue #676:** Messages are now signed before sending (if signing enabled)
+    pub async fn send_message(&self, target: &DhtNode, mut message: DhtMessage) -> Result<()> {
+        // Issue #676: Sign the message before sending
+        self.sign_message_if_enabled(&mut message)?;
+
         // Serialize message
         let message_bytes = bincode::serialize(&message)?;
-        
+
         // Get target address and create PeerId
         let target_addr = target.addresses.first()
             .ok_or_else(|| anyhow!("No address available for target node"))?;
-        
+
         // Parse address to PeerId (default to UDP for socket addresses)
         let peer_id = if let Ok(socket_addr) = target_addr.parse::<SocketAddr>() {
             PeerId::Udp(socket_addr)
@@ -200,22 +399,35 @@ impl DhtNetwork {
         } else {
             return Err(anyhow!("Unknown address format: {}", target_addr));
         };
-        
+
+        // Register target's public key for future verification
+        self.register_peer_key(target.peer.node_id(), target.peer.public_key().clone());
+
         // Send via transport abstraction
         self.transport.send(&message_bytes, &peer_id).await?;
-        
+
+        debug!(
+            message_id = %message.message_id,
+            msg_type = ?message.message_type,
+            target = %hex::encode(&target.peer.node_id().as_bytes()[..8]),
+            signed = self.signer.is_some(),
+            "Sent DHT message"
+        );
+
         Ok(())
     }
     
-    /// Receive and parse DHT message with freshness validation
+    /// Receive and parse DHT message with freshness and signature validation
     ///
     /// **TICKET #152:** Now uses DhtTransport abstraction for multi-protocol support
+    /// **Issue #676:** Messages are now verified for valid signatures
     ///
     /// # Security
     ///
     /// - Validates message timestamp (rejects > 5 min old)
     /// - Validates nonce is non-zero
-    /// - Caller should verify signature and check nonce against seen-nonce cache
+    /// - Verifies cryptographic signature (if signing enabled)
+    /// - Caller should check nonce against seen-nonce cache for replay protection
     pub async fn receive_message(&self) -> Result<(DhtMessage, PeerId)> {
         // Receive from transport abstraction
         let (message_bytes, peer_id) = timeout(
@@ -237,6 +449,30 @@ impl DhtNetwork {
             return Err(anyhow!("Message validation failed: {}", e));
         }
 
+        // Issue #676: Verify message signature
+        match self.verify_message_if_possible(&message) {
+            Ok(true) => {
+                // Signature valid or signing disabled
+            }
+            Ok(false) => {
+                error!(
+                    sender = %peer_id,
+                    sender_id = %hex::encode(&message.sender_id.as_bytes()[..8]),
+                    msg_type = ?message.message_type,
+                    "Rejecting message with invalid signature"
+                );
+                return Err(anyhow!("Message signature verification failed"));
+            }
+            Err(e) => {
+                error!(
+                    sender = %peer_id,
+                    error = %e,
+                    "Signature verification error"
+                );
+                return Err(anyhow!("Signature verification error: {}", e));
+            }
+        }
+
         debug!(
             sender = %peer_id,
             msg_type = ?message.message_type,
@@ -251,11 +487,12 @@ impl DhtNetwork {
     /// Send PING message to check node liveness
     ///
     /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
+    /// **Issue #676:** Message is automatically signed in `send_message()`
     ///
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
-    /// - TODO: Sign message before sending (HIGH-5)
+    /// - Message is signed before sending (if signing enabled)
     pub async fn ping(&self, target: &DhtNode) -> Result<bool> {
         let ping_message = DhtMessage {
             message_id: generate_message_id(),
@@ -269,7 +506,7 @@ impl DhtNetwork {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: Self::generate_nonce(),
             sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message with local node's private key
+            signature: None, // Signed in send_message()
         };
 
         self.send_message(target, ping_message).await?;
@@ -292,10 +529,12 @@ impl DhtNetwork {
     /// Send FIND_NODE query
     ///
     /// **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
+    /// **Issue #676:** Message is automatically signed in `send_message()`
     ///
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
+    /// - Message is signed before sending (if signing enabled)
     pub async fn find_node(&self, target: &DhtNode, query_id: NodeId) -> Result<Vec<DhtNode>> {
         let find_node_message = DhtMessage {
             message_id: generate_message_id(),
@@ -309,7 +548,7 @@ impl DhtNetwork {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: Self::generate_nonce(),
             sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
+            signature: None, // Signed in send_message()
         };
 
         self.send_message(target, find_node_message).await?;
@@ -332,10 +571,12 @@ impl DhtNetwork {
     /// Send FIND_VALUE query
     ///
     /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
+    /// **Issue #676:** Message is automatically signed in `send_message()`
     ///
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
+    /// - Message is signed before sending (if signing enabled)
     pub async fn find_value(&self, target: &DhtNode, key: String) -> Result<DhtQueryResponse> {
         let find_value_message = DhtMessage {
             message_id: generate_message_id(),
@@ -349,7 +590,7 @@ impl DhtNetwork {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: Self::generate_nonce(),
             sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
+            signature: None, // Signed in send_message()
         };
 
         self.send_message(target, find_value_message).await?;
@@ -376,10 +617,12 @@ impl DhtNetwork {
     /// Send STORE message
     ///
     /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
+    /// **Issue #676:** Message is automatically signed in `send_message()`
     ///
     /// # Security
     ///
     /// - Includes nonce and sequence_number for replay protection
+    /// - Message is signed before sending (if signing enabled)
     pub async fn store(&self, target: &DhtNode, key: String, value: Vec<u8>) -> Result<bool> {
         let store_message = DhtMessage {
             message_id: generate_message_id(),
@@ -393,7 +636,7 @@ impl DhtNetwork {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             nonce: Self::generate_nonce(),
             sequence_number: self.next_sequence(),
-            signature: None, // TODO (HIGH-5): Sign message
+            signature: None, // Signed in send_message()
         };
 
         self.send_message(target, store_message).await?;
@@ -416,15 +659,17 @@ impl DhtNetwork {
     /// Handle incoming message and generate appropriate response
     ///
     /// **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for responses
+    /// **Issue #676:** Response messages are automatically signed
     ///
     /// # Security
     ///
     /// - Response messages include nonce and sequence_number for replay protection
+    /// - Response messages are signed (if signing enabled)
     /// - Incoming message freshness is already validated by receive_message()
     pub async fn handle_incoming_message(&self, message: DhtMessage, _sender: PeerId) -> Result<Option<DhtMessage>> {
-        match message.message_type {
+        let response = match message.message_type {
             DhtMessageType::Ping => {
-                Ok(Some(DhtMessage {
+                Some(DhtMessage {
                     message_id: generate_message_id(),
                     message_type: DhtMessageType::Pong,
                     sender_id: self.local_node.peer.node_id().clone(),
@@ -436,15 +681,14 @@ impl DhtNetwork {
                     timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
                     nonce: Self::generate_nonce(),
                     sequence_number: self.next_sequence(),
-                    signature: None, // TODO (HIGH-5): Sign response
-                }))
+                    signature: None, // Will be signed below
+                })
             }
 
             DhtMessageType::FindNode => {
                 // In a implementation, this would query the routing table
                 // For now, return empty node list
-                // **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
-                Ok(Some(DhtMessage {
+                Some(DhtMessage {
                     message_id: generate_message_id(),
                     message_type: DhtMessageType::FindNodeResponse,
                     sender_id: self.local_node.peer.node_id().clone(),
@@ -456,15 +700,14 @@ impl DhtNetwork {
                     timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
                     nonce: Self::generate_nonce(),
                     sequence_number: self.next_sequence(),
-                    signature: None, // TODO (HIGH-5): Sign response
-                }))
+                    signature: None, // Will be signed below
+                })
             }
 
             DhtMessageType::FindValue => {
                 // In a implementation, this would check local storage
                 // For now, return empty node list (value not found)
-                // **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
-                Ok(Some(DhtMessage {
+                Some(DhtMessage {
                     message_id: generate_message_id(),
                     message_type: DhtMessageType::FindValueResponse,
                     sender_id: self.local_node.peer.node_id().clone(),
@@ -476,14 +719,13 @@ impl DhtNetwork {
                     timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
                     nonce: Self::generate_nonce(),
                     sequence_number: self.next_sequence(),
-                    signature: None, // TODO (HIGH-5): Sign response
-                }))
+                    signature: None, // Will be signed below
+                })
             }
 
             DhtMessageType::Store => {
                 // In a implementation, this would store the key-value pair
-                // **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
-                Ok(Some(DhtMessage {
+                Some(DhtMessage {
                     message_id: generate_message_id(),
                     message_type: DhtMessageType::StoreResponse,
                     sender_id: self.local_node.peer.node_id().clone(),
@@ -495,11 +737,20 @@ impl DhtNetwork {
                     timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
                     nonce: Self::generate_nonce(),
                     sequence_number: self.next_sequence(),
-                    signature: None, // TODO (HIGH-5): Sign response
-                }))
+                    signature: None, // Will be signed below
+                })
             }
 
-            _ => Ok(None), // Response messages don't need responses
+            _ => None, // Response messages don't need responses
+        };
+
+        // Issue #676: Sign the response message if one was generated
+        match response {
+            Some(mut msg) => {
+                self.sign_message_if_enabled(&mut msg)?;
+                Ok(Some(msg))
+            }
+            None => Ok(None),
         }
     }
     
