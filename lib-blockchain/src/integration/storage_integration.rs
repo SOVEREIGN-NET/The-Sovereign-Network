@@ -1000,6 +1000,7 @@ impl BlockchainStorageManager {
             total_connections: 0, // Active peer connections
             total_messages_sent: 0, // DHT protocol messages
             total_messages_received: 0,
+            replay_rejections: 0,
             routing_table_size: self.stats.routing_table_size,
             storage_utilization: self.calculate_storage_utilization().await?,
             network_health: self.calculate_network_health().await?,

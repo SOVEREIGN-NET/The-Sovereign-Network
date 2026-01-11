@@ -216,6 +216,7 @@ impl KademliaRouter {
             bucket_index,
             last_contact: current_time,
             failed_attempts: 0,
+            last_sequence: None,
         };
 
         self.registry.upsert(entry)?;
@@ -268,6 +269,16 @@ impl KademliaRouter {
         // mark_responsive returns bool, but we maintain Result<()> for compatibility
         let _ = self.registry.mark_responsive(node_id);
         Ok(())
+    }
+
+    /// Check if a peer exists in the routing table
+    pub fn has_peer(&self, node_id: &NodeId) -> bool {
+        self.registry.contains(node_id)
+    }
+
+    /// Validate and record per-peer sequence number for replay protection
+    pub fn check_and_update_sequence(&mut self, node_id: &NodeId, sequence: u64) -> Result<()> {
+        self.registry.check_and_update_sequence(node_id, sequence)
     }
     
     /// Remove a node from the routing table

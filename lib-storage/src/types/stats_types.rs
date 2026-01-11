@@ -29,6 +29,9 @@ pub struct DhtStats {
     pub total_messages_sent: u64,
     /// Total messages received
     pub total_messages_received: u64,
+    /// Total rejected replay messages
+    #[serde(default)]
+    pub replay_rejections: u64,
     /// Size of routing table
     pub routing_table_size: usize,
     /// Storage utilization percentage

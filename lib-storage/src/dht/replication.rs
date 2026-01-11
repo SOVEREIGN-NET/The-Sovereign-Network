@@ -19,6 +19,8 @@ pub struct DhtReplication {
     replication_status: HashMap<String, ReplicationStatus>,
     /// Default replication factor
     default_replication_factor: usize,
+    /// Monotonic sequence counter for outgoing replication messages
+    sequence_counter: u64,
 }
 
 impl DhtReplication {
@@ -29,7 +31,14 @@ impl DhtReplication {
             policies: HashMap::new(),
             replication_status: HashMap::new(),
             default_replication_factor,
+            sequence_counter: 0,
         }
+    }
+
+    fn next_sequence(&mut self) -> u64 {
+        let sequence = self.sequence_counter;
+        self.sequence_counter = self.sequence_counter.wrapping_add(1);
+        sequence
     }
     
     /// Set replication policy for a data type
@@ -95,7 +104,7 @@ impl DhtReplication {
     }
     
     /// Replicate data to a specific node
-    async fn replicate_to_node(&self, key: &str, value: &[u8], target_node: &DhtNode) -> Result<()> {
+    async fn replicate_to_node(&mut self, key: &str, value: &[u8], target_node: &DhtNode) -> Result<()> {
         // Check node reputation before attempting replication
         if target_node.reputation < 500 {
             return Err(anyhow!("Target node reputation too low: {}", target_node.reputation));
@@ -123,7 +132,7 @@ impl DhtReplication {
                 nonce.copy_from_slice(&hash.as_bytes()[..32]);
                 nonce
             },
-            sequence_number: 0, // TODO: Track per-peer sequence numbers
+            sequence_number: self.next_sequence(),
             signature: None, // TODO (HIGH-5): Sign message
         };
 

@@ -53,6 +53,9 @@ pub const DEFAULT_RATE_LIMIT_PER_MINUTE: u32 = 100;
 /// Rate limit window in seconds
 pub const RATE_LIMIT_WINDOW_SECS: u64 = 60;
 
+/// Allow small wraparound window for u64 sequence counters
+const SEQUENCE_WRAPAROUND_WINDOW: u64 = 1024;
+
 // ========== DHT PEER ENTRY ==========
 
 /// DHT peer entry with K-bucket metadata
@@ -68,6 +71,8 @@ pub struct DhtPeerEntry {
     pub last_contact: u64,
     /// Failed ping attempts
     pub failed_attempts: u32,
+    /// Last accepted sequence number from this peer (replay protection)
+    pub last_sequence: Option<u64>,
 }
 
 // ========== RATE LIMITER ==========
@@ -185,6 +190,7 @@ impl DhtPeerRegistry {
     /// - `Ok(false)` if existing peer was updated
     /// - `Err(...)` if rate limited or invalid bucket index
     pub fn upsert(&mut self, entry: DhtPeerEntry) -> Result<bool> {
+        let mut entry = entry;
         // Validate bucket index
         if entry.bucket_index > MAX_BUCKET_INDEX {
             return Err(anyhow!(
@@ -196,6 +202,10 @@ impl DhtPeerRegistry {
 
         let node_id = entry.node.peer.node_id().clone();
         let is_new = !self.peers.contains_key(&node_id);
+
+        if let Some(existing) = self.peers.get(&node_id) {
+            entry.last_sequence = existing.last_sequence;
+        }
 
         // Apply rate limiting only for new peer insertions
         if is_new && !self.rate_limiter.check_and_record() {
@@ -366,6 +376,33 @@ impl DhtPeerRegistry {
             self.remove(&node_id);
         }
         count
+    }
+
+    /// Check per-peer sequence number and update last seen sequence
+    ///
+    /// Rejects messages with sequence numbers less than or equal to the last seen.
+    /// Allows a small wraparound window for u64 overflow.
+    pub fn check_and_update_sequence(&mut self, node_id: &NodeId, sequence: u64) -> Result<()> {
+        let entry = self.peers.get_mut(node_id)
+            .ok_or_else(|| anyhow!("Unknown peer {}", hex::encode(&node_id.as_bytes()[..4])))?;
+
+        if let Some(last_sequence) = entry.last_sequence {
+            if sequence <= last_sequence {
+                let is_wraparound = last_sequence > u64::MAX - SEQUENCE_WRAPAROUND_WINDOW
+                    && sequence < SEQUENCE_WRAPAROUND_WINDOW;
+
+                if !is_wraparound {
+                    return Err(anyhow!(
+                        "Replay detected: sequence {} <= {}",
+                        sequence,
+                        last_sequence
+                    ));
+                }
+            }
+        }
+
+        entry.last_sequence = Some(sequence);
+        Ok(())
     }
 
     /// Get registry statistics
@@ -552,6 +589,7 @@ mod tests {
             bucket_index: 5,
             last_contact: 12345,
             failed_attempts: 0,
+            last_sequence: None,
         };
 
         let is_new = registry.upsert(entry).unwrap();
@@ -568,6 +606,7 @@ mod tests {
             bucket_index: 6,
             last_contact: 12346,
             failed_attempts: 0,
+            last_sequence: None,
         };
         let is_new2 = registry.upsert(entry2).unwrap();
         assert!(!is_new2);
@@ -587,6 +626,7 @@ mod tests {
             bucket_index: 200, // Invalid: > MAX_BUCKET_INDEX
             last_contact: 12345,
             failed_attempts: 0,
+            last_sequence: None,
         };
 
         let result = registry.upsert(entry);
@@ -607,6 +647,7 @@ mod tests {
                 bucket_index: 0,
                 last_contact: 12345,
                 failed_attempts: 0,
+                last_sequence: None,
             };
             registry.upsert(entry).unwrap();
         }
@@ -632,6 +673,7 @@ mod tests {
                 bucket_index: bucket_idx as usize,
                 last_contact: 12345,
                 failed_attempts: 0,
+                last_sequence: None,
             };
             registry.upsert(entry).unwrap();
         }
@@ -659,6 +701,7 @@ mod tests {
             bucket_index: 5,
             last_contact: 12345,
             failed_attempts: 0,
+            last_sequence: None,
         };
         registry.upsert(entry).unwrap();
 
@@ -682,6 +725,7 @@ mod tests {
             bucket_index: 5,
             last_contact: 12345,
             failed_attempts: 5,
+            last_sequence: None,
         };
         registry.upsert(entry).unwrap();
 
@@ -702,6 +746,7 @@ mod tests {
                 bucket_index: 0,
                 last_contact: 12345,
                 failed_attempts: i as u32,
+                last_sequence: None,
             };
             registry.upsert(entry).unwrap();
         }
@@ -727,12 +772,57 @@ mod tests {
             bucket_index: 0,
             last_contact: 12345,
             failed_attempts: 2,
+            last_sequence: None,
         };
         registry.upsert(entry).unwrap();
 
         // Should be cleaned up with configured threshold of 1
         let removed = registry.cleanup_failed_peers();
         assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn test_sequence_tracking_rejects_replay() {
+        let mut registry = DhtPeerRegistry::new(20);
+        let node = create_test_node("seq-peer", 4100);
+        let node_id = node.peer.node_id().clone();
+
+        let entry = DhtPeerEntry {
+            node,
+            distance: 1,
+            bucket_index: 0,
+            last_contact: 0,
+            failed_attempts: 0,
+            last_sequence: None,
+        };
+
+        registry.upsert(entry).unwrap();
+
+        registry.check_and_update_sequence(&node_id, 1).unwrap();
+        registry.check_and_update_sequence(&node_id, 2).unwrap();
+
+        let err = registry.check_and_update_sequence(&node_id, 2).unwrap_err();
+        assert!(err.to_string().contains("Replay detected"));
+    }
+
+    #[test]
+    fn test_sequence_wraparound_window() {
+        let mut registry = DhtPeerRegistry::new(20);
+        let node = create_test_node("seq-wrap", 4101);
+        let node_id = node.peer.node_id().clone();
+
+        let entry = DhtPeerEntry {
+            node,
+            distance: 1,
+            bucket_index: 0,
+            last_contact: 0,
+            failed_attempts: 0,
+            last_sequence: Some(u64::MAX - 1),
+        };
+
+        registry.upsert(entry).unwrap();
+
+        assert!(registry.check_and_update_sequence(&node_id, 0).is_ok());
     }
 
     #[test]
@@ -750,6 +840,7 @@ mod tests {
                 bucket_index: (distance as usize).min(MAX_BUCKET_INDEX),
                 last_contact: 12345,
                 failed_attempts: 0,
+                last_sequence: None,
             };
             registry.upsert(entry).unwrap();
         }
@@ -781,6 +872,7 @@ mod tests {
                     bucket_index: bucket_idx as usize,
                     last_contact: 12345,
                     failed_attempts: 0,
+                    last_sequence: None,
                 };
                 registry.upsert(entry).unwrap();
             }
@@ -824,6 +916,7 @@ mod tests {
                 bucket_index: 0,
                 last_contact: 12345,
                 failed_attempts: 0,
+                last_sequence: None,
             };
             assert!(registry.upsert(entry).is_ok());
         }
@@ -836,6 +929,7 @@ mod tests {
             bucket_index: 0,
             last_contact: 12345,
             failed_attempts: 0,
+            last_sequence: None,
         };
         let result = registry.upsert(entry);
         assert!(result.is_err());
@@ -878,6 +972,7 @@ impl DhtPeerRegistryTrait for DhtPeerRegistry {
             bucket_index,
             last_contact: current_time,
             failed_attempts: 0,
+            last_sequence: None,
         };
         
         self.upsert(entry)?;

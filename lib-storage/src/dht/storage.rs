@@ -79,6 +79,8 @@ pub struct DhtStorage {
     router: KademliaRouter,
     /// Messaging system for reliable communication
     messaging: DhtMessaging,
+    /// Count of rejected replay messages
+    replay_rejections: u64,
     /// Known DHT nodes
     known_nodes: HashMap<NodeId, DhtNode>,
     /// Contract index for fast discovery by tags and metadata
@@ -100,6 +102,7 @@ impl DhtStorage {
             network: None,
             router: KademliaRouter::new(local_node_id.clone(), 20),
             messaging: DhtMessaging::new(local_node_id),
+            replay_rejections: 0,
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
             persist_path: None,
@@ -116,6 +119,7 @@ impl DhtStorage {
             network: None,
             router: KademliaRouter::new(local_node_id.clone(), 20),
             messaging: DhtMessaging::new(local_node_id),
+            replay_rejections: 0,
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
             persist_path: Some(persist_path),
@@ -1354,24 +1358,77 @@ impl DhtStorage {
                             message.message_id,
                             sender_addr);
 
-                    if let Ok(response) = self.messaging.handle_incoming(message.clone()).await {
-                        if let Some(response_msg) = response {
-                            // Send response back
-                            if let Some(target_node) = self.known_nodes.get(&message.sender_id) {
-                                let _ = network.send_message(target_node, response_msg).await;
+                    let sender_id = message.sender_id.clone();
+                    if !self.router.has_peer(&sender_id) {
+                        if let Some(node) = self.known_nodes.get(&sender_id).cloned() {
+                            if let Err(e) = self.router.add_node(node).await {
+                                warn!("Failed to register peer for sequence tracking: {}", e);
                             }
                         }
                     }
 
-                    // Put network back before handling storage message
-                    self.network = Some(network);
+                    if self.router.has_peer(&sender_id) {
+                        if let Err(e) = self.router.check_and_update_sequence(&sender_id, message.sequence_number) {
+                            if e.to_string().contains("Replay detected") {
+                                self.replay_rejections = self.replay_rejections.saturating_add(1);
+                            }
 
-                    // Handle storage-specific messages (now self is available)
-                    if let Err(e) = self.handle_storage_message(message).await {
-                        warn!("Failed to handle storage message: {}", e);
+                            warn!(
+                                "Rejecting DHT message {} from {}: {}",
+                                message.message_id,
+                                hex::encode(&sender_id.as_bytes()[..4]),
+                                e
+                            );
+
+                            // Put network back before continuing
+                            self.network = Some(network);
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            true
+                        } else {
+                            if let Ok(response) = self.messaging.handle_incoming(message.clone()).await {
+                                if let Some(response_msg) = response {
+                                    // Send response back
+                                    if let Some(target_node) = self.known_nodes.get(&message.sender_id) {
+                                        let _ = network.send_message(target_node, response_msg).await;
+                                    }
+                                }
+                            }
+
+                            // Put network back before handling storage message
+                            self.network = Some(network);
+
+                            // Handle storage-specific messages (now self is available)
+                            if let Err(e) = self.handle_storage_message(message).await {
+                                warn!("Failed to handle storage message: {}", e);
+                            }
+
+                            true // Continue processing
+                        }
+                    } else {
+                        warn!(
+                            "Skipping sequence validation for unknown peer {} on message {}",
+                            hex::encode(&sender_id.as_bytes()[..4]),
+                            message.message_id
+                        );
+                        if let Ok(response) = self.messaging.handle_incoming(message.clone()).await {
+                            if let Some(response_msg) = response {
+                                // Send response back
+                                if let Some(target_node) = self.known_nodes.get(&message.sender_id) {
+                                    let _ = network.send_message(target_node, response_msg).await;
+                                }
+                            }
+                        }
+
+                        // Put network back before handling storage message
+                        self.network = Some(network);
+
+                        // Handle storage-specific messages (now self is available)
+                        if let Err(e) = self.handle_storage_message(message).await {
+                            warn!("Failed to handle storage message: {}", e);
+                        }
+
+                        true // Continue processing
                     }
-
-                    true // Continue processing
                 }
                 Err(e) => {
                     // Put network back
@@ -1819,6 +1876,11 @@ impl DhtStorage {
     /// Get messaging queue statistics  
     pub fn get_messaging_stats(&self) -> crate::dht::messaging::QueueStats {
         self.messaging.get_queue_stats()
+    }
+
+    /// Get number of rejected replay messages
+    pub fn get_replay_rejection_count(&self) -> u64 {
+        self.replay_rejections
     }
 }
 
