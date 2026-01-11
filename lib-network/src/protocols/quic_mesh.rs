@@ -220,7 +220,7 @@ impl QuicMeshProtocol {
         info!("🔐 QUIC endpoint listening on {}", actual_addr);
 
         // Create shared handshake context with persistent nonce cache
-        // Uses RocksDB for persistence across restarts (prevents replay attacks)
+        // Uses sled for persistence across restarts (prevents replay attacks)
         // TTL: 1 hour, max entries: 100,000 (handles high connection rate)
         let nonce_db_path = cert_path.parent()
             .unwrap_or(Path::new("./data"))
