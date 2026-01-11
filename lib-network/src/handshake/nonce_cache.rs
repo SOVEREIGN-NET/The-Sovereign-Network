@@ -464,9 +464,10 @@ impl NonceCache {
 
         for item in iter {
             let (key, value) = item.map_err(|e| anyhow!("DB iteration error: {}", e))?;
+            let key_bytes = key.as_ref();
 
             // Skip keys that don't match our prefix
-            if !key.as_ref().starts_with(Self::NONCE_PREFIX.as_bytes()) {
+            if !key_bytes.starts_with(Self::NONCE_PREFIX.as_bytes()) {
                 continue;
             }
 
