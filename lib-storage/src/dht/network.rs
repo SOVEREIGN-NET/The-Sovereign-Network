@@ -302,23 +302,24 @@ impl DhtNetwork {
             return Ok(true);
         }
 
+        // Helper to convert VerificationError to anyhow::Result
+        let handle_verification_error = |e: VerificationError| -> Result<bool> {
+            match e {
+                VerificationError::NoSignature => Ok(false),
+                VerificationError::InvalidNonce => Ok(false),
+                VerificationError::MessageTooOld { .. } => Ok(false),
+                VerificationError::FutureTimestamp { .. } => Ok(false),
+                VerificationError::InvalidSignature => Ok(false),
+                VerificationError::InvalidPublicKey(ref msg) => {
+                    Err(anyhow!("Invalid public key: {}", msg))
+                }
+            }
+        };
+
         // Try to get sender's public key from cache
         if let Some(public_key) = self.get_peer_key(&message.sender_id) {
             return verify_message_signature(message, &public_key)
-                .or_else(|e| {
-                    // Convert VerificationError to anyhow::Result
-                    // Some verification errors should still allow message processing (lenient mode)
-                    match e {
-                        VerificationError::NoSignature => Ok(false),
-                        VerificationError::InvalidNonce => Ok(false),
-                        VerificationError::MessageTooOld { .. } => Ok(false),
-                        VerificationError::FutureTimestamp { .. } => Ok(false),
-                        VerificationError::InvalidSignature => Ok(false),
-                        VerificationError::InvalidPublicKey(ref msg) => {
-                            Err(anyhow!("Invalid public key: {}", msg))
-                        }
-                    }
-                });
+                .or_else(handle_verification_error);
         }
 
         // If sender is not in cache, check if it's in the message's nodes list
@@ -332,18 +333,7 @@ impl DhtNetwork {
                     // Found the sender in the nodes list, use their public key
                     self.register_peer_key(&message.sender_id, node.peer.public_key().clone());
                     return verify_message_signature(message, node.peer.public_key())
-                        .or_else(|e| {
-                            match e {
-                                VerificationError::NoSignature => Ok(false),
-                                VerificationError::InvalidNonce => Ok(false),
-                                VerificationError::MessageTooOld { .. } => Ok(false),
-                                VerificationError::FutureTimestamp { .. } => Ok(false),
-                                VerificationError::InvalidSignature => Ok(false),
-                                VerificationError::InvalidPublicKey(ref msg) => {
-                                    Err(anyhow!("Invalid public key: {}", msg))
-                                }
-                            }
-                        });
+                        .or_else(handle_verification_error);
                 }
             }
         }

@@ -130,7 +130,12 @@ pub fn verify_message_signature(
         use std::time::{SystemTime, UNIX_EPOCH};
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| {
+                // System clock is set before Unix epoch - use timestamp 0
+                // This should never happen in practice on modern systems
+                warn!("System clock is before Unix epoch");
+                std::time::Duration::from_secs(0)
+            })
             .as_secs();
         
         if message.timestamp > now {
