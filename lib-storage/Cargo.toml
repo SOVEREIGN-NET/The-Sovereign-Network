@@ -36,6 +36,8 @@ chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 tracing = "0.1"
 humantime-serde = "1.1"
+parking_lot = "0.12" # DB-010: Thread-safe locking for backend implementations
+sled = "0.34" # DB-010: Persistent storage backend
 
 [dev-dependencies]
 tokio-test = "0.4"
