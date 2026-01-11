@@ -578,6 +578,9 @@ impl StorageBackend for SledTree {
         new: Option<&[u8]>,
     ) -> Result<()> {
         validate_key(key)?;
+        if let Some(v) = expected {
+            validate_value(v)?;
+        }
         if let Some(v) = new {
             validate_value(v)?;
         }
@@ -730,6 +733,9 @@ impl StorageBackend for SledBackend {
         new: Option<&[u8]>,
     ) -> Result<()> {
         validate_key(key)?;
+        if let Some(v) = expected {
+            validate_value(v)?;
+        }
         if let Some(v) = new {
             validate_value(v)?;
         }
