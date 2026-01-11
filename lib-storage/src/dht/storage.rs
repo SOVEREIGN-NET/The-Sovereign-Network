@@ -1383,6 +1383,14 @@ impl DhtStorage {
                                     last_sequence
                                 );
 
+                                // TODO: Send error response to sender (requires protocol extension)
+                                // Currently we silently drop replay messages. To help legitimate
+                                // senders (e.g., after restart), we should send an error response
+                                // indicating sequence rejection. This requires:
+                                // 1. Add DhtMessageType::SequenceError variant
+                                // 2. Define error response message format
+                                // 3. Handle response on sender side to reset/re-establish connection
+
                                 // Put network back before continuing
                                 self.network = Some(network);
                                 tokio::time::sleep(Duration::from_millis(10)).await;
