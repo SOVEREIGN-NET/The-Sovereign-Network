@@ -160,12 +160,13 @@ impl ZkVerificationMetrics {
             self.max_verification_time_ms = duration_ms;
         }
 
-        // Update rolling average using saturating_add to prevent overflow
+        // Update rolling average using incremental average formula
         let completed = self.successful_verifications.saturating_add(self.failed_verifications);
         if completed > 0 {
+            let count = completed as f64;
             self.avg_verification_time_ms =
-                (self.avg_verification_time_ms * (completed - 1) as f64 + duration_ms as f64)
-                / completed as f64;
+                self.avg_verification_time_ms
+                    + (duration_ms as f64 - self.avg_verification_time_ms) / count;
         }
     }
 
