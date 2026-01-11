@@ -22,7 +22,7 @@ use serde::{Serialize, Deserialize};
 use crate::dht::transport::{DhtTransport, PeerId};
 
 // Import signing module (Issue #676)
-use crate::dht::signing::{MessageSigner, verify_message_signature};
+use crate::dht::signing::{MessageSigner, verify_message_signature, VerificationError};
 use lib_crypto::PublicKey;
 
 /// Network envelope for DHT messages with metadata
@@ -262,7 +262,8 @@ impl DhtNetwork {
     /// Sign a message if signing is enabled
     fn sign_message_if_enabled(&self, message: &mut DhtMessage) -> Result<()> {
         if let Some(ref signer) = self.signer {
-            signer.sign_message(message)?;
+            signer.sign_message(message)
+                .map_err(|e| anyhow!("Failed to sign message: {}", e))?;
         } else {
             debug!(
                 message_id = %message.message_id,
@@ -303,7 +304,21 @@ impl DhtNetwork {
 
         // Try to get sender's public key from cache
         if let Some(public_key) = self.get_peer_key(&message.sender_id) {
-            return verify_message_signature(message, &public_key);
+            return verify_message_signature(message, &public_key)
+                .or_else(|e| {
+                    // Convert VerificationError to anyhow::Result
+                    // Some verification errors should still allow message processing (lenient mode)
+                    match e {
+                        VerificationError::NoSignature => Ok(false),
+                        VerificationError::InvalidNonce => Ok(false),
+                        VerificationError::MessageTooOld { .. } => Ok(false),
+                        VerificationError::FutureTimestamp { .. } => Ok(false),
+                        VerificationError::InvalidSignature => Ok(false),
+                        VerificationError::InvalidPublicKey(ref msg) => {
+                            Err(anyhow!("Invalid public key: {}", msg))
+                        }
+                    }
+                });
         }
 
         // If sender is not in cache, check if it's in the message's nodes list
@@ -316,7 +331,19 @@ impl DhtNetwork {
                 if node.peer.node_id() == &message.sender_id {
                     // Found the sender in the nodes list, use their public key
                     self.register_peer_key(&message.sender_id, node.peer.public_key().clone());
-                    return verify_message_signature(message, node.peer.public_key());
+                    return verify_message_signature(message, node.peer.public_key())
+                        .or_else(|e| {
+                            match e {
+                                VerificationError::NoSignature => Ok(false),
+                                VerificationError::InvalidNonce => Ok(false),
+                                VerificationError::MessageTooOld { .. } => Ok(false),
+                                VerificationError::FutureTimestamp { .. } => Ok(false),
+                                VerificationError::InvalidSignature => Ok(false),
+                                VerificationError::InvalidPublicKey(ref msg) => {
+                                    Err(anyhow!("Invalid public key: {}", msg))
+                                }
+                            }
+                        });
                 }
             }
         }
