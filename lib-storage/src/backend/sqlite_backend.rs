@@ -1789,7 +1789,7 @@ mod tests {
 
         // Insert content with various tags
         for i in 0..3 {
-            let content_hash = vec![i + 1; 32];
+            let content_hash = vec![(i + 1) as u8; 32];
             let tags = match i {
                 0 => r#"["rust", "backend"]"#,
                 1 => r#"["rust", "frontend"]"#,
@@ -1838,7 +1838,7 @@ mod tests {
 
         // Insert content with different tiers
         for (i, tier) in ["hot", "warm", "cold"].iter().enumerate() {
-            let content_hash = vec![i as u8 + 1; 32];
+            let content_hash = vec![(i + 1) as u8; 32];
             let metadata = ContentMetadataRow {
                 content_hash: content_hash.clone(),
                 size: 1024 * (i + 1) as i64,
@@ -2041,7 +2041,7 @@ mod tests {
         ];
 
         for (i, (tier, size)) in tier_data.iter().enumerate() {
-            let content_hash = vec![i as u8 + 1; 32];
+            let content_hash = vec![(i + 1) as u8; 32];
             let metadata = ContentMetadataRow {
                 content_hash: content_hash.clone(),
                 size: *size,
