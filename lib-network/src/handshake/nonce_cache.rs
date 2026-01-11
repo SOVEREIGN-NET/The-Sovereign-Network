@@ -169,6 +169,15 @@ impl NetworkEpoch {
 ///
 /// All variable-length fields are length-prefixed to prevent ambiguity attacks
 /// where different input combinations could produce the same hash.
+///
+/// # Breaking Change Note
+///
+/// The addition of length-prefixing to `peer_role` is a breaking change that will cause
+/// all existing cached nonces to have different fingerprints than newly computed ones.
+/// This means nonces cached before this change won't be detected as replays of new requests.
+/// While this is acceptable from a security perspective (it's conservative - we may miss
+/// some old replays but will catch all new ones), operators should be aware that old cached
+/// nonces are effectively invalidated after upgrade.
 pub fn compute_nonce_fingerprint(
     network_epoch: NetworkEpoch,
     nonce: &[u8; 32],
@@ -736,7 +745,10 @@ impl NonceCache {
                             "Stored epoch bytes corrupted ({}), re-storing expected epoch",
                             e
                         );
-                        db.put(Self::META_EPOCH_KEY, expected_epoch.to_bytes())
+                        // Use sync write for critical metadata during corrupted-epoch recovery
+                        let mut write_opts = WriteOptions::default();
+                        write_opts.set_sync(true);
+                        db.put_opt(Self::META_EPOCH_KEY, expected_epoch.to_bytes(), &write_opts)
                             .map_err(|e| anyhow!("Failed to restore network epoch: {}", e))?;
                         return Ok(());
                     }
@@ -961,12 +973,24 @@ impl NonceCache {
 /// Background task to periodically cleanup expired nonces
 ///
 /// Should be spawned as a background task when the system starts.
+///
+/// Uses `spawn_blocking` to avoid blocking the async runtime during cleanup operations,
+/// which involve synchronous RocksDB I/O and may include retry logic with sleeps.
 pub async fn start_nonce_cleanup_task(cache: NonceCache, interval_secs: u64) {
     let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
 
     loop {
         interval.tick().await;
-        cache.cleanup_expired();
+        let cache_clone = cache.clone();
+        // Spawn blocking task to avoid blocking the async runtime
+        // cleanup_expired() does synchronous RocksDB I/O and may sleep during retries
+        tokio::task::spawn_blocking(move || {
+            cache_clone.cleanup_expired();
+        })
+        .await
+        .unwrap_or_else(|e| {
+            warn!("Cleanup task panicked: {}", e);
+        });
     }
 }
 
