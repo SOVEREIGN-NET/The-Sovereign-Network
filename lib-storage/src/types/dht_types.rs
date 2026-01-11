@@ -487,9 +487,13 @@ impl DhtMessage {
     }
 
     /// Get the data that should be signed for this message
+    ///
+    /// Includes all fields except the signature itself to prevent tampering.
+    /// Returns empty Vec if serialization fails (should never happen for valid messages).
     pub fn signable_data(&self) -> Vec<u8> {
         use bincode;
         // Create a version without signature for signing
+        // SECURITY: All fields except signature must be included to prevent tampering
         let signable = SignableMessage {
             message_id: &self.message_id,
             message_type: &self.message_type,
@@ -497,15 +501,23 @@ impl DhtMessage {
             target_id: &self.target_id,
             key: &self.key,
             value: &self.value,
+            nodes: &self.nodes,
+            contract_data: &self.contract_data,
             timestamp: self.timestamp,
             nonce: &self.nonce,
             sequence_number: self.sequence_number,
         };
-        bincode::serialize(&signable).unwrap_or_default()
+        // Note: serialization should never fail for valid Rust types
+        // If it does, return empty vec which will cause signature verification to fail
+        bincode::serialize(&signable).unwrap_or_else(|e| {
+            tracing::error!("Failed to serialize signable message: {}", e);
+            Vec::new()
+        })
     }
 }
 
 /// Helper struct for creating signable message data
+/// SECURITY: All message fields except signature must be included here
 #[derive(Serialize)]
 struct SignableMessage<'a> {
     message_id: &'a str,
@@ -514,6 +526,8 @@ struct SignableMessage<'a> {
     target_id: &'a Option<NodeId>,
     key: &'a Option<String>,
     value: &'a Option<Vec<u8>>,
+    nodes: &'a Option<Vec<DhtNode>>,
+    contract_data: &'a Option<ContractDhtData>,
     timestamp: u64,
     nonce: &'a [u8; 32],
     sequence_number: u64,

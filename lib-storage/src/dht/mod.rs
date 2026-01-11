@@ -32,6 +32,7 @@ pub mod replication;
 pub mod peer_registry; // Ticket #148: Internal DHT peer registry
 pub mod transport; // Ticket #152: Multi-protocol transport abstraction
 pub mod registry_trait; // Ticket #1.14: Trait for unified registry integration
+pub mod signing; // Issue #676: DHT message signing and verification
 
 // Re-export main DHT components
 pub use node::*;
@@ -44,6 +45,15 @@ pub use replication::*;
 pub use peer_registry::*; // Ticket #148
 pub use transport::{DhtTransport, PeerId, UdpDhtTransport}; // Ticket #152
 pub use registry_trait::DhtPeerRegistryTrait; // Ticket #1.14
+pub use signing::{
+    MessageSigner,
+    verify_message_signature,
+    verify_message_signature_bytes,
+    requires_signature,
+    SigningError,
+    VerificationError,
+    MAX_FUTURE_TIMESTAMP_SECS,
+}; // Issue #676
 
 // DHT Configuration Constants
 pub const DHT_PORT: u16 = 33442;
