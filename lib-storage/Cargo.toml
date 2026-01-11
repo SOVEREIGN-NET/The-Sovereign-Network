@@ -37,6 +37,9 @@ log = "0.4"
 tracing = "0.1"
 humantime-serde = "1.1"
 
+# Persistent key-value storage backend (DB-008)
+sled = "0.34"
+
 [dev-dependencies]
 tokio-test = "0.4"
 

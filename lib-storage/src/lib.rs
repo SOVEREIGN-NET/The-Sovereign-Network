@@ -44,6 +44,9 @@ pub mod optimization;
 // Distributed consistency (Phase F - NEW)
 pub mod consistency;
 
+// Storage backend abstraction (DB-008)
+pub mod backend;
+
 // Re-export core types (avoiding conflicts)
 pub use types::{
     dht_types::*, storage_types::*, stats_types::*
@@ -67,6 +70,7 @@ pub use erasure::*;
 pub use proofs::{StorageProof, RetrievalProof, generate_storage_proof, generate_retrieval_proof};
 pub use integrity::{IntegrityManager, IntegrityMetadata, IntegrityStatus, ChecksumAlgorithm};
 pub use cache::{CacheManager, CacheEntry, EvictionPolicy, CacheStats};
+pub use backend::{StorageBackend, SledBackend, SledTree, BatchOp};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
