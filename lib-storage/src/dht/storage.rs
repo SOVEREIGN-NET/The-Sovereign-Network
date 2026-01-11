@@ -1394,7 +1394,7 @@ impl DhtStorage {
                                 // Put network back before continuing
                                 self.network = Some(network);
                                 tokio::time::sleep(Duration::from_millis(10)).await;
-                                true
+                                true // Continue loop but skip this message
                             }
                             Err(e) => {
                                 warn!(
@@ -1407,7 +1407,7 @@ impl DhtStorage {
                                 // Put network back before continuing
                                 self.network = Some(network);
                                 tokio::time::sleep(Duration::from_millis(10)).await;
-                                true
+                                true // Continue loop but skip this message
                             }
                             Ok(()) => {
                                 // Process the message using helper method
