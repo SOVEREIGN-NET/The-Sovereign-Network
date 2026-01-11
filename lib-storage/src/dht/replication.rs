@@ -129,6 +129,7 @@ impl DhtReplication {
 
         // Create DHT store message for replication
         // SECURITY: Includes nonce and sequence_number for replay protection
+        // Issue #676: Message should be signed by caller using MessageSigner
         let _message = crate::types::dht_types::DhtMessage {
             message_id: hex::encode(&blake3::hash(&[key.as_bytes(), value, target_node.peer.node_id().as_bytes()].concat()).as_bytes()[..8]),
             message_type: crate::types::dht_types::DhtMessageType::Store,
