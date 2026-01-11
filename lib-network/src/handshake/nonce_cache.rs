@@ -5,7 +5,7 @@
 //! This module implements persistent, cross-restart replay protection using:
 //!
 //! - **Network Epoch**: Stable, network-wide constant derived from chain genesis
-//! - **Persistent Nonce Tracking**: Blake3 fingerprints stored in sled
+//! - **Persistent Nonce Tracking**: Blake3 fingerprints stored in RocksDB
 //! - **TTL-Based Pruning**: Automatic cleanup of expired nonces
 //!
 //! # Security Properties
@@ -47,13 +47,13 @@
 use anyhow::{Result, anyhow};
 use blake3::Hasher;
 use parking_lot::RwLock;
+use rocksdb::{DB, Options, IteratorMode, WriteBatch, WriteOptions};
 use serde::{Deserialize, Serialize};
-use sled::Db;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, Duration, SystemTime, UNIX_EPOCH};
-use tracing::{warn, info, debug};
+use tracing::{warn, info, debug, error};
 
 // ============================================================================
 // Network Epoch - Stable, Genesis-Derived Identifier
@@ -164,6 +164,11 @@ impl NetworkEpoch {
 ///
 /// Includes network epoch, protocol version, and peer role to prevent
 /// cross-context replay attacks.
+///
+/// # Security
+///
+/// All variable-length fields are length-prefixed to prevent ambiguity attacks
+/// where different input combinations could produce the same hash.
 pub fn compute_nonce_fingerprint(
     network_epoch: NetworkEpoch,
     nonce: &[u8; 32],
@@ -174,8 +179,12 @@ pub fn compute_nonce_fingerprint(
     hasher.update(&network_epoch.to_bytes());
     hasher.update(nonce);
     hasher.update(&protocol_version.to_le_bytes());
-    hasher.update(peer_role.as_bytes());
-    
+    // Length-prefix the peer_role to prevent ambiguity attacks
+    // e.g., "client" + "server" vs "clientse" + "rver" producing same hash
+    let role_bytes = peer_role.as_bytes();
+    hasher.update(&(role_bytes.len() as u32).to_le_bytes());
+    hasher.update(role_bytes);
+
     let hash = hasher.finalize();
     let mut result = [0u8; 32];
     result.copy_from_slice(hash.as_bytes());
@@ -205,11 +214,14 @@ struct PersistentNonceEntry {
 }
 
 /// In-memory nonce entry (for performance)
+///
+/// Uses Unix timestamps for consistency with disk storage,
+/// avoiding clock skew issues between Instant and SystemTime.
 #[derive(Debug, Clone)]
 struct MemoryNonceEntry {
-    /// When entry was added to memory cache
-    timestamp: Instant,
-    /// Message timestamp from handshake
+    /// Unix timestamp when nonce was first seen (consistent with disk)
+    first_seen_unix: i64,
+    /// Message timestamp from handshake (for audit)
     message_timestamp: u64,
 }
 
@@ -222,7 +234,7 @@ struct MemoryNonceEntry {
 /// # Architecture
 ///
 /// - **Memory Cache**: LRU cache for hot nonces (fast path)
-/// - **Disk Cache**: sled for persistent storage (durability)
+/// - **Disk Cache**: RocksDB for persistent storage (durability)
 /// - **Network Epoch**: Genesis-derived constant (replay prevention namespace)
 /// - **Nonce Fingerprints**: Context-bound hashes (prevents cross-protocol replay)
 ///
@@ -240,8 +252,8 @@ pub struct NonceCache {
     /// In-memory LRU cache for fast lookups (hot path)
     memory_cache: Arc<RwLock<lru::LruCache<[u8; 32], MemoryNonceEntry>>>,
 
-    /// Persistent sled storage (durability) - internally thread-safe
-    db: Db,
+    /// Persistent RocksDB storage (durability)
+    db: Arc<DB>,
 
     /// Network epoch (genesis-derived, stable across restarts)
     network_epoch: NetworkEpoch,
@@ -263,20 +275,38 @@ impl NonceCache {
     /// Large cache size for blockchain sync periods: 5 million entries (~320 MB memory)
     pub const SYNC_MAX_SIZE: usize = 5_000_000;
 
-    /// sled key prefix for seen nonces
+    /// RocksDB key prefix for seen nonces
     const NONCE_PREFIX: &'static str = "seen:";
 
-    /// sled key for stored network epoch
+    /// RocksDB key for stored network epoch
     const META_EPOCH_KEY: &'static str = "meta:network_epoch";
 
     /// Pruning trigger: prune every N insertions
     const PRUNE_EVERY_N_INSERTS: u64 = 10_000;
 
+    /// Maximum entries per batch delete operation to prevent OOM
+    /// RocksDB recommends 100KB-1MB per batch; at ~150 bytes/key, 50K is ~7.5MB
+    const MAX_BATCH_DELETE_SIZE: usize = 50_000;
+
+    /// Maximum memory (bytes) to allocate for keys_to_delete vector
+    /// Prevents unbounded memory growth during mass pruning
+    const MAX_PRUNE_MEMORY_BYTES: usize = 100_000_000; // 100 MB
+
+    /// Estimated bytes per key in keys_to_delete vector
+    /// Key format: "seen:" (5) + hex(32 bytes) (64) = 69 bytes + Vec overhead (~24) = ~100 bytes
+    const ESTIMATED_BYTES_PER_KEY: usize = 100;
+
+    /// Maximum retries for batch write operations
+    const MAX_BATCH_RETRIES: u32 = 3;
+
+    /// Delay between batch write retries (milliseconds)
+    const BATCH_RETRY_DELAY_MS: u64 = 100;
+
     /// Open or create persistent nonce cache with network epoch
     ///
     /// # Arguments
     ///
-    /// * `db_path` - Path to sled database directory
+    /// * `db_path` - Path to RocksDB database directory
     /// * `ttl_secs` - Time-to-live for nonces in seconds (default: 300 = 5 minutes)
     /// * `max_memory_size` - Maximum in-memory cache size (default: 1 million)
     /// * `network_epoch` - Network epoch derived from blockchain genesis
@@ -292,13 +322,16 @@ impl NonceCache {
         max_memory_size: usize,
         network_epoch: NetworkEpoch,
     ) -> Result<Self> {
-        // Open sled with tuned configuration for nonce cache workload
-        let db = sled::Config::default()
-            .path(db_path.as_ref())
-            .cache_capacity(64 * 1024 * 1024) // 64 MB page cache
-            .mode(sled::Mode::HighThroughput) // Optimize for write-heavy workload
-            .open()
+        // Open RocksDB with optimized settings
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+        opts.set_max_open_files(1000);
+
+        let db = DB::open(&opts, db_path.as_ref())
             .map_err(|e| anyhow!("Failed to open nonce cache DB: {}", e))?;
+
+        let db = Arc::new(db);
 
         // Verify or store network epoch
         Self::verify_or_store_network_epoch(&db, network_epoch)?;
@@ -368,7 +401,15 @@ impl NonceCache {
             }
         }
 
-        // Check persistent storage BEFORE acquiring write lock (reduces lock contention)
+        // Slow path: Check disk and insert atomically (write lock)
+        let mut memory = self.memory_cache.write();
+
+        // Double-check memory cache (another thread may have inserted)
+        if memory.peek(nonce_fp).is_some() {
+            return Ok(SeenResult::Replay);
+        }
+
+        // Check persistent storage
         let nonce_key = Self::nonce_key(nonce_fp);
         if self.db.get(&nonce_key)
             .map_err(|e| anyhow!("DB read error: {}", e))?.is_some() {
@@ -377,83 +418,54 @@ impl NonceCache {
             return Ok(SeenResult::Replay);
         }
 
-        // Prepare entry before acquiring lock
+        // All checks passed - insert nonce
+        // Insert into memory cache (use Unix timestamp for consistency with disk)
+        memory.put(*nonce_fp, MemoryNonceEntry {
+            first_seen_unix: now,
+            message_timestamp: now as u64,
+        });
+        drop(memory);
+
+        // Persist to disk with sync for durability
+        // This ensures nonce survives crash and prevents cross-restart replay
         let persistent_entry = PersistentNonceEntry {
             first_seen_unix: now,
             message_timestamp: now as u64,
         };
+
         let entry_bytes = bincode::serialize(&persistent_entry)
             .map_err(|e| anyhow!("Failed to serialize nonce entry: {}", e))?;
 
-        // Atomic disk insert using compare_and_swap (handles concurrent insertions)
-        // If key doesn't exist (None), insert our value; otherwise another thread won
-        let cas_result = self.db.compare_and_swap(
-            &nonce_key,
-            None as Option<&[u8]>,  // Expected: key doesn't exist
-            Some(entry_bytes.as_slice()),  // New value to insert
-        ).map_err(|e| anyhow!("DB CAS error: {}", e))?;
+        // Use sync write to ensure durability - critical for replay protection
+        let mut write_opts = WriteOptions::default();
+        write_opts.set_sync(true);
+        self.db.put_opt(&nonce_key, entry_bytes, &write_opts)
+            .map_err(|e| anyhow!("Failed to persist nonce: {}", e))?;
 
-        match cas_result {
-            Ok(()) => {
-                // We won the race - flush and update memory cache
-                self.db.flush()
-                    .map_err(|e| anyhow!("Failed to flush nonce to disk: {}", e))?;
+        debug!("Stored nonce fingerprint: fp={}, timestamp={}", hex::encode(nonce_fp), now);
 
-                // Update memory cache (short lock scope)
-                {
-                    let mut memory = self.memory_cache.write();
-                    memory.put(*nonce_fp, MemoryNonceEntry {
-                        timestamp: Instant::now(),
-                        message_timestamp: now as u64,
-                    });
-                }
-
-                debug!("Stored nonce fingerprint: fp={}, timestamp={}", hex::encode(nonce_fp), now);
-
-                // Trigger background pruning if needed
-                let count = self.insert_count.fetch_add(1, Ordering::Relaxed) + 1;
-                if count % Self::PRUNE_EVERY_N_INSERTS == 0 {
-                    self.trigger_background_pruning();
-                }
-
-                Ok(SeenResult::New)
-            }
-            Err(_existing) => {
-                // Another thread inserted first - this is a replay
-                warn!("Replay detected (concurrent insert): nonce_fp={}", hex::encode(nonce_fp));
-                Ok(SeenResult::Replay)
-            }
-        }
-    }
-
-    /// Trigger pruning in background to avoid blocking the current thread
-    fn trigger_background_pruning(&self) {
-        let cache = self.clone();
-        // Use tokio::spawn if runtime is available, otherwise prune inline
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                match cache.prune_seen_nonces_internal() {
-                    Ok(pruned) => {
-                        if pruned > 0 {
-                            debug!("Background pruning removed {} expired nonces", pruned);
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Background pruning failed (nonce cache may grow unbounded): {}. \
-                             Current cache utilization: {:.1}%",
-                            e,
-                            cache.utilization() * 100.0
-                        );
+        // Increment insert counter and trigger pruning if needed
+        let count = self.insert_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if count % Self::PRUNE_EVERY_N_INSERTS == 0 {
+            // Lazy pruning trigger
+            match self.prune_seen_nonces_internal() {
+                Ok(pruned) => {
+                    if pruned > 0 {
+                        debug!("Lazy pruning removed {} expired nonces", pruned);
                     }
                 }
-            });
-        } else {
-            // No async runtime - prune inline (fallback)
-            if let Err(e) = self.prune_seen_nonces_internal() {
-                warn!("Inline pruning failed: {}", e);
+                Err(e) => {
+                    warn!(
+                        "Lazy pruning failed (nonce cache may grow unbounded): {}. \
+                         Current cache utilization: {:.1}%",
+                        e,
+                        self.utilization() * 100.0
+                    );
+                }
             }
         }
+
+        Ok(SeenResult::New)
     }
 
     /// Legacy check_and_store for backward compatibility
@@ -482,13 +494,47 @@ impl NonceCache {
     /// Prune seen nonces older than cutoff
     ///
     /// Returns number of entries removed.
+    ///
+    /// # Security
+    ///
+    /// This method holds the memory cache write lock during the entire operation
+    /// to prevent TOCTOU race conditions where a nonce could be deleted from disk
+    /// but still present in memory, then evicted from memory before replay check.
+    ///
+    /// # Performance
+    ///
+    /// - Uses chunked batch deletes (max 50k per batch) to prevent OOM
+    /// - Includes memory estimation to abort if too many keys would be accumulated
+    /// - Implements retry logic for transient batch write failures
     pub fn prune_seen_nonces(&self, cutoff_unix: i64) -> Result<usize> {
-        let mut deleted = 0;
-        let mut keys_to_delete = Vec::new();
+        // CRITICAL: Hold memory cache lock during ENTIRE operation to prevent TOCTOU
+        // This ensures no gap between disk and memory pruning
+        let mut memory = self.memory_cache.write();
 
-        // Use scan_prefix for efficient iteration over only nonce keys
-        for item in self.db.scan_prefix(Self::NONCE_PREFIX.as_bytes()) {
-            let (key, value) = item.map_err(|e| anyhow!("DB iteration error: {}", e))?;
+        let mut total_deleted = 0;
+        let iter = self.db.iterator(IteratorMode::Start);
+        let mut keys_to_delete = Vec::new();
+        let mut estimated_memory = 0usize;
+        let mut iteration_failed = false;
+
+        for item in iter {
+            let (key, value) = match item {
+                Ok(kv) => kv,
+                Err(e) => {
+                    warn!(
+                        "DB iteration error at offset {}: {}. Pruning partial results.",
+                        keys_to_delete.len(),
+                        e
+                    );
+                    iteration_failed = true;
+                    break;
+                }
+            };
+
+            // Skip keys that don't match our prefix
+            if !key.starts_with(Self::NONCE_PREFIX.as_bytes()) {
+                continue;
+            }
 
             // Deserialize entry
             let entry: PersistentNonceEntry = match bincode::deserialize(&value) {
@@ -496,6 +542,7 @@ impl NonceCache {
                 Err(_) => {
                     // Delete corrupted entries
                     keys_to_delete.push(key.to_vec());
+                    estimated_memory += Self::ESTIMATED_BYTES_PER_KEY;
                     continue;
                 }
             };
@@ -503,23 +550,41 @@ impl NonceCache {
             // Check if expired
             if entry.first_seen_unix < cutoff_unix {
                 keys_to_delete.push(key.to_vec());
+                estimated_memory += Self::ESTIMATED_BYTES_PER_KEY;
+
+                // Memory safety check - abort accumulation if too much memory used
+                if estimated_memory > Self::MAX_PRUNE_MEMORY_BYTES {
+                    warn!(
+                        "Prune memory limit reached ({} bytes). Processing {} keys so far.",
+                        estimated_memory,
+                        keys_to_delete.len()
+                    );
+                    break;
+                }
+            }
+
+            // Chunked batch delete - process in chunks to prevent huge WriteBatch
+            if keys_to_delete.len() >= Self::MAX_BATCH_DELETE_SIZE {
+                let chunk_deleted = self.batch_delete_with_retry(&keys_to_delete)?;
+                total_deleted += chunk_deleted;
+                keys_to_delete.clear();
+                estimated_memory = 0;
             }
         }
 
-        // Delete expired entries
-        for key in &keys_to_delete {
-            self.db.remove(key)
-                .map_err(|e| anyhow!("Failed to delete old nonce: {}", e))?;
-            deleted += 1;
+        // Process remaining keys
+        if !keys_to_delete.is_empty() {
+            let chunk_deleted = self.batch_delete_with_retry(&keys_to_delete)?;
+            total_deleted += chunk_deleted;
         }
 
-        // Also prune memory cache
-        let now = Instant::now();
-        let mut memory = self.memory_cache.write();
+        // Prune memory cache using consistent Unix timestamp (not Instant)
+        // cutoff_unix already includes TTL offset (computed as now - ttl)
         let expired_nonces: Vec<[u8; 32]> = memory
             .iter()
             .filter_map(|(nonce_fp, entry)| {
-                if now.duration_since(entry.timestamp) >= self.ttl {
+                // Use same condition as disk pruning for consistency
+                if entry.first_seen_unix < cutoff_unix {
                     Some(*nonce_fp)
                 } else {
                     None
@@ -535,7 +600,61 @@ impl NonceCache {
             debug!("Pruned {} nonces from memory cache", expired_nonces.len());
         }
 
-        Ok(deleted)
+        // Release lock explicitly (though it would be released on drop)
+        drop(memory);
+
+        if iteration_failed {
+            warn!(
+                "Pruning partially completed - {} entries deleted, some expired entries may remain",
+                total_deleted
+            );
+        }
+
+        Ok(total_deleted)
+    }
+
+    /// Batch delete with retry logic for transient failures
+    fn batch_delete_with_retry(&self, keys: &[Vec<u8>]) -> Result<usize> {
+        let mut retries = 0;
+        loop {
+            // Rebuild batch for each attempt (WriteBatch doesn't implement Clone)
+            let mut batch = WriteBatch::default();
+            for key in keys {
+                batch.delete(key);
+            }
+
+            match self.db.write(batch) {
+                Ok(()) => {
+                    debug!("Batch deleted {} nonces", keys.len());
+                    return Ok(keys.len());
+                }
+                Err(e) if retries < Self::MAX_BATCH_RETRIES => {
+                    retries += 1;
+                    warn!(
+                        "Batch write failed, retrying {}/{}: {}",
+                        retries,
+                        Self::MAX_BATCH_RETRIES,
+                        e
+                    );
+                    std::thread::sleep(Duration::from_millis(
+                        Self::BATCH_RETRY_DELAY_MS * retries as u64,
+                    ));
+                }
+                Err(e) => {
+                    error!(
+                        "Batch write failed after {} retries: {}. {} nonces NOT deleted.",
+                        retries,
+                        e,
+                        keys.len()
+                    );
+                    return Err(anyhow!(
+                        "Failed to batch delete nonces after {} retries: {}",
+                        retries,
+                        e
+                    ));
+                }
+            }
+        }
     }
 
     /// Internal pruning (uses current time)
@@ -599,11 +718,30 @@ impl NonceCache {
     }
 
     /// Verify or store network epoch
-    fn verify_or_store_network_epoch(db: &Db, expected_epoch: NetworkEpoch) -> Result<()> {
+    ///
+    /// # Security
+    ///
+    /// Uses atomic WriteBatch for migration to ensure either both legacy key deletion
+    /// and new epoch storage succeed, or neither does. This prevents inconsistent state
+    /// if the process crashes during migration.
+    fn verify_or_store_network_epoch(db: &DB, expected_epoch: NetworkEpoch) -> Result<()> {
         match db.get(Self::META_EPOCH_KEY) {
             Ok(Some(bytes)) => {
                 // Epoch exists - verify it matches
-                let stored_epoch = NetworkEpoch::from_bytes(&bytes)?;
+                // Handle corrupted epoch bytes gracefully
+                let stored_epoch = match NetworkEpoch::from_bytes(&bytes) {
+                    Ok(epoch) => epoch,
+                    Err(e) => {
+                        warn!(
+                            "Stored epoch bytes corrupted ({}), re-storing expected epoch",
+                            e
+                        );
+                        db.put(Self::META_EPOCH_KEY, expected_epoch.to_bytes())
+                            .map_err(|e| anyhow!("Failed to restore network epoch: {}", e))?;
+                        return Ok(());
+                    }
+                };
+
                 if stored_epoch != expected_epoch {
                     return Err(anyhow!(
                         "Network epoch mismatch! DB belongs to different network.\n\
@@ -617,25 +755,42 @@ impl NonceCache {
             }
             Ok(None) => {
                 // First startup or migration - store epoch
-                // Also check for legacy epoch key and migrate
-                match db.get("meta:epoch") {
-                    Ok(Some(_legacy)) => {
-                        info!("Migrating from legacy epoch format to network epoch");
-                        if let Err(e) = db.remove("meta:epoch") {
-                            warn!(
-                                "Failed to delete legacy epoch key during migration: {}. \
-                                 New epoch will be stored, but legacy key may cause confusion.",
-                                e
-                            );
-                        }
-                    }
-                    Ok(None) => { /* No legacy key to migrate */ }
+                // Check for legacy epoch key and migrate atomically
+                let has_legacy = match db.get("meta:epoch") {
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
                     Err(e) => {
                         return Err(anyhow!("Failed to check for legacy epoch key: {}", e));
                     }
+                };
+
+                if has_legacy {
+                    // Atomic migration: delete legacy + store new in single batch
+                    info!("Migrating from legacy epoch format to network epoch (atomic)");
+                    let mut batch = WriteBatch::default();
+                    batch.delete(b"meta:epoch");
+                    batch.put(Self::META_EPOCH_KEY, expected_epoch.to_bytes());
+
+                    // Use sync write for critical metadata
+                    let mut write_opts = WriteOptions::default();
+                    write_opts.set_sync(true);
+                    db.write_opt(batch, &write_opts)
+                        .map_err(|e| anyhow!("Failed to atomically migrate epoch: {}", e))?;
+
+                    // Verify migration succeeded
+                    if db.get("meta:epoch")?.is_some() {
+                        return Err(anyhow!(
+                            "Epoch migration verification failed: legacy key still exists"
+                        ));
+                    }
+                } else {
+                    // No legacy key - just store new epoch with sync
+                    let mut write_opts = WriteOptions::default();
+                    write_opts.set_sync(true);
+                    db.put_opt(Self::META_EPOCH_KEY, expected_epoch.to_bytes(), &write_opts)
+                        .map_err(|e| anyhow!("Failed to store network epoch: {}", e))?;
                 }
-                db.insert(Self::META_EPOCH_KEY, &expected_epoch.to_bytes())
-                    .map_err(|e| anyhow!("Failed to store network epoch: {}", e))?;
+
                 info!("Stored new network epoch: 0x{:016x}", expected_epoch.value());
             }
             Err(e) => {
@@ -649,10 +804,20 @@ impl NonceCache {
     fn load_nonces_into_memory(&self) -> Result<usize> {
         let mut loaded = 0;
         let mut memory = self.memory_cache.write();
+        let iter = self.db.iterator(IteratorMode::Start);
 
-        // Use scan_prefix for efficient iteration over only nonce keys
-        for item in self.db.scan_prefix(Self::NONCE_PREFIX.as_bytes()) {
+        for item in iter {
             let (key, value) = item.map_err(|e| anyhow!("DB iteration error: {}", e))?;
+
+            // Skip metadata keys
+            if key.starts_with(b"meta:") {
+                continue;
+            }
+
+            // Skip keys that don't match our prefix
+            if !key.starts_with(Self::NONCE_PREFIX.as_bytes()) {
+                continue;
+            }
 
             // Deserialize entry
             let entry: PersistentNonceEntry = match bincode::deserialize(&value) {
@@ -668,25 +833,44 @@ impl NonceCache {
                 }
             };
 
-            // Extract nonce fingerprint from key (binary format)
+            // Extract nonce fingerprint from key
             let nonce_start = Self::NONCE_PREFIX.len();
-            let expected_len = nonce_start + 32; // prefix + 32-byte binary fingerprint
-            if key.len() != expected_len {
-                warn!(
-                    "Invalid nonce key length: {} (expected {}). Skipping entry.",
-                    key.len(),
-                    expected_len
-                );
+            if key.len() != nonce_start + 64 {
+                warn!("Invalid nonce key length: {}", key.len());
                 continue;
             }
 
-            let nonce_bytes = &key[nonce_start..];
-            let mut nonce_fp = [0u8; 32];
-            nonce_fp.copy_from_slice(nonce_bytes);
+            let nonce_hex = &key[nonce_start..];
+            let nonce_fp = match hex::decode(nonce_hex) {
+                Ok(n) => {
+                    if n.len() != 32 {
+                        warn!(
+                            "Nonce fingerprint has invalid length: {} bytes (expected 32). \
+                             Skipping entry: {}. This may indicate database corruption.",
+                            n.len(),
+                            String::from_utf8_lossy(&key)
+                        );
+                        continue;
+                    }
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&n);
+                    arr
+                }
+                Err(e) => {
+                    let key_str = String::from_utf8_lossy(&key);
+                    warn!(
+                        "Failed to decode nonce fingerprint from database key: {}. \
+                         Skipping entry: {}. This may indicate database corruption or \
+                         incompatible database format.",
+                        key_str, e
+                    );
+                    continue;
+                }
+            };
 
-            // Add to memory cache
+            // Add to memory cache (use Unix timestamp from disk for consistency)
             memory.put(nonce_fp, MemoryNonceEntry {
-                timestamp: Instant::now(),
+                first_seen_unix: entry.first_seen_unix,
                 message_timestamp: entry.message_timestamp,
             });
 
@@ -707,32 +891,51 @@ impl NonceCache {
         Ok(loaded)
     }
 
-    /// Generate nonce key for sled (binary format for efficiency)
+    /// Generate nonce key for RocksDB
     fn nonce_key(nonce_fp: &[u8; 32]) -> Vec<u8> {
-        let mut key = Vec::with_capacity(Self::NONCE_PREFIX.len() + 32);
+        let mut key = Vec::with_capacity(Self::NONCE_PREFIX.len() + 64);
         key.extend_from_slice(Self::NONCE_PREFIX.as_bytes());
-        key.extend_from_slice(nonce_fp); // Binary, not hex - 50% smaller keys
+        key.extend_from_slice(hex::encode(nonce_fp).as_bytes());
         key
     }
 
     /// Clear all nonces (for testing only)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success, or an error if batch delete fails.
+    /// Uses chunked batch delete for safety with large caches.
     #[cfg(test)]
-    pub fn clear(&self) {
-        // Clear memory cache
+    pub fn clear(&self) -> Result<()> {
+        // Clear memory cache first (under lock)
         self.memory_cache.write().clear();
 
-        // Clear disk cache (delete all nonce keys) using scan_prefix
+        // Clear disk cache (delete all nonce keys) with chunking
+        let iter = self.db.iterator(IteratorMode::Start);
         let mut keys_to_delete = Vec::new();
+        let mut total_deleted = 0usize;
 
-        for item in self.db.scan_prefix(Self::NONCE_PREFIX.as_bytes()) {
+        for item in iter {
             if let Ok((key, _)) = item {
-                keys_to_delete.push(key.to_vec());
+                if key.starts_with(Self::NONCE_PREFIX.as_bytes()) {
+                    keys_to_delete.push(key.to_vec());
+
+                    // Chunked batch delete
+                    if keys_to_delete.len() >= Self::MAX_BATCH_DELETE_SIZE {
+                        total_deleted += self.batch_delete_with_retry(&keys_to_delete)?;
+                        keys_to_delete.clear();
+                    }
+                }
             }
         }
 
-        for key in keys_to_delete {
-            let _ = self.db.remove(&key);
+        // Process remaining keys
+        if !keys_to_delete.is_empty() {
+            total_deleted += self.batch_delete_with_retry(&keys_to_delete)?;
         }
+
+        debug!("Cleared {} nonces from disk cache", total_deleted);
+        Ok(())
     }
 
     /// Create a test nonce cache (for testing only)
@@ -828,7 +1031,11 @@ mod tests {
         let epoch = NetworkEpoch::from_genesis(&[0u8; 32]);
         let nonce = [42u8; 32];
         let nonce_fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
-        let now = 1234567890;
+        // Use current timestamp (not old) to avoid pruning during restart
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
 
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path();
@@ -855,32 +1062,32 @@ mod tests {
 
         let nonce = [1u8; 32];
         let nonce_fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
-        let old_timestamp = 1000000000i64; // Very old
+        let old_timestamp = 1000000000i64; // Very old (year 2001)
 
         // Insert with old timestamp (this inserts into both memory cache and DB)
         cache.mark_nonce_seen(&nonce_fp, old_timestamp).unwrap();
         assert_eq!(cache.size(), 1);
 
-        // The DB entry has first_seen_unix = old_timestamp
-        // But the memory cache has timestamp = Instant::now()
-        // Prune with current time cutoff should remove the DB entry
+        // Both memory and disk now use Unix timestamps for consistency
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        let cutoff = now - 10; // Anything older than 10 seconds
+        let cutoff = now - 10; // Anything older than 10 seconds ago
 
         let pruned = cache.prune_seen_nonces(cutoff).unwrap();
-        // DB entry is pruned (first_seen_unix = 1000000000 < cutoff)
+        // Both DB and memory entries are pruned (first_seen_unix = 1000000000 < cutoff)
         assert_eq!(pruned, 1);
 
-        // The memory cache entry was just created, so still present
-        // Memory cache uses Instant-based TTL, not unix timestamp
-        // Replay is still detected because memory cache has the entry
+        // Memory cache is now also pruned (consistent with disk)
+        // So the nonce can be reinserted as NEW
         let result = cache.mark_nonce_seen(&nonce_fp, now).unwrap();
-        assert_eq!(result, SeenResult::Replay); // Memory cache still has it
+        assert_eq!(result, SeenResult::New); // Both memory and disk were pruned
 
-        // For a new nonce, it should work
+        // Verify cache now has the reinserted entry
+        assert_eq!(cache.size(), 1);
+
+        // For another new nonce, it should also work
         let new_nonce = [2u8; 32];
         let new_nonce_fp = compute_nonce_fingerprint(epoch, &new_nonce, 1, "client");
         let result = cache.mark_nonce_seen(&new_nonce_fp, now).unwrap();
@@ -932,17 +1139,27 @@ mod tests {
         let (cache, _dir) = create_test_cache(1); // 1 second TTL
         let nonce = [1u8; 32];
 
-        // Store nonce
-        cache.check_and_store(&nonce, 1234567890).unwrap();
+        // Store nonce with current timestamp (not old timestamp)
+        let initial_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        cache.check_and_store(&nonce, initial_time).unwrap();
 
-        // Wait for expiration
+        // Wait for expiration (TTL is 1 second)
         std::thread::sleep(Duration::from_secs(2));
 
-        // Cleanup
+        // Cleanup expired entries
         cache.cleanup_expired();
 
+        // Get new current timestamp for reinsert
+        let new_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         // Should be able to use again (expired and cleaned)
-        assert!(cache.check_and_store(&nonce, 1234567890).is_ok());
+        assert!(cache.check_and_store(&nonce, new_time).is_ok());
     }
 
     #[test]
@@ -1065,12 +1282,12 @@ mod tests {
             cache.check_and_store(&nonce, 1234567890).unwrap();
         }
 
-        // Manually corrupt an entry in sled (binary key format: "seen:" + 32 bytes)
+        // Manually corrupt an entry in RocksDB
         {
-            let db = sled::open(db_path).unwrap();
-            let mut bad_key = Vec::from(&b"seen:"[..]);
-            bad_key.extend_from_slice(&[0u8; 32]); // 32-byte binary fingerprint
-            db.insert(&bad_key, b"corrupted_binary_data").unwrap();
+            let opts = rocksdb::Options::default();
+            let db = rocksdb::DB::open(&opts, db_path).unwrap();
+            let bad_key = b"seen:0000000000000000000000000000000000000000000000000000000000000000";
+            db.put(bad_key, b"corrupted_binary_data").unwrap();
         }
 
         // Reopen cache - should recover without panic
@@ -1209,8 +1426,10 @@ mod tests {
 
         // Simulate old format by directly writing legacy key
         {
-            let db = sled::open(db_path).unwrap();
-            db.insert(b"meta:epoch", &epoch.to_bytes()).unwrap();
+            let mut opts = rocksdb::Options::default();
+            opts.create_if_missing(true);
+            let db = rocksdb::DB::open(&opts, db_path).unwrap();
+            db.put(b"meta:epoch", &epoch.to_bytes()).unwrap();
         }
 
         // Open with new code - should migrate
@@ -1283,5 +1502,118 @@ mod tests {
             SeenResult::New,
             "Different fingerprint should be new in cache2"
         );
+    }
+
+    // ============================================================================
+    // Batch Operations Tests (DB-006)
+    // ============================================================================
+
+    #[test]
+    fn test_batch_delete_atomicity() {
+        let temp_dir = TempDir::new().unwrap();
+        let epoch = test_epoch();
+        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).unwrap();
+
+        // Insert 100 nonces with old timestamps (will be pruned)
+        let old_timestamp = 1000i64; // Very old
+        let mut fingerprints = Vec::new();
+        for i in 0..100u8 {
+            let mut nonce = [0u8; 32];
+            nonce[0] = i;
+            let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
+            cache.mark_nonce_seen(&fp, old_timestamp).unwrap();
+            fingerprints.push(fp);
+        }
+
+        assert_eq!(cache.size(), 100, "Should have 100 entries before pruning");
+
+        // Prune with cutoff that expires all entries
+        let cutoff = old_timestamp + 100; // All entries are older than this
+        let pruned = cache.prune_seen_nonces(cutoff).unwrap();
+
+        // Batch delete should remove all entries atomically
+        assert_eq!(pruned, 100, "Should have pruned all 100 entries");
+
+        // Verify entries are actually gone from disk by trying to reinsert
+        // (memory cache may still have them, so we need to check disk)
+        drop(cache);
+
+        // Reopen cache to verify disk state
+        let cache2 = NonceCache::open_default(temp_dir.path(), 60, epoch).unwrap();
+
+        // All fingerprints should be insertable as new (they were batch-deleted)
+        for fp in &fingerprints {
+            let result = cache2.mark_nonce_seen(fp, old_timestamp + 200).unwrap();
+            assert_eq!(result, SeenResult::New, "Pruned nonce should be insertable as new");
+        }
+    }
+
+    #[test]
+    fn test_batch_delete_with_many_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let epoch = test_epoch();
+        let cache = NonceCache::open(temp_dir.path(), 60, 10_000, epoch).unwrap();
+
+        // Insert 1000 nonces (exceeds the >10 threshold for batch optimization)
+        let old_timestamp = 1000i64;
+        for i in 0..1000u32 {
+            let mut nonce = [0u8; 32];
+            nonce[0..4].copy_from_slice(&i.to_le_bytes());
+            let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
+            cache.mark_nonce_seen(&fp, old_timestamp).unwrap();
+        }
+
+        assert_eq!(cache.size(), 1000, "Should have 1000 entries");
+
+        // Prune all entries
+        let cutoff = old_timestamp + 100;
+        let pruned = cache.prune_seen_nonces(cutoff).unwrap();
+
+        // Should efficiently batch delete all 1000 entries
+        assert_eq!(pruned, 1000, "Should prune all 1000 entries in batch");
+    }
+
+    #[test]
+    fn test_batch_clear_atomicity() {
+        let temp_dir = TempDir::new().unwrap();
+        let epoch = test_epoch();
+        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).unwrap();
+
+        // Insert multiple nonces
+        for i in 0..50u8 {
+            let mut nonce = [0u8; 32];
+            nonce[0] = i;
+            let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
+            cache.mark_nonce_seen(&fp, 1234567890).unwrap();
+        }
+
+        assert_eq!(cache.size(), 50, "Should have 50 entries before clear");
+
+        // Clear uses batch delete internally (now returns Result)
+        cache.clear().unwrap();
+
+        assert_eq!(cache.size(), 0, "Should have 0 entries after clear");
+
+        // Verify entries are actually cleared by reinserting
+        for i in 0..50u8 {
+            let mut nonce = [0u8; 32];
+            nonce[0] = i;
+            let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
+            let result = cache.mark_nonce_seen(&fp, 1234567890).unwrap();
+            assert_eq!(result, SeenResult::New, "Cleared nonce should be insertable");
+        }
+    }
+
+    #[test]
+    fn test_empty_batch_delete_no_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let epoch = test_epoch();
+        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).unwrap();
+
+        // Prune on empty cache should succeed without error
+        let cutoff = 999999999i64;
+        let pruned = cache.prune_seen_nonces(cutoff).unwrap();
+
+        assert_eq!(pruned, 0, "Should report 0 entries pruned on empty cache");
     }
 }
