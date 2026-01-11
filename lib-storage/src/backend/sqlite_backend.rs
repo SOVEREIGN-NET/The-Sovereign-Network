@@ -1783,4 +1783,334 @@ mod tests {
         let result = backend.list_content_by_tier("invalid_tier", None, None).await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_search_content_by_tag() {
+        let backend = create_test_backend().await;
+        let now = get_test_timestamp();
+
+        // Insert content with various tags
+        for i in 0..3 {
+            let content_hash = vec![i + 1; 32];
+            let tags = match i {
+                0 => r#"["rust", "backend"]"#,
+                1 => r#"["rust", "frontend"]"#,
+                2 => r#"["python", "backend"]"#,
+                _ => r#"[]"#,
+            };
+            let metadata = ContentMetadataRow {
+                content_hash: content_hash.clone(),
+                size: 1024 * (i + 1) as i64,
+                owner_id: format!("owner{}", i),
+                tier: "hot".to_string(),
+                encryption_level: "aes256".to_string(),
+                created_at: now,
+                updated_at: now,
+                tags: Some(tags.to_string()),
+                description: Some(format!("Content {}", i)),
+            };
+            backend.upsert_content_metadata(&metadata).await.unwrap();
+        }
+
+        // Search for "rust" tag
+        let results = backend.search_content_by_tag("rust", None, None).await.unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Search for "backend" tag
+        let results = backend.search_content_by_tag("backend", None, None).await.unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Search for "python" tag
+        let results = backend.search_content_by_tag("python", None, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+
+        // Search for non-existent tag
+        let results = backend.search_content_by_tag("nonexistent", None, None).await.unwrap();
+        assert_eq!(results.len(), 0);
+
+        // Test pagination
+        let results = backend.search_content_by_tag("rust", Some(1), None).await.unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_list_content_by_tier() {
+        let backend = create_test_backend().await;
+        let now = get_test_timestamp();
+
+        // Insert content with different tiers
+        for (i, tier) in ["hot", "warm", "cold"].iter().enumerate() {
+            let content_hash = vec![i as u8 + 1; 32];
+            let metadata = ContentMetadataRow {
+                content_hash: content_hash.clone(),
+                size: 1024 * (i + 1) as i64,
+                owner_id: format!("owner{}", i),
+                tier: tier.to_string(),
+                encryption_level: "aes256".to_string(),
+                created_at: now,
+                updated_at: now,
+                tags: None,
+                description: None,
+            };
+            backend.upsert_content_metadata(&metadata).await.unwrap();
+        }
+
+        // List hot tier
+        let results = backend.list_content_by_tier("hot", None, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tier, "hot");
+
+        // List warm tier
+        let results = backend.list_content_by_tier("warm", None, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tier, "warm");
+
+        // List cold tier
+        let results = backend.list_content_by_tier("cold", None, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tier, "cold");
+
+        // List archive tier (no content)
+        let results = backend.list_content_by_tier("archive", None, None).await.unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_contracts_by_provider() {
+        let backend = create_test_backend().await;
+        let now = get_test_timestamp();
+
+        // Insert content first
+        let content_hash = vec![1u8; 32];
+        let metadata = ContentMetadataRow {
+            content_hash: content_hash.clone(),
+            size: 1024,
+            owner_id: "owner1".to_string(),
+            tier: "hot".to_string(),
+            encryption_level: "none".to_string(),
+            created_at: now,
+            updated_at: now,
+            tags: None,
+            description: None,
+        };
+        backend.upsert_content_metadata(&metadata).await.unwrap();
+
+        // Insert contracts with different providers
+        for i in 0..3 {
+            let contract = StorageContractRow {
+                contract_id: format!("contract{}", i),
+                content_hash: content_hash.clone(),
+                provider_id: format!("provider{}", i % 2),
+                client_id: format!("client{}", i),
+                status: "active".to_string(),
+                start_time: now,
+                end_time: now + 86400,
+                price_per_day: 100,
+                total_paid: 100,
+                created_at: now,
+                updated_at: now,
+            };
+            backend.insert_contract(&contract).await.unwrap();
+        }
+
+        // List contracts by provider0
+        let results = backend.list_contracts_by_provider("provider0", None, None).await.unwrap();
+        assert_eq!(results.len(), 2); // contracts 0 and 2
+
+        // List contracts by provider1
+        let results = backend.list_contracts_by_provider("provider1", None, None).await.unwrap();
+        assert_eq!(results.len(), 1); // contract 1
+
+        // List contracts by non-existent provider
+        let results = backend.list_contracts_by_provider("provider999", None, None).await.unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_contracts_by_client() {
+        let backend = create_test_backend().await;
+        let now = get_test_timestamp();
+
+        // Insert content first
+        let content_hash = vec![1u8; 32];
+        let metadata = ContentMetadataRow {
+            content_hash: content_hash.clone(),
+            size: 1024,
+            owner_id: "owner1".to_string(),
+            tier: "hot".to_string(),
+            encryption_level: "none".to_string(),
+            created_at: now,
+            updated_at: now,
+            tags: None,
+            description: None,
+        };
+        backend.upsert_content_metadata(&metadata).await.unwrap();
+
+        // Insert contracts with different clients
+        for i in 0..3 {
+            let contract = StorageContractRow {
+                contract_id: format!("contract{}", i),
+                content_hash: content_hash.clone(),
+                provider_id: format!("provider{}", i),
+                client_id: format!("client{}", i % 2),
+                status: "active".to_string(),
+                start_time: now,
+                end_time: now + 86400,
+                price_per_day: 100,
+                total_paid: 100,
+                created_at: now,
+                updated_at: now,
+            };
+            backend.insert_contract(&contract).await.unwrap();
+        }
+
+        // List contracts by client0
+        let results = backend.list_contracts_by_client("client0", None, None).await.unwrap();
+        assert_eq!(results.len(), 2); // contracts 0 and 2
+
+        // List contracts by client1
+        let results = backend.list_contracts_by_client("client1", None, None).await.unwrap();
+        assert_eq!(results.len(), 1); // contract 1
+
+        // List contracts by non-existent client
+        let results = backend.list_contracts_by_client("client999", None, None).await.unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_expiring_contracts() {
+        let backend = create_test_backend().await;
+        let now = get_test_timestamp();
+
+        // Insert content first
+        let content_hash = vec![1u8; 32];
+        let metadata = ContentMetadataRow {
+            content_hash: content_hash.clone(),
+            size: 1024,
+            owner_id: "owner1".to_string(),
+            tier: "hot".to_string(),
+            encryption_level: "none".to_string(),
+            created_at: now,
+            updated_at: now,
+            tags: None,
+            description: None,
+        };
+        backend.upsert_content_metadata(&metadata).await.unwrap();
+
+        // Insert contracts with different expiration times (within clock drift limits)
+        // Contract 0 expires in 60 seconds, 1 in 120 seconds, 2 in 180 seconds
+        for i in 0..3 {
+            let contract = StorageContractRow {
+                contract_id: format!("contract{}", i),
+                content_hash: content_hash.clone(),
+                provider_id: "provider1".to_string(),
+                client_id: "client1".to_string(),
+                status: "active".to_string(),
+                start_time: now - 3600, // Started 1 hour ago
+                end_time: now + (60 * (i + 1) as i64), // Expires in 60, 120, 180 seconds
+                price_per_day: 100,
+                total_paid: 100,
+                created_at: now,
+                updated_at: now,
+            };
+            backend.insert_contract(&contract).await.unwrap();
+        }
+
+        // List contracts expiring before 90 seconds from now
+        let results = backend.list_expiring_contracts(now + 90, None).await.unwrap();
+        assert_eq!(results.len(), 1); // Only contract 0
+
+        // List contracts expiring before 150 seconds from now
+        let results = backend.list_expiring_contracts(now + 150, None).await.unwrap();
+        assert_eq!(results.len(), 2); // Contracts 0 and 1
+
+        // List contracts expiring before 200 seconds from now
+        let results = backend.list_expiring_contracts(now + 200, None).await.unwrap();
+        assert_eq!(results.len(), 3); // All contracts
+    }
+
+    #[tokio::test]
+    async fn test_get_storage_by_tier() {
+        let backend = create_test_backend().await;
+        let now = get_test_timestamp();
+
+        // Insert content with different tiers and sizes
+        let tier_data = [
+            ("hot", 1000i64),
+            ("hot", 2000i64),
+            ("warm", 5000i64),
+            ("cold", 10000i64),
+        ];
+
+        for (i, (tier, size)) in tier_data.iter().enumerate() {
+            let content_hash = vec![i as u8 + 1; 32];
+            let metadata = ContentMetadataRow {
+                content_hash: content_hash.clone(),
+                size: *size,
+                owner_id: format!("owner{}", i),
+                tier: tier.to_string(),
+                encryption_level: "aes256".to_string(),
+                created_at: now,
+                updated_at: now,
+                tags: None,
+                description: None,
+            };
+            backend.upsert_content_metadata(&metadata).await.unwrap();
+        }
+
+        // Get storage by tier
+        let results = backend.get_storage_by_tier().await.unwrap();
+        
+        // Find hot tier total
+        let hot_total = results.iter().find(|(tier, _)| tier == "hot").map(|(_, size)| *size);
+        assert_eq!(hot_total, Some(3000)); // 1000 + 2000
+
+        // Find warm tier total
+        let warm_total = results.iter().find(|(tier, _)| tier == "warm").map(|(_, size)| *size);
+        assert_eq!(warm_total, Some(5000));
+
+        // Find cold tier total
+        let cold_total = results.iter().find(|(tier, _)| tier == "cold").map(|(_, size)| *size);
+        assert_eq!(cold_total, Some(10000));
+    }
+
+    #[tokio::test]
+    async fn test_prune_audit_logs() {
+        let backend = create_test_backend().await;
+        let now = get_test_timestamp();
+
+        // Insert audit logs using append_audit_log (which uses current timestamp)
+        for i in 0..5 {
+            backend.append_audit_log(
+                &format!("event_type{}", i),
+                Some(&format!("node{}", i)),
+                None,
+                Some(&format!("Details {}", i))
+            ).await.unwrap();
+        }
+
+        // Get count before pruning
+        let all_logs = backend.get_audit_logs(now - 3600, now + 300, 100).await.unwrap();
+        let initial_count = all_logs.len();
+        assert_eq!(initial_count, 5);
+
+        // Prune logs "older" than now + 200 seconds (within clock drift limit)
+        // This should delete all logs since they were created at "now"
+        let deleted = backend.prune_audit_logs(now + 200).await.unwrap();
+        assert_eq!(deleted, 5);
+
+        // Verify no logs remain
+        let final_logs = backend.get_audit_logs(now - 3600, now + 300, 100).await.unwrap();
+        assert_eq!(final_logs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_recalculate_reputation_nonexistent_node() {
+        let backend = create_test_backend().await;
+
+        // Try to recalculate reputation for non-existent node
+        let result = backend.recalculate_reputation("nonexistent_node").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No reputation row found"));
+    }
 }
