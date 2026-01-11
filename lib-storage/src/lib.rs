@@ -44,6 +44,10 @@ pub mod optimization;
 // Distributed consistency (Phase F - NEW)
 pub mod consistency;
 
+// [DB-009] Pluggable storage backends
+#[cfg(feature = "sqlite")]
+pub mod backend;
+
 // Re-export core types (avoiding conflicts)
 pub use types::{
     dht_types::*, storage_types::*, stats_types::*
