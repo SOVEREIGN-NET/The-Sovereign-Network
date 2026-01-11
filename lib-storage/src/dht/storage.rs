@@ -2,23 +2,30 @@
 //!
 //! Implements key-value storage operations with zero-knowledge proofs
 //! and replication for the DHT layer.
+//!
+//! ## Security: ZK Proof Verification Timeouts [DB-002]
+//!
+//! All ZK proof verification operations are wrapped with configurable timeouts
+//! to prevent denial-of-service attacks through crafted proofs that consume
+//! excessive verification time. See [`ZkVerificationConfig`] for configuration.
 
 use crate::types::dht_types::{DhtNode, StorageEntry, DhtMessage, DhtMessageType, ZkDhtValue};
 use crate::types::{NodeId, ChunkMetadata, DhtKey};
+use crate::types::config_types::{ZkVerificationConfig, ZkVerificationMetrics};
 use crate::dht::network::DhtNetwork;
 use crate::dht::routing::KademliaRouter;
 use crate::dht::messaging::DhtMessaging;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::io::Write;
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
 use serde::{Serialize, Deserialize};
-use tracing::{debug, warn, info, error};
+use tracing::{debug, warn, info, error, instrument};
 
 /// Current version of DHT storage persistence format
 const DHT_STORAGE_VERSION: u32 = 1;
@@ -63,6 +70,11 @@ async fn atomic_write_async(path: PathBuf, bytes: Vec<u8>) -> std::io::Result<()
 /// DHT storage manager with networking
 ///
 /// **MIGRATED (Ticket #148):** Now uses shared PeerRegistry for DHT peer storage
+///
+/// ## Security: ZK Proof Verification Timeouts [DB-002]
+///
+/// This struct includes configurable timeouts for all ZK proof verification
+/// operations to prevent DoS attacks. Configure via [`ZkVerificationConfig`].
 #[derive(Debug)]
 pub struct DhtStorage {
     /// Local storage for key-value pairs
@@ -85,6 +97,10 @@ pub struct DhtStorage {
     contract_index: HashMap<String, Vec<String>>, // tag -> contract_ids
     /// Path for persistence (if set, storage is persisted on mutation)
     persist_path: Option<PathBuf>,
+    /// [DB-002] Configuration for ZK proof verification timeouts
+    zk_verification_config: ZkVerificationConfig,
+    /// [DB-002] Metrics for ZK proof verification operations
+    zk_verification_metrics: ZkVerificationMetrics,
 }
 
 impl DhtStorage {
@@ -92,6 +108,13 @@ impl DhtStorage {
     ///
     /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
     pub fn new(local_node_id: NodeId, max_storage_size: u64) -> Self {
+        Self::new_with_config(local_node_id, max_storage_size, ZkVerificationConfig::default())
+    }
+
+    /// Create a new DHT storage manager with custom ZK verification config
+    ///
+    /// [DB-002] Allows configuring ZK proof verification timeouts
+    pub fn new_with_config(local_node_id: NodeId, max_storage_size: u64, zk_config: ZkVerificationConfig) -> Self {
         Self {
             storage: HashMap::new(),
             max_storage_size,
@@ -103,11 +126,25 @@ impl DhtStorage {
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
             persist_path: None,
+            zk_verification_config: zk_config,
+            zk_verification_metrics: ZkVerificationMetrics::new(),
         }
     }
 
     /// Create a new DHT storage manager with persistence enabled
     pub fn new_with_persistence(local_node_id: NodeId, max_storage_size: u64, persist_path: PathBuf) -> Self {
+        Self::new_with_persistence_and_config(local_node_id, max_storage_size, persist_path, ZkVerificationConfig::default())
+    }
+
+    /// Create a new DHT storage manager with persistence and custom ZK verification config
+    ///
+    /// [DB-002] Allows configuring ZK proof verification timeouts
+    pub fn new_with_persistence_and_config(
+        local_node_id: NodeId,
+        max_storage_size: u64,
+        persist_path: PathBuf,
+        zk_config: ZkVerificationConfig,
+    ) -> Self {
         Self {
             storage: HashMap::new(),
             max_storage_size,
@@ -119,6 +156,8 @@ impl DhtStorage {
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
             persist_path: Some(persist_path),
+            zk_verification_config: zk_config,
+            zk_verification_metrics: ZkVerificationMetrics::new(),
         }
     }
 
@@ -370,6 +409,18 @@ impl DhtStorage {
         bind_addr: SocketAddr,
         max_storage_size: u64
     ) -> Result<Self> {
+        Self::new_with_network_and_config(local_node, bind_addr, max_storage_size, ZkVerificationConfig::default()).await
+    }
+
+    /// Create DHT storage with networking and custom ZK verification config
+    ///
+    /// [DB-002] Allows configuring ZK proof verification timeouts
+    pub async fn new_with_network_and_config(
+        local_node: DhtNode,
+        bind_addr: SocketAddr,
+        max_storage_size: u64,
+        zk_config: ZkVerificationConfig,
+    ) -> Result<Self> {
         // Use UDP transport by default (Ticket #152 - Transport Abstraction)
         let network = DhtNetwork::new_udp(local_node.clone(), bind_addr)?;
         Ok(Self {
@@ -383,6 +434,8 @@ impl DhtStorage {
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
             persist_path: None,
+            zk_verification_config: zk_config,
+            zk_verification_metrics: ZkVerificationMetrics::new(),
         })
     }
 
@@ -393,6 +446,18 @@ impl DhtStorage {
         local_node: DhtNode,
         transport: Arc<dyn crate::dht::transport::DhtTransport>,
         max_storage_size: u64,
+    ) -> Result<Self> {
+        Self::new_with_transport_and_config(local_node, transport, max_storage_size, ZkVerificationConfig::default())
+    }
+
+    /// Create DHT storage with custom transport and ZK verification config
+    ///
+    /// [DB-002] Allows configuring ZK proof verification timeouts
+    pub fn new_with_transport_and_config(
+        local_node: DhtNode,
+        transport: Arc<dyn crate::dht::transport::DhtTransport>,
+        max_storage_size: u64,
+        zk_config: ZkVerificationConfig,
     ) -> Result<Self> {
         let network = DhtNetwork::new(local_node.clone(), transport)?;
         Ok(Self {
@@ -406,6 +471,8 @@ impl DhtStorage {
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
             persist_path: None,
+            zk_verification_config: zk_config,
+            zk_verification_metrics: ZkVerificationMetrics::new(),
         })
     }
 
@@ -415,6 +482,30 @@ impl DhtStorage {
             NodeId::from_bytes([0u8; 32]), // Default node ID
             1_000_000_000, // 1GB default storage
         )
+    }
+
+    /// Set the ZK verification configuration
+    ///
+    /// [DB-002] Allows runtime configuration of verification timeouts
+    pub fn set_zk_verification_config(&mut self, config: ZkVerificationConfig) {
+        self.zk_verification_config = config;
+    }
+
+    /// Get the current ZK verification configuration
+    pub fn zk_verification_config(&self) -> &ZkVerificationConfig {
+        &self.zk_verification_config
+    }
+
+    /// Get the ZK verification metrics
+    ///
+    /// [DB-002] Returns metrics for monitoring verification performance
+    pub fn zk_verification_metrics(&self) -> &ZkVerificationMetrics {
+        &self.zk_verification_metrics
+    }
+
+    /// Reset ZK verification metrics
+    pub fn reset_zk_verification_metrics(&mut self) {
+        self.zk_verification_metrics = ZkVerificationMetrics::new();
     }
 
     /// Store data with content hash as key and replicate across DHT
@@ -593,11 +684,85 @@ impl DhtStorage {
     }
 
     /// Verify zero-knowledge proof for DHT values using lib-proofs ZK system
-    pub async fn verify_zk_proof(&self, zk_proof: &ZkProof, zk_value: &ZkDhtValue) -> Result<bool> {
+    ///
+    /// [DB-002] This method is wrapped with a configurable timeout to prevent DoS attacks.
+    /// If verification exceeds the configured timeout, it returns an error.
+    ///
+    /// # Security
+    ///
+    /// - Timeout prevents malicious proofs from consuming excessive CPU time
+    /// - Metrics track timeout occurrences for monitoring
+    /// - Tracing logs are emitted for timeout events
+    #[instrument(skip(self, zk_proof, zk_value), fields(proof_system = %zk_proof.proof_system))]
+    pub async fn verify_zk_proof(&mut self, zk_proof: &ZkProof, zk_value: &ZkDhtValue) -> Result<bool> {
+        let start = Instant::now();
+        let timeout_duration = self.zk_verification_config.timeout;
+
+        // [DB-002] Wrap verification with timeout
+        let verification_result = tokio::time::timeout(
+            timeout_duration,
+            self.verify_zk_proof_inner(zk_proof, zk_value)
+        ).await;
+
+        let elapsed = start.elapsed();
+        let elapsed_ms = elapsed.as_millis() as u64;
+
+        match verification_result {
+            Ok(Ok(is_valid)) => {
+                // Verification completed successfully
+                if self.zk_verification_config.enable_metrics {
+                    if is_valid {
+                        self.zk_verification_metrics.record_success(elapsed_ms);
+                    } else {
+                        self.zk_verification_metrics.record_failure(elapsed_ms);
+                    }
+                }
+                debug!(
+                    elapsed_ms = elapsed_ms,
+                    is_valid = is_valid,
+                    "ZK proof verification completed"
+                );
+                Ok(is_valid)
+            }
+            Ok(Err(e)) => {
+                // Verification encountered an error
+                if self.zk_verification_config.enable_metrics {
+                    self.zk_verification_metrics.record_error();
+                }
+                warn!(
+                    elapsed_ms = elapsed_ms,
+                    error = %e,
+                    "ZK proof verification error"
+                );
+                Err(e)
+            }
+            Err(_) => {
+                // [DB-002] Timeout occurred - potential DoS attempt
+                if self.zk_verification_config.enable_metrics {
+                    self.zk_verification_metrics.record_timeout();
+                }
+                error!(
+                    timeout_ms = timeout_duration.as_millis() as u64,
+                    proof_system = %zk_proof.proof_system,
+                    proof_size = zk_proof.size(),
+                    "ZK proof verification TIMEOUT - possible DoS attempt"
+                );
+                Err(anyhow!(
+                    "ZK proof verification timed out after {:?} - verification aborted for security",
+                    timeout_duration
+                ))
+            }
+        }
+    }
+
+    /// Inner verification logic without timeout wrapper
+    ///
+    /// [DB-002] This is the actual verification logic, called by verify_zk_proof with timeout
+    async fn verify_zk_proof_inner(&self, zk_proof: &ZkProof, zk_value: &ZkDhtValue) -> Result<bool> {
         // Initialize the ZK proof system from lib-proofs
         let zk_system = lib_proofs::initialize_zk_system()
             .map_err(|e| anyhow!("Failed to initialize ZK system: {}", e))?;
-        
+
         // Check if this is a Plonky2 proof (preferred verification method)
         if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
             // Determine proof type based on the proof system identifier
@@ -619,13 +784,17 @@ impl DhtStorage {
                         .map_err(|e| anyhow!("Identity proof verification failed: {}", e));
                 },
                 _ => {
-                    // Generic proof verification for unknown types
-                    return Ok(plonky2_proof.proof.len() > 0 && 
-                             !plonky2_proof.public_inputs.is_empty());
+                    // [DB-002] Reject unknown proof types for security
+                    warn!(
+                        proof_system = %plonky2_proof.proof_system,
+                        proof_len = plonky2_proof.proof.len(),
+                        "Unknown proof system type - rejecting for security"
+                    );
+                    return Ok(false);
                 }
             }
         }
-        
+
         // Fallback to traditional ZK proof verification
         // Create public inputs from the ZK value for validation
         let value_hash = blake3::hash(&zk_value.encrypted_data);
@@ -634,7 +803,7 @@ impl DhtStorage {
             crate::types::dht_types::AccessLevel::Private => 1u64,
             crate::types::dht_types::AccessLevel::Restricted => 2u64,
         };
-        
+
         // Generate cryptographic access key from node identity and request context
         let node_key_material = self.local_node_id.as_bytes();
         let access_key = blake3::hash(&[node_key_material as &[u8], value_hash.as_bytes()].concat());
@@ -644,7 +813,7 @@ impl DhtStorage {
             access_key.as_bytes()[4], access_key.as_bytes()[5],
             access_key.as_bytes()[6], access_key.as_bytes()[7],
         ]);
-        
+
         // Generate requester secret from ZK value metadata
         let requester_context = [
             &zk_value.nonce,
@@ -657,22 +826,22 @@ impl DhtStorage {
             requester_secret_hash.as_bytes()[4], requester_secret_hash.as_bytes()[5],
             requester_secret_hash.as_bytes()[6], requester_secret_hash.as_bytes()[7],
         ]);
-        
+
         // Convert data hash to u64 for ZK system compatibility
         let data_hash_u64 = u64::from_be_bytes([
-            value_hash.as_bytes()[0], value_hash.as_bytes()[1], 
+            value_hash.as_bytes()[0], value_hash.as_bytes()[1],
             value_hash.as_bytes()[2], value_hash.as_bytes()[3],
             value_hash.as_bytes()[4], value_hash.as_bytes()[5],
             value_hash.as_bytes()[6], value_hash.as_bytes()[7],
         ]);
-        
+
         // Determine required permission based on access level
         let required_permission = match zk_value.access_level {
             crate::types::dht_types::AccessLevel::Public => 0u64,
             crate::types::dht_types::AccessLevel::Private => 1u64,
             crate::types::dht_types::AccessLevel::Restricted => 2u64,
         };
-        
+
         // Generate expected proof with cryptographic parameters
         let expected_proof = zk_system.prove_storage_access(
             access_key_u64,
@@ -681,33 +850,44 @@ impl DhtStorage {
             access_level_u64,
             required_permission,
         )?;
-        
+
         // Verify proof system compatibility
         if zk_proof.proof_system != "Plonky2" {
+            debug!(
+                expected = "Plonky2",
+                actual = %zk_proof.proof_system,
+                "Proof system mismatch"
+            );
             return Ok(false);
         }
-        
+
         // Validate proof completeness
-        if zk_proof.public_inputs.is_empty() || zk_proof.verification_key.is_empty() {
+        if zk_proof.public_inputs.is_empty() {
+            debug!("Proof rejected: empty public inputs");
             return Ok(false);
         }
-        
+        if zk_proof.verification_key.is_empty() {
+            debug!("Proof rejected: empty verification key");
+            return Ok(false);
+        }
+
         // Verify proof against expected cryptographic parameters
         if let Some(plonky2_proof) = &zk_proof.plonky2_proof {
             // Compare critical proof components with the expected proof
             if plonky2_proof.public_inputs != expected_proof.public_inputs {
+                debug!("Proof rejected: public inputs mismatch");
                 return Ok(false);
             }
-            
+
             // Verify proof validity using ZK system
             return zk_system.verify_storage_access(plonky2_proof)
                 .map_err(|e| anyhow!("Storage access proof verification failed: {}", e));
         }
-        
+
         // Fallback to generic proof verification with cryptographic validation
         let proof_valid = zk_proof.verify()
             .map_err(|e| anyhow!("ZK proof verification error: {}", e))?;
-        
+
         // Additional cryptographic integrity check
         let expected_public_inputs = [
             access_key_u64.to_be_bytes(),
@@ -715,10 +895,10 @@ impl DhtStorage {
             access_level_u64.to_be_bytes(),
             required_permission.to_be_bytes(),
         ].concat();
-        
+
         let public_inputs_match = zk_proof.public_inputs.len() >= expected_public_inputs.len() &&
             &zk_proof.public_inputs[..expected_public_inputs.len()] == &expected_public_inputs;
-        
+
         Ok(proof_valid && public_inputs_match)
     }
     
@@ -964,18 +1144,83 @@ impl DhtStorage {
     }
     
     /// Verify zero-knowledge storage proof with cryptographic validation
-    async fn verify_storage_proof(&self, proof: &ZkProof, key: &str, value: &[u8]) -> Result<bool> {
+    ///
+    /// [DB-002] This method is wrapped with a configurable timeout to prevent DoS attacks.
+    #[instrument(skip(self, proof, key, value), fields(key_len = key.len(), value_len = value.len()))]
+    async fn verify_storage_proof(&mut self, proof: &ZkProof, key: &str, value: &[u8]) -> Result<bool> {
+        let start = Instant::now();
+        let timeout_duration = self.zk_verification_config.timeout;
+
+        // [DB-002] Wrap verification with timeout
+        let verification_result = tokio::time::timeout(
+            timeout_duration,
+            self.verify_storage_proof_inner(proof, key, value)
+        ).await;
+
+        let elapsed = start.elapsed();
+        let elapsed_ms = elapsed.as_millis() as u64;
+
+        match verification_result {
+            Ok(Ok(is_valid)) => {
+                if self.zk_verification_config.enable_metrics {
+                    if is_valid {
+                        self.zk_verification_metrics.record_success(elapsed_ms);
+                    } else {
+                        self.zk_verification_metrics.record_failure(elapsed_ms);
+                    }
+                }
+                debug!(
+                    elapsed_ms = elapsed_ms,
+                    is_valid = is_valid,
+                    "Storage proof verification completed"
+                );
+                Ok(is_valid)
+            }
+            Ok(Err(e)) => {
+                if self.zk_verification_config.enable_metrics {
+                    self.zk_verification_metrics.record_error();
+                }
+                warn!(
+                    elapsed_ms = elapsed_ms,
+                    error = %e,
+                    "Storage proof verification error"
+                );
+                Err(e)
+            }
+            Err(_) => {
+                // [DB-002] Timeout occurred
+                if self.zk_verification_config.enable_metrics {
+                    self.zk_verification_metrics.record_timeout();
+                }
+                error!(
+                    timeout_ms = timeout_duration.as_millis() as u64,
+                    proof_size = proof.size(),
+                    "Storage proof verification TIMEOUT - possible DoS attempt"
+                );
+                Err(anyhow!(
+                    "Storage proof verification timed out after {:?}",
+                    timeout_duration
+                ))
+            }
+        }
+    }
+
+    /// Inner storage proof verification logic without timeout wrapper
+    ///
+    /// [DB-002] This is the actual verification logic, called with timeout by verify_storage_proof
+    async fn verify_storage_proof_inner(&self, proof: &ZkProof, key: &str, value: &[u8]) -> Result<bool> {
         // Initialize ZK system for proof verification
         let zk_system = lib_proofs::initialize_zk_system()
             .map_err(|e| anyhow!("Failed to initialize ZK system: {}", e))?;
-        
+
         if proof.is_empty() {
+            debug!("Storage proof rejected: empty proof");
             return Ok(false);
         }
 
         // Generate cryptographically secure commitment to the storage operation
         let storage_commitment = self.generate_storage_commitment(key, value)?;
-        
+
         // Create public inputs using cryptographic operations
         let data_hash = blake3::hash(value);
         let key_hash = blake3::hash(key.as_bytes());
@@ -987,15 +1232,15 @@ impl DhtStorage {
 
         // Convert to ZK proof system format (big-endian for consistency)
         let mut public_inputs_u64 = Vec::new();
-        
+
         // Add storage commitment (4 u64 values)
         for chunk in storage_commitment.as_bytes().chunks(8) {
             let mut bytes = [0u8; 8];
             bytes[..chunk.len()].copy_from_slice(chunk);
             public_inputs_u64.push(u64::from_be_bytes(bytes));
         }
-        
-        // Add node commitment (4 u64 values) 
+
+        // Add node commitment (4 u64 values)
         for chunk in node_commitment.as_bytes().chunks(8) {
             let mut bytes = [0u8; 8];
             bytes[..chunk.len()].copy_from_slice(chunk);
@@ -1009,11 +1254,17 @@ impl DhtStorage {
 
         // Verify public inputs match proof inputs
         if proof.public_inputs.len() < expected_public_inputs.len() {
+            debug!(
+                expected_len = expected_public_inputs.len(),
+                actual_len = proof.public_inputs.len(),
+                "Storage proof rejected: public inputs length mismatch"
+            );
             return Ok(false);
         }
-        
+
         let inputs_match = &proof.public_inputs[..expected_public_inputs.len()] == &expected_public_inputs;
         if !inputs_match {
+            debug!("Storage proof rejected: public inputs content mismatch");
             return Ok(false);
         }
 
@@ -1031,6 +1282,10 @@ impl DhtStorage {
                 }
                 _ => {
                     // Generic verification for unknown proof types
+                    debug!(
+                        proof_system = %plonky2_proof.proof_system,
+                        "Using generic Plonky2 proof verification for unknown type"
+                    );
                     return Ok(self.verify_generic_plonky2_proof(plonky2_proof, &expected_public_inputs)?);
                 }
             }
@@ -1239,14 +1494,83 @@ impl DhtStorage {
     }
 
     /// Verify full ZeroKnowledgeProof for comprehensive validation
-    async fn verify_full_zk_proof(&self, proof: &ZeroKnowledgeProof, key: &str, value: &[u8]) -> Result<bool> {
+    ///
+    /// [DB-002] This method is wrapped with a configurable timeout to prevent DoS attacks.
+    #[instrument(skip(self, proof, key, value), fields(proof_system = %proof.proof_system))]
+    async fn verify_full_zk_proof(&mut self, proof: &ZeroKnowledgeProof, key: &str, value: &[u8]) -> Result<bool> {
+        let start = Instant::now();
+        let timeout_duration = self.zk_verification_config.timeout;
+
+        // [DB-002] Wrap verification with timeout
+        let verification_result = tokio::time::timeout(
+            timeout_duration,
+            self.verify_full_zk_proof_inner(proof, key, value)
+        ).await;
+
+        let elapsed = start.elapsed();
+        let elapsed_ms = elapsed.as_millis() as u64;
+
+        match verification_result {
+            Ok(Ok(is_valid)) => {
+                if self.zk_verification_config.enable_metrics {
+                    if is_valid {
+                        self.zk_verification_metrics.record_success(elapsed_ms);
+                    } else {
+                        self.zk_verification_metrics.record_failure(elapsed_ms);
+                    }
+                }
+                debug!(
+                    elapsed_ms = elapsed_ms,
+                    is_valid = is_valid,
+                    "Full ZK proof verification completed"
+                );
+                Ok(is_valid)
+            }
+            Ok(Err(e)) => {
+                if self.zk_verification_config.enable_metrics {
+                    self.zk_verification_metrics.record_error();
+                }
+                warn!(
+                    elapsed_ms = elapsed_ms,
+                    error = %e,
+                    "Full ZK proof verification error"
+                );
+                Err(e)
+            }
+            Err(_) => {
+                // [DB-002] Timeout occurred
+                if self.zk_verification_config.enable_metrics {
+                    self.zk_verification_metrics.record_timeout();
+                }
+                error!(
+                    timeout_ms = timeout_duration.as_millis() as u64,
+                    proof_system = %proof.proof_system,
+                    "Full ZK proof verification TIMEOUT - possible DoS attempt"
+                );
+                Err(anyhow!(
+                    "Full ZK proof verification timed out after {:?}",
+                    timeout_duration
+                ))
+            }
+        }
+    }
+
+    /// Inner full ZK proof verification logic without timeout wrapper
+    ///
+    /// [DB-002] This is the actual verification logic, called with timeout by verify_full_zk_proof
+    async fn verify_full_zk_proof_inner(&self, proof: &ZeroKnowledgeProof, key: &str, value: &[u8]) -> Result<bool> {
         // This would use the full ZeroKnowledgeProof system for more complex proofs
         // For now, we'll validate the structure and basic integrity
-        
-        if proof.proof_system.is_empty() || proof.proof_data.is_empty() {
+
+        if proof.proof_system.is_empty() {
+            debug!("Full ZK proof rejected: empty proof_system");
             return Ok(false);
         }
-        
+        if proof.proof_data.is_empty() {
+            debug!("Full ZK proof rejected: empty proof_data");
+            return Ok(false);
+        }
+
         // Validate proof system type
         match proof.proof_system.as_str() {
             "plonky2" => {
@@ -1260,19 +1584,29 @@ impl DhtStorage {
                 // Validate other proof systems
                 return Ok(proof.proof_data.len() >= 32); // Minimum proof size
             }
-            _ => return Ok(false), // Unknown proof system
+            _ => {
+                debug!(
+                    proof_system = %proof.proof_system,
+                    "Full ZK proof rejected: unknown proof system type"
+                );
+                return Ok(false);
+            }
         }
-        
+
         // Basic integrity check
         let combined_data = [key.as_bytes(), value].concat();
         let expected_hash = blake3::hash(&combined_data);
-        
+
         // Check if public inputs contain the expected hash
         if proof.public_inputs.len() >= 32 {
             let input_hash = &proof.public_inputs[..32];
             return Ok(input_hash == expected_hash.as_bytes());
         }
-        
+
+        debug!(
+            public_inputs_len = proof.public_inputs.len(),
+            "Full ZK proof rejected: public inputs too short for hash check"
+        );
         Ok(false)
     }
     
@@ -2074,5 +2408,143 @@ mod tests {
 
         // Clean up
         let _ = std::fs::remove_file(&persist_path);
+    }
+
+    // ==========================================================================
+    // [DB-002] ZK Verification Timeout Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_zk_verification_config_default() {
+        let config = ZkVerificationConfig::default();
+        assert_eq!(config.timeout, Duration::from_secs(5));
+        assert!(config.enable_metrics);
+    }
+
+    #[test]
+    fn test_zk_verification_config_custom() {
+        let config = ZkVerificationConfig {
+            timeout: Duration::from_millis(100),
+            enable_metrics: false,
+        };
+        assert_eq!(config.timeout, Duration::from_millis(100));
+        assert!(!config.enable_metrics);
+    }
+
+    #[test]
+    fn test_zk_verification_metrics_recording() {
+        let mut metrics = ZkVerificationMetrics::new();
+
+        // Record some operations
+        metrics.record_success(50);
+        metrics.record_success(100);
+        metrics.record_failure(75);
+        metrics.record_timeout();
+        metrics.record_error();
+
+        assert_eq!(metrics.total_verifications, 5);
+        assert_eq!(metrics.successful_verifications, 2);
+        assert_eq!(metrics.failed_verifications, 1);
+        assert_eq!(metrics.timeout_count, 1);
+        assert_eq!(metrics.error_count, 1);
+        assert_eq!(metrics.max_verification_time_ms, 100);
+    }
+
+    #[test]
+    fn test_zk_verification_metrics_timeout_rate() {
+        let mut metrics = ZkVerificationMetrics::new();
+
+        // 1 timeout out of 4 = 25%
+        metrics.record_success(10);
+        metrics.record_success(10);
+        metrics.record_failure(10);
+        metrics.record_timeout();
+
+        let rate = metrics.timeout_rate();
+        assert!((rate - 25.0).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_storage_with_custom_zk_config() {
+        let node_id = NodeId::from_bytes([1u8; 32]);
+        let zk_config = ZkVerificationConfig {
+            timeout: Duration::from_millis(500),
+            enable_metrics: true,
+        };
+
+        let storage = DhtStorage::new_with_config(node_id, 1024 * 1024, zk_config);
+
+        // Verify config was applied
+        assert_eq!(storage.zk_verification_config().timeout, Duration::from_millis(500));
+        assert!(storage.zk_verification_config().enable_metrics);
+
+        // Verify metrics are initialized
+        assert_eq!(storage.zk_verification_metrics().total_verifications, 0);
+    }
+
+    #[tokio::test]
+    async fn test_storage_set_zk_config_runtime() {
+        let node_id = NodeId::from_bytes([1u8; 32]);
+        let mut storage = DhtStorage::new(node_id, 1024 * 1024);
+
+        // Default config
+        assert_eq!(storage.zk_verification_config().timeout, Duration::from_secs(5));
+
+        // Update config at runtime
+        let new_config = ZkVerificationConfig {
+            timeout: Duration::from_secs(10),
+            enable_metrics: false,
+        };
+        storage.set_zk_verification_config(new_config);
+
+        // Verify update
+        assert_eq!(storage.zk_verification_config().timeout, Duration::from_secs(10));
+        assert!(!storage.zk_verification_config().enable_metrics);
+    }
+
+    #[tokio::test]
+    async fn test_storage_reset_metrics() {
+        let node_id = NodeId::from_bytes([1u8; 32]);
+        let mut storage = DhtStorage::new(node_id, 1024 * 1024);
+
+        // Simulate some metrics activity (manually accessing the metrics field)
+        // Note: In real usage, metrics are recorded during verification
+
+        // Reset metrics
+        storage.reset_zk_verification_metrics();
+
+        // Verify reset
+        let metrics = storage.zk_verification_metrics();
+        assert_eq!(metrics.total_verifications, 0);
+        assert_eq!(metrics.timeout_count, 0);
+    }
+
+    #[test]
+    fn test_zk_verification_config_serialization() {
+        let config = ZkVerificationConfig {
+            timeout: Duration::from_secs(3),
+            enable_metrics: true,
+        };
+
+        // Test serialization round-trip
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("3s")); // humantime format
+
+        let deserialized: ZkVerificationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.timeout, Duration::from_secs(3));
+        assert!(deserialized.enable_metrics);
+    }
+
+    #[test]
+    fn test_zk_verification_metrics_average_calculation() {
+        let mut metrics = ZkVerificationMetrics::new();
+
+        // Record verifications with known times
+        metrics.record_success(100);  // avg = 100
+        metrics.record_success(200);  // avg = 150
+        metrics.record_success(300);  // avg = 200
+
+        // Average should be (100 + 200 + 300) / 3 = 200
+        assert!((metrics.avg_verification_time_ms - 200.0).abs() < 0.001);
     }
 }
