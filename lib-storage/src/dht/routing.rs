@@ -17,6 +17,7 @@ use anyhow::{Result, anyhow};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{trace, debug, warn};
 
 // ========== CRIT-3: NodeId Verification Constants ==========
 
@@ -164,7 +165,9 @@ impl KademliaRouter {
     /// See: `NodeIdChallenge`, `verify_node_id_ownership()`, `verify_node_id_ownership_full()`
     pub async fn add_node(&mut self, node: DhtNode) -> Result<()> {
         let node_id = node.peer.node_id();
+        let node_id_short = hex::encode(&node_id.as_bytes()[..4]);
         if *node_id == self.local_id {
+            trace!("Rejected attempt to add local node to routing table");
             return Err(anyhow!("Cannot add local node to routing table"));
         }
 
@@ -173,6 +176,7 @@ impl KademliaRouter {
         // should be performed by the network layer before calling add_node().
         // See: verify_node_id_ownership() for the complete verification protocol.
         if node.peer.public_key().dilithium_pk.is_empty() {
+            warn!(node_id = %node_id_short, "Rejected node with empty public key");
             return Err(anyhow!("Cannot add node with empty public key to routing table"));
         }
         
@@ -203,9 +207,11 @@ impl KademliaRouter {
 
             if let Some(node_to_remove) = lrs_failed {
                 // Remove the failed node
+                trace!(removed_node = %hex::encode(&node_to_remove.as_bytes()[..4]), "Removed failed node to make room");
                 self.registry.remove(&node_to_remove);
             } else {
                 // Bucket full and no failed peers - cannot add
+                trace!(node_id = %node_id_short, bucket = bucket_index, k = self.k, "K-bucket full, rejecting node");
                 return Err(anyhow!("K-bucket {} is full (k={})", bucket_index, self.k));
             }
         }
@@ -221,6 +227,7 @@ impl KademliaRouter {
         };
 
         self.registry.upsert(entry)?;
+        debug!(node_id = %node_id_short, bucket = bucket_index, "Added node to routing table");
         Ok(())
     }
     
@@ -254,6 +261,7 @@ impl KademliaRouter {
     ///
     /// **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for lookup
     pub fn mark_node_failed(&mut self, node_id: &NodeId) {
+        trace!(node_id = %hex::encode(&node_id.as_bytes()[..4]), "Marking node as failed");
         self.registry.mark_failed(node_id);
     }
     
@@ -876,7 +884,7 @@ mod tests {
         let distance_10 = router.calculate_distance(&local_id, &id_bucket_10);
         
         // These might not be exact due to randomness, but generally bucket 10 should be further
-        println!("Distance 0: {}, Distance 10: {}", distance_0, distance_10);
+        trace!(distance_0 = distance_0, distance_10 = distance_10, "Distance comparison");
     }
 
     #[tokio::test]
@@ -939,7 +947,7 @@ mod tests {
         let one_second_check = router.get_buckets_needing_refresh(1);
         
         // Since we waited 2 seconds, buckets with peers should need refresh with 1-second interval
-        println!("Buckets needing refresh after 2 seconds with 1-second interval: {}", one_second_check.len());
+        trace!(bucket_count = one_second_check.len(), "Buckets needing refresh after 2 seconds with 1-second interval");
         assert!(one_second_check.len() > 0, "After 2 seconds, buckets with peers should need refresh with 1-second interval");
         
         // We added 10 nodes to potentially different buckets
