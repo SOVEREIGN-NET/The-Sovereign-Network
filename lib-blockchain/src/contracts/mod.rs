@@ -40,6 +40,8 @@ pub mod sov_swap;
 pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod web4;
+#[cfg(feature = "contracts")]
+pub mod root_registry;
 
 // Re-export core types and functionality when contracts feature is enabled
 #[cfg(feature = "contracts")]
@@ -86,6 +88,11 @@ pub use sov_swap::{SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError}
 pub use utils::*;
 #[cfg(feature = "contracts")]
 pub use web4::{Web4Contract, WebsiteContract, WebsiteMetadata, ContentRoute, DomainRecord, WebsiteDeploymentData};
+#[cfg(feature = "contracts")]
+pub use root_registry::{
+    NameRecord, NameStatus, NameClassification, VerificationLevel,
+    GovernanceRecord, WelfareSector, parse_and_validate, compute_name_hash,
+};
 
 // Re-export testing framework when available
 #[cfg(all(feature = "contracts", feature = "testing"))]
