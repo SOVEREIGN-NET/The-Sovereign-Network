@@ -37,9 +37,14 @@ log = "0.4"
 tracing = "0.1"
 humantime-serde = "1.1"
 
+# [DB-009] SQLite backend for structured data
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"], optional = true }
+
 [dev-dependencies]
 tokio-test = "0.4"
 
 [features]
 default = []
 testing = []
+# [DB-009] Enable SQLite backend for structured queryable data
+sqlite = ["sqlx"]

@@ -47,7 +47,7 @@
 use anyhow::{Result, anyhow};
 use blake3::Hasher;
 use parking_lot::RwLock;
-use rocksdb::{DB, Options, IteratorMode, WriteBatch, WriteOptions};
+use sled::{Db, Batch};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
@@ -252,8 +252,8 @@ pub struct NonceCache {
     /// In-memory LRU cache for fast lookups (hot path)
     memory_cache: Arc<RwLock<lru::LruCache<[u8; 32], MemoryNonceEntry>>>,
 
-    /// Persistent RocksDB storage (durability)
-    db: Arc<DB>,
+    /// Persistent sled storage (durability)
+    db: Arc<Db>,
 
     /// Network epoch (genesis-derived, stable across restarts)
     network_epoch: NetworkEpoch,
@@ -322,13 +322,8 @@ impl NonceCache {
         max_memory_size: usize,
         network_epoch: NetworkEpoch,
     ) -> Result<Self> {
-        // Open RocksDB with optimized settings
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-        opts.set_max_open_files(1000);
-
-        let db = DB::open(&opts, db_path.as_ref())
+        // Open sled database
+        let db = sled::open(db_path.as_ref())
             .map_err(|e| anyhow!("Failed to open nonce cache DB: {}", e))?;
 
         let db = Arc::new(db);
@@ -437,10 +432,10 @@ impl NonceCache {
             .map_err(|e| anyhow!("Failed to serialize nonce entry: {}", e))?;
 
         // Use sync write to ensure durability - critical for replay protection
-        let mut write_opts = WriteOptions::default();
-        write_opts.set_sync(true);
-        self.db.put_opt(&nonce_key, entry_bytes, &write_opts)
+        self.db.insert(&nonce_key, entry_bytes)
             .map_err(|e| anyhow!("Failed to persist nonce: {}", e))?;
+        self.db.flush()
+            .map_err(|e| anyhow!("Failed to flush nonce: {}", e))?;
 
         debug!("Stored nonce fingerprint: fp={}, timestamp={}", hex::encode(nonce_fp), now);
 
@@ -512,7 +507,7 @@ impl NonceCache {
         let mut memory = self.memory_cache.write();
 
         let mut total_deleted = 0;
-        let iter = self.db.iterator(IteratorMode::Start);
+        let iter = self.db.iter();
         let mut keys_to_delete = Vec::new();
         let mut estimated_memory = 0usize;
         let mut iteration_failed = false;
@@ -617,13 +612,13 @@ impl NonceCache {
     fn batch_delete_with_retry(&self, keys: &[Vec<u8>]) -> Result<usize> {
         let mut retries = 0;
         loop {
-            // Rebuild batch for each attempt (WriteBatch doesn't implement Clone)
-            let mut batch = WriteBatch::default();
+            // Rebuild batch for each attempt
+            let mut batch = Batch::default();
             for key in keys {
-                batch.delete(key);
+                batch.remove(key.as_slice());
             }
 
-            match self.db.write(batch) {
+            match self.db.apply_batch(batch) {
                 Ok(()) => {
                     debug!("Batch deleted {} nonces", keys.len());
                     return Ok(keys.len());
@@ -721,10 +716,10 @@ impl NonceCache {
     ///
     /// # Security
     ///
-    /// Uses atomic WriteBatch for migration to ensure either both legacy key deletion
+    /// Uses atomic Batch for migration to ensure either both legacy key deletion
     /// and new epoch storage succeed, or neither does. This prevents inconsistent state
     /// if the process crashes during migration.
-    fn verify_or_store_network_epoch(db: &DB, expected_epoch: NetworkEpoch) -> Result<()> {
+    fn verify_or_store_network_epoch(db: &Db, expected_epoch: NetworkEpoch) -> Result<()> {
         match db.get(Self::META_EPOCH_KEY) {
             Ok(Some(bytes)) => {
                 // Epoch exists - verify it matches
@@ -736,8 +731,10 @@ impl NonceCache {
                             "Stored epoch bytes corrupted ({}), re-storing expected epoch",
                             e
                         );
-                        db.put(Self::META_EPOCH_KEY, expected_epoch.to_bytes())
+                        db.insert(Self::META_EPOCH_KEY, expected_epoch.to_bytes().as_slice())
                             .map_err(|e| anyhow!("Failed to restore network epoch: {}", e))?;
+                        db.flush()
+                            .map_err(|e| anyhow!("Failed to flush network epoch: {}", e))?;
                         return Ok(());
                     }
                 };
@@ -767,15 +764,14 @@ impl NonceCache {
                 if has_legacy {
                     // Atomic migration: delete legacy + store new in single batch
                     info!("Migrating from legacy epoch format to network epoch (atomic)");
-                    let mut batch = WriteBatch::default();
-                    batch.delete(b"meta:epoch");
-                    batch.put(Self::META_EPOCH_KEY, expected_epoch.to_bytes());
+                    let mut batch = Batch::default();
+                    batch.remove(b"meta:epoch");
+                    batch.insert(Self::META_EPOCH_KEY, expected_epoch.to_bytes().as_slice());
 
-                    // Use sync write for critical metadata
-                    let mut write_opts = WriteOptions::default();
-                    write_opts.set_sync(true);
-                    db.write_opt(batch, &write_opts)
+                    db.apply_batch(batch)
                         .map_err(|e| anyhow!("Failed to atomically migrate epoch: {}", e))?;
+                    db.flush()
+                        .map_err(|e| anyhow!("Failed to flush epoch migration: {}", e))?;
 
                     // Verify migration succeeded
                     if db.get("meta:epoch")?.is_some() {
@@ -785,10 +781,10 @@ impl NonceCache {
                     }
                 } else {
                     // No legacy key - just store new epoch with sync
-                    let mut write_opts = WriteOptions::default();
-                    write_opts.set_sync(true);
-                    db.put_opt(Self::META_EPOCH_KEY, expected_epoch.to_bytes(), &write_opts)
+                    db.insert(Self::META_EPOCH_KEY, expected_epoch.to_bytes().as_slice())
                         .map_err(|e| anyhow!("Failed to store network epoch: {}", e))?;
+                    db.flush()
+                        .map_err(|e| anyhow!("Failed to flush network epoch: {}", e))?;
                 }
 
                 info!("Stored new network epoch: 0x{:016x}", expected_epoch.value());
@@ -804,7 +800,7 @@ impl NonceCache {
     fn load_nonces_into_memory(&self) -> Result<usize> {
         let mut loaded = 0;
         let mut memory = self.memory_cache.write();
-        let iter = self.db.iterator(IteratorMode::Start);
+        let iter = self.db.iter();
 
         for item in iter {
             let (key, value) = item.map_err(|e| anyhow!("DB iteration error: {}", e))?;
@@ -911,7 +907,7 @@ impl NonceCache {
         self.memory_cache.write().clear();
 
         // Clear disk cache (delete all nonce keys) with chunking
-        let iter = self.db.iterator(IteratorMode::Start);
+        let iter = self.db.iter();
         let mut keys_to_delete = Vec::new();
         let mut total_deleted = 0usize;
 
@@ -1282,12 +1278,12 @@ mod tests {
             cache.check_and_store(&nonce, 1234567890).unwrap();
         }
 
-        // Manually corrupt an entry in RocksDB
+        // Manually corrupt an entry in sled
         {
-            let opts = rocksdb::Options::default();
-            let db = rocksdb::DB::open(&opts, db_path).unwrap();
+            let db = sled::open(db_path).unwrap();
             let bad_key = b"seen:0000000000000000000000000000000000000000000000000000000000000000";
-            db.put(bad_key, b"corrupted_binary_data").unwrap();
+            db.insert(bad_key, b"corrupted_binary_data").unwrap();
+            db.flush().unwrap();
         }
 
         // Reopen cache - should recover without panic
@@ -1426,10 +1422,9 @@ mod tests {
 
         // Simulate old format by directly writing legacy key
         {
-            let mut opts = rocksdb::Options::default();
-            opts.create_if_missing(true);
-            let db = rocksdb::DB::open(&opts, db_path).unwrap();
-            db.put(b"meta:epoch", &epoch.to_bytes()).unwrap();
+            let db = sled::open(db_path).unwrap();
+            db.insert(b"meta:epoch", &epoch.to_bytes()).unwrap();
+            db.flush().unwrap();
         }
 
         // Open with new code - should migrate
