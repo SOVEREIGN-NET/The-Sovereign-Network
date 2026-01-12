@@ -480,7 +480,7 @@ impl Default for NodeConfig {
                 ],
                 bootstrap_peers: vec![
                     "127.0.0.1:9333".to_string(),
-                    "192.168.1.245:9333".to_string(),
+                    "127.0.0.1:9334".to_string(),
                 ],
                 long_range_relays: false,
                 bootstrap_validators: Vec::new(), // Gap 5: Empty by default
