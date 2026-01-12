@@ -2153,11 +2153,18 @@ impl RuntimeOrchestrator {
     /// Discover network with retry logic for edge nodes
     pub async fn discover_network_with_retry(&mut self, is_edge_node: bool) -> Result<Option<ExistingNetworkInfo>> {
         use crate::discovery_coordinator::DiscoveryCoordinator;
-        
+
+        let mut discovery_protocols = Self::discovery_protocols_from_config(
+            &self.config.network_config.protocols,
+        );
+        if discovery_protocols.is_empty() {
+            discovery_protocols = vec![crate::discovery_coordinator::DiscoveryProtocol::UdpMulticast];
+        }
+
         let config = crate::discovery_coordinator::DiscoveryConfig::new(
-            vec![],
-            9333,
-            vec![crate::discovery_coordinator::DiscoveryProtocol::UdpMulticast],
+            self.config.network_config.bootstrap_peers.clone(),
+            self.config.protocols_config.api_port,
+            discovery_protocols,
         );
         let discovery = DiscoveryCoordinator::new(config);
         discovery.start_event_listener().await;
@@ -2199,6 +2206,37 @@ impl RuntimeOrchestrator {
                 }
             }
         }
+    }
+
+    fn discovery_protocols_from_config(
+        protocols: &[String],
+    ) -> Vec<crate::discovery_coordinator::DiscoveryProtocol> {
+        use crate::discovery_coordinator::DiscoveryProtocol;
+
+        let mut mapped = Vec::new();
+        for protocol in protocols {
+            let normalized = protocol.to_ascii_lowercase();
+            let discovery = match normalized.as_str() {
+                "mesh" | "udp_multicast" | "udp" => Some(DiscoveryProtocol::UdpMulticast),
+                "mdns" | "bonjour" => Some(DiscoveryProtocol::MDns),
+                "bluetooth" | "bluetooth_le" | "ble" => Some(DiscoveryProtocol::BluetoothLE),
+                "bluetooth_classic" => Some(DiscoveryProtocol::BluetoothClassic),
+                "wifi_direct" | "wifi" => Some(DiscoveryProtocol::WiFiDirect),
+                "dht" => Some(DiscoveryProtocol::DHT),
+                "port_scan" => Some(DiscoveryProtocol::PortScan),
+                "lorawan" => Some(DiscoveryProtocol::LoRaWAN),
+                "satellite" => Some(DiscoveryProtocol::Satellite),
+                _ => None,
+            };
+
+            if let Some(protocol) = discovery {
+                if !mapped.contains(&protocol) {
+                    mapped.push(protocol);
+                }
+            }
+        }
+
+        mapped
     }
     
     /// Graceful shutdown of the orchestrator
