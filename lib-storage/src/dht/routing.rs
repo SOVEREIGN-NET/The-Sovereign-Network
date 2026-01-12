@@ -677,7 +677,7 @@ pub fn verify_node_id_ownership_full(
 mod tests {
     use super::*;
     use lib_identity::{ZhtpIdentity, IdentityType};
-    use crate::types::dht_types::DhtPeerIdentity;
+    use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
     
     fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
         let identity = ZhtpIdentity::new_unified(
@@ -688,12 +688,12 @@ mod tests {
             None,
         ).expect("Failed to create test identity");
         
-        DhtPeerIdentity {
-            node_id: identity.node_id.clone(),
-            public_key: identity.public_key.clone(),
-            did: identity.did.clone(),
-            device_id: device_name.to_string(),
-        }
+        build_peer_identity(
+            identity.node_id.clone(),
+            identity.public_key.clone(),
+            identity.did.clone(),
+            device_name.to_string(),
+        )
     }
     
     fn build_test_node(peer: DhtPeerIdentity, port: u16) -> DhtNode {
@@ -891,7 +891,7 @@ mod tests {
     async fn test_bucket_refresh() {
         use lib_identity::ZhtpIdentity;
         use lib_identity::types::IdentityType;
-        use crate::types::dht_types::DhtPeerIdentity;
+        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
         
         let local_id = NodeId::from_bytes([1u8; 32]);
         let mut router = KademliaRouter::new(local_id.clone(), 20);
@@ -906,12 +906,12 @@ mod tests {
                 None,
             ).expect("Failed to create test identity");
 
-            let peer = DhtPeerIdentity {
-                node_id: identity.node_id.clone(),
-                public_key: identity.public_key.clone(),
-                did: identity.did.clone(),
-                device_id: device_name.to_string(),
-            };
+            let peer = build_peer_identity(
+                identity.node_id.clone(),
+                identity.public_key.clone(),
+                identity.did.clone(),
+                device_name.to_string(),
+            );
 
             DhtNode {
                 peer,

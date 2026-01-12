@@ -335,7 +335,7 @@ fn generate_nonce() -> [u8; 32] {
 mod tests {
     use super::*;
     use lib_identity::{ZhtpIdentity, IdentityType};
-    use crate::types::dht_types::DhtPeerIdentity;
+    use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
 
     fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
         let identity = ZhtpIdentity::new_unified(
@@ -346,12 +346,12 @@ mod tests {
             None,
         ).expect("Failed to create test identity");
         
-        DhtPeerIdentity {
-            node_id: identity.node_id.clone(),
-            public_key: identity.public_key.clone(),
-            did: identity.did.clone(),
-            device_id: device_name.to_string(),
-        }
+        build_peer_identity(
+            identity.node_id.clone(),
+            identity.public_key.clone(),
+            identity.did.clone(),
+            device_name.to_string(),
+        )
     }
 
     fn dummy_pq_signature() -> lib_crypto::PostQuantumSignature {
