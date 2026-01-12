@@ -89,18 +89,54 @@ pub trait StorageBackend: Send + Sync {
     /// Delete a key.
     async fn delete(&self, key: &[u8]) -> Result<()>;
 
-    /// Check if key exists.
+    /// Check if a key exists without modifying the store.
+    ///
+    /// Implementations are encouraged to use a backend-specific existence
+    /// primitive when available so that large values do not need to be
+    /// materialized just to answer this query.
+    ///
+    /// When the underlying backend does not provide a dedicated existence
+    /// check, it is acceptable to implement this method by calling
+    /// [`StorageBackend::get`] and returning `Ok(result.is_some())`.
     async fn contains(&self, key: &[u8]) -> Result<bool>;
 
-    /// Iterate over keys with prefix.
+    /// Iterate over key-value pairs whose keys start with the given prefix.
     ///
-    /// Implementations should return keys in lexicographic order and may impose
-    /// internal limits; callers must not rely on unbounded result sizes.
+    /// # Memory and result-size considerations
+    ///
+    /// This method collects **all** matching key-value pairs into a `Vec` before
+    /// returning. For large prefixes, this can use significant memory or even
+    /// exhaust available memory if the result set is unbounded.
+    ///
+    /// Implementations **should** consider enforcing reasonable limits, internal
+    /// pagination, or other safeguards to avoid unbounded memory growth when
+    /// scanning large ranges. Callers are encouraged to use this method only for
+    /// prefixes that are expected to match a bounded number of entries.
+    ///
+    /// In the future, this trait may be extended with an iterator- or stream-based
+    /// scanning API for more memory-efficient access to large datasets.
     async fn scan_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
 
-    /// Batch write operations.
+    /// Apply a batch of write operations atomically.
     ///
-    /// Implementations must apply operations in order and atomically.
+    /// # Atomicity
+    ///
+    /// Implementations **must** provide all-or-nothing semantics:
+    ///
+    /// - If this method returns `Ok(())`, all operations in `ops` are
+    ///   guaranteed to have been applied.
+    /// - If this method returns an error, none of the operations in `ops`
+    ///   may be externally visible; the backend must behave as if the batch
+    ///   was never applied.
+    ///
+    /// In particular, callers may rely on the guarantee that a failed batch
+    /// will not leave the storage in a partially-updated state.
+    ///
+    /// # Durability
+    ///
+    /// `write_batch` does **not** imply durability on its own. Callers that
+    /// require the batch to be persisted to stable storage should call
+    /// [`flush`](StorageBackend::flush) after a successful `write_batch`.
     async fn write_batch(&self, ops: Vec<BatchOp>) -> Result<()>;
 
     /// Flush to disk.
