@@ -391,13 +391,18 @@ impl ZhtpUnifiedServer {
 
         // Initialize QUIC mesh protocol (uses configurable QUIC port to avoid conflicts)
         // QUIC is now REQUIRED (not optional) for all networking
+        info!(" [UNIFIED_SERVER] Calling init_quic_mesh()");
         let quic_mesh = Self::init_quic_mesh(quic_port, server_id).await
             .context("Failed to initialize QUIC mesh protocol - QUIC is required")?;
-        info!(" QUIC mesh protocol initialized on UDP port {}", quic_port);
+        info!(" [UNIFIED_SERVER] QUIC mesh protocol initialized on UDP port {}", quic_port);
+
+        info!(" [UNIFIED_SERVER] Wrapping quic_mesh in Arc");
         let quic_arc = Arc::new(quic_mesh);
-        
+
         // Set QUIC protocol on mesh_router for sending messages
+        info!(" [UNIFIED_SERVER] Setting QUIC protocol on mesh_router");
         mesh_router_arc.set_quic_protocol(quic_arc.clone()).await;
+        info!(" [UNIFIED_SERVER] QUIC protocol set on mesh_router");
 
         // Create DHT handler for pure UDP mesh protocol and register it on mesh_router
         // This MUST happen before register_api_handlers to ensure the actual mesh_router instance gets the handler
@@ -502,23 +507,35 @@ impl ZhtpUnifiedServer {
     
     /// Initialize QUIC mesh protocol with configurable port
     async fn init_quic_mesh(quic_port: u16, server_id: Uuid) -> Result<QuicMeshProtocol> {
+        info!(" [QUIC] Parsing bind address for port {}", quic_port);
         let bind_addr: std::net::SocketAddr = format!("0.0.0.0:{}", quic_port).parse()
             .context("Failed to parse QUIC bind address")?;
-        
+
         // Create server identity for UHP+Kyber authentication
         // Uses server_id UUID as basis for deterministic identity generation
+        info!(" [QUIC] Creating server identity");
         let identity = Self::create_server_identity(server_id)?;
 
         // Initialize QUIC mesh protocol with UHP+Kyber authentication
-        let mut quic_mesh = QuicMeshProtocol::new(identity, bind_addr)
-            .context("Failed to create QUIC mesh protocol")?;
-        
+        info!(" [QUIC] Creating QuicMeshProtocol instance");
+        let mut quic_mesh = match QuicMeshProtocol::new(identity, bind_addr) {
+            Ok(q) => {
+                info!(" [QUIC] ✅ QuicMeshProtocol created successfully");
+                q
+            },
+            Err(e) => {
+                info!(" [QUIC] ❌ QuicMeshProtocol::new() failed: {}", e);
+                return Err(anyhow::anyhow!("Failed to create QuicMeshProtocol: {}", e));
+            }
+        };
+
         // Create MeshMessageHandler for routing blockchain sync messages
         // Note: These will be populated properly when mesh_router is initialized
+        info!(" [QUIC] Creating message handler components");
         let peer_registry = Arc::new(RwLock::new(lib_network::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(std::collections::HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(std::collections::HashMap::new()));
-        
+
         let mut message_handler = lib_network::messaging::message_handler::MeshMessageHandler::new(
             peer_registry,
             long_range_relays,
@@ -526,17 +543,19 @@ impl ZhtpUnifiedServer {
         );
 
         // If integration layer has already registered a DHT payload sender, wire it now
+        info!(" [QUIC] Wiring message handler for DHT integration");
         crate::integration::wire_message_handler(&mut message_handler).await;
-        
+
         // Inject message handler into QUIC protocol
+        info!(" [QUIC] Injecting message handler into QUIC protocol");
         quic_mesh.set_message_handler(Arc::new(RwLock::new(message_handler)));
-        info!("✅ MeshMessageHandler injected into QUIC protocol for blockchain sync");
+        info!("✅ [QUIC] MeshMessageHandler injected into QUIC protocol for blockchain sync");
 
         // IMPORTANT: Don't call start_receiving() here!
         // QuicHandler.accept_loop() is now the SOLE entry point for all QUIC connections
         // This avoids two competing accept loops racing for connections
 
-        info!(" QUIC mesh protocol ready on UDP port {} (unified handler will accept connections)", quic_port);
+        info!(" [QUIC] QUIC mesh protocol ready on UDP port {} (unified handler will accept connections)", quic_port);
         Ok(quic_mesh)
     }
     
