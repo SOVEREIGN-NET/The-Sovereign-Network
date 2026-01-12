@@ -284,26 +284,26 @@ impl DaoEngine {
         let voting_end_time = current_time + (voting_period_days as u64 * 24 * 60 * 60);
 
         // Create proposal with 30% quorum (same as protocol upgrades since this affects consensus)
-        // Note: The proposal is created for validation and ID generation; 
+        // Note: The proposal is created for validation and ID generation;
         // actual storage happens on blockchain via DaoProposal transaction
-        let _proposal = DaoProposal {
-            id: proposal_id.clone(),
+        let _proposal = DaoProposal::new(
+            proposal_id.clone(),
             title,
             description,
-            proposer: proposer.clone(),
-            proposal_type: DaoProposalType::DifficultyParameterUpdate,
-            status: DaoProposalStatus::Active,
-            voting_start_time: current_time,
+            proposer.clone(),
+            DaoProposalType::DifficultyParameterUpdate,
+            DaoProposalStatus::Active,
+            current_time,
             voting_end_time,
-            quorum_required: 30, // 30% quorum for difficulty changes
-            vote_tally: DaoVoteTally::default(),
-            created_at: current_time,
-            created_at_height: self.get_current_block_height(),
-            execution_params: Some(self.encode_execution_params(&execution_params)?),
-            ubi_impact: None,
-            economic_impact: None,
-            privacy_level: PrivacyLevel::Public,
-        };
+            30, // 30% quorum for difficulty changes
+            DaoVoteTally::default(),
+            current_time,
+            self.get_current_block_height(),
+            Some(self.encode_execution_params(&execution_params)?),
+            None,
+            None,
+            PrivacyLevel::Public,
+        ).map_err(|e| anyhow::anyhow!(e))?;
 
         tracing::info!(
             "Validated difficulty update proposal {:?}: target_timespan={}, adjustment_interval={} - ready for blockchain submission",
