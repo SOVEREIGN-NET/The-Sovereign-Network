@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use lib_crypto::PublicKey;
 use lib_network::{NetworkOutput, global_output_queue};
-use lib_storage::UnifiedStorageSystem;
+use lib_storage::PersistentStorageSystem;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
@@ -178,9 +178,9 @@ pub fn spawn_network_output_processor(
     });
 }
 
-/// Wrapper type for Arc<RwLock<UnifiedStorageSystem>> to implement the UnifiedStorage trait.
+/// Wrapper type for Arc<RwLock<PersistentStorageSystem>> to implement the UnifiedStorage trait.
 /// Kept here to avoid lib-storage depending on lib-network.
-pub struct UnifiedStorageWrapper(pub Arc<RwLock<UnifiedStorageSystem>>);
+pub struct UnifiedStorageWrapper(pub Arc<RwLock<PersistentStorageSystem>>);
 
 #[async_trait]
 impl lib_network::storage_stub::UnifiedStorage for UnifiedStorageWrapper {
