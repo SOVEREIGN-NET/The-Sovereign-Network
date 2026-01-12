@@ -5,8 +5,6 @@
 
 #[cfg(test)]
 mod tests {
-    use zhtp_cli::argument_parsing::ZhtpCli;
-
     #[test]
     fn test_zhtp_cli_parse_help() {
         // Test that --help is recognized
