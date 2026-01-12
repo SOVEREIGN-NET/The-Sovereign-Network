@@ -74,6 +74,60 @@ pub struct DomainRecord {
     pub transfer_history: Vec<DomainTransfer>,
 }
 
+/// Resolved name record derived from authoritative chain state or cached views.
+///
+/// This is a read-only view model for resolver clients and must not be treated
+/// as authoritative on its own.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedNameRecord {
+    /// Domain name (e.g., "myapp.zhtp")
+    pub domain: String,
+    /// Owner DID or identity
+    pub owner: IdentityId,
+    /// Current Web4Manifest CID (runtime truth)
+    pub current_web4_manifest_cid: String,
+    /// Current version number
+    pub version: u64,
+    /// Registration timestamp
+    pub registered_at: u64,
+    /// Last update timestamp
+    pub updated_at: u64,
+    /// Expiration timestamp
+    pub expires_at: u64,
+    /// Content mappings (path -> content_hash) - cached from current manifest
+    pub content_mappings: HashMap<String, String>,
+    /// Domain metadata
+    pub metadata: DomainMetadata,
+    /// Governance pointer (DAO ID or contract address)
+    pub governance_pointer: Option<String>,
+    /// Resolution source hint
+    pub source: NameResolutionSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum NameResolutionSource {
+    Chain,
+    Cache,
+}
+
+impl From<DomainRecord> for ResolvedNameRecord {
+    fn from(record: DomainRecord) -> Self {
+        Self {
+            domain: record.domain,
+            owner: record.owner,
+            current_web4_manifest_cid: record.current_web4_manifest_cid,
+            version: record.version,
+            registered_at: record.registered_at,
+            updated_at: record.updated_at,
+            expires_at: record.expires_at,
+            content_mappings: record.content_mappings,
+            metadata: record.metadata,
+            governance_pointer: None,
+            source: NameResolutionSource::Cache,
+        }
+    }
+}
+
 /// Web4 Manifest - Immutable, content-addressed deployment snapshot
 ///
 /// Each deployment creates a new manifest with:

@@ -27,6 +27,7 @@
 //! - **Collision resistance**: BLAKE3's cryptographic strength
 
 use std::collections::HashMap;
+use crate::contracts::root_registry::{DaoId, NameHash};
 use crate::integration::crypto_integration::PublicKey;
 use crate::types::dao::DAOType;
 
@@ -97,6 +98,9 @@ pub struct DAORegistry {
     /// Lookup index: Token Address → DAO ID (enforces token uniqueness)
     token_to_dao: HashMap<PublicKey, [u8; 32]>,
 
+    /// Lookup index: Domain name hash → DAO ID
+    dao_id_by_domain: HashMap<NameHash, [u8; 32]>,
+
     /// Insertion-ordered list of DAO IDs (for list queries)
     dao_list: Vec<[u8; 32]>,
 
@@ -111,6 +115,7 @@ impl DAORegistry {
         Self {
             entries: HashMap::new(),
             token_to_dao: HashMap::new(),
+            dao_id_by_domain: HashMap::new(),
             dao_list: Vec::new(),
             next_dao_index: 0,
         }
@@ -228,6 +233,46 @@ impl DAORegistry {
                 Err("Token address not registered".to_string())
             }
         }
+    }
+
+    /// Set primary domain for a DAO (domain-based lookup index)
+    ///
+    /// Requires caller to be DAO governance (owner).
+    pub fn set_primary_domain(
+        &mut self,
+        dao_id: &DaoId,
+        name_hash: NameHash,
+        caller: &PublicKey,
+    ) -> Result<(), String> {
+        self.require_governance(dao_id, caller)?;
+
+        if let Some(existing) = self.dao_id_by_domain.get(&name_hash) {
+            if existing != dao_id {
+                return Err("Domain already linked to another DAO".to_string());
+            }
+        }
+
+        self.dao_id_by_domain.insert(name_hash, *dao_id);
+        Ok(())
+    }
+
+    /// Lookup DAO ID by primary domain hash
+    pub fn get_dao_id_by_domain(&self, name_hash: &NameHash) -> Option<DaoId> {
+        self.dao_id_by_domain.get(name_hash).copied()
+    }
+
+    /// Ensure caller is governance (owner) for the DAO
+    pub fn require_governance(&self, dao_id: &DaoId, caller: &PublicKey) -> Result<(), String> {
+        let entry = self
+            .entries
+            .get(dao_id)
+            .ok_or_else(|| "DAO not found".to_string())?;
+
+        if &entry.owner != caller {
+            return Err("Caller is not DAO governance".to_string());
+        }
+
+        Ok(())
     }
 
     /// Retrieve DAO entry by DAO ID

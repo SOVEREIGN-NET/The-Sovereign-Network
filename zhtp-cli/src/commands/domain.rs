@@ -28,6 +28,7 @@ pub enum DomainOperation {
     Info,
     Transfer,
     Release,
+    Migrate,
 }
 
 impl DomainOperation {
@@ -39,6 +40,7 @@ impl DomainOperation {
             DomainOperation::Info => "Get domain information",
             DomainOperation::Transfer => "Transfer domain to new owner",
             DomainOperation::Release => "Release domain from use",
+            DomainOperation::Migrate => "Migrate legacy domain records",
         }
     }
 }
@@ -53,6 +55,7 @@ pub fn action_to_operation(action: &DomainAction) -> DomainOperation {
         DomainAction::Info { .. } => DomainOperation::Info,
         DomainAction::Transfer { .. } => DomainOperation::Transfer,
         DomainAction::Release { .. } => DomainOperation::Release,
+        DomainAction::Migrate { .. } => DomainOperation::Migrate,
     }
 }
 
@@ -218,6 +221,20 @@ async fn handle_domain_command_impl(
                 trust.trust_node,
                 &cli.server,
                 force,
+                output,
+            )
+            .await
+        }
+        DomainAction::Migrate { keystore, trust } => {
+            output.header("Migrate Domain Records")?;
+
+            migrate_domains_impl(
+                keystore.as_str(),
+                trust.pin_spki.as_deref(),
+                trust.node_did.as_deref(),
+                trust.tofu,
+                trust.trust_node,
+                &cli.server,
                 output,
             )
             .await
@@ -458,6 +475,34 @@ async fn release_domain_impl(
     Err(CliError::ConfigError(
         "Domain release failed".to_string(),
     ))
+}
+
+/// Admin: migrate legacy domain records
+async fn migrate_domains_impl(
+    keystore: &str,
+    pin_spki: Option<&str>,
+    node_did: Option<&str>,
+    tofu: bool,
+    trust_node: bool,
+    server: &str,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let keystore_path = PathBuf::from(keystore);
+    let loaded = load_identity_from_keystore(&keystore_path)?;
+    let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
+    let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
+
+    let response = client
+        .post_json("/api/v1/web4/domains/admin/migrate-domains", &serde_json::json!({}))
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Failed to migrate domains: {}", e)))?;
+
+    let info: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ConfigError(format!("Failed to parse migrate response: {}", e)))?;
+
+    let migrated = info.get("migrated").and_then(|v| v.as_u64()).unwrap_or(0);
+    output.success(&format!("✓ Migrated {} domain records", migrated))?;
+    Ok(())
 }
 
 // ============================================================================
