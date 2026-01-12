@@ -195,77 +195,76 @@ jobs:
 
   # Deploy to dev server (development branch) - uses separate secrets
   # Runs on: push to development OR manual trigger on development
-  # NOTE: Disabled until zhtp library is converted to a binary crate
-  # deploy-development:
-  #   name: Deploy to Dev Server
-  #   needs: smoke
-  #   runs-on: ubuntu-latest
-  #   if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/development'
-  #   steps:
-  #     - name: Checkout (for service file)
-  #       uses: actions/checkout@v4
-  #       with:
-  #         sparse-checkout: deploy
-  #
-  #     - name: Download Release Artifact
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: zhtp-binary
-  #
-  #     - name: Setup SSH
-  #       env:
-  #         SSH_KEY: ${{ secrets.DEV_DEPLOY_SSH_KEY }}
-  #         DEV_HOST_1: ${{ secrets.DEV_DEPLOY_HOST }}
-  #         DEV_HOST_2: ${{ secrets.DEV_DEPLOY_HOST_2 }}
-  #       run: |
-  #         mkdir -p ~/.ssh
-  #         echo "$SSH_KEY" > ~/.ssh/deploy_key
-  #         chmod 600 ~/.ssh/deploy_key
-  #         # Scan both dev servers
-  #         for host in "$DEV_HOST_1" "$DEV_HOST_2"; do
-  #           for i in 1 2 3; do
-  #             ssh-keyscan -T 10 -H "$host" >> ~/.ssh/known_hosts && break
-  #             echo "ssh-keyscan attempt $i for $host failed, retrying..."
-  #             sleep 2
-  #           done
-  #         done
-  #
-  #     - name: Deploy to Dev Server 1
-  #       env:
-  #         DEV_HOST: ${{ secrets.DEV_DEPLOY_HOST }}
-  #         DEV_USER: ${{ secrets.DEV_DEPLOY_USER }}
-  #       run: |
-  #         scp -i ~/.ssh/deploy_key ./zhtp "${DEV_USER}@${DEV_HOST}:/opt/zhtp/zhtp.new"
-  #         scp -i ~/.ssh/deploy_key ./deploy/zhtp-dev.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
-  #         ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
-  #           cd /opt/zhtp &&
-  #           systemctl stop zhtp 2>/dev/null || true &&
-  #           if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
-  #           mv zhtp.new zhtp &&
-  #           chmod +x zhtp &&
-  #           mv /tmp/zhtp.service /etc/systemd/system/zhtp.service &&
-  #           systemctl daemon-reload &&
-  #           systemctl enable zhtp &&
-  #           systemctl start zhtp &&
-  #           echo "Deployed to DEV SERVER 1 at $(date)"
-  #         '
-  #
-  #     - name: Deploy to Dev Server 2
-  #       env:
-  #         DEV_HOST: ${{ secrets.DEV_DEPLOY_HOST_2 }}
-  #         DEV_USER: ${{ secrets.DEV_DEPLOY_USER }}
-  #       run: |
-  #         scp -i ~/.ssh/deploy_key ./zhtp "${DEV_USER}@${DEV_HOST}:/opt/zhtp/zhtp.new"
-  #         scp -i ~/.ssh/deploy_key ./deploy/zhtp-dev.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
-  #         ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
-  #           cd /opt/zhtp &&
-  #           systemctl stop zhtp 2>/dev/null || true &&
-  #           if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
-  #           mv zhtp.new zhtp &&
-  #           chmod +x zhtp &&
-  #           mv /tmp/zhtp.service /etc/systemd/system/zhtp.service &&
-  #           systemctl daemon-reload &&
-  #           systemctl enable zhtp &&
-  #           systemctl start zhtp &&
-  #           echo "Deployed to DEV SERVER 2 at $(date)"
-  #         '
+  deploy-development:
+    name: Deploy to Dev Server
+    needs: smoke
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/development'
+    steps:
+      - name: Checkout (for service file)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: deploy
+
+      - name: Download Release Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zhtp-cli-binary
+
+      - name: Setup SSH
+        env:
+          SSH_KEY: ${{ secrets.DEV_DEPLOY_SSH_KEY }}
+          DEV_HOST_1: ${{ secrets.DEV_DEPLOY_HOST }}
+          DEV_HOST_2: ${{ secrets.DEV_DEPLOY_HOST_2 }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Scan both dev servers
+          for host in "$DEV_HOST_1" "$DEV_HOST_2"; do
+            for i in 1 2 3; do
+              ssh-keyscan -T 10 -H "$host" >> ~/.ssh/known_hosts && break
+              echo "ssh-keyscan attempt $i for $host failed, retrying..."
+              sleep 2
+            done
+          done
+
+      - name: Deploy to Dev Server 1 (zhtp-dev)
+        env:
+          DEV_HOST: ${{ secrets.DEV_DEPLOY_HOST }}
+          DEV_USER: ${{ secrets.DEV_DEPLOY_USER }}
+        run: |
+          scp -i ~/.ssh/deploy_key ./zhtp-cli "${DEV_USER}@${DEV_HOST}:/opt/zhtp/zhtp.new"
+          scp -i ~/.ssh/deploy_key ./deploy/zhtp-dev.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
+          ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
+            cd /opt/zhtp &&
+            systemctl stop zhtp 2>/dev/null || true &&
+            if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
+            mv zhtp.new zhtp &&
+            chmod +x zhtp &&
+            mv /tmp/zhtp.service /etc/systemd/system/zhtp.service &&
+            systemctl daemon-reload &&
+            systemctl enable zhtp &&
+            systemctl start zhtp &&
+            echo "Deployed to DEV SERVER 1 at $(date)"
+          '
+
+      - name: Deploy to Dev Server 2 (zhtp-dev-2)
+        env:
+          DEV_HOST: ${{ secrets.DEV_DEPLOY_HOST_2 }}
+          DEV_USER: ${{ secrets.DEV_DEPLOY_USER }}
+        run: |
+          scp -i ~/.ssh/deploy_key ./zhtp-cli "${DEV_USER}@${DEV_HOST}:/opt/zhtp/zhtp.new"
+          scp -i ~/.ssh/deploy_key ./deploy/zhtp-dev.service "${DEV_USER}@${DEV_HOST}:/tmp/zhtp.service"
+          ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
+            cd /opt/zhtp &&
+            systemctl stop zhtp 2>/dev/null || true &&
+            if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
+            mv zhtp.new zhtp &&
+            chmod +x zhtp &&
+            mv /tmp/zhtp.service /etc/systemd/system/zhtp.service &&
+            systemctl daemon-reload &&
+            systemctl enable zhtp &&
+            systemctl start zhtp &&
+            echo "Deployed to DEV SERVER 2 at $(date)"
+          '

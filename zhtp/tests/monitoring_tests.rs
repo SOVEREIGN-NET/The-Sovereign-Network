@@ -9,6 +9,7 @@ use std::time::Duration;
 use zhtp::monitoring::{
     MonitoringSystem, MetricsCollector, HealthMonitor, AlertManager,
     SystemMetrics, Alert, AlertLevel, NodeHealth,
+    set_global_alert_manager, clear_global_alert_manager, get_global_alert_manager,
 };
 use zhtp::monitoring::alerting::AlertThresholds;
 
@@ -337,22 +338,175 @@ async fn test_concurrent_monitoring_operations() -> Result<()> {
 async fn test_monitoring_memory_usage() -> Result<()> {
     let mut monitoring = MonitoringSystem::new().await?;
     monitoring.start().await?;
-    
+
     // Record many metrics to test memory usage
     let mut tags = HashMap::new();
     tags.insert("stress_test".to_string(), "memory".to_string());
-    
+
     for i in 0..1000 {
         monitoring.record_metric("memory_stress_test", i as f64, tags.clone()).await?;
-        
+
         if i % 100 == 0 {
             // Check memory usage periodically
             let metrics = monitoring.get_system_metrics().await?;
             assert!(metrics.memory_usage < 95.0, "Memory usage should not exceed 95%");
         }
     }
-    
+
     monitoring.stop().await?;
-    
+
+    Ok(())
+}
+
+// ============================================================================
+// RESTART-SAFETY TESTS
+// These tests verify that the global alert manager is correctly managed
+// during start/stop cycles, preventing restart from using stale instances.
+// ============================================================================
+
+#[tokio::test]
+async fn test_global_alert_manager_reset() -> Result<()> {
+    // Initially, no global manager
+    assert!(
+        get_global_alert_manager().is_none(),
+        "Global manager should not exist initially"
+    );
+
+    // Create and set first manager
+    let manager1 = AlertManager::new().await?;
+    let manager1_arc = std::sync::Arc::new(manager1);
+    set_global_alert_manager(manager1_arc.clone());
+
+    // Verify it was set
+    assert!(
+        get_global_alert_manager().is_some(),
+        "Global manager should exist after set_global_alert_manager"
+    );
+
+    let retrieved1 = get_global_alert_manager().unwrap();
+    assert!(
+        std::sync::Arc::ptr_eq(&manager1_arc, &retrieved1),
+        "Should retrieve the exact same Arc instance"
+    );
+
+    // Clear the global
+    clear_global_alert_manager();
+
+    // Verify it's cleared
+    assert!(
+        get_global_alert_manager().is_none(),
+        "Global manager should be None after clear_global_alert_manager"
+    );
+
+    // Create and set a different manager
+    let manager2 = AlertManager::new().await?;
+    let manager2_arc = std::sync::Arc::new(manager2);
+    set_global_alert_manager(manager2_arc.clone());
+
+    // Verify the new one is set
+    assert!(
+        get_global_alert_manager().is_some(),
+        "Global manager should exist after second set"
+    );
+
+    let retrieved2 = get_global_alert_manager().unwrap();
+    assert!(
+        std::sync::Arc::ptr_eq(&manager2_arc, &retrieved2),
+        "Should retrieve the new Arc instance"
+    );
+
+    // Verify it's different from the first
+    assert!(
+        !std::sync::Arc::ptr_eq(&manager1_arc, &retrieved2),
+        "Second manager should be different from first"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_monitoring_system_restart() -> Result<()> {
+    // **Restart-safety test**: Verify that restarting creates a new manager instance,
+    // not a reused stopped one. This prevents silent failures where a stopped manager
+    // is used without operators noticing.
+
+    // PHASE 1: Start monitoring, get manager pointer
+    let mut monitoring1 = MonitoringSystem::new().await?;
+    monitoring1.start().await?;
+
+    let manager1 = get_global_alert_manager().expect("Manager should exist after start");
+    let manager1_ptr = std::sync::Arc::as_ptr(&manager1);
+
+    // PHASE 2: Stop monitoring
+    monitoring1.stop().await?;
+
+    // CRITICAL: Verify global is cleared (prevents stale manager reuse)
+    assert!(
+        get_global_alert_manager().is_none(),
+        "Global manager should be cleared after stop() to prevent stale reuse"
+    );
+
+    // PHASE 3: Restart monitoring with a NEW system
+    let mut monitoring2 = MonitoringSystem::new().await?;
+    monitoring2.start().await?;
+
+    // Get the new manager
+    let manager2 = get_global_alert_manager().expect("Manager should exist after restart");
+    let manager2_ptr = std::sync::Arc::as_ptr(&manager2);
+
+    // **CRITICAL INVARIANT**: Verify it's a DIFFERENT instance
+    // This is the core restart-safety guarantee: restarts don't reuse stale managers
+    assert_ne!(
+        manager1_ptr, manager2_ptr,
+        "Restart MUST produce a new manager instance, never reuse the stopped one"
+    );
+
+    // PHASE 4: Cleanup
+    monitoring2.stop().await?;
+    assert!(
+        get_global_alert_manager().is_none(),
+        "Global should be cleared after final stop"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_alert_manager_drop_safety() -> Result<()> {
+    // Test that attempting to get a manager after it's dropped (cleared)
+    // returns None gracefully, not a stale reference
+
+    let mut monitoring = MonitoringSystem::new().await?;
+    monitoring.start().await?;
+
+    // Create an alert while manager exists
+    let test_alert = Alert {
+        id: "drop_test".to_string(),
+        level: AlertLevel::Info,
+        title: "Drop Test".to_string(),
+        message: "Testing safe drop behavior".to_string(),
+        source: "test".to_string(),
+        timestamp: chrono::Utc::now().timestamp() as u64,
+        metadata: HashMap::new(),
+    };
+
+    if let Some(mgr) = get_global_alert_manager() {
+        mgr.trigger_alert(test_alert).await?;
+        let alerts = mgr.get_active_alerts().await?;
+        assert!(!alerts.is_empty(), "Alert should be stored in manager");
+    }
+
+    // Stop monitoring (which clears the global)
+    monitoring.stop().await?;
+
+    // Try to get the manager - should return None, not a stale ref
+    assert!(
+        get_global_alert_manager().is_none(),
+        "Global should be None after stop, preventing stale access"
+    );
+
+    // This is the safety guarantee: you cannot accidentally use a stopped manager
+    // because it's not reachable through the global anymore
+
     Ok(())
 }

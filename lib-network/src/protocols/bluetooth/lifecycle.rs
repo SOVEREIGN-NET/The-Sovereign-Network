@@ -26,6 +26,7 @@ impl BluetoothMeshProtocol {
             max_connections: config::DEFAULT_MAX_CONNECTIONS,
             current_connections: Arc::new(RwLock::new(HashMap::new())),
             discovery_active: false,
+            enabled: true,  // Default to enabled; mesh server will set to false if config disables it
             tracked_devices: Arc::new(RwLock::new(HashMap::new())),
             address_mapping: Arc::new(RwLock::new(HashMap::new())),
             zhtp_monitor_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -61,5 +62,14 @@ impl BluetoothMeshProtocol {
     ) {
         *self.gatt_message_tx.write().await = Some(tx);
         info!(" GATT message channel configured");
+    }
+
+    /// Set whether Bluetooth is enabled (SAFETY: defensive configuration)
+    /// Called by mesh server after filtering based on config.toml
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if !enabled {
+            info!("⊘ Bluetooth LE disabled by configuration - discovery will be refused if attempted");
+        }
     }
 }

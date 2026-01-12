@@ -59,9 +59,18 @@ impl BluetoothRouter {
         blockchain_provider: Option<Arc<dyn lib_network::blockchain_sync::BlockchainProvider>>,
         sync_coordinator: Arc<lib_network::blockchain_sync::SyncCoordinator>,
         mesh_router: Arc<MeshRouter>,
+        enable_bluetooth: bool,
     ) -> Result<()> {
+        // AUTHORITATIVE CONFIG LAYER: Check if Bluetooth should be enabled
+        // This is the policy enforcement point where config decisions are applied
+        if !enable_bluetooth {
+            info!("⊘ Bluetooth LE disabled by configuration (enable_bluetooth=false)");
+            info!("   Skipping Bluetooth initialization");
+            return Ok(());
+        }
+
         info!("📱 Initializing Bluetooth mesh protocol for phone connectivity...");
-        
+
         // Create Bluetooth mesh protocol instance
         let mut bluetooth_protocol = BluetoothMeshProtocol::new(self.node_id, our_public_key)?;
         

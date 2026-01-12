@@ -178,7 +178,7 @@ impl DAORegistry {
         // Defensive check: DAO ID should not already exist (extremely unlikely with BLAKE3)
         if self.entries.contains_key(&dao_id) {
             return Err(format!(
-                "DAO ID collision detected (probability ~1 in 2^256): {}",
+                "DAO ID collision detected (cryptographically implausible): {}",
                 hex::encode(&dao_id)
             ));
         }
@@ -246,41 +246,45 @@ impl DAORegistry {
     /// # Invariant
     /// Order is guaranteed to be insertion order and stable across upgrades
     ///
-    /// # Panics
-    /// If dao_list and entries diverge (catastrophic registry corruption)
-    /// This is the correct behavior: silent data loss is unacceptable
-    pub fn list_daos(&self) -> Vec<DAOEntry> {
-        self.dao_list
-            .iter()
-            .map(|&dao_id| {
-                self.entries.get(&dao_id)
-                    .cloned()
-                    .expect(&format!(
-                        "CRITICAL: DAO registry corrupted - dao_list contains ID {} but entry not found. \
+    /// # Returns
+    /// Returns `Ok(Vec<DAOEntry>)` on success, or `Err` if registry is corrupted
+    /// (dao_list and entries out of sync). This is a fail-safe to prevent
+    /// silent data loss - corruption is always reported, never silently ignored.
+    pub fn list_daos(&self) -> Result<Vec<DAOEntry>, String> {
+        let mut entries = Vec::new();
+        for &dao_id in &self.dao_list {
+            match self.entries.get(&dao_id) {
+                Some(entry) => entries.push(entry.clone()),
+                None => {
+                    return Err(format!(
+                        "DAO registry corrupted: dao_list contains ID {} but entry not found. \
                          This indicates data structure desynchronization.",
                         hex::encode(&dao_id)
                     ))
-            })
-            .collect()
+                }
+            }
+        }
+        Ok(entries)
     }
 
     /// List all DAOs with their IDs
     ///
-    /// # Panics
-    /// If dao_list and entries diverge (catastrophic registry corruption)
-    pub fn list_daos_with_ids(&self) -> Vec<(DAOEntry, [u8; 32])> {
-        self.dao_list
-            .iter()
-            .map(|&dao_id| {
-                let entry = self.entries.get(&dao_id)
-                    .cloned()
-                    .expect(&format!(
-                        "CRITICAL: DAO registry corrupted - dao_list contains ID {} but entry not found",
+    /// # Returns
+    /// Returns `Ok(Vec<(DAOEntry, ID)>)` on success, or `Err` if registry is corrupted.
+    pub fn list_daos_with_ids(&self) -> Result<Vec<(DAOEntry, [u8; 32])>, String> {
+        let mut result = Vec::new();
+        for &dao_id in &self.dao_list {
+            match self.entries.get(&dao_id) {
+                Some(entry) => result.push((entry.clone(), dao_id)),
+                None => {
+                    return Err(format!(
+                        "DAO registry corrupted: dao_list contains ID {} but entry not found",
                         hex::encode(&dao_id)
-                    ));
-                (entry, dao_id)
-            })
-            .collect()
+                    ))
+                }
+            }
+        }
+        Ok(result)
     }
 
     /// Update DAO metadata
@@ -321,20 +325,7 @@ impl DAORegistry {
         }
 
         // === MUTATION PHASE ===
-        let old_hash = entry.metadata_hash;
         entry.metadata_hash = new_metadata_hash;
-
-        // Emit event (if logging is available)
-        // Include both old and new hash for audit trail and compliance
-        #[cfg(feature = "logging")]
-        {
-            tracing::info!(
-                "DAO metadata updated: {} (old_hash: {} → new_hash: {})",
-                hex::encode(&dao_id),
-                hex::encode(&old_hash),
-                hex::encode(&new_metadata_hash)
-            );
-        }
 
         Ok(())
     }
@@ -594,7 +585,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let entry = registry.list_daos()[0].clone();
+        let entry = registry.list_daos().unwrap()[0].clone();
         assert_eq!(entry.created_at, 0);
     }
 
@@ -657,7 +648,7 @@ mod tests {
             })
             .collect();
 
-        let list = registry.list_daos_with_ids();
+        let list = registry.list_daos_with_ids().unwrap();
         assert_eq!(list.len(), 3);
 
         // Verify order
@@ -1080,12 +1071,12 @@ mod tests {
             assert!(registry.dao_list.contains(&dao_id));
         }
 
-        // Verify list_daos() returns all without panic
-        let daos = registry.list_daos();
+        // Verify list_daos() returns all without error
+        let daos = registry.list_daos().unwrap();
         assert_eq!(daos.len(), 5);
 
-        // Verify list_daos_with_ids() returns all without panic
-        let daos_with_ids = registry.list_daos_with_ids();
+        // Verify list_daos_with_ids() returns all without error
+        let daos_with_ids = registry.list_daos_with_ids().unwrap();
         assert_eq!(daos_with_ids.len(), 5);
 
         // Verify counts match

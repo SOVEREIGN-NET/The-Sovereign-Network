@@ -17,9 +17,9 @@ pub async fn create_test_mesh_server() -> Result<ZhtpMeshServer> {
         NetworkProtocol::LoRaWAN,
     ];
     
-    // Create dummy owner key for testing 
+    // Create dummy owner key for testing
     let owner_key = lib_crypto::PublicKey::new(node_id.to_vec());
-    ZhtpMeshServer::new(node_id, owner_key, storage, protocols).await
+    ZhtpMeshServer::new(node_id, owner_key, storage, protocols, vec![]).await
 }
 
 /// Test storage system that implements the UnifiedStorageSystem interface

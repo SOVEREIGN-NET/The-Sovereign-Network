@@ -2154,7 +2154,12 @@ impl RuntimeOrchestrator {
     pub async fn discover_network_with_retry(&mut self, is_edge_node: bool) -> Result<Option<ExistingNetworkInfo>> {
         use crate::discovery_coordinator::DiscoveryCoordinator;
         
-        let discovery = DiscoveryCoordinator::new();
+        let config = crate::discovery_coordinator::DiscoveryConfig::new(
+            vec![],
+            9333,
+            vec![crate::discovery_coordinator::DiscoveryProtocol::UdpMulticast],
+        );
+        let discovery = DiscoveryCoordinator::new(config);
         discovery.start_event_listener().await;
         
         if is_edge_node {

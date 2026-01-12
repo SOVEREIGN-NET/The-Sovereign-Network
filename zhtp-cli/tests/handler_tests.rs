@@ -4,8 +4,6 @@
 
 #[cfg(test)]
 mod tests {
-    use zhtp_cli::argument_parsing::{ZhtpCli, ZhtpCommand};
-
     // Test handler enumeration
     #[test]
     fn test_all_handlers_exist() {

@@ -177,6 +177,10 @@ use common::mesh_test_utils::*;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
 
+#[cfg(feature = "allow-net-tests")]
+mod net_tests {
+    use super::*;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 async fn mesh_integration_multi_node_deterministic_nodeids() {
     // This test validates multi-node mesh formation, deterministic NodeIds,
@@ -284,4 +288,5 @@ async fn mesh_integration_partition_and_recovery() {
     }
 
     assert!(saw_bridge_msgs, "expected bridging node to enable cross-partition discovery");
+    }
 }

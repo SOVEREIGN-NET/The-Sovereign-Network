@@ -7,6 +7,8 @@
 #[cfg(feature = "contracts")]
 pub mod base;
 #[cfg(feature = "contracts")]
+pub mod types;
+#[cfg(feature = "contracts")]
 pub mod contacts;
 #[cfg(feature = "contracts")]
 pub mod executor;
@@ -28,6 +30,10 @@ pub mod treasuries;
 pub mod emergency_reserve;
 #[cfg(feature = "contracts")]
 pub mod dao_registry;
+#[cfg(feature = "contracts")]
+pub mod dev_grants;
+#[cfg(feature = "contracts")]
+pub mod ubi_distribution;
 #[cfg(feature = "contracts")]
 pub mod sov_swap;
 #[cfg(feature = "contracts")]
@@ -70,6 +76,10 @@ pub use treasuries::SovDaoTreasury;
 pub use emergency_reserve::EmergencyReserve;
 #[cfg(feature = "contracts")]
 pub use dao_registry::{DAORegistry, DAOEntry, derive_dao_id};
+#[cfg(feature = "contracts")]
+pub use dev_grants::{DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement, ProposalStatus, Error as DevGrantsError};
+#[cfg(feature = "contracts")]
+pub use ubi_distribution::{UbiDistributor, MonthIndex, Error as UbiError};
 #[cfg(feature = "contracts")]
 pub use sov_swap::{SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError};
 #[cfg(feature = "contracts")]

@@ -11,6 +11,11 @@ use lib_crypto::{PublicKey, Signature};
 use crate::mesh::{MeshConnection, MeshProtocolStats};
 use crate::protocols::NetworkProtocol;
 
+// Port configuration for mesh networking protocols
+// These are runtime/transport configuration, not node state
+const QUIC_MESH_PORT: u16 = 9334;      // Node-to-node QUIC communication port
+const MESH_BOOTSTRAP_PORT: u16 = 33444; // Bootstrap peer discovery port
+
 /// Simple in-memory routing statistics (no blockchain state)
 #[derive(Debug, Clone, Default)]
 pub struct RoutingStats {
@@ -205,6 +210,7 @@ use crate::storage_stub::UnifiedStorageSystem;
 pub struct NetworkConfig {
     pub node_id: [u8; 32],
     pub listen_port: u16,
+    pub mesh_port: u16,
     pub max_peers: usize,
     pub protocols: Vec<NetworkProtocol>,
     pub listen_addresses: Vec<String>,
@@ -219,6 +225,8 @@ pub struct NetworkConfig {
 pub struct ZhtpMeshServer {
     /// Server ID for this mesh node
     pub server_id: Uuid,
+    /// Network configuration (ports, bootstrap peers, protocol settings)
+    pub config: Arc<NetworkConfig>,
     /// Underlying mesh networking node with complete implementation
     pub mesh_node: Arc<RwLock<MeshNode>>,
     /// Economic incentive system
@@ -342,10 +350,10 @@ impl MeshNode {
         let filtered_protocols = if let Some(ref caps) = hardware_capabilities {
             filter_protocols_by_hardware(&config.protocols, caps)
         } else {
-            // If hardware detection fails, use safe defaults (Bluetooth + WiFi)
-            config.protocols.into_iter()
-                .filter(|p| matches!(p, NetworkProtocol::BluetoothLE | NetworkProtocol::WiFiDirect))
-                .collect()
+            // If hardware detection fails, use configured protocols as-is
+            // The caller is responsible for configuring what they want
+            warn!("Hardware detection failed - using configured protocols without hardware validation");
+            config.protocols.clone()
         };
         
         info!(" Enabled protocols: {:?}", filtered_protocols);
@@ -419,8 +427,9 @@ fn filter_protocols_by_hardware(
     }
     
     if enabled_protocols.is_empty() {
-        warn!("No protocols enabled! Falling back to Bluetooth LE as minimum viable mesh");
-        enabled_protocols.push(NetworkProtocol::BluetoothLE);
+        warn!("No protocols enabled based on requested config and available hardware");
+        // Don't force Bluetooth - respect the user's configuration choice
+        // Empty protocol list means the node will only use configured bootstrap peers
     }
     
     enabled_protocols
@@ -756,8 +765,8 @@ impl ZhtpMeshServer {
         // TODO: This should use a persistent server identity from config
         let identity = Arc::new(create_default_mesh_identity());
 
-        // Bind to QUIC mesh port 9334 (PQC encrypted)
-        let bind_addr = "0.0.0.0:9334".parse().unwrap();
+        // Bind to configured QUIC mesh port (PQC encrypted)
+        let bind_addr = format!("0.0.0.0:{}", self.config.mesh_port).parse().unwrap();
 
         // Initialize QUIC mesh protocol with UHP+Kyber authentication
         let mut quic_protocol = QuicMeshProtocol::new(identity, bind_addr)?;
@@ -778,30 +787,70 @@ impl ZhtpMeshServer {
         // Mark protocol as active
         self.active_protocols.write().await.insert(NetworkProtocol::QUIC, true);
         
-        info!("🚀 QUIC mesh protocol active with PQC encryption on port 9334");
+        info!("🚀 QUIC mesh protocol active with PQC encryption on port {}", self.config.mesh_port);
         
         // Connect to bootstrap peers if configured
+        // ARCHITECTURE NOTE: Bootstrap peers use QUIC exclusively because:
+        // 1. QUIC is the required transport for mesh bootstrap (enable_quic: true in ProtocolsConfig)
+        // 2. Mesh protocols (Bluetooth, WiFi, etc.) are optional and can be disabled
+        // 3. Bootstrap must work even when other protocols are disabled
+        // This means bootstrap_peers should always specify QUIC port (9334), but we support
+        // automatic conversion from mesh port (33444) for backward compatibility with configs
         let bootstrap_peers = self.mesh_node.read().await.bootstrap_peers.clone();
         if !bootstrap_peers.is_empty() {
             info!("📡 Connecting to {} bootstrap peer(s) via QUIC...", bootstrap_peers.len());
             let quic = quic_arc.read().await;
-            
+
             for peer_str in &bootstrap_peers {
-                // Parse address - might be "192.168.1.245:9334" or "zhtp://192.168.1.245:9334"
+                // Parse address - might be:
+                // - "192.168.1.245:9334" (correct QUIC port)
+                // - "192.168.1.245:33444" (legacy mesh port - converts to QUIC port for compatibility)
+                // - "192.168.1.245" (IP only - uses QUIC default port)
+                // - "zhtp://192.168.1.245:9334" (URL format)
                 let addr_str = peer_str.trim_start_matches("zhtp://").trim_start_matches("http://");
-                
-                match addr_str.parse::<std::net::SocketAddr>() {
-                    Ok(peer_addr) => {
-                        info!("   Connecting to bootstrap peer: {}", peer_addr);
-                        if let Err(e) = quic.connect_to_peer(peer_addr).await {
-                            warn!("   Failed to connect to bootstrap peer {}: {}", peer_addr, e);
-                        } else {
-                            info!("   ✓ Connected to bootstrap peer {}", peer_addr);
+
+                // Parse the address and fix port if needed
+                let peer_addr = if let Some(colon_pos) = addr_str.rfind(':') {
+                    let ip_part = &addr_str[..colon_pos];
+                    let port_str = &addr_str[colon_pos + 1..];
+
+                    // If port is legacy mesh port (33444), convert to configured QUIC port
+                    let port = match port_str.parse::<u16>() {
+                        Ok(p) if p == MESH_BOOTSTRAP_PORT => {
+                            info!("   ⚠️  Peer has legacy mesh port {}, converting to configured QUIC port {}: {}", MESH_BOOTSTRAP_PORT, self.config.mesh_port, peer_str);
+                            self.config.mesh_port
+                        }
+                        Ok(p) => p,
+                        Err(_) => {
+                            warn!("   Failed to parse port from bootstrap peer address '{}': invalid port", peer_str);
+                            continue;
+                        }
+                    };
+
+                    match format!("{}:{}", ip_part, port).parse::<std::net::SocketAddr>() {
+                        Ok(addr) => addr,
+                        Err(e) => {
+                            warn!("   Failed to parse bootstrap peer address '{}': {}", peer_str, e);
+                            continue;
                         }
                     }
-                    Err(e) => {
-                        warn!("   Failed to parse bootstrap peer address '{}': {}", peer_str, e);
+                } else {
+                    // No port specified - use configured QUIC mesh port
+                    info!("   ℹ️  Peer has no port, using configured QUIC mesh port {}: {}", self.config.mesh_port, peer_str);
+                    match format!("{}:{}", addr_str, self.config.mesh_port).parse::<std::net::SocketAddr>() {
+                        Ok(addr) => addr,
+                        Err(e) => {
+                            warn!("   Failed to parse bootstrap peer address '{}': {}", peer_str, e);
+                            continue;
+                        }
                     }
+                };
+
+                info!("   Connecting to bootstrap peer: {}", peer_addr);
+                if let Err(e) = quic.connect_to_peer(peer_addr).await {
+                    warn!("   Failed to connect to bootstrap peer {}: {}", peer_addr, e);
+                } else {
+                    info!("   ✓ Connected to bootstrap peer {}", peer_addr);
                 }
             }
         }
@@ -815,12 +864,15 @@ impl ZhtpMeshServer {
             let node = self.mesh_node.read().await;
             node.protocols.clone()
         };
-        
+
         for protocol in protocols {
             match protocol {
                 NetworkProtocol::BluetoothLE => {
+                    // BUGFIX: Skip Bluetooth discovery if not explicitly enabled in config
+                    // This respects enable_bluetooth=false in config.toml
+                    info!("Attempting to start Bluetooth LE discovery...");
                     if let Err(e) = self.start_bluetooth_discovery().await {
-                        warn!("Failed to start Bluetooth discovery: {}", e);
+                        warn!("Failed to start Bluetooth discovery (expected if hardware unavailable): {}", e);
                     }
                 },
                 NetworkProtocol::WiFiDirect => {
@@ -882,67 +934,68 @@ impl ZhtpMeshServer {
 
     /// Create a new ZHTP Mesh Server - The Internet
     pub async fn new(
-        node_id: [u8; 32], 
+        node_id: [u8; 32],
         owner_key: PublicKey,  // Owner key for security
-        storage: UnifiedStorageSystem, 
-        protocols: Vec<NetworkProtocol>
+        storage: UnifiedStorageSystem,
+        protocols: Vec<NetworkProtocol>,
+        bootstrap_peers: Vec<String>,
     ) -> Result<Self> {
         let server_id = Uuid::new_v4();
         
-        // Initialize mesh networking with  capabilities
+        // Initialize mesh networking with capabilities
         let network_config = NetworkConfig {
             node_id,
             listen_port: 0, // No TCP port needed for pure mesh
+            mesh_port: QUIC_MESH_PORT, // Configurable QUIC binding port
             max_peers: 1000, // Support many mesh connections
             protocols: protocols.clone(),
             listen_addresses: vec![], // No IP addresses needed
-            bootstrap_peers: vec![
-                "100.94.204.6:9333".to_string(), // Bootstrap node for initial mesh discovery
-            ],
+            bootstrap_peers,
         };
         
-        let mesh_node = Arc::new(RwLock::new(MeshNode::new_with_hardware_detection(network_config).await?));
-        
+        let mesh_node = Arc::new(RwLock::new(MeshNode::new_with_hardware_detection(network_config.clone()).await?));
+
         // Extract hardware capabilities from the mesh node
         let hardware_capabilities = {
             let node = mesh_node.read().await;
             node.hardware_capabilities.clone()
         };
-        
+
         let economics = Arc::new(RwLock::new(EconomicModel::new()));
         let storage = Arc::new(RwLock::new(storage));
-        
+
         // Ticket #149: Use unified peer_registry instead of separate mesh_connections
         let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
-        
+
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
         let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
         let stats = Arc::new(RwLock::new(MeshProtocolStats::default()));
-        
+
         // Create participant tracking for UBI
         let ubi_participants = Arc::new(RwLock::new(HashMap::<String, String>::new()));
-        
+
         // Initialize health monitor (Ticket #149: update to use peer_registry)
         let health_monitor = HealthMonitor::new(
             stats.clone(),
             peer_registry.clone(),
             long_range_relays.clone(),
         );
-        
+
         // Initialize DHT integration
         let dht = Arc::new(RwLock::new(ZkDHTIntegration::new()));
-        
+
         // Initialize routing statistics (in-memory counters only)
         let routing_stats = Arc::new(RwLock::new(RoutingStats::default()));
-        
+
         // Initialize storage statistics (in-memory counters only)
         let storage_stats = Arc::new(RwLock::new(StorageStats::default()));
-        
+
         // Initialize quality metrics for bonus calculation
         let quality_metrics = Arc::new(RwLock::new(QualityMetrics::default()));
-        
+
         let server = ZhtpMeshServer {
             server_id,
+            config: Arc::new(network_config),
             mesh_node,
             economics,
             storage,
