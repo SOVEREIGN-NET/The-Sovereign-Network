@@ -40,9 +40,14 @@ humantime-serde = "1.1"
 # Persistent key-value storage backend (DB-008)
 sled = "0.34"
 
+# [DB-009] SQLite backend for structured data
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"], optional = true }
+
 [dev-dependencies]
 tokio-test = "0.4"
 
 [features]
 default = []
 testing = []
+# [DB-009] Enable SQLite backend for structured queryable data
+sqlite = ["sqlx"]
