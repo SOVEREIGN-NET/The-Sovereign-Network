@@ -200,11 +200,11 @@ impl Component for ProtocolsComponent {
     async fn start(&self) -> Result<()> {
         info!("Starting protocols component with ZHTP Unified Server...");
         *self.status.write().await = ComponentStatus::Starting;
-        
+
         lib_protocols::initialize().await?;
-        
+
         info!("Initializing backend components for unified server...");
-        
+
         // Use existing global blockchain (already initialized and syncing in Phase 2)
         info!(" Using existing global blockchain instance...");
         let blockchain = match crate::runtime::blockchain_provider::get_global_blockchain().await {
@@ -228,7 +228,7 @@ impl Component for ProtocolsComponent {
                 }
             }
         };
-        
+
         // Get shared IdentityManager
         info!(" Getting shared IdentityManager...");
         let identity_manager = match crate::runtime::get_global_identity_manager().await {
@@ -248,12 +248,21 @@ impl Component for ProtocolsComponent {
                 }
             }
         };
-        
+
         // Initialize economic model and storage
+        info!(" Initializing economic model...");
         let economic_model = Arc::new(RwLock::new(lib_economy::EconomicModel::new()));
-        let storage_config = create_default_storage_config()?;
-        let storage = Arc::new(RwLock::new(lib_storage::UnifiedStorageSystem::new(storage_config).await?));
-        
+
+        info!(" Creating storage config...");
+        let storage_config = create_default_storage_config()
+            .map_err(|e| anyhow::anyhow!("Failed to create storage config: {}", e))?;
+
+        info!(" Initializing unified storage system...");
+        let storage = Arc::new(RwLock::new(
+            lib_storage::UnifiedStorageSystem::new(storage_config).await
+                .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?
+        ));
+
         info!("Creating ZHTP Unified Server...");
         let (peer_discovery_tx, _peer_discovery_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
@@ -268,7 +277,8 @@ impl Component for ProtocolsComponent {
             None,  // quic_port - use default
             None,  // protocols_config - will use defaults (Bluetooth disabled by default)
             None,  // bootstrap_peers - will use defaults
-        ).await?;
+        ).await
+            .map_err(|e| anyhow::anyhow!("Failed to create unified server: {}", e))?;
         
         // Initialize blockchain provider
         info!(" Setting up blockchain provider...");
