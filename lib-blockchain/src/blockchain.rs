@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use tracing::{info, warn, error, debug};
-use crate::types::{Hash, Difficulty};
+use crate::types::{Hash, Difficulty, DifficultyConfig};
 use crate::transaction::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData};
 use crate::types::transaction_type::TransactionType;
 use crate::block::Block;
@@ -40,6 +40,8 @@ pub struct Blockchain {
     pub height: u64,
     /// Current mining difficulty
     pub difficulty: Difficulty,
+    /// Difficulty adjustment configuration (governance-controlled)
+    pub difficulty_config: DifficultyConfig,
     /// Total work done (cumulative difficulty)
     pub total_work: u128,
     /// UTXO set for transaction validation
@@ -162,6 +164,7 @@ impl Blockchain {
             blocks: vec![genesis_block.clone()],
             height: 0,
             difficulty: Difficulty::from_bits(crate::INITIAL_DIFFICULTY),
+            difficulty_config: DifficultyConfig::default(),
             total_work: 0,
             utxo_set: HashMap::new(),
             nullifier_set: HashSet::new(),
@@ -783,33 +786,122 @@ impl Blockchain {
         crate::types::hash::blake3_hash(&data)
     }
 
-    /// Adjust mining difficulty based on block times
+    /// Adjust blockchain difficulty based on block time targets.
+    ///
+    /// This method delegates to the consensus coordinator's DifficultyManager when available,
+    /// falling back to the legacy hardcoded constants for backward compatibility.
+    /// The consensus engine owns the difficulty policy per architectural design.
+    ///
+    /// # Fallback Behavior
+    /// - If consensus coordinator is available: uses coordinator's difficulty calculation
+    /// - If consensus coordinator is not available: uses hardcoded legacy constants for backward compatibility
+    /// - If coordinator call fails: returns error (does NOT fall back to legacy calculation)
     fn adjust_difficulty(&mut self) -> Result<()> {
-        if self.height % crate::DIFFICULTY_ADJUSTMENT_INTERVAL != 0 {
+        // Get adjustment parameters from consensus coordinator if available
+        let (adjustment_interval, target_timespan) = if let Some(coordinator) = &self.consensus_coordinator {
+            // Use a single tokio block_in_place to call async methods from sync context
+            // Acquire the coordinator read lock once to avoid race conditions and redundant locking
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let coord = coordinator.read().await;
+                    let interval = coord.get_difficulty_adjustment_interval().await;
+                    let target_timespan = coord.get_difficulty_target_timespan().await;
+                    (interval, target_timespan)
+                })
+            })
+        } else {
+            // Fallback to hardcoded constants for backward compatibility
+            (crate::DIFFICULTY_ADJUSTMENT_INTERVAL, crate::TARGET_TIMESPAN)
+        };
+
+        // Check if we should adjust at this height
+        if self.height % adjustment_interval != 0 {
             return Ok(());
         }
 
-        if self.height < crate::DIFFICULTY_ADJUSTMENT_INTERVAL {
+        if self.height < adjustment_interval {
             return Ok(());
         }
 
         let current_block = &self.blocks[self.height as usize];
-        let interval_start = &self.blocks[(self.height - crate::DIFFICULTY_ADJUSTMENT_INTERVAL) as usize];
+        let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
         
-        let actual_timespan = current_block.timestamp() - interval_start.timestamp();
-        let actual_timespan = actual_timespan.max(crate::TARGET_TIMESPAN / 4).min(crate::TARGET_TIMESPAN * 4);
+        let interval_start_time = interval_start.timestamp();
+        let interval_end_time = current_block.timestamp();
 
-        let new_difficulty_bits = (self.difficulty.bits() as u64 * crate::TARGET_TIMESPAN / actual_timespan) as u32;
+        // Calculate new difficulty using consensus coordinator if available
+        let new_difficulty_bits = if let Some(coordinator) = &self.consensus_coordinator {
+            let result = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let coord = coordinator.read().await;
+                    coord.calculate_difficulty_adjustment(
+                        self.height,
+                        self.difficulty.bits(),
+                        interval_start_time,
+                        interval_end_time,
+                    ).await
+                })
+            });
+            
+            match result {
+                Ok(Some(new_bits)) => new_bits,
+                Ok(None) => return Ok(()), // No adjustment needed
+                Err(e) => {
+                    tracing::error!(
+                        "Difficulty adjustment via coordinator failed: {}. \
+                         This indicates a consensus layer problem requiring attention.", e
+                    );
+                    return Err(e);
+                }
+            }
+        } else {
+            // Legacy calculation without coordinator
+            self.calculate_difficulty_legacy(interval_start_time, interval_end_time, target_timespan)
+        };
+
+        let old_difficulty = self.difficulty.bits();
         self.difficulty = Difficulty::from_bits(new_difficulty_bits);
 
         tracing::info!(
             "Difficulty adjusted from {} to {} at height {}",
-            self.difficulty.bits(),
+            old_difficulty,
             new_difficulty_bits,
             self.height
         );
 
         Ok(())
+    }
+    
+    /// Legacy difficulty calculation using hardcoded constants.
+    /// Used when consensus coordinator is not available.
+    fn calculate_difficulty_legacy(&self, interval_start_time: u64, interval_end_time: u64, target_timespan: u64) -> u32 {
+        // Defensive check: target_timespan should be validated to be non-zero upstream,
+        // but avoid panicking here if that validation is ever bypassed.
+        if target_timespan == 0 {
+            tracing::warn!(
+                "calculate_difficulty_legacy called with target_timespan = 0; \
+                 returning current difficulty without adjustment"
+            );
+            return self.difficulty.bits();
+        }
+        
+        let actual_timespan = interval_end_time.saturating_sub(interval_start_time);
+        // Clamp to prevent extreme adjustments (4x range)
+        let actual_timespan = actual_timespan
+            .max(target_timespan / 4)
+            .min(target_timespan * 4);
+        
+        // Additional defensive check in case clamping still results in zero
+        // (can happen if target_timespan / 4 == 0 due to integer division with small values)
+        if actual_timespan == 0 {
+            tracing::warn!(
+                "calculate_difficulty_legacy computed actual_timespan = 0 after clamping; \
+                 returning current difficulty without adjustment"
+            );
+            return self.difficulty.bits();
+        }
+        
+        (self.difficulty.bits() as u64 * target_timespan / actual_timespan) as u32
     }
 
     /// Get the latest block
@@ -828,6 +920,33 @@ impl Blockchain {
     /// Get current blockchain height
     pub fn get_height(&self) -> u64 {
         self.height
+    }
+
+    /// Get the current difficulty configuration
+    pub fn get_difficulty_config(&self) -> &DifficultyConfig {
+        &self.difficulty_config
+    }
+
+    /// Update the difficulty configuration (for governance updates)
+    ///
+    /// This method validates the new configuration before applying it.
+    /// The `last_updated_at_height` field will be set to the current blockchain height.
+    ///
+    /// # Errors
+    /// Returns an error if the configuration parameters are invalid.
+    pub fn set_difficulty_config(&mut self, mut config: DifficultyConfig) -> Result<()> {
+        config.validate().map_err(|e| anyhow::anyhow!("Invalid difficulty config: {}", e))?;
+        config.last_updated_at_height = self.height;
+        info!(
+            "Updating difficulty config at height {}: target_timespan={}, adjustment_interval={}, max_decrease={}, max_increase={}",
+            self.height,
+            config.target_timespan,
+            config.adjustment_interval,
+            config.max_difficulty_decrease_factor,
+            config.max_difficulty_increase_factor
+        );
+        self.difficulty_config = config;
+        Ok(())
     }
 
     /// Check if a nullifier has been used

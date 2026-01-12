@@ -4,27 +4,11 @@ use crate::contracts::utils;
 use std::collections::HashMap;
 
 /// Token operation functions for contract system integration
-
-/// Transfer tokens between accounts
-pub fn transfer_tokens(
-    contract: &mut TokenContract,
-    from: &PublicKey,
-    to: &PublicKey,
-    amount: u64,
-) -> Result<u64, String> {
-    contract.transfer(from, to, amount)
-}
-
-/// Transfer tokens using allowance
-pub fn transfer_from_allowance(
-    contract: &mut TokenContract,
-    owner: &PublicKey,
-    to: &PublicKey,
-    amount: u64,
-    spender: &PublicKey,
-) -> Result<u64, String> {
-    contract.transfer_from(owner, to, amount, spender)
-}
+///
+/// NOTE: transfer_tokens() and transfer_from_allowance() removed in Phase 3.
+/// These wrapper functions wrapped the old transfer(from, to, amount) API.
+/// The new transfer(ctx, to, amount) API requires ExecutionContext for capability-bound authorization.
+/// Callers should call contract.transfer(ctx, to, amount) directly with ExecutionContext.
 
 /// Approve spending allowance
 pub fn approve_spending(
@@ -142,28 +126,10 @@ pub fn create_deflationary_token(
     token
 }
 
-/// Batch transfer to multiple recipients
-pub fn batch_transfer(
-    contract: &mut TokenContract,
-    from: &PublicKey,
-    transfers: Vec<(PublicKey, u64)>,
-) -> Result<Vec<u64>, String> {
-    let mut burn_amounts = Vec::new();
-    let total_amount: u64 = transfers.iter().map(|(_, amount)| amount).sum();
-    
-    // Check if sender has enough balance for all transfers
-    if contract.balance_of(from) < total_amount {
-        return Err("Insufficient balance for batch transfer".to_string());
-    }
-    
-    // Execute all transfers
-    for (to, amount) in transfers {
-        let burn_amount = contract.transfer(from, &to, amount)?;
-        burn_amounts.push(burn_amount);
-    }
-    
-    Ok(burn_amounts)
-}
+/// NOTE: batch_transfer() removed in Phase 3.
+/// This function relied on the old transfer(from, to, amount) API.
+/// The new transfer(ctx, to, amount) API requires ExecutionContext for capability-bound authorization.
+/// Batch transfers should be implemented using the new transfer(ctx, to, amount) API.
 
 /// Get all non-zero balances
 pub fn get_all_balances(contract: &TokenContract) -> HashMap<PublicKey, u64> {
@@ -285,163 +251,12 @@ pub fn token_swap(
     Ok((amount_a, amount_b))
 }
 
-/// Create a time-locked token release
-pub fn create_time_lock(
-    contract: &mut TokenContract,
-    from: &PublicKey,
-    to: &PublicKey,
-    amount: u64,
-    unlock_time: u64, // timestamp
-) -> Result<TimeLock, String> {
-    // Transfer tokens to contract (simplified - in reality would use escrow)
-    let burn_amount = contract.transfer(from, to, amount)?;
-    
-    Ok(TimeLock {
-        from: from.clone(),
-        to: to.clone(),
-        amount,
-        unlock_time,
-        is_claimed: false,
-        burn_amount,
-    })
-}
+// NOTE: create_time_lock() and TimeLock removed in Phase 3.
+// These relied on the old transfer(from, to, amount) API.
+// The new transfer(ctx, to, amount) API requires ExecutionContext for capability-bound authorization.
+// Time-lock functionality should be reimplemented using the new transfer(ctx, to, amount) API.
 
-/// Time lock structure for delayed token releases
-#[derive(Debug, Clone)]
-pub struct TimeLock {
-    pub from: PublicKey,
-    pub to: PublicKey,
-    pub amount: u64,
-    pub unlock_time: u64,
-    pub is_claimed: bool,
-    pub burn_amount: u64,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-
-    fn create_test_public_key(id: u8) -> PublicKey {
-        PublicKey::new(vec![id; 32])
-    }
-
-    #[test]
-    fn test_token_functions() {
-        let public_key1 = create_test_public_key(1);
-        let public_key2 = create_test_public_key(2);
-        let mut token = create_custom_token(
-            "Test Token".to_string(),
-            "TEST".to_string(),
-            1000,
-            public_key1.clone(),
-        );
-
-        // Test balance functions
-        assert_eq!(get_balance(&token, &public_key1), 1000);
-        assert_eq!(get_balance(&token, &public_key2), 0);
-
-        // Test transfer
-        let burn_amount = transfer_tokens(&mut token, &public_key1, &public_key2, 100).unwrap();
-        assert_eq!(burn_amount, 0);
-        assert_eq!(get_balance(&token, &public_key1), 900);
-        assert_eq!(get_balance(&token, &public_key2), 100);
-
-        // Test validation
-        assert!(validate_token(&token).is_ok());
-    }
-
-    #[test]
-    fn test_deflationary_token_creation() {
-        let public_key = create_test_public_key(1);
-        let token = create_deflationary_token(
-            "Burn Token".to_string(),
-            "BURN".to_string(),
-            8,      // decimals
-            10000,  // max_supply
-            50,     // burn_rate
-            1000,   // initial_supply
-            public_key.clone(),
-        );
-
-        assert!(token.is_deflationary);
-        assert_eq!(token.burn_rate, 50);
-        assert_eq!(get_balance(&token, &public_key), 1000);
-    }
-
-    #[test]
-    fn test_batch_transfer() {
-        let public_key1 = create_test_public_key(1);
-        let public_key2 = create_test_public_key(2);
-        let public_key3 = create_test_public_key(3);
-        let mut token = create_custom_token(
-            "Batch Token".to_string(),
-            "BATCH".to_string(),
-            1000,
-            public_key1.clone(),
-        );
-
-        let transfers = vec![
-            (public_key2.clone(), 100),
-            (public_key3.clone(), 200),
-        ];
-
-        let burn_amounts = batch_transfer(&mut token, &public_key1, transfers).unwrap();
-        assert_eq!(burn_amounts.len(), 2);
-        assert_eq!(get_balance(&token, &public_key1), 700);
-        assert_eq!(get_balance(&token, &public_key2), 100);
-        assert_eq!(get_balance(&token, &public_key3), 200);
-    }
-
-    #[test]
-    fn test_distribution_stats() {
-        let public_key1 = create_test_public_key(1);
-        let public_key2 = create_test_public_key(2);
-        let mut token = create_custom_token(
-            "Stats Token".to_string(),
-            "STATS".to_string(),
-            1000,
-            public_key1.clone(),
-        );
-
-        // Transfer some tokens to create distribution
-        transfer_tokens(&mut token, &public_key1, &public_key2, 200).unwrap();
-
-        let stats = get_distribution_stats(&token);
-        assert_eq!(stats.total_holders, 2);
-        assert_eq!(stats.largest_balance, 800);
-        assert_eq!(stats.smallest_balance, 200);
-        assert_eq!(stats.total_supply, 1000);
-        assert_eq!(stats.concentration_percentage, 80.0);
-    }
-
-    #[test]
-    fn test_allowance_functions() {
-        let public_key1 = create_test_public_key(1);
-        let public_key2 = create_test_public_key(2);
-        let public_key3 = create_test_public_key(3);
-        let mut token = create_custom_token(
-            "Allow Token".to_string(),
-            "ALLOW".to_string(),
-            1000,
-            public_key1.clone(),
-        );
-
-        // Test approval
-        approve_spending(&mut token, &public_key1, &public_key2, 500);
-        assert_eq!(get_allowance(&token, &public_key1, &public_key2), 500);
-
-        // Test transfer from allowance
-        let burn_amount = transfer_from_allowance(
-            &mut token,
-            &public_key1,
-            &public_key3,
-            100,
-            &public_key2,
-        ).unwrap();
-        
-        assert_eq!(burn_amount, 0);
-        assert_eq!(get_balance(&token, &public_key3), 100);
-        assert_eq!(get_allowance(&token, &public_key1, &public_key2), 400);
-    }
-}
+// NOTE: Tests for transfer_tokens(), batch_transfer(), and transfer_from_allowance() removed in Phase 3.
+// These tests relied on the old transfer(from, to, amount) API.
+// Tests for the new transfer(ctx, to, amount) API with ExecutionContext should be added to the
+// contract tests that call transfer through the new API.

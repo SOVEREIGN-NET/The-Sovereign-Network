@@ -258,3 +258,159 @@ async fn test_consensus_coordinator_lifecycle() {
     // Note: The coordinator might not immediately reflect the stopped state
     // in the status due to async nature, but the stop call should succeed
 }
+
+#[tokio::test]
+async fn test_difficulty_manager_integration() {
+    use lib_consensus::difficulty::DifficultyConfig;
+    
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let mempool = Arc::new(RwLock::new(Mempool::default()));
+    
+    let coordinator = initialize_consensus_integration(
+        blockchain,
+        mempool,
+        ConsensusType::ProofOfStake,
+    ).await.unwrap();
+
+    // Test getting default difficulty config
+    let config = coordinator.get_difficulty_config().await;
+    assert_eq!(config.initial_difficulty, 0x1d00ffff, "Should have Bitcoin-compatible initial difficulty");
+    assert_eq!(config.adjustment_interval, 2016, "Should have Bitcoin-compatible adjustment interval");
+    assert_eq!(config.target_timespan, 14 * 24 * 60 * 60, "Should have 2-week target timespan");
+    
+    // Test getting adjustment interval
+    let interval = coordinator.get_difficulty_adjustment_interval().await;
+    assert_eq!(interval, 2016);
+    
+    // Test getting initial difficulty
+    let initial = coordinator.get_initial_difficulty().await;
+    assert_eq!(initial, 0x1d00ffff);
+    
+    // Test should_adjust at various heights
+    assert!(!coordinator.should_adjust_difficulty(0).await, "Should not adjust at height 0");
+    assert!(!coordinator.should_adjust_difficulty(1000).await, "Should not adjust before first interval");
+    assert!(coordinator.should_adjust_difficulty(2016).await, "Should adjust at adjustment_interval");
+    assert!(!coordinator.should_adjust_difficulty(2017).await, "Should not adjust between intervals");
+    assert!(coordinator.should_adjust_difficulty(4032).await, "Should adjust at 2x adjustment_interval");
+}
+
+#[tokio::test]
+async fn test_difficulty_adjustment_calculation() {
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let mempool = Arc::new(RwLock::new(Mempool::default()));
+    
+    let coordinator = initialize_consensus_integration(
+        blockchain,
+        mempool,
+        ConsensusType::ProofOfStake,
+    ).await.unwrap();
+
+    let current_difficulty = 0x1d00ffff;
+    let config = coordinator.get_difficulty_config().await;
+    let target_timespan = config.target_timespan;
+    
+    // Test adjustment at correct height with on-target timing
+    let result = coordinator.calculate_difficulty_adjustment(
+        2016,                    // height at adjustment interval
+        current_difficulty,      // current difficulty
+        0,                       // interval start time
+        target_timespan,         // interval end time (exactly on target)
+    ).await;
+    
+    assert!(result.is_ok(), "Difficulty adjustment should succeed");
+    let new_difficulty = result.unwrap();
+    assert!(new_difficulty.is_some(), "Should return new difficulty at adjustment height");
+    
+    // With on-target timing, difficulty should stay approximately the same
+    let diff = new_difficulty.unwrap();
+    let diff_delta = (diff as i64 - current_difficulty as i64).abs();
+    assert!(diff_delta < 100, "Difficulty should not change much with on-target timing");
+    
+    // Test no adjustment at non-adjustment height
+    let result = coordinator.calculate_difficulty_adjustment(
+        1000,                    // not at adjustment interval
+        current_difficulty,
+        0,
+        target_timespan,
+    ).await;
+    
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_none(), "Should return None at non-adjustment height");
+}
+
+#[tokio::test]
+async fn test_difficulty_governance_update() {
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let mempool = Arc::new(RwLock::new(Mempool::default()));
+    
+    let coordinator = initialize_consensus_integration(
+        blockchain,
+        mempool,
+        ConsensusType::ProofOfStake,
+    ).await.unwrap();
+
+    // Update adjustment interval via governance
+    let result = coordinator.apply_difficulty_governance_update(
+        None,           // don't change initial_difficulty
+        Some(1000),     // change adjustment_interval to 1000
+        None,           // don't change target_timespan
+    ).await;
+    
+    assert!(result.is_ok(), "Governance update should succeed");
+    
+    let config = coordinator.get_difficulty_config().await;
+    assert_eq!(config.adjustment_interval, 1000, "Adjustment interval should be updated");
+    assert_eq!(config.initial_difficulty, 0x1d00ffff, "Initial difficulty should be unchanged");
+    
+    // Update target timespan
+    let result = coordinator.apply_difficulty_governance_update(
+        None,
+        None,
+        Some(604800),   // 1 week in seconds
+    ).await;
+    
+    assert!(result.is_ok());
+    let config = coordinator.get_difficulty_config().await;
+    assert_eq!(config.target_timespan, 604800);
+    
+    // Test invalid update (zero interval) should fail
+    let result = coordinator.apply_difficulty_governance_update(
+        None,
+        Some(0),  // invalid: zero interval
+        None,
+    ).await;
+    
+    assert!(result.is_err(), "Should reject zero adjustment interval");
+    
+    // Config should be unchanged after failed update
+    let config = coordinator.get_difficulty_config().await;
+    assert_eq!(config.adjustment_interval, 1000, "Config should be unchanged after failed update");
+}
+
+#[tokio::test]
+async fn test_difficulty_manager_with_custom_config() {
+    use lib_consensus::difficulty::DifficultyConfig;
+    use lib_blockchain::initialize_consensus_integration_with_difficulty_config;
+    
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let mempool = Arc::new(RwLock::new(Mempool::default()));
+    
+    // Create custom difficulty config
+    let custom_config = DifficultyConfig::new(
+        0x1d00fffe,  // custom initial difficulty
+        100,         // custom adjustment interval
+        86400,       // 1 day target timespan
+    ).unwrap();
+    
+    let coordinator = initialize_consensus_integration_with_difficulty_config(
+        blockchain,
+        mempool,
+        ConsensusType::ProofOfStake,
+        custom_config,
+    ).await.unwrap();
+
+    let config = coordinator.get_difficulty_config().await;
+    assert_eq!(config.initial_difficulty, 0x1d00fffe);
+    assert_eq!(config.adjustment_interval, 100);
+    assert_eq!(config.target_timespan, 86400);
+}

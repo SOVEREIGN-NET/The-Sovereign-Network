@@ -119,25 +119,25 @@ impl DaoEngine {
             _ => 10,                                   // 10% quorum for general governance
         };
 
-        // Create proposal
-        let proposal = DaoProposal {
-            id: proposal_id.clone(),
+        // Create proposal with validation
+        let proposal = DaoProposal::new(
+            proposal_id.clone(),
             title,
             description,
-            proposer: proposer.clone(),
-            proposal_type: proposal_type.clone(),
-            status: DaoProposalStatus::Active,
-            voting_start_time: current_time,
+            proposer.clone(),
+            proposal_type.clone(),
+            DaoProposalStatus::Active,
+            current_time,
             voting_end_time,
             quorum_required,
-            vote_tally: DaoVoteTally::default(),
-            created_at: current_time,
-            created_at_height: self.get_current_block_height(),
-            execution_params: None,
-            ubi_impact: None, // Can be set later when proposal details are finalized
-            economic_impact: None, // Will be calculated based on proposal type
-            privacy_level: PrivacyLevel::Public, // Default to public visibility
-        };
+            DaoVoteTally::new(0), // Will be populated with eligible voters
+            current_time,
+            self.get_current_block_height(),
+            None,
+            None, // Can be set later when proposal details are finalized
+            None, // Will be calculated based on proposal type
+            PrivacyLevel::Public, // Default to public visibility
+        ).map_err(|e| anyhow::anyhow!("Failed to create proposal: {}", e))?;
 
         // NOTE: Proposal storage happens on blockchain via DaoProposal transaction
         // This method only validates and returns the proposal ID for transaction creation
@@ -145,7 +145,7 @@ impl DaoEngine {
         tracing::info!(
             "Validated DAO proposal {:?}: {} (Type: {:?}) - ready for blockchain submission",
             proposal_id,
-            proposal.title,
+            proposal.title(),
             proposal_type
         );
 
@@ -259,6 +259,26 @@ impl DaoEngine {
                 GovernanceParameterValue::SlashDoubleSign(value) => config.slash_double_sign = *value,
                 GovernanceParameterValue::SlashLiveness(value) => config.slash_liveness = *value,
                 GovernanceParameterValue::DevelopmentMode(value) => config.development_mode = *value,
+                // Blockchain difficulty parameters are handled by DifficultyManager,
+                // not ConsensusConfig. These parameters are validated here but applied 
+                // separately through the following flow:
+                //
+                // 1. DAO proposal with BlockchainInitialDifficulty/AdjustmentInterval/TargetTimespan
+                //    parameters is validated by validate_governance_update()
+                // 2. After proposal passes voting, execute_passed_proposal() is called
+                // 3. For blockchain difficulty params, the caller (typically node runtime)
+                //    extracts these values from the passed proposal
+                // 4. Caller invokes BlockchainConsensusCoordinator::apply_difficulty_governance_update()
+                //    which delegates to DifficultyManager::apply_governance_update()
+                //
+                // See: lib-blockchain/src/integration/consensus_integration.rs
+                //      BlockchainConsensusCoordinator::apply_difficulty_governance_update()
+                GovernanceParameterValue::BlockchainInitialDifficulty(_)
+                | GovernanceParameterValue::BlockchainAdjustmentInterval(_)
+                | GovernanceParameterValue::BlockchainTargetTimespan(_) => {
+                    // No-op here: these are applied via the DifficultyManager pathway
+                    // described in the comment above, not via ConsensusConfig mutation
+                }
             }
         }
 
@@ -338,6 +358,22 @@ impl DaoEngine {
                     }
                 }
                 GovernanceParameterValue::DevelopmentMode(_) => {}
+                // Blockchain difficulty parameters validation
+                GovernanceParameterValue::BlockchainInitialDifficulty(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Initial difficulty must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::BlockchainAdjustmentInterval(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Adjustment interval must be greater than zero"));
+                    }
+                }
+                GovernanceParameterValue::BlockchainTargetTimespan(value) => {
+                    if *value == 0 {
+                        return Err(anyhow::anyhow!("Target timespan must be greater than zero"));
+                    }
+                }
             }
         }
 
@@ -350,7 +386,7 @@ impl DaoEngine {
         proposal: &DaoProposal,
         config: &mut ConsensusConfig,
     ) -> Result<()> {
-        match proposal.proposal_type {
+        match proposal.proposal_type() {
             DaoProposalType::ProtocolUpgrade
             | DaoProposalType::EconomicParams
             | DaoProposalType::GovernanceRules
@@ -364,8 +400,7 @@ impl DaoEngine {
         }
 
         let params = proposal
-            .execution_params
-            .as_ref()
+            .execution_params()
             .ok_or_else(|| anyhow::anyhow!("Proposal missing execution parameters"))?;
         let decoded = self.decode_execution_params(params)?;
 
@@ -494,7 +529,7 @@ impl DaoEngine {
     #[allow(dead_code)]
     fn parse_treasury_amount_from_proposal(&self, proposal: &DaoProposal) -> Result<u64> {
         // Look for amount in description (e.g., "amount:1000")
-        let description = &proposal.description;
+        let description = proposal.description();
 
         if let Some(start) = description.find("amount:") {
             let amount_section = &description[start + 7..];
