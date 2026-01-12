@@ -36,7 +36,7 @@ chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 tracing = "0.1"
 humantime-serde = "1.1"
-parking_lot = "0.12" # DB-010: Thread-safe locking for in-memory backend implementation (HashMapBackend)
+parking_lot = "0.12" # DB-010: Thread-safe locking for backend implementations
 sled = "0.34" # DB-010: Persistent storage backend (also used in DB-008)
 
 # [DB-009] SQLite backend for structured data

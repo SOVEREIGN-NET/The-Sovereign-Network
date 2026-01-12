@@ -7,6 +7,7 @@ use crate::types::NodeId;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::debug;
 
 /// DHT replication manager
 ///
@@ -157,13 +158,16 @@ impl DhtReplication {
         // Send replication message to target node
         // In a implementation, this would use the network layer
         // For now, we'll log the replication attempt and simulate success
-        println!(" Replicating key '{}' ({} bytes) to node {}", 
-                key, 
-                value.len(), 
-                hex::encode(&target_node.peer.node_id().as_bytes()[..4]));
+        let node_id_short = hex::encode(&target_node.peer.node_id().as_bytes()[..4]);
+        debug!(
+            key = %key,
+            data_size = value.len(),
+            target_node = %node_id_short,
+            "Replicating key to node"
+        );
 
         // Log successful replication (metrics would be handled by a separate metrics system)
-        println!("Replication message created for key '{}'", key);
+        debug!(key = %key, "Replication message created");
         
         // Simulate realistic network delay based on data size
         let delay_ms = (value.len() / 1024).max(10).min(1000); // 10ms to 1s based on size

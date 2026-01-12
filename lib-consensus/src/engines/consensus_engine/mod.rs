@@ -416,8 +416,7 @@ impl ConsensusEngine {
         proposal: &DaoProposal,
     ) -> ConsensusResult<()> {
         let params = proposal
-            .execution_params
-            .as_ref()
+            .execution_params()
             .ok_or_else(|| ConsensusError::ValidatorError("Proposal missing execution params".to_string()))?;
         let decoded = self
             .dao_engine

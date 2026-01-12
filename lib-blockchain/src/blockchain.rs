@@ -786,12 +786,16 @@ impl Blockchain {
         crate::types::hash::blake3_hash(&data)
     }
 
-    /// Adjust mining difficulty based on block times.
-    /// 
+    /// Adjust blockchain difficulty based on block time targets.
+    ///
     /// This method delegates to the consensus coordinator's DifficultyManager when available,
     /// falling back to the legacy hardcoded constants for backward compatibility.
-    /// 
     /// The consensus engine owns the difficulty policy per architectural design.
+    ///
+    /// # Fallback Behavior
+    /// - If consensus coordinator is available: uses coordinator's difficulty calculation
+    /// - If consensus coordinator is not available: uses hardcoded legacy constants for backward compatibility
+    /// - If coordinator call fails: returns error (does NOT fall back to legacy calculation)
     fn adjust_difficulty(&mut self) -> Result<()> {
         // Get adjustment parameters from consensus coordinator if available
         let (adjustment_interval, target_timespan) = if let Some(coordinator) = &self.consensus_coordinator {
@@ -843,9 +847,11 @@ impl Blockchain {
                 Ok(Some(new_bits)) => new_bits,
                 Ok(None) => return Ok(()), // No adjustment needed
                 Err(e) => {
-                    tracing::warn!("Difficulty adjustment via coordinator failed: {}, using fallback", e);
-                    // Fallback to legacy calculation
-                    self.calculate_difficulty_legacy(interval_start_time, interval_end_time, target_timespan)
+                    tracing::error!(
+                        "Difficulty adjustment via coordinator failed: {}. \
+                         This indicates a consensus layer problem requiring attention.", e
+                    );
+                    return Err(e);
                 }
             }
         } else {
