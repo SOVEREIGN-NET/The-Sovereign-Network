@@ -465,7 +465,8 @@ pub mod utils {
             }
             TransactionType::DaoProposal |
             TransactionType::DaoVote |
-            TransactionType::DaoExecution => {
+            TransactionType::DaoExecution |
+            TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation will be handled during transaction validation
             }
         }
