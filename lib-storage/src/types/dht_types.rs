@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use std::collections::HashMap;
 
+// Re-export DhtPeerIdentity from lib-identity for convenience
+pub use lib_identity::DhtPeerIdentity;
+
 /// Smart contract data for DHT operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractDhtData {
@@ -218,105 +221,18 @@ pub struct StorageCapabilities {
 /// **TODO:** This struct duplicates `UnifiedPeerId` from lib-network to avoid
 /// circular dependencies. This creates maintenance burden and potential drift.
 ///
-/// **Preferred solution:** Create `lib-types` crate containing shared types:
-/// - Move `UnifiedPeerId`, `NodeId`, `DhtKey` to lib-types
-/// - Have both lib-storage and lib-network depend on lib-types
-/// - Remove this duplicate struct
+/// **MOVED TO lib-identity [PR #718]:** DhtPeerIdentity is now defined in lib-identity::types::peer_identity
+/// to consolidate peer identity logic in one place. It is re-exported from lib-identity for convenience.
 ///
-/// **Why not done now:** Requires significant refactoring across multiple crates.
-/// Tracked in: https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/145
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct DhtPeerIdentity {
-    /// Canonical node identifier from lib-identity
-    /// Used for Kademlia distance calculations
-    pub node_id: NodeId,
-    
-    /// Cryptographic public key for signature verification
-    pub public_key: lib_crypto::PublicKey,
-    
-    /// Decentralized Identifier (DID)
-    /// Format: "did:zhtp:<hash>"
-    pub did: String,
-    
-    /// Device identifier (e.g., "laptop", "phone")
-    pub device_id: String,
-}
-
-impl DhtPeerIdentity {
-    /// Create from ZhtpIdentity
-    ///
-    /// # Security (MED-7)
-    ///
-    /// **WARNING:** This method accepts only a NodeId and creates a placeholder identity.
-    /// The resulting DhtPeerIdentity will have an EMPTY public key and placeholder DID,
-    /// which means signature verification will FAIL.
-    ///
-    /// **PREFERRED:** Use `from_zhtp_identity_full()` or construct DhtPeerIdentity directly
-    /// with valid cryptographic material.
-    ///
-    /// This method is retained for backwards compatibility but should be avoided in
-    /// security-critical code paths.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use from_zhtp_identity_full() or construct DhtPeerIdentity with valid public key"
-    )]
-    pub fn from_zhtp_identity(identity: &crate::types::NodeId) -> Result<Self, anyhow::Error> {
-        // SECURITY: Log warning about insecure usage
-        tracing::warn!(
-            "from_zhtp_identity() creates placeholder identity without valid public key. \
-             Use from_zhtp_identity_full() for security-critical operations."
-        );
-
-        Ok(Self {
-            node_id: identity.clone(),
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
-                key_id: [0u8; 32],
-            },
-            did: String::from("did:zhtp:placeholder"),
-            device_id: String::from("default"),
-        })
-    }
-
-    /// Create from full ZhtpIdentity with all cryptographic material
-    ///
-    /// # Arguments
-    ///
-    /// * `identity` - Full ZhtpIdentity with valid cryptographic keys
-    ///
-    /// # Returns
-    ///
-    /// DhtPeerIdentity with valid public key for signature verification
-    pub fn from_zhtp_identity_full(identity: &lib_identity::ZhtpIdentity) -> Self {
-        Self {
-            node_id: identity.node_id.clone(),
-            public_key: identity.public_key.clone(),
-            did: identity.did.clone(),
-            device_id: identity.primary_device.clone(),
-        }
-    }
-    
-    /// Get NodeId reference (for Kademlia routing)
-    pub fn node_id(&self) -> &NodeId {
-        &self.node_id
-    }
-    
-    /// Get PublicKey reference (for signature verification)
-    pub fn public_key(&self) -> &lib_crypto::PublicKey {
-        &self.public_key
-    }
-    
-    /// Get DID reference (for identity validation)
-    pub fn did(&self) -> &str {
-        &self.did
-    }
-    
-    /// Get device ID reference
-    pub fn device_id(&self) -> &str {
-        &self.device_id
-    }
-}
+/// Import using:
+/// ```
+/// use lib_identity::DhtPeerIdentity;
+/// ```
+///
+/// This enables:
+/// - Single source of truth for peer identity across lib-storage and lib-network
+/// - Easier maintenance and consistency
+/// - Clearer API organization (identity types in lib-identity)
 
 /// DHT node information with unified peer identity
 ///

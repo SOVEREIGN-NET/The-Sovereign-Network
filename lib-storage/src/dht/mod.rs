@@ -17,6 +17,7 @@
 //!
 //! Key functions are decorated with `#[instrument]` for automatic span creation.
 
+pub mod backend;
 pub mod node;
 pub mod routing;
 pub mod network;
