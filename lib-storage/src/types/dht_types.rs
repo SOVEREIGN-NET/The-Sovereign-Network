@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use std::collections::HashMap;
 
+// Re-export DhtPeerIdentity from lib-identity for convenience
+pub use lib_identity::DhtPeerIdentity;
+
 /// Smart contract data for DHT operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractDhtData {
@@ -205,10 +208,6 @@ pub struct StorageCapabilities {
 
 /// Unified Peer Identity for DHT operations.
 ///
-/// Re-exports the canonical DhtPeerIdentity from lib-identity to avoid
-/// maintaining a duplicate storage-local copy.
-pub use lib_identity::DhtPeerIdentity;
-
 /// Create a placeholder peer identity when only a NodeId is available.
 ///
 /// This is intended for bootstrap/testing paths where full identity material

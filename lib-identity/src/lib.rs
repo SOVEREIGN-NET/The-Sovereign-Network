@@ -56,22 +56,24 @@ pub use types::{
     IdentityType,        // ✓ Human, Agent, Contract, Organization, Device
     AccessLevel,         // ✓ FullCitizen, Visitor, Organization, Device, Restricted
     PrivateIdentityData, // ✓ Private data (never transmitted)
-    
+
     // Credential types
     CredentialType,      // ✓ Credential type enumeration
     AttestationType,     // ✓ Attestation types
-    
+
     // Proof parameters
     IdentityProofParams, // ✓ Zero-knowledge proof parameters
-    
+
     // Verification types
     IdentityVerification, // ✓ Verification results
     VerificationLevel,    // ✓ Verification level (None, Basic, Standard, Full)
     VerificationResult,   // ✓ Detailed verification result
-    
+
     // Node ID for DHT routing (32-byte deterministic identifier)
     NodeId,              // ✓ Derived from DID + device name
-    DhtPeerIdentity,     // ✓ Unified peer identity (NodeId + PublicKey + DID)
+
+    // Peer identity for DHT/network (unified across lib-storage and lib-network)
+    DhtPeerIdentity,     // ✓ Unified peer identity (NodeId + PublicKey + DID + device_id)
 };
 
 // Identity module - Core identity structures
