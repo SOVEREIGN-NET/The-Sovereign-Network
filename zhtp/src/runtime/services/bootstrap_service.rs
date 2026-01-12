@@ -1,6 +1,6 @@
 use anyhow::{Result, Context, anyhow};
 use lib_blockchain::Blockchain;
-use lib_storage::UnifiedStorageSystem;
+use lib_storage::PersistentStorageSystem;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
@@ -13,7 +13,7 @@ impl BootstrapService {
     /// Try to bootstrap blockchain from network discovery
     pub async fn try_bootstrap_blockchain(
         _blockchain: &Arc<RwLock<Blockchain>>,
-        _storage: &Arc<RwLock<UnifiedStorageSystem>>,
+        _storage: &Arc<RwLock<PersistentStorageSystem>>,
         _api_port: u16,
         environment: &crate::config::environment::Environment,
     ) -> Result<Blockchain> {
@@ -25,7 +25,7 @@ impl BootstrapService {
     /// Try to sync blockchain from a specific peer address using incremental protocol
     pub async fn try_bootstrap_blockchain_from_peer(
         blockchain: &Arc<RwLock<Blockchain>>,
-        _storage: &Arc<RwLock<UnifiedStorageSystem>>,
+        _storage: &Arc<RwLock<PersistentStorageSystem>>,
         peer_addr: &str,
     ) -> Result<Blockchain> {
         use serde::Deserialize;

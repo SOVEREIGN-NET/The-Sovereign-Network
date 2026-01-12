@@ -294,7 +294,7 @@ pub struct StubDomainRegistry {
 
 impl StubDomainRegistry {
     pub async fn new_with_storage(
-        _storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+        _storage: Arc<RwLock<lib_storage::PersistentStorageSystem>>,
     ) -> Result<Self> {
         Ok(Self {
             domain_records: Arc::new(RwLock::new(HashMap::new())),
@@ -624,14 +624,14 @@ pub struct Web4Manager {
 impl Web4Manager {
     pub async fn new_with_registry(
         registry: Arc<StubDomainRegistry>,
-        _storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+        _storage: Arc<RwLock<lib_storage::PersistentStorageSystem>>,
     ) -> Result<Self> {
         Ok(Self { registry })
     }
 }
 
 pub async fn initialize_web4_system_with_storage(
-    storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>,
+    storage: Arc<RwLock<lib_storage::PersistentStorageSystem>>,
 ) -> Result<Web4Manager> {
     let registry = Arc::new(StubDomainRegistry::new_with_storage(storage.clone()).await?);
     Web4Manager::new_with_registry(registry, storage).await

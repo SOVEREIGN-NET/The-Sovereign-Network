@@ -269,10 +269,27 @@ impl Component for ProtocolsComponent {
         let storage_config = create_default_storage_config()
             .map_err(|e| anyhow::anyhow!("Failed to create storage config: {}", e))?;
 
-        info!(" Initializing unified storage system...");
+        // Get the persistence path from config
+        let db_path = storage_config.storage_config.dht_persist_path.clone()
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join(".zhtp")
+                    .join("storage")
+                    .join("dht_db")
+            });
+
+        // Ensure the storage directory exists
+        if let Some(parent) = db_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::warn!("Failed to create storage directory {:?}: {}", parent, e);
+            }
+        }
+
+        info!(" Initializing persistent unified storage system at {:?}...", db_path);
         let storage = Arc::new(RwLock::new(
-            lib_storage::UnifiedStorageSystem::new(storage_config).await
-                .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?
+            lib_storage::UnifiedStorageSystem::new_persistent(storage_config, &db_path).await
+                .map_err(|e| anyhow::anyhow!("Failed to initialize persistent storage: {}", e))?
         ));
 
         info!("Creating ZHTP Unified Server...");

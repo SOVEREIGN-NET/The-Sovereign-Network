@@ -38,7 +38,7 @@ use lib_network::protocols::quic_mesh::QuicMeshProtocol;
 // Import new QUIC handler for native ZHTP-over-QUIC
 use crate::server::QuicHandler;
 use lib_blockchain::Blockchain;
-use lib_storage::UnifiedStorageSystem;
+use lib_storage::PersistentStorageSystem;
 use lib_identity::IdentityManager;
 use lib_economy::EconomicModel;
 use lib_crypto::PublicKey;
@@ -101,7 +101,7 @@ pub struct ZhtpUnifiedServer {
     
     // Shared backend state (from ZHTP orchestrator)
     blockchain: Arc<RwLock<Blockchain>>,
-    storage: Arc<RwLock<UnifiedStorageSystem>>,
+    storage: Arc<RwLock<PersistentStorageSystem>>,
     identity_manager: Arc<RwLock<IdentityManager>>,
     economic_model: Arc<RwLock<EconomicModel>>,
     
@@ -286,7 +286,7 @@ impl ZhtpUnifiedServer {
     /// Create new unified server with comprehensive backend integration
     pub async fn new(
         blockchain: Arc<RwLock<Blockchain>>,
-        storage: Arc<RwLock<UnifiedStorageSystem>>,
+        storage: Arc<RwLock<PersistentStorageSystem>>,
         identity_manager: Arc<RwLock<IdentityManager>>,
         economic_model: Arc<RwLock<EconomicModel>>,
         port: u16, // Port from configuration
@@ -297,7 +297,7 @@ impl ZhtpUnifiedServer {
     /// Create new unified server with peer discovery notification channel
     pub async fn new_with_peer_notification(
         blockchain: Arc<RwLock<Blockchain>>,
-        storage: Arc<RwLock<UnifiedStorageSystem>>,
+        storage: Arc<RwLock<PersistentStorageSystem>>,
         identity_manager: Arc<RwLock<IdentityManager>>,
         economic_model: Arc<RwLock<EconomicModel>>,
         port: u16,
@@ -564,7 +564,7 @@ impl ZhtpUnifiedServer {
     async fn register_api_handlers(
         zhtp_router: &mut crate::server::zhtp::ZhtpRouter,
         blockchain: Arc<RwLock<Blockchain>>,
-        storage: Arc<RwLock<UnifiedStorageSystem>>,
+        storage: Arc<RwLock<PersistentStorageSystem>>,
         identity_manager: Arc<RwLock<IdentityManager>>,
         _economic_model: Arc<RwLock<EconomicModel>>,
         _session_manager: Arc<SessionManager>,
