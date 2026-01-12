@@ -222,18 +222,19 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
             config.storage_config.max_storage_size,
         );
 
-        if config.storage_config.dht_persist_path.is_some() {
+        if let Some(path) = &config.storage_config.dht_persist_path {
             tracing::warn!(
-                "DHT persistence path is configured but UnifiedStorageSystem uses in-memory storage. \
+                "DHT persistence path {:?} is configured but UnifiedStorageSystem::new() uses in-memory storage. \
                  For persistent storage, use UnifiedStorageSystem::new_persistent(). \
-                 Tracked as [DB-010] Phase 4."
+                 Tracked as [DB-010] Phase 4.",
+                path
+            );
+        } else {
+            tracing::info!(
+                "DHT storage is in-memory only - data will be lost on restart. \
+                 For production use with persistence, call UnifiedStorageSystem::new_persistent()."
             );
         }
-
-        tracing::warn!(
-            "DHT storage is in-memory only - data will be lost on restart! \
-             For production use with persistence, call UnifiedStorageSystem::new_persistent()."
-        );
 
         // Initialize economic manager
         let economic_manager = economic::manager::EconomicStorageManager::new(

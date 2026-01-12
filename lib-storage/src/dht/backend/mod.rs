@@ -32,6 +32,13 @@ pub use sled_backend::SledBackend;
 ///
 /// Abstracts over different storage mechanisms (HashMap, sled, etc.)
 /// All implementations must be thread-safe (Send + Sync) and cheaply cloneable.
+///
+/// # Clone Semantics
+///
+/// The Clone trait is required for flexibility in async contexts and testing.
+/// **Implementations must make Clone cheap** (typically O(1) via Arc wrapping)
+/// since clones happen frequently throughout the codebase. Cloning should not
+/// duplicate the underlying storage, only create a new handle to it.
 pub trait StorageBackend: Send + Sync + Clone + fmt::Debug {
     /// Insert or update a key-value pair
     ///
@@ -117,6 +124,12 @@ pub trait StorageBackend: Send + Sync + Clone + fmt::Debug {
 
     /// Get number of entries in storage
     ///
+    /// # Performance Warning
+    ///
+    /// This operation may be O(n) for some backends (e.g., SledBackend iterates
+    /// through all entries). Use sparingly in hot paths. Consider maintaining
+    /// a separate counter in DhtStorage if frequent len() calls are needed.
+    ///
     /// # Returns
     /// - `Ok(count)`: Number of key-value pairs
     /// - `Err(e)`: Storage error
@@ -142,26 +155,4 @@ pub trait StorageBackend: Send + Sync + Clone + fmt::Debug {
     /// - `Err(e)`: Clear failed
     #[cfg(test)]
     fn clear(&self) -> Result<()>;
-}
-
-/// Storage backend error types
-#[derive(Debug, thiserror::Error)]
-pub enum StorageBackendError {
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
-
-    #[error("Database error: {0}")]
-    Database(String),
-
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("Key not found: {0}")]
-    KeyNotFound(String),
-
-    #[error("Invalid key encoding: {0}")]
-    InvalidKey(String),
-
-    #[error("Backend error: {0}")]
-    Other(String),
 }

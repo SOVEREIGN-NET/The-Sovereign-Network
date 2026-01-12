@@ -145,7 +145,12 @@ impl DhtStorage<HashMapBackend> {
     /// Create a new DHT storage manager with persistence enabled
     /// **DEPRECATED in DB-010**: Use `new_persistent()` instead or just `new()` for in-memory
     #[deprecated(note = "Use new() for in-memory or new_persistent() for persistent storage")]
-    pub fn new_with_persistence(local_node_id: NodeId, max_storage_size: u64, _persist_path: PathBuf) -> Self {
+    pub fn new_with_persistence(local_node_id: NodeId, max_storage_size: u64, persist_path: PathBuf) -> Self {
+        error!(
+            "DEPRECATED: new_with_persistence() no longer provides persistence. \
+             Path {:?} is ignored. Use new_persistent() for persistent storage or new() for in-memory.",
+            persist_path
+        );
         Self::new_with_config(local_node_id, max_storage_size, ZkVerificationConfig::default())
     }
 
@@ -155,9 +160,14 @@ impl DhtStorage<HashMapBackend> {
     pub fn new_with_persistence_and_config(
         local_node_id: NodeId,
         max_storage_size: u64,
-        _persist_path: PathBuf,
+        persist_path: PathBuf,
         zk_config: ZkVerificationConfig,
     ) -> Self {
+        error!(
+            "DEPRECATED: new_with_persistence_and_config() no longer provides persistence. \
+             Path {:?} is ignored. Use new_persistent_with_config() for persistent storage.",
+            persist_path
+        );
         Self::new_with_config(local_node_id, max_storage_size, zk_config)
     }
 
@@ -298,7 +308,16 @@ impl DhtStorage<crate::dht::backend::SledBackend> {
         );
 
         // Restore existing data from backend
-        storage.restore_from_backend()?;
+        // If restoration fails, the storage instance is still valid but empty.
+        // The backend remains intact so data can be recovered by retrying or
+        // using a different restoration strategy.
+        if let Err(e) = storage.restore_from_backend() {
+            warn!(
+                "Failed to restore data from backend during initialization: {}. \
+                 Storage will start empty but backend data is preserved.",
+                e
+            );
+        }
 
         Ok(storage)
     }
@@ -393,20 +412,56 @@ impl<B: StorageBackend> DhtStorage<B> {
     fn restore_from_backend(&mut self) -> Result<()> {
         let mut total_size = 0u64;
         let metadata_overhead_per_entry = 256u64;
+        let mut skipped_keys = 0usize;
 
         // Iterate through all keys in backend
         for key_bytes in self.backend.keys()? {
-            if let Ok(key_str) = String::from_utf8(key_bytes.clone()) {
-                // Fetch the entry from backend
-                if let Some(entry_bytes) = self.backend.get(&key_bytes)? {
-                    // Decode the entry
-                    let entry = Self::decode_entry(&entry_bytes)?;
+            match String::from_utf8(key_bytes.clone()) {
+                Ok(key_str) => {
+                    // Fetch the entry from backend
+                    if let Some(entry_bytes) = self.backend.get(&key_bytes)? {
+                        // Decode the entry
+                        let entry = Self::decode_entry(&entry_bytes)?;
 
-                    // Calculate size: value size + metadata overhead
-                    total_size += entry.value.len() as u64 + metadata_overhead_per_entry;
+                        // Calculate size: value size + metadata overhead
+                        total_size += entry.value.len() as u64 + metadata_overhead_per_entry;
 
-                    // Store in cache
-                    self.storage_cache.insert(key_str.clone(), entry);
+                        // Rebuild contract_index for contract entries
+                        if key_str.starts_with("contract:") {
+                            // Try to deserialize as ContractInfo to extract metadata
+                            if let Ok(contract_info) = serde_json::from_slice::<serde_json::Value>(&entry.value) {
+                                if let Some(metadata_obj) = contract_info.get("metadata") {
+                                    if let Ok(metadata) = serde_json::from_value::<crate::types::dht_types::ContractMetadata>(metadata_obj.clone()) {
+                                        let contract_id = key_str.strip_prefix("contract:").unwrap_or(&key_str);
+                                        // Index by each tag
+                                        for tag in &metadata.tags {
+                                            self.contract_index
+                                                .entry(tag.clone())
+                                                .or_insert_with(Vec::new)
+                                                .push(contract_id.to_string());
+                                        }
+                                        // Index by name
+                                        self.contract_index
+                                            .entry(format!("name:{}", metadata.name))
+                                            .or_insert_with(Vec::new)
+                                            .push(contract_id.to_string());
+                                    }
+                                }
+                            }
+                        }
+
+                        // Store in cache
+                        self.storage_cache.insert(key_str.clone(), entry);
+                    }
+                }
+                Err(e) => {
+                    // Log warning for non-UTF-8 keys and skip them
+                    skipped_keys += 1;
+                    warn!(
+                        "Skipping key with invalid UTF-8 encoding during restoration: {} bytes, error: {}",
+                        key_bytes.len(),
+                        e
+                    );
                 }
             }
         }
@@ -415,9 +470,10 @@ impl<B: StorageBackend> DhtStorage<B> {
         self.current_usage = total_size.min(self.max_storage_size);
 
         info!(
-            "Restored DHT storage from backend: {} entries, {} bytes used",
+            "Restored DHT storage from backend: {} entries, {} bytes used{}", 
             self.storage_cache.len(),
-            self.current_usage
+            self.current_usage,
+            if skipped_keys > 0 { format!(", {} keys skipped due to invalid UTF-8", skipped_keys) } else { String::new() }
         );
 
         Ok(())
@@ -992,7 +1048,10 @@ impl<B: StorageBackend> DhtStorage<B> {
     /// Retrieve a value by key
     pub async fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
         if let Some(entry) = self.storage_cache.get_mut(key) {
-            // Update access statistics
+            // Update access statistics in memory
+            // NOTE: Access metadata (access_count, last_access) is intentionally NOT persisted
+            // on every get() call to avoid performance overhead. These statistics are volatile
+            // and will be reset on restart. They are persisted only during store() operations.
             entry.metadata.access_count += 1;
             entry.metadata.last_access = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 

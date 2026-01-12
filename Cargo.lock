@@ -2975,6 +2975,7 @@ dependencies = [
  "lib-types",
  "log",
  "lz4_flex",
+ "parking_lot 0.12.5",
  "rand 0.8.5",
  "reed-solomon-erasure",
  "serde",
