@@ -414,3 +414,34 @@ async fn test_difficulty_manager_with_custom_config() {
     assert_eq!(config.adjustment_interval, 100);
     assert_eq!(config.target_timespan, 86400);
 }
+
+// ============================================================================
+// Tests for apply_difficulty_parameter_update()
+// Note: These tests verify the apply_difficulty_parameter_update() method's
+// error handling and parameter validation logic.
+// ============================================================================
+
+#[tokio::test]
+async fn test_apply_difficulty_parameter_update_proposal_not_found() {
+    use lib_blockchain::Blockchain;
+    
+    let mut blockchain = Blockchain::new().unwrap();
+    
+    // Try to apply a non-existent proposal
+    let fake_proposal_id = lib_blockchain::Hash::new([42u8; 32]);
+    let result = blockchain.apply_difficulty_parameter_update(fake_proposal_id);
+    
+    assert!(result.is_err(), "Should fail when proposal doesn't exist");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("InvalidProposal") || err_msg.contains("not found"),
+        "Error should mention proposal not found: {}",
+        err_msg
+    );
+}
+
+// Note: Full integration testing of apply_difficulty_parameter_update() requires:
+// 1. A working DAO proposal system (create, vote, approve)
+// 2. Proper serialization of execution parameters
+// 3. Block processing integration
+// These will be tested in integration tests when the full DAO system is in place.
