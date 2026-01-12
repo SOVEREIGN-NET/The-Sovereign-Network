@@ -810,13 +810,14 @@ impl Blockchain {
         // Get adjustment parameters and calculate difficulty in a single lock acquisition
         // to avoid race conditions between reading config and calculating adjustment
         if let Some(coordinator) = &self.consensus_coordinator {
-            // Acquire the coordinator read lock ONCE for the entire operation
+            // Use a single tokio block_in_place to call async methods from sync context
+            // Acquire the coordinator read lock once to avoid race conditions and redundant locking
             let result = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     let coord = coordinator.read().await;
                     let adjustment_interval = coord.get_difficulty_adjustment_interval().await;
                     let config = coord.get_difficulty_config().await;
-
+                    
                     // Check if we should adjust at this height
                     if self.height % adjustment_interval != 0 {
                         return Ok::<Option<u32>, anyhow::Error>(None);
@@ -824,12 +825,12 @@ impl Blockchain {
                     if self.height < adjustment_interval {
                         return Ok(None);
                     }
-
+                    
                     let current_block = &self.blocks[self.height as usize];
                     let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
                     let interval_start_time = interval_start.timestamp();
                     let interval_end_time = current_block.timestamp();
-
+                    
                     // Calculate new difficulty
                     match coord.calculate_difficulty_adjustment(
                         self.height,
@@ -847,7 +848,7 @@ impl Blockchain {
                     }
                 })
             });
-
+            
             match result {
                 Ok(Some(new_bits)) => {
                     let old_difficulty = self.difficulty.bits();
@@ -861,7 +862,10 @@ impl Blockchain {
                 }
                 Ok(None) => {} // No adjustment needed
                 Err(e) => {
-                    tracing::error!("Difficulty adjustment failed: {}", e);
+                    tracing::error!(
+                        "Difficulty adjustment via coordinator failed: {}. \
+                         This indicates a consensus layer problem requiring attention.", e
+                    );
                     return Err(e);
                 }
             }
@@ -869,7 +873,7 @@ impl Blockchain {
             // Fallback to hardcoded constants for backward compatibility (no coordinator)
             let adjustment_interval = crate::DIFFICULTY_ADJUSTMENT_INTERVAL;
             let target_timespan = crate::TARGET_TIMESPAN;
-
+            
             // Check if we should adjust at this height
             if self.height % adjustment_interval != 0 {
                 return Ok(());
@@ -877,16 +881,16 @@ impl Blockchain {
             if self.height < adjustment_interval {
                 return Ok(());
             }
-
+            
             let current_block = &self.blocks[self.height as usize];
             let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
             let interval_start_time = interval_start.timestamp();
             let interval_end_time = current_block.timestamp();
-
+            
             let new_difficulty_bits = self.calculate_difficulty_legacy(interval_start_time, interval_end_time, target_timespan);
             let old_difficulty = self.difficulty.bits();
             self.difficulty = Difficulty::from_bits(new_difficulty_bits);
-
+            
             tracing::info!(
                 "Difficulty adjusted from {} to {} at height {}",
                 old_difficulty,
@@ -894,10 +898,10 @@ impl Blockchain {
                 self.height
             );
         }
-
+        
         Ok(())
     }
-
+    
     /// Legacy difficulty calculation using hardcoded constants.
     /// Used when consensus coordinator is not available.
     fn calculate_difficulty_legacy(&self, interval_start_time: u64, interval_end_time: u64, target_timespan: u64) -> u32 {
@@ -910,7 +914,7 @@ impl Blockchain {
             );
             return self.difficulty.bits();
         }
-
+        
         let actual_timespan = interval_end_time.saturating_sub(interval_start_time);
         // Clamp to prevent extreme adjustments (4x range)
         let actual_timespan = actual_timespan
@@ -2422,23 +2426,30 @@ impl Blockchain {
         Ok(tx_hash)
     }
 
-    /// Apply difficulty parameter updates from an approved DAO proposal
+    // ============================================================================
+    // GOVERNANCE PARAMETER UPDATE METHODS
+    // ============================================================================
+
+    /// Apply a difficulty parameter update from a passed DAO proposal.
     ///
-    /// This method should be called when processing DifficultyUpdate transactions
-    /// in blocks. It validates that the proposal exists, is approved, and contains
-    /// valid difficulty parameters before applying them to the blockchain.
+    /// This method:
+    /// 1. Verifies the proposal exists and has passed voting
+    /// 2. Extracts and validates the new difficulty parameters
+    /// 3. Updates the blockchain's difficulty_config
+    /// 4. Synchronizes changes with the consensus coordinator
+    /// 5. Logs all changes at info level
     ///
-    /// # Parameters
-    /// * `proposal_id` - Hash of the DAO proposal containing difficulty parameters
+    /// # Arguments
+    /// * `proposal_id` - The hash ID of the passed difficulty parameter update proposal
     ///
     /// # Returns
-    /// * `Ok(())` if parameters were successfully applied
-    /// * `Err(...)` if proposal not found, not approved, or parameters are invalid
+    /// * `Ok(())` on successful update
+    /// * `Err` if proposal doesn't exist, hasn't passed, or parameters are invalid
     ///
     /// # Errors
-    /// Returns error if:
-    /// - Proposal does not exist (`InvalidProposal`)
-    /// - Proposal is not approved/passed (`InvalidProposal`)
+    /// - Proposal not found (`InvalidProposal`)
+    /// - Proposal not passed (`InvalidProposal`)
+    /// - Wrong proposal type (`InvalidProposal`)
     /// - New parameters fail validation (`ParameterValidationError`)
     /// - Parameters were already applied at this proposal_id
     pub fn apply_difficulty_parameter_update(&mut self, proposal_id: Hash) -> Result<()> {
@@ -2452,163 +2463,130 @@ impl Blockchain {
         }
 
         // 1. Verify proposal exists
-        let proposal = self.get_dao_proposal(&proposal_id)
+        let _proposal = self.get_dao_proposal(&proposal_id)
             .ok_or_else(|| anyhow::anyhow!(
-                "InvalidProposal: Proposal {:?} not found", proposal_id
+                "InvalidProposal: Difficulty parameter update proposal {:?} not found",
+                proposal_id
             ))?;
 
-        // 2. Verify proposal type is correct
-        if proposal.proposal_type != "difficulty_parameter_update" {
-            return Err(anyhow::anyhow!(
-                "InvalidProposal: Proposal {:?} is not a difficulty parameter update (type: {})",
-                proposal_id,
-                proposal.proposal_type
-            ));
-        }
-
-        // 3. Verify proposal has passed
+        // 2. Verify proposal has passed (60% quorum for governance changes)
         if !self.has_proposal_passed(&proposal_id, 60)? {
             return Err(anyhow::anyhow!(
-                "InvalidProposal: Proposal {:?} has not passed or voting is still active",
+                "InvalidProposal: Proposal {:?} has not passed voting",
                 proposal_id
             ));
         }
 
-        // 4. Check if already applied (prevent double-application)
-        // A difficulty update should only be applied once per proposal
-        if self.difficulty_config.last_updated_at_height >= proposal.created_at_height {
-            // Check if this specific proposal was already applied
-            // We'll consider it applied if difficulty was updated at or after proposal creation
-            // and the current config height matches a block that could have applied this proposal
-            warn!(
-                "Difficulty parameters may have already been applied for proposal {:?} \
-                (current config updated at height {}, proposal created at {})",
-                proposal_id,
-                self.difficulty_config.last_updated_at_height,
-                proposal.created_at_height
-            );
-            // We'll allow the update to proceed, but log a warning
-            // The validation and idempotency check below will catch true duplicates
-        }
-
-        // 5. Extract and validate execution parameters
-        let execution_params = proposal.execution_params
+        // 3. Get the execution parameters from the proposal
+        let execution_params_bytes = self.get_dao_proposal(&proposal_id)
+            .and_then(|p| p.execution_params.clone())
             .ok_or_else(|| anyhow::anyhow!(
-                "ParameterValidationError: Proposal {:?} has no execution parameters",
+                "InvalidProposal: Proposal {:?} has no execution parameters",
                 proposal_id
             ))?;
 
-        // Deserialize execution params to extract difficulty parameters
-        // The params are encoded as GovernanceParameterUpdate with BlockchainTargetTimespan
-        // and BlockchainAdjustmentInterval values
-        let params: lib_consensus::dao::dao_types::DaoExecutionParams = 
-            bincode::deserialize(&execution_params)
+        // 4. Decode execution parameters
+        let execution_params: lib_consensus::dao::dao_types::DaoExecutionParams = 
+            bincode::deserialize(&execution_params_bytes)
                 .map_err(|e| anyhow::anyhow!(
-                    "ParameterValidationError: Failed to deserialize execution params: {}",
+                    "ParameterValidationError: Failed to decode execution params: {}",
                     e
                 ))?;
 
-        // Extract the parameter values
-        let (target_timespan, adjustment_interval) = match params.action {
+        // 5. Extract the governance parameter update
+        let update = match execution_params.action {
             lib_consensus::dao::dao_types::DaoExecutionAction::GovernanceParameterUpdate(update) => {
-                let mut target_timespan = None;
-                let mut adjustment_interval = None;
-
-                for param in update.updates {
-                    match param {
-                        lib_consensus::dao::dao_types::GovernanceParameterValue::BlockchainTargetTimespan(val) => {
-                            target_timespan = Some(val);
-                        }
-                        lib_consensus::dao::dao_types::GovernanceParameterValue::BlockchainAdjustmentInterval(val) => {
-                            adjustment_interval = Some(val);
-                        }
-                        _ => {} // Ignore other parameter types
-                    }
-                }
-
-                match (target_timespan, adjustment_interval) {
-                    (Some(ts), Some(ai)) => (ts, ai),
-                    _ => return Err(anyhow::anyhow!(
-                        "ParameterValidationError: Proposal {:?} missing required difficulty parameters",
-                        proposal_id
-                    )),
-                }
+                update
             }
             _ => return Err(anyhow::anyhow!(
-                "ParameterValidationError: Proposal {:?} has wrong execution action type",
+                "InvalidProposal: Proposal {:?} is not a governance parameter update",
                 proposal_id
             )),
         };
 
-        // 6. Validate new parameters (same validation as proposal creation)
-        if target_timespan == 0 {
+        // 6. Extract difficulty-specific parameters from the update vector
+        let mut new_target_timespan: Option<u64> = None;
+        let mut new_adjustment_interval: Option<u64> = None;
+
+        for param in &update.updates {
+            match param {
+                lib_consensus::dao::dao_types::GovernanceParameterValue::BlockchainTargetTimespan(v) => {
+                    new_target_timespan = Some(*v);
+                }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::BlockchainAdjustmentInterval(v) => {
+                    new_adjustment_interval = Some(*v);
+                }
+                _ => {
+                    // Other parameters are handled elsewhere
+                }
+            }
+        }
+
+        // 7. Validate that at least one difficulty parameter was provided
+        if new_target_timespan.is_none() && new_adjustment_interval.is_none() {
             return Err(anyhow::anyhow!(
-                "ParameterValidationError: target_timespan must be greater than 0"
+                "ParameterValidationError: No difficulty parameters found in governance update"
             ));
         }
 
-        if adjustment_interval == 0 {
-            return Err(anyhow::anyhow!(
-                "ParameterValidationError: adjustment_interval must be greater than 0"
-            ));
+        // 8. Validate parameters
+        if let Some(ts) = new_target_timespan {
+            if ts == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: target_timespan cannot be zero"
+                ));
+            }
+        }
+        if let Some(ai) = new_adjustment_interval {
+            if ai == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: adjustment_interval cannot be zero"
+                ));
+            }
         }
 
-        // Create new config with updated parameters
-        // Keep the existing min/max difficulty factors as they're not changed by this proposal type
-        let new_config = DifficultyConfig {
-            target_timespan,
-            adjustment_interval,
-            max_difficulty_decrease_factor: self.difficulty_config.max_difficulty_decrease_factor,
-            max_difficulty_increase_factor: self.difficulty_config.max_difficulty_increase_factor,
-            last_updated_at_height: self.height,
-        };
-
-        // Validate the complete configuration
-        new_config.validate().map_err(|e| anyhow::anyhow!(
-            "ParameterValidationError: New difficulty configuration is invalid: {}",
-            e
-        ))?;
-
-        // 7. Update blockchain.difficulty_config
-        let old_target_timespan = self.difficulty_config.target_timespan;
-        let old_adjustment_interval = self.difficulty_config.adjustment_interval;
-        self.difficulty_config = new_config;
-
-        // 8. Log the change
+        // 9. Log the update
         info!(
-            "✅ Difficulty parameters updated via DAO proposal {:?} at height {}: \
-            target_timespan {} -> {} seconds, adjustment_interval {} -> {} blocks (target block time: {} seconds)",
-            proposal_id,
-            self.height,
-            old_target_timespan,
-            target_timespan,
-            old_adjustment_interval,
-            adjustment_interval,
-            self.difficulty_config.target_block_time()
+            "📊 Applying difficulty parameter update from proposal {:?}",
+            proposal_id
         );
+        if let Some(ts) = new_target_timespan {
+            info!(
+                "   target_timespan: {} → {}",
+                self.difficulty_config.target_timespan, ts
+            );
+        }
+        if let Some(ai) = new_adjustment_interval {
+            info!(
+                "   adjustment_interval: {} → {}",
+                self.difficulty_config.adjustment_interval, ai
+            );
+        }
 
-        // 9. If we have a consensus coordinator, update it as well
-        if let Some(coordinator) = &self.consensus_coordinator {
+        // 10. Apply the update
+        if let Some(ts) = new_target_timespan {
+            self.difficulty_config.target_timespan = ts;
+        }
+        if let Some(ai) = new_adjustment_interval {
+            self.difficulty_config.adjustment_interval = ai;
+        }
+        self.difficulty_config.last_updated_at_height = self.height;
+
+        // Sync with consensus coordinator if available
+        if let Some(ref coordinator) = self.consensus_coordinator {
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
-                    let coord = coordinator.read().await;
-                    if let Err(e) = coord.apply_difficulty_governance_update(
-                        None,  // Keep initial_difficulty unchanged
-                        Some(adjustment_interval),
-                        Some(target_timespan)
-                    ).await {
-                        warn!(
-                            "Failed to update consensus coordinator difficulty parameters: {}",
-                            e
-                        );
-                    } else {
-                        debug!("Consensus coordinator difficulty parameters synchronized");
-                    }
+                    let coord = coordinator.write().await;
+                    coord.apply_difficulty_governance_update(
+                        None, // initial_difficulty not in DifficultyConfig
+                        new_adjustment_interval,
+                        new_target_timespan,
+                    ).await
                 })
-            });
+            })?;
         }
 
-        // 10. Mark proposal as executed to prevent double-execution
+        // 11. Mark proposal as executed to prevent double-execution
         self.executed_dao_proposals.insert(proposal_id);
 
         Ok(())
