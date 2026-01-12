@@ -37,10 +37,7 @@ log = "0.4"
 tracing = "0.1"
 humantime-serde = "1.1"
 parking_lot = "0.12" # DB-010: Thread-safe locking for backend implementations
-sled = "0.34" # DB-010: Persistent storage backend
-
-# Persistent key-value storage backend (DB-008)
-sled = "0.34"
+sled = "0.34" # DB-010: Persistent storage backend (also used in DB-008)
 
 # [DB-009] SQLite backend for structured data
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"], optional = true }

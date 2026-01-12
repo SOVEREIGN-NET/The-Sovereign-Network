@@ -79,7 +79,6 @@ use lib_identity::ZhtpIdentity;
 
 // Import specific types from our own modules
 use crate::types::{NodeId, ContentHash};
-use crate::dht::backend::{StorageBackend, HashMapBackend, SledBackend};
 use std::path::Path;
 
 /// Unified storage system that integrates all components
@@ -105,7 +104,7 @@ use std::path::Path;
 /// ).await?;
 /// ```
 #[derive(Debug)]
-pub struct UnifiedStorageSystem<B: StorageBackend = HashMapBackend> {
+pub struct UnifiedStorageSystem<B: dht::backend::StorageBackend = dht::backend::HashMapBackend> {
     /// DHT network manager
     dht_manager: dht::node::DhtNodeManager,
     /// DHT storage (generic over backend)
@@ -186,7 +185,7 @@ pub struct StorageStats {
     pub total_downloads: u64,
 }
 
-impl UnifiedStorageSystem<HashMapBackend> {
+impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
     /// Create new unified storage system with in-memory storage (backward compatible)
     ///
     /// This is the default constructor for UnifiedStorageSystem. It uses in-memory
@@ -673,7 +672,7 @@ impl UnifiedStorageSystem<HashMapBackend> {
 ///
 /// Provides factory methods to create UnifiedStorageSystem with persistent storage
 /// (SledBackend) instead of in-memory storage. All DHT data is persisted across restarts.
-impl UnifiedStorageSystem<SledBackend> {
+impl UnifiedStorageSystem<dht::backend::SledBackend> {
     /// Create new unified storage system with persistent SledBackend storage
     ///
     /// This constructor initializes UnifiedStorageSystem with persistent storage
