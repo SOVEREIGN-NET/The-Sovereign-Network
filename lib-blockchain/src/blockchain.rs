@@ -2462,24 +2462,23 @@ impl Blockchain {
             return Ok(());
         }
 
-        // 1. Verify proposal exists
-        let _proposal = self.get_dao_proposal(&proposal_id)
+        // 1. Verify proposal exists and get its quorum requirement
+        let proposal = self.get_dao_proposal(&proposal_id)
             .ok_or_else(|| anyhow::anyhow!(
                 "InvalidProposal: Difficulty parameter update proposal {:?} not found",
                 proposal_id
             ))?;
 
-        // 2. Verify proposal has passed (60% quorum for governance changes)
-        if !self.has_proposal_passed(&proposal_id, 60)? {
+        // 2. Verify proposal has passed using its configured quorum requirement
+        if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
             return Err(anyhow::anyhow!(
                 "InvalidProposal: Proposal {:?} has not passed voting",
                 proposal_id
             ));
         }
 
-        // 3. Get the execution parameters from the proposal
-        let execution_params_bytes = self.get_dao_proposal(&proposal_id)
-            .and_then(|p| p.execution_params.clone())
+        // 3. Get the execution parameters from the proposal (already fetched above)
+        let execution_params_bytes = proposal.execution_params.clone()
             .ok_or_else(|| anyhow::anyhow!(
                 "InvalidProposal: Proposal {:?} has no execution parameters",
                 proposal_id
@@ -2600,21 +2599,22 @@ impl Blockchain {
     ///
     /// Future: Treasury allocations, protocol upgrades, etc.
     pub fn process_approved_governance_proposals(&mut self) -> Result<()> {
-        // Get all difficulty parameter update proposals
-        let difficulty_proposals: Vec<Hash> = self.get_dao_proposals()
+        // Get difficulty parameter update proposals with their quorum requirements
+        // Collect to avoid borrowing issues with self.has_proposal_passed()
+        let difficulty_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
             .iter()
             .filter(|p| p.proposal_type == "difficulty_parameter_update")
-            .map(|p| p.proposal_id.clone())
+            .map(|p| (p.proposal_id.clone(), p.quorum_required))
             .collect();
 
-        for proposal_id in difficulty_proposals {
+        for (proposal_id, quorum_required) in difficulty_proposals {
             // Skip if already executed
             if self.executed_dao_proposals.contains(&proposal_id) {
                 continue;
             }
 
-            // Check if proposal has passed voting (60% quorum by default)
-            match self.has_proposal_passed(&proposal_id, 60) {
+            // Check if proposal has passed voting using its configured quorum requirement
+            match self.has_proposal_passed(&proposal_id, quorum_required as u32) {
                 Ok(true) => {
                     // Proposal passed, try to execute it
                     match self.apply_difficulty_parameter_update(proposal_id.clone()) {
