@@ -465,7 +465,8 @@ mod tests {
         let server_addr = listener.local_addr()?;
 
         // Create shared handshake context
-        let ctx = HandshakeContext::new(NonceCache::new_test(300, 10000));
+        let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let ctx = HandshakeContext::new(NonceCache::new_test(300, 10000, epoch));
         let server_ctx = ctx.clone();
 
         // Spawn server task
@@ -489,12 +490,12 @@ mod tests {
         assert_eq!(client_result.session_id, server_result.session_id);
 
         // Verify peer identities match
-        assert_eq!(client_result.peer_identity.did, server_did);
-        assert_eq!(server_result.peer_identity.did, client_identity.did);
+        assert_eq!(client_result.peer_identity.did(), server_did);
+        assert_eq!(server_result.peer_identity.did(), client_identity.did);
 
         // Verify peer NodeIds match
-        assert_eq!(client_result.peer_identity.node_id, server_node_id);
-        assert_eq!(server_result.peer_identity.node_id, client_identity.node_id);
+        assert_eq!(client_result.peer_identity.node_id(), &server_node_id);
+        assert_eq!(server_result.peer_identity.node_id(), &client_identity.node_id);
 
         Ok(())
     }
@@ -512,7 +513,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let server_addr = listener.local_addr()?;
         
-        let ctx = HandshakeContext::new(NonceCache::new_test(300, 10000));
+        let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let ctx = HandshakeContext::new(NonceCache::new_test(300, 10000, epoch));
         let server_ctx = ctx.clone();
         
         // First handshake should succeed

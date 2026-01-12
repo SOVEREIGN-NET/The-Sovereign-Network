@@ -220,13 +220,15 @@ impl QuicMeshProtocol {
         info!("🔐 QUIC endpoint listening on {}", actual_addr);
 
         // Create shared handshake context with persistent nonce cache
-        // Uses RocksDB for persistence across restarts (prevents replay attacks)
+        // Uses sled for persistence across restarts (prevents replay attacks)
         // TTL: 1 hour, max entries: 100,000 (handles high connection rate)
         let nonce_db_path = cert_path.parent()
             .unwrap_or(Path::new("./data"))
             .join("quic_nonce_cache");
 
-        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 100_000)
+        // Derive network epoch from genesis hash (uses environment-appropriate fallback)
+        let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
+        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 100_000, network_epoch)
             .context("Failed to open QUIC nonce cache database")?;
 
         let handshake_ctx = HandshakeContext::new(nonce_cache);

@@ -8,37 +8,142 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaoProposal {
     /// Unique proposal identifier
-    pub id: Hash,
+    id: Hash,
     /// Proposal title
-    pub title: String,
+    title: String,
     /// Detailed description
-    pub description: String,
+    description: String,
     /// Proposer identity
-    pub proposer: IdentityId,
+    proposer: IdentityId,
     /// Type of proposal
-    pub proposal_type: DaoProposalType,
+    proposal_type: DaoProposalType,
     /// Current status
-    pub status: DaoProposalStatus,
+    status: DaoProposalStatus,
     /// Voting start time
-    pub voting_start_time: u64,
+    voting_start_time: u64,
     /// Voting end time
-    pub voting_end_time: u64,
+    voting_end_time: u64,
     /// Minimum quorum required (percentage)
-    pub quorum_required: u8,
+    quorum_required: u8,
     /// Current vote tally
-    pub vote_tally: DaoVoteTally,
+    vote_tally: DaoVoteTally,
     /// Proposal creation timestamp
-    pub created_at: u64,
+    created_at: u64,
     /// Block height when proposal was created
-    pub created_at_height: u64,
+    created_at_height: u64,
     /// Execution parameters (if passed)
-    pub execution_params: Option<Vec<u8>>,
+    execution_params: Option<Vec<u8>>,
     /// Expected UBI impact (number of beneficiaries)
-    pub ubi_impact: Option<u64>,
+    ubi_impact: Option<u64>,
     /// Expected economic impact metrics
-    pub economic_impact: Option<ImpactMetrics>,
+    economic_impact: Option<ImpactMetrics>,
     /// Privacy level for proposal data
-    pub privacy_level: PrivacyLevel,
+    privacy_level: PrivacyLevel,
+}
+
+impl DaoProposal {
+    /// Create a new DAO proposal with validation
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - voting_end_time <= voting_start_time (voting window must be positive)
+    /// - quorum_required > 100 (quorum must be valid percentage)
+    pub fn new(
+        id: Hash,
+        title: String,
+        description: String,
+        proposer: IdentityId,
+        proposal_type: DaoProposalType,
+        status: DaoProposalStatus,
+        voting_start_time: u64,
+        voting_end_time: u64,
+        quorum_required: u8,
+        vote_tally: DaoVoteTally,
+        created_at: u64,
+        created_at_height: u64,
+        execution_params: Option<Vec<u8>>,
+        ubi_impact: Option<u64>,
+        economic_impact: Option<ImpactMetrics>,
+        privacy_level: PrivacyLevel,
+    ) -> Result<Self, String> {
+        // Validate temporal ordering invariant
+        if voting_end_time <= voting_start_time {
+            return Err("voting_end_time must be after voting_start_time".to_string());
+        }
+
+        // Validate quorum invariant
+        if quorum_required > 100 {
+            return Err("quorum_required must be between 0 and 100".to_string());
+        }
+
+        Ok(DaoProposal {
+            id,
+            title,
+            description,
+            proposer,
+            proposal_type,
+            status,
+            voting_start_time,
+            voting_end_time,
+            quorum_required,
+            vote_tally,
+            created_at,
+            created_at_height,
+            execution_params,
+            ubi_impact,
+            economic_impact,
+            privacy_level,
+        })
+    }
+
+    /// Validate status transition
+    pub fn transition_to(&mut self, new_status: DaoProposalStatus) -> Result<(), String> {
+        match (&self.status, &new_status) {
+            (DaoProposalStatus::Draft, DaoProposalStatus::Active) => {},
+            (DaoProposalStatus::Active, DaoProposalStatus::Passed) => {},
+            (DaoProposalStatus::Active, DaoProposalStatus::Failed) => {},
+            (DaoProposalStatus::Passed, DaoProposalStatus::Executed) => {},
+            (DaoProposalStatus::Active, DaoProposalStatus::Expired) => {},
+            (s, DaoProposalStatus::Cancelled) => {
+                if !matches!(s, DaoProposalStatus::Executed) {
+                    // Can cancel from most states except Executed
+                } else {
+                    return Err("Cannot cancel executed proposal".to_string());
+                }
+            },
+            _ => return Err(format!("Invalid transition from {:?} to {:?}", self.status, new_status)),
+        }
+        self.status = new_status;
+        Ok(())
+    }
+
+    /// Check if proposal is currently votable
+    pub fn is_votable(&self, current_time: u64) -> bool {
+        matches!(self.status, DaoProposalStatus::Active)
+            && current_time >= self.voting_start_time
+            && current_time < self.voting_end_time
+    }
+
+    // Accessor methods (immutable)
+    pub fn id(&self) -> &Hash { &self.id }
+    pub fn title(&self) -> &str { &self.title }
+    pub fn description(&self) -> &str { &self.description }
+    pub fn proposer(&self) -> &IdentityId { &self.proposer }
+    pub fn proposal_type(&self) -> &DaoProposalType { &self.proposal_type }
+    pub fn status(&self) -> &DaoProposalStatus { &self.status }
+    pub fn voting_start_time(&self) -> u64 { self.voting_start_time }
+    pub fn voting_end_time(&self) -> u64 { self.voting_end_time }
+    pub fn quorum_required(&self) -> u8 { self.quorum_required }
+    pub fn vote_tally(&self) -> &DaoVoteTally { &self.vote_tally }
+    pub fn created_at(&self) -> u64 { self.created_at }
+    pub fn created_at_height(&self) -> u64 { self.created_at_height }
+    pub fn execution_params(&self) -> Option<&Vec<u8>> { self.execution_params.as_ref() }
+    pub fn ubi_impact(&self) -> Option<u64> { self.ubi_impact }
+    pub fn economic_impact(&self) -> Option<&ImpactMetrics> { self.economic_impact.as_ref() }
+    pub fn privacy_level(&self) -> &PrivacyLevel { &self.privacy_level }
+
+    // Mutable accessor for tally
+    pub fn vote_tally_mut(&mut self) -> &mut DaoVoteTally { &mut self.vote_tally }
 }
 
 /// DAO execution parameters for proposal application
@@ -143,21 +248,98 @@ pub enum DaoProposalStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaoVoteTally {
     /// Total number of votes cast
-    pub total_votes: u64,
+    total_votes: u64,
     /// Number of "yes" votes
-    pub yes_votes: u64,
+    yes_votes: u64,
     /// Number of "no" votes
-    pub no_votes: u64,
+    no_votes: u64,
     /// Number of "abstain" votes
-    pub abstain_votes: u64,
+    abstain_votes: u64,
     /// Total eligible voting power
-    pub total_eligible_power: u64,
+    total_eligible_power: u64,
     /// Weighted yes votes (considering voting power)
-    pub weighted_yes: u64,
+    weighted_yes: u64,
     /// Weighted no votes (considering voting power)
-    pub weighted_no: u64,
+    weighted_no: u64,
     /// Weighted abstain votes (considering voting power)
-    pub weighted_abstain: u64,
+    weighted_abstain: u64,
+}
+
+impl DaoVoteTally {
+    /// Create a new vote tally with validation
+    pub fn new(total_eligible_power: u64) -> Self {
+        Self {
+            total_votes: 0,
+            yes_votes: 0,
+            no_votes: 0,
+            abstain_votes: 0,
+            total_eligible_power,
+            weighted_yes: 0,
+            weighted_no: 0,
+            weighted_abstain: 0,
+        }
+    }
+
+    /// Record a vote and validate invariants
+    pub fn record_vote(&mut self, choice: &DaoVoteChoice, power: u64) -> Result<(), String> {
+        // Check power constraint
+        if self.total_votes + 1 > self.total_eligible_power {
+            return Err("Cannot exceed total eligible voting power".to_string());
+        }
+
+        match choice {
+            DaoVoteChoice::Yes => {
+                self.yes_votes = self.yes_votes.saturating_add(1);
+                self.weighted_yes = self.weighted_yes.saturating_add(power);
+            },
+            DaoVoteChoice::No => {
+                self.no_votes = self.no_votes.saturating_add(1);
+                self.weighted_no = self.weighted_no.saturating_add(power);
+            },
+            DaoVoteChoice::Abstain => {
+                self.abstain_votes = self.abstain_votes.saturating_add(1);
+                self.weighted_abstain = self.weighted_abstain.saturating_add(power);
+            },
+            DaoVoteChoice::Delegate(_) => {
+                // Delegates don't contribute to votes directly
+            },
+        }
+
+        self.total_votes = self.total_votes.saturating_add(1);
+        self.validate()?;
+        Ok(())
+    }
+
+    /// Validate vote tally invariants
+    fn validate(&self) -> Result<(), String> {
+        // Invariant: vote sum consistency
+        if self.yes_votes + self.no_votes + self.abstain_votes != self.total_votes {
+            return Err("Vote counts don't sum to total_votes".to_string());
+        }
+
+        // Invariant: votes don't exceed eligible power
+        if self.total_votes > self.total_eligible_power {
+            return Err("Votes exceed total eligible voting power".to_string());
+        }
+
+        // Invariant: weighted votes don't exceed eligible power
+        let total_weighted = self.weighted_yes + self.weighted_no + self.weighted_abstain;
+        if total_weighted > self.total_eligible_power {
+            return Err("Weighted votes exceed total eligible voting power".to_string());
+        }
+
+        Ok(())
+    }
+
+    // Accessor methods
+    pub fn total_votes(&self) -> u64 { self.total_votes }
+    pub fn yes_votes(&self) -> u64 { self.yes_votes }
+    pub fn no_votes(&self) -> u64 { self.no_votes }
+    pub fn abstain_votes(&self) -> u64 { self.abstain_votes }
+    pub fn total_eligible_power(&self) -> u64 { self.total_eligible_power }
+    pub fn weighted_yes(&self) -> u64 { self.weighted_yes }
+    pub fn weighted_no(&self) -> u64 { self.weighted_no }
+    pub fn weighted_abstain(&self) -> u64 { self.weighted_abstain }
 }
 
 /// Individual DAO vote

@@ -245,9 +245,9 @@ impl TokenClass {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TreasuryAllocation {
     /// Allocation percentage (0-100)
-    pub percentage: u8,
+    percentage: u8,
     /// Optional vesting schedule in months (0 = immediate)
-    pub vesting_months: Option<u16>,
+    vesting_months: Option<u16>,
 }
 
 impl TreasuryAllocation {
@@ -261,8 +261,8 @@ impl TreasuryAllocation {
         Ok(allocation)
     }
 
-    /// Validate allocation bounds
-    pub fn validate(&self) -> Result<(), &'static str> {
+    /// Validate allocation bounds (invariant enforcement at construction time)
+    fn validate(&self) -> Result<(), &'static str> {
         if self.percentage > 100 {
             return Err("treasury allocation percentage must be between 0 and 100");
         }
@@ -273,17 +273,27 @@ impl TreasuryAllocation {
     pub fn is_immediate(&self) -> bool {
         self.vesting_months.unwrap_or(0) == 0
     }
+
+    /// Get allocation percentage
+    pub fn percentage(&self) -> u8 {
+        self.percentage
+    }
+
+    /// Get vesting schedule
+    pub fn vesting_months(&self) -> Option<u16> {
+        self.vesting_months
+    }
 }
 
 /// Metadata describing DAO classification and treasury rules
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DAOMetadata {
     /// DAO classification (NP/FP)
-    pub dao_type: DAOType,
+    dao_type: DAOType,
     /// Primary token class for the DAO
-    pub token_class: TokenClass,
+    token_class: TokenClass,
     /// Treasury allocation policy for this DAO
-    pub treasury_allocation: TreasuryAllocation,
+    treasury_allocation: TreasuryAllocation,
 }
 
 // ============================================================================
@@ -464,10 +474,14 @@ impl DAOMetadata {
         Ok(metadata)
     }
 
-    /// Validate metadata consistency and allocation bounds
-    pub fn validate(&self) -> Result<(), &'static str> {
-        self.treasury_allocation.validate()?;
+    /// Validate metadata consistency and allocation bounds (invariant enforcement at construction time)
+    fn validate(&self) -> Result<(), &'static str> {
+        // Invariant: Treasury allocation must be valid
+        if self.treasury_allocation.percentage() > 100 {
+            return Err("treasury allocation percentage must be between 0 and 100");
+        }
 
+        // Invariant: Token-type consistency
         if matches!(self.token_class, TokenClass::DAO_NP) && !self.dao_type.is_non_profit() {
             return Err("DAO_NP tokens require NP DAO type");
         }
@@ -477,6 +491,21 @@ impl DAOMetadata {
         }
 
         Ok(())
+    }
+
+    /// Get DAO type
+    pub fn dao_type(&self) -> &DAOType {
+        &self.dao_type
+    }
+
+    /// Get token class
+    pub fn token_class(&self) -> &TokenClass {
+        &self.token_class
+    }
+
+    /// Get treasury allocation
+    pub fn treasury_allocation(&self) -> &TreasuryAllocation {
+        &self.treasury_allocation
     }
 }
 

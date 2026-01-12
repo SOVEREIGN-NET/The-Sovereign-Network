@@ -4,24 +4,20 @@
 //! for the economic storage layer. It provides Kademlia-based routing, peer discovery,
 //! and basic key-value operations with zero-knowledge privacy.
 //!
-//! # Logging (MED-9)
+//! # Logging
 //!
-//! **TODO:** Replace `println!` with `tracing` throughout this module.
+//! This module uses structured logging via the `tracing` crate with appropriate
+//! log levels and structured fields for filtering and observability:
 //!
-//! This module currently uses `println!` for debug output in multiple files.
-//! For production, migrate all logging to use the `tracing` crate:
+//! - `trace!` - Exhaustive debugging (internal state, byte-level details)
+//! - `debug!` - Development visibility (successful operations, routine events)
+//! - `info!` - Operational milestones (DHT maintenance, node additions)
+//! - `warn!` - Recoverable problems (failed pings, missing data)
+//! - `error!` - Critical failures (network errors, contract failures)
 //!
-//! - `tracing::debug!()` for internal state transitions
-//! - `tracing::info!()` for significant operations (node add/remove, store/retrieve)
-//! - `tracing::warn!()` for recoverable errors
-//! - `tracing::error!()` for critical failures
-//!
-//! Files requiring migration:
-//! - `storage.rs` (~40 println! statements)
-//! - `replication.rs` (~5 println! statements)
-//! - `messaging.rs` (~1 println! statements)
-//! - `routing.rs` (~3 println! statements, mostly tests)
+//! Key functions are decorated with `#[instrument]` for automatic span creation.
 
+pub mod backend;
 pub mod node;
 pub mod routing;
 pub mod network;
@@ -32,6 +28,7 @@ pub mod replication;
 pub mod peer_registry; // Ticket #148: Internal DHT peer registry
 pub mod transport; // Ticket #152: Multi-protocol transport abstraction
 pub mod registry_trait; // Ticket #1.14: Trait for unified registry integration
+pub mod signing; // Issue #676: DHT message signing and verification
 
 // Re-export main DHT components
 pub use node::*;
@@ -44,6 +41,15 @@ pub use replication::*;
 pub use peer_registry::*; // Ticket #148
 pub use transport::{DhtTransport, PeerId, UdpDhtTransport}; // Ticket #152
 pub use registry_trait::DhtPeerRegistryTrait; // Ticket #1.14
+pub use signing::{
+    MessageSigner,
+    verify_message_signature,
+    verify_message_signature_bytes,
+    requires_signature,
+    SigningError,
+    VerificationError,
+    MAX_FUTURE_TIMESTAMP_SECS,
+}; // Issue #676
 
 // DHT Configuration Constants
 pub const DHT_PORT: u16 = 33442;

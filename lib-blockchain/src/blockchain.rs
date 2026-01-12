@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use tracing::{info, warn, error, debug};
-use crate::types::{Hash, Difficulty};
+use crate::types::{Hash, Difficulty, DifficultyConfig};
 use crate::transaction::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData};
 use crate::types::transaction_type::TransactionType;
 use crate::block::Block;
@@ -40,6 +40,8 @@ pub struct Blockchain {
     pub height: u64,
     /// Current mining difficulty
     pub difficulty: Difficulty,
+    /// Difficulty adjustment configuration (governance-controlled)
+    pub difficulty_config: DifficultyConfig,
     /// Total work done (cumulative difficulty)
     pub total_work: u128,
     /// UTXO set for transaction validation
@@ -162,6 +164,7 @@ impl Blockchain {
             blocks: vec![genesis_block.clone()],
             height: 0,
             difficulty: Difficulty::from_bits(crate::INITIAL_DIFFICULTY),
+            difficulty_config: DifficultyConfig::default(),
             total_work: 0,
             utxo_set: HashMap::new(),
             nullifier_set: HashSet::new(),
@@ -783,18 +786,22 @@ impl Blockchain {
         crate::types::hash::blake3_hash(&data)
     }
 
-    /// Adjust mining difficulty based on block times.
-    /// 
+    /// Adjust blockchain difficulty based on block time targets.
+    ///
     /// This method delegates to the consensus coordinator's DifficultyManager when available,
     /// falling back to the legacy hardcoded constants for backward compatibility.
-    /// 
     /// The consensus engine owns the difficulty policy per architectural design.
+    ///
+    /// # Fallback Behavior
+    /// - If consensus coordinator is available: uses coordinator's difficulty calculation
+    /// - If consensus coordinator is not available: uses hardcoded legacy constants for backward compatibility
+    /// - If coordinator call fails: returns error (does NOT fall back to legacy calculation)
     fn adjust_difficulty(&mut self) -> Result<()> {
         // Get adjustment parameters and calculate difficulty in a single lock acquisition
         // to avoid race conditions between reading config and calculating adjustment
         if let Some(coordinator) = &self.consensus_coordinator {
             // Use a single tokio block_in_place to call async methods from sync context
-            // Acquire the coordinator read lock ONCE for the entire operation
+            // Acquire the coordinator read lock once to avoid race conditions and redundant locking
             let result = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     let coord = coordinator.read().await;
@@ -845,7 +852,10 @@ impl Blockchain {
                 }
                 Ok(None) => {} // No adjustment needed
                 Err(e) => {
-                    tracing::error!("Difficulty adjustment failed: {}", e);
+                    tracing::error!(
+                        "Difficulty adjustment via coordinator failed: {}. \
+                         This indicates a consensus layer problem requiring attention.", e
+                    );
                     return Err(e);
                 }
             }
@@ -930,6 +940,33 @@ impl Blockchain {
     /// Get current blockchain height
     pub fn get_height(&self) -> u64 {
         self.height
+    }
+
+    /// Get the current difficulty configuration
+    pub fn get_difficulty_config(&self) -> &DifficultyConfig {
+        &self.difficulty_config
+    }
+
+    /// Update the difficulty configuration (for governance updates)
+    ///
+    /// This method validates the new configuration before applying it.
+    /// The `last_updated_at_height` field will be set to the current blockchain height.
+    ///
+    /// # Errors
+    /// Returns an error if the configuration parameters are invalid.
+    pub fn set_difficulty_config(&mut self, mut config: DifficultyConfig) -> Result<()> {
+        config.validate().map_err(|e| anyhow::anyhow!("Invalid difficulty config: {}", e))?;
+        config.last_updated_at_height = self.height;
+        info!(
+            "Updating difficulty config at height {}: target_timespan={}, adjustment_interval={}, max_decrease={}, max_increase={}",
+            self.height,
+            config.target_timespan,
+            config.adjustment_interval,
+            config.max_difficulty_decrease_factor,
+            config.max_difficulty_increase_factor
+        );
+        self.difficulty_config = config;
+        Ok(())
     }
 
     /// Check if a nullifier has been used

@@ -18,7 +18,7 @@ use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use std::net::SocketAddr;
 use uuid::Uuid;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use lib_network::protocols::wifi_direct::WiFiDirectMeshProtocol;
 use lib_network::protocols::wifi_direct_handshake::handshake_as_responder;
 use lib_network::handshake::{HandshakeContext, NonceCache};
@@ -58,11 +58,34 @@ impl WiFiRouter {
         // SECURITY (HIGH-2): Persistent RocksDB cache for cross-restart replay protection
         // Uses open_default() with 5-minute TTL
         let db_path = PathBuf::from("./nonce_cache_wifi");
-        let nonce_cache = NonceCache::open_default(&db_path, 300)
+        let network_epoch = match lib_identity::types::node_id::get_network_genesis() {
+            Ok(genesis) => lib_network::handshake::NetworkEpoch::from_genesis(genesis.as_slice()),
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                {
+                    warn!(
+                        "Network genesis not set (expected in development): {}. \
+                         Using fallback chain_id=0 for development/testing.",
+                        e
+                    );
+                    lib_network::handshake::NetworkEpoch::from_chain_id(0)
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    error!(
+                        "CRITICAL: Network genesis not set in production. \
+                         Cannot determine network epoch for replay protection. \
+                         Defaulting to chain_id=0, but this is a configuration error."
+                    );
+                    lib_network::handshake::NetworkEpoch::from_chain_id(0)
+                }
+            }
+        };
+        let nonce_cache = NonceCache::open_default(&db_path, 300, network_epoch)
             .unwrap_or_else(|e| {
                 warn!("Failed to initialize persistent nonce cache: {}, using fallback", e);
                 // Fallback: try again with different path
-                NonceCache::open_default(&PathBuf::from("/tmp/nonce_cache_wifi"), 300)
+                NonceCache::open_default(&PathBuf::from("/tmp/nonce_cache_wifi"), 300, network_epoch)
                     .expect("Failed to create WiFi nonce cache even with fallback path")
             });
         let handshake_context = HandshakeContext::new(nonce_cache);

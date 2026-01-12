@@ -7,8 +7,26 @@ use crate::types::NodeId;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::debug;
 
 /// DHT replication manager
+///
+/// ## Sequence Counter Behavior
+///
+/// The sequence counter starts at 0 on every node initialization and increments monotonically
+/// with each outgoing replication message. This provides replay protection for the current session.
+///
+/// **Important**: After a node restart, the sequence counter resets to 0. This means:
+/// - Replication messages from a restarted node will have low sequence numbers
+/// - Remote peers that still have high last_sequence values will reject these messages
+/// - The wraparound window (1024) provides some tolerance for this scenario
+/// - If a node frequently restarts, legitimate replication operations may fail
+///
+/// **Mitigation strategies** (not yet implemented):
+/// 1. Persist sequence counters across restarts
+/// 2. Add a connection reset protocol to signal sequence counter reset
+/// 3. Use timestamp-based validation in addition to sequence numbers
+/// 4. Implement session tokens that change on restart
 #[derive(Debug)]
 pub struct DhtReplication {
     /// Local node ID
@@ -19,6 +37,8 @@ pub struct DhtReplication {
     replication_status: HashMap<String, ReplicationStatus>,
     /// Default replication factor
     default_replication_factor: usize,
+    /// Monotonic sequence counter for outgoing replication messages
+    sequence_counter: u64,
 }
 
 impl DhtReplication {
@@ -29,7 +49,14 @@ impl DhtReplication {
             policies: HashMap::new(),
             replication_status: HashMap::new(),
             default_replication_factor,
+            sequence_counter: 0,
         }
+    }
+
+    fn next_sequence(&mut self) -> u64 {
+        let sequence = self.sequence_counter;
+        self.sequence_counter = self.sequence_counter.wrapping_add(1);
+        sequence
     }
     
     /// Set replication policy for a data type
@@ -95,7 +122,7 @@ impl DhtReplication {
     }
     
     /// Replicate data to a specific node
-    async fn replicate_to_node(&self, key: &str, value: &[u8], target_node: &DhtNode) -> Result<()> {
+    async fn replicate_to_node(&mut self, key: &str, value: &[u8], target_node: &DhtNode) -> Result<()> {
         // Check node reputation before attempting replication
         if target_node.reputation < 500 {
             return Err(anyhow!("Target node reputation too low: {}", target_node.reputation));
@@ -103,6 +130,7 @@ impl DhtReplication {
 
         // Create DHT store message for replication
         // SECURITY: Includes nonce and sequence_number for replay protection
+        // Issue #676: Message should be signed by caller using MessageSigner
         let _message = crate::types::dht_types::DhtMessage {
             message_id: hex::encode(&blake3::hash(&[key.as_bytes(), value, target_node.peer.node_id().as_bytes()].concat()).as_bytes()[..8]),
             message_type: crate::types::dht_types::DhtMessageType::Store,
@@ -123,20 +151,23 @@ impl DhtReplication {
                 nonce.copy_from_slice(&hash.as_bytes()[..32]);
                 nonce
             },
-            sequence_number: 0, // TODO: Track per-peer sequence numbers
+            sequence_number: self.next_sequence(),
             signature: None, // TODO (HIGH-5): Sign message
         };
 
         // Send replication message to target node
         // In a implementation, this would use the network layer
         // For now, we'll log the replication attempt and simulate success
-        println!(" Replicating key '{}' ({} bytes) to node {}", 
-                key, 
-                value.len(), 
-                hex::encode(&target_node.peer.node_id().as_bytes()[..4]));
+        let node_id_short = hex::encode(&target_node.peer.node_id().as_bytes()[..4]);
+        debug!(
+            key = %key,
+            data_size = value.len(),
+            target_node = %node_id_short,
+            "Replicating key to node"
+        );
 
         // Log successful replication (metrics would be handled by a separate metrics system)
-        println!("Replication message created for key '{}'", key);
+        debug!(key = %key, "Replication message created");
         
         // Simulate realistic network delay based on data size
         let delay_ms = (value.len() / 1024).max(10).min(1000); // 10ms to 1s based on size
