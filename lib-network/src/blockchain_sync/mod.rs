@@ -55,9 +55,14 @@ use std::time::Duration;
 #[deprecated(since = "0.1.0", note = "Use crate::mtu::BLE_CHUNK_SIZE instead")]
 pub const BLE_CHUNK_SIZE_COMPAT: usize = BLE_CHUNK_SIZE;
 
+/// Backward compatibility: Direct re-export of BLE_CHUNK_SIZE
+#[deprecated(since = "0.1.0", note = "Use crate::mtu::BLE_CHUNK_SIZE instead")]
+pub use crate::mtu::BLE_CHUNK_SIZE;
+
 #[deprecated(since = "0.1.0", note = "Use crate::mtu::BLUETOOTH_CLASSIC_CHUNK_SIZE instead")]
 pub const CLASSIC_CHUNK_SIZE: usize = BLUETOOTH_CLASSIC_CHUNK_SIZE;
 
+/// Backward compatibility: Direct re-export of WIFI_CHUNK_SIZE  
 #[deprecated(since = "0.1.0", note = "Use crate::mtu::WIFI_DIRECT_CHUNK_SIZE instead")]
 pub const WIFI_CHUNK_SIZE: usize = WIFI_DIRECT_CHUNK_SIZE;
 

@@ -126,8 +126,27 @@ pub fn fragment_data(data: &[u8], mtu: u16) -> Vec<Vec<u8>> {
 /// **REFACTORED**: Now uses centralized fragmentation with standardized 8-byte headers.
 /// Returns Vec of wire-format fragments ready for GATT transmission.
 /// 
+/// ## Wire Format Compatibility Warning
+/// 
+/// **BREAKING CHANGE**: The wire format has changed from 12-byte headers (old format)
+/// to 8-byte headers (new v1 format):
+/// 
+/// - **Old format** (12 bytes): `message_id: u64, total_fragments: u16, fragment_index: u16`
+/// - **New v1 format** (8 bytes): `message_id: u32, total_fragments: u16, fragment_index: u16`
+/// 
+/// This change is **NOT backward compatible**. Old clients will fail to parse fragments
+/// created by this function, and vice versa. For production deployments requiring 
+/// compatibility, use `fragment_large_message_v2` which includes protocol versioning.
+/// 
+/// ## Message ID Parameter
+/// 
+/// **Note**: The `message_id` parameter (u64) is currently **ignored**. Message IDs are
+/// generated internally as u32 by the centralized fragmentation logic. Callers should
+/// not rely on a specific `message_id` being preserved. This breaks backward compatibility
+/// with code that depends on specific message IDs.
+/// 
 /// **DEPRECATED**: Use `fragment_large_message_v2` with a GattSession for new code.
-pub fn fragment_large_message(message_id: u64, data: &[u8], mtu: u16) -> Vec<Vec<u8>> {
+pub fn fragment_large_message(_message_id: u64, data: &[u8], mtu: u16) -> Vec<Vec<u8>> {
     // ATT overhead is 3 bytes, leave room for our 8-byte header
     let chunk_size = (mtu as usize).saturating_sub(3 + 8).max(20);
     
@@ -205,18 +224,26 @@ impl FragmentReassembler {
         let result = self.inner.add_fragment(parsed)?;
         
         if let Some(ref data) = result {
-            info!("✅ Reassembled message from {} fragments ({} bytes)", 
-                self.inner.pending_count(), data.len());
+            info!("✅ Reassembled complete message ({} bytes)", data.len());
         }
         
         Ok(result)
     }
     
     /// Clear stale fragments older than timeout
-    pub fn cleanup_stale_fragments(&mut self, _message_id: u64) {
-        // Clear all pending (centralized reassembler doesn't track individual message cleanup)
-        self.inner.clear();
-        warn!("🗑️ Cleaned up all stale fragments");
+    /// 
+    /// **Note**: The centralized v1 reassembler does not support per-message cleanup.
+    /// This method only logs the request. To avoid disrupting reassembly of valid
+    /// in-progress messages, use v2 fragmentation with GattSession which provides
+    /// automatic timeout-based cleanup.
+    pub fn cleanup_stale_fragments(&mut self, message_id: u64) {
+        // Centralized reassembler currently does not support per-message cleanup.
+        // To avoid disrupting reassembly of other in-progress messages, we only log for now.
+        debug!(
+            "Requested cleanup of stale fragments for message_id {}, \
+             but centralized reassembler does not support targeted cleanup; no action taken",
+            message_id
+        );
     }
 }
 
