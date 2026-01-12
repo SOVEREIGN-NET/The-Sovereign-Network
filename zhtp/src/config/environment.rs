@@ -226,8 +226,7 @@ impl Environment {
                     network_id: "lib-dev".to_string(),
                     bootstrap_peers: vec![
                         "127.0.0.1:9333".to_string(),
-                        "localhost:9334".to_string(),
-                        "192.168.1.245:9333".to_string(),
+                        "127.0.0.1:9334".to_string(),
                     ],
                     max_peers: 10,
                     connection_timeout_ms: 5000,
@@ -356,8 +355,9 @@ impl Environment {
                 network_settings: NetworkSettings {
                     network_id: "lib-mainnet".to_string(),
                     bootstrap_peers: vec![
-                        "127.0.0.1:9333".to_string(),
-                        "192.168.1.245:9333".to_string(),
+                        // TODO: Configure with actual mainnet bootstrap nodes
+                        // "mainnet-node-1.example.com:9333".to_string(),
+                        // "mainnet-node-2.example.com:9333".to_string(),
                     ],
                     max_peers: 100,
                     connection_timeout_ms: 30000,
