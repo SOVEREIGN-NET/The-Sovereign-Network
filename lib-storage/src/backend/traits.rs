@@ -108,16 +108,13 @@ pub trait StorageBackend: Send + Sync {
     /// returning. For large prefixes, this can use significant memory or even
     /// exhaust available memory if the result set is unbounded.
     ///
-    /// Implementors **should** consider enforcing reasonable limits, internal
+    /// Implementations **should** consider enforcing reasonable limits, internal
     /// pagination, or other safeguards to avoid unbounded memory growth when
     /// scanning large ranges. Callers are encouraged to use this method only for
     /// prefixes that are expected to match a bounded number of entries.
     ///
     /// In the future, this trait may be extended with an iterator- or stream-based
     /// scanning API for more memory-efficient access to large datasets.
-    ///
-    /// Implementations should return keys in lexicographic order and may impose
-    /// internal limits; callers must not rely on unbounded result sizes.
     async fn scan_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
 
     /// Apply a batch of write operations atomically.
