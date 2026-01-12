@@ -968,8 +968,8 @@ impl<B: StorageBackend> DhtStorage<B> {
             access_control: None,
         };
         
-        // Update storage
-        if let Some(old_entry) = self.storage_cache.insert(key, entry) {
+        // Update storage cache
+        if let Some(old_entry) = self.storage_cache.insert(key.clone(), entry.clone()) {
             // If replacing existing entry, adjust usage (include metadata overhead)
             let old_total = old_entry.value.len() as u64 + metadata_overhead;
             self.current_usage = self.current_usage
@@ -980,8 +980,11 @@ impl<B: StorageBackend> DhtStorage<B> {
             self.current_usage += total_size;
         }
 
-        // Persist to disk if configured
-        self.maybe_persist().await?;
+        // Persist entry to backend
+        let entry_bytes = Self::encode_entry(&entry)?;
+        let key_bytes = Self::encode_key(&key);
+        self.backend.put(&key_bytes, &entry_bytes)?;
+        self.backend.flush()?;
 
         Ok(())
     }
@@ -1022,8 +1025,10 @@ impl<B: StorageBackend> DhtStorage<B> {
             self.current_usage = self.current_usage.saturating_sub(total_size);
             // Clean up contract_index to prevent stale lookups
             self.remove_from_contract_index(key);
-            // Persist to disk if configured
-            self.maybe_persist().await?;
+            // Remove from backend
+            let key_bytes = Self::encode_key(key);
+            self.backend.remove(&key_bytes)?;
+            self.backend.flush()?;
             Ok(true)
         } else {
             Ok(false)
@@ -2365,20 +2370,20 @@ mod tests {
     #[tokio::test]
     async fn test_persistence_round_trip() {
         let temp_dir = std::env::temp_dir();
-        let persist_path = temp_dir.join("dht_storage_test.bin");
+        let persist_path = temp_dir.join("dht_storage_round_trip_test");
 
         // Clean up from previous test runs
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
 
         let node_id = NodeId::from_bytes([1u8; 32]);
 
-        // Create storage and add entries
+        // Create persistent storage and add entries
         {
-            let mut storage = DhtStorage::new_with_persistence(
+            let mut storage = DhtStorage::new_persistent(
                 node_id.clone(),
                 1024 * 1024,
                 persist_path.clone(),
-            );
+            ).unwrap();
 
             storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
             storage.store("key2".to_string(), b"value2".to_vec(), None).await.unwrap();
@@ -2388,10 +2393,13 @@ mod tests {
             assert_eq!(stats.total_entries, 3);
         }
 
-        // Create new storage and load from file
+        // Create new persistent storage and verify data auto-restored
         {
-            let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
-            storage.load_from_file(&persist_path).await.unwrap();
+            let mut storage = DhtStorage::new_persistent(
+                node_id.clone(),
+                1024 * 1024,
+                persist_path.clone(),
+            ).unwrap();
 
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 3);
@@ -2403,64 +2411,62 @@ mod tests {
         }
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
     }
 
     #[tokio::test]
     async fn test_persistence_atomic_write_safety() {
         let temp_dir = std::env::temp_dir();
-        let persist_path = temp_dir.join("dht_storage_atomic_test.bin");
-        let tmp_path = persist_path.with_extension("tmp");
+        let persist_path = temp_dir.join("dht_storage_atomic_test");
 
         // Clean up from previous test runs
-        let _ = std::fs::remove_file(&persist_path);
-        let _ = std::fs::remove_file(&tmp_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
 
         let node_id = NodeId::from_bytes([1u8; 32]);
 
-        // Create storage and save
+        // Create persistent storage and store data
         {
-            let mut storage = DhtStorage::new_with_persistence(
+            let mut storage = DhtStorage::new_persistent(
                 node_id.clone(),
                 1024 * 1024,
                 persist_path.clone(),
-            );
+            ).unwrap();
             storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
         }
 
-        // Simulate partial write (create orphan tmp file)
-        std::fs::write(&tmp_path, b"corrupted partial data").unwrap();
-
-        // Load should still succeed from main file
+        // Create new persistent storage instance and verify data persists
+        // (sled handles atomicity internally, so data should be there)
         {
-            let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
-            storage.load_from_file(&persist_path).await.unwrap();
+            let mut storage = DhtStorage::new_persistent(
+                node_id.clone(),
+                1024 * 1024,
+                persist_path.clone(),
+            ).unwrap();
 
             assert_eq!(storage.get("key1").await.unwrap(), Some(b"value1".to_vec()));
         }
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
-        let _ = std::fs::remove_file(&tmp_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
     }
 
     #[tokio::test]
     async fn test_persistence_remove_persists() {
         let temp_dir = std::env::temp_dir();
-        let persist_path = temp_dir.join("dht_storage_remove_test.bin");
+        let persist_path = temp_dir.join("dht_storage_remove_test");
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
 
         let node_id = NodeId::from_bytes([1u8; 32]);
 
-        // Create, store, remove
+        // Create persistent storage, store, and remove
         {
-            let mut storage = DhtStorage::new_with_persistence(
+            let mut storage = DhtStorage::new_persistent(
                 node_id.clone(),
                 1024 * 1024,
                 persist_path.clone(),
-            );
+            ).unwrap();
 
             storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
             storage.store("key2".to_string(), b"value2".to_vec(), None).await.unwrap();
@@ -2470,10 +2476,13 @@ mod tests {
             assert_eq!(stats.total_entries, 1);
         }
 
-        // Reload and verify remove was persisted
+        // Create new persistent storage and verify remove was persisted
         {
-            let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
-            storage.load_from_file(&persist_path).await.unwrap();
+            let mut storage = DhtStorage::new_persistent(
+                node_id.clone(),
+                1024 * 1024,
+                persist_path.clone(),
+            ).unwrap();
 
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 1);
@@ -2482,36 +2491,50 @@ mod tests {
         }
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
     }
 
     #[tokio::test]
-    async fn test_persistence_version_check() {
+    async fn test_persistence_graceful_empty_db() {
+        // This test verifies that creating a persistent storage instance with an empty
+        // or non-existent database directory works correctly.
+        // The old version checking is no longer needed with sled's native atomicity.
         let temp_dir = std::env::temp_dir();
-        let persist_path = temp_dir.join("dht_storage_version_test.bin");
+        let persist_path = temp_dir.join("dht_storage_empty_db_test");
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
 
-        // Write a storage file with wrong version
-        let wrong_version = PersistedDhtStorage {
-            version: 999, // Wrong version
-            entries: vec![],
-            contract_index: vec![],
-        };
-        let bytes = bincode::serialize(&wrong_version).unwrap();
-        std::fs::write(&persist_path, bytes).unwrap();
-
-        // Attempt to load should fail
         let node_id = NodeId::from_bytes([1u8; 32]);
-        let mut storage = DhtStorage::new(node_id, 1024 * 1024);
-        let result = storage.load_from_file(&persist_path).await;
 
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported DHT storage version"));
+        // First instance: create new persistent storage in non-existent directory
+        {
+            let mut storage = DhtStorage::new_persistent(
+                node_id.clone(),
+                1024 * 1024,
+                persist_path.clone(),
+            ).unwrap();
+
+            storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
+            let stats = storage.get_storage_stats();
+            assert_eq!(stats.total_entries, 1);
+        }
+
+        // Second instance: reopen should load the existing data
+        {
+            let mut storage = DhtStorage::new_persistent(
+                node_id.clone(),
+                1024 * 1024,
+                persist_path.clone(),
+            ).unwrap();
+
+            let stats = storage.get_storage_stats();
+            assert_eq!(stats.total_entries, 1);
+            assert_eq!(storage.get("key1").await.unwrap(), Some(b"value1".to_vec()));
+        }
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
     }
 
     #[tokio::test]
