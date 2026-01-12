@@ -22,6 +22,7 @@
 //! - `messaging.rs` (~1 println! statements)
 //! - `routing.rs` (~3 println! statements, mostly tests)
 
+pub mod backend;
 pub mod node;
 pub mod routing;
 pub mod network;
