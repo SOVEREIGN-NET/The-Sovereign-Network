@@ -87,6 +87,9 @@ pub use security::{
 pub use nonce_cache::{
     NonceCache, start_nonce_cleanup_task, NetworkEpoch,
     SeenResult, compute_nonce_fingerprint,
+    // Global singleton functions [DB-013]
+    init_global_nonce_cache, global_nonce_cache,
+    is_global_nonce_cache_initialized, get_or_init_global_nonce_cache,
 };
 pub use observability::{
     HandshakeObserver, HandshakeEvent, HandshakeMetrics, FailureReason,
