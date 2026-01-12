@@ -317,19 +317,19 @@ impl DhtStorage {
     /// Uses async I/O via spawn_blocking to avoid stalling async runtime
     async fn maybe_persist(&self) -> Result<()> {
         if let Some(ref path) = self.persist_path {
-            debug!("DHT: maybe_persist - persisting {} entries to {:?}", self.storage.len(), path);
+            trace!(entries = self.storage.len(), path = ?path, "Persisting storage");
             match self.save_to_file(path).await {
                 Ok(()) => {
-                    debug!("DHT: maybe_persist - ✅ persisted successfully");
+                    trace!("Persistence successful");
                     Ok(())
                 }
                 Err(e) => {
-                    error!("DHT: maybe_persist - ❌ failed to persist: {}", e);
+                    error!(error = %e, "Persistence failed");
                     Err(e)
                 }
             }
         } else {
-            debug!("DHT: maybe_persist - no persist_path configured, skipping persistence");
+            trace!("No persist_path configured, skipping persistence");
             Ok(())
         }
     }
@@ -1664,7 +1664,7 @@ impl DhtStorage {
         let node_id_short = hex::encode(&node.peer.node_id().as_bytes()[..8]);
         let has_pubkey = !node.peer.public_key().dilithium_pk.is_empty();
 
-        info!(
+        debug!(
             node_id = %node_id_short,
             did = %node.peer.did(),
             device = %node.peer.device_id(),
@@ -1718,32 +1718,38 @@ impl DhtStorage {
 
             // Process outgoing messages
             if let Some(queued_msg) = self.messaging.get_next_message() {
+                let target_node_id = hex::encode(&queued_msg.target_node.peer.node_id().as_bytes()[..4]);
                 match network.send_message(&queued_msg.target_node, queued_msg.message.clone()).await {
                     Ok(_) => {
-                        debug!("Sent message {} to {}",
-                                queued_msg.message.message_id,
-                                hex::encode(&queued_msg.target_node.peer.node_id().as_bytes()[..4]));
+                        debug!(
+                            message_id = %queued_msg.message.message_id,
+                            target_node = %target_node_id,
+                            "Sent message"
+                        );
                     }
                     Err(e) => {
-                        warn!("Failed to send message: {}", e);
+                        warn!(error = %e, "Failed to send message");
                         self.messaging.mark_message_failed(queued_msg);
                     }
                 }
             }
-            
+
             // Process incoming messages
             let should_continue = match network.receive_message().await {
                 Ok((message, sender_addr)) => {
                     // Log incoming message with sender info
-                    debug!("Received message {} from {}",
-                            message.message_id,
-                            sender_addr);
+                    debug!(
+                        message_id = %message.message_id,
+                        sender = %sender_addr,
+                        "Received message"
+                    );
 
                     let sender_id = message.sender_id.clone();
+                    let sender_id_short = hex::encode(&sender_id.as_bytes()[..4]);
                     if !self.router.has_peer(&sender_id) {
                         if let Some(node) = self.known_nodes.get(&sender_id).cloned() {
                             if let Err(e) = self.router.add_node(node).await {
-                                warn!("Failed to register peer for sequence tracking: {}", e);
+                                warn!(error = %e, "Failed to register peer for sequence tracking");
                             }
                         }
                     }
@@ -1752,13 +1758,13 @@ impl DhtStorage {
                         match self.router.check_and_update_sequence(&sender_id, message.sequence_number) {
                             Err(SequenceError::ReplayDetected { sequence, last_sequence }) => {
                                 self.replay_rejections = self.replay_rejections.saturating_add(1);
-                                
+
                                 warn!(
-                                    "Rejecting DHT message {} from {}: replay detected (sequence {} <= {})",
-                                    message.message_id,
-                                    hex::encode(&sender_id.as_bytes()[..4]),
-                                    sequence,
-                                    last_sequence
+                                    message_id = %message.message_id,
+                                    sender = %sender_id_short,
+                                    sequence = sequence,
+                                    last_sequence = last_sequence,
+                                    "Rejecting DHT message: replay detected"
                                 );
 
                                 // TODO: Send error response to sender (requires protocol extension)
@@ -1776,10 +1782,10 @@ impl DhtStorage {
                             }
                             Err(e) => {
                                 warn!(
-                                    "Rejecting DHT message {} from {}: {}",
-                                    message.message_id,
-                                    hex::encode(&sender_id.as_bytes()[..4]),
-                                    e
+                                    message_id = %message.message_id,
+                                    sender = %sender_id_short,
+                                    error = %e,
+                                    "Rejecting DHT message"
                                 );
 
                                 // Put network back before continuing
@@ -1799,9 +1805,9 @@ impl DhtStorage {
                         }
                     } else {
                         warn!(
-                            "Skipping sequence validation for unknown peer {} on message {}",
-                            hex::encode(&sender_id.as_bytes()[..4]),
-                            message.message_id
+                            sender = %sender_id_short,
+                            message_id = %message.message_id,
+                            "Skipping sequence validation for unknown peer"
                         );
                         
                         // Process the message using helper method
@@ -1820,11 +1826,11 @@ impl DhtStorage {
                     // Distinguish between expected timeouts and actual errors
                     // Timeouts are normal during idle periods, so log at debug level
                     if e.to_string().contains("deadline has elapsed") {
-                        // Expected timeout - log at debug level
-                        debug!("Network receive timeout (no incoming messages): {}", e);
+                        // Expected timeout - log at trace level
+                        trace!(error = %e, "Network receive timeout, no incoming messages");
                     } else {
                         // Actual network error - log at warn level
-                        warn!("Network receive error: {}", e);
+                        warn!(error = %e, "Network receive error");
                     }
 
                     tokio::time::sleep(Duration::from_millis(10)).await;

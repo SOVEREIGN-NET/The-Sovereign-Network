@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::trace;
 
 /// Message queue entry
 #[derive(Debug, Clone)]
@@ -304,9 +304,7 @@ impl DhtMessaging {
         });
         
         // Log cleanup activity
-        if self.pending_responses.len() > 100 {
-            debug!(remaining = self.pending_responses.len(), "Cleaned up expired responses");
-        }
+        trace!(remaining = self.pending_responses.len(), "Cleaned up expired responses");
     }
 }
 
