@@ -33,7 +33,7 @@ pub use difficulty::{Difficulty, DifficultyConfig, calculate_target, meets_diffi
 pub use mining::*;
 
 // Re-export DAO and SOV economy types
-pub use dao::{DAOType, TokenClass, DAOMetadata, TreasuryAllocation, SectorDao};
+pub use dao::{DAOType, TokenClass, DAOMetadata, TreasuryAllocation, SectorDao, DifficultyParameterUpdateData};
 
 // Re-export contract types when contracts feature is enabled
 #[cfg(feature = "contracts")]

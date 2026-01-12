@@ -797,55 +797,60 @@ impl Blockchain {
     /// - If consensus coordinator is not available: uses hardcoded legacy constants for backward compatibility
     /// - If coordinator call fails: returns error (does NOT fall back to legacy calculation)
     fn adjust_difficulty(&mut self) -> Result<()> {
-        // Get adjustment parameters from consensus coordinator if available
-        let (adjustment_interval, target_timespan) = if let Some(coordinator) = &self.consensus_coordinator {
+        // Get adjustment parameters and calculate difficulty in a single lock acquisition
+        // to avoid race conditions between reading config and calculating adjustment
+        if let Some(coordinator) = &self.consensus_coordinator {
             // Use a single tokio block_in_place to call async methods from sync context
             // Acquire the coordinator read lock once to avoid race conditions and redundant locking
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let coord = coordinator.read().await;
-                    let interval = coord.get_difficulty_adjustment_interval().await;
-                    let target_timespan = coord.get_difficulty_target_timespan().await;
-                    (interval, target_timespan)
-                })
-            })
-        } else {
-            // Fallback to hardcoded constants for backward compatibility
-            (crate::DIFFICULTY_ADJUSTMENT_INTERVAL, crate::TARGET_TIMESPAN)
-        };
-
-        // Check if we should adjust at this height
-        if self.height % adjustment_interval != 0 {
-            return Ok(());
-        }
-
-        if self.height < adjustment_interval {
-            return Ok(());
-        }
-
-        let current_block = &self.blocks[self.height as usize];
-        let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
-        
-        let interval_start_time = interval_start.timestamp();
-        let interval_end_time = current_block.timestamp();
-
-        // Calculate new difficulty using consensus coordinator if available
-        let new_difficulty_bits = if let Some(coordinator) = &self.consensus_coordinator {
             let result = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     let coord = coordinator.read().await;
-                    coord.calculate_difficulty_adjustment(
+                    let adjustment_interval = coord.get_difficulty_adjustment_interval().await;
+                    let config = coord.get_difficulty_config().await;
+                    
+                    // Check if we should adjust at this height
+                    if self.height % adjustment_interval != 0 {
+                        return Ok::<Option<u32>, anyhow::Error>(None);
+                    }
+                    if self.height < adjustment_interval {
+                        return Ok(None);
+                    }
+                    
+                    let current_block = &self.blocks[self.height as usize];
+                    let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
+                    let interval_start_time = interval_start.timestamp();
+                    let interval_end_time = current_block.timestamp();
+                    
+                    // Calculate new difficulty
+                    match coord.calculate_difficulty_adjustment(
                         self.height,
                         self.difficulty.bits(),
                         interval_start_time,
                         interval_end_time,
-                    ).await
+                    ).await {
+                        Ok(Some(new_bits)) => Ok(Some(new_bits)),
+                        Ok(None) => Ok(None),
+                        Err(e) => {
+                            tracing::warn!("Difficulty adjustment via coordinator failed: {}, using fallback", e);
+                            // Fallback to legacy calculation
+                            Ok(Some(self.calculate_difficulty_legacy(interval_start_time, interval_end_time, config.target_timespan)))
+                        }
+                    }
                 })
             });
             
             match result {
-                Ok(Some(new_bits)) => new_bits,
-                Ok(None) => return Ok(()), // No adjustment needed
+                Ok(Some(new_bits)) => {
+                    let old_difficulty = self.difficulty.bits();
+                    self.difficulty = Difficulty::from_bits(new_bits);
+                    tracing::info!(
+                        "Difficulty adjusted from {} to {} at height {}",
+                        old_difficulty,
+                        new_bits,
+                        self.height
+                    );
+                }
+                Ok(None) => {} // No adjustment needed
                 Err(e) => {
                     tracing::error!(
                         "Difficulty adjustment via coordinator failed: {}. \
@@ -855,20 +860,35 @@ impl Blockchain {
                 }
             }
         } else {
-            // Legacy calculation without coordinator
-            self.calculate_difficulty_legacy(interval_start_time, interval_end_time, target_timespan)
-        };
-
-        let old_difficulty = self.difficulty.bits();
-        self.difficulty = Difficulty::from_bits(new_difficulty_bits);
-
-        tracing::info!(
-            "Difficulty adjusted from {} to {} at height {}",
-            old_difficulty,
-            new_difficulty_bits,
-            self.height
-        );
-
+            // Fallback to hardcoded constants for backward compatibility (no coordinator)
+            let adjustment_interval = crate::DIFFICULTY_ADJUSTMENT_INTERVAL;
+            let target_timespan = crate::TARGET_TIMESPAN;
+            
+            // Check if we should adjust at this height
+            if self.height % adjustment_interval != 0 {
+                return Ok(());
+            }
+            if self.height < adjustment_interval {
+                return Ok(());
+            }
+            
+            let current_block = &self.blocks[self.height as usize];
+            let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
+            let interval_start_time = interval_start.timestamp();
+            let interval_end_time = current_block.timestamp();
+            
+            let new_difficulty_bits = self.calculate_difficulty_legacy(interval_start_time, interval_end_time, target_timespan);
+            let old_difficulty = self.difficulty.bits();
+            self.difficulty = Difficulty::from_bits(new_difficulty_bits);
+            
+            tracing::info!(
+                "Difficulty adjusted from {} to {} at height {}",
+                old_difficulty,
+                new_difficulty_bits,
+                self.height
+            );
+        }
+        
         Ok(())
     }
     

@@ -141,7 +141,8 @@ impl TransactionValidator {
             },
             TransactionType::DaoProposal |
             TransactionType::DaoVote |
-            TransactionType::DaoExecution => {
+            TransactionType::DaoExecution |
+            TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
             }
         }
@@ -216,7 +217,8 @@ impl TransactionValidator {
             },
             TransactionType::DaoProposal |
             TransactionType::DaoVote |
-            TransactionType::DaoExecution => {
+            TransactionType::DaoExecution |
+            TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
             }
         }
@@ -801,7 +803,8 @@ impl<'a> StatefulTransactionValidator<'a> {
             },
             TransactionType::DaoProposal |
             TransactionType::DaoVote |
-            TransactionType::DaoExecution => {
+            TransactionType::DaoExecution |
+            TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
             }
         }
@@ -1020,6 +1023,11 @@ pub mod utils {
             TransactionType::DaoProposal => transaction.dao_proposal_data.is_some(),
             TransactionType::DaoVote => transaction.dao_vote_data.is_some(),
             TransactionType::DaoExecution => transaction.dao_execution_data.is_some(),
+            TransactionType::DifficultyUpdate => {
+                // Difficulty update validation - requires memo with parameters
+                // Full validation happens at consensus layer
+                !transaction.memo.is_empty()
+            }
         }
     }
 

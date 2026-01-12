@@ -175,14 +175,6 @@ impl DifficultyManager {
         &self.config
     }
 
-    /// Get a mutable reference to the configuration (for internal updates).
-    ///
-    /// This is intentionally private to ensure all external updates go through
-    /// validated governance or setter methods that enforce configuration invariants.
-    fn config_mut(&mut self) -> &mut DifficultyConfig {
-        &mut self.config
-    }
-
     /// Get the initial difficulty value
     pub fn initial_difficulty(&self) -> u32 {
         self.config.initial_difficulty
