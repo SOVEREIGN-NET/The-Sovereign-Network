@@ -71,6 +71,7 @@ pub use types::{
     
     // Node ID for DHT routing (32-byte deterministic identifier)
     NodeId,              // ✓ Derived from DID + device name
+    DhtPeerIdentity,     // ✓ Unified peer identity (NodeId + PublicKey + DID)
 };
 
 // Identity module - Core identity structures

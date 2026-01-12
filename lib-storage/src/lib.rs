@@ -172,16 +172,7 @@ impl UnifiedStorageSystem {
         
         // Create DhtPeerIdentity from NodeId (simplified version)
         // In production, this would come from ZhtpIdentity
-        let peer_identity = types::dht_types::DhtPeerIdentity {
-            node_id: node_id.clone(),
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
-                key_id: [0u8; 32],
-            },
-            did: String::from("did:zhtp:placeholder"),
-            device_id: String::from("default"),
-        };
+        let peer_identity = types::dht_types::placeholder_peer_identity(node_id.clone());
         
         // Initialize DHT components
         let dht_manager = dht::node::DhtNodeManager::new(
@@ -407,16 +398,7 @@ impl UnifiedStorageSystem {
     /// **MIGRATION (Ticket #145):** Creates DhtPeerIdentity from NodeId
     pub async fn add_peer(&mut self, peer_address: String, node_id: NodeId) -> Result<()> {
         // Create DhtPeerIdentity from NodeId
-        let peer_identity = types::dht_types::DhtPeerIdentity {
-            node_id: node_id.clone(),
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk: vec![],
-                kyber_pk: vec![],
-                key_id: [0u8; 32],
-            },
-            did: String::from("did:zhtp:placeholder"),
-            device_id: String::from("default"),
-        };
+        let peer_identity = types::dht_types::placeholder_peer_identity(node_id.clone());
         
         // Parse peer info and add to DHT
         let node_info = DhtNode {

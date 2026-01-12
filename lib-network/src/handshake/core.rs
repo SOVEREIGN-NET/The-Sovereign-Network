@@ -475,8 +475,8 @@ mod tests {
         assert_eq!(client_result.session_key, server_result.session_key);
 
         // Verify peer identities are correct
-        assert_eq!(client_result.peer_identity.did, server_did);
-        assert_eq!(server_result.peer_identity.did, client_did);
+        assert_eq!(client_result.peer_identity.did(), server_did);
+        assert_eq!(server_result.peer_identity.did(), client_did);
     }
 
     /// Test: Replay attack detection

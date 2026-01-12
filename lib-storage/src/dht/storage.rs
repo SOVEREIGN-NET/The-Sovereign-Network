@@ -2514,7 +2514,7 @@ mod tests {
     async fn test_sequence_tracking_replay_rejection() {
         use crate::dht::network::DhtNetwork;
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::DhtPeerIdentity;
+        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
         use lib_identity::{ZhtpIdentity, IdentityType};
         use std::net::SocketAddr;
 
@@ -2532,12 +2532,12 @@ mod tests {
         ).expect("Failed to create peer identity");
 
         let peer_node = DhtNode {
-            peer: DhtPeerIdentity {
-                node_id: peer_identity.node_id.clone(),
-                public_key: peer_identity.public_key.clone(),
-                did: peer_identity.did.clone(),
-                device_id: "test-peer".to_string(),
-            },
+            peer: build_peer_identity(
+                peer_identity.node_id.clone(),
+                peer_identity.public_key.clone(),
+                peer_identity.did.clone(),
+                "test-peer".to_string(),
+            ),
             addresses: vec!["127.0.0.1:8080".to_string()],
             public_key: lib_crypto::PostQuantumSignature {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
@@ -2581,7 +2581,7 @@ mod tests {
     #[tokio::test]
     async fn test_sequence_tracking_increments_replay_counter() {
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::DhtPeerIdentity;
+        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
         use lib_identity::{ZhtpIdentity, IdentityType};
 
         // Create a storage instance
@@ -2598,12 +2598,12 @@ mod tests {
         ).expect("Failed to create peer identity");
 
         let peer_node = DhtNode {
-            peer: DhtPeerIdentity {
-                node_id: peer_identity.node_id.clone(),
-                public_key: peer_identity.public_key.clone(),
-                did: peer_identity.did.clone(),
-                device_id: "test-peer-2".to_string(),
-            },
+            peer: build_peer_identity(
+                peer_identity.node_id.clone(),
+                peer_identity.public_key.clone(),
+                peer_identity.did.clone(),
+                "test-peer-2".to_string(),
+            ),
             addresses: vec!["127.0.0.1:8081".to_string()],
             public_key: lib_crypto::PostQuantumSignature {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
@@ -2648,7 +2648,7 @@ mod tests {
     #[tokio::test]
     async fn test_sequence_wraparound_in_storage() {
         use crate::dht::peer_registry::DhtPeerEntry;
-        use crate::types::dht_types::DhtPeerIdentity;
+        use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
         use lib_identity::{ZhtpIdentity, IdentityType};
 
         // Create a storage instance
@@ -2665,12 +2665,12 @@ mod tests {
         ).expect("Failed to create peer identity");
 
         let peer_node = DhtNode {
-            peer: DhtPeerIdentity {
-                node_id: peer_identity.node_id.clone(),
-                public_key: peer_identity.public_key.clone(),
-                did: peer_identity.did.clone(),
-                device_id: "test-peer-wrap".to_string(),
-            },
+            peer: build_peer_identity(
+                peer_identity.node_id.clone(),
+                peer_identity.public_key.clone(),
+                peer_identity.did.clone(),
+                "test-peer-wrap".to_string(),
+            ),
             addresses: vec!["127.0.0.1:8082".to_string()],
             public_key: lib_crypto::PostQuantumSignature {
                 algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
