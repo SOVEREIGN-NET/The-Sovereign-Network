@@ -490,12 +490,12 @@ mod tests {
         assert_eq!(client_result.session_id, server_result.session_id);
 
         // Verify peer identities match
-        assert_eq!(client_result.peer_identity.did(), server_did);
-        assert_eq!(server_result.peer_identity.did(), client_identity.did);
+        assert_eq!(client_result.peer_identity.did, server_did);
+        assert_eq!(server_result.peer_identity.did, client_identity.did);
 
         // Verify peer NodeIds match
-        assert_eq!(client_result.peer_identity.node_id(), &server_node_id);
-        assert_eq!(server_result.peer_identity.node_id(), &client_identity.node_id);
+        assert_eq!(client_result.peer_identity.node_id, server_node_id);
+        assert_eq!(server_result.peer_identity.node_id, client_identity.node_id);
 
         Ok(())
     }

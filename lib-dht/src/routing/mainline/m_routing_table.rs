@@ -85,7 +85,7 @@ impl RoutingTable for MRoutingTable {
 
         if let Some(uid) = &self.uid {
             if *uid != n.uid {
-                let id = self.bucket_uid(&n.uid);
+                let _id = self.bucket_uid(&n.uid);
 
                 //if self.m_bucket[id],is_full() {
 
@@ -171,11 +171,11 @@ impl RoutingTable for MRoutingTable {
         let _ = self.listeners.remove(index);
     }
 
-    fn has_queried(&self, n: &Node, now: u128) -> bool {
+    fn has_queried(&self, _n: &Node, _now: u128) -> bool {
         todo!()
     }
 
-    fn bucket_uid(&self, k: &UID) -> usize {
+    fn bucket_uid(&self, _k: &UID) -> usize {
         todo!()
     }
 
@@ -183,11 +183,11 @@ impl RoutingTable for MRoutingTable {
         todo!()
     }
 
-    fn find_closest(&self, k: &UID, r: usize) -> Vec<Node> {
+    fn find_closest(&self, _k: &UID, _r: usize) -> Vec<Node> {
         todo!()
     }
 
-    fn bucket_size(&self, i: usize) -> usize {
+    fn bucket_size(&self, _i: usize) -> usize {
         todo!()
     }
 
