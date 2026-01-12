@@ -140,8 +140,6 @@ pub trait StorageBackend: Send + Sync {
     /// `write_batch` does **not** imply durability on its own. Callers that
     /// require the batch to be persisted to stable storage should call
     /// [`flush`](StorageBackend::flush) after a successful `write_batch`.
-    ///
-    /// Implementations must apply operations in order and atomically.
     async fn write_batch(&self, ops: Vec<BatchOp>) -> Result<()>;
 
     /// Flush to disk.
