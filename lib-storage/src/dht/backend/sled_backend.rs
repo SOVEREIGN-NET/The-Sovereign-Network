@@ -136,8 +136,9 @@ impl StorageBackend for SledBackend {
     }
 
     fn len(&self) -> Result<usize> {
-        // Note: This is O(n) for sled. If performance is critical,
-        // DhtStorage should maintain its own count.
+        // PERFORMANCE WARNING: This is O(n) as it iterates through all entries.
+        // SledBackend does not maintain a cached count. For frequent len() calls,
+        // consider maintaining a separate counter in DhtStorage instead.
         let count = self
             .db
             .iter()
