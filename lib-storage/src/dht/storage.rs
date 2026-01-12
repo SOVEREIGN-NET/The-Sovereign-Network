@@ -23,14 +23,10 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::io::Write;
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
 use serde::{Serialize, Deserialize};
 use tracing::{trace, debug, warn, info, error, instrument};
-
-/// Current version of DHT storage persistence format
-const DHT_STORAGE_VERSION: u32 = 1;
 
 /// Versioned container for persisted DHT storage
 #[derive(Serialize, Deserialize)]
@@ -41,32 +37,6 @@ struct PersistedDhtStorage {
     entries: Vec<(String, StorageEntry)>,
     /// Contract index for fast discovery (sorted for deterministic serialization)
     contract_index: Vec<(String, Vec<String>)>,
-}
-
-/// Atomic write helper - writes to temp file then renames (blocking I/O)
-fn atomic_write_sync(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let dir = path.parent().ok_or_else(|| std::io::Error::other("missing parent dir"))?;
-    std::fs::create_dir_all(dir)?;
-
-    let tmp = path.with_extension("tmp");
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-    }
-    std::fs::rename(&tmp, path)?;
-    // Sync directory for durability on POSIX systems
-    if let Ok(d) = std::fs::File::open(dir) {
-        let _ = d.sync_all();
-    }
-    Ok(())
-}
-
-/// Async atomic write - moves blocking I/O to spawn_blocking to avoid stalling async runtime
-async fn atomic_write_async(path: PathBuf, bytes: Vec<u8>) -> std::io::Result<()> {
-    tokio::task::spawn_blocking(move || atomic_write_sync(&path, &bytes))
-        .await
-        .map_err(|e| std::io::Error::other(format!("spawn_blocking failed: {}", e)))?
 }
 
 /// DHT storage manager with networking
@@ -515,42 +485,6 @@ impl<B: StorageBackend> DhtStorage<B> {
     ///     async { lib_crypto::verification::verify_signature(...) }
     /// ).await
     /// ```
-    fn verify_node_signature(&self, node: &DhtNode, data: &[u8], signature: &[u8]) -> Result<bool> {
-        // Validate inputs
-        if signature.is_empty() {
-            warn!(node_did = %node.peer.did(), "Signature verification failed: empty signature");
-            return Ok(false);
-        }
-
-        let public_key = node.peer.public_key();
-        if public_key.dilithium_pk.is_empty() {
-            warn!(node_did = %node.peer.did(), "Signature verification failed: empty public key");
-            return Ok(false);
-        }
-
-        debug!(
-            node_did = %node.peer.did(),
-            pk_len = public_key.dilithium_pk.len(),
-            sig_len = signature.len(),
-            data_len = data.len(),
-            "Verifying DHT node signature"
-        );
-
-        // Use lib_crypto's verified signature verification
-        match lib_crypto::verification::verify_signature(data, signature, &public_key.dilithium_pk) {
-            Ok(valid) => {
-                if !valid {
-                    warn!(node_did = %node.peer.did(), "Signature verification failed: invalid signature");
-                }
-                Ok(valid)
-            }
-            Err(e) => {
-                warn!(node_did = %node.peer.did(), error = %e, "Signature verification error");
-                Err(anyhow::anyhow!("Signature verification error: {}", e))
-            }
-        }
-    }
-
     /// Set the ZK verification configuration
     ///
     /// [DB-002] Allows runtime configuration of verification timeouts
@@ -1580,29 +1514,6 @@ impl<B: StorageBackend> DhtStorage<B> {
         
         // Deny overwrite for protected entries without proof
         Ok(false)
-    }
-
-    /// Calculate entropy of data for security classification
-    fn calculate_entropy(&self, data: &[u8]) -> Result<f64> {
-        if data.is_empty() {
-            return Ok(0.0);
-        }
-        
-        let mut counts = [0u32; 256];
-        for &byte in data {
-            counts[byte as usize] += 1;
-        }
-        
-        let len = data.len() as f64;
-        let entropy = counts.iter()
-            .filter(|&&count| count > 0)
-            .map(|&count| {
-                let p = count as f64 / len;
-                -p * p.log2()
-            })
-            .sum();
-        
-        Ok(entropy)
     }
 
     /// Verify full ZeroKnowledgeProof for comprehensive validation

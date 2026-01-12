@@ -296,6 +296,168 @@ pub struct DAOMetadata {
     treasury_allocation: TreasuryAllocation,
 }
 
+// ============================================================================
+// Difficulty Parameter Update Types
+// ============================================================================
+
+/// Difficulty parameter update data for DAO governance proposals
+///
+/// Used to propose changes to the blockchain's difficulty adjustment parameters
+/// through the DAO governance system. This enables adaptive difficulty adjustment
+/// to be controlled by governance rather than hardcoded values.
+///
+/// # Validation Rules
+/// - `target_timespan` must be > 0
+/// - `adjustment_interval` must be > 0
+/// - `min_adjustment_factor` must be >= 1 (if provided)
+/// - `max_adjustment_factor` must be >= 1 (if provided)
+/// - `max_adjustment_factor` must be >= `min_adjustment_factor` (if both provided)
+///
+/// # Example
+/// ```
+/// use lib_blockchain::types::dao::DifficultyParameterUpdateData;
+///
+/// let update = DifficultyParameterUpdateData::new(
+///     14 * 24 * 60 * 60,  // 2 weeks in seconds
+///     2016,                // blocks between adjustments
+/// ).expect("valid parameters");
+///
+/// assert!(update.validate().is_ok());
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DifficultyParameterUpdateData {
+    /// Target time for difficulty adjustment interval (in seconds)
+    /// This is the desired total time for `adjustment_interval` blocks.
+    /// e.g., Bitcoin uses 14 days (1,209,600 seconds) for 2016 blocks.
+    pub target_timespan: u64,
+
+    /// Number of blocks between difficulty adjustments
+    /// e.g., Bitcoin uses 2016 blocks between adjustments.
+    pub adjustment_interval: u64,
+
+    /// Minimum adjustment factor (multiplier, >= 1)
+    /// Limits how much difficulty can decrease in a single adjustment.
+    /// e.g., 4 means difficulty can decrease by at most 1/4 (divide by 4)
+    /// Default: None (use DifficultyConfig's symmetric max_adjustment_factor)
+    pub min_adjustment_factor: Option<u64>,
+
+    /// Maximum adjustment factor (multiplier, >= 1)
+    /// Limits how much difficulty can increase in a single adjustment.
+    /// e.g., 4 means difficulty can increase by at most 4x
+    /// Default: None (use DifficultyConfig's symmetric max_adjustment_factor)
+    pub max_adjustment_factor: Option<u64>,
+}
+
+impl DifficultyParameterUpdateData {
+    /// Create a new difficulty parameter update with required fields
+    ///
+    /// # Arguments
+    /// * `target_timespan` - Target time for the adjustment interval (seconds)
+    /// * `adjustment_interval` - Number of blocks between adjustments
+    ///
+    /// # Errors
+    /// Returns an error if validation fails (e.g., zero values)
+    pub fn new(target_timespan: u64, adjustment_interval: u64) -> Result<Self, &'static str> {
+        let data = Self {
+            target_timespan,
+            adjustment_interval,
+            min_adjustment_factor: None,
+            max_adjustment_factor: None,
+        };
+        data.validate()?;
+        Ok(data)
+    }
+
+    /// Create a new difficulty parameter update with all fields
+    ///
+    /// # Arguments
+    /// * `target_timespan` - Target time for the adjustment interval (seconds)
+    /// * `adjustment_interval` - Number of blocks between adjustments
+    /// * `min_adjustment_factor` - Minimum adjustment factor (multiplier, >= 1)
+    /// * `max_adjustment_factor` - Maximum adjustment factor (multiplier, >= 1)
+    ///
+    /// # Errors
+    /// Returns an error if validation fails
+    pub fn new_with_factors(
+        target_timespan: u64,
+        adjustment_interval: u64,
+        min_adjustment_factor: Option<u64>,
+        max_adjustment_factor: Option<u64>,
+    ) -> Result<Self, &'static str> {
+        let data = Self {
+            target_timespan,
+            adjustment_interval,
+            min_adjustment_factor,
+            max_adjustment_factor,
+        };
+        data.validate()?;
+        Ok(data)
+    }
+
+    /// Validate the difficulty parameter update data
+    ///
+    /// # Validation Rules
+    /// - `target_timespan` must be > 0
+    /// - `adjustment_interval` must be > 0
+    /// - `min_adjustment_factor` must be >= 1 (if provided)
+    /// - `max_adjustment_factor` must be >= 1 (if provided)
+    /// - `max_adjustment_factor` must be >= `min_adjustment_factor` (if both provided)
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.target_timespan == 0 {
+            return Err("target_timespan must be greater than 0");
+        }
+
+        if self.adjustment_interval == 0 {
+            return Err("adjustment_interval must be greater than 0");
+        }
+
+        if let Some(min_factor) = self.min_adjustment_factor {
+            if min_factor < 1 {
+                return Err("min_adjustment_factor must be >= 1");
+            }
+        }
+
+        if let Some(max_factor) = self.max_adjustment_factor {
+            if max_factor < 1 {
+                return Err("max_adjustment_factor must be >= 1");
+            }
+        }
+
+        // If both factors are provided, max must be >= min
+        if let (Some(min_factor), Some(max_factor)) =
+            (self.min_adjustment_factor, self.max_adjustment_factor)
+        {
+            if max_factor < min_factor {
+                return Err("max_adjustment_factor must be >= min_adjustment_factor");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Calculate the target block time in seconds
+    ///
+    /// Returns the expected time per block based on target_timespan and adjustment_interval.
+    pub fn target_block_time_secs(&self) -> u64 {
+        if self.adjustment_interval == 0 {
+            return 0;
+        }
+        self.target_timespan / self.adjustment_interval
+    }
+
+    /// Set the minimum adjustment factor
+    pub fn with_min_factor(mut self, factor: u64) -> Self {
+        self.min_adjustment_factor = Some(factor);
+        self
+    }
+
+    /// Set the maximum adjustment factor
+    pub fn with_max_factor(mut self, factor: u64) -> Self {
+        self.max_adjustment_factor = Some(factor);
+        self
+    }
+}
+
 impl DAOMetadata {
     /// Construct metadata while validating invariants
     pub fn new(
@@ -550,5 +712,148 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ============================================================================
+    // DIFFICULTY PARAMETER UPDATE TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_difficulty_parameter_update_basic_creation() {
+        // Create with required fields only
+        let update = DifficultyParameterUpdateData::new(
+            14 * 24 * 60 * 60, // 2 weeks in seconds
+            2016,             // blocks between adjustments (like Bitcoin)
+        ).expect("valid parameters");
+
+        assert_eq!(update.target_timespan, 14 * 24 * 60 * 60);
+        assert_eq!(update.adjustment_interval, 2016);
+        assert!(update.min_adjustment_factor.is_none());
+        assert!(update.max_adjustment_factor.is_none());
+    }
+
+    #[test]
+    fn test_difficulty_parameter_update_with_factors() {
+        let update = DifficultyParameterUpdateData::new_with_factors(
+            604800,   // 1 week in seconds
+            1008,     // blocks
+            Some(25), // min factor 25%
+            Some(400), // max factor 400%
+        ).expect("valid parameters");
+
+        assert_eq!(update.target_timespan, 604800);
+        assert_eq!(update.adjustment_interval, 1008);
+        assert_eq!(update.min_adjustment_factor, Some(25));
+        assert_eq!(update.max_adjustment_factor, Some(400));
+    }
+
+    #[test]
+    fn test_difficulty_parameter_update_validation_zero_timespan() {
+        let result = DifficultyParameterUpdateData::new(0, 2016);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "target_timespan must be greater than 0");
+    }
+
+    #[test]
+    fn test_difficulty_parameter_update_validation_zero_interval() {
+        let result = DifficultyParameterUpdateData::new(604800, 0);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "adjustment_interval must be greater than 0");
+    }
+
+    #[test]
+    fn test_difficulty_parameter_update_validation_zero_min_factor() {
+        let result = DifficultyParameterUpdateData::new_with_factors(
+            604800,
+            2016,
+            Some(0), // Invalid: must be >= 1
+            None,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "min_adjustment_factor must be >= 1");
+    }
+
+    #[test]
+    fn test_difficulty_parameter_update_validation_zero_max_factor() {
+        let result = DifficultyParameterUpdateData::new_with_factors(
+            604800,
+            2016,
+            None,
+            Some(0), // Invalid: must be >= 1
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "max_adjustment_factor must be >= 1");
+    }
+
+    #[test]
+    fn test_difficulty_parameter_update_validation_max_less_than_min() {
+        let result = DifficultyParameterUpdateData::new_with_factors(
+            604800,
+            2016,
+            Some(400), // min = 400
+            Some(25),  // max = 25 (invalid: less than min)
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "max_adjustment_factor must be >= min_adjustment_factor");
+    }
+
+    #[test]
+    fn test_difficulty_parameter_update_validation_equal_factors() {
+        // Edge case: min == max should be valid
+        let result = DifficultyParameterUpdateData::new_with_factors(
+            604800,
+            2016,
+            Some(100),
+            Some(100),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_difficulty_parameter_update_target_block_time() {
+        // Bitcoin-like: 2 weeks / 2016 blocks = 600 seconds (10 minutes)
+        let bitcoin_like = DifficultyParameterUpdateData::new(
+            14 * 24 * 60 * 60,
+            2016,
+        ).unwrap();
+        assert_eq!(bitcoin_like.target_block_time_secs(), 600);
+
+        // ZHTP-like: 1 day / 8640 blocks = 10 seconds
+        let zhtp_like = DifficultyParameterUpdateData::new(
+            24 * 60 * 60,
+            8640,
+        ).unwrap();
+        assert_eq!(zhtp_like.target_block_time_secs(), 10);
+    }
+
+    #[test]
+    fn test_difficulty_parameter_update_builder_pattern() {
+        let update = DifficultyParameterUpdateData::new(604800, 1008)
+            .unwrap()
+            .with_min_factor(25)
+            .with_max_factor(400);
+
+        assert_eq!(update.min_adjustment_factor, Some(25));
+        assert_eq!(update.max_adjustment_factor, Some(400));
+    }
+
+    #[test]
+    fn test_difficulty_parameter_update_serialization() {
+        let update = DifficultyParameterUpdateData::new_with_factors(
+            604800,
+            2016,
+            Some(25),
+            Some(400),
+        ).unwrap();
+
+        let serialized = bincode::serialize(&update).expect("serialize update");
+        let deserialized: DifficultyParameterUpdateData = 
+            bincode::deserialize(&serialized).expect("deserialize update");
+
+        assert_eq!(update, deserialized);
+        assert_eq!(deserialized.target_timespan, 604800);
+        assert_eq!(deserialized.adjustment_interval, 2016);
+        assert_eq!(deserialized.min_adjustment_factor, Some(25));
+        assert_eq!(deserialized.max_adjustment_factor, Some(400));
     }
 }
