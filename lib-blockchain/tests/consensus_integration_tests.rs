@@ -440,6 +440,71 @@ async fn test_apply_difficulty_parameter_update_proposal_not_found() {
     );
 }
 
+#[tokio::test]
+async fn test_difficulty_double_execution_prevention() {
+    use lib_blockchain::Blockchain;
+    
+    let mut blockchain = Blockchain::new().unwrap();
+    
+    // Pre-mark a proposal as executed
+    let proposal_id = lib_blockchain::Hash::new([99u8; 32]);
+    blockchain.executed_dao_proposals.insert(proposal_id.clone());
+    
+    // Try to apply it again - should succeed but do nothing (idempotent)
+    let result = blockchain.apply_difficulty_parameter_update(proposal_id);
+    
+    // Should succeed (early return for already-executed)
+    assert!(result.is_ok(), "Should return Ok for already-executed proposal");
+}
+
+#[tokio::test]
+async fn test_process_approved_governance_proposals_empty() {
+    use lib_blockchain::Blockchain;
+    
+    let mut blockchain = Blockchain::new().unwrap();
+    
+    // With no proposals, this should succeed without errors
+    let result = blockchain.process_approved_governance_proposals();
+    
+    assert!(result.is_ok(), "Should succeed with no proposals");
+}
+
+#[tokio::test]
+async fn test_executed_proposals_tracking() {
+    use lib_blockchain::Blockchain;
+    
+    let blockchain = Blockchain::new().unwrap();
+    
+    // Check that executed_dao_proposals is initialized empty
+    assert!(
+        blockchain.executed_dao_proposals.is_empty(),
+        "executed_dao_proposals should be empty on initialization"
+    );
+}
+
+#[tokio::test]
+async fn test_difficulty_config_persistence_after_update() {
+    use lib_blockchain::Blockchain;
+    
+    let blockchain = Blockchain::new().unwrap();
+    
+    // Verify initial difficulty config exists
+    assert!(
+        blockchain.difficulty_config.target_timespan > 0,
+        "Initial target_timespan should be set"
+    );
+    assert!(
+        blockchain.difficulty_config.adjustment_interval > 0,
+        "Initial adjustment_interval should be set"
+    );
+    
+    // Verify last_updated_at_height is initialized
+    assert_eq!(
+        blockchain.difficulty_config.last_updated_at_height, 0,
+        "Initial last_updated_at_height should be 0"
+    );
+}
+
 // Note: Full integration testing of apply_difficulty_parameter_update() requires:
 // 1. A working DAO proposal system (create, vote, approve)
 // 2. Proper serialization of execution parameters

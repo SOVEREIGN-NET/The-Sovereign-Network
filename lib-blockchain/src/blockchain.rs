@@ -101,6 +101,8 @@ pub struct Blockchain {
     /// Broadcast channel for real-time block/transaction propagation
     #[serde(skip)]
     pub broadcast_sender: Option<tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>>,
+    /// Track executed DAO proposals to prevent double-execution
+    pub executed_dao_proposals: HashSet<Hash>,
 }
 
 /// Validator information stored on-chain
@@ -192,6 +194,7 @@ impl Blockchain {
             auto_persist_enabled: true,
             blocks_since_last_persist: 0,
             broadcast_sender: None,
+            executed_dao_proposals: HashSet::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -543,6 +546,13 @@ impl Blockchain {
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
         self.process_contract_transactions(&block)?;
+
+        // Process approved governance proposals (e.g., difficulty parameter updates)
+        // This executes any proposals that have passed voting since the last block
+        if let Err(e) = self.process_approved_governance_proposals() {
+            warn!("Error processing governance proposals at height {}: {}", self.height, e);
+            // Don't fail block processing, governance is non-critical
+        }
 
         // Update persistence counter
         self.blocks_since_last_persist += 1;
@@ -2432,6 +2442,15 @@ impl Blockchain {
     /// - New parameters fail validation (`ParameterValidationError`)
     /// - Parameters were already applied at this proposal_id
     pub fn apply_difficulty_parameter_update(&mut self, proposal_id: Hash) -> Result<()> {
+        // 0. Check if already executed (prevent double-execution)
+        if self.executed_dao_proposals.contains(&proposal_id) {
+            debug!(
+                "Difficulty proposal {:?} already executed, skipping",
+                proposal_id
+            );
+            return Ok(());
+        }
+
         // 1. Verify proposal exists
         let proposal = self.get_dao_proposal(&proposal_id)
             .ok_or_else(|| anyhow::anyhow!(
@@ -2587,6 +2606,70 @@ impl Blockchain {
                     }
                 })
             });
+        }
+
+        // 10. Mark proposal as executed to prevent double-execution
+        self.executed_dao_proposals.insert(proposal_id);
+
+        Ok(())
+    }
+
+    /// Process all approved governance proposals that haven't been executed yet.
+    /// This is called during block processing to execute any passed proposals.
+    ///
+    /// Currently handles:
+    /// - DifficultyParameterUpdate proposals
+    ///
+    /// Future: Treasury allocations, protocol upgrades, etc.
+    pub fn process_approved_governance_proposals(&mut self) -> Result<()> {
+        // Get all difficulty parameter update proposals
+        let difficulty_proposals: Vec<Hash> = self.get_dao_proposals()
+            .iter()
+            .filter(|p| p.proposal_type == "difficulty_parameter_update")
+            .map(|p| p.proposal_id.clone())
+            .collect();
+
+        for proposal_id in difficulty_proposals {
+            // Skip if already executed
+            if self.executed_dao_proposals.contains(&proposal_id) {
+                continue;
+            }
+
+            // Check if proposal has passed voting (60% quorum by default)
+            match self.has_proposal_passed(&proposal_id, 60) {
+                Ok(true) => {
+                    // Proposal passed, try to execute it
+                    match self.apply_difficulty_parameter_update(proposal_id.clone()) {
+                        Ok(()) => {
+                            info!(
+                                "✅ Successfully executed difficulty parameter update proposal {:?}",
+                                proposal_id
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to execute difficulty parameter update proposal {:?}: {}",
+                                proposal_id, e
+                            );
+                            // Don't fail the whole block processing, just log the warning
+                        }
+                    }
+                }
+                Ok(false) => {
+                    // Proposal hasn't passed yet, skip
+                    debug!(
+                        "Difficulty proposal {:?} has not passed voting yet",
+                        proposal_id
+                    );
+                }
+                Err(e) => {
+                    // Error checking proposal status, skip
+                    debug!(
+                        "Error checking status of proposal {:?}: {}",
+                        proposal_id, e
+                    );
+                }
+            }
         }
 
         Ok(())
