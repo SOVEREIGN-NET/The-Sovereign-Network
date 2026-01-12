@@ -17,6 +17,7 @@ use anyhow::{Result, anyhow};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::trace;
 
 // ========== CRIT-3: NodeId Verification Constants ==========
 
@@ -876,7 +877,7 @@ mod tests {
         let distance_10 = router.calculate_distance(&local_id, &id_bucket_10);
         
         // These might not be exact due to randomness, but generally bucket 10 should be further
-        println!("Distance 0: {}, Distance 10: {}", distance_0, distance_10);
+        trace!(distance_0 = distance_0, distance_10 = distance_10, "Distance comparison");
     }
 
     #[tokio::test]
@@ -939,7 +940,7 @@ mod tests {
         let one_second_check = router.get_buckets_needing_refresh(1);
         
         // Since we waited 2 seconds, buckets with peers should need refresh with 1-second interval
-        println!("Buckets needing refresh after 2 seconds with 1-second interval: {}", one_second_check.len());
+        trace!(bucket_count = one_second_check.len(), "Buckets needing refresh after 2 seconds with 1-second interval");
         assert!(one_second_check.len() > 0, "After 2 seconds, buckets with peers should need refresh with 1-second interval");
         
         // We added 10 nodes to potentially different buckets

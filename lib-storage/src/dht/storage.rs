@@ -26,7 +26,7 @@ use std::io::Write;
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
 use serde::{Serialize, Deserialize};
-use tracing::{debug, warn, info, error, instrument};
+use tracing::{trace, debug, warn, info, error, instrument};
 
 /// Current version of DHT storage persistence format
 const DHT_STORAGE_VERSION: u32 = 1;
@@ -516,26 +516,32 @@ impl DhtStorage {
     }
 
     /// Store data with content hash as key and replicate across DHT
+    #[instrument(skip(self, data), fields(key = %hex::encode(content_hash.as_bytes())[..16], data_size = data.len()))]
     pub async fn store_data(&mut self, content_hash: Hash, data: Vec<u8>) -> Result<()> {
         let key: DhtKey = content_hash; // Use DhtKey type for strongly typed keys
         let key_str = hex::encode(key.as_bytes());
-        
-        println!(" 💾 DhtStorage::store_data() called");
-        println!("    Hash (first 16 chars): {}...", &key_str[..16.min(key_str.len())]);
-        println!("    Full hex key: {}", key_str);
-        println!("    Data size: {} bytes", data.len());
-        
+
+        debug!(
+            operation = "store_data",
+            key = %key_str,
+            data_size = data.len(),
+            "DHT store_data called"
+        );
+
         // Store locally first
         self.store(key_str.clone(), data.clone(), None).await?;
-        
-        println!("     Stored locally in HashMap with key: {}", key_str);
-        println!("    HashMap now contains {} entries", self.storage.len());
-        
+
+        trace!(
+            key = %key_str,
+            storage_entries = self.storage.len(),
+            "Stored locally in HashMap"
+        );
+
         // Verify it was actually stored
         if self.storage.contains_key(&key_str) {
-            println!("     VERIFIED: Key exists in HashMap");
+            trace!(key = %key_str, "Verified: key exists in HashMap");
         } else {
-            println!("     WARNING: Key NOT found in HashMap after store!");
+            warn!(key = %key_str, "Key NOT found in HashMap after store");
         }
         
         // If network is available, replicate to other nodes
@@ -575,16 +581,30 @@ impl DhtStorage {
             // Send store messages to closest nodes
             // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for routing and tracking
             for node in closest_nodes {
+                let node_id_short = hex::encode(&node.peer.node_id().as_bytes()[..4]);
                 match network.store(&node, key.to_string(), data.to_vec()).await {
                     Ok(true) => {
-                        println!("Successfully stored data at node {}", hex::encode(&node.peer.node_id().as_bytes()[..4]));
+                        debug!(
+                            node_id = %node_id_short,
+                            key = %key,
+                            "Successfully stored data at node"
+                        );
                     }
                     Ok(false) => {
-                        println!("Store failed at node {}", hex::encode(&node.peer.node_id().as_bytes()[..4]));
+                        warn!(
+                            node_id = %node_id_short,
+                            key = %key,
+                            "Store failed at node"
+                        );
                         self.router.mark_node_failed(node.peer.node_id());
                     }
                     Err(e) => {
-                        println!("Network error storing to node {}: {}", hex::encode(&node.peer.node_id().as_bytes()[..4]), e);
+                        error!(
+                            node_id = %node_id_short,
+                            key = %key,
+                            error = %e,
+                            "Network error storing to node"
+                        );
                         self.router.mark_node_failed(node.peer.node_id());
                     }
                 }
@@ -605,11 +625,17 @@ impl DhtStorage {
             // Query nodes for the value
             // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for routing and tracking
             for node in closest_nodes {
+                let node_id_short = hex::encode(&node.peer.node_id().as_bytes()[..4]);
                 match network.find_value(&node, key.to_string()).await {
                     Ok(crate::types::dht_types::DhtQueryResponse::Value(data)) => {
-                        println!("Found data at node {}", hex::encode(&node.peer.node_id().as_bytes()[..4]));
+                        debug!(
+                            node_id = %node_id_short,
+                            key = %key,
+                            data_size = data.len(),
+                            "Found data at node"
+                        );
                         self.router.mark_node_responsive(node.peer.node_id())?;
-                        
+
                         // Store locally for caching
                         let _ = self.store(key.to_string(), data.clone(), None).await;
                         return Ok(Some(data));
@@ -621,7 +647,12 @@ impl DhtStorage {
                         }
                     }
                     Err(e) => {
-                        println!("Query error from node {}: {}", hex::encode(&node.peer.node_id().as_bytes()[..4]), e);
+                        warn!(
+                            node_id = %node_id_short,
+                            key = %key,
+                            error = %e,
+                            "Query error from node"
+                        );
                         self.router.mark_node_failed(node.peer.node_id());
                     }
                 }
@@ -1628,39 +1659,46 @@ impl DhtStorage {
     /// **ACCEPTANCE CRITERIA (Ticket #145):**
     /// - Stores full DhtPeerIdentity (NodeId + PublicKey + DID)
     /// - Signature verification ready (uses PublicKey from peer identity)
+    #[instrument(skip(self, node), fields(node_id = %hex::encode(&node.peer.node_id().as_bytes()[..8])))]
     pub async fn add_dht_node(&mut self, node: DhtNode) -> Result<()> {
-        println!("✅ Adding node with full peer identity:");
-        println!("   NodeId: {}", hex::encode(&node.peer.node_id().as_bytes()[..8]));
-        println!("   DID: {}", node.peer.did());
-        println!("   Device: {}", node.peer.device_id());
-        println!("   PublicKey available for signature verification: {:?}", !node.peer.public_key().dilithium_pk.is_empty());
-        
+        let node_id_short = hex::encode(&node.peer.node_id().as_bytes()[..8]);
+        let has_pubkey = !node.peer.public_key().dilithium_pk.is_empty();
+
+        info!(
+            node_id = %node_id_short,
+            did = %node.peer.did(),
+            device = %node.peer.device_id(),
+            has_pubkey = has_pubkey,
+            "Adding DHT node with full peer identity"
+        );
+
         // Add to routing table (ACCEPTANCE CRITERIA: uses Kademlia distance based on NodeId)
         self.router.add_node(node.clone()).await?;
-        
+
         // Add to known nodes
         // **MIGRATION (Ticket #145):** Uses `node.peer.node_id()` for tracking
         let node_id = node.peer.node_id().clone();
         self.known_nodes.insert(node_id.clone(), node.clone());
-        
+
         // Test connectivity if network is available
         if let Some(network) = &self.network {
+            let node_id_short = hex::encode(&node_id.as_bytes()[..4]);
             match network.ping(&node).await {
                 Ok(true) => {
-                    println!("Successfully pinged new node {}", hex::encode(&node_id.as_bytes()[..4]));
+                    debug!(node_id = %node_id_short, "Successfully pinged new node");
                     self.router.mark_node_responsive(&node_id)?;
                 }
                 Ok(false) => {
-                    println!("Ping failed for new node {}", hex::encode(&node_id.as_bytes()[..4]));
+                    warn!(node_id = %node_id_short, "Ping failed for new node");
                     self.router.mark_node_failed(&node_id);
                 }
                 Err(e) => {
-                    println!("Network error pinging node {}: {}", hex::encode(&node_id.as_bytes()[..4]), e);
+                    error!(node_id = %node_id_short, error = %e, "Network error pinging node");
                     self.router.mark_node_failed(&node_id);
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -1840,14 +1878,19 @@ impl DhtStorage {
         match message.message_type {
             DhtMessageType::Store => {
                 if let (Some(key), Some(value)) = (&message.key, &message.value) {
+                    let sender_short = hex::encode(&message.sender_id.as_bytes()[..4]);
                     // Store the data locally
                     match self.store(key.clone(), value.clone(), None).await {
                         Ok(_) => {
-                            println!(" Stored data for key {} from {}", 
-                                    key, hex::encode(&message.sender_id.as_bytes()[..4]));
+                            debug!(
+                                key = %key,
+                                sender = %sender_short,
+                                data_size = value.len(),
+                                "Stored data from peer"
+                            );
                         }
                         Err(e) => {
-                            println!("Failed to store data for key {}: {}", key, e);
+                            error!(key = %key, error = %e, "Failed to store data");
                         }
                     }
                 }
@@ -1856,7 +1899,7 @@ impl DhtStorage {
                 if let Some(key) = &message.key {
                     // Check if we have the value locally
                     if let Ok(Some(_)) = self.get(key).await {
-                        println!("Found requested value for key {} locally", key);
+                        debug!(key = %key, "Found requested value locally");
                     }
                 }
             }
@@ -1864,8 +1907,11 @@ impl DhtStorage {
                 if let Some(target_id) = &message.target_id {
                     // Return closest nodes we know about
                     let closest = self.router.find_closest_nodes(target_id, 8);
-                    println!("🗺️ Returning {} closest nodes for target {}", 
-                            closest.len(), hex::encode(&target_id.as_bytes()[..4]));
+                    debug!(
+                        target = %hex::encode(&target_id.as_bytes()[..4]),
+                        node_count = closest.len(),
+                        "Returning closest nodes for target"
+                    );
                 }
             }
             // Smart Contract DHT Messages
@@ -1899,7 +1945,12 @@ impl DhtStorage {
 
     /// Handle smart contract deployment through DHT
     async fn handle_contract_deploy(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
-        println!(" Contract deployment request from {}", hex::encode(&sender_id.as_bytes()[..4]));
+        let sender_short = hex::encode(&sender_id.as_bytes()[..4]);
+        debug!(
+            sender = %sender_short,
+            contract_id = %contract_data.contract_id,
+            "Contract deployment request received"
+        );
         
         if let (Some(bytecode), Some(metadata)) = (&contract_data.bytecode, &contract_data.metadata) {
             let contract_key = format!("contract:{}", contract_data.contract_id);
@@ -1922,8 +1973,13 @@ impl DhtStorage {
                     Ok(_) => {
                         // Index contract by tags for discovery
                         self.index_contract_by_tags(&contract_data.contract_id, metadata).await;
-                        println!(" Contract {} deployed and indexed successfully", contract_data.contract_id);
-                        
+                        info!(
+                            contract_id = %contract_data.contract_id,
+                            bytecode_size = bytecode.len(),
+                            tags = ?metadata.tags,
+                            "Contract deployed and indexed successfully"
+                        );
+
                         // Store contract summary for quick discovery
                         let summary_key = format!("contract_summary:{}", contract_data.contract_id);
                         let summary = serde_json::json!({
@@ -1942,7 +1998,7 @@ impl DhtStorage {
                             let _ = self.store(summary_key, summary_serialized, None).await;
                         }
                     }
-                    Err(e) => println!(" Contract deployment failed: {}", e),
+                    Err(e) => error!(contract_id = %contract_data.contract_id, error = %e, "Contract deployment failed"),
                 }
             }
         }
@@ -1950,54 +2006,66 @@ impl DhtStorage {
 
     /// Handle smart contract query through DHT
     async fn handle_contract_query(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
-        println!(" Contract query from {}", hex::encode(&sender_id.as_bytes()[..4]));
-        
+        let sender_short = hex::encode(&sender_id.as_bytes()[..4]);
+        debug!(sender = %sender_short, contract_id = %contract_data.contract_id, "Contract query received");
+
         let contract_key = format!("contract:{}", contract_data.contract_id);
-        
+
         match self.get(&contract_key).await {
             Ok(Some(stored_contract)) => {
-                println!(" Found contract {} for query ({} bytes)", 
-                        contract_data.contract_id, 
-                        stored_contract.len());
-                
+                debug!(
+                    contract_id = %contract_data.contract_id,
+                    data_size = stored_contract.len(),
+                    "Found contract for query"
+                );
+
                 // Parse contract info and provide detailed response
                 if let Ok(contract_info) = serde_json::from_slice::<serde_json::Value>(&stored_contract) {
-                    if let Some(metadata) = contract_info.get("metadata") {
-                        println!(" Contract metadata: {}", 
-                                serde_json::to_string_pretty(metadata).unwrap_or_default());
-                    }
-                    
-                    println!("⏰ Deployed at: {}", 
-                            contract_info["deployed_at"].as_u64().unwrap_or(0));
-                    println!(" Deployed by: {}", 
-                            contract_info["deployer"].as_str().unwrap_or("unknown"));
-                    println!("📏 Bytecode size: {} bytes", 
-                            contract_info["bytecode_size"].as_u64().unwrap_or(0));
+                    let deployed_at = contract_info["deployed_at"].as_u64().unwrap_or(0);
+                    let deployer = contract_info["deployer"].as_str().unwrap_or("unknown");
+                    let bytecode_size = contract_info["bytecode_size"].as_u64().unwrap_or(0);
+
+                    trace!(
+                        contract_id = %contract_data.contract_id,
+                        deployed_at = deployed_at,
+                        deployer = %deployer,
+                        bytecode_size = bytecode_size,
+                        "Contract metadata"
+                    );
                 }
-                
+
                 // In a full implementation, this would integrate with the WASM runtime
                 // to execute read-only contract queries
             }
             Ok(None) => {
-                println!(" Contract {} not found", contract_data.contract_id);
+                debug!(contract_id = %contract_data.contract_id, "Contract not found");
             }
             Err(e) => {
-                println!(" Error querying contract {}: {}", contract_data.contract_id, e);
+                error!(contract_id = %contract_data.contract_id, error = %e, "Error querying contract");
             }
         }
     }
 
     /// Handle smart contract execution through DHT
     async fn handle_contract_execute(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
-        println!(" Contract execution request from {}", hex::encode(&sender_id.as_bytes()[..4]));
-        
+        let sender_short = hex::encode(&sender_id.as_bytes()[..4]);
+        let function_name = contract_data.function_name.as_deref().unwrap_or("default");
+        debug!(
+            sender = %sender_short,
+            contract_id = %contract_data.contract_id,
+            function = %function_name,
+            "Contract execution request received"
+        );
+
         let contract_key = format!("contract:{}", contract_data.contract_id);
-        
+
         match self.get(&contract_key).await {
             Ok(Some(_contract_data)) => {
-                println!(" Executing contract {} function {:?}", 
-                        contract_data.contract_id, 
-                        contract_data.function_name.as_deref().unwrap_or("default"));
+                debug!(
+                    contract_id = %contract_data.contract_id,
+                    function = %function_name,
+                    "Executing contract function"
+                );
                 // In a full implementation, this would:
                 // 1. Load contract from DHT storage
                 // 2. Initialize WASM runtime with contract bytecode
@@ -2005,64 +2073,71 @@ impl DhtStorage {
                 // 4. Return execution result through DHT response
             }
             Ok(None) => {
-                println!(" Contract {} not found for execution", contract_data.contract_id);
+                warn!(contract_id = %contract_data.contract_id, "Contract not found for execution");
             }
             Err(e) => {
-                println!(" Error executing contract {}: {}", contract_data.contract_id, e);
+                error!(contract_id = %contract_data.contract_id, error = %e, "Error executing contract");
             }
         }
     }
 
     /// Handle smart contract find through DHT
     async fn handle_contract_find(&mut self, contract_data: &crate::types::dht_types::ContractDhtData, sender_id: &NodeId) {
-        println!(" Contract search from {}", hex::encode(&sender_id.as_bytes()[..4]));
-        
+        let sender_short = hex::encode(&sender_id.as_bytes()[..4]);
+        debug!(sender = %sender_short, "Contract search request received");
+
         // If specific contract ID provided, look it up directly
         if !contract_data.contract_id.is_empty() {
             let contract_key = format!("contract:{}", contract_data.contract_id);
-            
+
             match self.get(&contract_key).await {
                 Ok(Some(contract_info)) => {
-                    println!(" Found contract {} ({} bytes)", 
-                            contract_data.contract_id, 
-                            contract_info.len());
+                    debug!(
+                        contract_id = %contract_data.contract_id,
+                        data_size = contract_info.len(),
+                        "Found contract"
+                    );
                     // Return contract metadata through DHT response
                 }
                 Ok(None) => {
-                    println!(" Contract {} not found in DHT", contract_data.contract_id);
+                    debug!(contract_id = %contract_data.contract_id, "Contract not found in DHT");
                 }
                 Err(e) => {
-                    println!(" Error searching for contract {}: {}", contract_data.contract_id, e);
+                    error!(contract_id = %contract_data.contract_id, error = %e, "Error searching for contract");
                 }
             }
         } else if let Some(metadata) = &contract_data.metadata {
             // Search by tags if no specific ID provided
-            println!(" Searching contracts by tags: {:?}", metadata.tags);
-            
+            debug!(tags = ?metadata.tags, "Searching contracts by tags");
+
             match self.find_contracts_by_tags(&metadata.tags, 10).await {
                 Ok(matching_contracts) => {
-                    println!(" Found {} contracts matching tags", matching_contracts.len());
-                    
+                    debug!(
+                        tag_count = metadata.tags.len(),
+                        match_count = matching_contracts.len(),
+                        "Found contracts matching tags"
+                    );
+
                     // Return list of matching contract summaries
                     for contract_id in &matching_contracts {
                         let summary_key = format!("contract_summary:{}", contract_id);
                         if let Ok(Some(summary)) = self.get(&summary_key).await {
-                            println!(" Contract: {} ({} bytes)", contract_id, summary.len());
+                            trace!(contract_id = %contract_id, data_size = summary.len(), "Contract summary");
                         }
                     }
                 }
                 Err(e) => {
-                    println!(" Error searching contracts by tags: {}", e);
+                    error!(error = %e, "Error searching contracts by tags");
                 }
             }
         } else {
             // List all available contracts
-            println!(" Listing all available contracts");
+            debug!("Listing all available contracts");
             let all_contracts = self.list_contracts().await;
-            println!(" Found {} contracts in DHT storage", all_contracts.len());
-            
+            debug!(contract_count = all_contracts.len(), "Found contracts in DHT storage");
+
             for contract_id in all_contracts.iter().take(10) {
-                println!("   Contract: {}", contract_id);
+                trace!(contract_id = %contract_id, "Available contract");
             }
         }
     }
@@ -2087,7 +2162,11 @@ impl DhtStorage {
         // Persist contract index
         let _ = self.maybe_persist().await;
 
-        println!(" Indexed contract {} with {} tags", contract_id, metadata.tags.len());
+        debug!(
+            contract_id = %contract_id,
+            tag_count = metadata.tags.len(),
+            "Indexed contract with tags"
+        );
     }
 
     /// Find contracts by tags through DHT
@@ -2182,12 +2261,13 @@ impl DhtStorage {
     }
 
     /// Perform DHT maintenance (refresh routing table, check node liveness)
+    #[instrument(skip(self))]
     pub async fn perform_maintenance(&mut self) -> Result<()> {
-        println!("Performing DHT maintenance...");
-        
+        info!("Performing DHT maintenance");
+
         // Check liveness of known nodes
         let node_ids: Vec<NodeId> = self.known_nodes.keys().cloned().collect();
-        
+
         if let Some(network) = &self.network {
             for node_id in node_ids {
                 if let Some(node) = self.known_nodes.get(&node_id) {
@@ -2197,7 +2277,7 @@ impl DhtStorage {
                         }
                         Ok(false) | Err(_) => {
                             self.router.mark_node_failed(&node_id);
-                            
+
                             // Remove unresponsive nodes after too many failures
                             // This would be configurable in production
                             self.router.remove_node(&node_id);
@@ -2207,16 +2287,20 @@ impl DhtStorage {
                 }
             }
         }
-        
+
         // Cleanup expired storage entries
         let expired_count = self.cleanup_expired().await?;
         if expired_count > 0 {
-            println!("🗑️ Cleaned up {} expired storage entries", expired_count);
+            info!(expired_count = expired_count, "Cleaned up expired storage entries");
         }
-        
+
         let stats = self.router.get_stats();
-        println!("DHT stats: {} nodes in {} buckets", stats.total_nodes, stats.non_empty_buckets);
-        
+        info!(
+            total_nodes = stats.total_nodes,
+            non_empty_buckets = stats.non_empty_buckets,
+            "DHT maintenance complete"
+        );
+
         Ok(())
     }
 
