@@ -217,6 +217,12 @@ pub enum DaoProposalType {
     CommunityFunding,
     /// Research and development grants
     ResearchGrants,
+    /// Difficulty parameter update for adaptive difficulty adjustment
+    /// 
+    /// Used to propose changes to the blockchain's difficulty adjustment parameters
+    /// through DAO governance. Contains target_timespan, adjustment_interval,
+    /// and optional min/max adjustment factors.
+    DifficultyParameterUpdate,
 }
 
 /// DAO proposal status
