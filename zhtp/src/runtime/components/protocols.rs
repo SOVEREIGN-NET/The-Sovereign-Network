@@ -229,6 +229,18 @@ impl Component for ProtocolsComponent {
             }
         };
 
+        // Initialize network genesis hash for QUIC protocol (CRITICAL: must be before unified server creation)
+        {
+            let blockchain_read = blockchain.read().await;
+            if !blockchain_read.blocks.is_empty() {
+                let genesis_hash = blockchain_read.blocks[0].header.block_hash.as_array();
+                lib_identity::types::node_id::set_network_genesis(genesis_hash);
+                info!(" ✓ Network genesis initialized for QUIC protocol");
+            } else {
+                return Err(anyhow::anyhow!("Blockchain has no genesis block"));
+            }
+        }
+
         // Get shared IdentityManager
         info!(" Getting shared IdentityManager...");
         let identity_manager = match crate::runtime::get_global_identity_manager().await {
