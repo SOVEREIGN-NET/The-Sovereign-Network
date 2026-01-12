@@ -20,4 +20,4 @@
 
 mod sled_backend;
 
-pub use sled_backend::{SledBackend, SledTree, BatchOp, StorageBackend};
+pub use sled_backend::{SledBackend, SledTree, BatchOp, StorageBackend, StorageError, Result};
