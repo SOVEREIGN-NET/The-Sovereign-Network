@@ -29,7 +29,7 @@ use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use lib_network::web4::{DomainRegistry, ContentPublisher, Web4ContentService};
+use lib_network::web4::{DomainRegistry, ContentPublisher, NameResolver, Web4ContentService};
 use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use chrono;
@@ -48,6 +48,8 @@ pub struct ErrorResponse {
 pub struct Web4Handler {
     /// Domain registry for managing Web4 domains
     domain_registry: Arc<DomainRegistry>,
+    /// Read-only name resolver
+    name_resolver: Arc<NameResolver>,
     /// Content publisher for publishing content
     content_publisher: Arc<ContentPublisher>,
     /// Content service for serving Web4 content
@@ -75,6 +77,7 @@ impl Web4Handler {
 
         // Create content service using the shared registry
         let content_service = Web4ContentService::new(domain_registry.clone());
+        let name_resolver = Arc::new(NameResolver::new(domain_registry.clone()));
 
         info!("Web4 API handler initialized with shared domain registry");
 
@@ -83,6 +86,7 @@ impl Web4Handler {
 
         Ok(Self {
             domain_registry,
+            name_resolver,
             content_publisher,
             content_service: Arc::new(content_service),
             wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
@@ -165,49 +169,36 @@ impl Web4Handler {
             (parts[0].to_string(), parts.get(1).map(|s| s.to_string()))
         };
 
-        // Resolve domain to get contract ID
-        match self.domain_registry.lookup_domain(&domain).await {
-            Ok(lookup) if lookup.found => {
-                if let Some(record) = lookup.record {
-                    let owner = hex::encode(&record.owner.0[..16]);
-                    let content_available = !record.content_mappings.is_empty();
-                    // Return contract/content information
-                    // Note: Web4 domains don't have direct contract associations yet
-                    let response = serde_json::json!({
-                        "status": "success",
-                        "domain": domain,
-                        "owner": owner,
-                        "path": path,
-                        "content_available": content_available,
-                        "note": "Contract association not yet implemented"
-                    });
+        // Resolve domain via read-only view model
+        match self.name_resolver.resolve(&domain).await {
+            Ok(record) => {
+                let owner = hex::encode(&record.owner.0[..16]);
+                let content_available = !record.content_mappings.is_empty();
+                // Return contract/content information
+                // Note: Web4 domains don't have direct contract associations yet
+                let response = serde_json::json!({
+                    "status": "success",
+                    "domain": domain,
+                    "owner": owner,
+                    "path": path,
+                    "content_available": content_available,
+                    "note": "Contract association not yet implemented"
+                });
 
-                    let json = serde_json::to_vec(&response)
-                        .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                let json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
 
-                    Ok(ZhtpResponse::success_with_content_type(
-                        json,
-                        "application/json".to_string(),
-                        None,
-                    ))
-                } else {
-                    Ok(ZhtpResponse::error(
-                        ZhtpStatus::NotFound,
-                        format!("Domain record incomplete: {}", domain),
-                    ))
-                }
-            }
-            Ok(_) => {
-                Ok(ZhtpResponse::error(
-                    ZhtpStatus::NotFound,
-                    format!("Domain not found: {}", domain),
+                Ok(ZhtpResponse::success_with_content_type(
+                    json,
+                    "application/json".to_string(),
+                    None,
                 ))
             }
             Err(e) => {
                 error!("Failed to resolve domain {}: {}", domain, e);
                 Ok(ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("Failed to resolve domain: {}", e),
+                    ZhtpStatus::NotFound,
+                    format!("Domain not found: {}", domain),
                 ))
             }
         }
@@ -222,48 +213,35 @@ impl Web4Handler {
 
         info!("Resolving Web4 domain: {}", domain);
 
-        match self.domain_registry.lookup_domain(domain).await {
-            Ok(lookup) if lookup.found => {
-                if let Some(record) = lookup.record {
-                    let owner = hex::encode(&record.owner.0[..16]);
-                    let registered_at = record.registered_at;
-                    let expires_at = record.expires_at;
-                    // Note: Web4 domains don't have direct contract associations yet
-                    let response = serde_json::json!({
-                        "status": "success",
-                        "domain": domain,
-                        "owner": owner,
-                        "registered_at": registered_at,
-                        "expires_at": expires_at,
-                        "note": "Contract association not yet implemented"
-                    });
+        match self.name_resolver.resolve(domain).await {
+            Ok(record) => {
+                let owner = hex::encode(&record.owner.0[..16]);
+                let registered_at = record.registered_at;
+                let expires_at = record.expires_at;
+                // Note: Web4 domains don't have direct contract associations yet
+                let response = serde_json::json!({
+                    "status": "success",
+                    "domain": domain,
+                    "owner": owner,
+                    "registered_at": registered_at,
+                    "expires_at": expires_at,
+                    "note": "Contract association not yet implemented"
+                });
 
-                    let json = serde_json::to_vec(&response)
-                        .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+                let json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
 
-                    Ok(ZhtpResponse::success_with_content_type(
-                        json,
-                        "application/json".to_string(),
-                        None,
-                    ))
-                } else {
-                    Ok(ZhtpResponse::error(
-                        ZhtpStatus::NotFound,
-                        format!("Domain record incomplete: {}", domain),
-                    ))
-                }
-            }
-            Ok(_) => {
-                Ok(ZhtpResponse::error(
-                    ZhtpStatus::NotFound,
-                    format!("Domain not found: {}", domain),
+                Ok(ZhtpResponse::success_with_content_type(
+                    json,
+                    "application/json".to_string(),
+                    None,
                 ))
             }
             Err(e) => {
                 error!("Failed to resolve domain {}: {}", domain, e);
                 Ok(ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("Failed to resolve domain: {}", e),
+                    ZhtpStatus::NotFound,
+                    format!("Domain not found: {}", domain),
                 ))
             }
         }
@@ -522,6 +500,9 @@ impl ZhtpRequestHandler for Web4Handler {
             // Domain versioning endpoints (must come before general domain endpoints)
             "/api/v1/web4/domains/resolve" if request.method == lib_protocols::ZhtpMethod::Post => {
                 self.resolve_domain_manifest(request).await
+            }
+            "/api/v1/web4/domains/admin/migrate-domains" if request.method == lib_protocols::ZhtpMethod::Post => {
+                self.migrate_domains(request).await
             }
             "/api/v1/web4/domains/update" if request.method == lib_protocols::ZhtpMethod::Post => {
                 self.update_domain_version(request).await

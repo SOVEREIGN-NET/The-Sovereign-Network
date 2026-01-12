@@ -12,7 +12,7 @@
 //!
 //! ```text
 //! ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-//! │  Gateway/API     │────▶│   ZdnsResolver   │────▶│  DomainRegistry  │
+//! │  Gateway/API     │────▶│   ZdnsResolver   │────▶│  NameResolver    │
 //! │  Handlers        │     │   (LRU Cache)    │     │  (Storage)       │
 //! └──────────────────┘     └──────────────────┘     └──────────────────┘
 //! ```
@@ -20,7 +20,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! let resolver = ZdnsResolver::new(domain_registry.clone(), ZdnsConfig::default());
+//! let resolver = ZdnsResolver::new(name_resolver.clone(), ZdnsConfig::default());
 //!
 //! // Resolve a domain (hits cache or registry)
 //! let record = resolver.resolve_web4("myapp.zhtp").await?;
