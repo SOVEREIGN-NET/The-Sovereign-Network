@@ -206,33 +206,39 @@ pub struct StorageCapabilities {
     pub uptime: f64,
 }
 
-/// Unified Peer Identity for DHT operations
+/// Unified Peer Identity for DHT operations.
 ///
-/// **MIGRATION (Ticket #145):** Consolidates NodeId, PublicKey, and DID
-/// into a single structure for complete peer identification.
+/// Create a placeholder peer identity when only a NodeId is available.
 ///
-/// # Note
-///
-/// This is a storage-local version to avoid circular dependencies with lib-network.
-/// The full `UnifiedPeerId` from lib-network can be converted to this type.
-///
-/// # Technical Debt (HIGH-4)
-///
-/// **TODO:** This struct duplicates `UnifiedPeerId` from lib-network to avoid
-/// circular dependencies. This creates maintenance burden and potential drift.
-///
-/// **MOVED TO lib-identity [PR #718]:** DhtPeerIdentity is now defined in lib-identity::types::peer_identity
-/// to consolidate peer identity logic in one place. It is re-exported from lib-identity for convenience.
-///
-/// Import using:
-/// ```
-/// use lib_identity::DhtPeerIdentity;
-/// ```
-///
-/// This enables:
-/// - Single source of truth for peer identity across lib-storage and lib-network
-/// - Easier maintenance and consistency
-/// - Clearer API organization (identity types in lib-identity)
+/// This is intended for bootstrap/testing paths where full identity material
+/// is not yet available. The resulting peer is marked as bootstrap-mode.
+pub fn placeholder_peer_identity(node_id: NodeId) -> DhtPeerIdentity {
+    DhtPeerIdentity {
+        node_id,
+        public_key: lib_crypto::PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0u8; 32],
+        },
+        did: String::from("did:zhtp:placeholder"),
+        device_id: String::from("default"),
+    }
+}
+
+/// Build a peer identity from explicit fields.
+pub fn build_peer_identity(
+    node_id: NodeId,
+    public_key: lib_crypto::PublicKey,
+    did: String,
+    device_id: String,
+) -> DhtPeerIdentity {
+    DhtPeerIdentity {
+        node_id,
+        public_key,
+        did,
+        device_id,
+    }
+}
 
 /// DHT node information with unified peer identity
 ///

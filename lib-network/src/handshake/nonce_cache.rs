@@ -47,7 +47,7 @@
 use anyhow::{Result, anyhow};
 use blake3::Hasher;
 use parking_lot::RwLock;
-use sled::{Db, Batch};
+use sled::{Db, Batch, IVec};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -687,7 +687,7 @@ impl NonceCache {
         let mut iteration_failed = false;
 
         for item in iter {
-            let (key, value) = match item {
+            let (key, value): (IVec, IVec) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
                     warn!(
@@ -896,6 +896,7 @@ impl NonceCache {
     fn verify_or_store_network_epoch(db: &Db, expected_epoch: NetworkEpoch) -> Result<()> {
         match db.get(Self::META_EPOCH_KEY) {
             Ok(Some(bytes)) => {
+                let bytes: IVec = bytes;
                 // Epoch exists - verify it matches
                 // Handle corrupted epoch bytes gracefully
                 let stored_epoch = match NetworkEpoch::from_bytes(&bytes) {
@@ -977,7 +978,8 @@ impl NonceCache {
         let iter = self.db.iter();
 
         for item in iter {
-            let (key, value) = item.map_err(|e| anyhow!("DB iteration error: {}", e))?;
+            let (key, value): (IVec, IVec) =
+                item.map_err(|e| anyhow!("DB iteration error: {}", e))?;
 
             // Skip metadata keys
             if key.starts_with(b"meta:") {
