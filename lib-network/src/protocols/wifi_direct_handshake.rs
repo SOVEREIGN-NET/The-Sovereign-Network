@@ -614,13 +614,13 @@ mod tests {
         
         // Verify peer identities
         assert_eq!(
-            client_result.peer_identity.node_id,
+            client_result.peer_identity.node_id(),
             group_owner_identity.node_id,
             "Client should see group owner's identity"
         );
         
         assert_eq!(
-            server_result.peer_identity.node_id,
+            server_result.peer_identity.node_id(),
             client_identity.node_id,
             "Group owner should see client's identity"
         );

@@ -553,7 +553,7 @@ pub fn new_shared_dht_registry_with_config(
 mod tests {
     use super::*;
     use lib_identity::{ZhtpIdentity, IdentityType};
-    use crate::types::dht_types::DhtPeerIdentity;
+    use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
 
     fn create_test_node(device_name: &str, port: u16) -> DhtNode {
         let identity = ZhtpIdentity::new_unified(
@@ -564,12 +564,12 @@ mod tests {
             None,
         ).expect("Failed to create test identity");
 
-        let peer = DhtPeerIdentity {
-            node_id: identity.node_id.clone(),
-            public_key: identity.public_key.clone(),
-            did: identity.did.clone(),
-            device_id: device_name.to_string(),
-        };
+        let peer = build_peer_identity(
+            identity.node_id.clone(),
+            identity.public_key.clone(),
+            identity.did.clone(),
+            device_name.to_string(),
+        );
 
         DhtNode {
             peer,
