@@ -47,10 +47,6 @@ pub mod optimization;
 // Distributed consistency (Phase F - NEW)
 pub mod consistency;
 
-// [DB-009] Pluggable storage backends
-#[cfg(feature = "sqlite")]
-pub mod backend;
-
 // Re-export core types (avoiding conflicts)
 pub use types::{
     dht_types::*, storage_types::*, stats_types::*
@@ -70,7 +66,7 @@ pub use economic::{
 };
 pub use content::{ContentManager, UploadRequest, DownloadRequest, SearchQuery, AccessControlSettings, ContentStorageRequirements};
 pub use wallet_content_integration::{WalletContentManager, WalletContentStatistics};
-pub use backend::{BackendStats, BatchOp, StorageBackend, StorageKey};
+pub use backend::{BackendStats, BatchOp, StorageBackend, StorageKey, SledBackend, SledTree};
 pub use erasure::*;
 pub use proofs::{StorageProof, RetrievalProof, generate_storage_proof, generate_retrieval_proof};
 pub use integrity::{IntegrityManager, IntegrityMetadata, IntegrityStatus, ChecksumAlgorithm};
