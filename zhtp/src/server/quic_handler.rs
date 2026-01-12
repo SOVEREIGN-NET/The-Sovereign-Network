@@ -428,11 +428,10 @@ impl QuicHandler {
     async fn handle_control_plane_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
         info!("🔐 Control plane connection from {} - starting UHP handshake", peer_addr);
 
-        // Perform UHP+Kyber handshake with common setup
+        // Perform UHP+Kyber handshake with common setup (uses global nonce cache)
         let (identity, handshake_result) = self.perform_uhp_handshake(
             &connection,
             &peer_addr,
-            "./data/tls/control_plane_nonce_cache",
         ).await?;
 
         let peer_did = handshake_result.verified_peer.identity.did.clone();
@@ -480,12 +479,15 @@ impl QuicHandler {
 
     /// Common handshake setup for authenticated connections (control plane and mesh)
     ///
-    /// Performs: rate limiting, identity retrieval, nonce cache setup, UHP+Kyber handshake
+    /// Performs: rate limiting, identity retrieval, nonce cache access, UHP+Kyber handshake
+    ///
+    /// # DB-013 Fix
+    /// Uses global singleton NonceCache instead of opening per-handshake.
+    /// The cache is initialized once during server startup via `init_global_nonce_cache()`.
     async fn perform_uhp_handshake(
         &self,
         connection: &Connection,
         peer_addr: &SocketAddr,
-        nonce_cache_path: &str,
     ) -> Result<(lib_identity::ZhtpIdentity, lib_network::protocols::quic_handshake::QuicHandshakeResult)> {
         // Check rate limit
         self.check_handshake_rate_limit(peer_addr).await?;
@@ -493,12 +495,11 @@ impl QuicHandler {
         // Get server identity
         let identity = self.quic_protocol.identity();
 
-        // Create handshake context with nonce cache
-        let nonce_db_path = std::path::Path::new(nonce_cache_path);
-        let network_epoch = lib_network::handshake::NetworkEpoch::from_global_or_fail()?;
-        let nonce_cache = lib_network::handshake::NonceCache::open(nonce_db_path, 3600, 100_000, network_epoch)
-            .context("Failed to open nonce cache")?;
-        let handshake_ctx = lib_network::handshake::HandshakeContext::new(nonce_cache);
+        // [DB-013] Use global singleton NonceCache instead of opening per-handshake
+        // This is more efficient and prevents sled lock contention
+        let nonce_cache = lib_network::handshake::get_or_init_global_nonce_cache(3600, 100_000)
+            .context("Failed to get global nonce cache")?;
+        let handshake_ctx = lib_network::handshake::HandshakeContext::new(nonce_cache.clone());
 
         // Perform UHP+Kyber handshake as responder
         let handshake_result = lib_network::protocols::quic_handshake::handshake_as_responder(
@@ -716,11 +717,10 @@ impl QuicHandler {
     async fn handle_mesh_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
         info!("🔗 Mesh peer connection from {} - starting UHP handshake", peer_addr);
 
-        // Perform UHP+Kyber handshake with common setup
+        // Perform UHP+Kyber handshake with common setup (uses global nonce cache)
         let (_identity, handshake_result) = self.perform_uhp_handshake(
             &connection,
             &peer_addr,
-            "./data/tls/mesh_nonce_cache",
         ).await?;
 
         // Extract peer node ID
@@ -975,12 +975,11 @@ impl QuicHandler {
         // Get server identity from QuicMeshProtocol
         let identity = self.quic_protocol.identity();
 
-        // Create handshake context with nonce cache
-        let nonce_db_path = std::path::Path::new("./data/tls/quic_handler_nonce_cache");
-        let network_epoch = lib_network::handshake::NetworkEpoch::from_global_or_fail()?;
-        let nonce_cache = NonceCache::open(nonce_db_path, 3600, 100_000, network_epoch)
-            .context("Failed to open nonce cache")?;
-        let handshake_ctx = HandshakeContext::new(nonce_cache);
+        // [DB-013] Use global singleton NonceCache instead of opening per-handshake
+        // This prevents replay attacks by sharing nonce state across all connections
+        let nonce_cache = lib_network::handshake::get_or_init_global_nonce_cache(3600, 100_000)
+            .context("Failed to get global nonce cache")?;
+        let handshake_ctx = HandshakeContext::new(nonce_cache.clone());
 
         // Perform UHP+Kyber handshake as responder
         let handshake_result = quic_handshake::handshake_as_responder(

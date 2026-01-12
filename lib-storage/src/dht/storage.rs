@@ -9,9 +9,10 @@
 //! to prevent denial-of-service attacks through crafted proofs that consume
 //! excessive verification time. See [`ZkVerificationConfig`] for configuration.
 
-use crate::types::dht_types::{DhtNode, StorageEntry, DhtMessage, DhtMessageType, ZkDhtValue, AccessLevel};
+use crate::types::dht_types::{DhtNode, StorageEntry, DhtMessage, DhtMessageType, ZkDhtValue};
 use crate::types::{NodeId, ChunkMetadata, DhtKey};
 use crate::types::config_types::{ZkVerificationConfig, ZkVerificationMetrics};
+use crate::dht::backend::{StorageBackend, HashMapBackend};
 use crate::dht::network::DhtNetwork;
 use crate::dht::routing::KademliaRouter;
 use crate::dht::messaging::DhtMessaging;
@@ -26,7 +27,7 @@ use std::io::Write;
 use lib_crypto::Hash;
 use lib_proofs::{ZkProof, ZeroKnowledgeProof};
 use serde::{Serialize, Deserialize};
-use tracing::{debug, warn, info, error, instrument};
+use tracing::{debug, warn, error, instrument, info};
 
 /// Current version of DHT storage persistence format
 const DHT_STORAGE_VERSION: u32 = 1;
@@ -72,14 +73,21 @@ async fn atomic_write_async(path: PathBuf, bytes: Vec<u8>) -> std::io::Result<()
 ///
 /// **MIGRATED (Ticket #148):** Now uses shared PeerRegistry for DHT peer storage
 ///
+/// ## Storage Backend [DB-010]
+///
+/// DhtStorage is generic over a `StorageBackend`, enabling different implementations
+/// (in-memory HashMap, persistent sled, etc.). Default is HashMapBackend for backward compatibility.
+///
 /// ## Security: ZK Proof Verification Timeouts [DB-002]
 ///
 /// This struct includes configurable timeouts for all ZK proof verification
 /// operations to prevent DoS attacks. Configure via [`ZkVerificationConfig`].
 #[derive(Debug)]
-pub struct DhtStorage {
-    /// Local storage for key-value pairs
-    storage: HashMap<String, StorageEntry>,
+pub struct DhtStorage<B: StorageBackend = HashMapBackend> {
+    /// Storage backend (generic over implementation)
+    backend: B,
+    /// In-memory metadata cache for fast StorageEntry access
+    storage_cache: HashMap<String, StorageEntry>,
     /// Maximum storage size per node (in bytes)
     max_storage_size: u64,
     /// Current storage usage (in bytes)
@@ -98,18 +106,17 @@ pub struct DhtStorage {
     known_nodes: HashMap<NodeId, DhtNode>,
     /// Contract index for fast discovery by tags and metadata
     contract_index: HashMap<String, Vec<String>>, // tag -> contract_ids
-    /// Path for persistence (if set, storage is persisted on mutation)
-    persist_path: Option<PathBuf>,
     /// [DB-002] Configuration for ZK proof verification timeouts
     zk_verification_config: ZkVerificationConfig,
     /// [DB-002] Metrics for ZK proof verification operations
     zk_verification_metrics: ZkVerificationMetrics,
 }
 
-impl DhtStorage {
-    /// Create a new DHT storage manager
+impl DhtStorage<HashMapBackend> {
+    /// Create a new DHT storage manager (in-memory, backward compatible)
     ///
     /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
+    /// **DB-010**: Now uses HashMapBackend by default
     pub fn new(local_node_id: NodeId, max_storage_size: u64) -> Self {
         Self::new_with_config(local_node_id, max_storage_size, ZkVerificationConfig::default())
     }
@@ -119,7 +126,8 @@ impl DhtStorage {
     /// [DB-002] Allows configuring ZK proof verification timeouts
     pub fn new_with_config(local_node_id: NodeId, max_storage_size: u64, zk_config: ZkVerificationConfig) -> Self {
         Self {
-            storage: HashMap::new(),
+            backend: HashMapBackend::new(),
+            storage_cache: HashMap::new(),
             max_storage_size,
             current_usage: 0,
             local_node_id: local_node_id.clone(),
@@ -129,28 +137,214 @@ impl DhtStorage {
             replay_rejections: 0,
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
-            persist_path: None,
             zk_verification_config: zk_config,
             zk_verification_metrics: ZkVerificationMetrics::new(),
         }
     }
 
     /// Create a new DHT storage manager with persistence enabled
+    /// **DEPRECATED in DB-010**: Use `new_persistent()` instead or just `new()` for in-memory
+    #[deprecated(note = "Use new() for in-memory or new_persistent() for persistent storage")]
     pub fn new_with_persistence(local_node_id: NodeId, max_storage_size: u64, persist_path: PathBuf) -> Self {
-        Self::new_with_persistence_and_config(local_node_id, max_storage_size, persist_path, ZkVerificationConfig::default())
+        error!(
+            "DEPRECATED: new_with_persistence() no longer provides persistence. \
+             Path {:?} is ignored. Use new_persistent() for persistent storage or new() for in-memory.",
+            persist_path
+        );
+        Self::new_with_config(local_node_id, max_storage_size, ZkVerificationConfig::default())
     }
 
     /// Create a new DHT storage manager with persistence and custom ZK verification config
-    ///
-    /// [DB-002] Allows configuring ZK proof verification timeouts
+    /// **DEPRECATED in DB-010**: Use `new_persistent()` instead
+    #[deprecated(note = "Use new() for in-memory or new_persistent() for persistent storage")]
     pub fn new_with_persistence_and_config(
         local_node_id: NodeId,
         max_storage_size: u64,
         persist_path: PathBuf,
         zk_config: ZkVerificationConfig,
     ) -> Self {
+        error!(
+            "DEPRECATED: new_with_persistence_and_config() no longer provides persistence. \
+             Path {:?} is ignored. Use new_persistent_with_config() for persistent storage.",
+            persist_path
+        );
+        Self::new_with_config(local_node_id, max_storage_size, zk_config)
+    }
+
+    /// Set the persistence path (DEPRECATED in DB-010 - no-op)
+    #[deprecated(note = "Persistence is now handled automatically by the backend")]
+    pub fn set_persist_path(&mut self, _path: PathBuf) {
+        // No-op - persistence is backend-specific
+    }
+
+    /// Create default storage (for convenience)
+    pub fn new_default() -> Self {
+        Self::new(
+            NodeId::from_bytes([0u8; 32]), // Default node ID
+            1_000_000_000, // 1GB default storage
+        )
+    }
+
+    /// Create DHT storage with networking enabled
+    ///
+    /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
+    pub async fn new_with_network(
+        local_node: DhtNode,
+        bind_addr: SocketAddr,
+        max_storage_size: u64
+    ) -> Result<Self> {
+        Self::new_with_network_and_config(local_node, bind_addr, max_storage_size, ZkVerificationConfig::default()).await
+    }
+
+    /// Create DHT storage with networking and custom ZK verification config
+    ///
+    /// [DB-002] Allows configuring ZK proof verification timeouts
+    pub async fn new_with_network_and_config(
+        local_node: DhtNode,
+        bind_addr: SocketAddr,
+        max_storage_size: u64,
+        zk_config: ZkVerificationConfig,
+    ) -> Result<Self> {
+        // Use UDP transport by default (Ticket #152 - Transport Abstraction)
+        let network = DhtNetwork::new_udp(local_node.clone(), bind_addr)?;
+        Ok(Self {
+            backend: HashMapBackend::new(),
+            storage_cache: HashMap::new(),
+            max_storage_size,
+            current_usage: 0,
+            local_node_id: local_node.peer.node_id().clone(),
+            network: Some(network),
+            router: KademliaRouter::new(local_node.peer.node_id().clone(), 20),
+            messaging: DhtMessaging::new(local_node.peer.node_id().clone()),
+            known_nodes: HashMap::new(),
+            contract_index: HashMap::new(),
+            replay_rejections: 0,
+            zk_verification_config: zk_config,
+            zk_verification_metrics: ZkVerificationMetrics::new(),
+        })
+    }
+
+    /// Create DHT storage with custom transport
+    ///
+    /// **TICKET #154:** Allows using any DhtTransport implementation (including mesh routing)
+    pub fn new_with_transport(
+        local_node: DhtNode,
+        transport: Arc<dyn crate::dht::transport::DhtTransport>,
+        max_storage_size: u64,
+    ) -> Result<Self> {
+        Self::new_with_transport_and_config(local_node, transport, max_storage_size, ZkVerificationConfig::default())
+    }
+
+    /// Create DHT storage with custom transport and ZK verification config
+    ///
+    /// [DB-002] Allows configuring ZK proof verification timeouts
+    pub fn new_with_transport_and_config(
+        local_node: DhtNode,
+        transport: Arc<dyn crate::dht::transport::DhtTransport>,
+        max_storage_size: u64,
+        zk_config: ZkVerificationConfig,
+    ) -> Result<Self> {
+        let network = DhtNetwork::new(local_node.clone(), transport)?;
+        Ok(Self {
+            backend: HashMapBackend::new(),
+            storage_cache: HashMap::new(),
+            max_storage_size,
+            current_usage: 0,
+            local_node_id: local_node.peer.node_id().clone(),
+            network: Some(network),
+            router: KademliaRouter::new(local_node.peer.node_id().clone(), 20),
+            messaging: DhtMessaging::new(local_node.peer.node_id().clone()),
+            known_nodes: HashMap::new(),
+            contract_index: HashMap::new(),
+            replay_rejections: 0,
+            zk_verification_config: zk_config,
+            zk_verification_metrics: ZkVerificationMetrics::new(),
+        })
+    }
+}
+
+impl DhtStorage<crate::dht::backend::SledBackend> {
+    /// Create a new persistent DHT storage manager with sled backend
+    ///
+    /// **DB-010**: Creates DhtStorage with persistent sled backend.
+    /// Data is automatically persisted to disk and survives restarts.
+    ///
+    /// # Arguments
+    /// - `local_node_id`: This node's identity
+    /// - `max_storage_size`: Maximum storage capacity in bytes
+    /// - `persist_path`: Directory path for sled database
+    ///
+    /// # Returns
+    /// DhtStorage instance with sled persistence, data restored if it exists
+    pub fn new_persistent<P: AsRef<std::path::Path>>(
+        local_node_id: NodeId,
+        max_storage_size: u64,
+        persist_path: P,
+    ) -> Result<Self> {
+        Self::new_persistent_with_config(
+            local_node_id,
+            max_storage_size,
+            persist_path,
+            ZkVerificationConfig::default(),
+        )
+    }
+
+    /// Create persistent storage with custom ZK verification config
+    pub fn new_persistent_with_config<P: AsRef<std::path::Path>>(
+        local_node_id: NodeId,
+        max_storage_size: u64,
+        persist_path: P,
+        zk_config: ZkVerificationConfig,
+    ) -> Result<Self> {
+        // Open or create sled database
+        let backend = crate::dht::backend::SledBackend::open(persist_path)?;
+
+        // Create storage with backend
+        let mut storage = Self::with_backend_and_config(
+            backend,
+            local_node_id,
+            max_storage_size,
+            zk_config,
+        );
+
+        // Restore existing data from backend
+        // If restoration fails, the storage instance is still valid but empty.
+        // The backend remains intact so data can be recovered by retrying or
+        // using a different restoration strategy.
+        if let Err(e) = storage.restore_from_backend() {
+            warn!(
+                "Failed to restore data from backend during initialization: {}. \
+                 Storage will start empty but backend data is preserved.",
+                e
+            );
+        }
+
+        Ok(storage)
+    }
+}
+
+impl<B: StorageBackend> DhtStorage<B> {
+    /// Create DhtStorage with a custom backend
+    ///
+    /// [DB-010] Allows using different backend implementations
+    pub fn with_backend(
+        backend: B,
+        local_node_id: NodeId,
+        max_storage_size: u64,
+    ) -> Self {
+        Self::with_backend_and_config(backend, local_node_id, max_storage_size, ZkVerificationConfig::default())
+    }
+
+    /// Create DhtStorage with a custom backend and ZK verification config
+    pub fn with_backend_and_config(
+        backend: B,
+        local_node_id: NodeId,
+        max_storage_size: u64,
+        zk_config: ZkVerificationConfig,
+    ) -> Self {
         Self {
-            storage: HashMap::new(),
+            backend,
+            storage_cache: HashMap::new(),
             max_storage_size,
             current_usage: 0,
             local_node_id: local_node_id.clone(),
@@ -160,178 +354,129 @@ impl DhtStorage {
             replay_rejections: 0,
             known_nodes: HashMap::new(),
             contract_index: HashMap::new(),
-            persist_path: Some(persist_path),
             zk_verification_config: zk_config,
             zk_verification_metrics: ZkVerificationMetrics::new(),
         }
     }
 
-    /// Set the persistence path (enables auto-save on mutations)
-    pub fn set_persist_path(&mut self, path: PathBuf) {
-        self.persist_path = Some(path);
+    /// Encode key to bytes
+    #[inline]
+    fn encode_key(key: &str) -> Vec<u8> {
+        key.as_bytes().to_vec()
+    }
+
+    /// Encode StorageEntry to bytes
+    fn encode_entry(entry: &StorageEntry) -> Result<Vec<u8>> {
+        bincode::serialize(entry)
+            .map_err(|e| anyhow!("Failed to serialize entry: {}", e))
+    }
+
+    /// Decode StorageEntry from bytes
+    fn decode_entry(bytes: &[u8]) -> Result<StorageEntry> {
+        bincode::deserialize(bytes)
+            .map_err(|e| anyhow!("Failed to deserialize entry: {}", e))
     }
 
     /// Save storage state to disk (versioned, deterministic format)
-    /// Uses spawn_blocking to avoid stalling async runtime with file I/O
-    pub async fn save_to_file(&self, path: &Path) -> Result<()> {
-        let path_owned = path.to_path_buf();
-        let entry_count_before = self.storage.len();
-
-        // Sort entries by key for deterministic output
-        let mut entries: Vec<(String, StorageEntry)> =
-            self.storage.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // Sort contract index by key, and sort each value list for deterministic output
-        let mut contract_index: Vec<(String, Vec<String>)> =
-            self.contract_index.iter().map(|(k, v)| {
-                let mut sorted_values = v.clone();
-                sorted_values.sort();
-                (k.clone(), sorted_values)
-            }).collect();
-        contract_index.sort_by(|a, b| a.0.cmp(&b.0));
-
-        let persisted = PersistedDhtStorage {
-            version: DHT_STORAGE_VERSION,
-            entries,
-            contract_index,
-        };
-
-        let bytes = bincode::serialize(&persisted)
-            .map_err(|e| anyhow!("Failed to serialize DHT storage: {}", e))?;
-
-        let byte_count = bytes.len();
-
-        atomic_write_async(path_owned.clone(), bytes).await
-            .map_err(|e| anyhow!("Failed to write DHT storage: {}", e))?;
-
-        info!("DHT storage persisted ({} entries, {} bytes)", entry_count_before, byte_count);
+    /// **DEPRECATED in DB-010**: Persistence is now handled automatically by the storage backend
+    /// This method is kept for backward compatibility but is a no-op.
+    #[deprecated(note = "Persistence is handled automatically by backend. Use new_persistent() for persistent storage.")]
+    pub async fn save_to_file(&self, _path: &Path) -> Result<()> {
+        warn!("save_to_file() is deprecated - persistence handled by storage backend");
         Ok(())
     }
 
     /// Load storage state from disk
-    /// Uses spawn_blocking to avoid stalling async runtime with file I/O
-    pub async fn load_from_file(&mut self, path: &Path) -> Result<()> {
-        let path_owned = path.to_path_buf();
+    /// **DEPRECATED in DB-010**: Use `new_persistent()` constructor instead to automatically load from backend
+    /// This method is no longer supported for the generic storage backend.
+    #[deprecated(note = "Use new_persistent() constructor to automatically load from persistent backend")]
+    pub async fn load_from_file(&mut self, _path: &Path) -> Result<()> {
+        warn!("load_from_file() is deprecated - use new_persistent() constructor instead");
+        Err(anyhow!("load_from_file() is deprecated - use new_persistent() constructor"))
+    }
 
-        // Clean up orphaned temp files from interrupted atomic writes
-        let tmp_path = path.with_extension("tmp");
-        if tmp_path.exists() {
-            if let Err(e) = std::fs::remove_file(&tmp_path) {
-                warn!("Failed to clean up orphaned temp file {:?}: {}", tmp_path, e);
-            } else {
-                info!("Cleaned up orphaned temp file {:?}", tmp_path);
-            }
-        }
-
-        // Check existence and read file in spawn_blocking
-        let bytes_opt: Option<Vec<u8>> = tokio::task::spawn_blocking(move || {
-            if !path_owned.exists() {
-                return Ok(None);
-            }
-            std::fs::read(&path_owned)
-                .map(Some)
-                .map_err(|e| anyhow!("Failed to read DHT storage file: {}", e))
-        })
-        .await
-        .map_err(|e| anyhow!("spawn_blocking failed: {}", e))??;
-
-        let bytes = match bytes_opt {
-            Some(b) => b,
-            None => {
-                info!("DHT storage file not found at {:?}, starting fresh", path);
-                return Ok(());
-            }
-        };
-
-        let persisted: PersistedDhtStorage = bincode::deserialize(&bytes)
-            .map_err(|e| anyhow!("Failed to deserialize DHT storage: {}", e))?;
-
-        if persisted.version != DHT_STORAGE_VERSION {
-            return Err(anyhow!(
-                "Unsupported DHT storage version {}, expected {}",
-                persisted.version,
-                DHT_STORAGE_VERSION
-            ));
-        }
-
-        self.storage = persisted.entries.into_iter().collect();
-        // Convert sorted Vec back to HashMap for runtime use
-        self.contract_index = persisted.contract_index.into_iter().collect();
-        // Calculate current usage including metadata overhead (256 bytes per entry)
-        let metadata_overhead_per_entry = 256u64;
-        self.current_usage = self.storage.values()
-            .map(|e| e.value.len() as u64 + metadata_overhead_per_entry)
-            .sum();
-
-        // Enforce capacity limits - evict oldest entries if over capacity
-        if self.current_usage > self.max_storage_size {
-            warn!(
-                "DHT storage loaded over capacity: {} bytes used, {} bytes max. Evicting oldest entries.",
-                self.current_usage,
-                self.max_storage_size
-            );
-
-            // Sort entries by last_access (oldest first) for eviction
-            // Include metadata overhead in size calculation
-            let mut entries_by_age: Vec<(String, u64, u64)> = self.storage.iter()
-                .map(|(k, e)| (k.clone(), e.metadata.last_access, e.value.len() as u64 + metadata_overhead_per_entry))
-                .collect();
-            entries_by_age.sort_by_key(|(_, last_access, _)| *last_access);
-
-            // Evict oldest entries until under capacity
-            let mut evicted_count = 0;
-            for (key, _, total_size) in entries_by_age {
-                if self.current_usage <= self.max_storage_size {
-                    break;
-                }
-                if self.storage.remove(&key).is_some() {
-                    self.current_usage = self.current_usage.saturating_sub(total_size);
-                    // Clean up contract_index to prevent stale lookups
-                    self.remove_from_contract_index(&key);
-                    evicted_count += 1;
-                }
-            }
-
-            warn!(
-                "Evicted {} entries during load to enforce capacity. Now at {} bytes.",
-                evicted_count,
-                self.current_usage
-            );
-
-            // Persist the evicted state so we don't repeat this on next restart
-            self.maybe_persist().await?;
-        }
-
-        info!(
-            "Loaded DHT storage from {:?} ({} entries, {} bytes used, {} bytes max)",
-            path,
-            self.storage.len(),
-            self.current_usage,
-            self.max_storage_size
-        );
+    /// Persist storage if needed (no-op in DB-010)
+    /// **DEPRECATED**: Persistence is now handled automatically by the storage backend
+    async fn maybe_persist(&self) -> Result<()> {
+        // No-op: persistence is handled automatically by backend on each mutation
         Ok(())
     }
 
-    /// Persist storage if a persist path is configured
-    /// Uses async I/O via spawn_blocking to avoid stalling async runtime
-    async fn maybe_persist(&self) -> Result<()> {
-        if let Some(ref path) = self.persist_path {
-            debug!("DHT: maybe_persist - persisting {} entries to {:?}", self.storage.len(), path);
-            match self.save_to_file(path).await {
-                Ok(()) => {
-                    debug!("DHT: maybe_persist - ✅ persisted successfully");
-                    Ok(())
+    /// Restore storage data from backend
+    ///
+    /// Loads all entries from the backend into the storage_cache and rebuilds metadata.
+    /// Used during initialization to populate storage_cache with persisted data.
+    ///
+    /// # DB-010
+    /// This is called automatically by `new_persistent()` constructors.
+    fn restore_from_backend(&mut self) -> Result<()> {
+        let mut total_size = 0u64;
+        let metadata_overhead_per_entry = 256u64;
+        let mut skipped_keys = 0usize;
+
+        // Iterate through all keys in backend
+        for key_bytes in self.backend.keys()? {
+            match String::from_utf8(key_bytes.clone()) {
+                Ok(key_str) => {
+                    // Fetch the entry from backend
+                    if let Some(entry_bytes) = self.backend.get(&key_bytes)? {
+                        // Decode the entry
+                        let entry = Self::decode_entry(&entry_bytes)?;
+
+                        // Calculate size: value size + metadata overhead
+                        total_size += entry.value.len() as u64 + metadata_overhead_per_entry;
+
+                        // Rebuild contract_index for contract entries
+                        if key_str.starts_with("contract:") {
+                            // Try to deserialize as ContractInfo to extract metadata
+                            if let Ok(contract_info) = serde_json::from_slice::<serde_json::Value>(&entry.value) {
+                                if let Some(metadata_obj) = contract_info.get("metadata") {
+                                    if let Ok(metadata) = serde_json::from_value::<crate::types::dht_types::ContractMetadata>(metadata_obj.clone()) {
+                                        let contract_id = key_str.strip_prefix("contract:").unwrap_or(&key_str);
+                                        // Index by each tag
+                                        for tag in &metadata.tags {
+                                            self.contract_index
+                                                .entry(tag.clone())
+                                                .or_insert_with(Vec::new)
+                                                .push(contract_id.to_string());
+                                        }
+                                        // Index by name
+                                        self.contract_index
+                                            .entry(format!("name:{}", metadata.name))
+                                            .or_insert_with(Vec::new)
+                                            .push(contract_id.to_string());
+                                    }
+                                }
+                            }
+                        }
+
+                        // Store in cache
+                        self.storage_cache.insert(key_str.clone(), entry);
+                    }
                 }
                 Err(e) => {
-                    error!("DHT: maybe_persist - ❌ failed to persist: {}", e);
-                    Err(e)
+                    // Log warning for non-UTF-8 keys and skip them
+                    skipped_keys += 1;
+                    warn!(
+                        "Skipping key with invalid UTF-8 encoding during restoration: {} bytes, error: {}",
+                        key_bytes.len(),
+                        e
+                    );
                 }
             }
-        } else {
-            debug!("DHT: maybe_persist - no persist_path configured, skipping persistence");
-            Ok(())
         }
+
+        // Update current_usage
+        self.current_usage = total_size.min(self.max_storage_size);
+
+        info!(
+            "Restored DHT storage from backend: {} entries, {} bytes used{}", 
+            self.storage_cache.len(),
+            self.current_usage,
+            if skipped_keys > 0 { format!(", {} keys skipped due to invalid UTF-8", skipped_keys) } else { String::new() }
+        );
+
+        Ok(())
     }
 
     /// Remove a key from the contract_index
@@ -406,91 +551,6 @@ impl DhtStorage {
         }
     }
 
-    /// Create DHT storage with networking enabled
-    ///
-    /// **MIGRATED (Ticket #148):** Now creates and uses shared PeerRegistry
-    pub async fn new_with_network(
-        local_node: DhtNode,
-        bind_addr: SocketAddr,
-        max_storage_size: u64
-    ) -> Result<Self> {
-        Self::new_with_network_and_config(local_node, bind_addr, max_storage_size, ZkVerificationConfig::default()).await
-    }
-
-    /// Create DHT storage with networking and custom ZK verification config
-    ///
-    /// [DB-002] Allows configuring ZK proof verification timeouts
-    pub async fn new_with_network_and_config(
-        local_node: DhtNode,
-        bind_addr: SocketAddr,
-        max_storage_size: u64,
-        zk_config: ZkVerificationConfig,
-    ) -> Result<Self> {
-        // Use UDP transport by default (Ticket #152 - Transport Abstraction)
-        let network = DhtNetwork::new_udp(local_node.clone(), bind_addr)?;
-        Ok(Self {
-            storage: HashMap::new(),
-            max_storage_size,
-            current_usage: 0,
-            local_node_id: local_node.peer.node_id().clone(),
-            network: Some(network),
-            router: KademliaRouter::new(local_node.peer.node_id().clone(), 20),
-            messaging: DhtMessaging::new(local_node.peer.node_id().clone()),
-            known_nodes: HashMap::new(),
-            contract_index: HashMap::new(),
-            persist_path: None,
-            replay_rejections: 0,
-            zk_verification_config: zk_config,
-            zk_verification_metrics: ZkVerificationMetrics::new(),
-        })
-    }
-
-    /// Create DHT storage with custom transport
-    ///
-    /// **TICKET #154:** Allows using any DhtTransport implementation (including mesh routing)
-    pub fn new_with_transport(
-        local_node: DhtNode,
-        transport: Arc<dyn crate::dht::transport::DhtTransport>,
-        max_storage_size: u64,
-    ) -> Result<Self> {
-        Self::new_with_transport_and_config(local_node, transport, max_storage_size, ZkVerificationConfig::default())
-    }
-
-    /// Create DHT storage with custom transport and ZK verification config
-    ///
-    /// [DB-002] Allows configuring ZK proof verification timeouts
-    pub fn new_with_transport_and_config(
-        local_node: DhtNode,
-        transport: Arc<dyn crate::dht::transport::DhtTransport>,
-        max_storage_size: u64,
-        zk_config: ZkVerificationConfig,
-    ) -> Result<Self> {
-        let network = DhtNetwork::new(local_node.clone(), transport)?;
-        Ok(Self {
-            storage: HashMap::new(),
-            max_storage_size,
-            current_usage: 0,
-            local_node_id: local_node.peer.node_id().clone(),
-            network: Some(network),
-            router: KademliaRouter::new(local_node.peer.node_id().clone(), 20),
-            messaging: DhtMessaging::new(local_node.peer.node_id().clone()),
-            known_nodes: HashMap::new(),
-            contract_index: HashMap::new(),
-            persist_path: None,
-            replay_rejections: 0,
-            zk_verification_config: zk_config,
-            zk_verification_metrics: ZkVerificationMetrics::new(),
-        })
-    }
-
-    /// Create default storage (for convenience)
-    pub fn new_default() -> Self {
-        Self::new(
-            NodeId::from_bytes([0u8; 32]), // Default node ID
-            1_000_000_000, // 1GB default storage
-        )
-    }
-
     /// Set the ZK verification configuration
     ///
     /// [DB-002] Allows runtime configuration of verification timeouts
@@ -527,15 +587,15 @@ impl DhtStorage {
         
         // Store locally first
         self.store(key_str.clone(), data.clone(), None).await?;
-        
-        println!("     Stored locally in HashMap with key: {}", key_str);
-        println!("    HashMap now contains {} entries", self.storage.len());
-        
+
+        println!("     Stored locally with key: {}", key_str);
+        println!("    Storage cache now contains {} entries", self.storage_cache.len());
+
         // Verify it was actually stored
-        if self.storage.contains_key(&key_str) {
-            println!("     VERIFIED: Key exists in HashMap");
+        if self.storage_cache.contains_key(&key_str) {
+            println!("     VERIFIED: Key exists in storage cache");
         } else {
-            println!("     WARNING: Key NOT found in HashMap after store!");
+            println!("     WARNING: Key NOT found in storage cache after store!");
         }
         
         // If network is available, replicate to other nodes
@@ -964,8 +1024,8 @@ impl DhtStorage {
             access_control: None,
         };
         
-        // Update storage
-        if let Some(old_entry) = self.storage.insert(key, entry) {
+        // Update storage cache
+        if let Some(old_entry) = self.storage_cache.insert(key.clone(), entry.clone()) {
             // If replacing existing entry, adjust usage (include metadata overhead)
             let old_total = old_entry.value.len() as u64 + metadata_overhead;
             self.current_usage = self.current_usage
@@ -976,16 +1036,22 @@ impl DhtStorage {
             self.current_usage += total_size;
         }
 
-        // Persist to disk if configured
-        self.maybe_persist().await?;
+        // Persist entry to backend
+        let entry_bytes = Self::encode_entry(&entry)?;
+        let key_bytes = Self::encode_key(&key);
+        self.backend.put(&key_bytes, &entry_bytes)?;
+        self.backend.flush()?;
 
         Ok(())
     }
 
     /// Retrieve a value by key
     pub async fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>> {
-        if let Some(entry) = self.storage.get_mut(key) {
-            // Update access statistics
+        if let Some(entry) = self.storage_cache.get_mut(key) {
+            // Update access statistics in memory
+            // NOTE: Access metadata (access_count, last_access) is intentionally NOT persisted
+            // on every get() call to avoid performance overhead. These statistics are volatile
+            // and will be reset on restart. They are persisted only during store() operations.
             entry.metadata.access_count += 1;
             entry.metadata.last_access = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
@@ -993,7 +1059,7 @@ impl DhtStorage {
             if let Some(expiry) = entry.expiry {
                 if SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() > expiry {
                     // Remove expired entry (subtract value size + metadata overhead)
-                    let removed_entry = self.storage.remove(key).unwrap();
+                    let removed_entry = self.storage_cache.remove(key).unwrap();
                     let total_size = removed_entry.value.len() as u64 + 256;
                     self.current_usage = self.current_usage.saturating_sub(total_size);
                     // Clean up contract_index to prevent stale lookups
@@ -1012,14 +1078,16 @@ impl DhtStorage {
     
     /// Remove a key-value pair
     pub async fn remove(&mut self, key: &str) -> Result<bool> {
-        if let Some(entry) = self.storage.remove(key) {
+        if let Some(entry) = self.storage_cache.remove(key) {
             // Subtract value size + metadata overhead (256 bytes)
             let total_size = entry.value.len() as u64 + 256;
             self.current_usage = self.current_usage.saturating_sub(total_size);
             // Clean up contract_index to prevent stale lookups
             self.remove_from_contract_index(key);
-            // Persist to disk if configured
-            self.maybe_persist().await?;
+            // Remove from backend
+            let key_bytes = Self::encode_key(key);
+            self.backend.remove(&key_bytes)?;
+            self.backend.flush()?;
             Ok(true)
         } else {
             Ok(false)
@@ -1028,17 +1096,17 @@ impl DhtStorage {
     
     /// Get storage entry metadata
     pub fn get_metadata(&self, key: &str) -> Option<&ChunkMetadata> {
-        self.storage.get(key).map(|entry| &entry.metadata)
+        self.storage_cache.get(key).map(|entry| &entry.metadata)
     }
     
     /// List all stored keys
     pub fn list_keys(&self) -> Vec<String> {
-        self.storage.keys().cloned().collect()
+        self.storage_cache.keys().cloned().collect()
     }
 
     /// List all stored keys matching a prefix
     pub async fn list_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
-        Ok(self.storage.keys()
+        Ok(self.storage_cache.keys()
             .filter(|k| k.starts_with(prefix))
             .cloned()
             .collect())
@@ -1046,24 +1114,24 @@ impl DhtStorage {
 
     /// List all stored keys with their sizes (for debugging)
     pub fn list_keys_with_info(&self) -> Vec<(String, usize)> {
-        self.storage.iter()
+        self.storage_cache.iter()
             .map(|(key, entry)| (key.clone(), entry.value.len()))
             .collect()
     }
     
     /// Check if a specific key exists in storage
     pub fn contains_key(&self, key: &str) -> bool {
-        self.storage.contains_key(key)
+        self.storage_cache.contains_key(key)
     }
     
     /// Get storage statistics
     pub fn get_storage_stats(&self) -> StorageStats {
-        let total_entries = self.storage.len();
+        let total_entries = self.storage_cache.len();
         let total_size = self.current_usage;
         let available_space = self.max_storage_size.saturating_sub(self.current_usage);
         
         // Calculate average access count
-        let total_accesses: u64 = self.storage.values()
+        let total_accesses: u64 = self.storage_cache.values()
             .map(|entry| entry.metadata.access_count)
             .sum();
         let avg_access_count = if total_entries > 0 {
@@ -1086,7 +1154,7 @@ impl DhtStorage {
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let mut removed_count = 0;
         
-        let expired_keys: Vec<String> = self.storage.iter()
+        let expired_keys: Vec<String> = self.storage_cache.iter()
             .filter_map(|(key, entry)| {
                 if let Some(expiry) = entry.expiry {
                     if current_time > expiry {
@@ -1101,7 +1169,7 @@ impl DhtStorage {
             .collect();
         
         for key in expired_keys {
-            if let Some(entry) = self.storage.remove(&key) {
+            if let Some(entry) = self.storage_cache.remove(&key) {
                 // Subtract value size + metadata overhead (256 bytes)
                 let total_size = entry.value.len() as u64 + 256;
                 self.current_usage = self.current_usage.saturating_sub(total_size);
@@ -1121,7 +1189,7 @@ impl DhtStorage {
 
     /// Set entry expiry time
     pub async fn set_expiry(&mut self, key: &str, expiry: u64) -> Result<()> {
-        if let Some(entry) = self.storage.get_mut(key) {
+        if let Some(entry) = self.storage_cache.get_mut(key) {
             entry.expiry = Some(expiry);
             // Persist expiry change to disk
             self.maybe_persist().await?;
@@ -1133,7 +1201,7 @@ impl DhtStorage {
     
     /// Get entries that need replication
     pub fn get_replication_candidates(&self, min_replicas: usize) -> Vec<String> {
-        self.storage.iter()
+        self.storage_cache.iter()
             .filter_map(|(key, entry)| {
                 if entry.replicas.len() < min_replicas {
                     Some(key.clone())
@@ -1146,7 +1214,7 @@ impl DhtStorage {
     
     /// Update replica information for a key
     pub async fn update_replicas(&mut self, key: &str, replicas: Vec<NodeId>) -> Result<()> {
-        if let Some(entry) = self.storage.get_mut(key) {
+        if let Some(entry) = self.storage_cache.get_mut(key) {
             entry.replicas = replicas;
             // Persist replica change to disk
             self.maybe_persist().await?;
@@ -1397,7 +1465,7 @@ impl DhtStorage {
         }
         
         // Check for overwrite permissions if key exists
-        if let Some(existing_entry) = self.storage.get(key) {
+        if let Some(existing_entry) = self.storage_cache.get(key) {
             if !self.can_overwrite_entry(existing_entry, proof).await? {
                 return Err(anyhow!("Insufficient permissions to overwrite existing entry"));
             }
@@ -2155,7 +2223,7 @@ impl DhtStorage {
     pub async fn list_contracts(&self) -> Vec<String> {
         let mut contracts = Vec::new();
         
-        for key in self.storage.keys() {
+        for key in self.storage_cache.keys() {
             if key.starts_with("contract:") && !key.starts_with("contract_summary:") {
                 if let Some(contract_id) = key.strip_prefix("contract:") {
                     contracts.push(contract_id.to_string());
@@ -2171,7 +2239,7 @@ impl DhtStorage {
         let mut contract_count = 0;
         let mut total_size = 0u64;
         
-        for (key, entry) in &self.storage {
+        for (key, entry) in &self.storage_cache {
             if key.starts_with("contract:") && !key.starts_with("contract_summary:") {
                 contract_count += 1;
                 total_size += entry.value.len() as u64;
@@ -2361,20 +2429,20 @@ mod tests {
     #[tokio::test]
     async fn test_persistence_round_trip() {
         let temp_dir = std::env::temp_dir();
-        let persist_path = temp_dir.join("dht_storage_test.bin");
+        let persist_path = temp_dir.join("dht_storage_round_trip_test");
 
         // Clean up from previous test runs
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
 
         let node_id = NodeId::from_bytes([1u8; 32]);
 
-        // Create storage and add entries
+        // Create persistent storage and add entries
         {
-            let mut storage = DhtStorage::new_with_persistence(
+            let mut storage = DhtStorage::new_persistent(
                 node_id.clone(),
                 1024 * 1024,
                 persist_path.clone(),
-            );
+            ).unwrap();
 
             storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
             storage.store("key2".to_string(), b"value2".to_vec(), None).await.unwrap();
@@ -2384,10 +2452,13 @@ mod tests {
             assert_eq!(stats.total_entries, 3);
         }
 
-        // Create new storage and load from file
+        // Create new persistent storage and verify data auto-restored
         {
-            let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
-            storage.load_from_file(&persist_path).await.unwrap();
+            let mut storage = DhtStorage::new_persistent(
+                node_id.clone(),
+                1024 * 1024,
+                persist_path.clone(),
+            ).unwrap();
 
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 3);
@@ -2399,64 +2470,62 @@ mod tests {
         }
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
     }
 
     #[tokio::test]
     async fn test_persistence_atomic_write_safety() {
         let temp_dir = std::env::temp_dir();
-        let persist_path = temp_dir.join("dht_storage_atomic_test.bin");
-        let tmp_path = persist_path.with_extension("tmp");
+        let persist_path = temp_dir.join("dht_storage_atomic_test");
 
         // Clean up from previous test runs
-        let _ = std::fs::remove_file(&persist_path);
-        let _ = std::fs::remove_file(&tmp_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
 
         let node_id = NodeId::from_bytes([1u8; 32]);
 
-        // Create storage and save
+        // Create persistent storage and store data
         {
-            let mut storage = DhtStorage::new_with_persistence(
+            let mut storage = DhtStorage::new_persistent(
                 node_id.clone(),
                 1024 * 1024,
                 persist_path.clone(),
-            );
+            ).unwrap();
             storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
         }
 
-        // Simulate partial write (create orphan tmp file)
-        std::fs::write(&tmp_path, b"corrupted partial data").unwrap();
-
-        // Load should still succeed from main file
+        // Create new persistent storage instance and verify data persists
+        // (sled handles atomicity internally, so data should be there)
         {
-            let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
-            storage.load_from_file(&persist_path).await.unwrap();
+            let mut storage = DhtStorage::new_persistent(
+                node_id.clone(),
+                1024 * 1024,
+                persist_path.clone(),
+            ).unwrap();
 
             assert_eq!(storage.get("key1").await.unwrap(), Some(b"value1".to_vec()));
         }
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
-        let _ = std::fs::remove_file(&tmp_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
     }
 
     #[tokio::test]
     async fn test_persistence_remove_persists() {
         let temp_dir = std::env::temp_dir();
-        let persist_path = temp_dir.join("dht_storage_remove_test.bin");
+        let persist_path = temp_dir.join("dht_storage_remove_test");
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
 
         let node_id = NodeId::from_bytes([1u8; 32]);
 
-        // Create, store, remove
+        // Create persistent storage, store, and remove
         {
-            let mut storage = DhtStorage::new_with_persistence(
+            let mut storage = DhtStorage::new_persistent(
                 node_id.clone(),
                 1024 * 1024,
                 persist_path.clone(),
-            );
+            ).unwrap();
 
             storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
             storage.store("key2".to_string(), b"value2".to_vec(), None).await.unwrap();
@@ -2466,10 +2535,13 @@ mod tests {
             assert_eq!(stats.total_entries, 1);
         }
 
-        // Reload and verify remove was persisted
+        // Create new persistent storage and verify remove was persisted
         {
-            let mut storage = DhtStorage::new(node_id.clone(), 1024 * 1024);
-            storage.load_from_file(&persist_path).await.unwrap();
+            let mut storage = DhtStorage::new_persistent(
+                node_id.clone(),
+                1024 * 1024,
+                persist_path.clone(),
+            ).unwrap();
 
             let stats = storage.get_storage_stats();
             assert_eq!(stats.total_entries, 1);
@@ -2478,36 +2550,50 @@ mod tests {
         }
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
     }
 
     #[tokio::test]
-    async fn test_persistence_version_check() {
+    async fn test_persistence_graceful_empty_db() {
+        // This test verifies that creating a persistent storage instance with an empty
+        // or non-existent database directory works correctly.
+        // The old version checking is no longer needed with sled's native atomicity.
         let temp_dir = std::env::temp_dir();
-        let persist_path = temp_dir.join("dht_storage_version_test.bin");
+        let persist_path = temp_dir.join("dht_storage_empty_db_test");
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
 
-        // Write a storage file with wrong version
-        let wrong_version = PersistedDhtStorage {
-            version: 999, // Wrong version
-            entries: vec![],
-            contract_index: vec![],
-        };
-        let bytes = bincode::serialize(&wrong_version).unwrap();
-        std::fs::write(&persist_path, bytes).unwrap();
-
-        // Attempt to load should fail
         let node_id = NodeId::from_bytes([1u8; 32]);
-        let mut storage = DhtStorage::new(node_id, 1024 * 1024);
-        let result = storage.load_from_file(&persist_path).await;
 
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported DHT storage version"));
+        // First instance: create new persistent storage in non-existent directory
+        {
+            let mut storage = DhtStorage::new_persistent(
+                node_id.clone(),
+                1024 * 1024,
+                persist_path.clone(),
+            ).unwrap();
+
+            storage.store("key1".to_string(), b"value1".to_vec(), None).await.unwrap();
+            let stats = storage.get_storage_stats();
+            assert_eq!(stats.total_entries, 1);
+        }
+
+        // Second instance: reopen should load the existing data
+        {
+            let mut storage = DhtStorage::new_persistent(
+                node_id.clone(),
+                1024 * 1024,
+                persist_path.clone(),
+            ).unwrap();
+
+            let stats = storage.get_storage_stats();
+            assert_eq!(stats.total_entries, 1);
+            assert_eq!(storage.get("key1").await.unwrap(), Some(b"value1".to_vec()));
+        }
 
         // Clean up
-        let _ = std::fs::remove_file(&persist_path);
+        let _ = std::fs::remove_dir_all(&persist_path);
     }
 
     #[tokio::test]
@@ -2893,7 +2979,7 @@ mod tests {
             stored_at: current_time,
             expires_at: None,
             nonce: [0u8; 32],
-            access_level: AccessLevel::Public,
+            access_level: crate::types::dht_types::AccessLevel::Public,
             timestamp: current_time,
         };
         

@@ -79,17 +79,39 @@ use lib_identity::ZhtpIdentity;
 
 // Import specific types from our own modules
 use crate::types::{NodeId, ContentHash};
+use std::path::Path;
 
 /// Unified storage system that integrates all components
+///
+/// # DB-010: Generic over StorageBackend
+///
+/// UnifiedStorageSystem is now generic over `StorageBackend`, allowing both:
+/// - **In-memory storage** (HashMapBackend) - default, fast but volatile
+/// - **Persistent storage** (SledBackend) - durable across restarts
+///
+/// # Usage
+///
+/// Create in-memory instance (backward compatible):
+/// ```ignore
+/// let system = UnifiedStorageSystem::new(config).await?;
+/// ```
+///
+/// Create persistent instance:
+/// ```ignore
+/// let system = UnifiedStorageSystem::new_persistent(
+///     config,
+///     "/path/to/db".into(),
+/// ).await?;
+/// ```
 #[derive(Debug)]
-pub struct UnifiedStorageSystem {
+pub struct UnifiedStorageSystem<B: dht::backend::StorageBackend = dht::backend::HashMapBackend> {
     /// DHT network manager
     dht_manager: dht::node::DhtNodeManager,
-    /// DHT storage
-    dht_storage: dht::storage::DhtStorage,
+    /// DHT storage (generic over backend)
+    dht_storage: dht::storage::DhtStorage<B>,
     /// Economic manager
     economic_manager: economic::manager::EconomicStorageManager,
-    /// Content manager
+    /// Content manager (uses in-memory storage for content metadata)
     content_manager: content::ContentManager,
     /// Erasure coding
     erasure_coding: erasure::ErasureCoding,
@@ -163,79 +185,57 @@ pub struct StorageStats {
     pub total_downloads: u64,
 }
 
-impl UnifiedStorageSystem {
-    /// Create new unified storage system
+impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
+    /// Create new unified storage system with in-memory storage (backward compatible)
+    ///
+    /// This is the default constructor for UnifiedStorageSystem. It uses in-memory
+    /// storage (HashMapBackend) which is fast but volatile - all data is lost on restart.
+    ///
+    /// For persistent storage, use [`UnifiedStorageSystem::new_persistent()`].
     ///
     /// **MIGRATION (Ticket #145):** Creates DhtPeerIdentity from NodeId for DHT initialization
     pub async fn new(config: UnifiedStorageConfig) -> Result<Self> {
         let node_id = config.node_id.clone();
-        
+
         // Create DhtPeerIdentity from NodeId (simplified version)
         // In production, this would come from ZhtpIdentity
         let peer_identity = types::dht_types::placeholder_peer_identity(node_id.clone());
-        
         // Initialize DHT components
         let dht_manager = dht::node::DhtNodeManager::new(
             peer_identity.clone(),
             config.addresses.clone(),
         )?;
 
-        // Initialize DHT storage with optional persistence
-        let dht_storage = match &config.storage_config.dht_persist_path {
-            Some(persist_path) => {
-                let mut storage = dht::storage::DhtStorage::new_with_persistence(
-                    node_id.clone(),
-                    config.storage_config.max_storage_size,
-                    persist_path.clone(),
-                );
-                // Load existing data from disk (async to avoid blocking runtime)
-                if let Err(e) = storage.load_from_file(persist_path).await {
-                    tracing::warn!("Failed to load DHT storage from {:?}: {}", persist_path, e);
-                }
-                storage
-            }
-            None => {
-                // PERSISTENCE WARNING: In-memory only storage will lose all data on restart
-                tracing::warn!(
-                    "DHT storage persistence is NOT configured - data will be lost on restart! \
-                     Set dht_persist_path in storage_config for production use."
-                );
-                dht::storage::DhtStorage::new(
-                    node_id.clone(),
-                    config.storage_config.max_storage_size,
-                )
-            }
-        };
+        // Initialize DHT storage with in-memory backend (HashMapBackend)
+        let dht_storage = dht::storage::DhtStorage::new(
+            node_id.clone(),
+            config.storage_config.max_storage_size,
+        );
+
+        if let Some(path) = &config.storage_config.dht_persist_path {
+            tracing::warn!(
+                "DHT persistence path {:?} is configured but UnifiedStorageSystem::new() uses in-memory storage. \
+                 For persistent storage, use UnifiedStorageSystem::new_persistent(). \
+                 Tracked as [DB-010] Phase 4.",
+                path
+            );
+        } else {
+            tracing::info!(
+                "DHT storage is in-memory only - data will be lost on restart. \
+                 For production use with persistence, call UnifiedStorageSystem::new_persistent()."
+            );
+        }
 
         // Initialize economic manager
         let economic_manager = economic::manager::EconomicStorageManager::new(
             config.economic_config.clone(),
         );
 
-        // Initialize content manager with same persistence config
-        let content_dht_storage = match &config.storage_config.dht_persist_path {
-            Some(persist_path) => {
-                // Use a separate file for content storage
-                let content_persist_path = persist_path.with_file_name(
-                    format!("{}_content", persist_path.file_stem().unwrap_or_default().to_string_lossy())
-                ).with_extension("bin");
-                let mut storage = dht::storage::DhtStorage::new_with_persistence(
-                    node_id.clone(),
-                    config.storage_config.max_storage_size,
-                    content_persist_path.clone(),
-                );
-                if let Err(e) = storage.load_from_file(&content_persist_path).await {
-                    tracing::warn!("Failed to load content DHT storage from {:?}: {}", content_persist_path, e);
-                }
-                storage
-            }
-            None => {
-                dht::storage::DhtStorage::new(
-                    node_id.clone(),
-                    config.storage_config.max_storage_size,
-                )
-            }
-        };
+        // Initialize content manager with in-memory storage
+        let content_dht_storage = dht::storage::DhtStorage::new(
+            node_id.clone(),
+            config.storage_config.max_storage_size,
+        );
         let content_manager = content::ContentManager::new(
             content_dht_storage,
             config.economic_config.clone(),
@@ -645,6 +645,129 @@ impl UnifiedStorageSystem {
             }
             None => Ok(None)
         }
+    }
+}
+
+/// Persistent unified storage system with SledBackend
+///
+/// # DB-010: Persistent Storage Implementation
+///
+/// Provides factory methods to create UnifiedStorageSystem with persistent storage
+/// (SledBackend) instead of in-memory storage. All DHT data is persisted across restarts.
+impl UnifiedStorageSystem<dht::backend::SledBackend> {
+    /// Create new unified storage system with persistent SledBackend storage
+    ///
+    /// This constructor initializes UnifiedStorageSystem with persistent storage
+    /// using the sled embedded database. All DHT data is automatically persisted
+    /// and restored on the next initialization with the same database path.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Unified storage configuration
+    /// * `db_path` - Path to sled database directory (will be created if missing)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let system = UnifiedStorageSystem::new_persistent(
+    ///     config,
+    ///     "./data/dht".into(),
+    /// ).await?;
+    /// ```
+    pub async fn new_persistent<P: AsRef<Path>>(
+        config: UnifiedStorageConfig,
+        db_path: P,
+    ) -> Result<Self> {
+        let node_id = config.node_id.clone();
+
+        // Create DhtPeerIdentity from NodeId (simplified version)
+        let peer_identity = types::dht_types::DhtPeerIdentity {
+            node_id: node_id.clone(),
+            public_key: lib_crypto::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: [0u8; 32],
+            },
+            did: String::from("did:zhtp:placeholder"),
+            device_id: String::from("default"),
+        };
+
+        // Initialize DHT components
+        let dht_manager = dht::node::DhtNodeManager::new(
+            peer_identity.clone(),
+            config.addresses.clone(),
+        )?;
+
+        // Initialize DHT storage with persistent SledBackend
+        let dht_storage = dht::storage::DhtStorage::new_persistent(
+            node_id.clone(),
+            config.storage_config.max_storage_size,
+            db_path,
+        )?;
+
+        tracing::info!(
+            "Initialized persistent DHT storage with SledBackend - data will persist across restarts"
+        );
+
+        // Initialize economic manager
+        let economic_manager = economic::manager::EconomicStorageManager::new(
+            config.economic_config.clone(),
+        );
+
+        // Initialize content manager with in-memory storage (content metadata layer)
+        // Note: Content storage is separate and can be made persistent in future phases
+        let content_dht_storage = dht::storage::DhtStorage::new(
+            node_id.clone(),
+            config.storage_config.max_storage_size,
+        );
+        let content_manager = content::ContentManager::new(
+            content_dht_storage,
+            config.economic_config.clone(),
+        )?;
+
+        // Initialize erasure coding
+        let erasure_coding = erasure::ErasureCoding::new(
+            config.erasure_config.data_shards,
+            config.erasure_config.parity_shards,
+        )?;
+
+        // Initialize statistics
+        let stats = UnifiedStorageStats {
+            dht_stats: DhtStats {
+                total_nodes: 1,
+                total_connections: 0,
+                total_messages_sent: 0,
+                total_messages_received: 0,
+                replay_rejections: 0,
+                routing_table_size: 0,
+                storage_utilization: 0.0,
+                network_health: 1.0,
+            },
+            economic_stats: EconomicStats {
+                total_contracts: 0,
+                total_storage: 0,
+                total_value_locked: 0,
+                average_contract_value: 0,
+                total_penalties: 0,
+                total_rewards: 0,
+            },
+            storage_stats: StorageStats {
+                total_content_count: 0,
+                total_storage_used: 0,
+                total_uploads: 0,
+                total_downloads: 0,
+            },
+        };
+
+        Ok(Self {
+            dht_manager,
+            dht_storage,
+            economic_manager,
+            content_manager,
+            erasure_coding,
+            config: config.clone(),
+            stats,
+        })
     }
 }
 
