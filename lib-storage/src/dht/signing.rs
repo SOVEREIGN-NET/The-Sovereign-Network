@@ -255,8 +255,12 @@ pub enum VerificationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::dht_types::DhtMessageType;
+    use crate::types::dht_types::{
+        build_peer_identity, ContractDhtData, ContractOperation, DhtMessageType, DhtNode,
+    };
     use crate::types::NodeId;
+    use lib_crypto::{PostQuantumSignature, SignatureAlgorithm};
+    use lib_identity::{IdentityType, ZhtpIdentity};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn create_test_message() -> DhtMessage {
@@ -277,6 +281,57 @@ mod tests {
             sequence_number: 1,
             signature: None,
         }
+    }
+
+    fn create_test_node() -> DhtNode {
+        let identity = ZhtpIdentity::new_unified(
+            IdentityType::Device,
+            None,
+            None,
+            "test-device",
+            None,
+        )
+        .expect("Failed to create test identity");
+
+        let peer = build_peer_identity(
+            identity.node_id.clone(),
+            identity.public_key.clone(),
+            identity.did.clone(),
+            "test-device".to_string(),
+        );
+
+        DhtNode {
+            peer,
+            addresses: vec!["127.0.0.1:1234".to_string()],
+            public_key: PostQuantumSignature {
+                algorithm: SignatureAlgorithm::Dilithium2,
+                signature: vec![],
+                public_key: identity.public_key.clone(),
+                timestamp: 0,
+            },
+            last_seen: 0,
+            reputation: 0,
+            storage_info: None,
+        }
+    }
+
+    fn create_message_with_all_fields() -> DhtMessage {
+        let mut message = create_test_message();
+        message.key = Some("test-key".to_string());
+        message.value = Some(vec![1, 2, 3, 4]);
+        message.nodes = Some(vec![create_test_node()]);
+        message.contract_data = Some(ContractDhtData {
+            contract_id: "contract-001".to_string(),
+            operation: ContractOperation::Deploy,
+            bytecode: None,
+            function_name: None,
+            arguments: None,
+            gas_limit: Some(10),
+            result: None,
+            metadata: None,
+            zk_proofs: Vec::new(),
+        });
+        message
     }
 
     #[test]
@@ -553,6 +608,143 @@ mod tests {
         let result = verify_message_signature(&message, &keypair.public_key)
             .expect("Verification should not error");
         assert!(!result, "Corrupted signature should fail verification");
+    }
+
+    #[test]
+    fn test_truncated_signature_bytes_fails() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_test_message();
+        signer.sign_message(&mut message).expect("Failed to sign message");
+
+        if let Some(ref mut sig) = message.signature {
+            sig.truncate(8);
+        }
+
+        let result = verify_message_signature(&message, &keypair.public_key)
+            .expect("Verification should not error");
+        assert!(!result, "Truncated signature should fail verification");
+    }
+
+    #[test]
+    fn test_signature_covers_all_fields() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_message_with_all_fields();
+        signer.sign_message(&mut message).expect("Failed to sign message");
+
+        let mut variants: Vec<Box<dyn Fn(DhtMessage) -> DhtMessage>> = Vec::new();
+        variants.push(Box::new(|mut msg| {
+            msg.message_id = "altered-id".to_string();
+            msg
+        }));
+        variants.push(Box::new(|mut msg| {
+            msg.message_type = DhtMessageType::Store;
+            msg
+        }));
+        variants.push(Box::new(|mut msg| {
+            msg.sender_id = NodeId::from_bytes([9u8; 32]);
+            msg
+        }));
+        variants.push(Box::new(|mut msg| {
+            msg.target_id = None;
+            msg
+        }));
+        variants.push(Box::new(|mut msg| {
+            msg.key = Some("alt-key".to_string());
+            msg
+        }));
+        variants.push(Box::new(|mut msg| {
+            msg.value = Some(vec![9, 9, 9]);
+            msg
+        }));
+        variants.push(Box::new(|mut msg| {
+            msg.nodes = Some(vec![create_test_node(), create_test_node()]);
+            msg
+        }));
+        variants.push(Box::new(|mut msg| {
+            if let Some(ref mut data) = msg.contract_data {
+                data.contract_id = "contract-002".to_string();
+            }
+            msg
+        }));
+        variants.push(Box::new(|mut msg| {
+            msg.timestamp = msg.timestamp.saturating_add(1);
+            msg
+        }));
+        variants.push(Box::new(|mut msg| {
+            msg.nonce = [7u8; 32];
+            msg
+        }));
+        variants.push(Box::new(|mut msg| {
+            msg.sequence_number = msg.sequence_number.saturating_add(1);
+            msg
+        }));
+
+        for mutate in variants {
+            let tampered = mutate(message.clone());
+            let result = verify_message_signature(&tampered, &keypair.public_key)
+                .expect("Verification should not error");
+            assert!(!result, "Tampered message should fail verification");
+        }
+    }
+
+    #[test]
+    fn test_signature_serialization_roundtrip() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_message_with_all_fields();
+        signer.sign_message(&mut message).expect("Failed to sign message");
+
+        let bytes = bincode::serialize(&message).expect("Failed to serialize message");
+        let roundtrip: DhtMessage = bincode::deserialize(&bytes).expect("Failed to deserialize");
+
+        let result = verify_message_signature(&roundtrip, &keypair.public_key)
+            .expect("Verification should not error");
+        assert!(result, "Round-tripped message should verify");
+    }
+
+    #[test]
+    fn test_signature_with_large_message() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_test_message();
+        message.key = Some("large".to_string());
+        message.value = Some(vec![0u8; 64 * 1024]);
+
+        signer.sign_message(&mut message).expect("Failed to sign message");
+
+        let result = verify_message_signature(&message, &keypair.public_key)
+            .expect("Verification should not error");
+        assert!(result, "Large message should verify");
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_signature_verification() {
+        let keypair = KeyPair::generate().expect("Failed to generate keypair");
+        let signer = MessageSigner::new(keypair.clone());
+
+        let mut message = create_message_with_all_fields();
+        signer.sign_message(&mut message).expect("Failed to sign message");
+
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let msg = message.clone();
+            let pk = keypair.public_key.clone();
+            handles.push(tokio::task::spawn_blocking(move || {
+                verify_message_signature(&msg, &pk)
+            }));
+        }
+
+        for handle in handles {
+            let result = handle.await.expect("Task join failed")
+                .expect("Verification should not error");
+            assert!(result, "Concurrent verification should succeed");
+        }
     }
 
     #[test]
