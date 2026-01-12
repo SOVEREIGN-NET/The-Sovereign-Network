@@ -18,6 +18,8 @@
 //! - Nonce tracking
 //! - Hot key-value data
 
+pub mod traits;
 mod sled_backend;
 
+pub use traits::{BackendStats, StorageKey};
 pub use sled_backend::{SledBackend, SledTree, BatchOp, StorageBackend, StorageError, Result};
