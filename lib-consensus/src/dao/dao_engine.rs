@@ -116,6 +116,7 @@ impl DaoEngine {
             DaoProposalType::WelfareAllocation => 22,  // 22% quorum for welfare services
             DaoProposalType::ProtocolUpgrade => 30,    // 30% quorum for protocol changes
             DaoProposalType::UbiDistribution => 20,    // 20% quorum for UBI changes
+            DaoProposalType::DifficultyParameterUpdate => 30, // 30% quorum for difficulty changes (affects consensus)
             _ => 10,                                   // 10% quorum for general governance
         };
 
@@ -147,6 +148,168 @@ impl DaoEngine {
             proposal_id,
             proposal.title(),
             proposal_type
+        );
+
+        Ok(proposal_id)
+    }
+
+    /// Create a difficulty parameter update proposal
+    /// 
+    /// This is a convenience method for creating proposals to update the blockchain's
+    /// difficulty adjustment parameters through DAO governance.
+    ///
+    /// # Arguments
+    /// * `proposer` - Identity of the proposal creator
+    /// * `target_timespan` - Target time for difficulty adjustment interval (seconds)
+    /// * `adjustment_interval` - Number of blocks between adjustments
+    /// * `min_adjustment_factor` - Optional minimum adjustment factor (percentage)
+    /// * `max_adjustment_factor` - Optional maximum adjustment factor (percentage)
+    /// * `voting_period_days` - Duration of the voting period in days
+    ///
+    /// # Errors
+    /// Returns an error if validation fails:
+    /// - target_timespan must be > 0
+    /// - adjustment_interval must be > 0
+    /// - min_adjustment_factor must be >= 1 (if provided)
+    /// - max_adjustment_factor must be >= 1 (if provided)
+    /// - max_adjustment_factor must be >= min_adjustment_factor (if both provided)
+    ///
+    /// # Example
+    /// ```ignore
+    /// use lib_consensus::DaoEngine;
+    /// 
+    /// let mut engine = DaoEngine::new();
+    /// let proposal_id = engine.create_difficulty_update_proposal(
+    ///     proposer_id,
+    ///     14 * 24 * 60 * 60,  // 2 weeks target timespan
+    ///     2016,               // blocks between adjustments
+    ///     Some(4),            // min factor (4x = max 1/4 decrease)
+    ///     Some(4),            // max factor (4x = max 4x increase)
+    ///     7,                  // 7 day voting period
+    /// ).await?;
+    /// ```
+    pub async fn create_difficulty_update_proposal(
+        &mut self,
+        proposer: IdentityId,
+        target_timespan: u64,
+        adjustment_interval: u64,
+        min_adjustment_factor: Option<u64>,
+        max_adjustment_factor: Option<u64>,
+        voting_period_days: u32,
+    ) -> Result<Hash> {
+        // Validate parameters
+        if target_timespan == 0 {
+            return Err(anyhow::anyhow!("target_timespan must be greater than 0"));
+        }
+        if adjustment_interval == 0 {
+            return Err(anyhow::anyhow!("adjustment_interval must be greater than 0"));
+        }
+        if let Some(min_factor) = min_adjustment_factor {
+            if min_factor < 1 {
+                return Err(anyhow::anyhow!("min_adjustment_factor must be >= 1"));
+            }
+        }
+        if let Some(max_factor) = max_adjustment_factor {
+            if max_factor < 1 {
+                return Err(anyhow::anyhow!("max_adjustment_factor must be >= 1"));
+            }
+        }
+        if let (Some(min_factor), Some(max_factor)) = (min_adjustment_factor, max_adjustment_factor) {
+            if max_factor < min_factor {
+                return Err(anyhow::anyhow!("max_adjustment_factor must be >= min_adjustment_factor"));
+            }
+        }
+
+        // Build description with parameters
+        let mut description = format!(
+            "Difficulty Parameter Update Proposal\n\n\
+            Parameters:\n\
+            - Target Timespan: {} seconds ({:.2} days)\n\
+            - Adjustment Interval: {} blocks",
+            target_timespan,
+            target_timespan as f64 / 86400.0,
+            adjustment_interval
+        );
+
+        if let Some(min_factor) = min_adjustment_factor {
+            description.push_str(&format!("\n- Min Adjustment Factor: {}%", min_factor));
+        }
+        if let Some(max_factor) = max_adjustment_factor {
+            description.push_str(&format!("\n- Max Adjustment Factor: {}%", max_factor));
+        }
+
+        // Calculate and include target block time
+        let target_block_time_secs = target_timespan / adjustment_interval;
+        description.push_str(&format!("\n\nTarget Block Time: {} seconds", target_block_time_secs));
+
+        // Build execution parameters
+        let updates = vec![
+            GovernanceParameterValue::BlockchainTargetTimespan(target_timespan),
+            GovernanceParameterValue::BlockchainAdjustmentInterval(adjustment_interval),
+        ];
+
+        // Note: min/max adjustment factors are stored in description for now.
+        // DifficultyConfig uses a single symmetric max_adjustment_factor for both directions.
+        // Future enhancement: extend GovernanceParameterValue to support separate min/max factors
+        // and update DifficultyConfig accordingly. See DifficultyParameterUpdateData in lib-blockchain.
+
+        let execution_params = DaoExecutionParams {
+            action: DaoExecutionAction::GovernanceParameterUpdate(GovernanceParameterUpdate {
+                updates,
+            }),
+        };
+
+        let title = format!(
+            "Difficulty Update: {} sec target, {} block interval",
+            target_block_time_secs, adjustment_interval
+        );
+
+        // Generate proposal ID
+        let proposal_id = hash_blake3(
+            &[
+                proposer.as_bytes(),
+                title.as_bytes(),
+                description.as_bytes(),
+                &SystemTime::now()
+                    .duration_since(UNIX_EPOCH)?
+                    .as_nanos()
+                    .to_le_bytes(),
+            ]
+            .concat(),
+        );
+        let proposal_id = Hash::from_bytes(&proposal_id);
+
+        // Calculate voting end time
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let voting_end_time = current_time + (voting_period_days as u64 * 24 * 60 * 60);
+
+        // Create proposal with 30% quorum (same as protocol upgrades since this affects consensus)
+        // Note: The proposal is created for validation and ID generation; 
+        // actual storage happens on blockchain via DaoProposal transaction
+        let _proposal = DaoProposal {
+            id: proposal_id.clone(),
+            title,
+            description,
+            proposer: proposer.clone(),
+            proposal_type: DaoProposalType::DifficultyParameterUpdate,
+            status: DaoProposalStatus::Active,
+            voting_start_time: current_time,
+            voting_end_time,
+            quorum_required: 30, // 30% quorum for difficulty changes
+            vote_tally: DaoVoteTally::default(),
+            created_at: current_time,
+            created_at_height: self.get_current_block_height(),
+            execution_params: Some(self.encode_execution_params(&execution_params)?),
+            ubi_impact: None,
+            economic_impact: None,
+            privacy_level: PrivacyLevel::Public,
+        };
+
+        tracing::info!(
+            "Validated difficulty update proposal {:?}: target_timespan={}, adjustment_interval={} - ready for blockchain submission",
+            proposal_id,
+            target_timespan,
+            adjustment_interval
         );
 
         Ok(proposal_id)
@@ -391,7 +554,8 @@ impl DaoEngine {
             | DaoProposalType::EconomicParams
             | DaoProposalType::GovernanceRules
             | DaoProposalType::FeeStructure
-            | DaoProposalType::Emergency => {}
+            | DaoProposalType::Emergency
+            | DaoProposalType::DifficultyParameterUpdate => {}
             _ => {
                 return Err(anyhow::anyhow!(
                     "Proposal type does not support governance parameter updates"

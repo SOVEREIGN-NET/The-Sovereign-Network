@@ -467,3 +467,226 @@ async fn test_vote_tally_consistency() -> Result<()> {
 
     Ok(())
 }
+
+// ============================================================================
+// DIFFICULTY PARAMETER UPDATE PROPOSAL TESTS
+// ============================================================================
+
+/// Test creating a basic difficulty parameter update proposal
+#[tokio::test]
+async fn test_difficulty_update_proposal_creation() -> Result<()> {
+    let mut dao_engine = DaoEngine::new();
+
+    let proposer = create_test_identity("validator1");
+    
+    // Create a difficulty update proposal with Bitcoin-like parameters
+    let proposal_id = dao_engine
+        .create_difficulty_update_proposal(
+            proposer,
+            14 * 24 * 60 * 60, // 2 weeks target timespan
+            2016,              // adjustment interval
+            None,              // no min factor
+            None,              // no max factor
+            7,                 // 7 day voting period
+        )
+        .await?;
+
+    // Proposal ID should be valid (32 bytes)
+    assert_eq!(proposal_id.as_bytes().len(), 32);
+
+    Ok(())
+}
+
+/// Test difficulty update proposal with all parameters
+#[tokio::test]
+async fn test_difficulty_update_proposal_with_factors() -> Result<()> {
+    let mut dao_engine = DaoEngine::new();
+
+    let proposer = create_test_identity("validator2");
+    
+    let proposal_id = dao_engine
+        .create_difficulty_update_proposal(
+            proposer,
+            604800,    // 1 week
+            1008,      // blocks
+            Some(25),  // min factor 25%
+            Some(400), // max factor 400%
+            14,        // 14 day voting period
+        )
+        .await?;
+
+    assert_eq!(proposal_id.as_bytes().len(), 32);
+
+    Ok(())
+}
+
+/// Test validation: target_timespan must be > 0
+#[tokio::test]
+async fn test_difficulty_update_proposal_zero_timespan() -> Result<()> {
+    let mut dao_engine = DaoEngine::new();
+
+    let proposer = create_test_identity("validator3");
+    
+    let result = dao_engine
+        .create_difficulty_update_proposal(
+            proposer,
+            0,    // Invalid: zero timespan
+            2016,
+            None,
+            None,
+            7,
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("target_timespan must be greater than 0"));
+
+    Ok(())
+}
+
+/// Test validation: adjustment_interval must be > 0
+#[tokio::test]
+async fn test_difficulty_update_proposal_zero_interval() -> Result<()> {
+    let mut dao_engine = DaoEngine::new();
+
+    let proposer = create_test_identity("validator4");
+    
+    let result = dao_engine
+        .create_difficulty_update_proposal(
+            proposer,
+            604800,
+            0,    // Invalid: zero interval
+            None,
+            None,
+            7,
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("adjustment_interval must be greater than 0"));
+
+    Ok(())
+}
+
+/// Test validation: min_adjustment_factor must be >= 1
+#[tokio::test]
+async fn test_difficulty_update_proposal_zero_min_factor() -> Result<()> {
+    let mut dao_engine = DaoEngine::new();
+
+    let proposer = create_test_identity("validator5");
+    
+    let result = dao_engine
+        .create_difficulty_update_proposal(
+            proposer,
+            604800,
+            2016,
+            Some(0), // Invalid: zero min factor
+            None,
+            7,
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("min_adjustment_factor must be >= 1"));
+
+    Ok(())
+}
+
+/// Test validation: max_adjustment_factor must be >= 1
+#[tokio::test]
+async fn test_difficulty_update_proposal_zero_max_factor() -> Result<()> {
+    let mut dao_engine = DaoEngine::new();
+
+    let proposer = create_test_identity("validator6");
+    
+    let result = dao_engine
+        .create_difficulty_update_proposal(
+            proposer,
+            604800,
+            2016,
+            None,
+            Some(0), // Invalid: zero max factor
+            7,
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("max_adjustment_factor must be >= 1"));
+
+    Ok(())
+}
+
+/// Test validation: max_adjustment_factor must be >= min_adjustment_factor
+#[tokio::test]
+async fn test_difficulty_update_proposal_max_less_than_min() -> Result<()> {
+    let mut dao_engine = DaoEngine::new();
+
+    let proposer = create_test_identity("validator7");
+    
+    let result = dao_engine
+        .create_difficulty_update_proposal(
+            proposer,
+            604800,
+            2016,
+            Some(400), // min = 400
+            Some(25),  // max = 25 (invalid: less than min)
+            7,
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("max_adjustment_factor must be >= min_adjustment_factor"));
+
+    Ok(())
+}
+
+/// Test that equal min and max factors are valid
+#[tokio::test]
+async fn test_difficulty_update_proposal_equal_factors() -> Result<()> {
+    let mut dao_engine = DaoEngine::new();
+
+    let proposer = create_test_identity("validator8");
+    
+    let result = dao_engine
+        .create_difficulty_update_proposal(
+            proposer,
+            604800,
+            2016,
+            Some(100), // min = 100
+            Some(100), // max = 100 (valid: equal)
+            7,
+        )
+        .await;
+
+    assert!(result.is_ok());
+
+    Ok(())
+}
+
+/// Test DaoProposalType enum includes DifficultyParameterUpdate
+#[test]
+fn test_difficulty_parameter_update_proposal_type_exists() {
+    // Verify the variant exists and can be compared
+    let proposal_type = DaoProposalType::DifficultyParameterUpdate;
+    assert_eq!(proposal_type, DaoProposalType::DifficultyParameterUpdate);
+    
+    // Verify it's different from other types
+    assert_ne!(proposal_type, DaoProposalType::ProtocolUpgrade);
+    assert_ne!(proposal_type, DaoProposalType::EconomicParams);
+}
+
+/// Test that DifficultyParameterUpdate serializes correctly
+#[test]
+fn test_difficulty_parameter_update_proposal_type_serialization() {
+    let proposal_type = DaoProposalType::DifficultyParameterUpdate;
+    
+    // Serialize to JSON
+    let json = serde_json::to_string(&proposal_type).expect("serialize to JSON");
+    assert!(json.contains("DifficultyParameterUpdate"));
+    
+    // Deserialize from JSON
+    let deserialized: DaoProposalType = 
+        serde_json::from_str(&json).expect("deserialize from JSON");
+    assert_eq!(deserialized, DaoProposalType::DifficultyParameterUpdate);
+}
+

@@ -42,6 +42,11 @@ pub enum TransactionType {
     DaoVote,
     /// DAO proposal execution (treasury spending)
     DaoExecution,
+    /// Difficulty parameter update (via DAO governance)
+    /// 
+    /// Used to update the blockchain's difficulty adjustment parameters
+    /// after a DifficultyParameterUpdate DAO proposal has been approved.
+    DifficultyUpdate,
 }
 
 impl TransactionType {
@@ -81,7 +86,8 @@ impl TransactionType {
         matches!(self,
             TransactionType::DaoProposal |
             TransactionType::DaoVote |
-            TransactionType::DaoExecution
+            TransactionType::DaoExecution |
+            TransactionType::DifficultyUpdate
         )
     }
 
@@ -105,6 +111,7 @@ impl TransactionType {
             TransactionType::DaoProposal => "DAO governance proposal submission",
             TransactionType::DaoVote => "DAO governance vote on proposal",
             TransactionType::DaoExecution => "DAO proposal execution (treasury spending)",
+            TransactionType::DifficultyUpdate => "Difficulty parameter update (via DAO governance)",
         }
     }
 
@@ -128,6 +135,7 @@ impl TransactionType {
             TransactionType::DaoProposal => "dao_proposal",
             TransactionType::DaoVote => "dao_vote",
             TransactionType::DaoExecution => "dao_execution",
+            TransactionType::DifficultyUpdate => "difficulty_update",
         }
     }
 
@@ -151,6 +159,7 @@ impl TransactionType {
             "dao_proposal" => Some(TransactionType::DaoProposal),
             "dao_vote" => Some(TransactionType::DaoVote),
             "dao_execution" => Some(TransactionType::DaoExecution),
+            "difficulty_update" => Some(TransactionType::DifficultyUpdate),
             _ => None,
         }
     }
