@@ -83,6 +83,15 @@ impl FragmentHeader {
         let total_fragments = u16::from_le_bytes([bytes[4], bytes[5]]);
         let fragment_index = u16::from_le_bytes([bytes[6], bytes[7]]);
 
+        // Validate fragment_index is within bounds
+        if fragment_index >= total_fragments {
+            return Err(anyhow!(
+                "Invalid fragment: index {} >= total_fragments {}",
+                fragment_index,
+                total_fragments
+            ));
+        }
+
         Ok(Self {
             message_id,
             total_fragments,
@@ -137,6 +146,26 @@ impl Fragment {
 
 /// Fragment a message into chunks suitable for transmission
 ///
+/// This function splits a payload into multiple fragments, each with an 8-byte header
+/// containing sequence information for reassembly.
+///
+/// ## Message ID Generation - Collision Risk ⚠️
+///
+/// **WARNING**: The message_id is generated using a simple wrapping sum of payload bytes:
+/// ```ignore
+/// message_id = payload.iter().fold(0u32, |acc, &b| acc.wrapping_add(b as u32))
+/// ```
+///
+/// This algorithm is **NOT cryptographically secure** and can easily produce collisions:
+/// - Two different messages with the same byte sum will get the same message_id
+/// - Messages sent in the same session could have their fragments mixed during reassembly
+/// - Attackers could craft messages to intentionally cause collisions
+///
+/// **For production use, prefer `fragmentation_v2` which provides:**
+/// - Session-scoped identity `(session_id, message_seq, fragment_index)`
+/// - Sequential message_seq counters (zero collisions)
+/// - Proper isolation between concurrent sessions
+///
 /// ## Arguments
 ///
 /// - `payload`: The message data to fragment
@@ -160,6 +189,7 @@ pub fn fragment_message(payload: &[u8], chunk_size: usize) -> Vec<Fragment> {
     }
 
     // Generate unique message ID (use hash of payload for determinism)
+    // WARNING: Simple wrapping sum is NOT collision-resistant - see function docs
     let message_id = payload.iter().fold(0u32, |acc, &b| acc.wrapping_add(b as u32));
 
     let total_fragments = ((payload.len() + chunk_size - 1) / chunk_size) as u16;
