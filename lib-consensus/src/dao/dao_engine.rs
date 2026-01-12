@@ -284,7 +284,7 @@ impl DaoEngine {
         let voting_end_time = current_time + (voting_period_days as u64 * 24 * 60 * 60);
 
         // Create proposal with 30% quorum (same as protocol upgrades since this affects consensus)
-        // Note: The proposal is created for validation and ID generation; 
+        // Note: The proposal is created for validation and ID generation;
         // actual storage happens on blockchain via DaoProposal transaction
         let _proposal = DaoProposal::new(
             proposal_id.clone(),
