@@ -183,6 +183,7 @@ impl Mempool {
     /// Get next N transactions for block inclusion (by priority)
     pub fn select_transactions(&mut self, max_count: usize, current_height: u64) -> Vec<[u8; 32]> {
         let mut selected = Vec::new();
+        let mut expired = Vec::new();
 
         while selected.len() < max_count && !self.priority_queue.is_empty() {
             if let Some(priority_tx) = self.priority_queue.pop() {
@@ -192,14 +193,34 @@ impl Mempool {
                     if priority_tx.tx.should_retry(self.max_mempool_age, current_height) {
                         selected.push(priority_tx.tx.tx_hash);
                     } else {
-                        // Transaction expired, remove it
-                        self.remove_transaction(&priority_tx.tx.tx_hash);
+                        // Transaction expired, mark for removal
+                        expired.push(priority_tx.tx.tx_hash);
                     }
                 }
             }
         }
 
+        // Remove expired transactions
+        for tx_hash in expired {
+            self.remove_transaction(&tx_hash);
+        }
+
+        // Rebuild priority queue to maintain consistency
+        self.rebuild_priority_queue(current_height);
+
         selected
+    }
+
+    /// Rebuild the priority queue from current transactions
+    fn rebuild_priority_queue(&mut self, current_height: u64) {
+        self.priority_queue.clear();
+        for tx in self.transactions.values() {
+            let priority = tx.priority_score(current_height);
+            self.priority_queue.push(MempoolPriority {
+                tx: tx.clone(),
+                priority,
+            });
+        }
     }
 
     /// Get transaction by hash
