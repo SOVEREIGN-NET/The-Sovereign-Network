@@ -594,7 +594,12 @@ impl ConsensusEngine {
     /// Production implementation will extract fees from actual transactions.
     /// This stub provides deterministic simulated fees for testing fee collection.
     fn simulate_block_fees(&self, height: u64) -> u64 {
-        // Simulate realistic fee distribution:
+        // Genesis block (height 0) has no transaction fees
+        if height == 0 {
+            return 0;
+        }
+
+        // Simulate realistic fee distribution for non-genesis blocks:
         // - Every 10th block: 10,000 tokens (large block)
         // - Blocks 1-7: 1,000 tokens each (normal blocks)
         // - Blocks 8-9: 100 tokens each (small blocks)
