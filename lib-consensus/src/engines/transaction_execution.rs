@@ -124,7 +124,9 @@ impl TransactionExecutor {
             }
         }
 
-        let final_selected = selected[..limit_index].to_vec();
+        // Truncate to fit within size limit (in-place, no allocation)
+        let mut final_selected = selected;
+        final_selected.truncate(limit_index);
 
         (final_selected, total_fees, total_size)
     }
