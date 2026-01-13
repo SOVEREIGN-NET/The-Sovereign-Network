@@ -551,7 +551,7 @@ impl ConsensusEngine {
         // If FeeRouter is set, notify it about fees
         // Week 7: Stub implementation using generic dyn Any
         // Production: Will call FeeRouter::collect_fee() and distribute()
-        if let Some(ref _fee_router_arc) = self.fee_router {
+        if self.fee_router.is_some() {
             // TODO: Week 8 - Actually call FeeRouter methods when integration is ready
             // For now, just log the intent
             if metadata.total_fees_collected > 0 {

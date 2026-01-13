@@ -1,6 +1,6 @@
-//! Week 7 Integration Tests: Consensus Fee Integration & SOV Transaction Types
+//! Week 8 Integration Tests: Consensus Fee Integration & SOV Transaction Types
 //!
-//! This test suite validates the Week 7 implementation:
+//! This test suite validates the Week 8 implementation:
 //! - Phase 1: Consensus fee integration (fee collection hook)
 //! - Phase 2: UBIClaim and ProfitDeclaration transaction types
 //! - 45 comprehensive integration tests across 5 categories
