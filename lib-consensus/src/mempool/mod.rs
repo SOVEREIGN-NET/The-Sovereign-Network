@@ -87,10 +87,10 @@ impl PartialOrd for MempoolPriority {
 
 impl Ord for MempoolPriority {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse ordering for max-heap (higher priority first)
-        other.priority.cmp(&self.priority)
-            .then_with(|| other.tx.fee.cmp(&self.tx.fee))
-            .then_with(|| self.tx.received_at_height.cmp(&other.tx.received_at_height))
+        // Max-heap ordering: higher priority values are popped first
+        self.priority.cmp(&other.priority)
+            .then_with(|| self.tx.fee.cmp(&other.tx.fee))
+            .then_with(|| other.tx.received_at_height.cmp(&self.tx.received_at_height))
     }
 }
 

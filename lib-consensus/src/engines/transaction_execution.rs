@@ -186,7 +186,8 @@ mod tests {
 
     #[test]
     fn test_block_execution_context() {
-        let proposer = IdentityId::from([1u8; 32]);
+        use lib_crypto::Hash;
+        let proposer = IdentityId::from(Hash([1u8; 32]));
         let mut ctx = BlockExecutionContext::new(100, proposer);
 
         ctx.include_transaction([1u8; 32], 1000, "transfer");
