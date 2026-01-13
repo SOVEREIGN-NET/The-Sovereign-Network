@@ -55,7 +55,9 @@ pub const NUM_SECTOR_DAOS: u8 = 5;
 /// Per-DAO allocation: 6% (30% / 5)
 pub const PER_DAO_ALLOCATION_PERCENT: u8 = 6;
 
-// Compile-time assertion that allocations sum to 100%
+/// Compile-time assertion: allocation percentages must always sum to 100.
+/// This constant exists solely to enforce the invariant on the allocation
+/// constants above; if they are changed to not sum to 100, compilation fails.
 const _: () = assert!(
     UBI_ALLOCATION_PERCENT as u16
         + DAO_ALLOCATION_PERCENT as u16

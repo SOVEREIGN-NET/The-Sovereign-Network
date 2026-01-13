@@ -188,7 +188,7 @@ impl VestingSchedule {
 
 /// Errors for CBE token operations
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CbeTokenError {
+pub enum CBETokenError {
     /// Token already initialized
     AlreadyInitialized,
 
@@ -229,34 +229,34 @@ pub enum CbeTokenError {
     TokensNotVested,
 }
 
-impl std::fmt::Display for CbeTokenError {
+impl std::fmt::Display for CBETokenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CbeTokenError::AlreadyInitialized =>
+            CBETokenError::AlreadyInitialized =>
                 write!(f, "CBE token already initialized"),
-            CbeTokenError::NotInitialized =>
+            CBETokenError::NotInitialized =>
                 write!(f, "CBE token not initialized"),
-            CbeTokenError::Unauthorized =>
+            CBETokenError::Unauthorized =>
                 write!(f, "Unauthorized operation"),
-            CbeTokenError::InsufficientBalance =>
+            CBETokenError::InsufficientBalance =>
                 write!(f, "Insufficient balance"),
-            CbeTokenError::InsufficientVestedBalance =>
+            CBETokenError::InsufficientVestedBalance =>
                 write!(f, "Insufficient vested balance"),
-            CbeTokenError::InsufficientAllowance =>
+            CBETokenError::InsufficientAllowance =>
                 write!(f, "Insufficient allowance"),
-            CbeTokenError::MintingDisabled =>
+            CBETokenError::MintingDisabled =>
                 write!(f, "Minting is disabled after initialization"),
-            CbeTokenError::ZeroAmount =>
+            CBETokenError::ZeroAmount =>
                 write!(f, "Transfer amount cannot be zero"),
-            CbeTokenError::Overflow =>
+            CBETokenError::Overflow =>
                 write!(f, "Arithmetic overflow"),
-            CbeTokenError::ZeroRecipient =>
+            CBETokenError::ZeroRecipient =>
                 write!(f, "Recipient cannot be zero address"),
-            CbeTokenError::InvalidAllocation =>
+            CBETokenError::InvalidAllocation =>
                 write!(f, "Distribution allocation must sum to 100 billion"),
-            CbeTokenError::VestingNotFound =>
+            CBETokenError::VestingNotFound =>
                 write!(f, "Vesting schedule not found"),
-            CbeTokenError::TokensNotVested =>
+            CBETokenError::TokensNotVested =>
                 write!(f, "Cannot transfer unvested tokens"),
         }
     }
@@ -334,20 +334,9 @@ impl CbeToken {
 
     /// Derive the canonical token ID for CBE
     fn derive_token_id() -> [u8; 32] {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        CBE_NAME.hash(&mut hasher);
-        CBE_SYMBOL.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        for i in 8..32 {
-            id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-        }
-        id
+        // Use Blake3 for cryptographically secure, deterministic token ID
+        let token_data = format!("{}_{}_TOKEN", CBE_NAME.to_uppercase(), CBE_SYMBOL.to_uppercase());
+        blake3::hash(token_data.as_bytes()).into()
     }
 
     /// Initialize the token with the 40/30/20/10 distribution
@@ -369,14 +358,14 @@ impl CbeToken {
         operational_address: &PublicKey,
         performance_address: &PublicKey,
         strategic_address: &PublicKey,
-    ) -> Result<(), CbeTokenError> {
+    ) -> Result<(), CBETokenError> {
         if self.initialized {
-            return Err(CbeTokenError::AlreadyInitialized);
+            return Err(CBETokenError::AlreadyInitialized);
         }
 
         // Verify allocation sums correctly
         if !self.distribution.verify() {
-            return Err(CbeTokenError::InvalidAllocation);
+            return Err(CBETokenError::InvalidAllocation);
         }
 
         // Store pool addresses
@@ -495,13 +484,13 @@ impl CbeToken {
         duration_blocks: u64,
         cliff_blocks: u64,
         pool: VestingPool,
-    ) -> Result<(), CbeTokenError> {
+    ) -> Result<(), CBETokenError> {
         if !self.initialized {
-            return Err(CbeTokenError::NotInitialized);
+            return Err(CBETokenError::NotInitialized);
         }
 
         if amount == 0 {
-            return Err(CbeTokenError::ZeroAmount);
+            return Err(CBETokenError::ZeroAmount);
         }
 
         // Create vesting schedule
@@ -549,24 +538,24 @@ impl CbeToken {
         to: &PublicKey,
         amount: u64,
         current_block: u64,
-    ) -> Result<(), CbeTokenError> {
+    ) -> Result<(), CBETokenError> {
         if !self.initialized {
-            return Err(CbeTokenError::NotInitialized);
+            return Err(CBETokenError::NotInitialized);
         }
 
         if amount == 0 {
-            return Err(CbeTokenError::ZeroAmount);
+            return Err(CBETokenError::ZeroAmount);
         }
 
         if to.as_bytes().iter().all(|b| *b == 0) {
-            return Err(CbeTokenError::ZeroRecipient);
+            return Err(CBETokenError::ZeroRecipient);
         }
 
         // Determine source
         let source_key_id = match ctx.call_origin {
             CallOrigin::User => ctx.caller.key_id,
             CallOrigin::Contract => ctx.contract.key_id,
-            CallOrigin::System => return Err(CbeTokenError::Unauthorized),
+            CallOrigin::System => return Err(CBETokenError::Unauthorized),
         };
 
         // Create a temporary PublicKey for vested_balance_of lookup
@@ -579,13 +568,13 @@ impl CbeToken {
         // Check vested balance
         let vested = self.vested_balance_of(&source_pk, current_block);
         if vested < amount {
-            return Err(CbeTokenError::InsufficientVestedBalance);
+            return Err(CBETokenError::InsufficientVestedBalance);
         }
 
         // Check total balance
         let source_balance = self.balances.get(&source_key_id).copied().unwrap_or(0);
         if source_balance < amount {
-            return Err(CbeTokenError::InsufficientBalance);
+            return Err(CBETokenError::InsufficientBalance);
         }
 
         // Debit source
@@ -599,7 +588,7 @@ impl CbeToken {
         let to_balance = self.balances.get(&to.key_id).copied().unwrap_or(0);
         self.balances.insert(
             to.key_id,
-            to_balance.checked_add(amount).ok_or(CbeTokenError::Overflow)?,
+            to_balance.checked_add(amount).ok_or(CBETokenError::Overflow)?,
         );
 
         Ok(())
@@ -620,8 +609,8 @@ impl CbeToken {
     }
 
     /// Attempt to mint tokens (always fails after initialization)
-    pub fn mint(&self, _to: &PublicKey, _amount: u64) -> Result<(), CbeTokenError> {
-        Err(CbeTokenError::MintingDisabled)
+    pub fn mint(&self, _to: &PublicKey, _amount: u64) -> Result<(), CBETokenError> {
+        Err(CBETokenError::MintingDisabled)
     }
 }
 
@@ -743,7 +732,7 @@ mod tests {
         token.init(&compensation, &operational, &performance, &strategic).unwrap();
         let result = token.init(&compensation, &operational, &performance, &strategic);
 
-        assert_eq!(result, Err(CbeTokenError::AlreadyInitialized));
+        assert_eq!(result, Err(CBETokenError::AlreadyInitialized));
     }
 
     // ========================================================================
@@ -874,7 +863,7 @@ mod tests {
         token.init(&compensation, &operational, &performance, &strategic).unwrap();
 
         let result = token.mint(&compensation, 1000);
-        assert_eq!(result, Err(CbeTokenError::MintingDisabled));
+        assert_eq!(result, Err(CBETokenError::MintingDisabled));
     }
 
     // ========================================================================
