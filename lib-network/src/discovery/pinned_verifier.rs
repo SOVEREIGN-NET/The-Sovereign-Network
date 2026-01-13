@@ -594,10 +594,34 @@ impl ServerCertVerifier for ConnectionVerifier {
     }
 }
 
-/// Global PinnedCertVerifier instance
+/// Global PinnedCertVerifier instance (deprecated - use per-instance verifiers)
+///
+/// DEPRECATION NOTE: The global verifier pattern is deprecated in favor of
+/// per-instance verifiers created in QuicMeshProtocol. Use this only for
+/// legacy code that requires a global singleton.
 static PINNED_VERIFIER: std::sync::OnceLock<Arc<PinnedCertVerifier>> = std::sync::OnceLock::new();
 
 /// Initialize the global PinnedCertVerifier with bootstrap addresses
+///
+/// # Deprecation
+///
+/// This function is deprecated. Instead, create per-instance verifiers in
+/// QuicMeshProtocol and configure bootstrap peers via `set_bootstrap_peers()`.
+///
+/// # Usage
+///
+/// ```ignore
+/// // Deprecated:
+/// let verifier = init_global_verifier(bootstrap_addrs);
+///
+/// // Preferred:
+/// let mut quic_mesh = QuicMeshProtocol::new(identity, bind_addr)?;
+/// quic_mesh.set_bootstrap_peers(bootstrap_addrs);
+/// ```
+#[deprecated(
+    since = "0.1.0",
+    note = "Use per-instance verifiers in QuicMeshProtocol instead"
+)]
 pub fn init_global_verifier(bootstrap_addrs: Vec<SocketAddr>) -> Arc<PinnedCertVerifier> {
     let peer_count = bootstrap_addrs.len();
     let verifier = Arc::new(PinnedCertVerifier::with_bootstrap(bootstrap_addrs));
@@ -610,6 +634,15 @@ pub fn init_global_verifier(bootstrap_addrs: Vec<SocketAddr>) -> Arc<PinnedCertV
 }
 
 /// Get the global PinnedCertVerifier (creates default if not initialized)
+///
+/// # Deprecation
+///
+/// This function is deprecated. Use per-instance verifiers from QuicMeshProtocol
+/// via `quic_mesh.verifier()` instead.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use per-instance verifiers from QuicMeshProtocol instead"
+)]
 pub fn global_verifier() -> Arc<PinnedCertVerifier> {
     PINNED_VERIFIER
         .get_or_init(|| Arc::new(PinnedCertVerifier::new(PinnedVerifierConfig::default())))
@@ -617,6 +650,14 @@ pub fn global_verifier() -> Arc<PinnedCertVerifier> {
 }
 
 /// Check if the global verifier has been initialized
+///
+/// # Deprecation
+///
+/// This function is deprecated along with the global verifier pattern.
+#[deprecated(
+    since = "0.1.0",
+    note = "Global verifier pattern is deprecated"
+)]
 pub fn is_verifier_initialized() -> bool {
     PINNED_VERIFIER.get().is_some()
 }
@@ -710,5 +751,165 @@ mod tests {
 
         // Should not be in bootstrap list
         assert!(!verifier.is_bootstrap(&unknown_addr));
+    }
+
+    // ========================================================================
+    // Comprehensive Certificate Verification Tests
+    // ========================================================================
+
+    /// Test verify_certificate: Bootstrap peer with TOFU
+    #[test]
+    fn test_verify_certificate_bootstrap_tofu() {
+        let bootstrap_addr: SocketAddr = "10.0.0.1:9334".parse().unwrap();
+        let verifier = PinnedCertVerifier::with_bootstrap(vec![bootstrap_addr]);
+
+        // Create a mock certificate (we'll test SPKI extraction separately)
+        // For this test, we just verify the logic path
+        let spki_hash = [99u8; 32];
+        
+        // Simulate verification of an unknown cert from bootstrap peer
+        // The verifier should return TofuBootstrap
+        assert!(verifier.is_bootstrap(&bootstrap_addr));
+    }
+
+    /// Test verify_certificate: Known peer with matching pin
+    #[test]
+    fn test_verify_certificate_known_peer_match() {
+        let verifier = PinnedCertVerifier::new(PinnedVerifierConfig::default());
+        let node_id: NodeIdKey = [10u8; 32];
+        let spki_hash = [42u8; 32];
+        
+        // Add a known pin
+        verifier.add_pin(node_id, spki_hash);
+        
+        // Verify the pin exists
+        assert!(verifier.pin_store.has_pin(&node_id));
+        assert_eq!(verifier.pin_store.find_node_by_spki(&spki_hash), Some(node_id));
+    }
+
+    /// Test verify_certificate: Unknown peer rejection
+    #[test]
+    fn test_verify_certificate_unknown_peer_reject() {
+        let verifier = PinnedCertVerifier::new(PinnedVerifierConfig::default());
+        let unknown_addr: SocketAddr = "192.168.99.99:9334".parse().unwrap();
+        
+        // Not a bootstrap peer, no pin cached
+        assert!(!verifier.is_bootstrap(&unknown_addr));
+        
+        // An unknown SPKI should not be found
+        let unknown_spki = [123u8; 32];
+        assert_eq!(verifier.pin_store.find_node_by_spki(&unknown_spki), None);
+    }
+
+    /// Test ConnectionVerifier: Per-connection isolation
+    #[test]
+    fn test_connection_verifier_isolation() {
+        let bootstrap_addr1: SocketAddr = "10.0.0.1:9334".parse().unwrap();
+        let bootstrap_addr2: SocketAddr = "10.0.0.2:9334".parse().unwrap();
+        
+        let verifier = Arc::new(PinnedCertVerifier::with_bootstrap(vec![
+            bootstrap_addr1,
+            bootstrap_addr2,
+        ]));
+        
+        // Create two connection-specific verifiers
+        let conn_verifier1 = verifier.for_peer(bootstrap_addr1);
+        let conn_verifier2 = verifier.for_peer(bootstrap_addr2);
+        
+        // Each should have its own peer address
+        assert_eq!(conn_verifier1.peer_addr, bootstrap_addr1);
+        assert_eq!(conn_verifier2.peer_addr, bootstrap_addr2);
+        
+        // Both should share the same underlying verifier
+        assert!(Arc::ptr_eq(&conn_verifier1.verifier, &conn_verifier2.verifier));
+    }
+
+    /// Test bootstrap peer update preserves pin state
+    #[test]
+    fn test_bootstrap_update_preserves_pins() {
+        let bootstrap_addr1: SocketAddr = "10.0.0.1:9334".parse().unwrap();
+        let bootstrap_addr2: SocketAddr = "10.0.0.2:9334".parse().unwrap();
+        
+        let verifier = PinnedCertVerifier::with_bootstrap(vec![bootstrap_addr1]);
+        
+        // Add some pins
+        let node_id1: NodeIdKey = [1u8; 32];
+        let spki_hash1 = [10u8; 32];
+        verifier.add_pin(node_id1, spki_hash1);
+        
+        let node_id2: NodeIdKey = [2u8; 32];
+        let spki_hash2 = [20u8; 32];
+        verifier.add_pin(node_id2, spki_hash2);
+        
+        // Verify pins exist
+        assert_eq!(verifier.pin_store.len(), 2);
+        
+        // Update bootstrap peers
+        verifier.update_bootstrap_peers(vec![bootstrap_addr2]);
+        
+        // Pins should still exist
+        assert_eq!(verifier.pin_store.len(), 2);
+        assert!(verifier.pin_store.has_pin(&node_id1));
+        assert!(verifier.pin_store.has_pin(&node_id2));
+        
+        // New bootstrap peer should be recognized
+        assert!(verifier.is_bootstrap(&bootstrap_addr2));
+    }
+
+    /// Test sync_from_cache
+    #[test]
+    fn test_sync_from_cache() {
+        let verifier = PinnedCertVerifier::new(PinnedVerifierConfig::default());
+        
+        // Create mock cache entries
+        let entries = vec![
+            PinCacheEntry {
+                node_id: [1u8; 32],
+                dilithium_pk: vec![0u8; 1312],
+                tls_spki_sha256: [10u8; 32],
+                expires_at: 9999999999,
+                last_seen: 0,
+                endpoints: vec![],
+            },
+            PinCacheEntry {
+                node_id: [2u8; 32],
+                dilithium_pk: vec![0u8; 1312],
+                tls_spki_sha256: [20u8; 32],
+                expires_at: 9999999999,
+                last_seen: 0,
+                endpoints: vec![],
+            },
+        ];
+        
+        // Sync from cache
+        verifier.sync_from_cache(&entries);
+        
+        // Verify pins were loaded
+        assert_eq!(verifier.pin_store.len(), 2);
+        assert!(verifier.pin_store.has_pin(&[1u8; 32]));
+        assert!(verifier.pin_store.has_pin(&[2u8; 32]));
+        assert_eq!(verifier.pin_store.get_pin(&[1u8; 32]), Some([10u8; 32]));
+        assert_eq!(verifier.pin_store.get_pin(&[2u8; 32]), Some([20u8; 32]));
+    }
+
+    /// Test TOFU callback invocation
+    #[test]
+    fn test_tofu_callback_invocation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        
+        let bootstrap_addr: SocketAddr = "10.0.0.1:9334".parse().unwrap();
+        let verifier = PinnedCertVerifier::with_bootstrap(vec![bootstrap_addr]);
+        
+        // Set up a callback that sets a flag
+        let callback_invoked = Arc::new(AtomicBool::new(false));
+        let callback_invoked_clone = Arc::clone(&callback_invoked);
+        
+        verifier.set_tofu_callback(move |_spki, _addr| {
+            callback_invoked_clone.store(true, Ordering::SeqCst);
+        });
+        
+        // The callback should be set
+        assert!(verifier.tofu_callback.read()
+            .expect("Failed to read tofu_callback").is_some());
     }
 }

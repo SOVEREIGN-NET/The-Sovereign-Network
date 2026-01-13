@@ -552,6 +552,11 @@ impl ZhtpUnifiedServer {
             if !peer_addrs.is_empty() {
                 quic_mesh.set_bootstrap_peers(peer_addrs.clone());
                 info!(" [QUIC] Configured {} bootstrap peer(s) for TOFU: {:?}", peer_addrs.len(), peer_addrs);
+                
+                // Sync existing pins from discovery cache to verifier
+                if let Err(e) = quic_mesh.sync_pins_from_cache().await {
+                    warn!(" [QUIC] Failed to sync pins from discovery cache: {}", e);
+                }
             }
         }
 
