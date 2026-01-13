@@ -36,6 +36,10 @@ use crate::contracts::executor::{ExecutionContext, CallOrigin};
 
 /// Total supply of SOV tokens: 1 trillion (1,000,000,000,000)
 /// This is FIXED and IMMUTABLE after initialization.
+/// 
+/// Type note: `SOV_TOTAL_SUPPLY` is stored as `u64`. The maximum value of `u64`
+/// is ~18.4 quintillion (18_446_744_073_709_551_615), so the fixed supply of
+/// 1 trillion (1_000_000_000_000) is well within the safe range for this type.
 pub const SOV_TOTAL_SUPPLY: u64 = 1_000_000_000_000;
 
 /// Number of decimal places for SOV token
@@ -168,21 +172,9 @@ impl SovToken {
 
     /// Derive the canonical token ID for SOV
     fn derive_token_id() -> [u8; 32] {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        SOV_NAME.hash(&mut hasher);
-        SOV_SYMBOL.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        // Fill rest with deterministic pattern
-        for i in 8..32 {
-            id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-        }
-        id
+        // Use Blake3 for cryptographically secure, deterministic token ID
+        let token_data = format!("{}_{}_TOKEN", SOV_NAME.to_uppercase(), SOV_SYMBOL.to_uppercase());
+        blake3::hash(token_data.as_bytes()).into()
     }
 
     /// Initialize the token with the full supply distributed to specified addresses

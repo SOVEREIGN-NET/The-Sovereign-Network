@@ -48,6 +48,9 @@ use crate::monitoring::MonitoringSystem;
 // Import keystore filename constants
 use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
 
+/// Default QUIC port for mesh networking (UDP)
+const QUIC_PORT: u16 = 9334;
+
 // Import our comprehensive API handlers
 use crate::api::handlers::{
     DhtHandler,
@@ -529,13 +532,43 @@ impl ZhtpUnifiedServer {
             }
         };
 
-        // Set trust mode to allow mesh peers without CA certificates
-        // TLS is just for encryption - UHP handles actual identity verification
+        // Configure bootstrap peers for TOFU (Trust On First Use)
+        // This enables connections to bootstrap peers with self-signed certificates
+        // After first contact, their certificates are pinned for future connections
+        if let Some(bootstrap_peers) = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers().await {
+            let peer_addrs: Vec<std::net::SocketAddr> = bootstrap_peers
+                .iter()
+                .filter_map(|s| {
+                    // First, try to parse the address as-is (may already include a port)
+                    if let Ok(mut addr) = s.parse::<std::net::SocketAddr>() {
+                        // Always use the configured QUIC port
+                        addr.set_port(QUIC_PORT);
+                        Some(addr)
+                    } else {
+                        // No valid port specified; append the QUIC port and parse
+                        let addr_with_port = format!("{}:{}", s, QUIC_PORT);
+                        addr_with_port.parse::<std::net::SocketAddr>().ok()
+                    }
+                })
+                .collect();
+
+            if !peer_addrs.is_empty() {
+                quic_mesh.set_bootstrap_peers(peer_addrs.clone());
+                info!(" [QUIC] Configured {} bootstrap peer(s) for TOFU: {:?}", peer_addrs.len(), peer_addrs);
+                
+                // Sync existing pins from discovery cache to verifier
+                if let Err(e) = quic_mesh.sync_pins_from_cache().await {
+                    warn!(" [QUIC] Failed to sync pins from discovery cache: {}", e);
+                }
+            }
+        }
+
+        // Legacy unsafe-bootstrap mode (deprecated - use PinnedCertVerifier instead)
         #[cfg(feature = "unsafe-bootstrap")]
         {
             use lib_network::protocols::quic_mesh::QuicTrustMode;
             quic_mesh.set_trust_mode(QuicTrustMode::MeshTrustUhp);
-            info!(" [QUIC] Mesh trust mode enabled (TLS verification skipped, UHP handles auth)");
+            warn!(" [QUIC] ⚠️  unsafe-bootstrap mode enabled (deprecated - use bootstrap_peers for TOFU)");
         }
 
         // Create MeshMessageHandler for routing blockchain sync messages
