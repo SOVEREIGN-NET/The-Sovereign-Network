@@ -11,7 +11,7 @@
 //! - K6: resolve(name)
 
 use super::types::*;
-use super::validation::{ParsedName, ValidationError, ValidationResult};
+use super::validation::{ParsedName, ValidationError};
 use thiserror::Error;
 
 // ============================================================================
@@ -202,6 +202,8 @@ impl RegisterGuard {
             verification_proof,
             issuer,
             governance_pointer: None, // Set separately for dao.X
+            governance_config: None,
+            governance_delegate: None,
             status: NameStatus::Active,
             registered_at: current_block,
             expires_at,

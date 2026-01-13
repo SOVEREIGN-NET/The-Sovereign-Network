@@ -39,6 +39,10 @@ pub mod ubi_distribution;
 #[cfg(feature = "contracts")]
 pub mod sov_swap;
 #[cfg(feature = "contracts")]
+pub mod governance;
+#[cfg(feature = "contracts")]
+pub mod economics;
+#[cfg(feature = "contracts")]
 pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod web4;
@@ -84,6 +88,14 @@ pub use dev_grants::{DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement,
 pub use ubi_distribution::{UbiDistributor, MonthIndex, Error as UbiError};
 #[cfg(feature = "contracts")]
 pub use sov_swap::{SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError};
+#[cfg(feature = "contracts")]
+pub use governance::{EntityRegistry, EntityType, Role, EntityRegistryError};
+#[cfg(feature = "contracts")]
+pub use economics::{
+    FeeRouter, FeeRouterError, FeeDistribution, DaoDistribution,
+    FEE_RATE_BASIS_POINTS, UBI_ALLOCATION_PERCENT, DAO_ALLOCATION_PERCENT,
+    EMERGENCY_ALLOCATION_PERCENT, DEV_ALLOCATION_PERCENT,
+};
 #[cfg(feature = "contracts")]
 pub use utils::*;
 #[cfg(feature = "contracts")]
