@@ -111,7 +111,7 @@ tempfile = "3.8"
 criterion = "0.5"
 
 [features]
-default = ["production", "full-blockchain", "windows-bluetooth"]  # TLS pinning via discovery cache (Issue #739)
+default = ["production", "full-blockchain", "windows-bluetooth"]  # See Issue #739 for planned TLS pinning behavior
 production = []
 # unsafe-bootstrap removed - TLS certificate pinning is now required (Issue #739)
 development = ["tracing-subscriber/env-filter"]

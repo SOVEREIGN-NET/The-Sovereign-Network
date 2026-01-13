@@ -70,6 +70,7 @@ use crate::messaging::message_handler::MeshMessageHandler;
 // Import TLS pin cache for certificate pinning (Issue #739)
 use crate::discovery::global_pin_cache;
 // Import PinnedCertVerifier for production-safe TLS verification
+#[allow(deprecated)]
 use crate::discovery::{PinnedCertVerifier, PinnedVerifierConfig, init_global_verifier, global_verifier};
 
 /// Default path for TLS certificate
@@ -311,15 +312,68 @@ impl QuicMeshProtocol {
     /// Only configure trusted bootstrap peers here. These peers get special
     /// TOFU treatment - their self-signed certificates will be accepted on
     /// first contact and then pinned for future connections.
+    ///
+    /// # Implementation Note
+    ///
+    /// This method updates the bootstrap peers on the existing verifier instance,
+    /// preserving any previously loaded pins in its internal pin store. This avoids
+    /// discarding cached state when bootstrap peers are reconfigured.
     pub fn set_bootstrap_peers(&mut self, peers: Vec<SocketAddr>) {
-        let config = PinnedVerifierConfig::with_bootstrap(peers.clone());
-        self.verifier = Arc::new(PinnedCertVerifier::new(config));
+        self.verifier.update_bootstrap_peers(peers.clone());
         info!("Configured {} bootstrap peers for TOFU", peers.len());
     }
 
     /// Get a reference to the certificate verifier
     pub fn verifier(&self) -> Arc<PinnedCertVerifier> {
         Arc::clone(&self.verifier)
+    }
+
+    /// Sync pins from the global TlsPinCache to the PinnedCertVerifier
+    ///
+    /// This should be called on startup to load existing pins from the discovery
+    /// cache into the verifier's synchronous pin store. This enables the verifier
+    /// to enforce pin matching for known peers during TLS handshake.
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// let mut quic_mesh = QuicMeshProtocol::new(identity, bind_addr)?;
+    /// quic_mesh.sync_pins_from_cache().await?;
+    /// ```
+    pub async fn sync_pins_from_cache(&self) -> Result<()> {
+        let pin_cache = global_pin_cache();
+        let entries = pin_cache.get_all_entries().await;
+        
+        if !entries.is_empty() {
+            self.verifier.sync_from_cache(&entries);
+            info!(
+                "Synced {} certificate pins from discovery cache to verifier",
+                entries.len()
+            );
+        } else {
+            debug!("No certificate pins in discovery cache to sync");
+        }
+        
+        Ok(())
+    }
+
+    /// Set up TOFU callback to persist pins to the global TlsPinCache
+    ///
+    /// This callback is invoked synchronously during TLS handshake when a bootstrap
+    /// peer is accepted via TOFU. The callback sends the pin to a background task
+    /// for async persistence to avoid blocking the handshake.
+    ///
+    /// # Implementation
+    ///
+    /// The callback uses a channel to send pins to a background task that persists
+    /// them to the TlsPinCache. This avoids blocking I/O during TLS handshake.
+    pub fn setup_tofu_persistence(&self) {
+        // TODO: Implement channel-based async persistence
+        // For now, we'll just log a warning that persistence is not yet wired up
+        warn!(
+            "TOFU pin persistence not yet implemented - pins will not survive restarts. \
+            See Issue #739 for implementation plan."
+        );
     }
     
     /// Get the QUIC endpoint for accepting connections

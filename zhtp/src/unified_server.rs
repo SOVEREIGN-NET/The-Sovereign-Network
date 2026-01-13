@@ -48,6 +48,9 @@ use crate::monitoring::MonitoringSystem;
 // Import keystore filename constants
 use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
 
+/// Default QUIC port for mesh networking (UDP)
+const QUIC_PORT: u16 = 9334;
+
 // Import our comprehensive API handlers
 use crate::api::handlers::{
     DhtHandler,
@@ -536,24 +539,27 @@ impl ZhtpUnifiedServer {
             let peer_addrs: Vec<std::net::SocketAddr> = bootstrap_peers
                 .iter()
                 .filter_map(|s| {
-                    // Parse with default QUIC port if not specified
-                    let addr_str = if s.contains(':') {
-                        // Replace port with QUIC port (9334)
-                        if let Some(host) = s.split(':').next() {
-                            format!("{}:9334", host)
-                        } else {
-                            s.clone()
-                        }
+                    // First, try to parse the address as-is (may already include a port)
+                    if let Ok(mut addr) = s.parse::<std::net::SocketAddr>() {
+                        // Always use the configured QUIC port
+                        addr.set_port(QUIC_PORT);
+                        Some(addr)
                     } else {
-                        format!("{}:9334", s)
-                    };
-                    addr_str.parse().ok()
+                        // No valid port specified; append the QUIC port and parse
+                        let addr_with_port = format!("{}:{}", s, QUIC_PORT);
+                        addr_with_port.parse::<std::net::SocketAddr>().ok()
+                    }
                 })
                 .collect();
 
             if !peer_addrs.is_empty() {
                 quic_mesh.set_bootstrap_peers(peer_addrs.clone());
                 info!(" [QUIC] Configured {} bootstrap peer(s) for TOFU: {:?}", peer_addrs.len(), peer_addrs);
+                
+                // Sync existing pins from discovery cache to verifier
+                if let Err(e) = quic_mesh.sync_pins_from_cache().await {
+                    warn!(" [QUIC] Failed to sync pins from discovery cache: {}", e);
+                }
             }
         }
 
