@@ -183,6 +183,38 @@ impl TlsPinCache {
         self.get(node_id).await.map(|e| e.dilithium_pk)
     }
 
+    /// Verify a peer's Dilithium public key against the cached discovery record
+    ///
+    /// This should be called after UHP handshake to ensure the peer's identity
+    /// matches what was learned during discovery.
+    ///
+    /// Returns Ok(true) if the key matches, Ok(false) if no pin cached,
+    /// or Err if the key doesn't match (security violation).
+    pub async fn verify_peer_dilithium_pk(&self, node_id: &NodeIdKey, peer_dilithium_pk: &[u8]) -> Result<bool> {
+        let entry = match self.get(node_id).await {
+            Some(e) => e,
+            None => {
+                debug!("Pin cache: no entry for node {:?} (dilithium pk check)", &node_id[..8]);
+                return Ok(false);
+            }
+        };
+
+        if entry.dilithium_pk != peer_dilithium_pk {
+            warn!(
+                "SECURITY: Dilithium PK mismatch for node {:?} - cached pk len: {}, peer pk len: {}",
+                &node_id[..8],
+                entry.dilithium_pk.len(),
+                peer_dilithium_pk.len()
+            );
+            return Err(anyhow!(
+                "Peer's Dilithium public key does not match discovery cache"
+            ));
+        }
+
+        debug!("Pin cache: Dilithium PK verified for node {:?}", &node_id[..8]);
+        Ok(true)
+    }
+
     /// Remove expired entries from the cache
     pub async fn cleanup_expired(&self) {
         let now = Self::now();

@@ -350,6 +350,24 @@ impl QuicMeshProtocol {
             }
         }
 
+        // === Dilithium Public Key Verification (Issue #739) ===
+        // Verify the peer's Dilithium PK from UHP matches what was cached from discovery
+        let peer_dilithium_pk = &handshake_result.verified_peer.identity.public_key.dilithium_pk;
+        match global_pin_cache().verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk).await {
+            Ok(true) => {
+                info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 Dilithium PK verified against discovery cache");
+            }
+            Ok(false) => {
+                debug!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "No Dilithium PK cached for peer (first contact)");
+            }
+            Err(e) => {
+                error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
+                    "🚨 SECURITY: Dilithium PK mismatch - peer identity compromised");
+                connection.close(3u32.into(), b"dilithium_pk_mismatch");
+                return Err(anyhow!("Dilithium PK mismatch for peer {:?}", hex::encode(&peer_node_id[..8])));
+            }
+        }
+
         // Create PqcQuicConnection from verified peer
         let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection,
@@ -440,6 +458,23 @@ impl QuicMeshProtocol {
                     connection.close(2u32.into(), b"tls_pin_mismatch");
                     return Err(anyhow!("TLS certificate pin mismatch for bootstrap peer {:?}", hex::encode(&peer_node_id[..8])));
                 }
+            }
+        }
+
+        // === Dilithium Public Key Verification (Issue #739) ===
+        let peer_dilithium_pk = &handshake_result.verified_peer.identity.public_key.dilithium_pk;
+        match global_pin_cache().verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk).await {
+            Ok(true) => {
+                info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 Bootstrap peer Dilithium PK verified");
+            }
+            Ok(false) => {
+                debug!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "No Dilithium PK cached for bootstrap peer");
+            }
+            Err(e) => {
+                error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
+                    "🚨 SECURITY: Bootstrap peer Dilithium PK mismatch");
+                connection.close(3u32.into(), b"dilithium_pk_mismatch");
+                return Err(anyhow!("Dilithium PK mismatch for bootstrap peer {:?}", hex::encode(&peer_node_id[..8])));
             }
         }
 
@@ -594,6 +629,32 @@ impl QuicMeshProtocol {
                                                 connection.close(2u32.into(), b"tls_pin_mismatch");
                                                 return;
                                             }
+                                        }
+                                    }
+
+                                    // === Dilithium Public Key Verification (Issue #739) ===
+                                    let peer_dilithium_pk = &handshake_result.verified_peer.identity.public_key.dilithium_pk;
+                                    match global_pin_cache().verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk).await {
+                                        Ok(true) => {
+                                            info!(
+                                                peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                "🔐 Dilithium PK verified against discovery cache"
+                                            );
+                                        }
+                                        Ok(false) => {
+                                            debug!(
+                                                peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                "No Dilithium PK cached for peer (first contact)"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                error = %e,
+                                                "🚨 SECURITY: Dilithium PK mismatch - rejecting connection"
+                                            );
+                                            connection.close(3u32.into(), b"dilithium_pk_mismatch");
+                                            return;
                                         }
                                     }
 
