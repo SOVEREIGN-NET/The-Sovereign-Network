@@ -965,14 +965,10 @@ pub enum ServiceAction {
 /// Main CLI runner
 pub async fn run_cli() -> Result<()> {
     // Initialize network genesis for replay protection
-    // Uses testnet genesis hash - CLI commands need this for network communication
-    let testnet_genesis: [u8; 32] = [
-        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ];
-    let _ = lib_identity::types::node_id::try_set_network_genesis(testnet_genesis);
+    // Uses testnet genesis hash from shared constant - CLI commands need this for network communication
+    let _ = lib_identity::types::node_id::try_set_network_genesis(
+        lib_identity::constants::TESTNET_GENESIS_HASH
+    );
 
     let cli = ZhtpCli::parse();
 
