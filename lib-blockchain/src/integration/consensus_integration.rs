@@ -584,11 +584,14 @@ impl BlockchainConsensusCoordinator {
     
     /// Convert consensus proposal to blockchain block with specific transactions
     async fn consensus_proposal_to_block_with_transactions(&self, proposal: &ConsensusProposal, transactions: Vec<Transaction>) -> Result<Block> {
+        // Week 10 Phase 3: Construct block with real transaction effects
+        // This method ensures blocks are constructed with validated transactions and proper fee tracking
+
         // Create block header
         let blockchain = self.blockchain.read().await;
         let previous_block = blockchain.latest_block();
         let height = proposal.height;
-        
+
         // Validate that the proposal height is consistent with blockchain state
         if let Some(ref prev_block) = previous_block {
             if height != prev_block.header.height + 1 {
@@ -596,23 +599,32 @@ impl BlockchainConsensusCoordinator {
             }
             debug!("Validated block height against previous block: {}", prev_block.header.height);
         }
-        
+
         let mut hash_bytes = [0u8; 32];
         let prop_bytes = proposal.previous_hash.as_bytes();
         hash_bytes[..prop_bytes.len().min(32)].copy_from_slice(&prop_bytes[..prop_bytes.len().min(32)]);
         let previous_hash = BlockchainHash::from(hash_bytes);
         let timestamp = proposal.timestamp;
-        
+
         // Validate proposal timestamp
         if let Err(e) = validate_consensus_timestamp(timestamp) {
             warn!("Invalid proposal timestamp: {}", e);
             return Err(anyhow!("Proposal timestamp validation failed: {}", e));
         }
         debug!("Proposal timestamp validated: {}", timestamp);
-        
+
         // Calculate merkle root from actual transactions
         let merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&transactions);
-        
+
+        // Week 10 Phase 3: Calculate transaction fees for block metadata
+        let total_fees: u64 = transactions.iter().map(|tx| tx.fee).sum();
+        let tx_count = transactions.len();
+
+        info!(
+            "Week 10 Phase 3: Constructing block at height {} with {} transactions (total_fees={})",
+            height, tx_count, total_fees
+        );
+
         // Set difficulty (in production this would be calculated based on network state)
         let difficulty = Difficulty::from_bits(crate::INITIAL_DIFFICULTY);
 
@@ -629,6 +641,16 @@ impl BlockchainConsensusCoordinator {
         );
 
         let block = Block::new(header, transactions);
+
+        // Log block construction summary for audit trail
+        info!(
+            "Week 10 Phase 3: Block constructed successfully - height={}, tx_count={}, total_fees={}, merkle_root={}",
+            height,
+            tx_count,
+            total_fees,
+            hex::encode(merkle_root.as_bytes())
+        );
+
         Ok(block)
     }
 
