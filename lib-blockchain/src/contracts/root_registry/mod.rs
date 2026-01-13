@@ -1,10 +1,11 @@
 //! Root Registry Contract Module
 //!
 //! [Issue #655] Phase 0: Domain Reservation Enforcement
+//! [Issue #657] Phase 2: dao. Prefix Enforcement - Architectural Decisions
 //!
 //! Authoritative `.sov` naming system registry implementing:
 //! - Reserved welfare namespaces ({food,health,edu,housing,energy}.dao.sov)
-//! - `dao.` subdomain semantics
+//! - `dao.` subdomain semantics (Phase 2: virtual resolution)
 //! - Hierarchical delegation
 //! - Verification levels (L0-L3)
 //! - State lifecycle management
@@ -21,6 +22,7 @@
 //! - **Verification Requirements**: L2 for commercial, L1 for welfare delegated,
 //!   L3 for constitutional actors
 //! - **State Lifecycle**: Active → Expired → Released with proper grace periods
+//! - **dao. Prefix Enforcement (Phase 2)**: dao.X is virtual, never stored
 //!
 //! # Components
 //!
@@ -30,12 +32,12 @@
 //! - [`core`]: RootRegistry implementation with in-memory storage
 //! - [`namespace_policy`]: Namespace policy enforcement
 //! - [`delegation_tree`]: Parent-child relationship tracking
+//! - [`dao_prefix_router`]: Phase 2 - Virtual dao.X resolution (Issue #657)
 //!
 //! # Related Modules (to be implemented)
 //!
 //! - `commercial_registry`: Open registration under policy
 //! - `welfare_dao_registry`: Per-sector registries
-//! - `dao_prefix_router`: Enforces dao. convention
 //! - `verification_module`: VC anchoring, attestations
 
 pub mod types;
@@ -44,6 +46,7 @@ pub mod operations;
 pub mod core;
 pub mod namespace_policy;
 pub mod delegation_tree;
+pub mod dao_prefix_router;
 
 #[cfg(test)]
 mod tests;
@@ -67,8 +70,11 @@ pub use types::{
     NameStatus, SuspensionReason, SuspensionAuthority,
     ReasonCode, AppealStatus, RevokedRecord,
 
-    // Governance
+    // Governance (Phase 2: Issue #657)
     GovernanceRecord, VCReference,
+    GovernancePointer, GovernanceDelegation, DelegateTarget,
+    GovernanceStatus, GovernanceResolution,
+    ResolutionResult as TypesResolutionResult,
 
     // History
     TransferRecord, RenewalRecord,
@@ -115,3 +121,6 @@ pub use namespace_policy::NamespacePolicy;
 
 // Re-export delegation tree
 pub use delegation_tree::DelegationTree;
+
+// Re-export dao prefix router (Phase 2: Issue #657)
+pub use dao_prefix_router::{DaoPrefixRouter, DaoPrefixRegistrationError};

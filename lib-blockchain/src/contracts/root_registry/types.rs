@@ -325,6 +325,143 @@ pub struct GovernanceRecord {
     pub application_endpoint: Option<String>,
 }
 
+// ============================================================================
+// Phase 2: dao. Prefix Enforcement Types (Issue #657)
+// ============================================================================
+
+/// Governance pointer configuration for dao.X resolution
+///
+/// Stored on the parent domain `X`, not on `dao.X` (which is virtual).
+/// When resolving `dao.X`, this pointer determines where governance lives.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernancePointer {
+    /// On-chain governance contract address
+    pub contract: Option<Address>,
+    /// Off-chain governance DID service endpoint
+    pub did: Option<String>,
+}
+
+impl GovernancePointer {
+    /// Create an empty governance pointer
+    pub fn empty() -> Self {
+        Self {
+            contract: None,
+            did: None,
+        }
+    }
+
+    /// Check if the pointer has any governance endpoint configured
+    pub fn is_configured(&self) -> bool {
+        self.contract.is_some() || self.did.is_some()
+    }
+}
+
+impl Default for GovernancePointer {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+/// Target for governance delegation
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DelegateTarget {
+    /// Delegate to an on-chain contract
+    Contract(Address),
+    /// Delegate to an off-chain DID
+    Did(String),
+}
+
+/// Governance delegation for dao.X control
+///
+/// Allows the owner of `X` to delegate governance authority
+/// for `dao.X` to another contract or DID.
+///
+/// # Invariants
+/// - Delegation is explicit and must be set by the owner of X
+/// - Delegation persists across domain transfers
+/// - Delegation can be revoked by the new owner after transfer
+/// - Expired delegations are treated as revoked
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceDelegation {
+    /// Delegated controller (contract or DID)
+    pub delegate: DelegateTarget,
+    /// Optional expiration timestamp (None = permanent until revoked)
+    pub expires_at: Option<Timestamp>,
+}
+
+impl GovernanceDelegation {
+    /// Check if the delegation is active at the given time
+    pub fn is_active(&self, current_time: Timestamp) -> bool {
+        match self.expires_at {
+            Some(expires) => current_time < expires,
+            None => true,
+        }
+    }
+
+    /// Get the active delegate address if the delegation is valid
+    pub fn active_delegate(&self, current_time: Timestamp) -> Option<&DelegateTarget> {
+        if self.is_active(current_time) {
+            Some(&self.delegate)
+        } else {
+            None
+        }
+    }
+}
+
+/// Status of governance for a dao.X resolution
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GovernanceStatus {
+    /// Governance is active and operational
+    Active,
+    /// Governance is suspended (parent domain suspended)
+    Suspended,
+    /// Governance is revoked (parent domain revoked)
+    Revoked,
+    /// Parent domain has expired
+    ParentExpired,
+}
+
+/// Resolution result for dao.X queries
+///
+/// This is returned when resolving `dao.X` - a virtual governance view
+/// derived from the parent domain `X`'s configuration.
+///
+/// # Invariants
+/// - dao.X is NEVER stored as a NameRecord
+/// - dao.X resolution is ALWAYS derived from X.governance_pointer
+/// - If X doesn't exist, resolution returns NotFound (not this struct)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceResolution {
+    /// The parent domain this governance is derived from
+    pub parent_domain: String,
+    /// Parent domain name hash
+    pub parent_hash: NameHash,
+    /// On-chain governance contract address
+    pub governance_contract: Option<Address>,
+    /// Off-chain governance DID service endpoint
+    pub governance_did: Option<String>,
+    /// Delegate address (if governance was explicitly delegated)
+    pub delegate: Option<DelegateTarget>,
+    /// Current governance status
+    pub status: GovernanceStatus,
+}
+
+/// Result of a name resolution query
+///
+/// Distinguishes between standard domain resolution and
+/// governance resolution for dao.* queries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResolutionResult {
+    /// Standard domain resolution (content, endpoints)
+    Domain(NameRecord),
+    /// Governance resolution (dao.* queries)
+    Governance(GovernanceResolution),
+    /// Name not found
+    NotFound,
+    /// Invalid name (e.g., dao.dao.sov)
+    Invalid { reason: String },
+}
+
 /// Reference to a verifiable credential
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VCReference {
@@ -427,9 +564,14 @@ pub struct NameRecord {
     /// Who issued/registered this name
     pub issuer: PublicKey,
 
-    // === Governance ===
-    /// Governance pointer for dao.X resolution
+    // === Governance (Phase 2: Issue #657) ===
+    /// Governance pointer for dao.X resolution (legacy field)
     pub governance_pointer: Option<GovernanceRecord>,
+    /// Phase 2: New governance pointer configuration
+    pub governance_config: Option<GovernancePointer>,
+    /// Phase 2: Optional delegation of dao.X control
+    /// Allows owner to delegate governance authority to another contract/DID
+    pub governance_delegate: Option<GovernanceDelegation>,
 
     // === Lifecycle ===
     /// Current status in the lifecycle
@@ -718,6 +860,8 @@ mod tests {
             verification_proof: None,
             issuer: [1u8; 32],
             governance_pointer: None,
+            governance_config: None,
+            governance_delegate: None,
             status: NameStatus::Active,
             registered_at: 100,
             expires_at: 1000000,
