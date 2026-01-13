@@ -924,6 +924,7 @@ mod tests {
             local_ip: "192.168.1.50".parse().unwrap(),
             protocols: vec!["zhtp".to_string()],
             announced_at: 1234567890,
+            ..Default::default()
         };
 
         let result: DiscoveryResult = announcement.clone().into();

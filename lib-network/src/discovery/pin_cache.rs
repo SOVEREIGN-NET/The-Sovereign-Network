@@ -383,4 +383,197 @@ mod tests {
         cache.cleanup_expired().await;
         assert!(cache.is_empty().await);
     }
+
+    // ========================================================================
+    // Issue #739: Integration tests for 5 security cases
+    // ========================================================================
+
+    /// Case 1: Valid TLS pin - SPKI matches cached value → connection allowed
+    #[tokio::test]
+    async fn test_case1_valid_tls_pin_match() {
+        let cache = TlsPinCache::new();
+        let node_id_key: NodeIdKey = [10u8; 32];
+        let valid_spki = [42u8; 32];
+
+        // Cache a valid pin
+        let entry = PinCacheEntry {
+            node_id: node_id_key,
+            dilithium_pk: vec![0u8; 1312],
+            tls_spki_sha256: valid_spki,
+            expires_at: TlsPinCache::now() + 3600, // Valid for 1 hour
+            last_seen: TlsPinCache::now(),
+            endpoints: vec!["192.168.1.100:9334".to_string()],
+        };
+
+        {
+            let mut entries = cache.entries.write().await;
+            let mut access_times = cache.access_times.write().await;
+            entries.insert(node_id_key, entry);
+            access_times.insert(node_id_key, TlsPinCache::now());
+        }
+
+        // Peer presents matching SPKI → should succeed
+        let result = cache.verify_peer_spki(&node_id_key, &valid_spki).await;
+        assert!(result.is_ok(), "Valid SPKI should verify successfully");
+        assert!(result.unwrap(), "Result should indicate pin was found and matched");
+    }
+
+    /// Case 2: Valid TLS pin - SPKI mismatch → connection rejected
+    #[tokio::test]
+    async fn test_case2_valid_tls_pin_mismatch() {
+        let cache = TlsPinCache::new();
+        let node_id_key: NodeIdKey = [20u8; 32];
+        let cached_spki = [42u8; 32];
+        let attacker_spki = [99u8; 32]; // Different SPKI (MITM attempt)
+
+        // Cache a valid pin
+        let entry = PinCacheEntry {
+            node_id: node_id_key,
+            dilithium_pk: vec![0u8; 1312],
+            tls_spki_sha256: cached_spki,
+            expires_at: TlsPinCache::now() + 3600,
+            last_seen: TlsPinCache::now(),
+            endpoints: vec!["192.168.1.100:9334".to_string()],
+        };
+
+        {
+            let mut entries = cache.entries.write().await;
+            let mut access_times = cache.access_times.write().await;
+            entries.insert(node_id_key, entry);
+            access_times.insert(node_id_key, TlsPinCache::now());
+        }
+
+        // Attacker presents different SPKI → should fail
+        let result = cache.verify_peer_spki(&node_id_key, &attacker_spki).await;
+        assert!(result.is_err(), "Mismatched SPKI should return error");
+        assert!(
+            result.unwrap_err().to_string().contains("does not match"),
+            "Error should indicate SPKI mismatch"
+        );
+    }
+
+    /// Case 3: No TLS pin cached → connection allowed (first contact)
+    #[tokio::test]
+    async fn test_case3_no_pin_cached_first_contact() {
+        let cache = TlsPinCache::new();
+        let unknown_node_id: NodeIdKey = [30u8; 32];
+        let any_spki = [123u8; 32];
+
+        // No entry cached for this node
+        assert!(cache.is_empty().await);
+
+        // First contact → should return Ok(false) meaning "no pin, allow connection"
+        let result = cache.verify_peer_spki(&unknown_node_id, &any_spki).await;
+        assert!(result.is_ok(), "Unknown node should not cause error");
+        assert!(!result.unwrap(), "Result should indicate no pin was found (false)");
+    }
+
+    /// Case 4: Expired TLS pin → treated as no pin (connection allowed)
+    #[tokio::test]
+    async fn test_case4_expired_pin_treated_as_no_pin() {
+        let cache = TlsPinCache::new();
+        let node_id_key: NodeIdKey = [40u8; 32];
+        let expired_spki = [42u8; 32];
+
+        // Cache an expired pin
+        let entry = PinCacheEntry {
+            node_id: node_id_key,
+            dilithium_pk: vec![0u8; 1312],
+            tls_spki_sha256: expired_spki,
+            expires_at: TlsPinCache::now() - 100, // Expired 100 seconds ago
+            last_seen: TlsPinCache::now() - 200,
+            endpoints: vec!["192.168.1.100:9334".to_string()],
+        };
+
+        {
+            let mut entries = cache.entries.write().await;
+            entries.insert(node_id_key, entry);
+        }
+
+        // Even with different SPKI, expired pin should be treated as "no pin"
+        let different_spki = [99u8; 32];
+        let result = cache.verify_peer_spki(&node_id_key, &different_spki).await;
+        assert!(result.is_ok(), "Expired pin should not cause error");
+        assert!(!result.unwrap(), "Expired pin should be treated as 'no pin' (false)");
+    }
+
+    /// Case 5: Dilithium PK verification - match
+    #[tokio::test]
+    async fn test_case5_dilithium_pk_match() {
+        let cache = TlsPinCache::new();
+        let node_id_key: NodeIdKey = [50u8; 32];
+        let valid_dilithium_pk = vec![55u8; 1312]; // Dilithium3 public key size
+
+        // Cache entry with Dilithium PK
+        let entry = PinCacheEntry {
+            node_id: node_id_key,
+            dilithium_pk: valid_dilithium_pk.clone(),
+            tls_spki_sha256: [1u8; 32],
+            expires_at: TlsPinCache::now() + 3600,
+            last_seen: TlsPinCache::now(),
+            endpoints: vec!["192.168.1.100:9334".to_string()],
+        };
+
+        {
+            let mut entries = cache.entries.write().await;
+            let mut access_times = cache.access_times.write().await;
+            entries.insert(node_id_key, entry);
+            access_times.insert(node_id_key, TlsPinCache::now());
+        }
+
+        // Peer presents matching Dilithium PK → should succeed
+        let result = cache.verify_peer_dilithium_pk(&node_id_key, &valid_dilithium_pk).await;
+        assert!(result.is_ok(), "Valid Dilithium PK should verify successfully");
+        assert!(result.unwrap(), "Result should indicate PK was found and matched");
+    }
+
+    /// Case 5b: Dilithium PK verification - mismatch (identity compromise)
+    #[tokio::test]
+    async fn test_case5_dilithium_pk_mismatch() {
+        let cache = TlsPinCache::new();
+        let node_id_key: NodeIdKey = [51u8; 32];
+        let cached_dilithium_pk = vec![55u8; 1312];
+        let attacker_dilithium_pk = vec![99u8; 1312]; // Different PK (impersonation attempt)
+
+        // Cache entry with legitimate Dilithium PK
+        let entry = PinCacheEntry {
+            node_id: node_id_key,
+            dilithium_pk: cached_dilithium_pk,
+            tls_spki_sha256: [1u8; 32],
+            expires_at: TlsPinCache::now() + 3600,
+            last_seen: TlsPinCache::now(),
+            endpoints: vec!["192.168.1.100:9334".to_string()],
+        };
+
+        {
+            let mut entries = cache.entries.write().await;
+            let mut access_times = cache.access_times.write().await;
+            entries.insert(node_id_key, entry);
+            access_times.insert(node_id_key, TlsPinCache::now());
+        }
+
+        // Attacker presents different Dilithium PK → should fail
+        let result = cache.verify_peer_dilithium_pk(&node_id_key, &attacker_dilithium_pk).await;
+        assert!(result.is_err(), "Mismatched Dilithium PK should return error");
+        assert!(
+            result.unwrap_err().to_string().contains("does not match"),
+            "Error should indicate Dilithium PK mismatch"
+        );
+    }
+
+    /// Case 5c: Dilithium PK verification - no cache entry (first contact)
+    #[tokio::test]
+    async fn test_case5_dilithium_pk_no_cache() {
+        let cache = TlsPinCache::new();
+        let unknown_node_id: NodeIdKey = [52u8; 32];
+        let any_dilithium_pk = vec![123u8; 1312];
+
+        // No entry cached for this node
+        assert!(cache.is_empty().await);
+
+        // First contact → should return Ok(false) meaning "no cached PK, allow connection"
+        let result = cache.verify_peer_dilithium_pk(&unknown_node_id, &any_dilithium_pk).await;
+        assert!(result.is_ok(), "Unknown node should not cause error");
+        assert!(!result.unwrap(), "Result should indicate no PK was cached (false)");
+    }
 }
