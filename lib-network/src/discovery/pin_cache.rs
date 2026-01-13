@@ -291,6 +291,19 @@ impl TlsPinCache {
         self.entries.read().await.is_empty()
     }
 
+    /// Get all non-expired entries from the cache
+    ///
+    /// This is useful for syncing pins to the PinnedCertVerifier on startup.
+    pub async fn get_all_entries(&self) -> Vec<PinCacheEntry> {
+        let now = Self::now();
+        let entries = self.entries.read().await;
+        entries
+            .values()
+            .filter(|entry| entry.expires_at >= now)
+            .cloned()
+            .collect()
+    }
+
     /// Process and cache a discovery announcement if valid
     ///
     /// This is the main entry point for adding discovered peers to the pin cache.
