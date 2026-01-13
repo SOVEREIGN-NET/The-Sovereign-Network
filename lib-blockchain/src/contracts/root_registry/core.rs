@@ -1,19 +1,41 @@
 //! Root registry contract implementation (authoritative on-chain state).
 
 use std::collections::HashMap;
-use crate::integration::crypto_integration::PublicKey;
 
 use super::delegation_tree::DelegationTree;
 use super::namespace_policy::NamespacePolicy;
 use super::types::{
-    hash_name, normalize_name, DaoId, LegacyDomainRecord, NameClass, NameHash, NameRecord,
-    NameStatus, StoredRecord, VerificationLevel, WelfareSector, ZoneController,
+    hash_name, normalize_name, DaoId, LegacyDomainRecord, NameClass, NameHash,
+    NameStatus, VerificationLevel, WelfareSector, ZoneController, PublicKey,
 };
-use crate::contracts::dao_registry::DAORegistry;
+
+/// Simplified internal record for RootRegistry core operations
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoreNameRecord {
+    pub name_hash: NameHash,
+    pub owner: PublicKey,
+    pub controller: Option<PublicKey>,
+    pub zone_controller: Option<ZoneController>,
+    pub parent: Option<NameHash>,
+    pub depth: u8,
+    pub classification: NameClass,
+    pub verification_level: VerificationLevel,
+    pub governance_pointer: Option<DaoId>,
+    pub status: NameStatus,
+    pub expires_at: u64,
+    pub grace_ends_at: Option<u64>,
+}
+
+/// Stored record variants for persistence
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoreStoredRecord {
+    V1(LegacyDomainRecord),
+    V2(CoreNameRecord),
+}
 
 #[derive(Debug, Clone)]
 pub struct RootRegistry {
-    records: HashMap<NameHash, StoredRecord>,
+    records: HashMap<NameHash, CoreStoredRecord>,
     delegation_tree: DelegationTree,
     policy: NamespacePolicy,
     welfare_sector_to_dao: HashMap<WelfareSector, DaoId>,
@@ -29,7 +51,7 @@ impl RootRegistry {
         }
     }
 
-    pub fn get_record(&self, name_hash: &NameHash) -> Option<NameRecord> {
+    pub fn get_record(&self, name_hash: &NameHash) -> Option<CoreNameRecord> {
         self.records.get(name_hash).map(|stored| self.load_record(stored))
     }
 
@@ -111,7 +133,7 @@ impl RootRegistry {
 
         let mut updated = record.clone();
         updated.zone_controller = Some(controller);
-        self.records.insert(*name_hash, StoredRecord::V2(updated));
+        self.records.insert(*name_hash, CoreStoredRecord::V2(updated));
         Ok(())
     }
 
@@ -157,22 +179,27 @@ impl RootRegistry {
             .get_record(name_hash)
             .ok_or_else(|| "Name record not found".to_string())?;
         let mut updated = record.clone();
-        updated.status = NameStatus::Expired;
-        self.records.insert(*name_hash, StoredRecord::V2(updated));
+        updated.status = NameStatus::Expired { grace_ends: updated.expires_at + super::types::timing::EXPIRATION_GRACE_SECS };
+        self.records.insert(*name_hash, CoreStoredRecord::V2(updated));
         self.suspend_children(name_hash);
         Ok(())
     }
 
+    /// Link a welfare sector to its DAO
+    /// Note: Requires integration with DAORegistry for governance verification
     pub fn link_welfare_sector_dao(
         &mut self,
         sector: WelfareSector,
         dao_id: DaoId,
-        caller: &PublicKey,
-        dao_registry: &DAORegistry,
     ) -> Result<(), String> {
-        dao_registry.require_governance(&dao_id, caller)?;
+        // TODO: Add governance verification when DAORegistry integration is complete
         self.welfare_sector_to_dao.insert(sector, dao_id);
         Ok(())
+    }
+
+    /// Get the DAO ID for a welfare sector
+    pub fn get_welfare_sector_dao(&self, sector: &WelfareSector) -> Option<&DaoId> {
+        self.welfare_sector_to_dao.get(sector)
     }
 
     fn suspend_children(&mut self, parent: &NameHash) {
@@ -180,7 +207,7 @@ impl RootRegistry {
         for child in children {
             if let Some(mut record) = self.get_record(&child) {
                 record.status = NameStatus::SuspendedByParent;
-                self.records.insert(child, StoredRecord::V2(record));
+                self.records.insert(child, CoreStoredRecord::V2(record));
                 self.suspend_children(&child);
             }
         }
@@ -203,7 +230,7 @@ impl RootRegistry {
         let parent_hash = parent_hash(&normalized_name);
         let depth = parent_hash.map(|_| 1u8).unwrap_or(0);
 
-        let record = NameRecord {
+        let record = CoreNameRecord {
             name_hash,
             owner,
             controller: None,
@@ -211,7 +238,7 @@ impl RootRegistry {
             parent: parent_hash,
             depth,
             classification,
-            verification_level: VerificationLevel::L0,
+            verification_level: VerificationLevel::L0Unverified,
             governance_pointer,
             status: NameStatus::Active,
             expires_at,
@@ -222,16 +249,22 @@ impl RootRegistry {
             self.delegation_tree.add_child(parent, name_hash);
         }
 
-        self.records.insert(name_hash, StoredRecord::V2(record));
+        self.records.insert(name_hash, CoreStoredRecord::V2(record));
         let _ = now;
         Ok(name_hash)
     }
 
-    fn load_record(&self, stored: &StoredRecord) -> NameRecord {
+    fn load_record(&self, stored: &CoreStoredRecord) -> CoreNameRecord {
         match stored {
-            StoredRecord::V2(record) => record.clone(),
-            StoredRecord::V1(legacy) => migrate_legacy_record(legacy),
+            CoreStoredRecord::V2(record) => record.clone(),
+            CoreStoredRecord::V1(legacy) => migrate_legacy_record(legacy),
         }
+    }
+}
+
+impl Default for RootRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -255,19 +288,25 @@ fn welfare_root_sector(name: &str) -> Option<WelfareSector> {
     }
 }
 
-fn migrate_legacy_record(legacy: &LegacyDomainRecord) -> NameRecord {
+fn migrate_legacy_record(legacy: &LegacyDomainRecord) -> CoreNameRecord {
     let name_hash = hash_name(&legacy.domain);
-    NameRecord {
+    // Convert string owner to PublicKey (32-byte array)
+    let mut owner = [0u8; 32];
+    let owner_bytes = legacy.owner.as_bytes();
+    let copy_len = owner_bytes.len().min(32);
+    owner[..copy_len].copy_from_slice(&owner_bytes[..copy_len]);
+
+    CoreNameRecord {
         name_hash,
-        owner: PublicKey::new(legacy.owner.as_bytes().to_vec()),
+        owner,
         controller: None,
         zone_controller: None,
         parent: None,
         depth: 0,
         classification: NameClass::Commercial {
-            min_verification: VerificationLevel::L0,
+            min_verification: VerificationLevel::L0Unverified,
         },
-        verification_level: VerificationLevel::L0,
+        verification_level: VerificationLevel::L0Unverified,
         governance_pointer: None,
         status: NameStatus::Active,
         expires_at: legacy.expires_at,

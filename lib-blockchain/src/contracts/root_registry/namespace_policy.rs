@@ -69,7 +69,7 @@ impl NamespacePolicy {
         }
 
         NameClass::Commercial {
-            min_verification: VerificationLevel::L0,
+            min_verification: VerificationLevel::L0Unverified,
         }
     }
 }
