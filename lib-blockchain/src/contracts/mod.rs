@@ -46,6 +46,8 @@ pub mod economics;
 pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod web4;
+#[cfg(feature = "contracts")]
+pub mod approval_verifier;
 
 // Re-export core types and functionality when contracts feature is enabled
 #[cfg(feature = "contracts")]
@@ -105,6 +107,15 @@ pub use root_registry::{
     RootRegistry, NameRecord, NameClass, ZoneController, NameStatus, VerificationLevel,
     ReservedReason, WelfareSector, NameHash, DaoId, NameClassification,
     GovernanceRecord, parse_and_validate, compute_name_hash,
+    // Phase 3: Welfare Issuer Adapter (Issue #658)
+    WelfareIssuerAdapter, WelfareIssuerError, WelfareMetadata,
+    SectorBinding, PendingClaim, DaoVerificationPolicy, IssuanceResult,
+};
+#[cfg(feature = "contracts")]
+pub use approval_verifier::{
+    ApprovalProof, IssuanceApprovalVerifier, IssuanceRequest, VerificationError,
+    VerificationResult as ApprovalVerificationResult,
+    GovernanceVoteVerifier, MultisigVerifier, DelegatedVerifier,
 };
 
 // Re-export testing framework when available
