@@ -504,6 +504,19 @@ impl ConsensusEngine {
                 .calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
             self.reward_calculator.distribute_rewards(&reward_round)?;
 
+            // Collect and distribute fees from block (Week 7 integration)
+            // Mirrors reward distribution pattern - happens at block finalization
+            let block_metadata = self.extract_block_metadata(&proposal);
+            if let Err(e) = self.collect_and_distribute_fees(&block_metadata) {
+                tracing::warn!(
+                    "Error collecting fees for block {}: {}",
+                    proposal.height,
+                    e
+                );
+                // Non-critical: Fee collection failure does NOT block consensus
+                // See Invariant CE-ENG-4: Consensus correctness independent of fee collection
+            }
+
             // Process any DAO proposals that may have expired
             if let Err(e) = self.dao_engine.process_expired_proposals().await {
                 tracing::warn!("Error processing DAO proposals: {}", e);
@@ -517,6 +530,79 @@ impl ConsensusEngine {
         }
 
         Ok(())
+    }
+
+    /// Collect and distribute fees from block metadata (Week 7 integration)
+    ///
+    /// Called after block finalization to trigger fee collection.
+    /// Uses BlockMetadata to track fees without requiring transaction execution.
+    /// Mirrors reward distribution pattern (lines 502-505).
+    ///
+    /// **Invariant CE-ENG-4**: Consensus correctness does NOT depend on fee collection
+    /// success. Fee collection is a side-effect of block finalization, not a prerequisite.
+    fn collect_and_distribute_fees(&self, metadata: &BlockMetadata) -> ConsensusResult<()> {
+        // Log fee collection attempt
+        tracing::info!(
+            " Collecting fees from block height {} (total_fees: {})",
+            metadata.height,
+            metadata.total_fees_collected
+        );
+
+        // If FeeRouter is set, notify it about fees
+        // Week 7: Stub implementation using generic dyn Any
+        // Production: Will call FeeRouter::collect_fee() and distribute()
+        if let Some(ref _fee_router_arc) = self.fee_router {
+            // TODO: Week 8 - Actually call FeeRouter methods when integration is ready
+            // For now, just log the intent
+            if metadata.total_fees_collected > 0 {
+                tracing::debug!(
+                    " Fee collection registered for height {} (amount: {})",
+                    metadata.height,
+                    metadata.total_fees_collected
+                );
+                // TODO: Call fee_router.collect_fee(metadata.total_fees_collected)
+                // TODO: Call fee_router.distribute(height, governance, tx_hash)
+            }
+        } else {
+            tracing::debug!(
+                " No FeeRouter configured - skipping fee collection for block {}",
+                metadata.height
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Extract block metadata from a consensus proposal
+    ///
+    /// Creates BlockMetadata structure for fee tracking.
+    /// Week 7: Uses simulated fees (production will extract from actual transactions)
+    fn extract_block_metadata(&self, proposal: &ConsensusProposal) -> BlockMetadata {
+        let simulated_fees = self.simulate_block_fees(proposal.height);
+
+        BlockMetadata {
+            height: proposal.height,
+            timestamp: chrono::Utc::now().timestamp(),
+            transaction_count: 0, // Week 7: Stub (will be actual tx count in Week 8)
+            total_fees_collected: simulated_fees,
+            proposer: proposal.proposer.clone(),
+        }
+    }
+
+    /// Simulate block fees for Week 7 testing
+    ///
+    /// Production implementation will extract fees from actual transactions.
+    /// This stub provides deterministic simulated fees for testing fee collection.
+    fn simulate_block_fees(&self, height: u64) -> u64 {
+        // Simulate realistic fee distribution:
+        // - Every 10th block: 10,000 tokens (large block)
+        // - Blocks 1-7: 1,000 tokens each (normal blocks)
+        // - Blocks 8-9: 100 tokens each (small blocks)
+        match height % 10 {
+            0 => 10_000,  // Large block
+            1..=7 => 1_000,   // Normal blocks
+            _ => 100,     // Small blocks
+        }
     }
 
     /// Validate committed block before applying

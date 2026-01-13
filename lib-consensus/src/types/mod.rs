@@ -343,6 +343,48 @@ pub enum ConsensusEvent {
     },
 }
 
+/// Block metadata for fee tracking and statistics
+///
+/// Tracks fees and other metadata for each finalized block.
+/// Used for fee collection integration with consensus layer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockMetadata {
+    /// Block height
+    pub height: u64,
+    /// Block timestamp (Unix seconds)
+    pub timestamp: i64,
+    /// Number of transactions in block
+    pub transaction_count: u32,
+    /// Total fees collected in this block
+    pub total_fees_collected: u64,
+    /// Block proposer
+    pub proposer: IdentityId,
+}
+
+impl BlockMetadata {
+    /// Create new block metadata
+    pub fn new(height: u64, proposer: IdentityId) -> Self {
+        Self {
+            height,
+            timestamp: chrono::Utc::now().timestamp(),
+            transaction_count: 0,
+            total_fees_collected: 0,
+            proposer,
+        }
+    }
+
+    /// Create block metadata with all fields
+    pub fn with_fees(height: u64, proposer: IdentityId, total_fees: u64) -> Self {
+        Self {
+            height,
+            timestamp: chrono::Utc::now().timestamp(),
+            transaction_count: 0,
+            total_fees_collected: total_fees,
+            proposer,
+        }
+    }
+}
+
 /// Canonical validator message for network broadcast
 ///
 /// Invariant CE-ENG-2: ConsensusEngine broadcasts only signed, canonical ValidatorMessages.
