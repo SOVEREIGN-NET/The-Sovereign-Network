@@ -20,6 +20,14 @@
 //! | `dao.food.dao.sov` | GovernanceResolution from `food.dao.sov` |
 //! | `dao.sub.shoes.sov` | Controlled by `sub.shoes.sov`, not `shoes.sov` |
 //!
+//! # Special Reservations
+//!
+//! - `dao.sov` is reserved for meta-governance purposes and represents the root
+//!   governance layer of the Sovereign Network itself.
+//! - Any attempt to resolve `dao.dao.sov` is explicitly invalid because it would
+//!   create a circular reference (dao.sov cannot govern itself through the dao prefix).
+//! - This reservation ensures the integrity of the root governance structure.
+//!
 //! # Transfer Semantics
 //!
 //! When domain `X` is transferred:
@@ -122,8 +130,7 @@ impl DaoPrefixRouter {
         if Self::is_dao_prefixed(name) {
             return Err(DaoPrefixRegistrationError {
                 attempted: name.to_string(),
-                reason: "dao.* names are virtual and cannot be registered. \
-                         Governance is accessed via resolution, not registration.",
+                reason: "dao.* names are virtual and cannot be registered. Governance is accessed via resolution, not registration.",
             });
         }
         Ok(())
