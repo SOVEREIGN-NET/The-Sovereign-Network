@@ -1,11 +1,10 @@
 //! Root registry tests for phase-1 invariants.
 
 use super::core::RootRegistry;
-use super::types::{NameStatus, ZoneController};
-use crate::integration::crypto_integration::PublicKey;
+use super::types::{NameStatus, ZoneController, PublicKey};
 
 fn test_public_key(id: u8) -> PublicKey {
-    PublicKey::new(vec![id; 1312])
+    [id; 32]
 }
 
 #[test]
