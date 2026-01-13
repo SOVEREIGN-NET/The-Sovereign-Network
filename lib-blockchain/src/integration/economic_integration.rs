@@ -441,6 +441,8 @@ impl EconomicTransactionProcessor {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         })
     }
 
@@ -475,6 +477,8 @@ impl EconomicTransactionProcessor {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
 
         // Create signing hash

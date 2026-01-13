@@ -145,7 +145,15 @@ impl TransactionValidator {
             TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
             }
-        }
+        
+            TransactionType::UBIClaim => {
+                // UBI claim transactions - citizen-initiated claims (Week 7)
+                // Validation will be enhanced when builder methods are implemented
+            }
+            TransactionType::ProfitDeclaration => {
+                // Profit declaration transactions - enforce 20% tribute (Week 7)
+                // Validation will be enhanced when builder methods are implemented
+            }}
 
         // Signature validation (always required)
         self.validate_signature(transaction)?;
@@ -221,7 +229,15 @@ impl TransactionValidator {
             TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
             }
-        }
+        
+            TransactionType::UBIClaim => {
+                // UBI claim transactions - citizen-initiated claims (Week 7)
+                // Validation will be enhanced when builder methods are implemented
+            }
+            TransactionType::ProfitDeclaration => {
+                // Profit declaration transactions - enforce 20% tribute (Week 7)
+                // Validation will be enhanced when builder methods are implemented
+            }}
 
         // Signature validation (always required)
         self.validate_signature(transaction)?;
@@ -807,7 +823,15 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
             }
-        }
+        
+            TransactionType::UBIClaim => {
+                // UBI claim transactions - citizen-initiated claims (Week 7)
+                // Validation will be enhanced when builder methods are implemented
+            }
+            TransactionType::ProfitDeclaration => {
+                // Profit declaration transactions - enforce 20% tribute (Week 7)
+                // Validation will be enhanced when builder methods are implemented
+            }}
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
         // This is the missing check that was allowing transactions from non-existent identities
@@ -1027,6 +1051,14 @@ pub mod utils {
                 // Difficulty update validation - requires memo with parameters
                 // Full validation happens at consensus layer
                 !transaction.memo.is_empty()
+            }
+            TransactionType::UBIClaim => {
+                // UBI claim transactions should have ubi_claim_data (Week 7)
+                transaction.ubi_claim_data.is_some()
+            }
+            TransactionType::ProfitDeclaration => {
+                // Profit declaration transactions should have profit_declaration_data (Week 7)
+                transaction.profit_declaration_data.is_some()
             }
         }
     }
