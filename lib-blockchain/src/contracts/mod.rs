@@ -48,6 +48,8 @@ pub mod economics;
 pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod web4;
+#[cfg(feature = "contracts")]
+pub mod approval_verifier;
 
 // Re-export core types and functionality when contracts feature is enabled
 #[cfg(feature = "contracts")]
