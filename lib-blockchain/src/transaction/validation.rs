@@ -906,7 +906,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         
             TransactionType::UBIClaim |
             TransactionType::ProfitDeclaration => {
-                // Week 7/8 transaction types - validate with helper method on self (StatefulTransactionValidator)
+                // Week 7/8 transaction types - validate with helper method
                 self.validate_week7_transaction_types(transaction)?;
             }}
 

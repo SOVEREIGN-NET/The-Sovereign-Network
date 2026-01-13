@@ -756,6 +756,9 @@ fn test_performance_02_fee_distribution_throughput() {
     
     // Simulate fee distribution calculations
     let ubi_share = (total_fees * 45) / 100;  // 45%
+    
+    // Safety check for division by zero (defensive programming)
+    assert!(num_citizens > 0, "Number of citizens must be greater than zero");
     let per_citizen = ubi_share / num_citizens as u64;
     
     // Verify distribution calculations
@@ -911,6 +914,8 @@ fn test_performance_05_end_to_end_1m_pipeline() {
     
     // Phase 2: Distribution Calculation
     let phase2_start = Instant::now();
+    // Safety check for division by zero (defensive programming)
+    assert!(num_citizens > 0, "Number of citizens must be greater than zero");
     let per_citizen = ubi_share / num_citizens as u64;
     let phase2_duration = phase2_start.elapsed();
     println!("  Phase 2: Distribution calculation - {:?}", phase2_duration);
