@@ -287,6 +287,114 @@
 
 ---
 
+### Week 10: Complete Transaction Execution in Blocks 🔄 PLANNING
+
+**What Will Be Built:**
+
+#### Phase 1: Transaction Extraction from Blocks (PENDING)
+- Extract actual transaction hashes from consensus proposals
+- Map transaction hashes to fees from transaction pool
+- Calculate per-transaction-type fee breakdown
+- Build fee distribution by transaction type (transfer, ubi_claim, profit_declaration, etc.)
+
+**Approach:**
+- Modify ConsensusProposal to include transaction list (or reference)
+- Parse transactions from block_data in consensus engine
+- Use transaction fee field directly (not mempool estimation)
+- Update BlockMetadata with real transaction count and actual fees
+
+#### Phase 2: Transaction Validation Before Inclusion (PENDING)
+- Implement full transaction validation before adding to block
+- Check signatures for each transaction
+- Validate inputs/outputs for UTXO consistency
+- Enforce fee >= min_fee_per_byte
+- Prevent double-spending
+
+**Approach:**
+- Add validate_transaction_for_block() method
+- Integration with existing UTXO validation
+- Reject invalid transactions from mempool
+- Keep rejected txs in separate error tracking
+
+#### Phase 3: Block Construction with Real Transactions (PENDING)
+- Build blocks with actual selected transactions
+- Execute transaction effects (state changes)
+- Track execution results per transaction
+- Handle partial block failures gracefully
+
+**Approach:**
+- Update block proposal construction
+- Replace mempool stats with actual tx hashes
+- Maintain execution context for each transaction
+- Store execution results in block metadata
+
+#### Phase 4: Integration Testing at Scale (PENDING)
+- Test 1K transactions per block
+- Validate fee extraction accuracy across transaction types
+- Benchmark block construction time
+- Test mempool eviction under high throughput
+- Verify fee distribution calculations
+
+**Test Coverage:**
+- 1K transaction block construction (1 test)
+- Per-type fee extraction validation (5 tests)
+- Transaction execution under load (3 tests)
+- Fee accuracy across different transaction mixes (3 tests)
+- Performance benchmarks (2 tests)
+- Total: 14 new tests
+
+#### Phase 5: Fee Distribution Pipeline (PENDING)
+- Integrate with FeeRouter for actual distribution
+- Split fees: 45% UBI, 30% DAOs, 15% Emergency, 10% Dev
+- Track fees per component
+- Validate totals match block fees
+
+**Approach:**
+- Call fee_router.collect_fee(total_fees)
+- Call fee_router.distribute(height, governance, tx_hash)
+- Log distribution breakdown
+- Validate mathematical precision (no rounding errors)
+
+### Week 10 Deliverables
+
+**Core Components:**
+- Real transaction extraction from blocks
+- Per-transaction-type fee breakdown
+- Full transaction validation pipeline
+- Block construction with execution tracking
+
+**Testing Suite:**
+- 14 integration tests (1K transactions, per-type validation, performance)
+- Scale validation: 1K tx/block
+- Fee distribution accuracy tests
+- Performance benchmarks (block construction time)
+
+**Documentation:**
+- Week 10 completion documented
+- Transaction flow end-to-end
+- Fee distribution pipeline verified
+- Ready for Week 11 testnet deployment
+
+### Week 10 Prerequisites (From Week 9)
+
+✅ Mempool with priority-based selection
+✅ TransactionExecutor for block preparation
+✅ ConsensusEngine integrated with TransactionExecutor
+✅ Fee extraction from mempool (ready to upgrade to actual txs)
+✅ 15 integration tests passing
+
+### Week 10 Success Criteria
+
+- [ ] Extract real transaction hashes from consensus blocks
+- [ ] Validate 1K transactions per block without performance degradation
+- [ ] Fee extraction accuracy within 0.001% (floating point precision)
+- [ ] All prior tests still passing (254+ total)
+- [ ] 14 new Week 10 tests passing (268+ total)
+- [ ] Performance: Block construction < 500ms for 1K txs
+- [ ] Ready for testnet deployment (Week 11)
+
+---
+
 ## WHAT'S COMPLETE (VERIFIED)
 
 | Component | Status | Tests | Files | PR |
