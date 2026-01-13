@@ -107,20 +107,26 @@ impl TransactionExecutor {
         // Calculate total fees and size for selected transactions
         let mut total_fees = 0u64;
         let mut total_size = 0usize;
+        let mut limit_index = selected.len();
 
-        for tx_hash in &selected {
+        for (idx, tx_hash) in selected.iter().enumerate() {
             if let Some(tx) = self.mempool.get_transaction(tx_hash) {
-                total_fees = total_fees.saturating_add(tx.fee);
-                total_size = total_size.saturating_add(tx.size as usize);
+                let projected_size = total_size.saturating_add(tx.size as usize);
 
-                // Stop if block would exceed size limit
-                if total_size as u64 > self.max_block_size_bytes {
+                // Stop before including a transaction that would exceed the size limit
+                if projected_size as u64 > self.max_block_size_bytes {
+                    limit_index = idx;
                     break;
                 }
+
+                total_fees = total_fees.saturating_add(tx.fee);
+                total_size = projected_size;
             }
         }
 
-        (selected, total_fees, total_size)
+        let final_selected = selected[..limit_index].to_vec();
+
+        (final_selected, total_fees, total_size)
     }
 
     /// Execute transactions and collect fees
@@ -183,10 +189,11 @@ impl TransactionExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::Hash;
 
     #[test]
     fn test_block_execution_context() {
-        let proposer = IdentityId::from([1u8; 32]);
+        let proposer = IdentityId::from(Hash([1u8; 32]));
         let mut ctx = BlockExecutionContext::new(100, proposer);
 
         ctx.include_transaction([1u8; 32], 1000, "transfer");
