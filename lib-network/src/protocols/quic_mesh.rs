@@ -69,6 +69,8 @@ use crate::messaging::message_handler::MeshMessageHandler;
 
 // Import TLS pin cache for certificate pinning (Issue #739)
 use crate::discovery::global_pin_cache;
+// Import PinnedCertVerifier for production-safe TLS verification
+use crate::discovery::{PinnedCertVerifier, PinnedVerifierConfig, init_global_verifier, global_verifier};
 
 /// Default path for TLS certificate
 pub const DEFAULT_TLS_CERT_PATH: &str = "./data/tls/server.crt";
@@ -79,7 +81,14 @@ pub const DEFAULT_TLS_KEY_PATH: &str = "./data/tls/server.key";
 #[derive(Clone, Debug)]
 pub enum QuicTrustMode {
     /// Strict TLS verification using native root certificates.
+    /// Use only for connections to public internet servers with CA-signed certs.
     Strict,
+    /// Production-safe pinned certificate verification (RECOMMENDED for mesh networks).
+    /// Uses PinnedCertVerifier with three deterministic paths:
+    /// 1. Bootstrap peers: TOFU (Trust On First Use), then pin
+    /// 2. Known peers: Require pin match
+    /// 3. Unknown peers: Reject
+    Pinned,
     /// Allow TLS verification to be skipped only for explicit allowlisted peers.
     #[cfg(feature = "unsafe-bootstrap")]
     BootstrapAllowlist(Vec<SocketAddr>),
@@ -87,6 +96,13 @@ pub enum QuicTrustMode {
     /// TLS is used only for encryption, not identity verification.
     #[cfg(feature = "unsafe-bootstrap")]
     MeshTrustUhp,
+}
+
+impl Default for QuicTrustMode {
+    fn default() -> Self {
+        // Default to Pinned mode for production safety
+        QuicTrustMode::Pinned
+    }
 }
 
 /// QUIC mesh protocol with UHP authentication and PQC encryption layer
@@ -108,6 +124,10 @@ pub struct QuicMeshProtocol {
 
     /// Trust policy for TLS verification
     trust_mode: QuicTrustMode,
+
+    /// PinnedCertVerifier for production-safe TLS verification
+    /// Contains bootstrap allowlist and pin cache
+    verifier: Arc<PinnedCertVerifier>,
 
     /// Message handler for processing received messages
     pub message_handler: Option<Arc<RwLock<MeshMessageHandler>>>,
@@ -240,6 +260,9 @@ impl QuicMeshProtocol {
 
         let handshake_ctx = HandshakeContext::new(nonce_cache);
 
+        // Initialize PinnedCertVerifier with empty bootstrap list (can be set later)
+        let verifier = Arc::new(PinnedCertVerifier::new(PinnedVerifierConfig::default()));
+
         info!(
             node_id = ?identity.node_id,
             did = %identity.did,
@@ -252,7 +275,8 @@ impl QuicMeshProtocol {
             identity,
             handshake_ctx,
             local_addr: actual_addr,
-            trust_mode: QuicTrustMode::Strict,
+            trust_mode: QuicTrustMode::Pinned, // Default to Pinned mode
+            verifier,
             message_handler: None,
         })
     }
@@ -276,6 +300,27 @@ impl QuicMeshProtocol {
     pub fn set_trust_mode(&mut self, trust_mode: QuicTrustMode) {
         self.trust_mode = trust_mode;
     }
+
+    /// Configure bootstrap peers for TOFU (Trust On First Use)
+    ///
+    /// Bootstrap peers are allowed to connect without a cached pin.
+    /// Their certificate will be pinned on first contact.
+    ///
+    /// # Security
+    ///
+    /// Only configure trusted bootstrap peers here. These peers get special
+    /// TOFU treatment - their self-signed certificates will be accepted on
+    /// first contact and then pinned for future connections.
+    pub fn set_bootstrap_peers(&mut self, peers: Vec<SocketAddr>) {
+        let config = PinnedVerifierConfig::with_bootstrap(peers.clone());
+        self.verifier = Arc::new(PinnedCertVerifier::new(config));
+        info!("Configured {} bootstrap peers for TOFU", peers.len());
+    }
+
+    /// Get a reference to the certificate verifier
+    pub fn verifier(&self) -> Arc<PinnedCertVerifier> {
+        Arc::clone(&self.verifier)
+    }
     
     /// Get the QUIC endpoint for accepting connections
     pub fn get_endpoint(&self) -> Arc<Endpoint> {
@@ -296,8 +341,8 @@ impl QuicMeshProtocol {
     pub async fn connect_to_peer(&self, peer_addr: SocketAddr) -> Result<()> {
         info!("🔐 Connecting to peer at {} via QUIC+UHP+Kyber", peer_addr);
 
-        // Configure client
-        let client_config = Self::configure_client(&self.trust_mode, peer_addr)?;
+        // Configure client with PinnedCertVerifier
+        let client_config = Self::configure_client(&self.trust_mode, peer_addr, &self.verifier)?;
 
         // Connect via QUIC
         let connection = self.endpoint
@@ -407,8 +452,8 @@ impl QuicMeshProtocol {
         let mode_str = if is_edge_node { "edge node - headers+proofs only" } else { "full node - complete blockchain" };
         info!("🔐 Connecting to bootstrap peer at {} (mode: {})", peer_addr, mode_str);
 
-        // Configure client
-        let client_config = Self::configure_client(&self.trust_mode, peer_addr)?;
+        // Configure client with PinnedCertVerifier
+        let client_config = Self::configure_client(&self.trust_mode, peer_addr, &self.verifier)?;
 
         // Connect via QUIC
         let connection = self.endpoint
@@ -953,10 +998,20 @@ impl QuicMeshProtocol {
         Ok(server_config)
     }
     
-    /// Configure QUIC client
-    fn configure_client(trust_mode: &QuicTrustMode, peer_addr: SocketAddr) -> Result<ClientConfig> {
+    /// Configure QUIC client with PinnedCertVerifier support
+    fn configure_client(
+        trust_mode: &QuicTrustMode,
+        peer_addr: SocketAddr,
+        verifier: &Arc<PinnedCertVerifier>,
+    ) -> Result<ClientConfig> {
         let mut crypto = match trust_mode {
             QuicTrustMode::Strict => Self::build_strict_client_config()?,
+            QuicTrustMode::Pinned => {
+                // Set the current peer address for the verifier before connecting
+                // This allows the verifier to check if it's a bootstrap peer
+                verifier.set_current_peer(peer_addr);
+                Self::build_pinned_client_config(Arc::clone(verifier))?
+            }
             #[cfg(feature = "unsafe-bootstrap")]
             QuicTrustMode::BootstrapAllowlist(allowlist) => {
                 if !allowlist.contains(&peer_addr) {
@@ -992,6 +1047,14 @@ impl QuicMeshProtocol {
         client_config.transport_config(Arc::new(transport_config));
 
         Ok(client_config)
+    }
+
+    /// Build client config with PinnedCertVerifier for production-safe mesh networking
+    fn build_pinned_client_config(verifier: Arc<PinnedCertVerifier>) -> Result<rustls::ClientConfig> {
+        Ok(rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
+            .with_no_client_auth())
     }
 
     fn build_strict_client_config() -> Result<rustls::ClientConfig> {

@@ -529,13 +529,40 @@ impl ZhtpUnifiedServer {
             }
         };
 
-        // Set trust mode to allow mesh peers without CA certificates
-        // TLS is just for encryption - UHP handles actual identity verification
+        // Configure bootstrap peers for TOFU (Trust On First Use)
+        // This enables connections to bootstrap peers with self-signed certificates
+        // After first contact, their certificates are pinned for future connections
+        if let Some(bootstrap_peers) = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers().await {
+            let peer_addrs: Vec<std::net::SocketAddr> = bootstrap_peers
+                .iter()
+                .filter_map(|s| {
+                    // Parse with default QUIC port if not specified
+                    let addr_str = if s.contains(':') {
+                        // Replace port with QUIC port (9334)
+                        if let Some(host) = s.split(':').next() {
+                            format!("{}:9334", host)
+                        } else {
+                            s.clone()
+                        }
+                    } else {
+                        format!("{}:9334", s)
+                    };
+                    addr_str.parse().ok()
+                })
+                .collect();
+
+            if !peer_addrs.is_empty() {
+                quic_mesh.set_bootstrap_peers(peer_addrs.clone());
+                info!(" [QUIC] Configured {} bootstrap peer(s) for TOFU: {:?}", peer_addrs.len(), peer_addrs);
+            }
+        }
+
+        // Legacy unsafe-bootstrap mode (deprecated - use PinnedCertVerifier instead)
         #[cfg(feature = "unsafe-bootstrap")]
         {
             use lib_network::protocols::quic_mesh::QuicTrustMode;
             quic_mesh.set_trust_mode(QuicTrustMode::MeshTrustUhp);
-            info!(" [QUIC] Mesh trust mode enabled (TLS verification skipped, UHP handles auth)");
+            warn!(" [QUIC] ⚠️  unsafe-bootstrap mode enabled (deprecated - use bootstrap_peers for TOFU)");
         }
 
         // Create MeshMessageHandler for routing blockchain sync messages
