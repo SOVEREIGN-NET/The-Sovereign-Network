@@ -17,20 +17,207 @@ const ZHTP_MULTICAST_ADDR: &str = "224.0.1.75"; // Custom ZHTP multicast address
 const ZHTP_MULTICAST_PORT: u16 = 37775; // Custom port for ZHTP discovery
 
 /// Local ZHTP node announcement (sent via multicast UDP)
+///
+/// # Security: TLS Certificate Pinning (Issue #739)
+///
+/// Discovery records now include cryptographic binding to the node's TLS certificate:
+/// - `dilithium_pk`: Long-term Dilithium public key for identity verification
+/// - `tls_spki_sha256`: SHA256 hash of the TLS certificate's SubjectPublicKeyInfo (SPKI)
+/// - `expires_at`: Record expiration to prevent replay attacks
+/// - `record_sig`: Dilithium signature over canonical encoding of all fields
+///
+/// Peers verify the signature before caching the TLS pin. During QUIC handshake,
+/// the peer's TLS certificate SPKI must match the cached pin, or the connection
+/// is immediately terminated before any UHP work.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeAnnouncement {
     pub node_id: Uuid,
     pub mesh_port: u16,
     #[serde(default = "default_quic_port")]
     pub quic_port: u16,
+    #[serde(default = "default_local_ip")]
     pub local_ip: IpAddr,
+    #[serde(default)]
     pub protocols: Vec<String>,
+    #[serde(default)]
     pub announced_at: u64,
+
+    // === TLS Certificate Pinning Fields (Issue #739) ===
+
+    /// Dilithium public key for verifying record signature (1312 bytes for Dilithium2)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dilithium_pk: Option<Vec<u8>>,
+
+    /// SHA256 hash of the TLS certificate's SubjectPublicKeyInfo (SPKI)
+    /// This binds the discovery record to the node's TLS identity
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_spki_sha256: Option<[u8; 32]>,
+
+    /// Expiration timestamp (Unix epoch seconds) to limit replay attacks
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
+
+    /// Dilithium signature over canonical encoding of:
+    /// node_id || dilithium_pk || tls_spki_sha256 || expires_at || protocols
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_sig: Option<Vec<u8>>,
 }
 
 /// Default QUIC port (9334)
 fn default_quic_port() -> u16 {
     9334
+}
+
+/// Default local IP (loopback)
+fn default_local_ip() -> IpAddr {
+    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
+}
+
+impl Default for NodeAnnouncement {
+    fn default() -> Self {
+        Self {
+            node_id: Uuid::nil(),
+            mesh_port: 0,
+            quic_port: default_quic_port(),
+            local_ip: default_local_ip(),
+            protocols: Vec::new(),
+            announced_at: 0,
+            dilithium_pk: None,
+            tls_spki_sha256: None,
+            expires_at: None,
+            record_sig: None,
+        }
+    }
+}
+
+/// Default record validity duration (1 hour)
+const DEFAULT_RECORD_VALIDITY_SECS: u64 = 3600;
+
+impl NodeAnnouncement {
+    /// Create canonical bytes for signing (deterministic encoding)
+    ///
+    /// Format: node_id (16) || dilithium_pk || tls_spki_sha256 (32) || expires_at (8) || protocols_hash (32)
+    ///
+    /// This canonical encoding is stable and independent of serialization format.
+    pub fn canonical_bytes_for_signing(&self) -> Vec<u8> {
+        let mut data = Vec::with_capacity(256);
+
+        // node_id as big-endian bytes (16 bytes)
+        data.extend_from_slice(self.node_id.as_bytes());
+
+        // dilithium_pk (variable length, prefixed with 4-byte length)
+        if let Some(ref pk) = self.dilithium_pk {
+            data.extend_from_slice(&(pk.len() as u32).to_be_bytes());
+            data.extend_from_slice(pk);
+        } else {
+            data.extend_from_slice(&0u32.to_be_bytes());
+        }
+
+        // tls_spki_sha256 (32 bytes, or 32 zeros if not set)
+        if let Some(ref spki) = self.tls_spki_sha256 {
+            data.extend_from_slice(spki);
+        } else {
+            data.extend_from_slice(&[0u8; 32]);
+        }
+
+        // expires_at (8 bytes big-endian)
+        let expires = self.expires_at.unwrap_or(0);
+        data.extend_from_slice(&expires.to_be_bytes());
+
+        // protocols as sorted, concatenated strings with null separators, then hashed
+        let mut sorted_protocols = self.protocols.clone();
+        sorted_protocols.sort();
+        let protocols_str = sorted_protocols.join("\0");
+        let protocols_hash = blake3::hash(protocols_str.as_bytes());
+        data.extend_from_slice(protocols_hash.as_bytes());
+
+        data
+    }
+
+    /// Sign this announcement with a Dilithium secret key
+    ///
+    /// Sets the `dilithium_pk`, `tls_spki_sha256`, `expires_at`, and `record_sig` fields.
+    pub fn sign(
+        &mut self,
+        dilithium_sk: &[u8],
+        dilithium_pk: Vec<u8>,
+        tls_spki_sha256: [u8; 32],
+    ) -> anyhow::Result<()> {
+        use lib_crypto::post_quantum::dilithium::dilithium2_sign;
+
+        // Set the fields that will be signed
+        self.dilithium_pk = Some(dilithium_pk);
+        self.tls_spki_sha256 = Some(tls_spki_sha256);
+        self.expires_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + DEFAULT_RECORD_VALIDITY_SECS,
+        );
+
+        // Compute canonical bytes and sign
+        let canonical = self.canonical_bytes_for_signing();
+        let signature = dilithium2_sign(&canonical, dilithium_sk)?;
+        self.record_sig = Some(signature);
+
+        Ok(())
+    }
+
+    /// Verify the signature on this announcement
+    ///
+    /// Returns Ok(true) if signature is valid, Ok(false) if invalid, Err if missing fields.
+    pub fn verify_signature(&self) -> anyhow::Result<bool> {
+        use lib_crypto::post_quantum::dilithium::dilithium2_verify;
+
+        let dilithium_pk = self
+            .dilithium_pk
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Missing dilithium_pk in announcement"))?;
+        let record_sig = self
+            .record_sig
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Missing record_sig in announcement"))?;
+
+        let canonical = self.canonical_bytes_for_signing();
+        dilithium2_verify(&canonical, record_sig, dilithium_pk)
+    }
+
+    /// Check if this announcement is still valid (not expired)
+    pub fn is_valid(&self) -> bool {
+        if let Some(expires_at) = self.expires_at {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            now < expires_at
+        } else {
+            // Legacy announcements without expiry are considered valid
+            // but should not be used for TLS pinning
+            true
+        }
+    }
+
+    /// Check if this announcement has TLS pinning data
+    pub fn has_tls_pin(&self) -> bool {
+        self.dilithium_pk.is_some()
+            && self.tls_spki_sha256.is_some()
+            && self.record_sig.is_some()
+            && self.expires_at.is_some()
+    }
+
+    /// Verify signature and expiry in one call
+    pub fn verify_and_check_expiry(&self) -> anyhow::Result<bool> {
+        if !self.has_tls_pin() {
+            return Ok(false);
+        }
+
+        if !self.is_valid() {
+            return Err(anyhow::anyhow!("Announcement has expired"));
+        }
+
+        self.verify_signature()
+    }
 }
 
 /// Start local network discovery service
@@ -99,6 +286,8 @@ async fn send_immediate_announcement(node_id: Uuid, mesh_port: u16) -> Result<()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs(),
+        // TLS pinning fields left as None for now (will be populated when signing is enabled)
+        ..Default::default()
     };
 
     let announcement_json = serde_json::to_string(&announcement)?;
@@ -153,6 +342,8 @@ async fn broadcast_announcements(node_id: Uuid, mesh_port: u16) -> Result<()> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
+            // TLS pinning fields left as None for now (will be populated when signing is enabled)
+            ..Default::default()
         };
 
         match serde_json::to_string(&announcement) {

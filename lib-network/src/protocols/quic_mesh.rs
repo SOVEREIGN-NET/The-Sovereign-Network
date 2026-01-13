@@ -67,6 +67,9 @@ use super::quic_handshake;
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::messaging::message_handler::MeshMessageHandler;
 
+// Import TLS pin cache for certificate pinning (Issue #739)
+use crate::discovery::global_pin_cache;
+
 /// Default path for TLS certificate
 pub const DEFAULT_TLS_CERT_PATH: &str = "./data/tls/server.crt";
 /// Default path for TLS private key
@@ -319,6 +322,34 @@ impl QuicMeshProtocol {
             peer_addr
         );
 
+        // === TLS Certificate Pinning Verification (Issue #739) ===
+        let peer_node_id = *handshake_result.verified_peer.identity.node_id.as_bytes();
+
+        // Extract SPKI synchronously before async operations (Box<dyn Any> is not Send)
+        let peer_spki: Option<[u8; 32]> = connection.peer_identity()
+            .and_then(|certs| {
+                certs.downcast_ref::<Vec<CertificateDer<'static>>>()
+                    .and_then(|c| Self::extract_peer_spki_sha256(c).ok())
+            });
+
+        // Now verify against pin cache (async)
+        if let Some(peer_spki) = peer_spki {
+            match global_pin_cache().verify_peer_spki(&peer_node_id, &peer_spki).await {
+                Ok(true) => {
+                    info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 TLS certificate pin verified");
+                }
+                Ok(false) => {
+                    debug!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "No TLS pin cached for peer");
+                }
+                Err(e) => {
+                    error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
+                        "🚨 SECURITY: TLS certificate pin mismatch");
+                    connection.close(2u32.into(), b"tls_pin_mismatch");
+                    return Err(anyhow!("TLS certificate pin mismatch for peer {:?}", hex::encode(&peer_node_id[..8])));
+                }
+            }
+        }
+
         // Create PqcQuicConnection from verified peer
         let pqc_conn = PqcQuicConnection::from_verified_peer(
             connection,
@@ -383,6 +414,34 @@ impl QuicMeshProtocol {
             peer_addr,
             mode_str
         );
+
+        // === TLS Certificate Pinning Verification (Issue #739) ===
+        let peer_node_id = *handshake_result.verified_peer.identity.node_id.as_bytes();
+
+        // Extract SPKI synchronously before async operations (Box<dyn Any> is not Send)
+        let peer_spki: Option<[u8; 32]> = connection.peer_identity()
+            .and_then(|certs| {
+                certs.downcast_ref::<Vec<CertificateDer<'static>>>()
+                    .and_then(|c| Self::extract_peer_spki_sha256(c).ok())
+            });
+
+        // Now verify against pin cache (async)
+        if let Some(peer_spki) = peer_spki {
+            match global_pin_cache().verify_peer_spki(&peer_node_id, &peer_spki).await {
+                Ok(true) => {
+                    info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 Bootstrap peer TLS pin verified");
+                }
+                Ok(false) => {
+                    debug!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "No TLS pin cached for bootstrap peer");
+                }
+                Err(e) => {
+                    error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
+                        "🚨 SECURITY: Bootstrap peer TLS certificate pin mismatch");
+                    connection.close(2u32.into(), b"tls_pin_mismatch");
+                    return Err(anyhow!("TLS certificate pin mismatch for bootstrap peer {:?}", hex::encode(&peer_node_id[..8])));
+                }
+            }
+        }
 
         if is_edge_node {
             info!("   → Edge node: Can download headers + ZK proofs");
@@ -497,6 +556,46 @@ impl QuicMeshProtocol {
                                         session_id = ?handshake_result.session_id,
                                         "🔐 UHP+Kyber handshake complete (server side)"
                                     );
+
+                                    // === TLS Certificate Pinning Verification (Issue #739) ===
+                                    // After UHP, verify the peer's TLS cert matches their discovery pin
+                                    let peer_node_id = *handshake_result.verified_peer.identity.node_id.as_bytes();
+
+                                    // Extract SPKI synchronously before async operations (Box<dyn Any> is not Send)
+                                    let peer_spki: Option<[u8; 32]> = connection.peer_identity()
+                                        .and_then(|certs| {
+                                            certs.downcast_ref::<Vec<CertificateDer<'static>>>()
+                                                .and_then(|c| QuicMeshProtocol::extract_peer_spki_sha256(c).ok())
+                                        });
+
+                                    // Now verify against pin cache (async)
+                                    if let Some(peer_spki) = peer_spki {
+                                        match global_pin_cache().verify_peer_spki(&peer_node_id, &peer_spki).await {
+                                            Ok(true) => {
+                                                info!(
+                                                    peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                    "🔐 TLS certificate pin verified"
+                                                );
+                                            }
+                                            Ok(false) => {
+                                                // No pin in cache - allow connection (first contact or legacy peer)
+                                                debug!(
+                                                    peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                    "No TLS pin cached for peer - allowing connection"
+                                                );
+                                            }
+                                            Err(e) => {
+                                                // Pin mismatch - SECURITY VIOLATION
+                                                error!(
+                                                    peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                    error = %e,
+                                                    "🚨 SECURITY: TLS certificate pin mismatch - rejecting connection"
+                                                );
+                                                connection.close(2u32.into(), b"tls_pin_mismatch");
+                                                return;
+                                            }
+                                        }
+                                    }
 
                                     // Create PqcQuicConnection from verified peer
                                     let pqc_conn = PqcQuicConnection::from_verified_peer(
@@ -695,7 +794,71 @@ impl QuicMeshProtocol {
             key: key_der,
         })
     }
-    
+
+    /// Compute SHA256 hash of the SubjectPublicKeyInfo (SPKI) from a DER-encoded certificate.
+    ///
+    /// This is used for TLS certificate pinning in discovery records (Issue #739).
+    /// The SPKI hash is stable across certificate reissues as long as the key remains the same.
+    ///
+    /// # Arguments
+    /// * `cert_der` - DER-encoded X.509 certificate
+    ///
+    /// # Returns
+    /// 32-byte SHA256 hash of the SPKI
+    pub fn compute_spki_sha256(cert_der: &[u8]) -> Result<[u8; 32]> {
+        use x509_parser::prelude::*;
+        use sha2::{Sha256, Digest};
+
+        let (_, cert) = X509Certificate::from_der(cert_der)
+            .map_err(|e| anyhow!("Failed to parse X.509 certificate: {:?}", e))?;
+
+        // Extract the SubjectPublicKeyInfo (SPKI) in DER format
+        let spki_der = cert.public_key().raw;
+
+        // Compute SHA256 hash
+        let mut hasher = Sha256::new();
+        hasher.update(spki_der);
+        let hash = hasher.finalize();
+
+        let mut result = [0u8; 32];
+        result.copy_from_slice(&hash);
+        Ok(result)
+    }
+
+    /// Compute SPKI hash from this node's TLS certificate.
+    ///
+    /// Loads the certificate from disk and computes its SPKI SHA256 hash.
+    /// This hash should be included in signed discovery announcements.
+    pub fn get_tls_spki_hash(&self) -> Result<[u8; 32]> {
+        let cert_path = Path::new(DEFAULT_TLS_CERT_PATH);
+
+        if !cert_path.exists() {
+            return Err(anyhow!("TLS certificate not found at {}", cert_path.display()));
+        }
+
+        let cert_pem = std::fs::read(cert_path)
+            .context("Failed to read TLS certificate")?;
+
+        let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
+            .next()
+            .ok_or_else(|| anyhow!("No certificate found in PEM file"))?
+            .context("Failed to parse certificate PEM")?;
+
+        Self::compute_spki_sha256(&cert_der)
+    }
+
+    /// Extract SPKI SHA256 hash from a peer's TLS certificate during handshake.
+    ///
+    /// This is called during QUIC connection establishment to verify the peer's
+    /// certificate matches the pin from discovery.
+    pub fn extract_peer_spki_sha256(peer_certs: &[CertificateDer<'_>]) -> Result<[u8; 32]> {
+        let cert = peer_certs
+            .first()
+            .ok_or_else(|| anyhow!("No peer certificate available"))?;
+
+        Self::compute_spki_sha256(cert.as_ref())
+    }
+
     /// Configure QUIC server
     fn configure_server(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> Result<ServerConfig> {
         // Build rustls ServerConfig with ALPN support

@@ -7,6 +7,7 @@ pub mod geo_location;
 pub mod local_network;
 pub mod smart_routing;
 pub mod unified;
+pub mod pin_cache;
 
 pub use lorawan::*;
 pub use satellite::*;
@@ -15,6 +16,7 @@ pub use hardware::*;
 pub use lorawan_hardware::*;
 pub use geo_location::GeographicLocation;
 pub use local_network::*;
+pub use pin_cache::{TlsPinCache, PinCacheEntry, global_pin_cache};
 
 // Export unified discovery as the primary interface
 pub use unified::{
