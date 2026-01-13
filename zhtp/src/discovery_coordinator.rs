@@ -670,27 +670,16 @@ impl DiscoveryCoordinator {
                     }
                 }
 
-                // Verify peer is reachable
-                if let Ok(socket_addr) = peer.as_str().parse::<std::net::SocketAddr>() {
-                    // Quick TCP check on port 9333
-                    match tokio::time::timeout(
-                        Duration::from_secs(2),
-                        tokio::net::TcpStream::connect(socket_addr)
-                    ).await {
-                        Ok(Ok(_)) => {
-                            debug!("      ✓ Bootstrap peer {} is reachable", peer_hash);
-                            discovered_peers.push(peer.clone());
-                        }
-                        Ok(Err(_e)) => {
-                            debug!("      ✗ Bootstrap peer {} unreachable (connection failed)", peer_hash);
-                        }
-                        Err(_) => {
-                            debug!("      ✗ Bootstrap peer {} timeout", peer_hash);
-                        }
-                    }
+                // Trust configured bootstrap peers - QUIC connection will validate reachability
+                // No TCP check needed since we use UDP/QUIC only
+                if peer.parse::<std::net::SocketAddr>().is_ok() {
+                    debug!("      ✓ Adding bootstrap peer {} (will verify via QUIC)", peer_hash);
+                    discovered_peers.push(peer.clone());
+                } else {
+                    warn!("      ✗ Invalid bootstrap peer address format: {}", peer_hash);
                 }
             }
-            info!("      Found {} peer(s) via bootstrap config", discovered_peers.len());
+            info!("      Using {} configured bootstrap peer(s)", discovered_peers.len());
         }
         
         // Method 1: Peer discovery via lib-network
@@ -732,95 +721,35 @@ impl DiscoveryCoordinator {
     }
     
     
-    /// Scan local subnet for ZHTP nodes (COMPLETE WITH PARALLEL SCANNING)
+    /// Scan local subnet for ZHTP nodes via UDP multicast
+    /// NOTE: We don't use TCP for discovery - ZHTP uses UDP multicast for local discovery
+    /// and QUIC for mesh communication. Subnet scanning is handled by lib-network's
+    /// UDP multicast announcements.
     async fn scan_local_subnet(&self) -> Result<Vec<String>> {
-        use tokio::net::TcpStream;
-        use futures::stream::{self, StreamExt};
-        use std::net::IpAddr;
-
-        let local_ip = get_local_ip().await?;
-
-        // Only scan IPv4 subnets - IPv6 requires different discovery approach
-        let base_ip = match local_ip {
-            IpAddr::V4(v4) => {
-                let octets = v4.octets();
-                format!("{}.{}.{}", octets[0], octets[1], octets[2])
-            },
-            IpAddr::V6(_) => {
-                info!("      IPv6 local address detected, skipping subnet scan (use mDNS/DHT instead)");
-                return Ok(Vec::new());
-            }
-        };
-
-        info!("      Scanning subnet: {}.0/24", base_ip);
-        let ports = vec![9333, 33444];
-        
-        // Parallel scan with concurrency limit
-        let scan_results = stream::iter(1..255)
-            .map(|i| {
-                let base_ip = base_ip.clone();
-                let ports = ports.clone();
-                async move {
-                    for port in &ports {
-                        let addr = format!("{}.{}:{}", base_ip, i, port);
-                        if let Ok(Ok(_)) = tokio::time::timeout(
-                            Duration::from_millis(50),
-                            TcpStream::connect(&addr)
-                        ).await {
-                            return Some(addr);
-                        }
-                    }
-                    None
-                }
-            })
-            .buffer_unordered(50)
-            .filter_map(|result| async move { result })
-            .collect::<Vec<_>>().await;
-        
-        Ok(scan_results)
+        // UDP multicast discovery is handled by lib-network
+        // This method is a fallback that relies on peers discovered via multicast
+        // Don't use TCP scanning - it's not part of the ZHTP protocol
+        debug!("      Subnet scan delegated to UDP multicast discovery");
+        Ok(Vec::new())
     }
     
 
     
-    /// Fetch blockchain info from discovered peers (COMPLETE HTTP API QUERY)
+    /// Get blockchain info for discovered peers
+    /// NOTE: Actual blockchain sync happens via QUIC mesh protocol, not HTTP
+    /// This just returns basic info indicating peers were found
     async fn fetch_blockchain_info(&self, peers: &[String]) -> Result<BlockchainInfo> {
-        let mut height = 0u64;
-        
-        for peer in peers {
-            // Try to query HTTP API
-            let http_url = if peer.contains("://") {
-                format!("http://{}/api/v1/blockchain/info", 
-                    peer.strip_prefix("zhtp://").or(peer.strip_prefix("http://")).unwrap_or(peer))
-            } else {
-                format!("http://{}/api/v1/blockchain/info", peer)
-            };
-            
-            match tokio::time::timeout(
-                Duration::from_secs(2),
-                reqwest::get(&http_url)
-            ).await {
-                Ok(Ok(response)) => {
-                    if let Ok(json) = response.json::<serde_json::Value>().await {
-                        if let Some(h) = json.get("height").and_then(|v| v.as_u64()) {
-                            height = h;
-                            info!("      Peer {} reports blockchain height: {}", peer, height);
-                            break;
-                        }
-                    }
-                }
-                Ok(Err(e)) => warn!("      Failed to query peer {}: {}", peer, e),
-                Err(_) => warn!("      Timeout querying peer {}", peer),
-            }
-        }
-        
+        // Don't query via HTTP - blockchain sync will happen via QUIC mesh protocol
+        // Just return info indicating we found peers to sync with
         let network_id = if peers.is_empty() {
             "zhtp-genesis".to_string()
         } else {
-            "zhtp-mainnet".to_string()
+            info!("      Will sync blockchain via QUIC mesh from {} peer(s)", peers.len());
+            "zhtp-network".to_string()
         };
-        
+
         Ok(BlockchainInfo {
-            height,
+            height: 0, // Will be populated during QUIC mesh sync
             network_id,
         })
     }

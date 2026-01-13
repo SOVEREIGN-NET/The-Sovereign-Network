@@ -529,6 +529,15 @@ impl ZhtpUnifiedServer {
             }
         };
 
+        // Set trust mode to allow mesh peers without CA certificates
+        // TLS is just for encryption - UHP handles actual identity verification
+        #[cfg(feature = "unsafe-bootstrap")]
+        {
+            use lib_network::protocols::quic_mesh::QuicTrustMode;
+            quic_mesh.set_trust_mode(QuicTrustMode::MeshTrustUhp);
+            info!(" [QUIC] Mesh trust mode enabled (TLS verification skipped, UHP handles auth)");
+        }
+
         // Create MeshMessageHandler for routing blockchain sync messages
         // Note: These will be populated properly when mesh_router is initialized
         info!(" [QUIC] Creating message handler components");

@@ -1,6 +1,6 @@
 //! Configuration Aggregation from All ZHTP Packages
-//! 
-//! Combines configurations from crypto, zk, identity, storage, network, 
+//!
+//! Combines configurations from crypto, zk, identity, storage, network,
 //! blockchain, consensus, economics, protocols packages into unified NodeConfig
 
 use anyhow::Result;
@@ -8,6 +8,31 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::collections::HashMap;
 use super::{MeshMode, SecurityLevel, Environment, ConfigError, CliArgs};
+
+/// Partial configuration for simple TOML files with just [network] section
+/// This allows users to provide minimal config files like:
+/// ```toml
+/// [network]
+/// bootstrap_peers = ["192.168.1.1:9334"]
+/// ```
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialConfig {
+    #[serde(default)]
+    pub network: Option<PartialNetworkConfig>,
+}
+
+/// Partial network configuration (matches user-friendly [network] section)
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialNetworkConfig {
+    #[serde(default)]
+    pub bootstrap_peers: Vec<String>,
+    #[serde(default)]
+    pub mesh_port: Option<u16>,
+    #[serde(default)]
+    pub max_peers: Option<usize>,
+    #[serde(default)]
+    pub network_id: Option<String>,
+}
 
 /// Complete node configuration aggregating all packages
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -634,9 +659,31 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
     // Try to load main node configuration file
     if config_path.exists() {
         let config_content = tokio::fs::read_to_string(config_path).await?;
+
+        // First try full NodeConfig parsing
         if let Ok(loaded_config) = toml::from_str::<NodeConfig>(&config_content) {
             config = loaded_config;
-            tracing::info!("Loaded main configuration file");
+            tracing::info!("Loaded main configuration file (full NodeConfig)");
+        } else if let Ok(partial) = toml::from_str::<PartialConfig>(&config_content) {
+            // Fall back to partial config parsing (for simple [network] section configs)
+            if let Some(network) = partial.network {
+                if !network.bootstrap_peers.is_empty() {
+                    tracing::info!("Loaded {} bootstrap peer(s) from config file", network.bootstrap_peers.len());
+                    config.network_config.bootstrap_peers = network.bootstrap_peers;
+                }
+                if let Some(mesh_port) = network.mesh_port {
+                    config.network_config.mesh_port = mesh_port;
+                }
+                if let Some(max_peers) = network.max_peers {
+                    config.network_config.max_peers = max_peers;
+                }
+                if let Some(network_id) = network.network_id {
+                    config.blockchain_config.network_id = network_id;
+                }
+                tracing::info!("Loaded partial configuration file ([network] section)");
+            }
+        } else {
+            tracing::warn!("Config file exists but could not be parsed - using defaults");
         }
     } else {
         tracing::info!("Using default configuration (no config file found)");

@@ -66,8 +66,20 @@ impl Component for StorageComponent {
                         info!("DHT network integration active");
                         info!("Economic incentives for storage providers enabled");
 
-                        *self.storage_system.write().await = Some(storage);
-                        info!("Storage system stored in component state");
+                        // Wrap in Arc<RwLock> for sharing
+                        let storage_arc = Arc::new(RwLock::new(storage));
+
+                        // Set as global storage provider for other components
+                        if let Err(e) = crate::runtime::storage_provider::set_global_storage(storage_arc.clone()).await {
+                            warn!("Failed to set global storage provider: {}", e);
+                        } else {
+                            info!("Global storage provider initialized for component sharing");
+                        }
+
+                        // Keep a local reference (extract from Arc for component state)
+                        // Note: We can't easily store Arc<RwLock<Storage>> in Option<Storage>
+                        // so we'll just rely on the global provider
+                        info!("Storage system available via global provider");
                     }
                     Err(e) => {
                         warn!("Failed to initialize persistent storage system: {}", e);
