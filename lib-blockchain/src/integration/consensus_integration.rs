@@ -1460,6 +1460,8 @@ impl BlockchainConsensusCoordinator {
                     dao_proposal_data: None,
                     dao_vote_data: None,
                     dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
                 };
 
                 reward_transactions.push(reward_tx);

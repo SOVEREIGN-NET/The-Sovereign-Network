@@ -471,6 +471,14 @@ pub mod utils {
             TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation will be handled during transaction validation
             }
+            TransactionType::UBIClaim => {
+                // UBI claim transactions - citizen-initiated pull-based claims (Week 7)
+                // Validation will be handled during transaction validation
+            }
+            TransactionType::ProfitDeclaration => {
+                // Profit declaration transactions - enforces 20% tribute (Week 7)
+                // Validation will be handled during transaction validation
+            }
         }
 
         Ok(())
