@@ -11,10 +11,10 @@
 //! - Native ZHTP protocol (not HTTP) designed for mesh networks
 //! - DHT client layer that uses lib-storage as the DHT implementation backend
 
-// TODO: Implement proper public key pinning for production
-// For now, allowing unsafe-bootstrap in release for mesh testing
-// #[cfg(all(not(debug_assertions), feature = "unsafe-bootstrap"))]
-// compile_error!("unsafe-bootstrap must not be enabled in release builds");
+// Issue #739: TLS certificate pinning is now implemented via discovery cache.
+// Re-enable the compile-time safety block to prevent unsafe-bootstrap in release.
+#[cfg(all(not(debug_assertions), feature = "unsafe-bootstrap"))]
+compile_error!("unsafe-bootstrap must not be enabled in release builds - use TLS certificate pinning via discovery cache (Issue #739)");
 
 // Re-exports for external use
 // Force rebuild
