@@ -48,6 +48,9 @@ use crate::monitoring::MonitoringSystem;
 // Import keystore filename constants
 use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
 
+/// Default QUIC port for mesh networking (UDP)
+const QUIC_PORT: u16 = 9334;
+
 // Import our comprehensive API handlers
 use crate::api::handlers::{
     DhtHandler,
@@ -539,11 +542,11 @@ impl ZhtpUnifiedServer {
                     // First, try to parse the address as-is (may already include a port)
                     if let Ok(mut addr) = s.parse::<std::net::SocketAddr>() {
                         // Always use the configured QUIC port
-                        addr.set_port(9334);
+                        addr.set_port(QUIC_PORT);
                         Some(addr)
                     } else {
                         // No valid port specified; append the QUIC port and parse
-                        let addr_with_port = format!("{}:9334", s);
+                        let addr_with_port = format!("{}:{}", s, QUIC_PORT);
                         addr_with_port.parse::<std::net::SocketAddr>().ok()
                     }
                 })

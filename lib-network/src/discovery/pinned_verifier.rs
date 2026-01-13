@@ -158,7 +158,7 @@ impl SyncPinStore {
 pub struct PinnedVerifierConfig {
     /// Bootstrap peer addresses that are allowed TOFU
     /// Wrapped in RwLock to allow dynamic updates without recreating the verifier
-    pub bootstrap_addrs: RwLock<HashSet<SocketAddr>>,
+    bootstrap_addrs: RwLock<HashSet<SocketAddr>>,
     /// Whether to allow connections to unknown peers (no pin, not bootstrap)
     /// Default: false (strict mode)
     pub allow_unknown_peers: bool,
@@ -211,9 +211,9 @@ impl PinnedVerifierConfig {
 
     /// Update the bootstrap addresses (replaces existing set)
     pub fn set_bootstrap_addrs(&self, addrs: Vec<SocketAddr>) {
+        let new_addrs: HashSet<SocketAddr> = addrs.into_iter().collect();
         *self.bootstrap_addrs.write()
-            .expect("Failed to acquire write lock on bootstrap_addrs") = 
-            addrs.into_iter().collect();
+            .expect("Failed to acquire write lock on bootstrap_addrs") = new_addrs;
     }
 }
 
