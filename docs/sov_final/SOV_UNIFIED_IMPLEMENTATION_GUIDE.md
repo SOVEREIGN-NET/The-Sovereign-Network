@@ -1836,7 +1836,7 @@ case "$NETWORK" in
         ;;
 esac
 
-echo "=== SOV Devnet Validation ==="
+echo "=== SOV Network Validation ==="
 echo "Network: $NETWORK"
 echo ""
 
