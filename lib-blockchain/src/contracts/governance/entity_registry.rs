@@ -186,11 +186,16 @@ impl std::fmt::Display for EntityRegistryError {
 }
 
 impl EntityRegistry {
+    /// Internal helper to create a zero/placeholder public key.
+    fn zero_public_key() -> PublicKey {
+        PublicKey::new(vec![0u8; 32])
+    }
+
     /// Create a new uninitialized EntityRegistry
     pub fn new() -> Self {
         Self {
-            cbe_treasury: PublicKey::new(vec![0u8; 32]),
-            nonprofit_treasury: PublicKey::new(vec![0u8; 32]),
+            cbe_treasury: Self::zero_public_key(),
+            nonprofit_treasury: Self::zero_public_key(),
             entity_types: HashMap::new(),
             roles: HashMap::new(),
             initialized: false,

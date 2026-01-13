@@ -1,6 +1,6 @@
 # SOV Unified Implementation Guide
 
-**Status:** Week 4 COMPLETE ✅ | Next: Week 5
+**Status:** Week 3 COMPLETE ✅ | Next: Week 4
 **Date:** January 13, 2026
 **Duration:** 12 weeks (January 20 - April 13, 2026)
 **Architecture:** Layer 0 Blockchain (Rust WASM Contracts on Native Consensus Engine)
@@ -29,19 +29,11 @@
    - Sunset contract (state machine: NORMAL→RESTRICTED→WIND_DOWN→DISSOLVED) ✓
    - 23 unit tests (all passing) ✓
    - PR #746 (created)
+   - **Total: 98 tests passing (Phase 1 milestone)**
 
-✅ Week 4: UBI Distribution Testing & Validation (COMPLETE)
-   - UBI Distribution contract validation (existing implementation) ✓
-   - Citizen registration and tracking workflows ✓
-   - Schedule configuration for Year 1/3/5 financial projections ✓
-   - Funding mechanism and authorization enforcement ✓
-   - 24 unit tests (all passing) ✓
-   - PR #747 (created)
-   - **Total: 122 tests passing (Phase 1 COMPLETE - exceeds 100+ gate)**
+🔄 Week 4-5: UBI Distribution & Integration Testing (NEXT)
 
-🔄 Week 5-6: SmartBatch & Integration Testing (NEXT)
-
-⏳ Week 7-12: Consensus Integration, Testing, Deployment (PENDING)
+⏳ Week 6-12: Full System Integration, Testing, Deployment (PENDING)
 ```
 
 ---
@@ -904,50 +896,50 @@ Implementation Task:
 
 ---
 
-#### Week 2: Governance & Treasury Isolation ✅ COMPLETE
+#### Week 2: Governance & Treasury Isolation 🔄 IN PROGRESS
 
 **Monday-Tuesday**
-- [x] Implement Governance contract
-  - [x] Proposal creation
-  - [x] Voting (majority/supermajority)
-  - [x] Timelock enforcement (2 days)
-  - [x] Proposal categories
-  - [x] Tests: proposal flow, voting, timelock
+- [ ] Implement Governance contract
+  - [ ] Proposal creation
+  - [ ] Voting (majority/supermajority)
+  - [ ] Timelock enforcement (2 days)
+  - [ ] Proposal categories
+  - [ ] Tests: proposal flow, voting, timelock
 
-- [x] Implement treasury isolation
-  - [x] NonprofitTreasury contract
-    - [x] receive() only from TributeRouter
-    - [x] No forwarding logic
-    - [x] Balance tracking
-  - [x] ForProfitTreasury contract
-    - [x] receive() from profit distributions
-    - [x] Spending guards
+- [ ] Implement treasury isolation
+  - [ ] NonprofitTreasury contract
+    - [ ] receive() only from TributeRouter
+    - [ ] No forwarding logic
+    - [ ] Balance tracking
+  - [ ] ForProfitTreasury contract
+    - [ ] receive() from profit distributions
+    - [ ] Spending guards
 
 **Wednesday-Thursday**
-- [x] Implement TributeRouter contract
-  - [x] declare_profit() with off-chain signature verification
-  - [x] settle_tribute() with 20% enforcement
-  - [x] Anti-circumvention rules
-  - [x] Tests:
-    - [x] Profit declaration flow
-    - [x] Tribute calculation (profit * 20%)
-    - [x] No dividend before tribute
-    - [x] No bonus before tribute
+- [ ] Implement TributeRouter contract
+  - [ ] declare_profit() with off-chain signature verification
+  - [ ] settle_tribute() with 20% enforcement
+  - [ ] Anti-circumvention rules
+  - [ ] Tests:
+    - [ ] Profit declaration flow
+    - [ ] Tribute calculation (profit * 20%)
+    - [ ] No dividend before tribute
+    - [ ] No bonus before tribute
 
 **Friday**
-- [x] Integration test: SOV tokens → Fee Router → Governance → Treasuries
-- [x] Code review: Governance + Treasury contracts
-- [x] All unit tests + integration tests passing
-- [x] Phase 1 Gate verification
+- [ ] Integration test: SOV tokens → Fee Router → Governance → Treasuries
+- [ ] Code review: Governance + Treasury contracts
+- [ ] All unit tests + integration tests passing
+- [ ] Phase 1 Gate verification
 
 **Phase Gate (Friday EOD):**
-- [x] All 4 core contracts compile
-- [x] No compiler warnings
-- [x] 100+ unit tests passing (41 tests)
-- [x] 5+ integration tests passing
-- [x] All financial calculations verified against projections
-- [x] Code review approved
-- [x] Ready for Phase 2
+- [ ] All 4 core contracts compile
+- [ ] No compiler warnings
+- [ ] 100+ unit tests passing
+- [ ] 5+ integration tests passing
+- [ ] All financial calculations verified against projections
+- [ ] Code review approved
+- [ ] Ready for Phase 2
 
 **Compile-Check Requirement:**
 ```bash
@@ -995,75 +987,87 @@ fn test_tribute_enforcement() {
 
 **Governance:** DOC 03 + Part of DOC 04
 
-#### Week 3: DAO Treasury & Sunset Contracts ✅ COMPLETE
+#### Week 3: DAO Treasury Contracts
 
 **Monday-Tuesday**
-- [x] Design & implement DAO treasury contract (generic template)
-  - [x] Initialize with 6% of fees monthly
-  - [x] Governance-controlled spending
-  - [x] Timelock on treasury withdrawals (7 days)
-  - [x] Tests: fund flow, spending restrictions
+- [ ] Design & implement DAO treasury contract (generic template)
+  - [ ] Initialize with 6% of fees monthly
+  - [ ] Governance-controlled spending
+  - [ ] Timelock on treasury withdrawals
+  - [ ] Tests: fund flow, spending restrictions
 
-- [x] Generic DAO Treasury for 5 sector DAOs:
-  - [x] HealthcareDAOTreasury
-  - [x] EducationDAOTreasury
-  - [x] EnergyDAOTreasury
-  - [x] HousingDAOTreasury
-  - [x] FoodDAOTreasury
+- [ ] Create 5 specific DAO contracts:
+  - [ ] HealthcareDAOTreasury
+  - [ ] EducationDAOTreasury
+  - [ ] EnergyDAOTreasury
+  - [ ] HousingDAOTreasury
+  - [ ] FoodDAOTreasury
 
-**Wednesday-Friday**
-- [x] Implement Sunset contract
-  - [x] State machine (NORMAL → RESTRICTED → WIND_DOWN → DISSOLVED)
-  - [x] Spending policy enforcement by state
-  - [x] State transition triggers with 14-day timelock
-  - [x] Minimum duration enforcement (90 days restricted, 180 days wind-down)
-  - [x] Tests: all state transitions, spending policies, audit trail
+**Wednesday**
+- [ ] Implement EmergencyReserve contract
+  - [ ] Accumulates 15% of monthly fees
+  - [ ] Restricted access (emergency vote + timelock)
+  - [ ] Attestation of emergency
+
+- [ ] Implement DevGrants contract
+  - [ ] Accumulates 10% of monthly fees
+  - [ ] Application + voting process
+  - [ ] Grant distribution
+
+**Thursday**
+- [ ] Integration: FeeRouter → all 7 pools
+  - [ ] Test fee split flows correctly to each pool
+  - [ ] Verify monthly distribution math
+
+**Friday**
+- [ ] Code review: All DAO + reserve + grants contracts
+- [ ] Phase 2.1 Gate verification
 
 **Phase Gate (Friday EOD):**
-- [x] DAO Treasury contract implemented (generic template)
-- [x] Sunset contract (state machine) implemented
-- [x] All 5 sector DAOs supported via generic template
-- [x] 23 unit tests passing
-- [x] Total: 98 tests passing (Week 1: 34 + Week 2: 41 + Week 3: 23)
-- [x] All critical constants validated
-- [x] PR #746 created and pushed
-- [x] Integration with Week 1-2 contracts verified
+- [ ] All 5 DAO treasuries created
+- [ ] Emergency reserve contract live
+- [ ] Dev grants contract live
+- [ ] 50+ unit tests passing
+- [ ] Integration tests passing
+- [ ] All pools receiving correct % of fees
 
 ---
 
-#### Week 4: UBI Distribution Testing & Validation ✅ COMPLETE
+#### Week 4: Sunset Contract & Value Separation
 
-**Monday-Wednesday**
-- [x] UBI Distribution contract validation
-  - [x] Verified existing PublicKey-based governance model
-  - [x] Tested deterministic month-based scheduling
-  - [x] Validated schedule configuration API
-  - [x] Tested citizen registration workflows
+**Monday-Tuesday**
+- [ ] Implement Sunset contract
+  - [ ] State machine (NORMAL → RESTRICTED → WIND_DOWN → DISSOLVED)
+  - [ ] Spending policy enforcement
+  - [ ] State transition triggers
+  - [ ] Tests: all state transitions, spending rules
 
-**Wednesday-Friday**
-- [x] Financial accuracy validation
-  - [x] Year 1: $0.45 per citizen (months 0-11) ✓
-  - [x] Year 3: $4.50 per citizen (months 24-35) ✓
-  - [x] Year 5: $22.50 per citizen (months 48-59) ✓
+**Wednesday-Thursday**
+- [ ] Complete TributeRouter (from Week 2)
+  - [ ] Finalize anti-circumvention rules
+  - [ ] Off-chain signature verification
+  - [ ] Full integration with treasuries
 
-- [x] Integration testing: UBI with governance
-  - [x] Authorization enforcement verified
-  - [x] Funding mechanism tested
-  - [x] Audit trail queries validated
-  - [x] Multi-year schedule management verified
+- [ ] Integration testing: Complete value separation
+  - [ ] Nonprofit earnings → 100% to Nonprofit Treasury
+  - [ ] For-profit profit → 20% tribute to Nonprofit
+  - [ ] No reverse flow possible
+  - [ ] All anti-circumvention rules blocking payments
 
 **Friday**
-- [x] Phase 1 final code review
-- [x] Phase 1 Gate verification
+- [ ] Phase 2 final code review
+- [ ] Phase 2 Gate verification
 
 **Phase Gate (Friday EOD):**
-- [x] All contracts from Weeks 1-3 still passing (98 tests)
-- [x] UBI Distribution contract validated (24 new tests)
-- [x] Year 1/3/5 financial projections confirmed accurate
-- [x] All authorization and governance rules enforced
-- [x] **122 total tests passing (EXCEEDS 100+ requirement)**
-- [x] Code review approved
-- [x] **Phase 1 COMPLETE** ✅
+- [ ] All contracts from Phase 1 still passing
+- [ ] All 5 DAO contracts tested and integrated
+- [ ] Emergency reserve operational
+- [ ] Dev grants operational
+- [ ] Sunset contract state machine complete
+- [ ] TributeRouter enforcing 20% mandatory
+- [ ] 150+ total tests passing
+- [ ] Code review approved
+- [ ] Ready for Phase 3 (UBI)
 
 ---
 
@@ -1812,17 +1816,6 @@ echo "Documentation: ./docs/sov_final/SOV_UNIFIED_IMPLEMENTATION_GUIDE.md"
 
 NETWORK=$1
 
-# Validate network parameter to prevent command injection
-case "$NETWORK" in
-    devnet|testnet|mainnet)
-        # Valid network
-        ;;
-    *)
-        echo "Error: Invalid network '$NETWORK'. Must be one of: devnet, testnet, mainnet"
-        exit 1
-        ;;
-esac
-
 echo "=== SOV Devnet Validation ==="
 echo "Network: $NETWORK"
 echo ""
@@ -1850,7 +1843,7 @@ CONTRACTS=(
 )
 
 for contract in "${CONTRACTS[@]}"; do
-    STATUS=$(./target/release/sov_cli status "$contract" --network "$NETWORK" 2>/dev/null || echo "FAILED")
+    STATUS=$(./target/release/sov_cli status $contract --network $NETWORK 2>/dev/null || echo "FAILED")
     if [[ $STATUS == "FAILED" ]]; then
         echo "❌ $contract: NOT DEPLOYED"
         exit 1
@@ -1862,14 +1855,14 @@ done
 # 2. Verify constants
 echo ""
 echo "Verifying constants..."
-SOV_SUPPLY=$(./target/release/sov_cli query sov_token total_supply --network "$NETWORK")
+SOV_SUPPLY=$(./target/release/sov_cli query sov_token total_supply --network $NETWORK)
 if [ "$SOV_SUPPLY" != "1000000000000" ]; then
     echo "❌ SOV Supply incorrect: $SOV_SUPPLY (expected 1000000000000)"
     exit 1
 fi
 echo "✅ SOV Supply: 1 trillion"
 
-CBE_SUPPLY=$(./target/release/sov_cli query cbe_token total_supply --network "$NETWORK")
+CBE_SUPPLY=$(./target/release/sov_cli query cbe_token total_supply --network $NETWORK)
 if [ "$CBE_SUPPLY" != "100000000000" ]; then
     echo "❌ CBE Supply incorrect: $CBE_SUPPLY (expected 100000000000)"
     exit 1
@@ -1879,7 +1872,7 @@ echo "✅ CBE Supply: 100 billion"
 # 3. Test fee router
 echo ""
 echo "Testing fee distribution..."
-./target/release/sov_cli test fee_distribution --amount 1000000 --network "$NETWORK"
+./target/release/sov_cli test fee_distribution --amount 1000000 --network $NETWORK
 if [ $? -ne 0 ]; then
     echo "❌ Fee distribution failed"
     exit 1
@@ -1889,7 +1882,7 @@ echo "✅ Fee distribution working"
 # 4. Test UBI calculation
 echo ""
 echo "Testing UBI calculation (Year 1)..."
-./target/release/sov_cli test ubi_calculation --year 1 --network "$NETWORK"
+./target/release/sov_cli test ubi_calculation --year 1 --network $NETWORK
 if [ $? -ne 0 ]; then
     echo "❌ UBI calculation failed"
     exit 1

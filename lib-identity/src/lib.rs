@@ -15,6 +15,7 @@
 //! - Privacy-preserving credentials
 
 // Core modules
+pub mod constants;
 pub mod types;
 pub mod identity;
 pub mod credentials;
