@@ -397,6 +397,28 @@ impl UbiDistributor {
     pub fn blocks_per_month(&self) -> u64 {
         self.blocks_per_month
     }
+
+    /// Check if a citizen is registered (Week 7 helper)
+    pub fn is_registered(&self, citizen: &PublicKey) -> bool {
+        let id = Self::key_id(citizen);
+        self.registered.contains(&id)
+    }
+
+    /// Check if a citizen has claimed for a specific month (Week 7 helper)
+    pub fn has_claimed(&self, citizen: &PublicKey, month: MonthIndex) -> bool {
+        let id = Self::key_id(citizen);
+        self.paid.get(&month).map_or(false, |set| set.contains(&id))
+    }
+
+    /// Get the scheduled amount for a month (Week 7 helper)
+    pub fn get_scheduled_amount(&self, month: MonthIndex) -> Option<u64> {
+        let amount = self.amount_for_month(month);
+        if amount > 0 {
+            Some(amount)
+        } else {
+            None
+        }
+    }
 }
 
 // DEPRECATED: Do not use Default::default() - it creates invalid zero-authority state.
