@@ -246,7 +246,9 @@ async fn upload_files(
 async fn upload_manifest(client: &ZhtpClient, manifest: &DeployManifest) -> CliResult<String> {
     let manifest_payload = serde_json::to_vec(manifest)
         .map_err(|e| CliError::ConfigError(format!("Failed to encode manifest: {}", e)))?;
-    let local_cid = hex::encode(lib_crypto::hash_blake3(&manifest_payload));
+    // Compute CID using same format as server: "bafk" + first 16 bytes of blake3 hash
+    let hash = lib_crypto::hash_blake3(&manifest_payload);
+    let local_cid = format!("bafk{}", hex::encode(&hash[..16]));
     let manifest_response = post_bytes(
         client,
         "/api/v1/web4/content/manifest",
