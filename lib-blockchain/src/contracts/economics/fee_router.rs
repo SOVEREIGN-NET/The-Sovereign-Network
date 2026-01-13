@@ -186,6 +186,12 @@ pub enum FeeRouterError {
 
     /// Invalid pool address
     InvalidPoolAddress,
+
+    /// Token contract not set
+    TokenContractNotSet,
+
+    /// UBI distributor not set
+    UbiDistributorNotSet,
 }
 
 impl std::fmt::Display for FeeRouterError {
@@ -205,6 +211,10 @@ impl std::fmt::Display for FeeRouterError {
                 write!(f, "Fee distribution failed"),
             FeeRouterError::InvalidPoolAddress =>
                 write!(f, "Invalid pool address"),
+            FeeRouterError::TokenContractNotSet =>
+                write!(f, "Token contract not set"),
+            FeeRouterError::UbiDistributorNotSet =>
+                write!(f, "UBI distributor not set"),
         }
     }
 }

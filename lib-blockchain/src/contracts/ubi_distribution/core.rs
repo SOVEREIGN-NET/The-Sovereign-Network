@@ -458,6 +458,77 @@ impl UbiDistributor {
     pub fn initialize_ubi_pool(&mut self, caller: &PublicKey, amount: u64) -> Result<(), Error> {
         self.receive_funds(caller, amount)
     }
+
+    // ========================================================================
+    // PERFORMANCE OPTIMIZATION METHODS
+    // ========================================================================
+
+    /// Create a new UbiDistributor with pre-allocated capacity for citizens
+    ///
+    /// Improves performance for large-scale operations (e.g., 1M citizen registration).
+    /// By pre-allocating HashSet capacity, we reduce rehashing overhead.
+    ///
+    /// # Arguments
+    /// * `governance_authority` - The PublicKey authorized to set schedule and receive funds
+    /// * `blocks_per_month` - Number of blocks in one month (must be > 0)
+    /// * `expected_citizens` - Expected number of citizens to register (for capacity planning)
+    ///
+    /// # Errors
+    /// - `InvalidSchedule` if blocks_per_month == 0
+    ///
+    /// # Performance
+    /// Allocates up-front space for faster registration at scale.
+    /// Beneficial when registering 10K+ citizens.
+    pub fn new_with_capacity(
+        governance_authority: PublicKey,
+        blocks_per_month: u64,
+        expected_citizens: usize,
+    ) -> Result<Self, Error> {
+        if blocks_per_month == 0 {
+            return Err(Error::InvalidSchedule);
+        }
+
+        Ok(Self {
+            governance_authority,
+            blocks_per_month,
+            balance: 0,
+            total_received: 0,
+            total_paid: 0,
+            registered: HashSet::with_capacity(expected_citizens),
+            paid: HashMap::new(),
+            schedule: HashMap::new(),
+        })
+    }
+
+    /// Register multiple citizens in a single batch operation
+    ///
+    /// More efficient than repeated `register()` calls for bulk registration.
+    /// Useful for initialization of large citizen bases.
+    ///
+    /// # Arguments
+    /// * `citizens` - Slice of PublicKeys to register
+    ///
+    /// # Returns
+    /// Number of citizens successfully registered (duplicates skipped).
+    /// No errors returned - duplicate registrations are silently skipped.
+    ///
+    /// # Invariants Maintained
+    /// - Invariant U1: No duplicates in final registered set
+    /// - Each citizen can only be registered once
+    ///
+    /// # Performance
+    /// O(n) where n = len(citizens). No authorization checks needed
+    /// as batch registration is permissionless (matches individual register behavior).
+    pub fn register_batch(&mut self, citizens: &[PublicKey]) -> usize {
+        let mut count = 0;
+        for citizen in citizens {
+            let id = Self::key_id(citizen);
+            if self.registered.insert(id) {
+                count += 1;
+            }
+        }
+        count
+    }
 }
 
 // DEPRECATED: Do not use Default::default() - it creates invalid zero-authority state.
