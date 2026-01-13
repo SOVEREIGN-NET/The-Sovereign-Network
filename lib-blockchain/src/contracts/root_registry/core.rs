@@ -72,13 +72,10 @@ impl RootRegistry {
             NameClass::WelfareChild { .. } => {
                 return Err("Welfare namespaces cannot be registered via commercial path".to_string());
             }
-            NameClass::DaoPrefixed { parent_hash } => {
-                let parent = self
-                    .get_record(&parent_hash)
-                    .ok_or_else(|| "Parent domain required for dao-prefixed registration".to_string())?;
-                if parent.owner != owner {
-                    return Err("dao-prefixed namespace requires ownership of parent domain".to_string());
-                }
+            NameClass::DaoPrefixed { .. } => {
+                // Phase 2 (Issue #657): dao.* names are VIRTUAL and cannot be registered
+                // They are resolved at query time from the parent's governance_pointer
+                return Err("dao.* names are virtual and cannot be registered. Use resolution to access governance.".to_string());
             }
             NameClass::Commercial { .. } => {}
         }
