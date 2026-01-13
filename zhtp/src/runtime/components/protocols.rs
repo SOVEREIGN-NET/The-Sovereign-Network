@@ -9,7 +9,7 @@ use tokio::time::{Duration, Instant};
 use tracing::{info, warn, debug};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
-use crate::runtime::components::identity::create_default_storage_config;
+// Removed: create_default_storage_config - now using global storage provider
 use crate::server::https_gateway::{HttpsGateway, GatewayTlsConfig};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
 use crate::web4_stub::{ZdnsResolver, ZdnsTransportServer, ZdnsServerConfig};
@@ -261,36 +261,34 @@ impl Component for ProtocolsComponent {
             }
         };
 
-        // Initialize economic model and storage
+        // Initialize economic model
         info!(" Initializing economic model...");
         let economic_model = Arc::new(RwLock::new(lib_economy::EconomicModel::new()));
 
-        info!(" Creating storage config...");
-        let storage_config = create_default_storage_config()
-            .map_err(|e| anyhow::anyhow!("Failed to create storage config: {}", e))?;
-
-        // Get the persistence path from config
-        let db_path = storage_config.storage_config.dht_persist_path.clone()
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join(".zhtp")
-                    .join("storage")
-                    .join("dht_db")
-            });
-
-        // Ensure the storage directory exists
-        if let Some(parent) = db_path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                tracing::warn!("Failed to create storage directory {:?}: {}", parent, e);
+        // Get storage from global provider (initialized by StorageComponent)
+        info!(" Getting shared storage from global provider...");
+        let storage = match crate::runtime::storage_provider::get_global_storage().await {
+            Ok(storage) => {
+                info!(" ✓ Using shared storage instance from StorageComponent");
+                storage
             }
-        }
-
-        info!(" Initializing persistent unified storage system at {:?}...", db_path);
-        let storage = Arc::new(RwLock::new(
-            lib_storage::UnifiedStorageSystem::new_persistent(storage_config, &db_path).await
-                .map_err(|e| anyhow::anyhow!("Failed to initialize persistent storage: {}", e))?
-        ));
+            Err(_) => {
+                // Fallback: wait for StorageComponent to initialize
+                info!("⏳ Waiting for StorageComponent to initialize storage...");
+                let mut attempts = 0;
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    attempts += 1;
+                    if let Ok(storage) = crate::runtime::storage_provider::get_global_storage().await {
+                        info!(" ✓ Storage became available after {} attempts", attempts);
+                        break storage;
+                    }
+                    if attempts >= 30 {
+                        return Err(anyhow::anyhow!("Timeout waiting for StorageComponent to initialize storage"));
+                    }
+                }
+            }
+        };
 
         info!("Creating ZHTP Unified Server...");
         let (peer_discovery_tx, _peer_discovery_rx) = tokio::sync::mpsc::unbounded_channel::<String>();

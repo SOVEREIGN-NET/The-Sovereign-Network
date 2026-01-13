@@ -34,6 +34,7 @@ pub mod services;
 pub mod shared_blockchain;
 pub mod shared_dht;
 pub mod blockchain_provider;
+pub mod storage_provider;  // Global access to storage for component sharing
 pub mod edge_state_provider;  // Global access to edge node state for header-only sync
 pub mod identity_manager_provider;
 pub mod network_blockchain_provider;
@@ -772,10 +773,31 @@ impl RuntimeOrchestrator {
             warn!("Failed to start local discovery: {}", e);
         }
         
-        // For now, assume we're creating a new network
-        // TODO: Check DHT and bootstrap peers for existing networks
-        let joined_existing_network = false;
+        // Discover existing network using bootstrap peers and DHT
+        let is_edge_node = *self.is_edge_node.read().await;
+        let network_info = self.discover_network_with_retry(is_edge_node).await.ok().flatten();
+
+        let joined_existing_network = network_info.is_some();
         self.set_joined_existing_network(joined_existing_network).await;
+
+        if let Some(ref net_info) = network_info {
+            info!("✓ Found existing network with {} peers at height {}",
+                  net_info.peer_count, net_info.blockchain_height);
+
+            // Initialize blockchain provider for sync reception
+            // This allows ProtocolsComponent to start the unified server
+            let blockchain = lib_blockchain::Blockchain::new()?;
+            let blockchain_arc = Arc::new(RwLock::new(blockchain));
+            set_global_blockchain(blockchain_arc.clone()).await?;
+            info!("✓ Blockchain provider initialized for network sync");
+
+            // Store bootstrap peers for mesh sync
+            if !net_info.bootstrap_peers.is_empty() {
+                crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(
+                    net_info.bootstrap_peers.clone()
+                ).await?;
+            }
+        }
         
         // ========================================================================
         // PHASE 3: Identity/Wallet Setup
@@ -2151,7 +2173,7 @@ impl RuntimeOrchestrator {
     }
     
     /// Discover network with retry logic for edge nodes
-    pub async fn discover_network_with_retry(&mut self, is_edge_node: bool) -> Result<Option<ExistingNetworkInfo>> {
+    pub async fn discover_network_with_retry(&self, is_edge_node: bool) -> Result<Option<ExistingNetworkInfo>> {
         use crate::discovery_coordinator::DiscoveryCoordinator;
 
         let mut discovery_protocols = Self::discovery_protocols_from_config(
