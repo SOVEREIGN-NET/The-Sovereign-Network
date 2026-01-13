@@ -295,27 +295,24 @@ fn classify_name(labels: &[String]) -> ValidationResult<NameClassification> {
         let second_label = &labels[1]; // e.g., "food" in "kitchen.food.sov"
         let third_label = &labels[2];  // e.g., "kitchen" in "kitchen.food.sov"
 
-        // Check for reserved welfare: {sector}.dao.sov
+        // Check for reserved welfare: {sector}.dao.sov and subdomains
         if second_label == "dao" {
             if WELFARE_SECTORS.contains(&third_label.as_str()) {
-                // This is exactly "{sector}.dao.sov" like "food.dao.sov"
-                if labels.len() == 3 {
-                    return Ok(NameClassification::ReservedWelfare);
-                } else {
-                    // Subdomain under welfare: "*.{sector}.dao.sov" is NOT allowed
-                    // The welfare subdomains are under *.{sector}.sov, not *.{sector}.dao.sov
-                    // Actually, re-reading the spec... subdomains under welfare are *.food.sov
-                    // So this would be deeper under the reserved welfare root
-                    // For now, treat subdomains under reserved welfare as WelfareDelegated
-                    return Ok(NameClassification::WelfareDelegated);
-                }
+                // This is "{sector}.dao.sov" or "*.{sector}.dao.sov"
+                // All are part of the reserved welfare namespace
+                // Spec: welfare subdomains live under "*.{sector}.sov", not "*.{sector}.dao.sov"
+                // Therefore, anything under "*.{sector}.dao.sov" is still part of the reserved
+                // welfare namespace and must be treated as reserved, not as a normal welfare
+                // delegation target.
+                return Ok(NameClassification::ReservedWelfare);
             }
         }
 
         // Check for dao.X pattern (where X is any domain)
         // e.g., "dao.shoes.sov" - this requires control of "shoes.sov"
-        if third_label == "dao" && labels.len() == 3 {
-            // "dao.X.sov" - reserved by rule
+        // Only match exact pattern "dao.X.sov", not deeper subdomains like "sub.dao.X.sov"
+        if labels.len() == 3 && labels[2] == "dao" {
+            // Exact "dao.X.sov" pattern - reserved by rule
             return Ok(NameClassification::ReservedByRule);
         }
 
@@ -323,13 +320,6 @@ fn classify_name(labels: &[String]) -> ValidationResult<NameClassification> {
         // e.g., "communitykitchen.food.sov"
         if WELFARE_SECTORS.contains(&second_label.as_str()) {
             return Ok(NameClassification::WelfareDelegated);
-        }
-
-        // Check for dao.X at any level (e.g., dao.sub.example.sov)
-        for (i, label) in labels.iter().enumerate().skip(1) {
-            if label == "dao" && i < labels.len() - 1 {
-                return Ok(NameClassification::ReservedByRule);
-            }
         }
     }
 
@@ -507,6 +497,41 @@ mod tests {
                 name
             );
         }
+    }
+
+    #[test]
+    fn test_dao_at_deeper_levels() {
+        // "dao.X.sov" should be ReservedByRule (exact pattern)
+        let parsed = parse_and_validate("dao.shoes.sov").unwrap();
+        assert_eq!(parsed.classification, NameClassification::ReservedByRule);
+
+        // "sub.dao.shoes.sov" is a subdomain of "dao.shoes.sov"
+        // This is NOT the exact "dao.X.sov" pattern, so it's Commercial
+        let parsed = parse_and_validate("sub.dao.shoes.sov").unwrap();
+        assert_eq!(parsed.classification, NameClassification::Commercial);
+
+        // "x.y.dao.example.sov" is deeper, so also Commercial
+        let parsed = parse_and_validate("x.y.dao.example.sov").unwrap();
+        assert_eq!(parsed.classification, NameClassification::Commercial);
+
+        // "sub.example.sov" where dao is NOT present should be Commercial
+        let parsed = parse_and_validate("sub.example.sov").unwrap();
+        assert_eq!(parsed.classification, NameClassification::Commercial);
+    }
+
+    #[test]
+    fn test_subdomain_under_reserved_welfare() {
+        // "food.dao.sov" should be ReservedWelfare
+        let parsed = parse_and_validate("food.dao.sov").unwrap();
+        assert_eq!(parsed.classification, NameClassification::ReservedWelfare);
+
+        // "sub.food.dao.sov" should also be ReservedWelfare (not WelfareDelegated)
+        let parsed = parse_and_validate("sub.food.dao.sov").unwrap();
+        assert_eq!(parsed.classification, NameClassification::ReservedWelfare);
+
+        // "kitchen.food.sov" under welfare namespace should be WelfareDelegated
+        let parsed = parse_and_validate("kitchen.food.sov").unwrap();
+        assert_eq!(parsed.classification, NameClassification::WelfareDelegated);
     }
 
     #[test]

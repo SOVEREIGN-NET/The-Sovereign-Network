@@ -428,6 +428,9 @@ impl DelegateGuard {
         child_exists: bool,
     ) -> OperationResult<()> {
         // Precondition 1: Caller is owner or zone_controller
+        // NOTE: zone_controller is typed as Address but compared to PublicKey here.
+        // Both are [u8; 32], but semantically zone_controller might need to be
+        // retyped as PublicKey in a future refactor for clarity.
         let is_owner = &parent.owner == caller;
         let is_zone_controller = parent
             .zone_controller
@@ -456,7 +459,7 @@ impl DelegateGuard {
         }
 
         // Precondition 4: Depth check
-        if child_parsed.depth > limits::MAX_DEPTH {
+        if child_parsed.depth >= limits::MAX_DEPTH {
             return Err(OperationError::DepthExceeded {
                 max: limits::MAX_DEPTH,
                 requested: child_parsed.depth,
@@ -571,11 +574,11 @@ impl RevokeGuard {
         current_time: Timestamp,
     ) -> NameStatus {
         match requester {
-            RevocationRequester::Owner(_) => NameStatus::Revoked {
+            RevocationRequester::Owner(owner) => NameStatus::Revoked {
                 tombstone: RevokedRecord {
                     revoked_at: current_time,
                     reason_code: ReasonCode::OwnerVoluntary,
-                    revoking_authority: [0u8; 32], // Owner's key would go here
+                    revoking_authority: *owner,
                     appeal_status: None,
                 },
             },
