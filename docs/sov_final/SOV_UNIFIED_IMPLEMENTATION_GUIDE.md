@@ -1812,6 +1812,17 @@ echo "Documentation: ./docs/sov_final/SOV_UNIFIED_IMPLEMENTATION_GUIDE.md"
 
 NETWORK=$1
 
+# Validate network parameter to prevent command injection
+case "$NETWORK" in
+    devnet|testnet|mainnet)
+        # Valid network
+        ;;
+    *)
+        echo "Error: Invalid network '$NETWORK'. Must be one of: devnet, testnet, mainnet"
+        exit 1
+        ;;
+esac
+
 echo "=== SOV Devnet Validation ==="
 echo "Network: $NETWORK"
 echo ""
@@ -1839,7 +1850,7 @@ CONTRACTS=(
 )
 
 for contract in "${CONTRACTS[@]}"; do
-    STATUS=$(./target/release/sov_cli status $contract --network $NETWORK 2>/dev/null || echo "FAILED")
+    STATUS=$(./target/release/sov_cli status "$contract" --network "$NETWORK" 2>/dev/null || echo "FAILED")
     if [[ $STATUS == "FAILED" ]]; then
         echo "❌ $contract: NOT DEPLOYED"
         exit 1
@@ -1851,14 +1862,14 @@ done
 # 2. Verify constants
 echo ""
 echo "Verifying constants..."
-SOV_SUPPLY=$(./target/release/sov_cli query sov_token total_supply --network $NETWORK)
+SOV_SUPPLY=$(./target/release/sov_cli query sov_token total_supply --network "$NETWORK")
 if [ "$SOV_SUPPLY" != "1000000000000" ]; then
     echo "❌ SOV Supply incorrect: $SOV_SUPPLY (expected 1000000000000)"
     exit 1
 fi
 echo "✅ SOV Supply: 1 trillion"
 
-CBE_SUPPLY=$(./target/release/sov_cli query cbe_token total_supply --network $NETWORK)
+CBE_SUPPLY=$(./target/release/sov_cli query cbe_token total_supply --network "$NETWORK")
 if [ "$CBE_SUPPLY" != "100000000000" ]; then
     echo "❌ CBE Supply incorrect: $CBE_SUPPLY (expected 100000000000)"
     exit 1
@@ -1868,7 +1879,7 @@ echo "✅ CBE Supply: 100 billion"
 # 3. Test fee router
 echo ""
 echo "Testing fee distribution..."
-./target/release/sov_cli test fee_distribution --amount 1000000 --network $NETWORK
+./target/release/sov_cli test fee_distribution --amount 1000000 --network "$NETWORK"
 if [ $? -ne 0 ]; then
     echo "❌ Fee distribution failed"
     exit 1
@@ -1878,7 +1889,7 @@ echo "✅ Fee distribution working"
 # 4. Test UBI calculation
 echo ""
 echo "Testing UBI calculation (Year 1)..."
-./target/release/sov_cli test ubi_calculation --year 1 --network $NETWORK
+./target/release/sov_cli test ubi_calculation --year 1 --network "$NETWORK"
 if [ $? -ne 0 ]; then
     echo "❌ UBI calculation failed"
     exit 1
