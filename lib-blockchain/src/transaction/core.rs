@@ -1078,18 +1078,21 @@ impl ProfitDeclarationData {
             return false;
         }
 
-        // Suffix can be either quarter form "Q1".."Q4" or month form "01".."12"
-        if suffix_part.len() == 2 && suffix_part.starts_with('Q') {
-            // Quarter format: "Q1".."Q4"
+        // Suffix must be exactly 2 characters
+        if suffix_part.len() != 2 {
+            return false;
+        }
+
+        // Check for quarter format "Q1".."Q4"
+        if suffix_part.starts_with('Q') {
             return matches!(suffix_part, "Q1" | "Q2" | "Q3" | "Q4");
         }
 
-        if suffix_part.len() == 2 && suffix_part.chars().all(|c| c.is_ascii_digit()) {
-            // Month format: "01".."12"
+        // Check for month format "01".."12"
+        if suffix_part.chars().all(|c| c.is_ascii_digit()) {
             if let Ok(month) = suffix_part.parse::<u8>() {
                 return (1..=12).contains(&month);
             }
-            return false;
         }
 
         false
