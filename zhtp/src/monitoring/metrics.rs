@@ -428,7 +428,22 @@ impl MetricsCollector {
     async fn collect_storage_metrics(metrics: &mut SystemMetrics) -> Result<()> {
         // Get storage metrics from lib-storage package with proper config
         if let Ok(config) = create_default_storage_config() {
-            if let Ok(mut storage) = lib_storage::UnifiedStorageSystem::new(config).await {
+            let db_path = config.storage_config.dht_persist_path.clone()
+                .unwrap_or_else(|| {
+                    dirs::home_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join(".zhtp")
+                        .join("storage")
+                        .join("dht_db")
+                });
+
+            if let Some(parent) = db_path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    warn!("Failed to create storage directory {:?}: {}", parent, e);
+                }
+            }
+
+            if let Ok(mut storage) = lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path).await {
                 // Try to get storage statistics
                 match storage.get_statistics().await {
                     Ok(stats) => {
