@@ -30,6 +30,52 @@ use std::collections::HashMap;
 use crate::contracts::root_registry::{DaoId, NameHash};
 use crate::integration::crypto_integration::PublicKey;
 use crate::types::dao::DAOType;
+use crate::types::sector::WelfareSectorId;
+
+/// Type of approval verifier a DAO uses for welfare issuance (Issue #658)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalVerifierType {
+    /// No verifier configured (cannot issue welfare names)
+    None,
+    /// Governance vote-based approval
+    GovernanceVote,
+    /// Multisig threshold signature approval
+    Multisig,
+    /// Delegated verifier contract
+    Delegated,
+}
+
+impl Default for ApprovalVerifierType {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// Sector claim status (Issue #658)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SectorClaimStatus {
+    /// Claim submitted, awaiting ratification
+    Pending,
+    /// Ratified by root governance
+    Ratified,
+    /// Rejected by root governance
+    Rejected,
+}
+
+/// A sector claim by a DAO (Issue #658)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectorClaim {
+    /// The welfare sector being claimed
+    pub sector: WelfareSectorId,
+    /// Block height when claim was submitted
+    pub claimed_at: u64,
+    /// Hash of justification document
+    pub justification_hash: [u8; 32],
+    /// Current status of the claim
+    pub status: SectorClaimStatus,
+    /// Block height when ratified (if ratified)
+    pub ratified_at: Option<u64>,
+}
 
 /// A registered DAO entry in the registry
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +98,14 @@ pub struct DAOEntry {
 
     /// Block height when registered
     pub created_at: u64,
+
+    // === Phase 3: Welfare Sector Support (Issue #658) ===
+
+    /// Sector claim for welfare DAOs (if any)
+    pub sector_claim: Option<SectorClaim>,
+
+    /// Type of approval verifier used for welfare issuance
+    pub approval_verifier_type: ApprovalVerifierType,
 }
 
 impl DAOEntry {
@@ -197,6 +251,9 @@ impl DAORegistry {
             treasury,
             owner: caller,
             created_at: block_height,
+            // Phase 3: Welfare sector fields (Issue #658)
+            sector_claim: None,
+            approval_verifier_type: ApprovalVerifierType::None,
         };
 
         self.entries.insert(dao_id, entry);
@@ -399,6 +456,176 @@ impl DAORegistry {
                 })
             })
             .collect()
+    }
+
+    // === Phase 3: Welfare Sector Claim Methods (Issue #658) ===
+
+    /// Submit a sector claim for a DAO
+    ///
+    /// # Arguments
+    /// - `dao_id`: The DAO ID making the claim
+    /// - `sector`: The welfare sector being claimed
+    /// - `justification_hash`: Hash of the justification document
+    /// - `caller`: Must be the DAO owner
+    /// - `block_height`: Current block height
+    ///
+    /// # Errors
+    /// - DAO not found
+    /// - Caller is not DAO owner
+    /// - DAO already has a sector claim
+    pub fn submit_sector_claim(
+        &mut self,
+        dao_id: [u8; 32],
+        sector: WelfareSectorId,
+        justification_hash: [u8; 32],
+        caller: &PublicKey,
+        block_height: u64,
+    ) -> Result<(), String> {
+        let entry = self.entries
+            .get_mut(&dao_id)
+            .ok_or_else(|| format!("DAO not found: {}", hex::encode(&dao_id)))?;
+
+        // Caller must be owner
+        if caller != &entry.owner {
+            return Err("Only DAO owner can submit sector claim".to_string());
+        }
+
+        // Cannot have multiple claims
+        if entry.sector_claim.is_some() {
+            return Err("DAO already has a sector claim".to_string());
+        }
+
+        entry.sector_claim = Some(SectorClaim {
+            sector,
+            claimed_at: block_height,
+            justification_hash,
+            status: SectorClaimStatus::Pending,
+            ratified_at: None,
+        });
+
+        Ok(())
+    }
+
+    /// Ratify a sector claim (root authority only)
+    ///
+    /// # Arguments
+    /// - `dao_id`: The DAO ID whose claim is being ratified
+    /// - `block_height`: Current block height
+    ///
+    /// # Errors
+    /// - DAO not found
+    /// - No pending claim
+    /// - Claim not in pending status
+    pub fn ratify_sector_claim(
+        &mut self,
+        dao_id: [u8; 32],
+        block_height: u64,
+    ) -> Result<WelfareSectorId, String> {
+        let entry = self.entries
+            .get_mut(&dao_id)
+            .ok_or_else(|| format!("DAO not found: {}", hex::encode(&dao_id)))?;
+
+        let claim = entry.sector_claim
+            .as_mut()
+            .ok_or_else(|| "No sector claim found".to_string())?;
+
+        if claim.status != SectorClaimStatus::Pending {
+            return Err("Claim is not in pending status".to_string());
+        }
+
+        claim.status = SectorClaimStatus::Ratified;
+        claim.ratified_at = Some(block_height);
+
+        Ok(claim.sector)
+    }
+
+    /// Reject a sector claim (root authority only)
+    ///
+    /// # Arguments
+    /// - `dao_id`: The DAO ID whose claim is being rejected
+    ///
+    /// # Errors
+    /// - DAO not found
+    /// - No pending claim
+    /// - Claim not in pending status
+    pub fn reject_sector_claim(
+        &mut self,
+        dao_id: [u8; 32],
+    ) -> Result<(), String> {
+        let entry = self.entries
+            .get_mut(&dao_id)
+            .ok_or_else(|| format!("DAO not found: {}", hex::encode(&dao_id)))?;
+
+        let claim = entry.sector_claim
+            .as_mut()
+            .ok_or_else(|| "No sector claim found".to_string())?;
+
+        if claim.status != SectorClaimStatus::Pending {
+            return Err("Claim is not in pending status".to_string());
+        }
+
+        claim.status = SectorClaimStatus::Rejected;
+
+        Ok(())
+    }
+
+    /// Set the approval verifier type for a DAO
+    ///
+    /// # Arguments
+    /// - `dao_id`: The DAO ID
+    /// - `verifier_type`: The type of verifier to use
+    /// - `caller`: Must be the DAO owner
+    ///
+    /// # Errors
+    /// - DAO not found
+    /// - Caller is not DAO owner
+    pub fn set_approval_verifier_type(
+        &mut self,
+        dao_id: [u8; 32],
+        verifier_type: ApprovalVerifierType,
+        caller: &PublicKey,
+    ) -> Result<(), String> {
+        let entry = self.entries
+            .get_mut(&dao_id)
+            .ok_or_else(|| format!("DAO not found: {}", hex::encode(&dao_id)))?;
+
+        if caller != &entry.owner {
+            return Err("Only DAO owner can set approval verifier type".to_string());
+        }
+
+        entry.approval_verifier_type = verifier_type;
+
+        Ok(())
+    }
+
+    /// Get the sector claim for a DAO
+    pub fn get_sector_claim(&self, dao_id: &[u8; 32]) -> Option<&SectorClaim> {
+        self.entries.get(dao_id).and_then(|e| e.sector_claim.as_ref())
+    }
+
+    /// Get all DAOs with ratified sector claims
+    pub fn get_ratified_sector_daos(&self) -> Vec<([u8; 32], WelfareSectorId)> {
+        self.entries
+            .iter()
+            .filter_map(|(dao_id, entry)| {
+                entry.sector_claim.as_ref().and_then(|claim| {
+                    if claim.status == SectorClaimStatus::Ratified {
+                        Some((*dao_id, claim.sector))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect()
+    }
+
+    /// Check if a DAO is authorized for a specific sector
+    pub fn is_dao_authorized_for_sector(&self, dao_id: &[u8; 32], sector: WelfareSectorId) -> bool {
+        self.entries.get(dao_id).map_or(false, |entry| {
+            entry.sector_claim.as_ref().map_or(false, |claim| {
+                claim.status == SectorClaimStatus::Ratified && claim.sector == sector
+            })
+        })
     }
 }
 

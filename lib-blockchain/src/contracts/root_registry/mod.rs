@@ -47,6 +47,7 @@ pub mod core;
 pub mod namespace_policy;
 pub mod delegation_tree;
 pub mod dao_prefix_router;
+pub mod welfare_issuer_adapter;
 
 #[cfg(test)]
 mod tests;
@@ -124,3 +125,10 @@ pub use delegation_tree::DelegationTree;
 
 // Re-export dao prefix router (Phase 2: Issue #657)
 pub use dao_prefix_router::{DaoPrefixRouter, DaoPrefixRegistrationError};
+
+// Re-export welfare issuer adapter (Phase 3: Issue #658)
+pub use welfare_issuer_adapter::{
+    WelfareIssuerAdapter, WelfareIssuerError, WelfareMetadata,
+    SectorBinding, PendingClaim, DaoVerificationPolicy, IssuanceResult,
+    BindingStatus, SuspensionReason as WelfareSuspensionReason,
+};
