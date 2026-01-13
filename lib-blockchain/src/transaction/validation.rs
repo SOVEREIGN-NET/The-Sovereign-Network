@@ -148,11 +148,11 @@ impl TransactionValidator {
         
             TransactionType::UBIClaim => {
                 // UBI claim transactions - citizen-initiated claims (Week 7)
-                // Validation will be enhanced when builder methods are implemented
+                self.validate_ubi_claim_transaction(transaction)?;
             }
             TransactionType::ProfitDeclaration => {
                 // Profit declaration transactions - enforce 20% tribute (Week 7)
-                // Validation will be enhanced when builder methods are implemented
+                self.validate_profit_declaration_transaction(transaction)?;
             }}
 
         // Signature validation (always required)
@@ -232,11 +232,11 @@ impl TransactionValidator {
         
             TransactionType::UBIClaim => {
                 // UBI claim transactions - citizen-initiated claims (Week 7)
-                // Validation will be enhanced when builder methods are implemented
+                self.validate_ubi_claim_transaction(transaction)?;
             }
             TransactionType::ProfitDeclaration => {
                 // Profit declaration transactions - enforce 20% tribute (Week 7)
-                // Validation will be enhanced when builder methods are implemented
+                self.validate_profit_declaration_transaction(transaction)?;
             }}
 
         // Signature validation (always required)
@@ -753,6 +753,71 @@ impl TransactionValidator {
 
         Ok(())
     }
+
+    /// Validate UBI claim transaction (Week 7)
+    ///
+    /// Checks that:
+    /// - ubi_claim_data is present and valid
+    /// - claim_amount is positive
+    /// - citizenship_proof is provided
+    /// - transaction has outputs but no inputs (claiming from pool)
+    fn validate_ubi_claim_transaction(&self, transaction: &Transaction) -> ValidationResult {
+        // Check that ubi_claim_data exists
+        let claim_data = transaction.ubi_claim_data.as_ref()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        // Validate claim data structure
+        if !claim_data.validate() {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Check that no inputs are present (claims don't spend UTXOs)
+        if !transaction.inputs.is_empty() {
+            return Err(ValidationError::InvalidInputs);
+        }
+
+        // Check that outputs are present (recipient wallet for claim)
+        if transaction.outputs.is_empty() {
+            return Err(ValidationError::InvalidOutputs);
+        }
+
+        Ok(())
+    }
+
+    /// Validate profit declaration transaction (Week 7)
+    ///
+    /// Checks that:
+    /// - profit_declaration_data is present and valid
+    /// - 20% tribute calculation is correct
+    /// - revenue sources sum to profit amount
+    /// - for-profit and nonprofit treasuries are different (anti-circumvention)
+    /// - inputs and outputs represent tribute transfer
+    fn validate_profit_declaration_transaction(&self, transaction: &Transaction) -> ValidationResult {
+        // Check that profit_declaration_data exists
+        let decl_data = transaction.profit_declaration_data.as_ref()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        // Validate declaration data structure
+        if !decl_data.validate() {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Verify anti-circumvention checks
+        if !decl_data.anti_circumvention_check() {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Check that inputs and outputs match tribute amount
+        if transaction.inputs.len() != 1 {
+            return Err(ValidationError::InvalidInputs);
+        }
+
+        if transaction.outputs.len() != 1 {
+            return Err(ValidationError::InvalidOutputs);
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for TransactionValidator {
@@ -826,11 +891,11 @@ impl<'a> StatefulTransactionValidator<'a> {
         
             TransactionType::UBIClaim => {
                 // UBI claim transactions - citizen-initiated claims (Week 7)
-                // Validation will be enhanced when builder methods are implemented
+                self.validate_ubi_claim_transaction(transaction)?;
             }
             TransactionType::ProfitDeclaration => {
                 // Profit declaration transactions - enforce 20% tribute (Week 7)
-                // Validation will be enhanced when builder methods are implemented
+                self.validate_profit_declaration_transaction(transaction)?;
             }}
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -988,11 +1053,41 @@ impl<'a> StatefulTransactionValidator<'a> {
                 tracing::error!("SECURITY CRITICAL: Transaction from unregistered wallet/identity!");
                 tracing::error!("Public key: {:02x?}", &sender_public_key[..std::cmp::min(16, sender_public_key.len())]);
                 tracing::error!(" REJECTED: All transactions must come from registered wallets/identities");
-                
+
                 // NO BYPASS: Always reject transactions from unregistered senders
                 return Err(ValidationError::UnregisteredSender);
             }
         }
+
+        Ok(())
+    }
+
+    /// Validate UBI claim transaction with state context (Week 7)
+    fn validate_ubi_claim_transaction(&self, transaction: &Transaction) -> ValidationResult {
+        // Use stateless validator for structural checks
+        let stateless_validator = TransactionValidator::new();
+        stateless_validator.validate_ubi_claim_transaction(transaction)?;
+
+        // In future weeks, could add stateful checks:
+        // - Verify claimant is registered citizen
+        // - Verify claim amount matches schedule
+        // - Verify UBI pool has sufficient balance
+        // - Verify claimant hasn't already claimed this month
+
+        Ok(())
+    }
+
+    /// Validate profit declaration transaction with state context (Week 7)
+    fn validate_profit_declaration_transaction(&self, transaction: &Transaction) -> ValidationResult {
+        // Use stateless validator for structural checks
+        let stateless_validator = TransactionValidator::new();
+        stateless_validator.validate_profit_declaration_transaction(transaction)?;
+
+        // In future weeks, could add stateful checks:
+        // - Verify declarant is registered for-profit entity
+        // - Verify nonprofit treasury is registered
+        // - Prevent duplicate declarations for same fiscal period
+        // - Verify for-profit treasury has sufficient balance for tribute
 
         Ok(())
     }

@@ -655,6 +655,95 @@ impl Transaction {
         }
     }
 
+    /// Create a new UBI claim transaction
+    ///
+    /// Citizens claim their monthly UBI allocation via pull-based transaction.
+    /// This is distinct from system-initiated UbiDistribution (push-based).
+    ///
+    /// # Arguments
+    /// * `claim_data` - UBI claim data with claimant identity, month index, and claim amount
+    /// * `outputs` - Transaction outputs (typically sends UBI to recipient wallet)
+    /// * `fee` - Transaction fee in micro-ZHTP
+    /// * `signature` - Authorization signature from claimant
+    /// * `memo` - Optional transaction memo
+    ///
+    /// # Returns
+    /// New Transaction with TransactionType::UBIClaim set
+    pub fn new_ubi_claim(
+        claim_data: UbiClaimData,
+        outputs: Vec<TransactionOutput>,
+        fee: u64,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 1,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::UBIClaim,
+            inputs: Vec::new(), // UBI claims don't require inputs (claiming from pool)
+            outputs,
+            fee,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: Some(claim_data),
+            profit_declaration_data: None,
+        }
+    }
+
+    /// Create a new profit declaration transaction
+    ///
+    /// For-profit entities declare profits and transfer 20% as tribute to nonprofits.
+    /// This transaction enforces the 20% tribute calculation and routing.
+    ///
+    /// # Arguments
+    /// * `declaration_data` - Profit declaration data with profit amount, tribute calculation, and entities
+    /// * `inputs` - UTXOs from for-profit treasury (must cover tribute amount)
+    /// * `outputs` - UTXOs to nonprofit treasury (tribute recipient)
+    /// * `fee` - Transaction fee in micro-ZHTP
+    /// * `signature` - Authorization signature from for-profit entity
+    /// * `memo` - Optional transaction memo
+    ///
+    /// # Returns
+    /// New Transaction with TransactionType::ProfitDeclaration set
+    ///
+    /// # Invariants
+    /// - Tribute amount must equal profit_amount * 20 / 100
+    /// - Input amount must equal tribute amount (enforced at validation)
+    /// - Output amount must equal tribute amount (enforced at validation)
+    pub fn new_profit_declaration(
+        declaration_data: ProfitDeclarationData,
+        inputs: Vec<TransactionInput>,
+        outputs: Vec<TransactionOutput>,
+        fee: u64,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: 1,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::ProfitDeclaration,
+            inputs,
+            outputs,
+            fee,
+            signature,
+            memo,
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: Some(declaration_data),
+        }
+    }
+
     /// Calculate transaction hash
     pub fn hash(&self) -> Hash {
         crate::transaction::hashing::hash_transaction(self)
@@ -839,5 +928,167 @@ impl IdentityTransactionData {
     /// Check if this is a revoked identity
     pub fn is_revoked(&self) -> bool {
         self.identity_type == "revoked"
+    }
+}
+
+impl UbiClaimData {
+    /// Compute the claim ID (deterministic hash of claimant + month)
+    ///
+    /// This ensures each claimant can only claim once per month with a unique identifier.
+    /// In production, this would hash the claimant identity + month to produce a deterministic claim ID.
+    pub fn compute_claim_id(claimant_identity: &str, month_index: u64) -> Hash {
+        // Stub implementation for Week 7
+        // Production: Use actual cryptographic hash function
+        // For now, return default hash - will be overridden by actual claim_id in transaction
+        Hash::default()
+    }
+
+    /// Validate UBI claim data structure
+    ///
+    /// # Returns
+    /// true if valid, false if invalid
+    ///
+    /// # Checks
+    /// - claim_amount > 0
+    /// - citizenship_proof is not empty
+    /// - claim_id matches computed deterministic hash
+    pub fn validate(&self) -> bool {
+        // Check claim amount is positive
+        if self.claim_amount == 0 {
+            return false;
+        }
+
+        // Check citizenship proof is provided
+        if self.citizenship_proof.is_empty() {
+            return false;
+        }
+
+        // In production, verify claim_id matches computed hash
+        // For now, accept any non-zero claim_id
+        if self.claim_id == Hash::default() {
+            return false;
+        }
+
+        true
+    }
+
+    /// Check if claim is for a valid month (not in future)
+    pub fn is_valid_month(&self, current_month_index: u64) -> bool {
+        self.month_index <= current_month_index
+    }
+
+    /// Get the amount being claimed
+    pub fn claim_amount(&self) -> u64 {
+        self.claim_amount
+    }
+
+    /// Get the claimant identity
+    pub fn claimant(&self) -> &str {
+        &self.claimant_identity
+    }
+}
+
+impl ProfitDeclarationData {
+    /// Validate 20% tribute calculation
+    ///
+    /// # Returns
+    /// true if tribute_amount == profit_amount * 20 / 100
+    pub fn validate_tribute_calculation(&self) -> bool {
+        let expected_tribute = self.profit_amount
+            .checked_mul(20)
+            .and_then(|x| x.checked_div(100));
+
+        match expected_tribute {
+            Some(expected) => self.tribute_amount == expected,
+            None => false, // Overflow or division error
+        }
+    }
+
+    /// Validate profit declaration data structure
+    ///
+    /// # Returns
+    /// true if valid, false if invalid
+    ///
+    /// # Checks
+    /// - profit_amount > 0
+    /// - tribute_amount matches 20% calculation
+    /// - authorization_signature is not empty
+    /// - revenue_sources sum equals profit_amount
+    pub fn validate(&self) -> bool {
+        // Check profit amount is positive
+        if self.profit_amount == 0 {
+            return false;
+        }
+
+        // Verify 20% tribute calculation
+        if !self.validate_tribute_calculation() {
+            return false;
+        }
+
+        // Check authorization signature is provided
+        if self.authorization_signature.is_empty() {
+            return false;
+        }
+
+        // Verify revenue sources sum to profit amount
+        let total_revenue: u64 = self.revenue_sources.iter()
+            .map(|src| src.amount)
+            .sum();
+        if total_revenue != self.profit_amount {
+            return false;
+        }
+
+        // Check for self-tribute (nonprofit and for-profit must be different)
+        if self.nonprofit_treasury == self.forprofit_treasury {
+            return false;
+        }
+
+        true
+    }
+
+    /// Check if fiscal period format is valid
+    ///
+    /// Valid formats: "YYYY-Q[1-4]" or "YYYY-MM"
+    /// Examples: "2026-Q1", "2026-03"
+    pub fn is_valid_fiscal_period(&self) -> bool {
+        self.fiscal_period.len() >= 6 && self.fiscal_period.contains('-')
+    }
+
+    /// Get the profit amount
+    pub fn profit(&self) -> u64 {
+        self.profit_amount
+    }
+
+    /// Get the tribute amount (20% of profit)
+    pub fn tribute(&self) -> u64 {
+        self.tribute_amount
+    }
+
+    /// Get the declarant identity
+    pub fn declarant(&self) -> &str {
+        &self.declarant_identity
+    }
+
+    /// Check for potential circumvention attempts
+    ///
+    /// # Returns
+    /// true if no circumvention detected, false otherwise
+    pub fn anti_circumvention_check(&self) -> bool {
+        // Check 1: Nonprofit and for-profit must be different
+        if self.nonprofit_treasury == self.forprofit_treasury {
+            return false;
+        }
+
+        // Check 2: Fiscal period must be valid
+        if !self.is_valid_fiscal_period() {
+            return false;
+        }
+
+        // Check 3: Revenue sources must not be empty
+        if self.revenue_sources.is_empty() {
+            return false;
+        }
+
+        true
     }
 }

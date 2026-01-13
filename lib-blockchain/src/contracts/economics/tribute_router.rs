@@ -584,6 +584,45 @@ impl TributeRouter {
     pub fn get_current_timestamp(&self) -> u64 {
         self.current_timestamp
     }
+
+    /// Check if nonprofit treasury is registered (Week 7 helper)
+    pub fn is_nonprofit_registered(&self) -> bool {
+        self.nonprofit_treasury.is_some()
+    }
+
+    /// Check if an entity has already declared profit
+    /// Returns true if the entity appears in declaration history
+    pub fn has_declared(&self, entity: [u8; 32]) -> bool {
+        self.declaration_history.contains_key(&entity)
+    }
+
+    /// Get the number of times an entity has declared
+    pub fn declaration_count(&self, entity: [u8; 32]) -> usize {
+        self.declaration_history.get(&entity).map(|v| v.len()).unwrap_or(0)
+    }
+
+    /// Check if a declaration can be made based on anti-circumvention rules
+    pub fn can_declare(&self, entity: [u8; 32], profit_amount: u64) -> bool {
+        // If no active rule, allow declaration
+        let Some(rule) = self.get_active_rule() else {
+            return profit_amount > 0;
+        };
+
+        // Check max per period rule
+        if let Some(declarations) = self.declaration_history.get(&entity) {
+            let period_declarations = declarations.iter()
+                .filter(|(ts, _)| {
+                    self.current_timestamp.saturating_sub(*ts) < rule.min_declaration_interval
+                })
+                .count();
+
+            if period_declarations as u32 >= rule.max_declarations_per_period {
+                return false;
+            }
+        }
+
+        profit_amount > 0
+    }
 }
 
 impl Default for TributeRouter {
