@@ -31,6 +31,8 @@ pub mod emergency_reserve;
 #[cfg(feature = "contracts")]
 pub mod dao_registry;
 #[cfg(feature = "contracts")]
+pub mod root_registry;
+#[cfg(feature = "contracts")]
 pub mod dev_grants;
 #[cfg(feature = "contracts")]
 pub mod ubi_distribution;
@@ -40,8 +42,6 @@ pub mod sov_swap;
 pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod web4;
-#[cfg(feature = "contracts")]
-pub mod root_registry;
 
 // Re-export core types and functionality when contracts feature is enabled
 #[cfg(feature = "contracts")]
@@ -79,6 +79,14 @@ pub use emergency_reserve::EmergencyReserve;
 #[cfg(feature = "contracts")]
 pub use dao_registry::{DAORegistry, DAOEntry, derive_dao_id};
 #[cfg(feature = "contracts")]
+pub use root_registry::{
+    // Types from Phase 0
+    NameRecord, NameStatus, NameClassification, VerificationLevel,
+    GovernanceRecord, WelfareSector, NameHash, DaoId,
+    // Functions
+    parse_and_validate, compute_name_hash,
+};
+#[cfg(feature = "contracts")]
 pub use dev_grants::{DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement, ProposalStatus, Error as DevGrantsError};
 #[cfg(feature = "contracts")]
 pub use ubi_distribution::{UbiDistributor, MonthIndex, Error as UbiError};
@@ -88,11 +96,6 @@ pub use sov_swap::{SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError}
 pub use utils::*;
 #[cfg(feature = "contracts")]
 pub use web4::{Web4Contract, WebsiteContract, WebsiteMetadata, ContentRoute, DomainRecord, WebsiteDeploymentData};
-#[cfg(feature = "contracts")]
-pub use root_registry::{
-    NameRecord, NameStatus, NameClassification, VerificationLevel,
-    GovernanceRecord, WelfareSector, parse_and_validate, compute_name_hash,
-};
 
 // Re-export testing framework when available
 #[cfg(all(feature = "contracts", feature = "testing"))]

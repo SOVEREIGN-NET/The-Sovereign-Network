@@ -42,7 +42,7 @@ pub mod operations;
 // Re-export core types
 pub use types::{
     // Core identity types
-    PublicKey, Address, NameHash, BlockHeight, Timestamp,
+    PublicKey, Address, NameHash, DaoId, BlockHeight, Timestamp,
 
     // Verification
     VerificationLevel,
@@ -87,3 +87,4 @@ pub use operations::{
     RegisterGuard, RenewGuard, TransferGuard, DelegateGuard, RevokeGuard,
     RevocationRequester, ResolutionResult,
 };
+

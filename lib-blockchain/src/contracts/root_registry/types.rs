@@ -24,6 +24,9 @@ pub type Address = [u8; 32];
 /// 32-byte name hash (BLAKE3)
 pub type NameHash = [u8; 32];
 
+/// DAO identifier (32-byte hash)
+pub type DaoId = [u8; 32];
+
 /// Block height timestamp
 pub type BlockHeight = u64;
 

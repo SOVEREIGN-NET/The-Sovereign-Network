@@ -845,6 +845,16 @@ pub enum DomainAction {
         #[command(flatten)]
         trust: TrustFlags,
     },
+
+    /// Admin: migrate legacy domain records to the latest format
+    Migrate {
+        /// Path to identity keystore directory (REQUIRED)
+        #[arg(short, long)]
+        keystore: String,
+
+        #[command(flatten)]
+        trust: TrustFlags,
+    },
 }
 
 /// Man page generation

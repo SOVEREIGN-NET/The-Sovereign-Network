@@ -13,20 +13,20 @@ use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 use lib_identity::types::IdentityId;
 
-// Storage imports - using UnifiedStorageSystem and types
-use lib_storage::{UnifiedStorageSystem, StorageRequirements, QualityRequirements, BudgetConstraints};
+// Storage imports - using PersistentStorageSystem and types
+use lib_storage::{PersistentStorageSystem, StorageRequirements, QualityRequirements, BudgetConstraints};
 use lib_storage::types::economic_types::PaymentSchedule;
 use lib_identity::ZhtpIdentity;
 use lib_identity::types::identity_types::IdentityType;
 
 /// Clean storage handler implementation
 pub struct StorageHandler {
-    storage: Arc<RwLock<UnifiedStorageSystem>>,
+    storage: Arc<RwLock<PersistentStorageSystem>>,
     wallet_content_manager: Option<Arc<RwLock<lib_storage::WalletContentManager>>>,
 }
 
 impl StorageHandler {
-    pub fn new(storage: Arc<RwLock<UnifiedStorageSystem>>) -> Self {
+    pub fn new(storage: Arc<RwLock<PersistentStorageSystem>>) -> Self {
         Self { 
             storage,
             wallet_content_manager: None,

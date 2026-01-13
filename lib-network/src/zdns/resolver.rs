@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use lru::LruCache;
 use tracing::{debug, info, warn};
 
-use crate::web4::{DomainRegistry, DomainRecord, ContentMode, Web4Capability};
+use crate::web4::{NameResolver, ResolvedNameRecord, ContentMode, Web4Capability};
 use super::config::ZdnsConfig;
 use super::error::ZdnsError;
 
@@ -137,8 +137,8 @@ impl ResolverMetrics {
 /// - Negative caching for not-found domains
 /// - Thread-safe concurrent access
 pub struct ZdnsResolver {
-    /// Domain registry for lookups
-    domain_registry: Arc<DomainRegistry>,
+    /// Name resolver for lookups
+    name_resolver: Arc<NameResolver>,
     /// LRU cache for resolved records
     cache: Arc<RwLock<LruCache<String, CachedRecord>>>,
     /// Resolver configuration
@@ -149,7 +149,7 @@ pub struct ZdnsResolver {
 
 impl ZdnsResolver {
     /// Create a new ZDNS resolver
-    pub fn new(domain_registry: Arc<DomainRegistry>, config: ZdnsConfig) -> Self {
+    pub fn new(name_resolver: Arc<NameResolver>, config: ZdnsConfig) -> Self {
         info!(
             cache_size = config.cache_size,
             default_ttl_secs = config.default_ttl.as_secs(),
@@ -157,7 +157,7 @@ impl ZdnsResolver {
         );
 
         Self {
-            domain_registry,
+            name_resolver,
             cache: Arc::new(RwLock::new(LruCache::new(
                 std::num::NonZeroUsize::new(config.cache_size).unwrap_or(
                     std::num::NonZeroUsize::new(1).unwrap()
@@ -313,28 +313,19 @@ impl ZdnsResolver {
 
     /// Resolve domain from registry (no caching)
     async fn resolve_from_registry(&self, domain: &str) -> Result<Web4Record, ZdnsError> {
-        match self.domain_registry.lookup_domain(domain).await {
-            Ok(lookup) if lookup.found => {
-                if let Some(record) = lookup.record {
-                    // Check if domain has expired
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
+        match self.name_resolver.resolve(domain).await {
+            Ok(record) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
 
-                    if record.expires_at < now {
-                        return Err(ZdnsError::DomainExpired(domain.to_string()));
-                    }
-
-                    // Convert DomainRecord to Web4Record
-                    let web4_record = Self::domain_record_to_web4(record);
-                    Ok(web4_record)
-                } else {
-                    Err(ZdnsError::DomainNotFound(domain.to_string()))
+                if record.expires_at < now {
+                    return Err(ZdnsError::DomainExpired(domain.to_string()));
                 }
-            }
-            Ok(_) => {
-                Err(ZdnsError::DomainNotFound(domain.to_string()))
+
+                let web4_record = Self::resolved_name_to_web4(record);
+                Ok(web4_record)
             }
             Err(e) => {
                 warn!(domain = %domain, error = %e, "Registry lookup failed");
@@ -343,12 +334,12 @@ impl ZdnsResolver {
         }
     }
 
-    /// Convert DomainRecord to Web4Record
+    /// Convert resolved name record to Web4Record
     ///
     /// TTL is calculated as the minimum of:
     /// - Time until domain expiration
     /// - Maximum cache TTL (1 hour)
-    fn domain_record_to_web4(record: DomainRecord) -> Web4Record {
+    fn resolved_name_to_web4(record: ResolvedNameRecord) -> Web4Record {
         // Extract owner as hex-encoded hash for privacy
         let owner = hex::encode(&record.owner.0[..16]);
 
