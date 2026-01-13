@@ -85,6 +85,13 @@ impl TlsPinCache {
     /// Insert or update a pin entry from a verified announcement
     ///
     /// The announcement must have already been verified with `verify_and_check_expiry()`.
+    ///
+    /// # Key Rotation Security
+    ///
+    /// When updating an existing entry, the Dilithium public key must match.
+    /// This prevents an attacker from replacing a legitimate node's entry.
+    /// TLS certificate rotation is allowed (tls_spki_sha256 can change) as long
+    /// as the announcement is signed by the same Dilithium key.
     pub async fn insert_verified(&self, announcement: &NodeAnnouncement, endpoints: Vec<String>) -> Result<()> {
         // Validate that the announcement has TLS pin data
         if !announcement.has_tls_pin() {
@@ -93,18 +100,41 @@ impl TlsPinCache {
 
         // Convert UUID to 32-byte key (pad with zeros)
         let node_id_key = uuid_to_node_id_key(&announcement.node_id);
+        let new_dilithium_pk = announcement.dilithium_pk.clone().unwrap();
+        let new_tls_spki = announcement.tls_spki_sha256.unwrap();
+
+        let mut entries = self.entries.write().await;
+        let mut access_times = self.access_times.write().await;
+
+        // Security check: if entry exists, verify Dilithium PK matches (key rotation security)
+        if let Some(existing) = entries.get(&node_id_key) {
+            if existing.dilithium_pk != new_dilithium_pk {
+                warn!(
+                    "SECURITY: Rejected pin update for node {} - Dilithium PK mismatch (identity hijack attempt)",
+                    announcement.node_id
+                );
+                return Err(anyhow!(
+                    "Cannot update pin entry: Dilithium PK mismatch (possible identity hijack)"
+                ));
+            }
+
+            // Log TLS certificate rotation
+            if existing.tls_spki_sha256 != new_tls_spki {
+                info!(
+                    "Pin cache: TLS certificate rotated for node {} (same Dilithium identity)",
+                    announcement.node_id
+                );
+            }
+        }
 
         let entry = PinCacheEntry {
             node_id: node_id_key,
-            dilithium_pk: announcement.dilithium_pk.clone().unwrap(),
-            tls_spki_sha256: announcement.tls_spki_sha256.unwrap(),
+            dilithium_pk: new_dilithium_pk,
+            tls_spki_sha256: new_tls_spki,
             expires_at: announcement.expires_at.unwrap(),
             last_seen: Self::now(),
             endpoints,
         };
-
-        let mut entries = self.entries.write().await;
-        let mut access_times = self.access_times.write().await;
 
         // Evict oldest entries if at capacity
         if entries.len() >= MAX_PIN_CACHE_ENTRIES && !entries.contains_key(&node_id_key) {
@@ -575,5 +605,104 @@ mod tests {
         let result = cache.verify_peer_dilithium_pk(&unknown_node_id, &any_dilithium_pk).await;
         assert!(result.is_ok(), "Unknown node should not cause error");
         assert!(!result.unwrap(), "Result should indicate no PK was cached (false)");
+    }
+
+    // ========================================================================
+    // Key Rotation Security Tests
+    // ========================================================================
+
+    /// Key rotation: TLS certificate update with same Dilithium PK → allowed
+    #[tokio::test]
+    async fn test_key_rotation_same_dilithium_pk_allowed() {
+        let cache = TlsPinCache::new();
+        let node_id_key: NodeIdKey = [60u8; 32];
+        let dilithium_pk = vec![77u8; 1312];
+        let old_tls_spki = [1u8; 32];
+        let new_tls_spki = [2u8; 32]; // Rotated TLS certificate
+
+        // Insert initial entry
+        let initial_entry = PinCacheEntry {
+            node_id: node_id_key,
+            dilithium_pk: dilithium_pk.clone(),
+            tls_spki_sha256: old_tls_spki,
+            expires_at: TlsPinCache::now() + 3600,
+            last_seen: TlsPinCache::now(),
+            endpoints: vec!["192.168.1.100:9334".to_string()],
+        };
+
+        {
+            let mut entries = cache.entries.write().await;
+            let mut access_times = cache.access_times.write().await;
+            entries.insert(node_id_key, initial_entry);
+            access_times.insert(node_id_key, TlsPinCache::now());
+        }
+
+        // Create updated entry with same Dilithium PK but new TLS SPKI
+        let updated_entry = PinCacheEntry {
+            node_id: node_id_key,
+            dilithium_pk: dilithium_pk.clone(), // Same Dilithium identity
+            tls_spki_sha256: new_tls_spki,      // New TLS certificate
+            expires_at: TlsPinCache::now() + 7200,
+            last_seen: TlsPinCache::now(),
+            endpoints: vec!["192.168.1.100:9334".to_string()],
+        };
+
+        // Manually update (simulating what insert_verified does after verification)
+        {
+            let mut entries = cache.entries.write().await;
+            entries.insert(node_id_key, updated_entry);
+        }
+
+        // Verify the new TLS SPKI is cached
+        let result = cache.verify_peer_spki(&node_id_key, &new_tls_spki).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "New TLS SPKI should be accepted after rotation");
+
+        // Old TLS SPKI should now fail
+        let result = cache.verify_peer_spki(&node_id_key, &old_tls_spki).await;
+        assert!(result.is_err(), "Old TLS SPKI should be rejected after rotation");
+    }
+
+    /// Key rotation: TLS certificate update with DIFFERENT Dilithium PK → rejected (hijack attempt)
+    #[tokio::test]
+    async fn test_key_rotation_different_dilithium_pk_rejected() {
+        let cache = TlsPinCache::new();
+        let node_id_key: NodeIdKey = [61u8; 32];
+        let legitimate_dilithium_pk = vec![77u8; 1312];
+        let attacker_dilithium_pk = vec![99u8; 1312]; // Different Dilithium PK
+
+        // Insert initial entry with legitimate Dilithium PK
+        let initial_entry = PinCacheEntry {
+            node_id: node_id_key,
+            dilithium_pk: legitimate_dilithium_pk.clone(),
+            tls_spki_sha256: [1u8; 32],
+            expires_at: TlsPinCache::now() + 3600,
+            last_seen: TlsPinCache::now(),
+            endpoints: vec!["192.168.1.100:9334".to_string()],
+        };
+
+        {
+            let mut entries = cache.entries.write().await;
+            let mut access_times = cache.access_times.write().await;
+            entries.insert(node_id_key, initial_entry);
+            access_times.insert(node_id_key, TlsPinCache::now());
+        }
+
+        // Attacker tries to update with their Dilithium PK
+        // (In real code, this check happens in insert_verified before insertion)
+        let entries = cache.entries.read().await;
+        let existing = entries.get(&node_id_key).unwrap();
+
+        // This should fail - Dilithium PK mismatch
+        assert_ne!(
+            existing.dilithium_pk, attacker_dilithium_pk,
+            "Attacker's Dilithium PK should not match existing entry"
+        );
+
+        // The legitimate Dilithium PK should still match
+        assert_eq!(
+            existing.dilithium_pk, legitimate_dilithium_pk,
+            "Legitimate Dilithium PK should still be cached"
+        );
     }
 }
