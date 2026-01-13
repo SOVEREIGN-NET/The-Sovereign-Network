@@ -195,7 +195,8 @@ pub struct ProtocolsConfig {
     #[serde(default = "default_quic_port")]
     pub quic_port: u16,
 
-    /// Discovery port for peer announcements (default: 9333)
+    /// Legacy/unicast discovery port for peer announcements (default: 9333)
+    /// Note: multicast peer discovery uses fixed port 37775/UDP (see NETWORK_RULES.md)
     /// Can be overridden via ZHTP_DISCOVERY_PORT environment variable
     #[serde(default = "default_discovery_port")]
     pub discovery_port: u16,
@@ -569,7 +570,7 @@ impl Default for NodeConfig {
             protocols_config: ProtocolsConfig {
                 lib_enabled: true,
                 zdns_enabled: true,
-                api_port: 9333,
+                api_port: 9333,  // Legacy port for API/HTTP traffic (distinct from QUIC mesh on 9334)
                 max_connections: 1000,
                 request_timeout_ms: 30000,
                 quic_port: default_quic_port(),

@@ -27,7 +27,8 @@ pub struct ProtocolsComponent {
     api_port: u16,
     /// QUIC port for mesh connections (default: 9334)
     quic_port: u16,
-    /// Discovery port for peer announcements (default: 9333)
+    /// Legacy/unicast discovery port for peer announcements (default: 9333).
+    /// Note: multicast peer discovery uses fixed port 37775/UDP (see NETWORK_RULES.md).
     discovery_port: u16,
     is_edge_node: bool,
     /// Enable ZDNS transport server (UDP/TCP DNS on port 53)
