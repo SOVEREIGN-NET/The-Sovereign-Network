@@ -55,7 +55,9 @@ pub const NUM_SECTOR_DAOS: u8 = 5;
 /// Per-DAO allocation: 6% (30% / 5)
 pub const PER_DAO_ALLOCATION_PERCENT: u8 = 6;
 
-// Compile-time assertion that allocations sum to 100%
+/// Compile-time assertion: allocation percentages must always sum to 100.
+/// This constant exists solely to enforce the invariant on the allocation
+/// constants above; if they are changed to not sum to 100, compilation fails.
 const _: () = assert!(
     UBI_ALLOCATION_PERCENT as u16
         + DAO_ALLOCATION_PERCENT as u16
@@ -186,12 +188,6 @@ pub enum FeeRouterError {
 
     /// Invalid pool address
     InvalidPoolAddress,
-
-    /// Token contract not set
-    TokenContractNotSet,
-
-    /// UBI distributor not set
-    UbiDistributorNotSet,
 }
 
 impl std::fmt::Display for FeeRouterError {
@@ -211,10 +207,6 @@ impl std::fmt::Display for FeeRouterError {
                 write!(f, "Fee distribution failed"),
             FeeRouterError::InvalidPoolAddress =>
                 write!(f, "Invalid pool address"),
-            FeeRouterError::TokenContractNotSet =>
-                write!(f, "Token contract not set"),
-            FeeRouterError::UbiDistributorNotSet =>
-                write!(f, "UBI distributor not set"),
         }
     }
 }

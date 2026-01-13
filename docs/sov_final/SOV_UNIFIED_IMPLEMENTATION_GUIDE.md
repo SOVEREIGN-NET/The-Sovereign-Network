@@ -1,6 +1,6 @@
 # SOV Unified Implementation Guide
 
-**Status:** Week 6 COMPLETE ✅ | Next: Week 7 (Consensus Integration)
+**Status:** Week 3 COMPLETE ✅ | Next: Week 4
 **Date:** January 13, 2026
 **Duration:** 12 weeks (January 20 - April 13, 2026)
 **Architecture:** Layer 0 Blockchain (Rust WASM Contracts on Native Consensus Engine)
@@ -29,44 +29,11 @@
    - Sunset contract (state machine: NORMAL→RESTRICTED→WIND_DOWN→DISSOLVED) ✓
    - 23 unit tests (all passing) ✓
    - PR #746 (created)
+   - **Total: 98 tests passing (Phase 1 milestone)**
 
-✅ Week 4: UBI Distribution Testing & Validation (COMPLETE)
-   - UBI Distribution contract validation (existing implementation) ✓
-   - Citizen registration and tracking workflows ✓
-   - Schedule configuration for Year 1/3/5 financial projections ✓
-   - Funding mechanism and authorization enforcement ✓
-   - 24 unit tests (all passing) ✓
-   - PR #747 (created)
-   - **Total: 122 tests passing (Phase 1 COMPLETE - exceeds 100+ gate)**
+🔄 Week 4-5: UBI Distribution & Integration Testing (NEXT)
 
-✅ Week 5: UBI Distribution & Scale Testing (COMPLETE)
-   - Query methods for frontend integration (get_monthly_ubi, is_registered, has_claimed_this_month) ✓
-   - Small-scale testing: 100 citizens (8 tests) ✓
-   - Medium-scale testing: 10K citizens (10 tests, < 1s registration) ✓
-   - Large-scale testing: 500K citizens (8 tests, ~10s registration) ✓
-   - Extreme-scale testing: 1M citizens (8 tests, marked #[ignore]) ✓
-   - Financial projections validated: Year 1 ($0.45), Year 3 ($4.50), Year 5 ($22.50) per citizen ✓
-   - Performance benchmarks established ✓
-   - 49 unit tests total (42 passing + 7 ignored) ✓
-   - PR #748 (ready to create)
-   - **Total: 171 tests passing (Phase 3 Part 1 COMPLETE)**
-
-✅ Week 6: FeeRouter ↔ UbiDistributor Integration Testing (COMPLETE)
-   - Comprehensive integration test suite (35 tests across 7 categories) ✓
-   - Category 1: FeeRouter → UBI pool allocation flow (8 tests) ✓
-   - Category 2: End-to-end fee collection & UBI distribution (6 tests) ✓
-   - Category 3: Stress testing (10K+ citizens, high-frequency distributions, large amounts) (4 tests) ✓
-   - Category 4: Precision testing (integer division, rounding, cumulative accuracy) (4 tests) ✓
-   - Category 5: Fairness testing (consistent allocation, no double allocation) (4 tests) ✓
-   - Category 6: Performance validation (throughput benchmarks, 5-year projection) (4 tests) ✓
-   - Category 7: Error scenarios and edge cases (5 tests) ✓
-   - Performance optimization methods added to UbiDistributor ✓
-     - new_with_capacity() - pre-allocate HashSet for 1M citizens ✓
-     - register_batch() - batch citizen registration for faster bulk import ✓
-   - All prior tests still passing (Week 1-5: 164 tests) ✓
-   - **Total: 199 tests passing (Phase 3 Part 2 COMPLETE - exceeds 150+ gate)**
-
-🔄 Week 7-12: Consensus Integration, Testing, Deployment (PENDING)
+⏳ Week 6-12: Full System Integration, Testing, Deployment (PENDING)
 ```
 
 ---
@@ -929,50 +896,50 @@ Implementation Task:
 
 ---
 
-#### Week 2: Governance & Treasury Isolation ✅ COMPLETE
+#### Week 2: Governance & Treasury Isolation 🔄 IN PROGRESS
 
 **Monday-Tuesday**
-- [x] Implement Governance contract
-  - [x] Proposal creation
-  - [x] Voting (majority/supermajority)
-  - [x] Timelock enforcement (2 days)
-  - [x] Proposal categories
-  - [x] Tests: proposal flow, voting, timelock
+- [ ] Implement Governance contract
+  - [ ] Proposal creation
+  - [ ] Voting (majority/supermajority)
+  - [ ] Timelock enforcement (2 days)
+  - [ ] Proposal categories
+  - [ ] Tests: proposal flow, voting, timelock
 
-- [x] Implement treasury isolation
-  - [x] NonprofitTreasury contract
-    - [x] receive() only from TributeRouter
-    - [x] No forwarding logic
-    - [x] Balance tracking
-  - [x] ForProfitTreasury contract
-    - [x] receive() from profit distributions
-    - [x] Spending guards
+- [ ] Implement treasury isolation
+  - [ ] NonprofitTreasury contract
+    - [ ] receive() only from TributeRouter
+    - [ ] No forwarding logic
+    - [ ] Balance tracking
+  - [ ] ForProfitTreasury contract
+    - [ ] receive() from profit distributions
+    - [ ] Spending guards
 
 **Wednesday-Thursday**
-- [x] Implement TributeRouter contract
-  - [x] declare_profit() with off-chain signature verification
-  - [x] settle_tribute() with 20% enforcement
-  - [x] Anti-circumvention rules
-  - [x] Tests:
-    - [x] Profit declaration flow
-    - [x] Tribute calculation (profit * 20%)
-    - [x] No dividend before tribute
-    - [x] No bonus before tribute
+- [ ] Implement TributeRouter contract
+  - [ ] declare_profit() with off-chain signature verification
+  - [ ] settle_tribute() with 20% enforcement
+  - [ ] Anti-circumvention rules
+  - [ ] Tests:
+    - [ ] Profit declaration flow
+    - [ ] Tribute calculation (profit * 20%)
+    - [ ] No dividend before tribute
+    - [ ] No bonus before tribute
 
 **Friday**
-- [x] Integration test: SOV tokens → Fee Router → Governance → Treasuries
-- [x] Code review: Governance + Treasury contracts
-- [x] All unit tests + integration tests passing
-- [x] Phase 1 Gate verification
+- [ ] Integration test: SOV tokens → Fee Router → Governance → Treasuries
+- [ ] Code review: Governance + Treasury contracts
+- [ ] All unit tests + integration tests passing
+- [ ] Phase 1 Gate verification
 
 **Phase Gate (Friday EOD):**
-- [x] All 4 core contracts compile
-- [x] No compiler warnings
-- [x] 100+ unit tests passing (41 tests)
-- [x] 5+ integration tests passing
-- [x] All financial calculations verified against projections
-- [x] Code review approved
-- [x] Ready for Phase 2
+- [ ] All 4 core contracts compile
+- [ ] No compiler warnings
+- [ ] 100+ unit tests passing
+- [ ] 5+ integration tests passing
+- [ ] All financial calculations verified against projections
+- [ ] Code review approved
+- [ ] Ready for Phase 2
 
 **Compile-Check Requirement:**
 ```bash
@@ -1020,75 +987,87 @@ fn test_tribute_enforcement() {
 
 **Governance:** DOC 03 + Part of DOC 04
 
-#### Week 3: DAO Treasury & Sunset Contracts ✅ COMPLETE
+#### Week 3: DAO Treasury Contracts
 
 **Monday-Tuesday**
-- [x] Design & implement DAO treasury contract (generic template)
-  - [x] Initialize with 6% of fees monthly
-  - [x] Governance-controlled spending
-  - [x] Timelock on treasury withdrawals (7 days)
-  - [x] Tests: fund flow, spending restrictions
+- [ ] Design & implement DAO treasury contract (generic template)
+  - [ ] Initialize with 6% of fees monthly
+  - [ ] Governance-controlled spending
+  - [ ] Timelock on treasury withdrawals
+  - [ ] Tests: fund flow, spending restrictions
 
-- [x] Generic DAO Treasury for 5 sector DAOs:
-  - [x] HealthcareDAOTreasury
-  - [x] EducationDAOTreasury
-  - [x] EnergyDAOTreasury
-  - [x] HousingDAOTreasury
-  - [x] FoodDAOTreasury
+- [ ] Create 5 specific DAO contracts:
+  - [ ] HealthcareDAOTreasury
+  - [ ] EducationDAOTreasury
+  - [ ] EnergyDAOTreasury
+  - [ ] HousingDAOTreasury
+  - [ ] FoodDAOTreasury
 
-**Wednesday-Friday**
-- [x] Implement Sunset contract
-  - [x] State machine (NORMAL → RESTRICTED → WIND_DOWN → DISSOLVED)
-  - [x] Spending policy enforcement by state
-  - [x] State transition triggers with 14-day timelock
-  - [x] Minimum duration enforcement (90 days restricted, 180 days wind-down)
-  - [x] Tests: all state transitions, spending policies, audit trail
+**Wednesday**
+- [ ] Implement EmergencyReserve contract
+  - [ ] Accumulates 15% of monthly fees
+  - [ ] Restricted access (emergency vote + timelock)
+  - [ ] Attestation of emergency
+
+- [ ] Implement DevGrants contract
+  - [ ] Accumulates 10% of monthly fees
+  - [ ] Application + voting process
+  - [ ] Grant distribution
+
+**Thursday**
+- [ ] Integration: FeeRouter → all 7 pools
+  - [ ] Test fee split flows correctly to each pool
+  - [ ] Verify monthly distribution math
+
+**Friday**
+- [ ] Code review: All DAO + reserve + grants contracts
+- [ ] Phase 2.1 Gate verification
 
 **Phase Gate (Friday EOD):**
-- [x] DAO Treasury contract implemented (generic template)
-- [x] Sunset contract (state machine) implemented
-- [x] All 5 sector DAOs supported via generic template
-- [x] 23 unit tests passing
-- [x] Total: 98 tests passing (Week 1: 34 + Week 2: 41 + Week 3: 23)
-- [x] All critical constants validated
-- [x] PR #746 created and pushed
-- [x] Integration with Week 1-2 contracts verified
+- [ ] All 5 DAO treasuries created
+- [ ] Emergency reserve contract live
+- [ ] Dev grants contract live
+- [ ] 50+ unit tests passing
+- [ ] Integration tests passing
+- [ ] All pools receiving correct % of fees
 
 ---
 
-#### Week 4: UBI Distribution Testing & Validation ✅ COMPLETE
+#### Week 4: Sunset Contract & Value Separation
 
-**Monday-Wednesday**
-- [x] UBI Distribution contract validation
-  - [x] Verified existing PublicKey-based governance model
-  - [x] Tested deterministic month-based scheduling
-  - [x] Validated schedule configuration API
-  - [x] Tested citizen registration workflows
+**Monday-Tuesday**
+- [ ] Implement Sunset contract
+  - [ ] State machine (NORMAL → RESTRICTED → WIND_DOWN → DISSOLVED)
+  - [ ] Spending policy enforcement
+  - [ ] State transition triggers
+  - [ ] Tests: all state transitions, spending rules
 
-**Wednesday-Friday**
-- [x] Financial accuracy validation
-  - [x] Year 1: $0.45 per citizen (months 0-11) ✓
-  - [x] Year 3: $4.50 per citizen (months 24-35) ✓
-  - [x] Year 5: $22.50 per citizen (months 48-59) ✓
+**Wednesday-Thursday**
+- [ ] Complete TributeRouter (from Week 2)
+  - [ ] Finalize anti-circumvention rules
+  - [ ] Off-chain signature verification
+  - [ ] Full integration with treasuries
 
-- [x] Integration testing: UBI with governance
-  - [x] Authorization enforcement verified
-  - [x] Funding mechanism tested
-  - [x] Audit trail queries validated
-  - [x] Multi-year schedule management verified
+- [ ] Integration testing: Complete value separation
+  - [ ] Nonprofit earnings → 100% to Nonprofit Treasury
+  - [ ] For-profit profit → 20% tribute to Nonprofit
+  - [ ] No reverse flow possible
+  - [ ] All anti-circumvention rules blocking payments
 
 **Friday**
-- [x] Phase 1 final code review
-- [x] Phase 1 Gate verification
+- [ ] Phase 2 final code review
+- [ ] Phase 2 Gate verification
 
 **Phase Gate (Friday EOD):**
-- [x] All contracts from Weeks 1-3 still passing (98 tests)
-- [x] UBI Distribution contract validated (24 new tests)
-- [x] Year 1/3/5 financial projections confirmed accurate
-- [x] All authorization and governance rules enforced
-- [x] **122 total tests passing (EXCEEDS 100+ requirement)**
-- [x] Code review approved
-- [x] **Phase 1 COMPLETE** ✅
+- [ ] All contracts from Phase 1 still passing
+- [ ] All 5 DAO contracts tested and integrated
+- [ ] Emergency reserve operational
+- [ ] Dev grants operational
+- [ ] Sunset contract state machine complete
+- [ ] TributeRouter enforcing 20% mandatory
+- [ ] 150+ total tests passing
+- [ ] Code review approved
+- [ ] Ready for Phase 3 (UBI)
 
 ---
 
@@ -1096,82 +1075,64 @@ fn test_tribute_enforcement() {
 
 **Governance:** None (Phase 3 is independent)
 
-#### Week 5: UBI Distributor Contract - ✅ COMPLETE
+#### Week 5: UBI Distributor Contract
 
 **Monday-Wednesday**
-- [x] Design UBI distributor contract (existing implementation validated)
-  - [x] Monthly distribution trigger (deterministic month calculation)
-  - [x] Per-citizen calculation (schedule HashMap)
-  - [x] Distribution to registered citizens (claim_ubi method)
-  - [x] Claim/withdrawal mechanics (pull-based claiming, double-claim prevention)
+- [ ] Design UBI distributor contract
+  - [ ] Monthly distribution trigger
+  - [ ] Per-citizen calculation
+  - [ ] Distribution to registered citizens
+  - [ ] Claim/withdrawal mechanics
 
-- [x] Implement query methods:
-  - [x] initialize_ubi_pool() - alias for receive_funds()
-  - [x] register_citizen() - existing register() method
-  - [x] claim_ubi() - existing pull-based claiming
-  - [x] get_monthly_ubi() - new query method for current month rate
-  - [x] is_registered() - new query method for registration status
-  - [x] has_claimed_this_month() - new query method for claim status
+- [ ] Implement:
+  - [ ] initialize_ubi_pool(monthly_ubi_amount)
+  - [ ] register_citizen(address) - KYC/validation
+  - [ ] claim_ubi(citizen_address) - month allocation
+  - [ ] get_monthly_ubi() - current month rate
 
 **Thursday-Friday**
-- [x] Citizen registration contract (open registration with optional verification)
-  - [x] Verification flow (architecture for off-chain/on-chain attestation)
-  - [x] Registration status tracking (HashSet<[u8; 32]>)
-  - [x] Claim eligibility (validated in claim_ubi method)
+- [ ] Citizen registration contract
+  - [ ] Verification flow (off-chain, on-chain attestation)
+  - [ ] Registration status tracking
+  - [ ] Claim eligibility
 
-- [x] Comprehensive testing (sov_week5_tests.rs: 49 test cases)
-  - [x] Year 1: 10K citizens, $0.45 each ($4,500 monthly per citizen)
-  - [x] Year 3: 500K citizens, $4.50 each ($2,250,000 monthly per citizen)
-  - [x] Year 5: 1M citizens, $22.50 each ($22,500,000 monthly per citizen)
-  - [x] Query methods: 5 tests
-  - [x] Small-scale baseline (100 citizens): 8 tests
-  - [x] Medium-scale (10K citizens): 10 tests
-  - [x] Large-scale (500K citizens): 8 tests
-  - [x] Extreme-scale (1M citizens): 8 tests (#[ignore])
-  - [x] Financial projections: 10 tests
-  - [x] Performance benchmarks: 5 tests
+- [ ] Tests:
+  - [ ] Year 1: 10K citizens, $0.45 each
+  - [ ] Year 3: 500K citizens, $4.50 each
+  - [ ] Year 5: 1M citizens, $22.50 each
 
 **Phase Gate (Friday EOD):**
-- [x] UBI distributor contract operational at scale
-- [x] Citizen registration functional and tested
-- [x] Monthly distribution calculation correct and deterministic
-- [x] 49 test cases created (exceeds 50+ requirement when including #[ignore] tests)
-- [x] Year 1/3/5 financial projections validated: $0.45, $4.50, $22.50 per citizen
-- [x] Performance profiled: 10K registrations < 1s, 500K registrations ~10s
-- [x] Query methods implemented for frontend/integration use
-- [x] Code review approved - no panics, all checked arithmetic, deterministic
-- [x] **Week 5 COMPLETE ✅**
+- [ ] UBI distributor contract live
+- [ ] Citizen registration operational
+- [ ] Monthly distribution calculation correct
+- [ ] 50+ tests passing
+- [ ] Year 1/3/5 projections validated
 
 ---
 
-#### Week 6: FeeRouter ↔ UBI Integration & Testing - ✅ COMPLETE
+#### Week 6: UBI Integration & Testing
 
 **Monday-Wednesday**
-- [x] Comprehensive integration test suite (sov_week6_integration_tests.rs)
-  - [x] FeeRouter → UBI pool allocation flow tests (8 tests)
-  - [x] End-to-end fee collection & UBI distribution (6 tests)
+- [ ] Integrate UBI with FeeRouter
+  - [ ] UBI pool receives 45% of fees automatically
+  - [ ] Monthly distribution trigger
 
-- [x] Stress & precision testing:
-  - [x] Stress test: 10K+ citizens, high-frequency distributions, large amounts (4 tests)
-  - [x] Precision test: integer division, rounding, cumulative accuracy (4 tests)
-  - [x] Fairness test: consistent allocation percentages (4 tests)
+- [ ] Comprehensive testing:
+  - [ ] Stress test: 1M citizen distributions
+  - [ ] Precision test: no rounding errors
+  - [ ] Fairness test: all citizens receive exact same amount
 
 **Thursday-Friday**
-- [x] Performance optimization methods added to UbiDistributor
-  - [x] new_with_capacity() - pre-allocate for 1M citizens
-  - [x] register_batch() - batch citizen registration
-- [x] Performance validation (throughput benchmarks, 5-year simulation)
-- [x] Error scenarios and edge cases (5 tests)
-- [x] Phase 3 code review and final integration testing
+- [ ] Phase 3 code review
+- [ ] Final integration testing
+- [ ] Performance validation
 
-**Phase Gate (Friday EOD):** ✅ PASSED
-- [x] UBI system fully integrated with FeeRouter
-- [x] All prior phase tests still passing (164 tests from Weeks 1-5)
-- [x] 35 UBI-specific integration tests passing
-- [x] Performance validation: 100 distributions < 1s, 60-month simulation < 1s
-- [x] Error handling comprehensive
-- [x] **Phase 3 COMPLETE: 199 total tests passing (exceeds 150+ gate)**
-- [x] Ready for Phase 4 (Consensus Integration)
+**Phase Gate (Friday EOD):**
+- [ ] UBI system fully integrated
+- [ ] All prior phase tests still passing (150+)
+- [ ] 50+ UBI-specific tests passing
+- [ ] Performance acceptable (1M citizens in <1s)
+- [ ] Ready for Phase 4 (Consensus Integration)
 
 ---
 
@@ -1229,7 +1190,7 @@ fn test_tribute_enforcement() {
 - [ ] Consensus integration complete
 - [ ] Fee collection operational
 - [ ] Voting primitives live
-- [ ] All prior tests still passing (199+ from Phases 1-3)
+- [ ] All prior tests still passing (200+)
 - [ ] Ready for Phase 5 (Testing & Validation)
 
 ---
@@ -1388,34 +1349,29 @@ MUST PASS:
 STATUS: Ready for Phase 2 (Week 2 Governance & Treasury)
 ```
 
-#### Phase 2 Gate (End Week 4) ✅ PASSED (Weeks 2-3 Complete)
+#### Phase 2 Gate (End Week 4)
 ```
 MUST PASS:
-  [x] All Phase 1 tests still passing (34 tests)
-  [x] 5 DAO treasuries created
-  [x] Emergency reserve operational
-  [x] Dev grants operational
-  [x] Sunset contract state machine complete
-  [x] TributeRouter enforcing 20% mandatory
-  [x] 150+ total tests passing (122 tests from Weeks 1-4)
-  [x] Code review approved
-
-STATUS: Ready for Phase 3 (Weeks 5-6 UBI Integration)
+  [ ] All Phase 1 tests still passing
+  [ ] 5 DAO treasuries created
+  [ ] Emergency reserve operational
+  [ ] Dev grants operational
+  [ ] Sunset contract state machine complete
+  [ ] TributeRouter enforcing 20% mandatory
+  [ ] 150+ total tests passing
+  [ ] Code review approved
 ```
 
-#### Phase 3 Gate (End Week 6) ✅ PASSED
+#### Phase 3 Gate (End Week 6)
 ```
 MUST PASS:
-  [x] All Phase 1-2 tests still passing (164 tests from Weeks 1-5)
-  [x] UBI distributor working (full integration tested)
-  [x] Citizen registration functional (query methods operational)
-  [x] Year 1/3/5 projections validated ($0.45, $4.50, $22.50 per citizen)
-  [x] 35 UBI integration tests passing (Week 6)
-  [x] 199 total tests passing (EXCEEDS 150+ gate requirement)
-  [x] Performance optimization methods added (new_with_capacity, register_batch)
-  [x] Code review approved
-
-STATUS: Ready for Phase 4 (Weeks 7-8 Consensus Integration)
+  [ ] All Phase 1-2 tests still passing
+  [ ] UBI distributor working
+  [ ] Citizen registration functional
+  [ ] Year 1/3/5 projections validated
+  [ ] 50+ UBI tests passing
+  [ ] 200+ total tests passing
+  [ ] Code review approved
 ```
 
 #### Phase 4 Gate (End Week 8)
@@ -1860,7 +1816,27 @@ echo "Documentation: ./docs/sov_final/SOV_UNIFIED_IMPLEMENTATION_GUIDE.md"
 
 NETWORK=$1
 
-echo "=== SOV Devnet Validation ==="
+# Validate network parameter to prevent command injection
+if [[ -z "$NETWORK" ]]; then
+    echo "Error: Network parameter is required"
+    echo "Usage: $0 <network>"
+    echo "Valid networks: devnet, testnet, mainnet"
+    exit 1
+fi
+
+# Whitelist allowed network values
+case "$NETWORK" in
+    devnet|testnet|mainnet)
+        # Valid network
+        ;;
+    *)
+        echo "Error: Invalid network '$NETWORK'"
+        echo "Valid networks: devnet, testnet, mainnet"
+        exit 1
+        ;;
+esac
+
+echo "=== SOV Network Validation ==="
 echo "Network: $NETWORK"
 echo ""
 
@@ -1887,7 +1863,7 @@ CONTRACTS=(
 )
 
 for contract in "${CONTRACTS[@]}"; do
-    STATUS=$(./target/release/sov_cli status $contract --network $NETWORK 2>/dev/null || echo "FAILED")
+    STATUS=$(./target/release/sov_cli status "$contract" --network "$NETWORK" 2>/dev/null || echo "FAILED")
     if [[ $STATUS == "FAILED" ]]; then
         echo "❌ $contract: NOT DEPLOYED"
         exit 1
@@ -1899,14 +1875,14 @@ done
 # 2. Verify constants
 echo ""
 echo "Verifying constants..."
-SOV_SUPPLY=$(./target/release/sov_cli query sov_token total_supply --network $NETWORK)
+SOV_SUPPLY=$(./target/release/sov_cli query sov_token total_supply --network "$NETWORK")
 if [ "$SOV_SUPPLY" != "1000000000000" ]; then
     echo "❌ SOV Supply incorrect: $SOV_SUPPLY (expected 1000000000000)"
     exit 1
 fi
 echo "✅ SOV Supply: 1 trillion"
 
-CBE_SUPPLY=$(./target/release/sov_cli query cbe_token total_supply --network $NETWORK)
+CBE_SUPPLY=$(./target/release/sov_cli query cbe_token total_supply --network "$NETWORK")
 if [ "$CBE_SUPPLY" != "100000000000" ]; then
     echo "❌ CBE Supply incorrect: $CBE_SUPPLY (expected 100000000000)"
     exit 1
@@ -1916,7 +1892,7 @@ echo "✅ CBE Supply: 100 billion"
 # 3. Test fee router
 echo ""
 echo "Testing fee distribution..."
-./target/release/sov_cli test fee_distribution --amount 1000000 --network $NETWORK
+./target/release/sov_cli test fee_distribution --amount 1000000 --network "$NETWORK"
 if [ $? -ne 0 ]; then
     echo "❌ Fee distribution failed"
     exit 1
@@ -1926,7 +1902,7 @@ echo "✅ Fee distribution working"
 # 4. Test UBI calculation
 echo ""
 echo "Testing UBI calculation (Year 1)..."
-./target/release/sov_cli test ubi_calculation --year 1 --network $NETWORK
+./target/release/sov_cli test ubi_calculation --year 1 --network "$NETWORK"
 if [ $? -ne 0 ]; then
     echo "❌ UBI calculation failed"
     exit 1
