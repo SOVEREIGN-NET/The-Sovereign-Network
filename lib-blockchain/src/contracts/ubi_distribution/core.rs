@@ -398,26 +398,136 @@ impl UbiDistributor {
         self.blocks_per_month
     }
 
-    /// Check if a citizen is registered (Week 7 helper)
+    /// Get current month's UBI amount based on block height
+    ///
+    /// **Consensus-Critical:** Uses deterministic month calculation.
+    /// Result depends only on current_height and blocks_per_month (both inputs/immutable).
+    ///
+    /// # Arguments
+    /// * `current_height` - Current blockchain block height
+    ///
+    /// # Returns
+    /// Per-citizen UBI amount for the current month, or 0 if not scheduled
+    pub fn get_monthly_ubi(&self, current_height: u64) -> u64 {
+        let month = self.month_index(current_height);
+        self.amount_for_month(month)
+    }
+
+    /// Check if citizen is registered for UBI
+    ///
+    /// # Arguments
+    /// * `citizen` - The citizen's PublicKey
+    ///
+    /// # Returns
+    /// true if citizen is registered, false otherwise
     pub fn is_registered(&self, citizen: &PublicKey) -> bool {
         let id = Self::key_id(citizen);
         self.registered.contains(&id)
     }
 
-    /// Check if a citizen has claimed for a specific month (Week 7 helper)
-    pub fn has_claimed(&self, citizen: &PublicKey, month: MonthIndex) -> bool {
+    /// Check if citizen has claimed UBI for the current month
+    ///
+    /// **Consensus-Critical:** Uses deterministic month calculation.
+    /// Invariant P1: Each citizen paid at most once per month.
+    ///
+    /// # Arguments
+    /// * `citizen` - The citizen's PublicKey
+    /// * `current_height` - Current blockchain block height
+    ///
+    /// # Returns
+    /// true if citizen already claimed this month, false otherwise
+    pub fn has_claimed_this_month(&self, citizen: &PublicKey, current_height: u64) -> bool {
         let id = Self::key_id(citizen);
-        self.paid.get(&month).map_or(false, |set| set.contains(&id))
+        let month = self.month_index(current_height);
+        self.paid.get(&month).map(|s| s.contains(&id)).unwrap_or(false)
     }
 
-    /// Get the scheduled amount for a month (Week 7 helper)
-    pub fn get_scheduled_amount(&self, month: MonthIndex) -> Option<u64> {
-        let amount = self.amount_for_month(month);
-        if amount > 0 {
-            Some(amount)
-        } else {
-            None
+    /// Initialize UBI pool with funding
+    ///
+    /// Semantic alias for `receive_funds()` - clarifies intent for UBI initialization.
+    /// The amount is total pool funding, not per-citizen monthly amount.
+    ///
+    /// # Arguments
+    /// * `caller` - Must be governance_authority
+    /// * `amount` - Total funds to add to pool (must be > 0)
+    ///
+    /// # Errors
+    /// - `Unauthorized` if caller is not governance_authority
+    /// - `InvalidSchedule` if amount == 0
+    /// - `InvalidSchedule` if total would overflow
+    pub fn initialize_ubi_pool(&mut self, caller: &PublicKey, amount: u64) -> Result<(), Error> {
+        self.receive_funds(caller, amount)
+    }
+
+    // ========================================================================
+    // PERFORMANCE OPTIMIZATION METHODS
+    // ========================================================================
+
+    /// Create a new UbiDistributor with pre-allocated capacity for citizens
+    ///
+    /// Improves performance for large-scale operations (e.g., 1M citizen registration).
+    /// By pre-allocating HashSet capacity, we reduce rehashing overhead.
+    ///
+    /// # Arguments
+    /// * `governance_authority` - The PublicKey authorized to set schedule and receive funds
+    /// * `blocks_per_month` - Number of blocks in one month (must be > 0)
+    /// * `expected_citizens` - Expected number of citizens to register (for capacity planning)
+    ///
+    /// # Errors
+    /// - `InvalidSchedule` if blocks_per_month == 0
+    ///
+    /// # Performance
+    /// Allocates up-front space for faster registration at scale.
+    /// Beneficial when registering 10K+ citizens.
+    pub fn new_with_capacity(
+        governance_authority: PublicKey,
+        blocks_per_month: u64,
+        expected_citizens: usize,
+    ) -> Result<Self, Error> {
+        if blocks_per_month == 0 {
+            return Err(Error::InvalidSchedule);
         }
+
+        Ok(Self {
+            governance_authority,
+            blocks_per_month,
+            balance: 0,
+            total_received: 0,
+            total_paid: 0,
+            registered: HashSet::with_capacity(expected_citizens),
+            paid: HashMap::new(),
+            schedule: HashMap::new(),
+        })
+    }
+
+    /// Register multiple citizens in a single batch operation
+    ///
+    /// More efficient than repeated `register()` calls for bulk registration.
+    /// Useful for initialization of large citizen bases.
+    ///
+    /// # Arguments
+    /// * `citizens` - Slice of PublicKeys to register
+    ///
+    /// # Returns
+    /// Number of citizens successfully registered (duplicates skipped).
+    /// No errors returned - duplicate registrations are silently skipped.
+    ///
+    /// # Invariants Maintained
+    /// - Invariant U1: No duplicates in final registered set
+    /// - Each citizen can only be registered once
+    ///
+    /// # Performance
+    /// O(n) where n = len(citizens). No authorization checks needed
+    /// as batch registration is permissionless (matches individual register behavior).
+    pub fn register_batch(&mut self, citizens: &[PublicKey]) -> usize {
+        let mut count = 0;
+        for citizen in citizens {
+            let id = Self::key_id(citizen);
+            if self.registered.insert(id) {
+                count += 1;
+            }
+        }
+        count
     }
 }
 

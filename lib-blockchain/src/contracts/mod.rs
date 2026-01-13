@@ -41,11 +41,15 @@ pub mod sov_swap;
 #[cfg(feature = "contracts")]
 pub mod governance;
 #[cfg(feature = "contracts")]
+pub mod dao;
+#[cfg(feature = "contracts")]
 pub mod economics;
 #[cfg(feature = "contracts")]
 pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod web4;
+#[cfg(feature = "contracts")]
+pub mod approval_verifier;
 
 // Re-export core types and functionality when contracts feature is enabled
 #[cfg(feature = "contracts")]
