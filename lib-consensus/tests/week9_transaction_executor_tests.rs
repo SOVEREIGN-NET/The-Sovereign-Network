@@ -5,7 +5,7 @@
 
 #[cfg(test)]
 mod transaction_executor_tests {
-    use lib_consensus::{Mempool, MempoolTransaction, MempoolStats};
+    use lib_consensus::{Mempool, MempoolTransaction};
     use lib_consensus::engines::{TransactionExecutor, BlockExecutionContext};
 
     #[test]
