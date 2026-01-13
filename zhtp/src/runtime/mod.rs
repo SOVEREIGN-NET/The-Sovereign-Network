@@ -506,26 +506,53 @@ impl RuntimeOrchestrator {
         }
         
         // CRITICAL: Check if we're joining existing network - if so, DON'T create genesis!
+        // BUT: If the blockchain is empty after joining (sync failed), fall back to genesis creation
         let joined_existing = *self.joined_existing_network.read().await;
-        
+
         if joined_existing {
-            // Joining existing network - blockchain should already be initialized for sync
-            info!(" Joining existing network - skipping genesis creation");
-            info!("  User wallet will be added to synced blockchain after sync completes");
-            
-            // Just store the wallet for later use, don't create blockchain
-            // The blockchain will be synced from network peers
-            
-            // CRITICAL: Push wallet to BlockchainComponent if already registered
-            let components = self.components.read().await;
-            if let Some(component) = components.get(&ComponentId::Blockchain) {
-                if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
-                    blockchain_comp.set_user_wallet(wallet).await;
-                    info!(" User wallet propagated to BlockchainComponent for sync");
+            // Check if the global blockchain actually has data (sync may have failed)
+            let blockchain_has_data = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                Ok(blockchain_arc) => {
+                    let blockchain = blockchain_arc.read().await;
+                    let has_data = blockchain.height > 0 || !blockchain.utxo_set.is_empty();
+                    if has_data {
+                        info!(" Joined network has blockchain data (height: {}, UTXOs: {})",
+                              blockchain.height, blockchain.utxo_set.len());
+                    } else {
+                        warn!("⚠ Joined network but blockchain is empty - sync may have failed");
+                    }
+                    has_data
                 }
+                Err(_) => {
+                    warn!("⚠ No global blockchain initialized - will create genesis");
+                    false
+                }
+            };
+
+            if blockchain_has_data {
+                // Successfully joined network with synced data
+                info!(" Joining existing network - skipping genesis creation");
+                info!("  User wallet will be added to synced blockchain after sync completes");
+
+                // Just store the wallet for later use, don't create blockchain
+                // The blockchain will be synced from network peers
+
+                // CRITICAL: Push wallet to BlockchainComponent if already registered
+                let components = self.components.read().await;
+                if let Some(component) = components.get(&ComponentId::Blockchain) {
+                    if let Some(blockchain_comp) = component.as_any().downcast_ref::<BlockchainComponent>() {
+                        blockchain_comp.set_user_wallet(wallet).await;
+                        info!(" User wallet propagated to BlockchainComponent for sync");
+                    }
+                }
+
+                return Ok(());
+            } else {
+                // Sync failed - fall back to genesis creation
+                warn!("⚠ Network sync failed or incomplete - falling back to genesis creation");
+                info!(" This node will create its own genesis and become a new network origin");
+                // Continue to genesis creation below...
             }
-            
-            return Ok(());
         }
         
         // Try to load existing blockchain from disk, or create new genesis
