@@ -172,21 +172,9 @@ impl SovToken {
 
     /// Derive the canonical token ID for SOV
     fn derive_token_id() -> [u8; 32] {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        SOV_NAME.hash(&mut hasher);
-        SOV_SYMBOL.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        // Fill rest with deterministic pattern
-        for i in 8..32 {
-            id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-        }
-        id
+        // Use Blake3 for cryptographically secure, deterministic token ID
+        let token_data = format!("{}_{}_TOKEN", SOV_NAME.to_uppercase(), SOV_SYMBOL.to_uppercase());
+        blake3::hash(token_data.as_bytes()).into()
     }
 
     /// Initialize the token with the full supply distributed to specified addresses
