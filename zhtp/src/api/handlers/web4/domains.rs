@@ -483,6 +483,8 @@ impl Web4Handler {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
         
         // Calculate transaction hash for signing
