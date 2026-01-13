@@ -906,8 +906,8 @@ impl<'a> StatefulTransactionValidator<'a> {
         
             TransactionType::UBIClaim |
             TransactionType::ProfitDeclaration => {
-                // Week 7/8 transaction types - validate with helper method
-                stateless_validator.validate_week7_transaction_types(transaction)?;
+                // Week 7/8 transaction types - validate with helper method on self (StatefulTransactionValidator)
+                self.validate_week7_transaction_types(transaction)?;
             }}
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -1101,6 +1101,27 @@ impl<'a> StatefulTransactionValidator<'a> {
         // - Prevent duplicate declarations for same fiscal period
         // - Verify for-profit treasury has sufficient balance for tribute
 
+        Ok(())
+    }
+
+    /// Helper method to validate Week 7/8 transaction types (UBIClaim and ProfitDeclaration)
+    ///
+    /// This method extracts the duplicate validation logic for UBIClaim and ProfitDeclaration
+    /// transaction types that appears in multiple validation functions.
+    fn validate_week7_transaction_types(&self, transaction: &Transaction) -> ValidationResult {
+        match transaction.transaction_type {
+            TransactionType::UBIClaim => {
+                // UBI claim transactions - citizen-initiated claims (Week 7)
+                self.validate_ubi_claim_transaction(transaction)?;
+            }
+            TransactionType::ProfitDeclaration => {
+                // Profit declaration transactions - enforce 20% tribute (Week 7)
+                self.validate_profit_declaration_transaction(transaction)?;
+            }
+            _ => {
+                // Not a Week 7 transaction type, no validation needed
+            }
+        }
         Ok(())
     }
 }
