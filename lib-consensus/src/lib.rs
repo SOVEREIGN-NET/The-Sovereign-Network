@@ -92,6 +92,12 @@ pub enum ConsensusError {
 
     #[error("System time error: {0}")]
     TimeError(#[from] std::time::SystemTimeError),
+
+    #[error("Fee collection failed: {0}")]
+    FeeCollectionFailed(String),
+
+    #[error("Fee distribution failed: {0}")]
+    FeeDistributionFailed(String),
 }
 
 /// Initialize the consensus system with configuration and message broadcaster

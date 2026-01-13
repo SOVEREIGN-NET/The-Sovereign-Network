@@ -43,10 +43,20 @@ pub enum TransactionType {
     /// DAO proposal execution (treasury spending)
     DaoExecution,
     /// Difficulty parameter update (via DAO governance)
-    /// 
+    ///
     /// Used to update the blockchain's difficulty adjustment parameters
     /// after a DifficultyParameterUpdate DAO proposal has been approved.
     DifficultyUpdate,
+    /// UBI claim - citizen-initiated claim from UBI pool (Week 7)
+    ///
+    /// Distinct from UbiDistribution (system-initiated push).
+    /// This is a pull-based model where citizens claim their allocation.
+    UBIClaim,
+    /// Profit declaration - enforces 20% tribute from for-profit to nonprofit (Week 7)
+    ///
+    /// Validates that tribute_amount == profit_amount * 20 / 100.
+    /// Integrates with TributeRouter for enforcement.
+    ProfitDeclaration,
 }
 
 impl TransactionType {
@@ -112,6 +122,8 @@ impl TransactionType {
             TransactionType::DaoVote => "DAO governance vote on proposal",
             TransactionType::DaoExecution => "DAO proposal execution (treasury spending)",
             TransactionType::DifficultyUpdate => "Difficulty parameter update (via DAO governance)",
+            TransactionType::UBIClaim => "UBI claim - citizen-initiated claim from pool",
+            TransactionType::ProfitDeclaration => "Profit declaration - enforces 20% tribute",
         }
     }
 
@@ -136,6 +148,8 @@ impl TransactionType {
             TransactionType::DaoVote => "dao_vote",
             TransactionType::DaoExecution => "dao_execution",
             TransactionType::DifficultyUpdate => "difficulty_update",
+            TransactionType::UBIClaim => "ubi_claim",
+            TransactionType::ProfitDeclaration => "profit_declaration",
         }
     }
 
@@ -160,7 +174,19 @@ impl TransactionType {
             "dao_vote" => Some(TransactionType::DaoVote),
             "dao_execution" => Some(TransactionType::DaoExecution),
             "difficulty_update" => Some(TransactionType::DifficultyUpdate),
+            "ubi_claim" => Some(TransactionType::UBIClaim),
+            "profit_declaration" => Some(TransactionType::ProfitDeclaration),
             _ => None,
         }
+    }
+
+    /// Check if this transaction type relates to UBI (pull-based claims vs system-initiated distribution)
+    pub fn is_ubi_claim(&self) -> bool {
+        matches!(self, TransactionType::UBIClaim)
+    }
+
+    /// Check if this transaction type relates to profit declarations (for-profit to nonprofit tribute)
+    pub fn is_profit_declaration(&self) -> bool {
+        matches!(self, TransactionType::ProfitDeclaration)
     }
 }

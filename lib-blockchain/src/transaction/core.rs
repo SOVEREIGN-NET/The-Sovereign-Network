@@ -44,6 +44,12 @@ pub struct Transaction {
     /// DAO execution data (only for DAO execution transactions)
     /// This data is processed by lib-consensus package
     pub dao_execution_data: Option<DaoExecutionData>,
+    /// UBI claim data (only for UBI claim transactions - Week 7)
+    /// This data is processed by lib-contracts package
+    pub ubi_claim_data: Option<UbiClaimData>,
+    /// Profit declaration data (only for profit declaration transactions - Week 7)
+    /// This data is processed by lib-contracts package
+    pub profit_declaration_data: Option<ProfitDeclarationData>,
 }
 
 /// DAO proposal transaction data (processed by lib-consensus package)
@@ -109,6 +115,69 @@ pub struct DaoExecutionData {
     pub executed_at_height: u64,
     /// Multi-sig signatures from approving validators
     pub multisig_signatures: Vec<Vec<u8>>,
+}
+
+/// UBI claim transaction data - citizen-initiated claim from UBI pool (Week 7)
+///
+/// Distinct from UbiDistribution (system-initiated push).
+/// This is a pull-based model where citizens claim their allocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UbiClaimData {
+    /// Unique claim identifier (deterministic hash of claimant + month)
+    pub claim_id: Hash,
+    /// Claimant's verified identity
+    pub claimant_identity: String,
+    /// Month index for this claim (calculated from genesis)
+    pub month_index: u64,
+    /// Amount being claimed (must match UbiDistributor schedule)
+    pub claim_amount: u64,
+    /// Recipient wallet address (must be registered to claimant)
+    pub recipient_wallet: PublicKey,
+    /// Block timestamp when claim was created
+    pub claimed_at: u64,
+    /// Block height when claim was created
+    pub claimed_at_height: u64,
+    /// Zero-knowledge proof of citizenship (verifies registration)
+    pub citizenship_proof: Vec<u8>,
+}
+
+/// Profit declaration transaction data - enforces 20% tribute from for-profit to nonprofit (Week 7)
+///
+/// Validates that tribute_amount == profit_amount * 20 / 100.
+/// Integrates with TributeRouter for enforcement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfitDeclarationData {
+    /// Unique declaration identifier
+    pub declaration_id: Hash,
+    /// Declarant's verified identity (for-profit entity)
+    pub declarant_identity: String,
+    /// Fiscal period (e.g., "2026-Q1")
+    pub fiscal_period: String,
+    /// Total profit declared (in smallest token unit)
+    pub profit_amount: u64,
+    /// Tribute amount (MUST equal profit_amount * 20 / 100)
+    pub tribute_amount: u64,
+    /// Nonprofit treasury receiving tribute
+    pub nonprofit_treasury: PublicKey,
+    /// For-profit treasury paying tribute
+    pub forprofit_treasury: PublicKey,
+    /// Block timestamp when declared
+    pub declared_at: u64,
+    /// Authorization signature from for-profit entity
+    pub authorization_signature: Vec<u8>,
+    /// Optional: Hash of audit proof documents
+    pub audit_proof_hash: Option<Hash>,
+    /// Revenue sources breakdown (for transparency)
+    pub revenue_sources: Vec<RevenueSource>,
+}
+
+/// Revenue source for profit declaration (transparency in tribute accounting)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevenueSource {
+    /// Category (e.g., "Sales", "Services", "Investments")
+    pub category: String,
+    /// Amount from this source
+    pub amount: u64,
 }
 
 /// Transaction input referencing a previous output
@@ -281,6 +350,8 @@ impl Transaction {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
@@ -306,6 +377,8 @@ impl Transaction {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
@@ -333,6 +406,8 @@ impl Transaction {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
@@ -376,6 +451,8 @@ impl Transaction {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
@@ -401,6 +478,8 @@ impl Transaction {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
@@ -426,6 +505,8 @@ impl Transaction {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
@@ -453,6 +534,8 @@ impl Transaction {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
@@ -480,6 +563,8 @@ impl Transaction {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
@@ -507,6 +592,8 @@ impl Transaction {
             dao_proposal_data: Some(proposal_data),
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
@@ -534,6 +621,8 @@ impl Transaction {
             dao_proposal_data: None,
             dao_vote_data: Some(vote_data),
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
@@ -561,6 +650,8 @@ impl Transaction {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: Some(execution_data),
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         }
     }
 
