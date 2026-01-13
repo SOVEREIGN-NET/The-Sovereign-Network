@@ -311,9 +311,14 @@ impl QuicMeshProtocol {
     /// Only configure trusted bootstrap peers here. These peers get special
     /// TOFU treatment - their self-signed certificates will be accepted on
     /// first contact and then pinned for future connections.
+    ///
+    /// # Implementation Note
+    ///
+    /// This method updates the bootstrap peers on the existing verifier instance,
+    /// preserving any previously loaded pins in its internal pin store. This avoids
+    /// discarding cached state when bootstrap peers are reconfigured.
     pub fn set_bootstrap_peers(&mut self, peers: Vec<SocketAddr>) {
-        let config = PinnedVerifierConfig::with_bootstrap(peers.clone());
-        self.verifier = Arc::new(PinnedCertVerifier::new(config));
+        self.verifier.update_bootstrap_peers(peers.clone());
         info!("Configured {} bootstrap peers for TOFU", peers.len());
     }
 

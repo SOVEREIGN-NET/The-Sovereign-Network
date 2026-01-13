@@ -69,9 +69,12 @@ impl SyncPinStore {
 
     /// Add or update a pin
     pub fn insert(&self, node_id: NodeIdKey, spki_hash: [u8; 32]) {
-        let mut spki_to_node = self.spki_to_node.write().unwrap();
-        let mut node_to_spki = self.node_to_spki.write().unwrap();
-        let mut pinned_nodes = self.pinned_nodes.write().unwrap();
+        let mut spki_to_node = self.spki_to_node.write()
+            .expect("Failed to acquire write lock on spki_to_node");
+        let mut node_to_spki = self.node_to_spki.write()
+            .expect("Failed to acquire write lock on node_to_spki");
+        let mut pinned_nodes = self.pinned_nodes.write()
+            .expect("Failed to acquire write lock on pinned_nodes");
 
         // Remove old SPKI mapping if exists
         if let Some(old_spki) = node_to_spki.get(&node_id) {
@@ -85,40 +88,54 @@ impl SyncPinStore {
 
     /// Check if a NodeId has a pinned certificate
     pub fn has_pin(&self, node_id: &NodeIdKey) -> bool {
-        self.pinned_nodes.read().unwrap().contains(node_id)
+        self.pinned_nodes.read()
+            .expect("Failed to acquire read lock on pinned_nodes")
+            .contains(node_id)
     }
 
     /// Get the pinned SPKI for a NodeId
     pub fn get_pin(&self, node_id: &NodeIdKey) -> Option<[u8; 32]> {
-        self.node_to_spki.read().unwrap().get(node_id).copied()
+        self.node_to_spki.read()
+            .expect("Failed to acquire read lock on node_to_spki")
+            .get(node_id).copied()
     }
 
     /// Verify a certificate's SPKI against the pin for a NodeId
     pub fn verify_spki(&self, node_id: &NodeIdKey, presented_spki: &[u8; 32]) -> Option<bool> {
-        let node_to_spki = self.node_to_spki.read().unwrap();
+        let node_to_spki = self.node_to_spki.read()
+            .expect("Failed to acquire read lock on node_to_spki");
         node_to_spki.get(node_id).map(|pinned| pinned == presented_spki)
     }
 
     /// Find the NodeId associated with an SPKI hash (for lookup by cert)
     pub fn find_node_by_spki(&self, spki_hash: &[u8; 32]) -> Option<NodeIdKey> {
-        self.spki_to_node.read().unwrap().get(spki_hash).copied()
+        self.spki_to_node.read()
+            .expect("Failed to acquire read lock on spki_to_node")
+            .get(spki_hash).copied()
     }
 
     /// Get the number of pins stored
     pub fn len(&self) -> usize {
-        self.pinned_nodes.read().unwrap().len()
+        self.pinned_nodes.read()
+            .expect("Failed to acquire read lock on pinned_nodes")
+            .len()
     }
 
     /// Check if the store is empty
     pub fn is_empty(&self) -> bool {
-        self.pinned_nodes.read().unwrap().is_empty()
+        self.pinned_nodes.read()
+            .expect("Failed to acquire read lock on pinned_nodes")
+            .is_empty()
     }
 
     /// Sync from the async TlsPinCache
     pub fn sync_from_entries(&self, entries: &[PinCacheEntry]) {
-        let mut spki_to_node = self.spki_to_node.write().unwrap();
-        let mut node_to_spki = self.node_to_spki.write().unwrap();
-        let mut pinned_nodes = self.pinned_nodes.write().unwrap();
+        let mut spki_to_node = self.spki_to_node.write()
+            .expect("Failed to acquire write lock on spki_to_node");
+        let mut node_to_spki = self.node_to_spki.write()
+            .expect("Failed to acquire write lock on node_to_spki");
+        let mut pinned_nodes = self.pinned_nodes.write()
+            .expect("Failed to acquire write lock on pinned_nodes");
 
         // Clear existing entries
         spki_to_node.clear();
@@ -137,19 +154,33 @@ impl SyncPinStore {
 }
 
 /// Configuration for the PinnedCertVerifier
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PinnedVerifierConfig {
     /// Bootstrap peer addresses that are allowed TOFU
-    pub bootstrap_addrs: HashSet<SocketAddr>,
+    /// Wrapped in RwLock to allow dynamic updates without recreating the verifier
+    pub bootstrap_addrs: RwLock<HashSet<SocketAddr>>,
     /// Whether to allow connections to unknown peers (no pin, not bootstrap)
     /// Default: false (strict mode)
     pub allow_unknown_peers: bool,
 }
 
+impl Clone for PinnedVerifierConfig {
+    fn clone(&self) -> Self {
+        Self {
+            bootstrap_addrs: RwLock::new(
+                self.bootstrap_addrs.read()
+                    .expect("Failed to acquire read lock on bootstrap_addrs")
+                    .clone()
+            ),
+            allow_unknown_peers: self.allow_unknown_peers,
+        }
+    }
+}
+
 impl Default for PinnedVerifierConfig {
     fn default() -> Self {
         Self {
-            bootstrap_addrs: HashSet::new(),
+            bootstrap_addrs: RwLock::new(HashSet::new()),
             allow_unknown_peers: false,
         }
     }
@@ -159,19 +190,30 @@ impl PinnedVerifierConfig {
     /// Create a new config with bootstrap addresses
     pub fn with_bootstrap(addrs: Vec<SocketAddr>) -> Self {
         Self {
-            bootstrap_addrs: addrs.into_iter().collect(),
+            bootstrap_addrs: RwLock::new(addrs.into_iter().collect()),
             allow_unknown_peers: false,
         }
     }
 
     /// Add a bootstrap address
     pub fn add_bootstrap(&mut self, addr: SocketAddr) {
-        self.bootstrap_addrs.insert(addr);
+        self.bootstrap_addrs.write()
+            .expect("Failed to acquire write lock on bootstrap_addrs")
+            .insert(addr);
     }
 
     /// Check if an address is in the bootstrap allowlist
     pub fn is_bootstrap(&self, addr: &SocketAddr) -> bool {
-        self.bootstrap_addrs.contains(addr)
+        self.bootstrap_addrs.read()
+            .expect("Failed to acquire read lock on bootstrap_addrs")
+            .contains(addr)
+    }
+
+    /// Update the bootstrap addresses (replaces existing set)
+    pub fn set_bootstrap_addrs(&self, addrs: Vec<SocketAddr>) {
+        *self.bootstrap_addrs.write()
+            .expect("Failed to acquire write lock on bootstrap_addrs") = 
+            addrs.into_iter().collect();
     }
 }
 
@@ -183,15 +225,28 @@ impl PinnedVerifierConfig {
 /// 3. Unknown peers: Rejection
 pub struct PinnedCertVerifier {
     /// Configuration (bootstrap allowlist, etc.)
-    config: PinnedVerifierConfig,
+    config: Arc<PinnedVerifierConfig>,
     /// Synchronous pin store for TLS verification
     pin_store: Arc<SyncPinStore>,
     /// The current peer address being verified (set before each connection)
     /// This is needed because verify_server_cert doesn't receive the socket address
+    /// 
+    /// CONCURRENCY NOTE: This field is shared across connections and may race if
+    /// multiple concurrent connections are made. Use `for_peer()` to create a
+    /// connection-specific verifier wrapper that avoids this race condition.
     current_peer_addr: RwLock<Option<SocketAddr>>,
     /// Callback to persist pins after TOFU (called after successful connection)
     /// The callback receives (spki_hash, peer_addr) and should persist the pin
     tofu_callback: RwLock<Option<Box<dyn Fn([u8; 32], SocketAddr) + Send + Sync>>>,
+}
+
+/// Per-connection wrapper around PinnedCertVerifier that stores the peer address
+/// to avoid race conditions when multiple concurrent connections are made.
+pub struct ConnectionVerifier {
+    /// The shared verifier state
+    verifier: Arc<PinnedCertVerifier>,
+    /// The peer address for this specific connection
+    peer_addr: SocketAddr,
 }
 
 impl std::fmt::Debug for PinnedCertVerifier {
@@ -200,7 +255,16 @@ impl std::fmt::Debug for PinnedCertVerifier {
             .field("config", &self.config)
             .field("pin_store", &self.pin_store)
             .field("current_peer_addr", &self.current_peer_addr)
-            .field("tofu_callback", &self.tofu_callback.read().map(|cb| cb.is_some()).unwrap_or(false))
+            .field("tofu_callback", &self.tofu_callback.read().expect("Failed to read tofu_callback lock").is_some())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ConnectionVerifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionVerifier")
+            .field("peer_addr", &self.peer_addr)
+            .field("config", &self.verifier.config)
             .finish()
     }
 }
@@ -209,7 +273,7 @@ impl PinnedCertVerifier {
     /// Create a new verifier with the given configuration
     pub fn new(config: PinnedVerifierConfig) -> Self {
         Self {
-            config,
+            config: Arc::new(config),
             pin_store: Arc::new(SyncPinStore::new()),
             current_peer_addr: RwLock::new(None),
             tofu_callback: RwLock::new(None),
@@ -221,33 +285,67 @@ impl PinnedCertVerifier {
         Self::new(PinnedVerifierConfig::with_bootstrap(addrs))
     }
 
+    /// Create a connection-specific verifier for the given peer address
+    ///
+    /// This method creates a wrapper that stores the peer address for this specific
+    /// connection, avoiding race conditions when multiple concurrent connections are made.
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// let verifier = Arc::new(PinnedCertVerifier::with_bootstrap(bootstrap_peers));
+    /// let conn_verifier = verifier.for_peer(peer_addr);
+    /// let client_config = rustls::ClientConfig::builder()
+    ///     .dangerous()
+    ///     .with_custom_certificate_verifier(Arc::new(conn_verifier))
+    ///     .with_no_client_auth();
+    /// ```
+    pub fn for_peer(self: &Arc<Self>, peer_addr: SocketAddr) -> ConnectionVerifier {
+        ConnectionVerifier {
+            verifier: Arc::clone(self),
+            peer_addr,
+        }
+    }
+
     /// Get a reference to the pin store
     pub fn pin_store(&self) -> Arc<SyncPinStore> {
         Arc::clone(&self.pin_store)
     }
 
     /// Set the current peer address for the next verification
-    /// Must be called before initiating a QUIC connection
+    /// 
+    /// **DEPRECATED**: Use `for_peer()` to create a connection-specific verifier instead.
+    /// This method has a race condition when multiple concurrent connections are made.
     pub fn set_current_peer(&self, addr: SocketAddr) {
-        *self.current_peer_addr.write().unwrap() = Some(addr);
+        *self.current_peer_addr.write()
+            .expect("Failed to acquire write lock on current_peer_addr") = Some(addr);
     }
 
     /// Clear the current peer address
     pub fn clear_current_peer(&self) {
-        *self.current_peer_addr.write().unwrap() = None;
+        *self.current_peer_addr.write()
+            .expect("Failed to acquire write lock on current_peer_addr") = None;
     }
 
     /// Get the current peer address
     pub fn current_peer(&self) -> Option<SocketAddr> {
-        *self.current_peer_addr.read().unwrap()
+        *self.current_peer_addr.read()
+            .expect("Failed to acquire read lock on current_peer_addr")
     }
 
     /// Set the callback for TOFU pin persistence
+    ///
+    /// IMPORTANT: This callback is invoked synchronously during TLS certificate
+    /// verification. Implementations MUST be non-blocking and SHOULD only enqueue
+    /// the pin for persistence (e.g. send it over a channel to a background task).
+    /// Performing blocking I/O (disk, database, network) directly in this callback
+    /// can stall the TLS handshake and cause timeouts or degraded performance.
     pub fn set_tofu_callback<F>(&self, callback: F)
     where
         F: Fn([u8; 32], SocketAddr) + Send + Sync + 'static,
     {
-        *self.tofu_callback.write().unwrap() = Some(Box::new(callback));
+        *self.tofu_callback.write()
+            .expect("Failed to acquire write lock on tofu_callback") = Some(Box::new(callback));
     }
 
     /// Sync pins from the async TlsPinCache
@@ -263,6 +361,14 @@ impl PinnedCertVerifier {
     /// Check if an address is in the bootstrap allowlist
     pub fn is_bootstrap(&self, addr: &SocketAddr) -> bool {
         self.config.is_bootstrap(addr)
+    }
+
+    /// Update the bootstrap peer addresses without recreating the verifier
+    ///
+    /// This preserves the existing pin store state, avoiding loss of cached pins.
+    pub fn update_bootstrap_peers(&self, peers: Vec<SocketAddr>) {
+        self.config.set_bootstrap_addrs(peers.clone());
+        info!("Updated bootstrap peers: {} addresses configured", peers.len());
     }
 
     /// Extract SPKI SHA256 hash from a certificate
@@ -317,8 +423,16 @@ impl PinnedCertVerifier {
                     hex::encode(&spki_hash[..8])
                 );
 
-                // Trigger TOFU callback to persist the pin
-                if let Some(callback) = self.tofu_callback.read().unwrap().as_ref() {
+                // Trigger TOFU callback to persist the pin.
+                //
+                // IMPORTANT: This callback is invoked synchronously during TLS
+                // certificate verification. Implementations MUST be non-blocking
+                // and SHOULD only enqueue the pin for persistence (e.g. send it
+                // over a channel to a background task). Performing blocking I/O
+                // (disk, database, network) directly in this callback can stall
+                // the TLS handshake and cause timeouts or degraded performance.
+                if let Some(callback) = self.tofu_callback.read()
+                    .expect("Failed to acquire read lock on tofu_callback").as_ref() {
                     callback(spki_hash, addr);
                 }
 
@@ -381,8 +495,18 @@ impl ServerCertVerifier for PinnedCertVerifier {
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, TlsError> {
-        // We accept any signature since we're doing pin-based verification
-        // The actual cryptographic verification is done by the UHP layer
+        // SECURITY NOTE: TLS signature verification bypassed for pin-based authentication
+        //
+        // This implementation accepts any TLS signature without cryptographic validation,
+        // relying entirely on SPKI pinning and UHP layer authentication for security.
+        //
+        // Defense-in-depth considerations:
+        // - SPKI pinning ensures the certificate public key is correct
+        // - UHP handshake performs post-quantum Dilithium signature verification
+        // - This approach allows self-signed certificates in mesh networks
+        //
+        // Tradeoff: An attacker with a pinned SPKI could present an invalid signature
+        // during TLS handshake, but would still fail UHP authentication.
         Ok(HandshakeSignatureValid::assertion())
     }
 
@@ -392,8 +516,9 @@ impl ServerCertVerifier for PinnedCertVerifier {
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, TlsError> {
-        // We accept any signature since we're doing pin-based verification
-        // The actual cryptographic verification is done by the UHP layer
+        // SECURITY NOTE: TLS signature verification bypassed for pin-based authentication
+        //
+        // See verify_tls12_signature for security rationale.
         Ok(HandshakeSignatureValid::assertion())
     }
 
@@ -414,16 +539,72 @@ impl ServerCertVerifier for PinnedCertVerifier {
     }
 }
 
+impl ServerCertVerifier for ConnectionVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, TlsError> {
+        // Delegate to the underlying verifier with our connection-specific peer address
+        match self.verifier.verify_certificate(end_entity, Some(self.peer_addr)) {
+            VerificationResult::PinMatched => {
+                debug!("Certificate verified: pin matched for {}", self.peer_addr);
+                Ok(ServerCertVerified::assertion())
+            }
+            VerificationResult::TofuBootstrap => {
+                debug!("Certificate verified: TOFU for bootstrap peer {}", self.peer_addr);
+                Ok(ServerCertVerified::assertion())
+            }
+            VerificationResult::PinMismatch => {
+                Err(TlsError::General(
+                    format!("Certificate SPKI does not match pinned value for {}", self.peer_addr),
+                ))
+            }
+            VerificationResult::UnknownPeer => {
+                Err(TlsError::General(
+                    format!("Unknown peer {}: not in bootstrap allowlist and no pin cached", self.peer_addr),
+                ))
+            }
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        self.verifier.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        self.verifier.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.verifier.supported_verify_schemes()
+    }
+}
+
 /// Global PinnedCertVerifier instance
 static PINNED_VERIFIER: std::sync::OnceLock<Arc<PinnedCertVerifier>> = std::sync::OnceLock::new();
 
 /// Initialize the global PinnedCertVerifier with bootstrap addresses
 pub fn init_global_verifier(bootstrap_addrs: Vec<SocketAddr>) -> Arc<PinnedCertVerifier> {
+    let peer_count = bootstrap_addrs.len();
     let verifier = Arc::new(PinnedCertVerifier::with_bootstrap(bootstrap_addrs));
     let _ = PINNED_VERIFIER.set(Arc::clone(&verifier));
     info!(
         "PinnedCertVerifier initialized with {} bootstrap peers",
-        verifier.config.bootstrap_addrs.len()
+        peer_count
     );
     verifier
 }

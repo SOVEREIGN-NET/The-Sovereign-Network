@@ -536,18 +536,16 @@ impl ZhtpUnifiedServer {
             let peer_addrs: Vec<std::net::SocketAddr> = bootstrap_peers
                 .iter()
                 .filter_map(|s| {
-                    // Parse with default QUIC port if not specified
-                    let addr_str = if s.contains(':') {
-                        // Replace port with QUIC port (9334)
-                        if let Some(host) = s.split(':').next() {
-                            format!("{}:9334", host)
-                        } else {
-                            s.clone()
-                        }
+                    // First, try to parse the address as-is (may already include a port)
+                    if let Ok(mut addr) = s.parse::<std::net::SocketAddr>() {
+                        // Always use the configured QUIC port
+                        addr.set_port(9334);
+                        Some(addr)
                     } else {
-                        format!("{}:9334", s)
-                    };
-                    addr_str.parse().ok()
+                        // No valid port specified; append the QUIC port and parse
+                        let addr_with_port = format!("{}:9334", s);
+                        addr_with_port.parse::<std::net::SocketAddr>().ok()
+                    }
                 })
                 .collect();
 
