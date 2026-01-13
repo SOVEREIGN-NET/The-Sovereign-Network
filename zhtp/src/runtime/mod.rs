@@ -870,11 +870,12 @@ impl RuntimeOrchestrator {
         
         // Get pending identity from Phase 3
         if let Some(identity) = self.get_pending_identity_registration().await {
-            // Get blockchain component for registration
-            if let Ok(Some(shared_blockchain)) = self.get_shared_blockchain().await {
-                let mut blockchain = shared_blockchain.write().await;
-                
-                if let Some(blockchain_ref) = blockchain.as_mut() {
+            // Prefer the global blockchain provider for registration.
+            match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                Ok(blockchain_arc) => {
+                    let mut blockchain = blockchain_arc.write().await;
+                    let blockchain_ref = &mut *blockchain;
+
                     // Create identity transaction data for blockchain registration
                     let identity_data = lib_blockchain::transaction::IdentityTransactionData {
                         did: format!("did:zhtp:{}", hex::encode(&identity.id.0)),
@@ -933,11 +934,10 @@ impl RuntimeOrchestrator {
                             }
                         }
                     }
-                } else {
-                    warn!("⚠️  Blockchain not initialized");
                 }
-            } else {
-                warn!("⚠️  Blockchain service not available for identity registration");
+                Err(e) => {
+                    warn!("⚠️  Blockchain service not available for identity registration: {}", e);
+                }
             }
         } else {
             info!("ℹ️  No pending identity registration (existing identity loaded)");
