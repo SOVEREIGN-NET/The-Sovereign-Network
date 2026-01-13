@@ -4,12 +4,13 @@
 //!
 //! - `entity_registry`: DOC 01 - Phase 0 Primitives & Fiduciary Mapping
 //! - `governance`: DOC 02 - Governance & Treasury Rails (Week 2)
-//! - `sunset`: DOC 03 - CBE Sunset Contract (TODO)
+//! - `sunset`: DOC 03 - CBE Sunset Contract (Week 3)
 //! - `voting`: DOC 05 - Voting Primitives (TODO)
 //! - `compensation_attestor`: DOC 06 - Compensation Fairness (TODO)
 
 pub mod entity_registry;
 pub mod governance;
+pub mod sunset;
 
 // Re-export key types
 pub use entity_registry::{EntityRegistry, EntityType, Role, EntityRegistryError};
@@ -19,4 +20,9 @@ pub use governance::{
     VOTING_PERIOD_SECONDS, TIMELOCK_DELAY_SECONDS,
     MAJORITY_THRESHOLD_BASIS_POINTS, SUPERMAJORITY_THRESHOLD_BASIS_POINTS,
     MIN_VOTING_POWER_FOR_PROPOSAL,
+};
+pub use sunset::{
+    Sunset, StateTransitionProposal, SunsetState, SpendingPolicy,
+    SunsetError, RESTRICTED_MIN_DURATION, WIND_DOWN_MIN_DURATION,
+    FINAL_PAYOUT_TO_NONPROFIT_PERCENTAGE, SUNSET_STATE_TRANSITION_TIMELOCK,
 };
