@@ -196,6 +196,7 @@ impl RegisterGuard {
             controller: None,
             zone_controller: None, // Set separately if zone delegation needed
             parent: parent_hash,
+            depth: parsed.depth as u8,
             classification: parsed.classification,
             verification_level,
             verification_proof,

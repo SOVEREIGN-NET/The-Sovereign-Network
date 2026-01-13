@@ -149,6 +149,42 @@ impl DomainRegistry {
         Ok(())
     }
 
+    /// Migrate legacy domain records by re-saving them in the latest format.
+    ///
+    /// Returns the number of records migrated.
+    pub async fn migrate_domains(&self) -> Result<u64> {
+        let records = self.storage.list_domain_records().await?;
+        if records.is_empty() {
+            return Ok(0);
+        }
+
+        let mut migrated = 0u64;
+        let mut parsed_records = Vec::new();
+
+        for (domain, data) in records {
+            match serde_json::from_slice::<DomainRecord>(&data) {
+                Ok(record) => {
+                    let migrated_data = serde_json::to_vec(&record)?;
+                    self.storage.store_domain_record(&domain, migrated_data).await?;
+                    parsed_records.push((domain, record));
+                    migrated += 1;
+                }
+                Err(e) => {
+                    warn!("Failed to deserialize domain record during migration: {}", e);
+                }
+            }
+        }
+
+        if !parsed_records.is_empty() {
+            let mut domain_records = self.domain_records.write().await;
+            for (domain, record) in parsed_records {
+                domain_records.insert(domain, record);
+            }
+        }
+
+        Ok(migrated)
+    }
+
     /// Load all persisted manifest histories from storage into memory
     /// FIX (Phantom Domain Bug): Manifests must be loaded on startup, not just domain records
     async fn load_persisted_manifests(&self) -> Result<()> {
@@ -583,6 +619,18 @@ impl DomainRegistry {
             content_mappings: HashMap::new(),
             owner_info: None,
         })
+    }
+
+    /// Resolve domain into a read-only view model.
+    ///
+    /// NOTE: Currently backed by the local registry cache until chain queries are wired.
+    pub async fn resolve_name(&self, domain: &str) -> Result<ResolvedNameRecord> {
+        let lookup = self.lookup_domain(domain).await?;
+        if let Some(record) = lookup.record {
+            Ok(record.into())
+        } else {
+            Err(anyhow!("Domain not found: {}", domain))
+        }
     }
 
 

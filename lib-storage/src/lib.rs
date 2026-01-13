@@ -331,66 +331,9 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         self.content_manager.search_content(query, requester).await
     }
 
-    /// Store data with erasure coding
-    pub async fn store_with_erasure_coding(
-        &mut self,
-        data: Vec<u8>,
-        storage_requirements: StorageRequirements,
-        uploader: ZhtpIdentity,
-    ) -> Result<ContentHash> {
-        // Encode data with erasure coding
-        let encoded_shards = self.erasure_coding.encode(&data)?;
-
-        // Create upload request
-        let upload_request = UploadRequest {
-            content: data,
-            filename: "erasure_coded_data".to_string(),
-            mime_type: "application/octet-stream".to_string(),
-            description: "Data stored with Reed-Solomon erasure coding".to_string(),
-            tags: vec!["erasure-coded".to_string()],
-            encrypt: true,
-            compress: true,
-            access_control: AccessControlSettings {
-                public_read: false,
-                read_permissions: vec![],
-                write_permissions: vec![],
-                expires_at: None,
-            },
-            storage_requirements: ContentStorageRequirements {
-                duration_days: storage_requirements.duration_days,
-                quality_requirements: storage_requirements.quality_requirements,
-                budget_constraints: storage_requirements.budget_constraints,
-            },
-        };
-
-        // Upload content
-        let content_hash = self.upload_content(upload_request, uploader).await?;
-
-        // Store encoded shards separately for redundancy
-        let shards_data = bincode::serialize(&encoded_shards)?;
-        let shards_hash = Hash::from_bytes(&blake3::hash(&shards_data).as_bytes()[..32]);
-        
-        self.dht_storage.store_data(shards_hash, shards_data).await?;
-
-        Ok(content_hash)
-    }
-
     /// Get storage quote for economic planning
     pub async fn get_storage_quote(&mut self, request: EconomicStorageRequest) -> Result<EconomicQuote> {
         self.economic_manager.process_storage_request(request).await
-    }
-
-    /// Get system statistics
-    pub async fn get_statistics(&mut self) -> Result<UnifiedStorageStats> {
-        // Update economic stats
-        self.stats.economic_stats = self.economic_manager.get_statistics().await?;
-
-        // Update DHT stats
-        self.stats.dht_stats = self.dht_manager.get_statistics();
-
-        // Storage stats are updated in real-time during operations
-
-        Ok(self.stats.clone())
     }
 
     /// Add peer to DHT network
@@ -478,14 +421,6 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         &self.config
     }
 
-    /// Get DHT content by hex hash string (for Web4 content retrieval)
-    /// CRITICAL FIX: Content is stored in content_manager's dht_storage, not self.dht_storage!
-    pub async fn get_dht_content_by_hex(&mut self, content_hash_hex: &str) -> Result<Option<Vec<u8>>> {
-        // FIXED: Query the SAME dht_storage instance that upload_content() stores to
-        // Content is stored via content_manager.dht_storage, so we must query from there
-        self.content_manager.get_from_dht_storage(content_hash_hex).await
-    }
-
     /// Update configuration
     pub fn update_config(&mut self, config: UnifiedStorageConfig) {
         self.config = config;
@@ -527,124 +462,6 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         passphrase: &str,
     ) -> Result<()> {
         self.content_manager.migrate_identity_from_blockchain(identity_id, lib_identity, passphrase).await
-    }
-
-    // ========================================================================
-    // Web4 Domain Storage Integration - Domain Records Persistence
-    // ========================================================================
-
-    /// Store a Web4 domain record in DHT storage
-    /// Uses key format: `web4/domain/{domain}`
-    pub async fn store_domain_record(&mut self, domain: &str, record_data: &[u8]) -> Result<()> {
-        // NAMESPACE GUARD: UnifiedStorageSystem only stores domain data, not blockchain
-        // If this assertion fails, it indicates either:
-        // 1. MeshRouter DHT is using the same persistence file (bug in dht_integration.rs)
-        // 2. Someone is trying to store blockchain data via UnifiedStorage (wrong usage)
-        if domain.starts_with("block_header:") || domain.starts_with("tx_idx:") {
-            return Err(anyhow!(
-                "NAMESPACE VIOLATION: UnifiedStorageSystem tried to store blockchain key '{}'. \
-                This indicates cross-namespace pollution. Ensure MeshRouter uses separate DHT file.",
-                domain
-            ));
-        }
-
-        let key = format!("web4/domain/{}", domain);
-        tracing::info!("Storing domain record for {} ({} bytes)", domain, record_data.len());
-        self.dht_storage.store(key, record_data.to_vec(), None).await
-    }
-
-    /// Retrieve a Web4 domain record from DHT storage
-    /// Returns None if the domain is not found
-    pub async fn get_domain_record(&mut self, domain: &str) -> Result<Option<Vec<u8>>> {
-        let key = format!("web4/domain/{}", domain);
-        self.dht_storage.get(&key).await
-    }
-
-    /// Delete a Web4 domain record from DHT storage
-    pub async fn delete_domain_record(&mut self, domain: &str) -> Result<()> {
-        let key = format!("web4/domain/{}", domain);
-        tracing::info!("Deleting domain record for {}", domain);
-        self.dht_storage.remove(&key).await?;
-        Ok(())
-    }
-
-    /// List all Web4 domain records from DHT storage
-    /// Returns a list of (domain_name, record_data) tuples
-    pub async fn list_domain_records(&mut self) -> Result<Vec<(String, Vec<u8>)>> {
-        let prefix = "web4/domain/";
-        let mut records = Vec::new();
-
-        // Get all keys with the web4/domain/ prefix
-        for key in self.dht_storage.list_keys_with_prefix(prefix).await? {
-            if let Some(data) = self.dht_storage.get(&key).await? {
-                // Extract domain name from key
-                let domain = key.strip_prefix(prefix).unwrap_or(&key).to_string();
-                records.push((domain, data));
-            }
-        }
-
-        tracing::info!("Listed {} domain records from DHT storage", records.len());
-        Ok(records)
-    }
-
-    // ========================================================================
-    // Identity Storage Integration - DHT Cache for Fast Lookups
-    // ========================================================================
-    //
-    // IMPORTANT: DHT identity records are a DERIVED CACHE, not the source of truth.
-    // The blockchain is authoritative. DHT enables:
-    // - Stateless API restarts (reload from DHT instead of replaying chain)
-    // - Horizontal scaling of identity endpoints
-    // - Fast DID resolution without chain queries
-    //
-    // Do NOT merge DHT state back into chain logic or use DHT for consensus.
-
-    /// Store an identity record in DHT storage for fast lookups
-    /// Uses key format: `identity/{identity_id}`
-    /// Payload is versioned: { "v": 1, "data": {...} }
-    pub async fn store_identity_record(&mut self, identity_id: &str, record_data: &[u8]) -> Result<()> {
-        let key = format!("identity/{}", identity_id);
-
-        // Wrap in versioned envelope for future compatibility
-        let versioned = serde_json::json!({
-            "v": 1,
-            "data": serde_json::from_slice::<serde_json::Value>(record_data)
-                .unwrap_or_else(|_| serde_json::Value::String(hex::encode(record_data)))
-        });
-        let versioned_data = serde_json::to_vec(&versioned)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize versioned identity: {}", e))?;
-
-        tracing::info!("Storing identity record {} ({} bytes, v1)", identity_id, versioned_data.len());
-        self.dht_storage.store(key, versioned_data, None).await
-    }
-
-    /// Retrieve an identity record from DHT storage
-    /// Returns None if identity not found, unwraps versioned payload
-    pub async fn get_identity_record(&mut self, identity_id: &str) -> Result<Option<Vec<u8>>> {
-        let key = format!("identity/{}", identity_id);
-        match self.dht_storage.get(&key).await? {
-            Some(versioned_data) => {
-                // Parse versioned envelope
-                let envelope: serde_json::Value = serde_json::from_slice(&versioned_data)
-                    .map_err(|e| anyhow::anyhow!("Failed to parse identity envelope: {}", e))?;
-
-                let version = envelope.get("v").and_then(|v| v.as_u64()).unwrap_or(0);
-                if version != 1 {
-                    tracing::warn!("Unknown identity record version {}, attempting to parse", version);
-                }
-
-                // Extract data field
-                if let Some(data) = envelope.get("data") {
-                    let data_bytes = serde_json::to_vec(data)
-                        .map_err(|e| anyhow::anyhow!("Failed to serialize identity data: {}", e))?;
-                    Ok(Some(data_bytes))
-                } else {
-                    // Fallback: treat entire payload as data (legacy)
-                    Ok(Some(versioned_data))
-                }
-            }
-            None => Ok(None)
-        }
     }
 }
 
@@ -771,6 +588,195 @@ impl UnifiedStorageSystem<dht::backend::SledBackend> {
     }
 }
 
+// ============================================================================
+// Generic methods available for ALL storage backends (HashMapBackend, SledBackend)
+// ============================================================================
+
+impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSystem<B> {
+    // ========================================================================
+    // Web4 Domain Storage Integration - Domain Records Persistence (Generic)
+    // ========================================================================
+
+    /// Store a Web4 domain record in DHT storage (works with any backend)
+    /// Uses key format: `web4/domain/{domain}`
+    pub async fn store_domain_record(&mut self, domain: &str, record_data: &[u8]) -> Result<()> {
+        // NAMESPACE GUARD: UnifiedStorageSystem only stores domain data, not blockchain
+        if domain.starts_with("block_header:") || domain.starts_with("tx_idx:") {
+            return Err(anyhow!(
+                "NAMESPACE VIOLATION: UnifiedStorageSystem tried to store blockchain key '{}'. \
+                This indicates cross-namespace pollution. Ensure MeshRouter uses separate DHT file.",
+                domain
+            ));
+        }
+
+        let key = format!("web4/domain/{}", domain);
+        tracing::info!("Storing domain record for {} ({} bytes)", domain, record_data.len());
+        self.dht_storage.store(key, record_data.to_vec(), None).await
+    }
+
+    /// Retrieve a Web4 domain record from DHT storage (works with any backend)
+    /// Returns None if the domain is not found
+    pub async fn get_domain_record(&mut self, domain: &str) -> Result<Option<Vec<u8>>> {
+        let key = format!("web4/domain/{}", domain);
+        self.dht_storage.get(&key).await
+    }
+
+    /// Delete a Web4 domain record from DHT storage (works with any backend)
+    pub async fn delete_domain_record(&mut self, domain: &str) -> Result<()> {
+        let key = format!("web4/domain/{}", domain);
+        tracing::info!("Deleting domain record for {}", domain);
+        self.dht_storage.remove(&key).await?;
+        Ok(())
+    }
+
+    /// List all Web4 domain records from DHT storage (works with any backend)
+    /// Returns a list of (domain_name, record_data) tuples
+    pub async fn list_domain_records(&mut self) -> Result<Vec<(String, Vec<u8>)>> {
+        let prefix = "web4/domain/";
+        let mut records = Vec::new();
+
+        // Get all keys with the web4/domain/ prefix
+        for key in self.dht_storage.list_keys_with_prefix(prefix).await? {
+            if let Some(data) = self.dht_storage.get(&key).await? {
+                // Extract domain name from key
+                let domain = key.strip_prefix(prefix).unwrap_or(&key).to_string();
+                records.push((domain, data));
+            }
+        }
+
+        tracing::info!("Listed {} domain records from DHT storage", records.len());
+        Ok(records)
+    }
+
+    // ========================================================================
+    // Identity Storage Integration (Generic)
+    // ========================================================================
+
+    /// Store an identity record in DHT storage for fast lookups (works with any backend)
+    /// Uses key format: `identity/{identity_id}`
+    /// Payload is versioned: { "v": 1, "data": {...} }
+    pub async fn store_identity_record(&mut self, identity_id: &str, record_data: &[u8]) -> Result<()> {
+        let key = format!("identity/{}", identity_id);
+
+        // Wrap in versioned envelope for future compatibility
+        let versioned = serde_json::json!({
+            "v": 1,
+            "data": serde_json::from_slice::<serde_json::Value>(record_data)
+                .unwrap_or_else(|_| serde_json::Value::String(hex::encode(record_data)))
+        });
+        let versioned_data = serde_json::to_vec(&versioned)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize versioned identity: {}", e))?;
+
+        tracing::info!("Storing identity record {} ({} bytes, v1)", identity_id, versioned_data.len());
+        self.dht_storage.store(key, versioned_data, None).await
+    }
+
+    /// Retrieve an identity record from DHT storage (works with any backend)
+    /// Returns None if identity not found, unwraps versioned payload
+    pub async fn get_identity_record(&mut self, identity_id: &str) -> Result<Option<Vec<u8>>> {
+        let key = format!("identity/{}", identity_id);
+        match self.dht_storage.get(&key).await? {
+            Some(versioned_data) => {
+                // Parse versioned envelope
+                let envelope: serde_json::Value = serde_json::from_slice(&versioned_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse identity envelope: {}", e))?;
+
+                let version = envelope.get("v").and_then(|v| v.as_u64()).unwrap_or(0);
+                if version != 1 {
+                    tracing::warn!("Unknown identity record version {}, attempting to parse", version);
+                }
+
+                // Extract data field
+                if let Some(data) = envelope.get("data") {
+                    let data_bytes = serde_json::to_vec(data)
+                        .map_err(|e| anyhow::anyhow!("Failed to serialize identity data: {}", e))?;
+                    Ok(Some(data_bytes))
+                } else {
+                    // Fallback: treat entire payload as data (legacy)
+                    Ok(Some(versioned_data))
+                }
+            }
+            None => Ok(None)
+        }
+    }
+
+    // ========================================================================
+    // System Statistics (Generic)
+    // ========================================================================
+
+    /// Get system statistics (works with any backend)
+    pub async fn get_statistics(&mut self) -> Result<UnifiedStorageStats> {
+        // Update economic stats
+        self.stats.economic_stats = self.economic_manager.get_statistics().await?;
+
+        // Update DHT stats
+        self.stats.dht_stats = self.dht_manager.get_statistics();
+
+        // Storage stats are updated in real-time during operations
+        Ok(self.stats.clone())
+    }
+
+    // ========================================================================
+    // Content Retrieval (Generic)
+    // ========================================================================
+
+    /// Get DHT content by hex hash string (works with any backend)
+    /// CRITICAL FIX: Content is stored in content_manager's dht_storage, not self.dht_storage!
+    pub async fn get_dht_content_by_hex(&mut self, content_hash_hex: &str) -> Result<Option<Vec<u8>>> {
+        // FIXED: Query the SAME dht_storage instance that upload_content() stores to
+        // Content is stored via content_manager.dht_storage, so we must query from there
+        self.content_manager.get_from_dht_storage(content_hash_hex).await
+    }
+
+    // ========================================================================
+    // Erasure Coding Storage (Generic)
+    // ========================================================================
+
+    /// Store data with erasure coding (works with any backend)
+    pub async fn store_with_erasure_coding(
+        &mut self,
+        data: Vec<u8>,
+        storage_requirements: StorageRequirements,
+        uploader: ZhtpIdentity,
+    ) -> Result<ContentHash> {
+        // Encode data with erasure coding
+        let encoded_shards = self.erasure_coding.encode(&data)?;
+
+        // Create upload request
+        let upload_request = UploadRequest {
+            content: data,
+            filename: "erasure_coded_data".to_string(),
+            mime_type: "application/octet-stream".to_string(),
+            description: "Data stored with Reed-Solomon erasure coding".to_string(),
+            tags: vec!["erasure-coded".to_string()],
+            encrypt: true,
+            compress: true,
+            access_control: AccessControlSettings {
+                public_read: false,
+                read_permissions: vec![],
+                write_permissions: vec![],
+                expires_at: None,
+            },
+            storage_requirements: ContentStorageRequirements {
+                duration_days: storage_requirements.duration_days,
+                quality_requirements: storage_requirements.quality_requirements,
+                budget_constraints: storage_requirements.budget_constraints,
+            },
+        };
+
+        // Upload content via content_manager
+        let content_hash = self.content_manager.upload_content(upload_request, uploader).await?;
+
+        // Store encoded shards separately for redundancy
+        let shards_data = bincode::serialize(&encoded_shards)?;
+        let shards_hash = Hash::from_bytes(&blake3::hash(&shards_data).as_bytes()[..32]);
+
+        self.dht_storage.store_data(shards_hash, shards_data).await?;
+
+        Ok(content_hash)
+    }
+}
+
 impl Default for UnifiedStorageConfig {
     fn default() -> Self {
         Self {
@@ -805,6 +811,12 @@ impl Default for StorageStats {
 
 /// Type alias for backward compatibility
 pub type UnifiedStorageManager = UnifiedStorageSystem;
+
+/// Type alias for persistent storage using SledBackend
+///
+/// Use this type when you need storage that persists across restarts.
+/// Create instances with `UnifiedStorageSystem::new_persistent()`.
+pub type PersistentStorageSystem = UnifiedStorageSystem<dht::backend::SledBackend>;
 
 #[cfg(test)]
 mod tests {

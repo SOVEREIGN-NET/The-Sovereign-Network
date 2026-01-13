@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tokio::sync::RwLock;
 use tokio::time::{Duration, interval};
-use tracing::{info, error, debug};
+use tracing::{info, warn, error, debug};
 
 use super::alerting::{Alert, AlertLevel, AlertManager};
 
@@ -766,7 +766,22 @@ impl HealthMonitor {
         // Try to get storage stats from lib-storage package with proper config
         let storage_stats = match create_default_storage_config() {
             Ok(config) => {
-                match lib_storage::UnifiedStorageSystem::new(config).await {
+                let db_path = config.storage_config.dht_persist_path.clone()
+                    .unwrap_or_else(|| {
+                        dirs::home_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("."))
+                            .join(".zhtp")
+                            .join("storage")
+                            .join("dht_db")
+                    });
+
+                if let Some(parent) = db_path.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        warn!("Failed to create storage directory {:?}: {}", parent, e);
+                    }
+                }
+
+                match lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path).await {
                     Ok(mut storage) => {
                         // Try to get storage metrics
                         let (total_storage, used_storage) = match storage.get_statistics().await {

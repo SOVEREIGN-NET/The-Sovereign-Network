@@ -31,6 +31,8 @@ pub mod emergency_reserve;
 #[cfg(feature = "contracts")]
 pub mod dao_registry;
 #[cfg(feature = "contracts")]
+pub mod root_registry;
+#[cfg(feature = "contracts")]
 pub mod dev_grants;
 #[cfg(feature = "contracts")]
 pub mod ubi_distribution;
@@ -40,8 +42,6 @@ pub mod sov_swap;
 pub mod utils;
 #[cfg(feature = "contracts")]
 pub mod web4;
-#[cfg(feature = "contracts")]
-pub mod root_registry;
 
 // Re-export core types and functionality when contracts feature is enabled
 #[cfg(feature = "contracts")]
@@ -90,8 +90,9 @@ pub use utils::*;
 pub use web4::{Web4Contract, WebsiteContract, WebsiteMetadata, ContentRoute, DomainRecord, WebsiteDeploymentData};
 #[cfg(feature = "contracts")]
 pub use root_registry::{
-    NameRecord, NameStatus, NameClassification, VerificationLevel,
-    GovernanceRecord, WelfareSector, parse_and_validate, compute_name_hash,
+    RootRegistry, NameRecord, NameClass, ZoneController, NameStatus, VerificationLevel,
+    ReservedReason, WelfareSector, NameHash, DaoId, NameClassification,
+    GovernanceRecord, parse_and_validate, compute_name_hash,
 };
 
 // Re-export testing framework when available

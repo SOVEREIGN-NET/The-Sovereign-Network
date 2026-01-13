@@ -303,7 +303,8 @@ impl DaoEngine {
             None,
             None,
             PrivacyLevel::Public,
-        ).map_err(|e| anyhow::anyhow!(e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to create proposal: {}", e))?;
 
         tracing::info!(
             "Validated difficulty update proposal {:?}: target_timespan={}, adjustment_interval={} - ready for blockchain submission",

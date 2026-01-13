@@ -27,6 +27,9 @@
 //! - [`types`]: Core state model (NameRecord, NameStatus, NameClassification)
 //! - [`validation`]: Name parsing, classification, and verification
 //! - [`operations`]: Operation guards and invariant enforcement
+//! - [`core`]: RootRegistry implementation with in-memory storage
+//! - [`namespace_policy`]: Namespace policy enforcement
+//! - [`delegation_tree`]: Parent-child relationship tracking
 //!
 //! # Related Modules (to be implemented)
 //!
@@ -38,17 +41,27 @@
 pub mod types;
 pub mod validation;
 pub mod operations;
+pub mod core;
+pub mod namespace_policy;
+pub mod delegation_tree;
+
+#[cfg(test)]
+mod tests;
+
+// Re-export core registry
+pub use core::{RootRegistry, CoreNameRecord, CoreStoredRecord};
 
 // Re-export core types
 pub use types::{
     // Core identity types
-    PublicKey, Address, NameHash, BlockHeight, Timestamp,
+    PublicKey, Address, NameHash, DaoId, BlockHeight, Timestamp,
 
     // Verification
     VerificationLevel,
 
     // Classification
     NameClassification,
+    NameClass, ReservedReason,
 
     // Status and lifecycle
     NameStatus, SuspensionReason, SuspensionAuthority,
@@ -60,11 +73,20 @@ pub use types::{
     // History
     TransferRecord, RenewalRecord,
 
+    // Zone controller
+    ZoneController,
+
     // Core record
     NameRecord,
 
+    // Legacy/Storage
+    LegacyDomainRecord, StoredRecord,
+
     // Welfare
     WelfareSector, WELFARE_SECTORS,
+
+    // Utility functions
+    normalize_name, hash_name, is_zero_name_hash,
 
     // Constants
     timing, limits,
@@ -87,3 +109,9 @@ pub use operations::{
     RegisterGuard, RenewGuard, TransferGuard, DelegateGuard, RevokeGuard,
     RevocationRequester, ResolutionResult,
 };
+
+// Re-export namespace policy
+pub use namespace_policy::NamespacePolicy;
+
+// Re-export delegation tree
+pub use delegation_tree::DelegationTree;

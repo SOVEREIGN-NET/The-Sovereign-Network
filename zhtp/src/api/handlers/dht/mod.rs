@@ -188,7 +188,7 @@ pub struct DhtHandler {
     /// Handler statistics
     stats: Arc<RwLock<DhtHandlerStats>>,
     /// Storage system (where Web4 content is actually stored)
-    storage_system: Arc<RwLock<Option<Arc<RwLock<lib_storage::UnifiedStorageSystem>>>>>,
+    storage_system: Arc<RwLock<Option<Arc<RwLock<lib_storage::PersistentStorageSystem>>>>>,
 }
 
 /// DHT handler internal statistics
@@ -222,7 +222,7 @@ impl DhtHandler {
     }
     
     /// Create a new DHT handler with storage system access (for fetching Web4 content)
-    pub fn new_with_storage(_mesh_router: Arc<MeshRouter>, storage: Arc<RwLock<lib_storage::UnifiedStorageSystem>>) -> Self {
+    pub fn new_with_storage(_mesh_router: Arc<MeshRouter>, storage: Arc<RwLock<lib_storage::PersistentStorageSystem>>) -> Self {
         Self {
             dht_client: Arc::new(RwLock::new(None)),
             stats: Arc::new(RwLock::new(DhtHandlerStats::default())),

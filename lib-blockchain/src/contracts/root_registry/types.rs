@@ -24,6 +24,9 @@ pub type Address = [u8; 32];
 /// 32-byte name hash (BLAKE3)
 pub type NameHash = [u8; 32];
 
+/// DAO identifier
+pub type DaoId = [u8; 32];
+
 /// Block height timestamp
 pub type BlockHeight = u64;
 
@@ -128,6 +131,31 @@ impl NameClassification {
                 | NameClassification::ReservedByRule
         )
     }
+}
+
+// ============================================================================
+// Alternative Classification (for RootRegistry core)
+// ============================================================================
+
+/// Reason for reservation in NameClass
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReservedReason {
+    MetaGovernance,
+    WelfareRoot,
+    GovernanceAdded,
+    HighRiskLabel,
+}
+
+/// Alternative name classification used by RootRegistry core
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NameClass {
+    Reserved { reason: ReservedReason },
+    Commercial { min_verification: VerificationLevel },
+    WelfareChild {
+        sector: WelfareSector,
+        zone_root_hash: NameHash,
+    },
+    DaoPrefixed { parent_hash: NameHash },
 }
 
 // ============================================================================
@@ -345,6 +373,21 @@ pub struct RenewalRecord {
 }
 
 // ============================================================================
+// Zone Controller (for delegation)
+// ============================================================================
+
+/// Zone controller for delegated issuance
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZoneController {
+    /// Contract address that can issue under this zone
+    pub controller: PublicKey,
+    /// The zone root this controller manages (hash of zone root)
+    pub scope: NameHash,
+    /// Optional expiration (None = permanent until revoked)
+    pub expires_at: Option<u64>,
+}
+
+// ============================================================================
 // Name Record (Core State)
 // ============================================================================
 
@@ -371,6 +414,8 @@ pub struct NameRecord {
     // === Hierarchy ===
     /// Parent name_hash (None for root-level like "shoes.sov")
     pub parent: Option<NameHash>,
+    /// Depth in hierarchy (0 for root level)
+    pub depth: u8,
     /// Classification determining registration rules
     pub classification: NameClassification,
 
@@ -437,9 +482,28 @@ impl NameRecord {
     }
 
     /// Get the depth of this name in the hierarchy (0 for root-level)
-    pub fn depth(&self) -> usize {
+    pub fn get_depth(&self) -> usize {
         self.name.matches('.').count().saturating_sub(1) // -1 for .sov TLD
     }
+}
+
+// ============================================================================
+// Legacy/Storage Types (for migration compatibility)
+// ============================================================================
+
+/// Legacy domain record for migration
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacyDomainRecord {
+    pub domain: String,
+    pub owner: String,
+    pub expires_at: u64,
+}
+
+/// Versioned storage record
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StoredRecord {
+    V1(LegacyDomainRecord),
+    V2(NameRecord),
 }
 
 // ============================================================================
@@ -495,6 +559,32 @@ impl WelfareSector {
             _ => None,
         }
     }
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+/// Normalize a domain name (lowercase, trim)
+pub fn normalize_name(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+/// Hash a name using BLAKE3
+pub fn hash_name(name: &str) -> NameHash {
+    use blake3::Hasher;
+    let normalized = normalize_name(name);
+    let mut hasher = Hasher::new();
+    hasher.update(normalized.as_bytes());
+    let hash = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(hash.as_bytes());
+    out
+}
+
+/// Check if a name hash is all zeros
+pub fn is_zero_name_hash(name_hash: &NameHash) -> bool {
+    name_hash.iter().all(|b| *b == 0)
 }
 
 // ============================================================================
@@ -622,6 +712,7 @@ mod tests {
             controller: None,
             zone_controller: None,
             parent: None,
+            depth: 0,
             classification: NameClassification::Commercial,
             verification_level: VerificationLevel::L2VerifiedEntity,
             verification_proof: None,
@@ -640,5 +731,21 @@ mod tests {
 
         assert!(record.has_transfer_lock(150));
         assert!(!record.has_transfer_lock(250));
+    }
+
+    #[test]
+    fn test_hash_name() {
+        let hash1 = hash_name("test.sov");
+        let hash2 = hash_name("TEST.SOV");
+        assert_eq!(hash1, hash2, "Hash should be case-insensitive");
+
+        let hash3 = hash_name("other.sov");
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_normalize_name() {
+        assert_eq!(normalize_name("  Test.SOV  "), "test.sov");
+        assert_eq!(normalize_name("HELLO"), "hello");
     }
 }

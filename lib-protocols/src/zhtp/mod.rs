@@ -62,7 +62,7 @@ pub trait ZhtpMiddleware: Send + Sync {
     async fn after_response(&self, response: &mut ZhtpResponse) -> ZhtpResult<()>;
     
     /// Handle errors
-    async fn on_error(&self, error: &anyhow::Error) -> ZhtpResult<Option<ZhtpResponse>> {
+    async fn on_error(&self, _error: &anyhow::Error) -> ZhtpResult<Option<ZhtpResponse>> {
         Ok(None)
     }
 }
@@ -91,7 +91,7 @@ pub trait ZhtpServerEvents: Send + Sync {
     }
     
     /// Called when error occurs
-    async fn on_error(&self, error: &anyhow::Error) -> ZhtpResult<()> {
+    async fn on_error(&self, _error: &anyhow::Error) -> ZhtpResult<()> {
         Ok(())
     }
 }
