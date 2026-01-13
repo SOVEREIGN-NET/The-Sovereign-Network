@@ -25,6 +25,10 @@ pub struct ProtocolsComponent {
     lib_integration: Arc<RwLock<Option<ZhtpIntegration>>>,
     environment: crate::config::environment::Environment,
     api_port: u16,
+    /// QUIC port for mesh connections (default: 9334)
+    quic_port: u16,
+    /// Discovery port for peer announcements (default: 9333)
+    discovery_port: u16,
     is_edge_node: bool,
     /// Enable ZDNS transport server (UDP/TCP DNS on port 53)
     enable_zdns_transport: bool,
@@ -52,6 +56,15 @@ impl std::fmt::Debug for ProtocolsComponent {
 
 impl ProtocolsComponent {
     pub fn new(environment: crate::config::environment::Environment, api_port: u16) -> Self {
+        Self::new_with_ports(environment, api_port, 9334, 9333)
+    }
+
+    pub fn new_with_ports(
+        environment: crate::config::environment::Environment,
+        api_port: u16,
+        quic_port: u16,
+        discovery_port: u16,
+    ) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -62,6 +75,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
+            quic_port,
+            discovery_port,
             is_edge_node: false,
             enable_zdns_transport: false, // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
@@ -73,6 +88,16 @@ impl ProtocolsComponent {
     }
 
     pub fn new_with_node_type(environment: crate::config::environment::Environment, api_port: u16, is_edge_node: bool) -> Self {
+        Self::new_with_node_type_and_ports(environment, api_port, 9334, 9333, is_edge_node)
+    }
+
+    pub fn new_with_node_type_and_ports(
+        environment: crate::config::environment::Environment,
+        api_port: u16,
+        quic_port: u16,
+        discovery_port: u16,
+        is_edge_node: bool,
+    ) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -83,6 +108,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
+            quic_port,
+            discovery_port,
             is_edge_node,
             enable_zdns_transport: false, // Disabled by default
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
@@ -110,6 +137,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
+            quic_port: 9334,
+            discovery_port: 9333,
             is_edge_node: false,
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
@@ -138,6 +167,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
+            quic_port: 9334,
+            discovery_port: 9333,
             is_edge_node: false,
             enable_zdns_transport: false,
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
@@ -165,6 +196,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
+            quic_port: 9334,
+            discovery_port: 9333,
             is_edge_node: false,
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
@@ -293,6 +326,8 @@ impl Component for ProtocolsComponent {
         info!("Creating ZHTP Unified Server...");
         let (peer_discovery_tx, _peer_discovery_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
+        info!("Creating unified server with ports: API={}, QUIC={}, Discovery={}",
+              self.api_port, self.quic_port, self.discovery_port);
         let mut unified_server = crate::unified_server::ZhtpUnifiedServer::new_with_peer_notification(
             blockchain.clone(),
             storage.clone(),
@@ -300,8 +335,8 @@ impl Component for ProtocolsComponent {
             economic_model.clone(),
             self.api_port,
             Some(peer_discovery_tx),
-            None,  // discovery_port - use default
-            None,  // quic_port - use default
+            Some(self.discovery_port),  // discovery_port from config
+            Some(self.quic_port),       // quic_port from config
             None,  // protocols_config - will use defaults (Bluetooth disabled by default)
             None,  // bootstrap_peers - will use defaults
         ).await

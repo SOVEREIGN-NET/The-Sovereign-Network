@@ -442,8 +442,12 @@ impl RuntimeOrchestrator {
         if !is_registered(ComponentId::Protocols).await {
             let environment = self.config.environment;
             let api_port = self.config.protocols_config.api_port;
+            let quic_port = self.config.protocols_config.quic_port;
+            let discovery_port = self.config.protocols_config.discovery_port;
             let is_edge_node = *self.is_edge_node.read().await;
-            self.register_component(Arc::new(ProtocolsComponent::new_with_node_type(environment, api_port, is_edge_node))).await?;
+            self.register_component(Arc::new(ProtocolsComponent::new_with_node_type_and_ports(
+                environment, api_port, quic_port, discovery_port, is_edge_node
+            ))).await?;
         }
         
         if !is_registered(ComponentId::Api).await {
@@ -886,7 +890,12 @@ impl RuntimeOrchestrator {
         self.register_component(Arc::new(blockchain_component)).await?;
         
         self.register_component(Arc::new(ConsensusComponent::new(environment))).await?;
-        self.register_component(Arc::new(ProtocolsComponent::new(environment, self.config.protocols_config.api_port))).await?;
+        self.register_component(Arc::new(ProtocolsComponent::new_with_ports(
+            environment,
+            self.config.protocols_config.api_port,
+            self.config.protocols_config.quic_port,
+            self.config.protocols_config.discovery_port,
+        ))).await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         

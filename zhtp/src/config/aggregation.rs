@@ -190,6 +190,16 @@ pub struct ProtocolsConfig {
     pub max_connections: usize,
     pub request_timeout_ms: u64,
 
+    /// QUIC port for mesh connections (default: 9334)
+    /// Can be overridden via ZHTP_QUIC_PORT environment variable
+    #[serde(default = "default_quic_port")]
+    pub quic_port: u16,
+
+    /// Discovery port for peer announcements (default: 9333)
+    /// Can be overridden via ZHTP_DISCOVERY_PORT environment variable
+    #[serde(default = "default_discovery_port")]
+    pub discovery_port: u16,
+
     // Mesh protocol settings (authoritative config from config.toml)
     /// Enable QUIC protocol (required, default: true)
     /// QUIC is the mandatory transport for mesh bootstrap and is always enabled
@@ -211,6 +221,20 @@ pub struct ProtocolsConfig {
     /// Currently not used - future implementation for dynamic protocol selection
     #[serde(default = "default_quic_priority")]
     pub quic_priority: u8,
+}
+
+fn default_quic_port() -> u16 {
+    std::env::var("ZHTP_QUIC_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9334)
+}
+
+fn default_discovery_port() -> u16 {
+    std::env::var("ZHTP_DISCOVERY_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9333)
 }
 
 fn default_enable_quic() -> bool {
@@ -548,6 +572,8 @@ impl Default for NodeConfig {
                 api_port: 9333,
                 max_connections: 1000,
                 request_timeout_ms: 30000,
+                quic_port: default_quic_port(),
+                discovery_port: default_discovery_port(),
                 enable_quic: true,          // QUIC is required
                 enable_bluetooth: false,    // Bluetooth disabled by default
                 enable_mdns: true,          // mDNS enabled for peer discovery
@@ -812,6 +838,8 @@ mod tests {
             api_port: 8080,
             max_connections: 100,
             request_timeout_ms: 5000,
+            quic_port: 9334,
+            discovery_port: 9333,
             enable_quic: true,
             enable_bluetooth: false,  // POLICY: Bluetooth disabled
             enable_mdns: true,
@@ -855,6 +883,8 @@ mod tests {
             api_port: 8080,
             max_connections: 100,
             request_timeout_ms: 5000,
+            quic_port: 9334,
+            discovery_port: 9333,
             enable_quic: true,
             enable_bluetooth: true,  // POLICY: Bluetooth enabled
             enable_mdns: true,
@@ -885,6 +915,8 @@ mod tests {
             api_port: 8080,
             max_connections: 100,
             request_timeout_ms: 5000,
+            quic_port: 9334,
+            discovery_port: 9333,
             enable_quic: false,  // POLICY: QUIC disabled
             enable_bluetooth: true,
             enable_mdns: true,
@@ -921,6 +953,8 @@ mod tests {
             api_port: 8080,
             max_connections: 100,
             request_timeout_ms: 5000,
+            quic_port: 9334,
+            discovery_port: 9333,
             enable_quic: true,
             enable_bluetooth: false,
             enable_mdns: true,

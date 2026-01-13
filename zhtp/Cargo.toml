@@ -24,7 +24,7 @@ lib-crypto = { path = "../lib-crypto" }
 lib-proofs = { path = "../lib-proofs" }
 lib-identity = { path = "../lib-identity" }
 lib-storage = { path = "../lib-storage" }
-lib-network = { path = "../lib-network", features = ["unsafe-bootstrap"] }
+lib-network = { path = "../lib-network" }
 lib-types = { path = "../lib-types" }
 lib-blockchain = { path = "../lib-blockchain", features = ["contracts"], optional = true }
 lib-consensus = { path = "../lib-consensus" }
@@ -111,7 +111,7 @@ tempfile = "3.8"
 criterion = "0.5"
 
 [features]
-default = ["production", "full-blockchain", "windows-bluetooth", "unsafe-bootstrap"]  # Enable Windows Bluetooth and mesh bootstrap by default
+default = ["production", "full-blockchain", "windows-bluetooth"]  # Enable Windows Bluetooth by default
 production = []
 unsafe-bootstrap = ["lib-network/unsafe-bootstrap"]  # Allow mesh connections without CA-signed certificates (UHP handles auth)
 development = ["tracing-subscriber/env-filter"]
