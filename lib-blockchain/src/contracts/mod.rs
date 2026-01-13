@@ -41,6 +41,8 @@ pub mod sov_swap;
 #[cfg(feature = "contracts")]
 pub mod governance;
 #[cfg(feature = "contracts")]
+pub mod dao;
+#[cfg(feature = "contracts")]
 pub mod economics;
 #[cfg(feature = "contracts")]
 pub mod utils;
