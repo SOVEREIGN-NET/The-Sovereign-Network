@@ -87,10 +87,10 @@ impl PartialOrd for MempoolPriority {
 
 impl Ord for MempoolPriority {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse ordering for max-heap (higher priority first)
-        other.priority.cmp(&self.priority)
-            .then_with(|| other.tx.fee.cmp(&self.tx.fee))
-            .then_with(|| self.tx.received_at_height.cmp(&other.tx.received_at_height))
+        // Max-heap: higher priority values come out first
+        self.priority.cmp(&other.priority)
+            .then_with(|| self.tx.fee.cmp(&other.tx.fee))
+            .then_with(|| other.tx.received_at_height.cmp(&self.tx.received_at_height))
     }
 }
 
@@ -226,7 +226,7 @@ impl Mempool {
     pub fn evict_expired(&mut self, current_height: u64) -> usize {
         let initial_count = self.transactions.len();
 
-        self.transactions.retain(|tx_hash, tx| {
+        self.transactions.retain(|_tx_hash, tx| {
             if tx.should_retry(self.max_mempool_age, current_height) {
                 true
             } else {
@@ -236,7 +236,24 @@ impl Mempool {
             }
         });
 
+        // Rebuild priority queue to remove stale entries
+        if initial_count != self.transactions.len() {
+            self.rebuild_priority_queue(current_height);
+        }
+
         initial_count - self.transactions.len()
+    }
+
+    /// Rebuild priority queue from current transactions
+    fn rebuild_priority_queue(&mut self, current_height: u64) {
+        self.priority_queue.clear();
+        for tx in self.transactions.values() {
+            let priority = tx.priority_score(current_height);
+            self.priority_queue.push(MempoolPriority {
+                tx: tx.clone(),
+                priority,
+            });
+        }
     }
 
     /// Get pending transaction hashes (for debugging/testing)
