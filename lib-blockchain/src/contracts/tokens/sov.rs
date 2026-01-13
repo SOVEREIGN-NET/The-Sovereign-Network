@@ -36,6 +36,10 @@ use crate::contracts::executor::{ExecutionContext, CallOrigin};
 
 /// Total supply of SOV tokens: 1 trillion (1,000,000,000,000)
 /// This is FIXED and IMMUTABLE after initialization.
+/// 
+/// Type note: `SOV_TOTAL_SUPPLY` is stored as `u64`. The maximum value of `u64`
+/// is ~18.4 quintillion (18_446_744_073_709_551_615), so the fixed supply of
+/// 1 trillion (1_000_000_000_000) is well within the safe range for this type.
 pub const SOV_TOTAL_SUPPLY: u64 = 1_000_000_000_000;
 
 /// Number of decimal places for SOV token
