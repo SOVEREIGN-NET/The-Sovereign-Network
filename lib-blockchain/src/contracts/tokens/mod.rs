@@ -19,7 +19,7 @@ pub use sov::{
 
 // Re-export CBE token
 pub use cbe_token::{
-    CbeToken, CBETokenError, DistributionAllocation, VestingSchedule, VestingPool,
+    CbeToken, CbeTokenError, DistributionAllocation, VestingSchedule, VestingPool,
     CBE_TOTAL_SUPPLY, CBE_DECIMALS, CBE_SYMBOL, CBE_NAME,
     CBE_COMPENSATION_POOL, CBE_OPERATIONAL_TREASURY,
     CBE_PERFORMANCE_INCENTIVES, CBE_STRATEGIC_RESERVES,
