@@ -120,7 +120,8 @@ mod transaction_executor_tests {
 
     #[test]
     fn test_block_execution_context() {
-        let proposer = [1u8; 32];
+        use lib_crypto::Hash;
+        let proposer = Hash([1u8; 32]);
         let mut ctx = BlockExecutionContext::new(100, proposer);
 
         // Add transactions
@@ -232,7 +233,9 @@ mod transaction_executor_tests {
     fn test_mempool_selection_respects_size_limit() {
         let mut executor = TransactionExecutor::new(5, 500, 1000, 1000); // Max 5 txs, 500 bytes
 
-        // Add transactions
+        // Add transactions with 60 bytes each
+        // With max 500 bytes, we can fit at most 8 transactions (8 * 60 = 480 bytes)
+        // But max_transactions_per_block is 5, so we should get 5 transactions
         for i in 0..10 {
             let mut hash = [0u8; 32];
             hash[0] = i;
@@ -247,11 +250,43 @@ mod transaction_executor_tests {
 
         assert!(selected.len() <= 5); // Max 5 transactions
         assert!(total_size <= 500); // Max 500 bytes
+        assert_eq!(selected.len(), 5); // Should select exactly 5 (tx count limit kicks in first)
+        assert_eq!(total_size, 5 * 60); // Total should be 5 * 60 = 300 bytes
+    }
+
+    #[test]
+    fn test_mempool_selection_respects_size_limit_as_primary_constraint() {
+        let mut executor = TransactionExecutor::new(100, 250, 1000, 1000); // Max 100 txs, 250 bytes
+
+        // Add transactions with 60 bytes each
+        // With max 250 bytes, we can fit at most 4 transactions (4 * 60 = 240 bytes)
+        // 5 transactions would be 300 bytes which exceeds 250, so size is the limiting factor
+        for i in 0..10 {
+            let mut hash = [0u8; 32];
+            hash[0] = i;
+            // Use same fee for all to test that size limit is enforced, not priority
+            executor
+                .mempool
+                .add_transaction(hash, 100, 60, 100, 1000000)
+                .ok();
+        }
+
+        // Prepare block with size constraint
+        let (selected, total_fees, total_size) = executor.prepare_block_transactions(100);
+
+        assert_eq!(selected.len(), 4); // Should select exactly 4 (size limit)
+        assert_eq!(total_size, 4 * 60); // Total should be 4 * 60 = 240 bytes
+        assert!(total_size <= 250); // Must not exceed size limit
+        assert_eq!(total_fees, 4 * 100); // 4 transactions * 100 fee each
+        
+        // Verify that adding one more would exceed limit
+        assert!((total_size + 60) > 250);
     }
 
     #[test]
     fn test_consensus_block_execution_context_fees() {
-        let proposer = [1u8; 32];
+        use lib_crypto::Hash;
+        let proposer = Hash([1u8; 32]);
         let mut ctx = BlockExecutionContext::new(100, proposer);
 
         // Simulate mixed transaction types
