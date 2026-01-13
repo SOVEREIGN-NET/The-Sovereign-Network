@@ -80,6 +80,10 @@ pub enum QuicTrustMode {
     /// Allow TLS verification to be skipped only for explicit allowlisted peers.
     #[cfg(feature = "unsafe-bootstrap")]
     BootstrapAllowlist(Vec<SocketAddr>),
+    /// Skip TLS verification entirely - for mesh networks where UHP handles authentication.
+    /// TLS is used only for encryption, not identity verification.
+    #[cfg(feature = "unsafe-bootstrap")]
+    MeshTrustUhp,
 }
 
 /// QUIC mesh protocol with UHP authentication and PQC encryption layer
@@ -737,6 +741,11 @@ impl QuicMeshProtocol {
                         peer_addr
                     ));
                 }
+                Self::build_bootstrap_client_config()?
+            }
+            #[cfg(feature = "unsafe-bootstrap")]
+            QuicTrustMode::MeshTrustUhp => {
+                // Skip TLS verification - UHP handles identity verification
                 Self::build_bootstrap_client_config()?
             }
         };
