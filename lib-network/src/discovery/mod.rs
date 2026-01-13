@@ -16,7 +16,7 @@ pub use hardware::*;
 pub use lorawan_hardware::*;
 pub use geo_location::GeographicLocation;
 pub use local_network::*;
-pub use pin_cache::{TlsPinCache, PinCacheEntry, global_pin_cache};
+pub use pin_cache::{TlsPinCache, PinCacheEntry, NodeIdKey, global_pin_cache};
 
 // Export unified discovery as the primary interface
 pub use unified::{

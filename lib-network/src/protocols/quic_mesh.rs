@@ -1253,6 +1253,30 @@ impl super::Protocol for QuicMeshProtocol {
     }
 }
 
+/// Compute SPKI hash from the default TLS certificate path.
+///
+/// This standalone function can be called without a QuicMeshProtocol instance,
+/// useful for creating DiscoverySigningContext for signed announcements (Issue #739).
+///
+/// Returns None if the certificate doesn't exist yet (node hasn't started QUIC server).
+pub fn get_tls_spki_hash_from_default_cert() -> Option<[u8; 32]> {
+    use std::path::Path;
+
+    let cert_path = Path::new(DEFAULT_TLS_CERT_PATH);
+
+    if !cert_path.exists() {
+        return None;
+    }
+
+    let cert_pem = std::fs::read(cert_path).ok()?;
+
+    let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
+        .next()?  // Option<Result<CertificateDer>>
+        .ok()?;   // Result -> Option
+
+    QuicMeshProtocol::compute_spki_sha256(&cert_der).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

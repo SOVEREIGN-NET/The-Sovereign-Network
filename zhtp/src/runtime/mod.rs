@@ -762,13 +762,31 @@ impl RuntimeOrchestrator {
             kyber_pk: keypair.public_key.kyber_pk.clone(),
             key_id: keypair.public_key.key_id.clone(),
         };
-        
+
+        // Create signing context for TLS certificate pinning (Issue #739)
+        // This requires the TLS certificate to exist (created by QUIC server)
+        let signing_ctx = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
+            .map(|tls_spki_sha256| {
+                lib_network::discovery::local_network::DiscoverySigningContext {
+                    dilithium_sk: keypair.private_key.dilithium_sk.clone(),
+                    dilithium_pk: keypair.public_key.dilithium_pk.clone(),
+                    tls_spki_sha256,
+                }
+            });
+
+        if signing_ctx.is_some() {
+            info!("TLS certificate pinning enabled for discovery announcements");
+        } else {
+            debug!("TLS certificate not yet available - discovery announcements will be unsigned");
+        }
+
         // Start local discovery service (runs in background)
         if let Err(e) = lib_network::discovery::start_local_discovery(
             node_uuid,
             mesh_port,
             public_key,
             None, // No callback needed for now
+            signing_ctx,
         ).await {
             warn!("Failed to start local discovery: {}", e);
         }
@@ -2156,17 +2174,29 @@ impl RuntimeOrchestrator {
             kyber_pk: keypair.public_key.kyber_pk.clone(),
             key_id: keypair.public_key.key_id.clone(),
         };
-        
+
+        // Create signing context for TLS certificate pinning (Issue #739)
+        let signing_ctx = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert()
+            .map(|tls_spki_sha256| {
+                lib_network::discovery::local_network::DiscoverySigningContext {
+                    dilithium_sk: keypair.private_key.dilithium_sk.clone(),
+                    dilithium_pk: keypair.public_key.dilithium_pk.clone(),
+                    tls_spki_sha256,
+                }
+            });
+
         // Start local discovery service (broadcasts immediately, then every 30s)
         if let Err(e) = lib_network::discovery::local_network::start_local_discovery(
             node_uuid,
             mesh_port,
             public_key,
             None, // No callback needed for discovery phase
+            signing_ctx,
         ).await {
             warn!("      Failed to start local discovery: {}", e);
         } else {
-            info!("      ✓ Multicast broadcasting started (224.0.1.75:37775)");
+            let signed = lib_network::protocols::quic_mesh::get_tls_spki_hash_from_default_cert().is_some();
+            info!("      ✓ Multicast broadcasting started (224.0.1.75:37775, TLS pinning: {})", signed);
         }
         
         Ok(())

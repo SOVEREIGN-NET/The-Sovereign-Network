@@ -772,6 +772,7 @@ impl UnifiedDiscoveryService {
                 mesh_port,
                 public_key,
                 Some(peer_callback),
+                None, // TODO: Pass signing context for TLS pinning (Issue #739)
             )
             .await
             {
