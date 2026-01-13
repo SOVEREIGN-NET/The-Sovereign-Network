@@ -518,6 +518,29 @@ impl BlockchainConsensusCoordinator {
 
             // Extract actual transactions from the proposal
             let transactions = self.extract_transactions_from_proposal(&winning_proposal).await?;
+
+            // Week 10 Phase 2: Validate transactions before block inclusion
+            // This prevents double-spends, invalid signatures, and other transaction-level issues
+            let blockchain = self.blockchain.read().await;
+            let stateful_validator = crate::transaction::validation::StatefulTransactionValidator::new(&blockchain);
+
+            match stateful_validator.validate_transactions_for_block_inclusion(&transactions) {
+                Ok((validated_fees, tx_count)) => {
+                    info!(
+                        "Week 10 Phase 2: Validated {} transactions for block at height {} (total_fees={})",
+                        tx_count, height, validated_fees
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        "Week 10 Phase 2: Transaction validation failed for block at height {}: {:?}",
+                        height, e
+                    );
+                    return Err(anyhow::anyhow!("Block validation failed: {:?}", e));
+                }
+            }
+            drop(blockchain);
+
             let block = self.consensus_proposal_to_block_with_transactions(&winning_proposal, transactions).await?;
             
             // Only generate proof if we were the block proposer (otherwise we're just accepting someone else's block)
