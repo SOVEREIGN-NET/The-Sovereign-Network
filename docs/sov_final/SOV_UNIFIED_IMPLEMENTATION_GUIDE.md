@@ -1,8 +1,8 @@
 # SOV Unified Implementation Guide
 
-**Status:** Week 7 COMPLETE ✅ | Week 8 IN PROGRESS 🔄
-**Last Updated:** January 13, 2026 10:45 PM GMT
-**Current Branch:** `sov-phase1-week8-performance-validation`
+**Status:** Week 7 COMPLETE ✅ | Week 9 IN PROGRESS 🔄
+**Last Updated:** January 13, 2026 11:30 PM GMT
+**Current Branch:** `sov-phase1-week9-transaction-execution`
 **Tests Passing:** 617 tests (all passing, 0 failures)
 **Architecture:** Layer 0 Blockchain (Rust WASM Contracts on Native Consensus Engine)
 **Source of Truth:** `06_Financial_Projections_Tokenomics_Models 1.docx` (August 2025)
@@ -22,9 +22,11 @@
    └── 35 integration tests, 199 total tests passing
 ✅ Week 7: Consensus Fee Integration & SOV Transaction Types (COMPLETE)
    └── BlockMetadata, UBIClaim, ProfitDeclaration, 41 new tests, 240 total
-🔄 Week 8: Performance Validation & Scale Testing (IN PROGRESS)
+⏳ Week 8: Performance Validation & Scale Testing (PENDING)
    └── 1M citizen end-to-end, throughput benchmarks
-⏳ Week 9-12: Full Transaction Execution, Testnet, Deployment (PENDING)
+🔄 Week 9: Full Transaction Execution Layer (IN PROGRESS)
+   └── Mempool, transaction selection, fee extraction
+⏳ Week 10-12: Testnet, Deployment, Production Hardening (PENDING)
 ```
 
 ---
@@ -197,60 +199,93 @@
 
 ---
 
-## CURRENT WORK: Week 8 - Performance Validation (IN PROGRESS)
+### Week 9: Full Transaction Execution Layer 🔄
 
-**Branch:** `sov-phase1-week8-performance-validation`
-**Base:** sov-phase1-week7-consensus-integration (merged with latest development)
-**Status:** Setup complete, ready for implementation
+**What's Being Built:**
 
-### Week 8 Objectives
+#### Phase 1: Transaction Mempool (360 lines, COMPLETE ✅)
+- Mempool struct with transaction pool management
+- Priority-based transaction selection using BinaryHeap
+- Priority calculation: (fee/byte) * (age bonus) * (retry penalty)
+- Transaction eviction and expiration handling
+- Full test coverage (6 comprehensive tests passing)
 
-1. **1M Citizen End-to-End Pipeline**
-   - Consensus block finalization with fees
-   - Fee distribution to FeeRouter
-   - FeeRouter splits to UBI pool (45%)
-   - Citizens claim via UBIClaim transactions
-   - UbiDistributor processes claims at scale
+**Files:**
+- `lib-consensus/src/mempool/mod.rs` (+360 lines)
+- `lib-consensus/src/lib.rs` (re-exports added)
 
-2. **Consensus Layer Throughput**
-   - Block finalization performance at scale
-   - Fee collection hook overhead measurement
-   - Blockchain capacity assessment
+#### Phase 2: Transaction Executor (232 lines, COMPLETE ✅)
+- TransactionExecutor struct managing block preparation
+- BlockExecutionContext for tracking fees per transaction type
+- prepare_block_transactions(): Select by priority, size constraints
+- execute_transactions(): Extract actual transaction fees
+- finalize_block_execution(): Remove from mempool, update state
+- Full test coverage (3 comprehensive tests passing)
 
-3. **UBIClaim Transaction Throughput**
-   - Target: 1K+ claims/second
-   - Batch claim processing
-   - Peak load testing
+**Files:**
+- `lib-consensus/src/engines/transaction_execution.rs` (+232 lines)
+- `lib-consensus/src/engines/mod.rs` (module integration)
 
-4. **ProfitDeclaration Processing**
-   - Tribute calculation efficiency
-   - Revenue source validation at scale
-   - Anti-circumvention check performance
+**Total Week 9 So Far:** 592 lines of production code
 
-5. **Financial Validation**
-   - Year 5 projection: $22.50/citizen UBI
-   - Fee distribution accuracy across 1M citizens
-   - No rounding errors or precision loss
+#### Phase 3: Consensus Integration (PENDING)
+- Integrate TransactionExecutor into ConsensusEngine struct
+- Replace BlockMetadata stub with actual transaction fee extraction
+- Update fee collection hook to use real transactions
+- Comprehensive integration tests
 
-### Week 8 Deliverables
+---
 
-**Performance Test Suite:**
-- 1M citizen registration benchmark
-- Fee distribution throughput test
-- 10K concurrent UBIClaim transactions
-- 1K profit declarations
-- End-to-end pipeline latency measurement
+## CURRENT WORK: Week 9 - Transaction Execution (IN PROGRESS)
 
-**Benchmarks Target:**
-- Registration: < 60 seconds for 1M citizens
-- Fee distribution: < 1 second
-- UBIClaim processing: > 1K claims/second
-- Memory efficiency: < 2GB for full state
+**Branch:** `sov-phase1-week9-transaction-execution`
+**Base:** sov-phase1-week8-performance-validation (merged with latest development)
+**Status:** Phases 1-2 complete, Phase 3 ready to start
+
+### Week 9 Remaining Objectives
+
+1. **Consensus Integration**
+   - Add TransactionExecutor field to ConsensusEngine
+   - Replace BlockMetadata stub with real transaction fee extraction
+   - Integrate mempool with block proposal process
+   - Update fee collection hook to use actual transactions
+
+2. **Fee Extraction at Finality**
+   - Extract fees from actual transactions in blocks
+   - Replace simulate_block_fees() with transaction iteration
+   - Track fees per transaction type (transfer, ubi_claim, etc.)
+   - Validate fee totals match block metadata
+
+3. **Transaction Pool Integration**
+   - Connect mempool to consensus round preparation
+   - Priority-based transaction selection for blocks
+   - Automatic transaction expiration after N blocks
+   - Statistics tracking for monitoring
+
+4. **Comprehensive Testing**
+   - Integration tests: consensus ↔ mempool ↔ fee collection
+   - Transaction priority validation
+   - Fee extraction accuracy
+   - Performance benchmarks (1K transactions/block)
+
+### Week 9 Deliverables
+
+**Integration Components:**
+- TransactionExecutor integrated into ConsensusEngine
+- Actual transaction fee extraction (no simulation)
+- Priority-based block proposal
+- Mempool statistics and monitoring
+
+**Testing Suite:**
+- Consensus integration tests (10+ tests)
+- Transaction execution validation
+- Fee collection accuracy tests
+- Performance benchmarks at scale
 
 **Documentation:**
-- Performance baseline established
-- Bottleneck identification
-- Optimization recommendations for Week 9
+- Updated SOV_UNIFIED_IMPLEMENTATION_GUIDE.md
+- Transaction execution flow documentation
+- Fee extraction methodology documented
 
 ---
 
