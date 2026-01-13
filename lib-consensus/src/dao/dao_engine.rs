@@ -248,10 +248,13 @@ impl DaoEngine {
             GovernanceParameterValue::BlockchainAdjustmentInterval(adjustment_interval),
         ];
 
-        // Note: min/max adjustment factors are stored in description for now.
+        // TODO: min/max adjustment factors are accepted for validation but only stored in
+        // the human-readable description. They are NOT included in execution_params and will
+        // NOT be programmatically applied during proposal execution.
         // DifficultyConfig uses a single symmetric max_adjustment_factor for both directions.
         // Future enhancement: extend GovernanceParameterValue to support separate min/max factors
         // and update DifficultyConfig accordingly. See DifficultyParameterUpdateData in lib-blockchain.
+        // Consider removing these parameters from the function signature until fully supported.
 
         let execution_params = DaoExecutionParams {
             action: DaoExecutionAction::GovernanceParameterUpdate(GovernanceParameterUpdate {
