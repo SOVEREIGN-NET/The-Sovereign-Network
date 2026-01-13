@@ -397,6 +397,67 @@ impl UbiDistributor {
     pub fn blocks_per_month(&self) -> u64 {
         self.blocks_per_month
     }
+
+    /// Get current month's UBI amount based on block height
+    ///
+    /// **Consensus-Critical:** Uses deterministic month calculation.
+    /// Result depends only on current_height and blocks_per_month (both inputs/immutable).
+    ///
+    /// # Arguments
+    /// * `current_height` - Current blockchain block height
+    ///
+    /// # Returns
+    /// Per-citizen UBI amount for the current month, or 0 if not scheduled
+    pub fn get_monthly_ubi(&self, current_height: u64) -> u64 {
+        let month = self.month_index(current_height);
+        self.amount_for_month(month)
+    }
+
+    /// Check if citizen is registered for UBI
+    ///
+    /// # Arguments
+    /// * `citizen` - The citizen's PublicKey
+    ///
+    /// # Returns
+    /// true if citizen is registered, false otherwise
+    pub fn is_registered(&self, citizen: &PublicKey) -> bool {
+        let id = Self::key_id(citizen);
+        self.registered.contains(&id)
+    }
+
+    /// Check if citizen has claimed UBI for the current month
+    ///
+    /// **Consensus-Critical:** Uses deterministic month calculation.
+    /// Invariant P1: Each citizen paid at most once per month.
+    ///
+    /// # Arguments
+    /// * `citizen` - The citizen's PublicKey
+    /// * `current_height` - Current blockchain block height
+    ///
+    /// # Returns
+    /// true if citizen already claimed this month, false otherwise
+    pub fn has_claimed_this_month(&self, citizen: &PublicKey, current_height: u64) -> bool {
+        let id = Self::key_id(citizen);
+        let month = self.month_index(current_height);
+        self.paid.get(&month).map(|s| s.contains(&id)).unwrap_or(false)
+    }
+
+    /// Initialize UBI pool with funding
+    ///
+    /// Semantic alias for `receive_funds()` - clarifies intent for UBI initialization.
+    /// The amount is total pool funding, not per-citizen monthly amount.
+    ///
+    /// # Arguments
+    /// * `caller` - Must be governance_authority
+    /// * `amount` - Total funds to add to pool (must be > 0)
+    ///
+    /// # Errors
+    /// - `Unauthorized` if caller is not governance_authority
+    /// - `InvalidSchedule` if amount == 0
+    /// - `InvalidSchedule` if total would overflow
+    pub fn initialize_ubi_pool(&mut self, caller: &PublicKey, amount: u64) -> Result<(), Error> {
+        self.receive_funds(caller, amount)
+    }
 }
 
 // DEPRECATED: Do not use Default::default() - it creates invalid zero-authority state.
