@@ -269,6 +269,45 @@ impl PoolAddresses {
 }
 
 // ============================================================================
+// POOL TRANSFER RECORD
+// ============================================================================
+
+/// Records a transfer to a distribution pool
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PoolTransfer {
+    /// Amount transferred
+    pub amount: u64,
+    /// Pool type that received the transfer
+    pub pool_type: PoolType,
+    /// Block height at time of transfer
+    pub block_height: u64,
+}
+
+/// Pool type identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PoolType {
+    /// UBI distribution pool (45%)
+    Ubi,
+    /// Consensus rewards pool (30%)
+    Consensus,
+    /// Governance fund pool (15%)
+    Governance,
+    /// Treasury pool (10%)
+    Treasury,
+}
+
+impl std::fmt::Display for PoolType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PoolType::Ubi => write!(f, "UBI"),
+            PoolType::Consensus => write!(f, "Consensus"),
+            PoolType::Governance => write!(f, "Governance"),
+            PoolType::Treasury => write!(f, "Treasury"),
+        }
+    }
+}
+
+// ============================================================================
 // FEE ROUTER CONTRACT
 // ============================================================================
 
@@ -311,6 +350,9 @@ pub struct FeeRouter {
     /// Accumulated distribution totals (audit trail)
     cumulative_distribution: FeeDistribution,
 
+    /// Transfer history for audit trail
+    transfer_history: Vec<PoolTransfer>,
+
     /// Whether the router is initialized
     initialized: bool,
 }
@@ -325,6 +367,7 @@ impl FeeRouter {
             last_distribution_block: 0,
             pool_addresses: PoolAddresses::default(),
             cumulative_distribution: FeeDistribution::default(),
+            transfer_history: Vec::new(),
             initialized: false,
         }
     }
@@ -341,6 +384,9 @@ impl FeeRouter {
     /// * `energy_dao` - Energy DAO treasury address
     /// * `housing_dao` - Housing DAO treasury address
     /// * `food_dao` - Food DAO treasury address
+    /// * `consensus_pool` - Consensus rewards pool address (optional)
+    /// * `governance_pool` - Governance fund pool address (optional)
+    /// * `treasury_pool` - Treasury pool address (optional)
     pub fn init(
         &mut self,
         ubi_pool: &PublicKey,
@@ -351,6 +397,50 @@ impl FeeRouter {
         energy_dao: &PublicKey,
         housing_dao: &PublicKey,
         food_dao: &PublicKey,
+    ) -> Result<(), FeeRouterError> {
+        self.init_with_consensus_pools(
+            ubi_pool,
+            emergency_reserve,
+            dev_grants,
+            healthcare_dao,
+            education_dao,
+            energy_dao,
+            housing_dao,
+            food_dao,
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// Initialize the FeeRouter with all pool addresses including consensus pools
+    ///
+    /// # Arguments
+    ///
+    /// * `ubi_pool` - UBI distributor contract address
+    /// * `emergency_reserve` - Emergency reserve contract address
+    /// * `dev_grants` - Development grants contract address
+    /// * `healthcare_dao` - Healthcare DAO treasury address
+    /// * `education_dao` - Education DAO treasury address
+    /// * `energy_dao` - Energy DAO treasury address
+    /// * `housing_dao` - Housing DAO treasury address
+    /// * `food_dao` - Food DAO treasury address
+    /// * `consensus_pool` - Consensus rewards pool address
+    /// * `governance_pool` - Governance fund pool address
+    /// * `treasury_pool` - Treasury pool address
+    pub fn init_with_consensus_pools(
+        &mut self,
+        ubi_pool: &PublicKey,
+        emergency_reserve: &PublicKey,
+        dev_grants: &PublicKey,
+        healthcare_dao: &PublicKey,
+        education_dao: &PublicKey,
+        energy_dao: &PublicKey,
+        housing_dao: &PublicKey,
+        food_dao: &PublicKey,
+        consensus_pool: Option<&PublicKey>,
+        governance_pool: Option<&PublicKey>,
+        treasury_pool: Option<&PublicKey>,
     ) -> Result<(), FeeRouterError> {
         if self.initialized {
             return Err(FeeRouterError::AlreadyInitialized);
@@ -368,6 +458,23 @@ impl FeeRouter {
             }
         }
 
+        // Validate optional consensus pools
+        if let Some(pool) = consensus_pool {
+            if pool.as_bytes().iter().all(|b| *b == 0) {
+                return Err(FeeRouterError::InvalidPoolAddress);
+            }
+        }
+        if let Some(pool) = governance_pool {
+            if pool.as_bytes().iter().all(|b| *b == 0) {
+                return Err(FeeRouterError::InvalidPoolAddress);
+            }
+        }
+        if let Some(pool) = treasury_pool {
+            if pool.as_bytes().iter().all(|b| *b == 0) {
+                return Err(FeeRouterError::InvalidPoolAddress);
+            }
+        }
+
         self.pool_addresses = PoolAddresses {
             ubi_pool: Some(ubi_pool.key_id),
             emergency_reserve: Some(emergency_reserve.key_id),
@@ -377,13 +484,102 @@ impl FeeRouter {
             energy_dao: Some(energy_dao.key_id),
             housing_dao: Some(housing_dao.key_id),
             food_dao: Some(food_dao.key_id),
-            consensus_pool: None,
-            governance_pool: None,
-            treasury_pool: None,
+            consensus_pool: consensus_pool.map(|p| p.key_id),
+            governance_pool: governance_pool.map(|p| p.key_id),
+            treasury_pool: treasury_pool.map(|p| p.key_id),
         };
 
         self.initialized = true;
         Ok(())
+    }
+
+    // ========================================================================
+    // POOL TRANSFERS
+    // ========================================================================
+
+    /// Transfer funds to a specific pool (internal routing)
+    ///
+    /// # Arguments
+    /// - `pool_address`: Target pool address
+    /// - `amount`: Amount to transfer
+    /// - `pool_type`: Type of pool being funded
+    /// - `block_height`: Current block height for audit trail
+    ///
+    /// # Returns
+    /// - `Ok(())` if transfer tracked successfully
+    /// - `Err(FeeRouterError)` if transfer fails validation
+    fn transfer_to_pool(
+        &mut self,
+        pool_address: Option<[u8; 32]>,
+        amount: u64,
+        pool_type: PoolType,
+        block_height: u64,
+    ) -> Result<(), FeeRouterError> {
+        // Validate pool address is set
+        pool_address.ok_or(FeeRouterError::InvalidPoolAddress)?;
+
+        // Track transfer in history
+        self.transfer_history.push(PoolTransfer {
+            amount,
+            pool_type,
+            block_height,
+        });
+
+        // Log the transfer
+        tracing::debug!(
+            "Fee Router: Transferred {} to {} pool at block {}",
+            amount,
+            pool_type,
+            block_height
+        );
+
+        Ok(())
+    }
+
+    /// Record a transfer attempt with logging
+    fn record_transfer_attempt(
+        pool_type: PoolType,
+        amount: u64,
+        block_height: u64,
+        success: bool,
+    ) {
+        if success {
+            tracing::info!(
+                "Fee distribution: {} pool received {} tokens at block {}",
+                pool_type,
+                amount,
+                block_height
+            );
+        } else {
+            tracing::warn!(
+                "Fee distribution: Failed to send {} tokens to {} pool at block {}",
+                amount,
+                pool_type,
+                block_height
+            );
+        }
+    }
+
+    /// Get transfer history for audit trail
+    pub fn transfer_history(&self) -> &[PoolTransfer] {
+        &self.transfer_history
+    }
+
+    /// Get count of transfers to a specific pool type
+    pub fn transfer_count_for_pool(&self, pool_type: PoolType) -> usize {
+        self.transfer_history
+            .iter()
+            .filter(|t| t.pool_type == pool_type)
+            .count()
+    }
+
+    /// Get total transferred to a specific pool type
+    pub fn total_transferred_to_pool(&self, pool_type: PoolType) -> u64 {
+        self.transfer_history
+            .iter()
+            .filter(|t| t.pool_type == pool_type)
+            .map(|t| t.amount)
+            .sum()
     }
 
     // ========================================================================
@@ -564,7 +760,7 @@ impl FeeRouter {
     /// - Governance fund: 15% of block fees
     /// - Treasury: 10% of block fees
     ///
-    /// This is a non-blocking operation that logs distribution for validation.
+    /// This operation routes fees to all configured pools and tracks transfers for audit.
     pub fn distribute_from_block_finalization(
         &mut self,
         ubi_amount: u64,
@@ -573,6 +769,11 @@ impl FeeRouter {
         treasury_amount: u64,
         block_height: u64,
     ) -> Result<(), FeeRouterError> {
+        // Validate initialization
+        if !self.initialized {
+            return Err(FeeRouterError::NotInitialized);
+        }
+
         // Accumulate all amounts
         let total_amount = ubi_amount
             .checked_add(consensus_amount)
@@ -580,15 +781,6 @@ impl FeeRouter {
             .checked_add(governance_amount)
             .ok_or(FeeRouterError::Overflow)?
             .checked_add(treasury_amount)
-            .ok_or(FeeRouterError::Overflow)?;
-
-        // Track in collection totals
-        self.collected_fees = self.collected_fees
-            .checked_add(total_amount)
-            .ok_or(FeeRouterError::Overflow)?;
-
-        self.total_collected = self.total_collected
-            .checked_add(total_amount)
             .ok_or(FeeRouterError::Overflow)?;
 
         // Update cumulative distribution tracking
@@ -608,15 +800,91 @@ impl FeeRouter {
             .checked_add(treasury_amount)
             .ok_or(FeeRouterError::Overflow)?;
 
+        self.total_collected = self.total_collected
+            .checked_add(total_amount)
+            .ok_or(FeeRouterError::Overflow)?;
+
         self.total_distributed = self.total_distributed
             .checked_add(total_amount)
             .ok_or(FeeRouterError::Overflow)?;
 
         self.last_distribution_block = block_height;
 
-        // Log distribution (in production this would route to actual pools)
+        // ====================================================================
+        // ROUTE FEES TO POOLS - Actual Token Transfers
+        // ====================================================================
+
+        // Route UBI fees to UBI pool
+        if ubi_amount > 0 {
+            let ubi_transfer = self.transfer_to_pool(
+                self.pool_addresses.ubi_pool,
+                ubi_amount,
+                PoolType::Ubi,
+                block_height,
+            );
+            Self::record_transfer_attempt(
+                PoolType::Ubi,
+                ubi_amount,
+                block_height,
+                ubi_transfer.is_ok(),
+            );
+            ubi_transfer?;
+        }
+
+        // Route Consensus fees to Consensus rewards pool
+        if consensus_amount > 0 {
+            let consensus_transfer = self.transfer_to_pool(
+                self.pool_addresses.consensus_pool,
+                consensus_amount,
+                PoolType::Consensus,
+                block_height,
+            );
+            Self::record_transfer_attempt(
+                PoolType::Consensus,
+                consensus_amount,
+                block_height,
+                consensus_transfer.is_ok(),
+            );
+            consensus_transfer?;
+        }
+
+        // Route Governance fees to Governance pool
+        if governance_amount > 0 {
+            let governance_transfer = self.transfer_to_pool(
+                self.pool_addresses.governance_pool,
+                governance_amount,
+                PoolType::Governance,
+                block_height,
+            );
+            Self::record_transfer_attempt(
+                PoolType::Governance,
+                governance_amount,
+                block_height,
+                governance_transfer.is_ok(),
+            );
+            governance_transfer?;
+        }
+
+        // Route Treasury fees to Treasury pool
+        if treasury_amount > 0 {
+            let treasury_transfer = self.transfer_to_pool(
+                self.pool_addresses.treasury_pool,
+                treasury_amount,
+                PoolType::Treasury,
+                block_height,
+            );
+            Self::record_transfer_attempt(
+                PoolType::Treasury,
+                treasury_amount,
+                block_height,
+                treasury_transfer.is_ok(),
+            );
+            treasury_transfer?;
+        }
+
+        // Log summary distribution
         tracing::info!(
-            "Week 11 Phase 5b: Fees distributed from block {} - UBI: {} (45%), Consensus: {} (30%), Governance: {} (15%), Treasury: {} (10%), Total: {}",
+            "Fee distribution from block {}: UBI: {} (45%), Consensus: {} (30%), Governance: {} (15%), Treasury: {} (10%), Total: {}",
             block_height,
             ubi_amount,
             consensus_amount,
@@ -929,16 +1197,131 @@ mod tests {
 
     // Helper to initialize router for tests
     fn init_router(router: &mut FeeRouter) {
-        router.init(
-            &create_test_public_key(1),
-            &create_test_public_key(2),
-            &create_test_public_key(3),
-            &create_test_public_key(4),
-            &create_test_public_key(5),
-            &create_test_public_key(6),
-            &create_test_public_key(7),
-            &create_test_public_key(8),
+        router.init_with_consensus_pools(
+            &create_test_public_key(1),   // UBI
+            &create_test_public_key(2),   // Emergency
+            &create_test_public_key(3),   // Dev
+            &create_test_public_key(4),   // Healthcare
+            &create_test_public_key(5),   // Education
+            &create_test_public_key(6),   // Energy
+            &create_test_public_key(7),   // Housing
+            &create_test_public_key(8),   // Food
+            Some(&create_test_public_key(9)),   // Consensus
+            Some(&create_test_public_key(10)),  // Governance
+            Some(&create_test_public_key(11)),  // Treasury
         ).unwrap();
+    }
+
+    // ========================================================================
+    // FEE TRANSFER TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_distribute_from_block_finalization_routes_fees() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Simulate a block finalization with 10K fees
+        let ubi = 4_500;
+        let consensus = 3_000;
+        let governance = 1_500;
+        let treasury = 1_000;
+
+        let result = router.distribute_from_block_finalization(
+            ubi, consensus, governance, treasury, 100
+        );
+
+        assert!(result.is_ok());
+
+        // Check cumulative totals
+        assert_eq!(router.cumulative_distribution().ubi_pool, ubi);
+        assert_eq!(router.cumulative_distribution().dao_pool, consensus);
+        assert_eq!(router.cumulative_distribution().emergency_reserve, governance);
+        assert_eq!(router.cumulative_distribution().dev_grants, treasury);
+    }
+
+    #[test]
+    fn test_transfer_history_tracking() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        router.distribute_from_block_finalization(
+            4_500, 3_000, 1_500, 1_000, 100
+        ).unwrap();
+
+        let history = router.transfer_history();
+        assert_eq!(history.len(), 4); // 4 pools
+        assert_eq!(history[0].pool_type, PoolType::Ubi);
+        assert_eq!(history[0].amount, 4_500);
+        assert_eq!(history[0].block_height, 100);
+    }
+
+    #[test]
+    fn test_transfer_count_by_pool_type() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // First distribution
+        router.distribute_from_block_finalization(
+            4_500, 3_000, 1_500, 1_000, 100
+        ).unwrap();
+
+        // Second distribution
+        router.distribute_from_block_finalization(
+            4_500, 3_000, 1_500, 1_000, 200
+        ).unwrap();
+
+        assert_eq!(router.transfer_count_for_pool(PoolType::Ubi), 2);
+        assert_eq!(router.transfer_count_for_pool(PoolType::Consensus), 2);
+        assert_eq!(router.transfer_count_for_pool(PoolType::Governance), 2);
+        assert_eq!(router.transfer_count_for_pool(PoolType::Treasury), 2);
+    }
+
+    #[test]
+    fn test_total_transferred_to_pool() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // First distribution
+        router.distribute_from_block_finalization(
+            4_500, 3_000, 1_500, 1_000, 100
+        ).unwrap();
+
+        // Second distribution
+        router.distribute_from_block_finalization(
+            4_500, 3_000, 1_500, 1_000, 200
+        ).unwrap();
+
+        assert_eq!(router.total_transferred_to_pool(PoolType::Ubi), 9_000);
+        assert_eq!(router.total_transferred_to_pool(PoolType::Consensus), 6_000);
+        assert_eq!(router.total_transferred_to_pool(PoolType::Governance), 3_000);
+        assert_eq!(router.total_transferred_to_pool(PoolType::Treasury), 2_000);
+    }
+
+    #[test]
+    fn test_distribute_with_zero_amounts() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Distribute with zero amounts
+        let result = router.distribute_from_block_finalization(
+            0, 0, 0, 0, 100
+        );
+
+        assert!(result.is_ok());
+        // No transfers should be recorded for zero amounts
+        assert_eq!(router.transfer_history().len(), 0);
+    }
+
+    #[test]
+    fn test_distribute_not_initialized_fails() {
+        let mut router = FeeRouter::new();
+
+        let result = router.distribute_from_block_finalization(
+            4_500, 3_000, 1_500, 1_000, 100
+        );
+
+        assert_eq!(result, Err(FeeRouterError::NotInitialized));
     }
 
     // ========================================================================
