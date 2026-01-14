@@ -26,6 +26,16 @@
 //! - **F2**: Fee distribution is exactly 45/30/15/10
 //! - **F3**: Distribution is permissionless (anyone can trigger)
 //! - **F4**: All arithmetic uses integer math (no floating point)
+//!
+//! # Dependencies
+//!
+//! **lib-consensus dependency**: This module will implement the `FeeCollector` trait
+//! from `lib-consensus` to enable direct integration with the consensus engine.
+//! This creates a reverse dependency (lib-blockchain → lib-consensus) which is
+//! intentional: fee collection and distribution semantics are defined in lib-consensus
+//! so that consensus validation and economic contracts share a single source of truth.
+//! If fee types are moved to a neutral crate (e.g., lib-types or lib-economy),
+//! this dependency should be revisited.
 
 use serde::{Deserialize, Serialize};
 use crate::integration::crypto_integration::PublicKey;
