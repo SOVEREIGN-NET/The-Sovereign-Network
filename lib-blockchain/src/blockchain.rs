@@ -113,6 +113,8 @@ pub struct Blockchain {
     pub contract_states: HashMap<[u8; 32], Vec<u8>>,
     /// Contract state snapshots per block height for historical queries
     pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
+    /// UTXO set snapshots per block height for state recovery and reorg support
+    pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
     /// Fork history for audit trail (height -> ForkPoint)
     pub fork_points: HashMap<u64, crate::fork_recovery::ForkPoint>,
     /// Count of reorganizations for monitoring
@@ -216,12 +218,14 @@ impl Blockchain {
             finalized_blocks: HashSet::new(),
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
+            utxo_snapshots: std::collections::BTreeMap::new(),
             fork_points: HashMap::new(),
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
+        blockchain.save_utxo_snapshot(0)?; // Save snapshot for genesis block
         Ok(blockchain)
     }
 
@@ -563,6 +567,7 @@ impl Blockchain {
         self.blocks.push(block.clone());
         self.height += 1;
         self.update_utxo_set(&block)?;
+        self.save_utxo_snapshot(self.height)?;
         self.adjust_difficulty()?;
         
         // Remove processed transactions from pending pool
@@ -5480,6 +5485,87 @@ impl Blockchain {
         }
 
         debug!("🧹 Pruned contract history before block {}", prune_before);
+    }
+
+    // ========================================================================
+    // UTXO SNAPSHOT MANAGEMENT
+    // ========================================================================
+
+    /// Save UTXO set snapshot for current block height
+    ///
+    /// Creates a complete snapshot of the current UTXO set for the given block height.
+    /// This enables state recovery and chain reorganizations.
+    ///
+    /// # Arguments
+    /// * `block_height` - Block height to snapshot
+    pub fn save_utxo_snapshot(&mut self, block_height: u64) -> Result<()> {
+        // Clone the current UTXO set
+        let snapshot = self.utxo_set.clone();
+
+        // Save to snapshots map
+        self.utxo_snapshots.insert(block_height, snapshot);
+
+        debug!("💾 UTXO snapshot saved at block {}: {} UTXOs", block_height, self.utxo_set.len());
+        Ok(())
+    }
+
+    /// Get UTXO set at a specific block height
+    ///
+    /// Returns the UTXO set as it existed at the specified block height.
+    /// Useful for state verification and historical queries.
+    ///
+    /// # Arguments
+    /// * `height` - Block height to query
+    ///
+    /// # Returns
+    /// HashMap of UTXO hash to TransactionOutput, or None if snapshot not found
+    pub fn get_utxo_set_at_height(&self, height: u64) -> Option<HashMap<Hash, TransactionOutput>> {
+        self.utxo_snapshots.get(&height).cloned()
+    }
+
+    /// Prune old UTXO snapshots to save memory
+    ///
+    /// Keeps snapshots for recent blocks and removes older ones.
+    /// Maintains finalized blocks to prevent reorg below finality depth.
+    ///
+    /// # Arguments
+    /// * `keep_blocks` - Number of recent blocks to keep in history
+    pub fn prune_utxo_history(&mut self, keep_blocks: u64) {
+        if self.height < keep_blocks {
+            return; // Not enough blocks to prune
+        }
+
+        let prune_before = self.height.saturating_sub(keep_blocks - 1);
+        let keys_to_remove: Vec<u64> = self.utxo_snapshots
+            .iter()
+            .filter(|(h, _)| **h < prune_before)
+            .map(|(h, _)| *h)
+            .collect();
+
+        for key in keys_to_remove {
+            self.utxo_snapshots.remove(&key);
+        }
+
+        debug!("🧹 Pruned UTXO snapshots before block {}", prune_before);
+    }
+
+    /// Restore UTXO set from a snapshot at specific height
+    ///
+    /// Used during chain reorganizations to rollback to previous state.
+    ///
+    /// # Arguments
+    /// * `height` - Block height to restore from
+    ///
+    /// # Returns
+    /// Ok(()) if snapshot found and restored, error otherwise
+    pub fn restore_utxo_set_from_snapshot(&mut self, height: u64) -> Result<()> {
+        if let Some(snapshot) = self.utxo_snapshots.get(&height) {
+            self.utxo_set = snapshot.clone();
+            info!("🔄 UTXO set restored from snapshot at height {}: {} UTXOs", height, self.utxo_set.len());
+            Ok(())
+        } else {
+            anyhow::bail!("No UTXO snapshot found at height {}", height)
+        }
     }
 
     // ========================================================================
