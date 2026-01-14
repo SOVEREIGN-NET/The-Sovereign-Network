@@ -154,8 +154,8 @@ impl TransactionBuilder {
             fee: economics_tx.total_fee,
             signature: temp_signature,
             memo: format!(
-                "System TX: {} {} ZHTP from {:?} to {:?}", 
-                economics_tx.tx_type.description(), 
+                "System TX: {} {} ZHTP from {:?} to {:?}",
+                economics_tx.tx_type.description(),
                 economics_tx.amount,
                 economics_tx.from,
                 economics_tx.to
