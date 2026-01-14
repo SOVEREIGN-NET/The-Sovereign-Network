@@ -28,6 +28,7 @@ use crate::{
     mempool::Mempool,
     utils::time::current_timestamp,
     transaction::IdentityTransactionData,
+    fork_recovery::{ForkDetector, ChainEvaluation},
 };
 
 /// Validator keypair for cryptographic operations
@@ -414,7 +415,10 @@ impl BlockchainConsensusCoordinator {
                 self.handle_new_block(height, previous_hash).await?;
             }
             ConsensusEvent::ProposalReceived { proposal } => {
-                self.handle_proposal_received(proposal).await?;
+                // Handle proposal with fork detection
+                if let Err(e) = self.handle_proposal_received(proposal).await {
+                    warn!("Proposal handling error: {}", e);
+                }
             }
             ConsensusEvent::VoteReceived { vote } => {
                 self.handle_vote_received(vote).await?;
@@ -525,13 +529,43 @@ impl BlockchainConsensusCoordinator {
         let block = self.consensus_proposal_to_block(&proposal).await?;
 
         // Validate block against blockchain rules
-        let blockchain = self.blockchain.read().await;
-        let previous_block = blockchain.latest_block();
-        
-        if !blockchain.verify_block(&block, previous_block)? {
-            return Err(anyhow::anyhow!("Block verification failed for proposal"));
-        }
-        drop(blockchain);
+        let should_reject_proposal = {
+            let blockchain = self.blockchain.read().await;
+            let previous_block = blockchain.latest_block();
+
+            if !blockchain.verify_block(&block, previous_block)? {
+                return Err(anyhow::anyhow!("Block verification failed for proposal"));
+            }
+
+            // Check for fork - if block at same height exists with different hash
+            if let Some(existing_block) = blockchain.get_block(block.header.height) {
+                if let Some(fork) = ForkDetector::detect_fork(existing_block, &block) {
+                    // Fork detected - evaluate chains to determine canonical block
+                    info!("Fork detected at height {}: existing={}, new={}",
+                          fork.height, fork.existing_hash, fork.new_hash);
+
+                    // Build chains for evaluation - use just the last blocks for comparison
+                    // since we're comparing fork point blocks
+                    let our_chain = vec![existing_block.clone()];
+                    let candidate_chain = vec![block.clone()];
+
+                    let evaluation = ForkDetector::evaluate_chains(&our_chain, &candidate_chain);
+                    match evaluation {
+                        ChainEvaluation::KeepOurChain { our_work, candidate_work, reason } => {
+                            info!("Fork resolution: keeping our chain (our_work={}, candidate_work={}, reason={})",
+                                  our_work, candidate_work, reason);
+                            return Err(anyhow::anyhow!("Fork detected: keeping our chain - {}", reason));
+                        }
+                        ChainEvaluation::SwitchToCandidate { our_work, candidate_work, reason } => {
+                            info!("Fork resolution: candidate block is better (our_work={}, candidate_work={}, reason={})",
+                                  our_work, candidate_work, reason);
+                            // Continue to vote on proposal - consensus will handle reorganization if needed
+                        }
+                    }
+                }
+            }
+            false
+        };
 
         // If we're a validator, cast our vote
         if let Some(ref _validator_id) = self.local_validator_id {

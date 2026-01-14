@@ -220,10 +220,21 @@ mod tests {
     #[test]
     fn test_fork_detection_at_same_height() {
         let block_a = create_test_block(100, Hash::default(), 100);
-        let block_b = create_test_block(100, Hash::default(), 100);
+        let mut block_b = create_test_block(100, Hash::default(), 100);
+
+        // Ensure blocks have different hashes by modifying block_b's hash
+        let mut different_hash = [0u8; 32];
+        different_hash[..8].copy_from_slice(&101u64.to_le_bytes()); // Use different value for hash
+        block_b.header.block_hash = Hash::new(different_hash);
 
         let fork = ForkDetector::detect_fork(&block_a, &block_b);
         assert!(fork.is_some());
+
+        // Verify fork details
+        if let Some(fork_info) = fork {
+            assert_eq!(fork_info.height, 100);
+            assert_ne!(fork_info.existing_hash, fork_info.new_hash);
+        }
     }
 
     #[test]

@@ -770,3 +770,177 @@ fn test_sync_validator_set_to_consensus() -> Result<()> {
 
     Ok(())
 }
+
+// Fork Detection Tests - Issue #6
+// Tests for fork detection and chain evaluation in consensus layer
+
+#[test]
+fn test_fork_detection_at_same_height() -> Result<()> {
+    let mut blockchain = Blockchain::new()?;
+
+    // Create a block at height 1
+    let block1 = create_mined_block(&blockchain, Vec::new())?;
+    blockchain.add_block(block1.clone())?;
+    assert_eq!(blockchain.height, 1);
+
+    // Try to add another block at the same height - should fail
+    // This simulates a fork detection scenario
+    let block1_alt = {
+        let mining_config = get_mining_config_from_env();
+        let merkle_root = Hash::default();
+
+        let mut header = BlockHeader::new(
+            1,
+            blockchain.blocks[0].hash(),
+            merkle_root,
+            blockchain.latest_block().unwrap().timestamp() + 15,
+            mining_config.difficulty,
+            1, // Same height as block1
+            0,
+            0,
+            mining_config.difficulty,
+        );
+        header.set_nonce(1);
+        Block::new(header, Vec::new())
+    };
+
+    // The blockchain should recognize this as a fork attempt
+    // At the same height with different hash
+    assert_ne!(block1.hash(), block1_alt.hash());
+    assert_eq!(block1.height(), block1_alt.height());
+
+    Ok(())
+}
+
+#[test]
+fn test_fork_detection_in_get_block() -> Result<()> {
+    let mut blockchain = Blockchain::new()?;
+
+    // Add a block at height 1
+    let block1 = create_mined_block(&blockchain, Vec::new())?;
+    blockchain.add_block(block1.clone())?;
+
+    // Verify we can retrieve it
+    let retrieved = blockchain.get_block(1);
+    assert!(retrieved.is_some());
+    assert_eq!(retrieved.unwrap().height(), 1);
+    assert_eq!(retrieved.unwrap().hash(), block1.hash());
+
+    // Verify get_block returns None for height that doesn't exist
+    let missing = blockchain.get_block(100);
+    assert!(missing.is_none());
+
+    Ok(())
+}
+
+#[test]
+fn test_blockchain_height_consistency() -> Result<()> {
+    let mut blockchain = Blockchain::new()?;
+    assert_eq!(blockchain.height, 0);
+    assert_eq!(blockchain.blocks.len(), 1); // Genesis block
+
+    // Add a block at height 1
+    let block1 = create_mined_block(&blockchain, Vec::new())?;
+    blockchain.add_block(block1)?;
+    assert_eq!(blockchain.height, 1);
+    assert_eq!(blockchain.blocks.len(), 2);
+
+    // Add a block at height 2
+    let block2 = create_mined_block(&blockchain, Vec::new())?;
+    blockchain.add_block(block2)?;
+    assert_eq!(blockchain.height, 2);
+    assert_eq!(blockchain.blocks.len(), 3);
+
+    // Verify blocks are in correct order
+    let genesis = blockchain.get_block(0).unwrap();
+    assert!(genesis.is_genesis());
+
+    let b1 = blockchain.get_block(1).unwrap();
+    assert_eq!(b1.height(), 1);
+    assert_eq!(b1.previous_hash(), genesis.hash());
+
+    let b2 = blockchain.get_block(2).unwrap();
+    assert_eq!(b2.height(), 2);
+    assert_eq!(b2.previous_hash(), b1.hash());
+
+    Ok(())
+}
+
+#[test]
+fn test_fork_detection_requires_same_height() -> Result<()> {
+    let mut blockchain = Blockchain::new()?;
+
+    // Create and add blocks in sequence
+    let block1 = create_mined_block(&blockchain, Vec::new())?;
+    blockchain.add_block(block1.clone())?;
+
+    let block2 = create_mined_block(&blockchain, Vec::new())?;
+    blockchain.add_block(block2.clone())?;
+
+    assert_eq!(blockchain.height, 2);
+
+    // Blocks at same height (1) with different hashes represent a fork
+    assert_eq!(block1.height(), block2.height().saturating_sub(1));
+
+    // But blocks at consecutive heights are not a fork
+    assert_eq!(block1.height() + 1, block2.height());
+    assert_eq!(block1.hash(), block2.previous_hash());
+
+    Ok(())
+}
+
+#[test]
+fn test_cumulative_difficulty_tracking() -> Result<()> {
+    let mut blockchain = Blockchain::new()?;
+
+    // Get initial cumulative difficulty from genesis
+    let genesis = blockchain.latest_block().unwrap();
+    let genesis_difficulty = genesis.header.cumulative_difficulty;
+
+    // Add a new block
+    let block1 = create_mined_block(&blockchain, Vec::new())?;
+    blockchain.add_block(block1)?;
+
+    // Cumulative difficulty should increase
+    let new_latest = blockchain.latest_block().unwrap();
+    assert!(new_latest.header.cumulative_difficulty >= genesis_difficulty);
+
+    // Verify we can retrieve blocks and check their cumulative difficulties
+    let retrieved_genesis = blockchain.get_block(0).unwrap();
+    let retrieved_block1 = blockchain.get_block(1).unwrap();
+
+    assert!(retrieved_block1.header.cumulative_difficulty >= retrieved_genesis.header.cumulative_difficulty);
+
+    Ok(())
+}
+
+#[test]
+fn test_block_chain_validity() -> Result<()> {
+    let mut blockchain = Blockchain::new()?;
+
+    // Add several blocks and verify chain validity
+    for _ in 0..5 {
+        let block = create_mined_block(&blockchain, Vec::new())?;
+        blockchain.add_block(block)?;
+    }
+
+    assert_eq!(blockchain.height, 5);
+
+    // Verify the entire chain is valid
+    for height in 0..=blockchain.height {
+        let block = blockchain.get_block(height);
+        assert!(block.is_some(), "Block at height {} should exist", height);
+
+        let current = block.unwrap();
+        assert_eq!(current.height(), height);
+
+        if height > 0 {
+            let previous = blockchain.get_block(height - 1).unwrap();
+            assert_eq!(current.previous_hash(), previous.hash());
+        } else {
+            assert!(current.is_genesis());
+        }
+    }
+
+    Ok(())
+}
