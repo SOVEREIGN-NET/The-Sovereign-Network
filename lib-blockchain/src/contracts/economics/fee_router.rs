@@ -233,6 +233,15 @@ pub struct PoolAddresses {
     pub energy_dao: Option<[u8; 32]>,
     pub housing_dao: Option<[u8; 32]>,
     pub food_dao: Option<[u8; 32]>,
+
+    /// Week 11: Consensus rewards pool address (30% of fees)
+    pub consensus_pool: Option<[u8; 32]>,
+
+    /// Week 11: Governance fund pool address (15% of fees)
+    pub governance_pool: Option<[u8; 32]>,
+
+    /// Week 11: Treasury pool address (10% of fees)
+    pub treasury_pool: Option<[u8; 32]>,
 }
 
 impl PoolAddresses {
@@ -358,6 +367,9 @@ impl FeeRouter {
             energy_dao: Some(energy_dao.key_id),
             housing_dao: Some(housing_dao.key_id),
             food_dao: Some(food_dao.key_id),
+            consensus_pool: None,
+            governance_pool: None,
+            treasury_pool: None,
         };
 
         self.initialized = true;
@@ -528,6 +540,82 @@ impl FeeRouter {
     /// Calculate distribution preview without executing
     pub fn preview_distribution(fees: u64) -> FeeDistribution {
         FeeDistribution::from_fees(fees)
+    }
+
+    // ========================================================================
+    // WEEK 11: CONSENSUS FINALITY FEE DISTRIBUTION
+    // ========================================================================
+
+    /// Week 11 Phase 5b: Distribute fees to pools from block finalization
+    ///
+    /// Called after a block is finalized in consensus. Distributes fees according to:
+    /// - UBI pool: 45% of block fees
+    /// - Consensus rewards: 30% of block fees
+    /// - Governance fund: 15% of block fees
+    /// - Treasury: 10% of block fees
+    ///
+    /// This is a non-blocking operation that logs distribution for validation.
+    pub fn distribute_from_block_finalization(
+        &mut self,
+        ubi_amount: u64,
+        consensus_amount: u64,
+        governance_amount: u64,
+        treasury_amount: u64,
+        block_height: u64,
+    ) -> Result<(), FeeRouterError> {
+        // Accumulate all amounts
+        let total_amount = ubi_amount
+            .checked_add(consensus_amount)
+            .ok_or(FeeRouterError::Overflow)?
+            .checked_add(governance_amount)
+            .ok_or(FeeRouterError::Overflow)?
+            .checked_add(treasury_amount)
+            .ok_or(FeeRouterError::Overflow)?;
+
+        // Track in collection totals
+        self.collected_fees = self.collected_fees
+            .checked_add(total_amount)
+            .ok_or(FeeRouterError::Overflow)?;
+
+        self.total_collected = self.total_collected
+            .checked_add(total_amount)
+            .ok_or(FeeRouterError::Overflow)?;
+
+        // Update cumulative distribution tracking
+        self.cumulative_distribution.ubi_pool = self.cumulative_distribution.ubi_pool
+            .checked_add(ubi_amount)
+            .ok_or(FeeRouterError::Overflow)?;
+
+        self.cumulative_distribution.dao_pool = self.cumulative_distribution.dao_pool
+            .checked_add(consensus_amount)
+            .ok_or(FeeRouterError::Overflow)?;
+
+        self.cumulative_distribution.emergency_reserve = self.cumulative_distribution.emergency_reserve
+            .checked_add(governance_amount)
+            .ok_or(FeeRouterError::Overflow)?;
+
+        self.cumulative_distribution.dev_grants = self.cumulative_distribution.dev_grants
+            .checked_add(treasury_amount)
+            .ok_or(FeeRouterError::Overflow)?;
+
+        self.total_distributed = self.total_distributed
+            .checked_add(total_amount)
+            .ok_or(FeeRouterError::Overflow)?;
+
+        self.last_distribution_block = block_height;
+
+        // Log distribution (in production this would route to actual pools)
+        tracing::info!(
+            "Week 11 Phase 5b: Fees distributed from block {} - UBI: {} (45%), Consensus: {} (30%), Governance: {} (15%), Treasury: {} (10%), Total: {}",
+            block_height,
+            ubi_amount,
+            consensus_amount,
+            governance_amount,
+            treasury_amount,
+            total_amount,
+        );
+
+        Ok(())
     }
 }
 
