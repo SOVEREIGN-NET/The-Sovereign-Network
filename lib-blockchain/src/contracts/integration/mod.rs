@@ -262,6 +262,8 @@ impl ContractTransactionBuilder {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
 
         let tx_hash = temp_tx.signing_hash();
@@ -282,6 +284,8 @@ impl ContractTransactionBuilder {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
 
         Ok(tx)

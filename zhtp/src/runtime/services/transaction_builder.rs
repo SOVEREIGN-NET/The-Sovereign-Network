@@ -119,6 +119,8 @@ impl TransactionBuilder {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         })
     }
 
@@ -164,8 +166,10 @@ impl TransactionBuilder {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
-        
+
         // Create signing hash using the exact same method as blockchain validation
         let signing_hash = lib_blockchain::transaction::hashing::hash_for_signature(&temp_transaction);
         
