@@ -62,6 +62,7 @@ impl BlockExecutionContext {
 }
 
 /// Transaction execution engine
+#[derive(Debug)]
 pub struct TransactionExecutor {
     /// Mempool for pending transactions
     pub mempool: Mempool,

@@ -23,6 +23,7 @@ pub enum DaoOperation {
     Propose,
     Vote,
     ClaimUbi,
+    Balance,
 }
 
 impl DaoOperation {
@@ -33,13 +34,14 @@ impl DaoOperation {
             DaoOperation::Propose => "Create proposal",
             DaoOperation::Vote => "Vote on proposal",
             DaoOperation::ClaimUbi => "Claim UBI",
+            DaoOperation::Balance => "Get DAO treasury balance",
         }
     }
 
     /// Get HTTP method for this operation
     pub fn http_method(&self) -> &'static str {
         match self {
-            DaoOperation::Info => "GET",
+            DaoOperation::Info | DaoOperation::Balance => "GET",
             _ => "POST",
         }
     }
@@ -51,6 +53,7 @@ impl DaoOperation {
             DaoOperation::Propose => "dao/proposal/create",
             DaoOperation::Vote => "dao/proposal/vote",
             DaoOperation::ClaimUbi => "dao/ubi/claim",
+            DaoOperation::Balance => "dao/treasury/status",
         }
     }
 }
@@ -64,6 +67,7 @@ pub fn action_to_operation(action: &DaoAction) -> DaoOperation {
         DaoAction::Propose { .. } => DaoOperation::Propose,
         DaoAction::Vote { .. } => DaoOperation::Vote,
         DaoAction::ClaimUbi => DaoOperation::ClaimUbi,
+        DaoAction::Balance | DaoAction::TreasuryBalance => DaoOperation::Balance,
     }
 }
 
@@ -154,6 +158,7 @@ pub fn build_request_body(
         DaoOperation::ClaimUbi => json!({
             "orchestrated": true
         }),
+        DaoOperation::Balance => json!({}),
     }
 }
 
@@ -177,6 +182,7 @@ pub fn get_operation_message(
             proposal_id.unwrap_or("unknown")
         ),
         DaoOperation::ClaimUbi => "💰 Orchestrating UBI claim...".to_string(),
+        DaoOperation::Balance => "💼 Fetching DAO treasury balance...".to_string(),
     }
 }
 
@@ -206,6 +212,10 @@ pub async fn handle_dao_command(args: DaoArgs, cli: &ZhtpCli) -> Result<()> {
             let operation = DaoOperation::ClaimUbi;
             handle_dao_operation_impl(operation, None, None, None, None, cli).await
         }
+        DaoAction::Balance | DaoAction::TreasuryBalance => {
+            let operation = DaoOperation::Balance;
+            handle_dao_operation_impl(operation, None, None, None, None, cli).await
+        }
     }
 }
 
@@ -225,7 +235,7 @@ async fn handle_dao_operation_impl(
     println!("{}", get_operation_message(operation, title, proposal_id, choice));
 
     let response = match operation {
-        DaoOperation::Info => client.get(&url).send().await?,
+        DaoOperation::Info | DaoOperation::Balance => client.get(&url).send().await?,
         DaoOperation::ClaimUbi => {
             client
                 .post(&url)
