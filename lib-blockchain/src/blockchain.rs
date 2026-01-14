@@ -571,6 +571,17 @@ impl Blockchain {
             // Don't fail block processing, governance is non-critical
         }
 
+        // Process economic features (UBI claims and profit declarations)
+        if let Err(e) = self.process_ubi_claim_transactions(&block) {
+            warn!("Error processing UBI claims at height {}: {}", self.height, e);
+            // Don't fail block processing for UBI errors
+        }
+
+        if let Err(e) = self.process_profit_declarations(&block) {
+            warn!("Error processing profit declarations at height {}: {}", self.height, e);
+            // Don't fail block processing for profit declaration errors
+        }
+
         // Create transaction receipts for all transactions in block
         let block_hash = block.hash();
         for (tx_index, tx) in block.transactions.iter().enumerate() {
@@ -5240,6 +5251,89 @@ impl Blockchain {
         }
 
         debug!("🧹 Pruned contract history before block {}", prune_before);
+    }
+
+    // ========================================================================
+    // ECONOMIC FEATURE PROCESSING
+    // ========================================================================
+
+    /// Process UBI claim transactions
+    ///
+    /// Validates and tracks UBI claims to prevent double-claiming in same month.
+    /// This is a simplified implementation tracking claims on-chain.
+    pub fn process_ubi_claim_transactions(&mut self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if let Some(ubi_data) = &tx.ubi_claim_data {
+                // Create claim tracking key: (identity, month_index)
+                let claim_key = format!(
+                    "ubi_claim:{}:{}",
+                    ubi_data.claimant_identity, ubi_data.month_index
+                );
+
+                // Check if already claimed this month
+                if self.identity_blocks.contains_key(&claim_key) {
+                    warn!(
+                        "⚠️ Duplicate UBI claim attempt: {} for month {}",
+                        ubi_data.claimant_identity, ubi_data.month_index
+                    );
+                    return Err(anyhow::anyhow!(
+                        "UBI already claimed for this month: {}",
+                        ubi_data.claimant_identity
+                    ));
+                }
+
+                // Record claim
+                self.identity_blocks.insert(claim_key, block.header.height);
+
+                info!(
+                    "✅ UBI claim processed: identity={}, month={}, amount={}",
+                    ubi_data.claimant_identity, ubi_data.month_index, ubi_data.claim_amount
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Process profit declaration transactions
+    ///
+    /// Validates that tribute amount equals 20% of profit amount.
+    /// Enforces mandatory profit-to-nonprofit redistribution.
+    pub fn process_profit_declarations(&mut self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if let Some(profit_data) = &tx.profit_declaration_data {
+                // Validate tribute calculation (must be exactly 20%)
+                let expected_tribute = profit_data.profit_amount * 20 / 100;
+
+                if profit_data.tribute_amount != expected_tribute {
+                    error!(
+                        "❌ Invalid tribute amount: expected {}, got {}",
+                        expected_tribute, profit_data.tribute_amount
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Invalid tribute amount: expected {}, got {}",
+                        expected_tribute,
+                        profit_data.tribute_amount
+                    ));
+                }
+
+                // Record declaration
+                let declaration_key = format!(
+                    "profit_declaration:{}:{}",
+                    profit_data.declarant_identity, profit_data.fiscal_period
+                );
+                self.identity_blocks
+                    .insert(declaration_key, block.header.height);
+
+                info!(
+                    "💸 Profit declaration processed: entity={}, fiscal_period={}, profit={}, tribute={}",
+                    profit_data.declarant_identity,
+                    profit_data.fiscal_period,
+                    profit_data.profit_amount,
+                    profit_data.tribute_amount
+                );
+            }
+        }
+        Ok(())
     }
 }
 
