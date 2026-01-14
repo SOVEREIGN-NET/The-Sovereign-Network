@@ -542,21 +542,27 @@ impl BlockchainConsensusCoordinator {
             drop(blockchain);
 
             let block = self.consensus_proposal_to_block_with_transactions(&winning_proposal, transactions).await?;
-            
+
             // Only generate proof if we were the block proposer (otherwise we're just accepting someone else's block)
             let mut blockchain = self.blockchain.write().await;
             let was_proposer = self.local_validator_id.as_ref()
                 .map(|id| id == &winning_proposal.proposer)
                 .unwrap_or(false);
-            
+
             if was_proposer {
                 // We proposed this block - generate proof
                 info!("We were the proposer - generating recursive proof for block at height {}", height);
-                blockchain.add_block_with_proof(block).await?;
+                blockchain.add_block_with_proof(block.clone()).await?;
             } else {
                 // Another validator proposed this block - just accept it (already has proof)
                 info!("Accepting block from proposer {} at height {}", hex::encode(winning_proposal.proposer.as_bytes()), height);
-                blockchain.add_block(block)?;
+                blockchain.add_block(block.clone())?;
+            }
+
+            // Week 11 Phase 5a: Collect and distribute fees from finalized block
+            // Non-blocking: fees are collected immediately with logging
+            if let Err(e) = self.collect_and_distribute_fees_for_block(&block).await {
+                warn!("Week 11 Phase 5a: Fee collection failed: {}", e);
             }
 
             // Remove processed transactions from mempool
@@ -571,7 +577,7 @@ impl BlockchainConsensusCoordinator {
                 .collect();
             mempool.remove_transactions(&tx_hashes);
 
-            info!(" Added new block to blockchain at height {} with {} transactions", 
+            info!(" Added new block to blockchain at height {} with {} transactions",
                   height, tx_hashes.len());
         }
 
@@ -1664,16 +1670,61 @@ impl BlockchainConsensusCoordinator {
         // For deterministic keypairs, would need to implement seed-based generation
         let validator_id = self.local_validator_id.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No validator ID configured"))?;
-        
+
         debug!("Generating consensus keypair for validator: {}", validator_id);
-        
+
         // Generate new keypair (in production, this would be persistent)
         let keypair = lib_crypto::generate_keypair()?;
-        
+
         Ok(ValidatorKeypair {
             public_key: keypair.public_key,
             private_key: keypair.private_key,
         })
+    }
+
+    /// Week 11 Phase 5a: Collect and distribute fees from a finalized block
+    ///
+    /// This method is called asynchronously after a block is added to the blockchain.
+    /// It extracts fees from the block and distributes them to UBI, consensus, governance,
+    /// and treasury pools using the 45/30/15/10 split formula.
+    ///
+    /// This is a non-blocking operation that doesn't delay consensus finality.
+    async fn collect_and_distribute_fees_for_block(&self, block: &Block) -> Result<()> {
+        // Get total fees from block
+        let total_fees = block.total_fees();
+
+        if total_fees == 0 {
+            debug!("Week 11 Phase 5a: Block {} has no fees to distribute", block.height());
+            return Ok(());
+        }
+
+        // Get fee distribution breakdown
+        let (ubi_amount, consensus_amount, gov_amount, treasury_amount) = block.fee_summary();
+
+        info!(
+            "Week 11 Phase 5a: Distributing fees from block {} - Total: {} | UBI: {} (45%) | Consensus: {} (30%) | Governance: {} (15%) | Treasury: {} (10%)",
+            block.height(),
+            total_fees,
+            ubi_amount,
+            consensus_amount,
+            gov_amount,
+            treasury_amount,
+        );
+
+        // In Phase 5b, this will integrate with FeeRouter to actually distribute fees
+        // For now, we log the intended distribution for validation
+
+        debug!(
+            "Week 11 Phase 5a: Fee collection recorded - height: {}, total: {}, breakdown: ({}, {}, {}, {})",
+            block.height(),
+            total_fees,
+            ubi_amount,
+            consensus_amount,
+            gov_amount,
+            treasury_amount,
+        );
+
+        Ok(())
     }
 }
 
