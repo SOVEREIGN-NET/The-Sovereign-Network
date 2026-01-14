@@ -1,6 +1,22 @@
 use super::*;
 use lib_crypto::hash_blake3;
 
+// ============================================================================
+// AUDIT AND LOGGING CONSTANTS
+// ============================================================================
+
+/// Maximum number of audit records to display in logs
+///
+/// When logging per-transaction fee audit records during fee collection,
+/// limit output to avoid log spam in blocks with many transactions.
+/// Full audit trails are still maintained in the audit data structures.
+///
+/// **Usage**: `.take(MAX_AUDIT_RECORDS_TO_LOG)` on audit record iterators
+/// when displaying in logs. This will be used when FeeCollector trait
+/// integration adds per-transaction audit record logging.
+#[allow(dead_code)] // Will be used when audit logging is added
+const MAX_AUDIT_RECORDS_TO_LOG: usize = 10;
+
 impl ConsensusEngine {
     /// Process a single consensus event (pure component method)
     /// This replaces the standalone start_consensus() loop pattern
