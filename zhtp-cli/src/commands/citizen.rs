@@ -7,9 +7,9 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for validation
 
-use anyhow::Result;
 use crate::argument_parsing::{CitizenArgs, CitizenAction, ZhtpCli, format_output};
 use crate::error::{CliResult, CliError};
+use crate::commands::common::validate_identity_id;
 use serde_json::{json, Value};
 
 // ============================================================================
@@ -59,45 +59,14 @@ pub fn action_to_operation(action: &CitizenAction) -> CitizenOperation {
     }
 }
 
-/// Validate identity ID format
-///
-/// Pure function - format validation only
-pub fn validate_identity_id(identity_id: &str) -> CliResult<()> {
-    if identity_id.is_empty() {
-        return Err(CliError::ConfigError(
-            "Identity ID cannot be empty".to_string(),
-        ));
-    }
-
-    if identity_id.len() < 10 {
-        return Err(CliError::ConfigError(format!(
-            "Invalid identity ID: {}. Must be at least 10 characters",
-            identity_id
-        )));
-    }
-
-    // Identity IDs can contain alphanumeric, colons, and hyphens (for DID format)
-    if !identity_id
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == ':' || c == '-')
-    {
-        return Err(CliError::ConfigError(format!(
-            "Invalid identity ID: {}. Use only alphanumeric characters, colons, and hyphens (DID format)",
-            identity_id
-        )));
-    }
-
-    Ok(())
-}
-
 /// Build request body for citizen registration
 ///
 /// Pure function - JSON construction only
-pub fn build_register_request(identity_id: &str) -> Result<Value> {
-    Ok(json!({
+pub fn build_register_request(identity_id: &str) -> Value {
+    json!({
         "identity_id": identity_id,
         "register_for_ubi": true,
-    }))
+    })
 }
 
 // ============================================================================
@@ -138,8 +107,7 @@ async fn register_citizen(
     }
 
     // Build request
-    let request_body = build_register_request(identity_id)
-        .map_err(|e| CliError::Other(e.to_string()))?;
+    let request_body = build_register_request(identity_id);
 
     // Create HTTP client and send request
     let client = reqwest::Client::new();
@@ -248,33 +216,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_validate_identity_id_valid() {
-        assert!(validate_identity_id("did:example:123456").is_ok());
-    }
-
-    #[test]
-    fn test_validate_identity_id_with_hyphens() {
-        assert!(validate_identity_id("did:sovereign:citizen-001").is_ok());
-    }
-
-    #[test]
-    fn test_validate_identity_id_empty() {
-        assert!(validate_identity_id("").is_err());
-    }
-
-    #[test]
-    fn test_validate_identity_id_too_short() {
-        assert!(validate_identity_id("short").is_err());
-    }
-
-    #[test]
-    fn test_validate_identity_id_invalid_chars() {
-        assert!(validate_identity_id("did:example:@invalid!").is_err());
-    }
-
-    #[test]
     fn test_build_register_request() {
-        let result = build_register_request("did:example:123").unwrap();
+        let result = build_register_request("did:example:123");
         assert_eq!(result["identity_id"], "did:example:123");
         assert_eq!(result["register_for_ubi"], true);
     }
