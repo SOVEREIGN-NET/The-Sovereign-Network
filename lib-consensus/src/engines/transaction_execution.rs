@@ -105,7 +105,6 @@ impl TransactionExecutor {
         );
 
         // Calculate total fees and size for selected transactions
-        // Stop before including a transaction that would exceed the size limit
         let mut total_fees = 0u64;
         let mut total_size = 0usize;
         let mut limit_index = selected.len();
@@ -125,7 +124,9 @@ impl TransactionExecutor {
             }
         }
 
-        let final_selected = selected[..limit_index].to_vec();
+        // Truncate to fit within size limit (in-place, no allocation)
+        let mut final_selected = selected;
+        final_selected.truncate(limit_index);
 
         (final_selected, total_fees, total_size)
     }
@@ -190,10 +191,10 @@ impl TransactionExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::Hash;
 
     #[test]
     fn test_block_execution_context() {
-        use lib_crypto::Hash;
         let proposer = IdentityId::from(Hash([1u8; 32]));
         let mut ctx = BlockExecutionContext::new(100, proposer);
 
