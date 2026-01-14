@@ -60,6 +60,13 @@ impl PendingStateChanges {
     }
 }
 
+/// Maximum allowed call depth to prevent infinite recursion
+/// Set to 10 to allow complex multi-contract workflows while preventing stack overflow
+pub const DEFAULT_MAX_CALL_DEPTH: u32 = 10;
+
+/// Error returned when call depth limit is exceeded
+pub const CALL_DEPTH_EXCEEDED: &str = "Call depth limit exceeded";
+
 /// System-level configuration persisted in storage
 ///
 /// **Consensus-Critical**: Must be loaded from storage on executor startup.

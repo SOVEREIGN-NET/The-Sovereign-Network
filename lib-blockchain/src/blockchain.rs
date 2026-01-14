@@ -5353,6 +5353,12 @@ impl Blockchain {
             new_blocks.len()
         );
 
+        // Capture old block hash before removing blocks for audit trail
+        let old_block_hash = self.blocks
+            .iter()
+            .find(|b| b.header.height == target_height)
+            .map(|b| b.header.block_hash);
+
         // Remove old blocks from target_height onwards
         let old_count = self.blocks.len();
         self.blocks.retain(|b| b.header.height < target_height);
@@ -5362,14 +5368,7 @@ impl Blockchain {
         for block in new_blocks {
             // Record fork for audit trail (only for first block of reorg)
             if block.header.height == target_height {
-                let old_block = self.blocks
-                    .iter()
-                    .find(|b| b.header.height == target_height - 1)
-                    .map(|b| b.header.block_hash);
-
-                if let Some(_prev_hash) = old_block {
-                    // Find what was at this height before
-                    let old_hash = Hash::default(); // Would be tracked from before reorg
+                if let Some(old_hash) = old_block_hash {
                     self.record_fork_point(
                         target_height,
                         old_hash,
