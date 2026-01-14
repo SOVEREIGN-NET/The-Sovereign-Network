@@ -49,6 +49,9 @@ pub const SUPERMAJORITY_THRESHOLD_BASIS_POINTS: u16 = 6_667; // 66.67%
 /// Minimum voting power to create a proposal (100,000 CBE tokens)
 pub const MIN_VOTING_POWER_FOR_PROPOSAL: u64 = 100_000 * 10_u64.pow(8); // 100k CBE with 8 decimals
 
+/// Quorum threshold in basis points (50%)
+pub const QUORUM_THRESHOLD_BASIS_POINTS: u16 = 5_000; // 50% of voting power
+
 // ============================================================================
 // ERROR TYPES
 // ============================================================================
@@ -97,6 +100,9 @@ pub enum GovernanceError {
 
     /// Arithmetic overflow
     Overflow,
+
+    /// Quorum not reached
+    QuorumNotMet,
 }
 
 impl std::fmt::Display for GovernanceError {
@@ -130,6 +136,8 @@ impl std::fmt::Display for GovernanceError {
                 write!(f, "Invalid proposal type"),
             GovernanceError::Overflow =>
                 write!(f, "Arithmetic overflow"),
+            GovernanceError::QuorumNotMet =>
+                write!(f, "Quorum not reached - insufficient voter participation"),
         }
     }
 }
@@ -494,7 +502,10 @@ impl Governance {
 
     /// Finalize voting on a proposal (after voting period ends)
     ///
-    /// This determines if the proposal passed based on voting threshold.
+    /// This determines if the proposal passed based on voting threshold and quorum.
+    ///
+    /// **Quorum**: Total votes cast (including abstentions) must reach 50% of total voting power
+    /// **Threshold**: Votes in favor must exceed votes against (adjusted for proposal category)
     ///
     /// # Errors
     ///
@@ -502,6 +513,7 @@ impl Governance {
     /// - `ProposalNotFound` if proposal doesn't exist
     /// - `VotingPeriodNotStarted` if voting hasn't started yet
     /// - `VotingPeriodEnded` if voting period hasn't ended yet
+    /// - `QuorumNotMet` if insufficient participation (< 50% of voting power)
     pub fn finalize_voting(
         &mut self,
         proposal_id: u64,
@@ -521,11 +533,33 @@ impl Governance {
             return Err(GovernanceError::VotingPeriodEnded);
         }
 
-        // Determine if proposal passed based on category
-        let total_votes = proposal.votes_for.checked_add(proposal.votes_against)
+        // ====================================================================
+        // STEP 1: CHECK QUORUM
+        // ====================================================================
+        // Total voting power that participated (including abstentions)
+        let total_voted = proposal.votes_for
+            .checked_add(proposal.votes_against)
+            .ok_or(GovernanceError::Overflow)?
+            .checked_add(proposal.votes_abstain)
             .ok_or(GovernanceError::Overflow)?;
 
-        if total_votes == 0 {
+        // Quorum: At least 50% of total voting power must participate
+        let quorum_required = (proposal.total_voting_power_at_creation * QUORUM_THRESHOLD_BASIS_POINTS as u64) / 10_000;
+
+        if total_voted < quorum_required {
+            proposal.status = ProposalStatus::Rejected;
+            return Err(GovernanceError::QuorumNotMet);
+        }
+
+        // ====================================================================
+        // STEP 2: CHECK VOTING THRESHOLD
+        // ====================================================================
+        // Threshold only considers For/Against (abstentions don't count toward threshold)
+        let total_yea_nay = proposal.votes_for.checked_add(proposal.votes_against)
+            .ok_or(GovernanceError::Overflow)?;
+
+        if total_yea_nay == 0 {
+            // Quorum met but no one voted for/against (all abstained)
             proposal.status = ProposalStatus::Rejected;
             return Ok(());
         }
@@ -537,8 +571,13 @@ impl Governance {
                 SUPERMAJORITY_THRESHOLD_BASIS_POINTS,
         };
 
-        // Calculate percentage of votes in favor
-        let for_percentage = (proposal.votes_for as u64 * 10_000) / total_votes;
+        // Calculate percentage of For votes relative to For + Against votes
+        let for_percentage = proposal
+            .votes_for
+            .checked_mul(10_000)
+            .ok_or(GovernanceError::Overflow)?
+            .checked_div(total_yea_nay)
+            .ok_or(GovernanceError::Overflow)?;
 
         if for_percentage >= threshold as u64 {
             proposal.status = ProposalStatus::Approved;
@@ -670,5 +709,444 @@ impl Governance {
 impl Default for Governance {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ============================================================================
+// COMPREHENSIVE GOVERNANCE VOTING TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_governance() -> Governance {
+        let mut gov = Governance::new();
+        let admin = [1u8; 32];
+        gov.init(admin).unwrap();
+        gov
+    }
+
+    fn create_test_proposer() -> [u8; 32] {
+        [2u8; 32]
+    }
+
+    fn create_test_voter(id: u8) -> [u8; 32] {
+        [id; 32]
+    }
+
+    // ========================================================================
+    // GOVERNANCE INITIALIZATION TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_governance_initialization() {
+        let gov = create_test_governance();
+        assert!(gov.is_initialized());
+        assert_eq!(gov.get_admin(), Some([1u8; 32]));
+    }
+
+    #[test]
+    fn test_governance_initialization_fails_when_already_initialized() {
+        let mut gov = create_test_governance();
+        let result = gov.init([1u8; 32]);
+        assert_eq!(result, Err(GovernanceError::AlreadyInitialized));
+    }
+
+    // ========================================================================
+    // PROPOSAL CREATION TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_create_proposal_success() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let result = gov.create_proposal(
+            create_test_proposer(),
+            "Test Proposal".to_string(),
+            "This is a test proposal".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        );
+
+        assert!(result.is_ok());
+        let proposal_id = result.unwrap();
+        assert_eq!(proposal_id, 1);
+
+        let proposal = gov.get_proposal(proposal_id).unwrap();
+        assert_eq!(proposal.title, "Test Proposal");
+        assert_eq!(proposal.status, ProposalStatus::Active);
+    }
+
+    #[test]
+    fn test_create_proposal_requires_minimum_voting_power() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let result = gov.create_proposal(
+            create_test_proposer(),
+            "Weak Proposal".to_string(),
+            "Insufficient power".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL - 1,
+        );
+
+        assert_eq!(result, Err(GovernanceError::InsufficientVotingPower));
+    }
+
+    #[test]
+    fn test_create_proposal_requires_non_empty_title() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let result = gov.create_proposal(
+            create_test_proposer(),
+            "".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        );
+
+        assert_eq!(result, Err(GovernanceError::EmptyTitle));
+    }
+
+    #[test]
+    fn test_create_proposal_requires_non_empty_description() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let result = gov.create_proposal(
+            create_test_proposer(),
+            "Title".to_string(),
+            "".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        );
+
+        assert_eq!(result, Err(GovernanceError::EmptyDescription));
+    }
+
+    // ========================================================================
+    // VOTING TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_cast_vote_during_voting_period() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Test Proposal".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        gov.set_current_timestamp(100);
+
+        let result = gov.vote(
+            proposal_id,
+            create_test_voter(3),
+            VoteType::For,
+            100_000,
+        );
+
+        assert!(result.is_ok());
+
+        let proposal = gov.get_proposal(proposal_id).unwrap();
+        assert_eq!(proposal.votes_for, 100_000);
+        assert_eq!(proposal.votes_against, 0);
+    }
+
+    #[test]
+    fn test_voting_prevented_after_period_ends() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Test Proposal".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        // Advance time past voting period
+        gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
+
+        let result = gov.vote(
+            proposal_id,
+            create_test_voter(3),
+            VoteType::For,
+            100_000,
+        );
+
+        assert_eq!(result, Err(GovernanceError::VotingPeriodEnded));
+    }
+
+    #[test]
+    fn test_voter_cannot_vote_twice() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Test Proposal".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        gov.set_current_timestamp(100);
+
+        gov.vote(proposal_id, create_test_voter(3), VoteType::For, 100_000).unwrap();
+
+        let result = gov.vote(proposal_id, create_test_voter(3), VoteType::Against, 50_000);
+        assert_eq!(result, Err(GovernanceError::AlreadyVoted));
+    }
+
+    // ========================================================================
+    // QUORUM ENFORCEMENT TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_proposal_fails_without_quorum() {
+        let mut gov = create_test_governance();
+        let total_power = 1_000_000u64;
+        gov.update_total_voting_power(total_power);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Quorum Test".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        gov.set_current_timestamp(100);
+
+        // Only 40% voting power participates (below 50% quorum)
+        gov.vote(proposal_id, create_test_voter(3), VoteType::For, 400_000).unwrap();
+
+        // Advance time past voting period
+        gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
+
+        let result = gov.finalize_voting(proposal_id);
+
+        // Should fail due to quorum not met
+        assert_eq!(result, Err(GovernanceError::QuorumNotMet));
+
+        // Proposal should be marked as rejected
+        let proposal = gov.get_proposal(proposal_id).unwrap();
+        assert_eq!(proposal.status, ProposalStatus::Rejected);
+    }
+
+    #[test]
+    fn test_proposal_passes_with_quorum_and_majority() {
+        let mut gov = create_test_governance();
+        let total_power = 1_000_000u64;
+        gov.update_total_voting_power(total_power);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Majority Test".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        gov.set_current_timestamp(100);
+
+        // 60% voting power participates (above 50% quorum)
+        // 60% vote For, 40% vote Against
+        gov.vote(proposal_id, create_test_voter(3), VoteType::For, 600_000).unwrap();
+        gov.vote(proposal_id, create_test_voter(4), VoteType::Against, 400_000).unwrap();
+
+        // Advance time past voting period
+        gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
+
+        let result = gov.finalize_voting(proposal_id);
+        assert!(result.is_ok());
+
+        let proposal = gov.get_proposal(proposal_id).unwrap();
+        assert_eq!(proposal.status, ProposalStatus::Approved);
+    }
+
+    #[test]
+    fn test_proposal_fails_with_quorum_but_without_majority() {
+        let mut gov = create_test_governance();
+        let total_power = 1_000_000u64;
+        gov.update_total_voting_power(total_power);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Rejection Test".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        gov.set_current_timestamp(100);
+
+        // 60% voting power participates (quorum met)
+        // But only 40% for, 60% against (no majority)
+        gov.vote(proposal_id, create_test_voter(3), VoteType::For, 400_000).unwrap();
+        gov.vote(proposal_id, create_test_voter(4), VoteType::Against, 600_000).unwrap();
+
+        gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
+
+        let result = gov.finalize_voting(proposal_id);
+        assert!(result.is_ok());
+
+        let proposal = gov.get_proposal(proposal_id).unwrap();
+        assert_eq!(proposal.status, ProposalStatus::Rejected);
+    }
+
+    #[test]
+    fn test_abstentions_count_toward_quorum_but_not_majority() {
+        let mut gov = create_test_governance();
+        let total_power = 1_000_000u64;
+        gov.update_total_voting_power(total_power);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Abstain Test".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        gov.set_current_timestamp(100);
+
+        // 50% For, 20% Against, 30% Abstain = 80% participation (quorum met)
+        gov.vote(proposal_id, create_test_voter(3), VoteType::For, 500_000).unwrap();
+        gov.vote(proposal_id, create_test_voter(4), VoteType::Against, 200_000).unwrap();
+        gov.vote(proposal_id, create_test_voter(5), VoteType::Abstain, 300_000).unwrap();
+
+        gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
+
+        let result = gov.finalize_voting(proposal_id);
+        assert!(result.is_ok());
+
+        let proposal = gov.get_proposal(proposal_id).unwrap();
+        // 50% For vs 20% Against = 50/(50+20) = 71.4% > 50% majority, so should pass
+        assert_eq!(proposal.status, ProposalStatus::Approved);
+    }
+
+    // ========================================================================
+    // TIMELOCK ENFORCEMENT TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_timelock_prevents_immediate_execution() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Timelock Test".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        gov.set_current_timestamp(100);
+        gov.vote(proposal_id, create_test_voter(3), VoteType::For, 600_000).unwrap();
+
+        gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
+        gov.finalize_voting(proposal_id).unwrap();
+
+        // Try to execute immediately (should fail)
+        let result = gov.execute_proposal(proposal_id);
+        assert_eq!(result, Err(GovernanceError::TimelockNotExpired));
+    }
+
+    #[test]
+    fn test_proposal_executes_after_timelock() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Execution Test".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Regular,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        gov.set_current_timestamp(100);
+        gov.vote(proposal_id, create_test_voter(3), VoteType::For, 600_000).unwrap();
+
+        gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
+        gov.finalize_voting(proposal_id).unwrap();
+
+        // Advance past timelock
+        gov.set_current_timestamp(VOTING_PERIOD_SECONDS + TIMELOCK_DELAY_SECONDS + 100);
+
+        let result = gov.execute_proposal(proposal_id);
+        assert!(result.is_ok());
+
+        let proposal = gov.get_proposal(proposal_id).unwrap();
+        assert_eq!(proposal.status, ProposalStatus::Executed);
+    }
+
+    // ========================================================================
+    // CONSTITUTIONAL VOTING TESTS (SUPERMAJORITY)
+    // ========================================================================
+
+    #[test]
+    fn test_constitutional_proposal_requires_supermajority() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Constitutional Change".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Constitutional,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        gov.set_current_timestamp(100);
+
+        // 60% for (enough for regular, not for constitutional supermajority)
+        gov.vote(proposal_id, create_test_voter(3), VoteType::For, 600_000).unwrap();
+        gov.vote(proposal_id, create_test_voter(4), VoteType::Against, 400_000).unwrap();
+
+        gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
+        let result = gov.finalize_voting(proposal_id);
+        assert!(result.is_ok());
+
+        // Should be rejected (60% is not >= 66.67% supermajority)
+        let proposal = gov.get_proposal(proposal_id).unwrap();
+        assert_eq!(proposal.status, ProposalStatus::Rejected);
+    }
+
+    #[test]
+    fn test_constitutional_proposal_passes_with_supermajority() {
+        let mut gov = create_test_governance();
+        gov.update_total_voting_power(1_000_000);
+
+        let proposal_id = gov.create_proposal(
+            create_test_proposer(),
+            "Constitutional Change".to_string(),
+            "Description".to_string(),
+            ProposalCategory::Constitutional,
+            MIN_VOTING_POWER_FOR_PROPOSAL,
+        ).unwrap();
+
+        gov.set_current_timestamp(100);
+
+        // 70% for (exceeds 66.67% supermajority)
+        gov.vote(proposal_id, create_test_voter(3), VoteType::For, 700_000).unwrap();
+        gov.vote(proposal_id, create_test_voter(4), VoteType::Against, 300_000).unwrap();
+
+        gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
+        gov.finalize_voting(proposal_id).unwrap();
+
+        let proposal = gov.get_proposal(proposal_id).unwrap();
+        assert_eq!(proposal.status, ProposalStatus::Approved);
     }
 }

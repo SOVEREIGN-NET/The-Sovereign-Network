@@ -20,6 +20,7 @@ pub mod utils;
 pub mod edge_node_state;
 pub mod dht_index;
 pub mod receipts;
+pub mod fork_recovery;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
@@ -34,6 +35,7 @@ pub use mempool::*;
 pub use utils::*;
 pub use dht_index::*;
 pub use receipts::{TransactionReceipt, TransactionStatus};
+pub use fork_recovery::{ForkPoint, ForkDetector, ForkDetection, ChainEvaluation, ForkRecoveryConfig, ForkResolution};
 
 // Re-export enhanced integrations
 pub use integration::enhanced_zk_crypto::{

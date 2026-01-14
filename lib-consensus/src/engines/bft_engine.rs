@@ -286,9 +286,15 @@ impl BftEngine {
         Ok(())
     }
 
-    /// Create a BFT proposal
+    /// Create a BFT proposal.
+    ///
+    /// Note: This method requires `&mut self` because it collects transactions
+    /// from the mempool via `collect_block_transactions`, which internally
+    /// calls `prepare_block_transactions` and mutates the mempool state.
     async fn create_bft_proposal(&mut self, previous_hash: Hash) -> ConsensusResult<ConsensusProposal> {
-        // Extract validator_id early to avoid borrow conflicts
+        // Extract validator_id early to avoid borrow conflicts.
+        // Clone is acceptable here: IdentityId is Hash (32 bytes), and we need
+        // owned value for use after mutable borrow in collect_block_transactions.
         let validator_id = self
             .validator_identity
             .clone()
