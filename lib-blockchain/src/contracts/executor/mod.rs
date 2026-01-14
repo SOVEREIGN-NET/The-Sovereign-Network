@@ -24,6 +24,13 @@ const UBI_INSTANCE_ID: &[u8] = b"contract:ubi:v1";
 const DEV_GRANTS_INSTANCE_ID: &[u8] = b"contract:dev_grants:v1";
 const SYSTEM_CONFIG_KEY: &[u8] = b"system:config:v1";
 
+/// Maximum allowed call depth to prevent infinite recursion
+/// Set to 10 to allow complex multi-contract workflows while preventing stack overflow
+pub const DEFAULT_MAX_CALL_DEPTH: u32 = 10;
+
+/// Error returned when call depth limit is exceeded
+pub const CALL_DEPTH_EXCEEDED: &str = "Call depth limit exceeded";
+
 /// System-level configuration persisted in storage
 ///
 /// **Consensus-Critical**: Must be loaded from storage on executor startup.
@@ -75,6 +82,10 @@ pub struct ExecutionContext {
     pub gas_used: u64,
     /// Transaction hash that triggered this execution
     pub tx_hash: [u8; 32],
+    /// Current call depth (0 = top-level user call)
+    pub call_depth: u32,
+    /// Maximum allowed call depth (default: 10)
+    pub max_call_depth: u32,
 }
 
 impl ExecutionContext {
@@ -108,6 +119,8 @@ impl ExecutionContext {
             gas_limit,
             gas_used: 0,
             tx_hash,
+            call_depth: 0,
+            max_call_depth: DEFAULT_MAX_CALL_DEPTH,
         }
     }
 
@@ -139,7 +152,38 @@ impl ExecutionContext {
             gas_limit,
             gas_used: 0,
             tx_hash,
+            call_depth: 0,
+            max_call_depth: DEFAULT_MAX_CALL_DEPTH,
         }
+    }
+
+    /// Create a nested execution context with incremented call depth
+    /// Used for cross-contract calls to prevent infinite recursion
+    ///
+    /// # Returns
+    /// - `Ok(ExecutionContext)` if depth limit not exceeded
+    /// - `Err` if incrementing depth would exceed max_call_depth
+    pub fn with_incremented_depth(&self) -> Result<ExecutionContext> {
+        if self.call_depth >= self.max_call_depth {
+            return Err(anyhow!(
+                "Call depth limit exceeded: {} >= {}",
+                self.call_depth,
+                self.max_call_depth
+            ));
+        }
+
+        Ok(ExecutionContext {
+            caller: self.caller.clone(),
+            contract: self.contract.clone(),
+            call_origin: self.call_origin,
+            block_number: self.block_number,
+            timestamp: self.timestamp,
+            gas_limit: self.gas_limit,
+            gas_used: self.gas_used,
+            tx_hash: self.tx_hash,
+            call_depth: self.call_depth + 1,
+            max_call_depth: self.max_call_depth,
+        })
     }
 
     /// Check if there's enough gas remaining
@@ -388,10 +432,19 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
     /// Execute a contract call
     pub fn execute_call(
-        &mut self, 
+        &mut self,
         call: ContractCall,
         context: &mut ExecutionContext,
     ) -> Result<ContractResult> {
+        // Validate call depth before execution to prevent infinite recursion
+        if context.call_depth > context.max_call_depth {
+            return Err(anyhow!(
+                "Call depth limit exceeded: {} > {}",
+                context.call_depth,
+                context.max_call_depth
+            ));
+        }
+
         // Check basic gas cost
         context.consume_gas(crate::GAS_BASE)?;
         
@@ -1026,6 +1079,16 @@ impl<S: ContractStorage> ContractExecutor<S> {
         );
         contract_context.gas_used = context.gas_used;
 
+        // Validate call depth before making nested contract calls
+        contract_context.call_depth = context.call_depth + 1;
+        if contract_context.call_depth > contract_context.max_call_depth {
+            return Err(anyhow!(
+                "Cross-contract call depth limit exceeded: {} > {}",
+                contract_context.call_depth,
+                contract_context.max_call_depth
+            ));
+        }
+
         // Load UBI from persistent storage (never create defaults in-memory)
         // Clone to avoid borrow checker issues with multiple self borrows
         let mut ubi = self.get_or_load_ubi()?.clone();
@@ -1143,6 +1206,16 @@ impl<S: ContractStorage> ContractExecutor<S> {
             context.tx_hash,
         );
         contract_context.gas_used = context.gas_used;
+
+        // Validate call depth before making nested contract calls
+        contract_context.call_depth = context.call_depth + 1;
+        if contract_context.call_depth > contract_context.max_call_depth {
+            return Err(anyhow!(
+                "Cross-contract call depth limit exceeded: {} > {}",
+                contract_context.call_depth,
+                contract_context.max_call_depth
+            ));
+        }
 
         // Load DevGrants from persistent storage (never create defaults in-memory)
         // Clone to avoid borrow checker issues with multiple self borrows
