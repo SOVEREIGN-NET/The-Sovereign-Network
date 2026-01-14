@@ -14,6 +14,35 @@ use serde::{Serialize, Deserialize};
 use lib_crypto::PublicKey;
 use lib_network::network_utils::get_local_ip;
 
+/// Runtime discovery configuration (topology, not behavior)
+///
+/// This struct contains ONLY runtime network topology configuration
+/// extracted from NodeConfig. Environment should never be passed to discovery.
+#[derive(Debug, Clone)]
+pub struct DiscoveryConfig {
+    /// Bootstrap peers to connect to (runtime topology)
+    pub bootstrap_peers: Vec<String>,
+    /// Discovery port for announcing this node
+    pub discovery_port: u16,
+    /// Active discovery protocols
+    pub protocols: Vec<DiscoveryProtocol>,
+}
+
+impl DiscoveryConfig {
+    /// Create discovery config from runtime topology
+    pub fn new(
+        bootstrap_peers: Vec<String>,
+        discovery_port: u16,
+        protocols: Vec<DiscoveryProtocol>,
+    ) -> Self {
+        Self {
+            bootstrap_peers,
+            discovery_port,
+            protocols,
+        }
+    }
+}
+
 /// Discovery protocol types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DiscoveryProtocol {
@@ -189,6 +218,10 @@ pub struct ProtocolStats {
 
 /// Central discovery coordinator
 pub struct DiscoveryCoordinator {
+    /// Runtime topology configuration (bootstrap peers, ports, protocols)
+    /// This is the ONLY network configuration that should exist in discovery.
+    config: DiscoveryConfig,
+
     /// All discovered peers (deduplicated by public key)
     peers: Arc<RwLock<HashMap<Vec<u8>, DiscoveredPeer>>>,
 
@@ -222,11 +255,15 @@ pub struct DiscoveryCoordinator {
 }
 
 impl DiscoveryCoordinator {
-    /// Create a new discovery coordinator with security limits
-    pub fn new() -> Self {
+    /// Create a new discovery coordinator with runtime topology configuration
+    ///
+    /// ARCHITECTURE: Only accepts DiscoveryConfig, never Environment.
+    /// Bootstrap peers and network topology are runtime concerns, not compile-time behavior.
+    pub fn new(config: DiscoveryConfig) -> Self {
         let (discovery_tx, discovery_rx) = mpsc::unbounded_channel();
 
         Self {
+            config,
             peers: Arc::new(RwLock::new(HashMap::new())),
             active_protocols: Arc::new(RwLock::new(HashSet::new())),
             discovery_tx,
@@ -538,49 +575,51 @@ impl DiscoveryCoordinator {
     // ========================================================================
     
     /// Discover ZHTP network using all available methods
-    /// 
+    ///
     /// This is the main entry point for network discovery. It tries:
-    /// 1. DHT/mDNS discovery
-    /// 2. UDP multicast announcements
-    /// 3. Port scanning on common ZHTP ports
-    /// 
+    /// 1. Bootstrap peers from runtime config
+    /// 2. DHT/mDNS discovery
+    /// 3. UDP multicast announcements
+    /// 4. Port scanning on common ZHTP ports
+    ///
+    /// ARCHITECTURE: No Environment parameter. Only uses runtime config passed at construction.
     /// Returns network information if peers are found
     pub async fn discover_network(
         &self,
         environment: &crate::config::Environment,
     ) -> Result<crate::runtime::ExistingNetworkInfo> {
         info!("📡 Discovering ZHTP peers on local network...");
-        info!("   Methods: DHT, mDNS, port scanning");
-        
+        info!("   Methods: Bootstrap config, DHT, mDNS, port scanning");
+
         // Create node identity for DHT
         let node_identity = crate::runtime::create_or_load_node_identity(environment).await?;
-        
+
         // Initialize DHT
         info!("   → Initializing DHT for peer discovery...");
         crate::runtime::shared_dht::initialize_global_dht_safe(node_identity.clone()).await?;
-        
-        // Perform active discovery
+
+        // Perform active discovery (uses self.config, not environment defaults)
         info!("   → Scanning network (timeout: 30 seconds)...");
-        let discovered_peers = self.perform_active_discovery(&node_identity, environment).await?;
-        
+        let discovered_peers = self.perform_active_discovery(&node_identity).await?;
+
         if discovered_peers.is_empty() {
             warn!("✗ No ZHTP peers discovered on local network");
             return Err(anyhow::anyhow!("No network peers found"));
         }
-        
+
         info!("✓ Discovered {} ZHTP peer(s)!", discovered_peers.len());
         for (i, peer) in discovered_peers.iter().enumerate() {
             info!("   {}. {}", i + 1, peer);
         }
-        
+
         // Give peers time to respond to handshakes
         info!("   ⏳ Waiting 5 seconds for peer handshakes...");
         tokio::time::sleep(Duration::from_secs(5)).await;
-        
+
         // Query blockchain status
         info!("   📊 Querying blockchain status from peers...");
         let blockchain_info = self.fetch_blockchain_info(&discovered_peers).await?;
-        
+
         Ok(crate::runtime::ExistingNetworkInfo {
             peer_count: discovered_peers.len() as u32,
             blockchain_height: blockchain_info.height,
@@ -592,17 +631,18 @@ impl DiscoveryCoordinator {
     
 
     /// Perform active peer discovery using all methods
+    ///
+    /// Uses only the runtime DiscoveryConfig passed at construction.
+    /// Never consults Environment enum (which contains compile-time defaults).
     async fn perform_active_discovery(
         &self,
         _node_identity: &lib_identity::ZhtpIdentity,
-        environment: &crate::config::Environment,
     ) -> Result<Vec<String>> {
         let mut discovered_peers = Vec::new();
-        
-        // Method 0: Bootstrap peers from config (ALWAYS TRY FIRST)
-        let env_config = environment.get_default_config();
-        if !env_config.network_settings.bootstrap_peers.is_empty() {
-            info!("   → Trying configured bootstrap peers ({} addresses)...", env_config.network_settings.bootstrap_peers.len());
+
+        // Method 0: Bootstrap peers from runtime config (ALWAYS TRY FIRST)
+        if !self.config.bootstrap_peers.is_empty() {
+            info!("   → Trying configured bootstrap peers ({} addresses)...", self.config.bootstrap_peers.len());
 
             // SECURITY (MEDIUM #8): Hash peer IPs before logging to prevent information disclosure
             // Hashing reveals nothing about which IPs are actually used, but allows correlation
@@ -611,7 +651,7 @@ impl DiscoveryCoordinator {
                 format!("peer_{}", hex::encode(&hash.as_bytes()[..4]))
             };
 
-            for peer in &env_config.network_settings.bootstrap_peers {
+            for peer in &self.config.bootstrap_peers {
                 let peer_hash = hash_peer_for_logging(peer);
                 debug!("      Checking bootstrap peer: {}", peer_hash);
 
@@ -630,27 +670,16 @@ impl DiscoveryCoordinator {
                     }
                 }
 
-                // Verify peer is reachable
-                if let Ok(socket_addr) = peer.as_str().parse::<std::net::SocketAddr>() {
-                    // Quick TCP check on port 9333
-                    match tokio::time::timeout(
-                        Duration::from_secs(2),
-                        tokio::net::TcpStream::connect(socket_addr)
-                    ).await {
-                        Ok(Ok(_)) => {
-                            debug!("      ✓ Bootstrap peer {} is reachable", peer_hash);
-                            discovered_peers.push(peer.clone());
-                        }
-                        Ok(Err(_e)) => {
-                            debug!("      ✗ Bootstrap peer {} unreachable (connection failed)", peer_hash);
-                        }
-                        Err(_) => {
-                            debug!("      ✗ Bootstrap peer {} timeout", peer_hash);
-                        }
-                    }
+                // Trust configured bootstrap peers - QUIC connection will validate reachability
+                // No TCP check needed since we use UDP/QUIC only
+                if peer.parse::<std::net::SocketAddr>().is_ok() {
+                    debug!("      ✓ Adding bootstrap peer {} (will verify via QUIC)", peer_hash);
+                    discovered_peers.push(peer.clone());
+                } else {
+                    warn!("      ✗ Invalid bootstrap peer address format: {}", peer_hash);
                 }
             }
-            info!("      Found {} peer(s) via bootstrap config", discovered_peers.len());
+            info!("      Using {} configured bootstrap peer(s)", discovered_peers.len());
         }
         
         // Method 1: Peer discovery via lib-network
@@ -692,95 +721,35 @@ impl DiscoveryCoordinator {
     }
     
     
-    /// Scan local subnet for ZHTP nodes (COMPLETE WITH PARALLEL SCANNING)
+    /// Scan local subnet for ZHTP nodes via UDP multicast
+    /// NOTE: We don't use TCP for discovery - ZHTP uses UDP multicast for local discovery
+    /// and QUIC for mesh communication. Subnet scanning is handled by lib-network's
+    /// UDP multicast announcements.
     async fn scan_local_subnet(&self) -> Result<Vec<String>> {
-        use tokio::net::TcpStream;
-        use futures::stream::{self, StreamExt};
-        use std::net::IpAddr;
-
-        let local_ip = get_local_ip().await?;
-
-        // Only scan IPv4 subnets - IPv6 requires different discovery approach
-        let base_ip = match local_ip {
-            IpAddr::V4(v4) => {
-                let octets = v4.octets();
-                format!("{}.{}.{}", octets[0], octets[1], octets[2])
-            },
-            IpAddr::V6(_) => {
-                info!("      IPv6 local address detected, skipping subnet scan (use mDNS/DHT instead)");
-                return Ok(Vec::new());
-            }
-        };
-
-        info!("      Scanning subnet: {}.0/24", base_ip);
-        let ports = vec![9333, 33444];
-        
-        // Parallel scan with concurrency limit
-        let scan_results = stream::iter(1..255)
-            .map(|i| {
-                let base_ip = base_ip.clone();
-                let ports = ports.clone();
-                async move {
-                    for port in &ports {
-                        let addr = format!("{}.{}:{}", base_ip, i, port);
-                        if let Ok(Ok(_)) = tokio::time::timeout(
-                            Duration::from_millis(50),
-                            TcpStream::connect(&addr)
-                        ).await {
-                            return Some(addr);
-                        }
-                    }
-                    None
-                }
-            })
-            .buffer_unordered(50)
-            .filter_map(|result| async move { result })
-            .collect::<Vec<_>>().await;
-        
-        Ok(scan_results)
+        // UDP multicast discovery is handled by lib-network
+        // This method is a fallback that relies on peers discovered via multicast
+        // Don't use TCP scanning - it's not part of the ZHTP protocol
+        debug!("      Subnet scan delegated to UDP multicast discovery");
+        Ok(Vec::new())
     }
     
 
     
-    /// Fetch blockchain info from discovered peers (COMPLETE HTTP API QUERY)
+    /// Get blockchain info for discovered peers
+    /// NOTE: Actual blockchain sync happens via QUIC mesh protocol, not HTTP
+    /// This just returns basic info indicating peers were found
     async fn fetch_blockchain_info(&self, peers: &[String]) -> Result<BlockchainInfo> {
-        let mut height = 0u64;
-        
-        for peer in peers {
-            // Try to query HTTP API
-            let http_url = if peer.contains("://") {
-                format!("http://{}/api/v1/blockchain/info", 
-                    peer.strip_prefix("zhtp://").or(peer.strip_prefix("http://")).unwrap_or(peer))
-            } else {
-                format!("http://{}/api/v1/blockchain/info", peer)
-            };
-            
-            match tokio::time::timeout(
-                Duration::from_secs(2),
-                reqwest::get(&http_url)
-            ).await {
-                Ok(Ok(response)) => {
-                    if let Ok(json) = response.json::<serde_json::Value>().await {
-                        if let Some(h) = json.get("height").and_then(|v| v.as_u64()) {
-                            height = h;
-                            info!("      Peer {} reports blockchain height: {}", peer, height);
-                            break;
-                        }
-                    }
-                }
-                Ok(Err(e)) => warn!("      Failed to query peer {}: {}", peer, e),
-                Err(_) => warn!("      Timeout querying peer {}", peer),
-            }
-        }
-        
+        // Don't query via HTTP - blockchain sync will happen via QUIC mesh protocol
+        // Just return info indicating we found peers to sync with
         let network_id = if peers.is_empty() {
             "zhtp-genesis".to_string()
         } else {
-            "zhtp-mainnet".to_string()
+            info!("      Will sync blockchain via QUIC mesh from {} peer(s)", peers.len());
+            "zhtp-network".to_string()
         };
-        
+
         Ok(BlockchainInfo {
-            height,
+            height: 0, // Will be populated during QUIC mesh sync
             network_id,
         })
     }
@@ -794,7 +763,12 @@ struct BlockchainInfo {
 
 impl Default for DiscoveryCoordinator {
     fn default() -> Self {
-        Self::new()
+        let config = DiscoveryConfig::new(
+            vec![],
+            9333,
+            vec![DiscoveryProtocol::UdpMulticast, DiscoveryProtocol::DHT],
+        );
+        Self::new(config)
     }
 }
 
@@ -804,7 +778,12 @@ mod tests {
     
     #[tokio::test]
     async fn test_coordinator_deduplication() {
-        let coordinator = DiscoveryCoordinator::new();
+        let config = DiscoveryConfig::new(
+            vec!["192.168.1.1:9333".to_string()],
+            9333,
+            vec![DiscoveryProtocol::UdpMulticast, DiscoveryProtocol::DHT],
+        );
+        let coordinator = DiscoveryCoordinator::new(config);
         coordinator.start_event_listener().await;
         
         let pubkey = PublicKey::new(vec![1, 2, 3, 4]);
@@ -844,7 +823,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_protocol_stats() {
-        let coordinator = DiscoveryCoordinator::new();
+        let config = DiscoveryConfig::new(vec![], 9333, vec![]);
+        let coordinator = DiscoveryCoordinator::new(config);
         
         coordinator.record_attempt(DiscoveryProtocol::UdpMulticast, true, 50.0).await;
         coordinator.record_attempt(DiscoveryProtocol::UdpMulticast, true, 100.0).await;

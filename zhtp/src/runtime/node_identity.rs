@@ -174,23 +174,23 @@ mod tests {
     fn deterministic() {
         let did = sample_did();
         let device = "device-1";
-        let n1 = derive_node_id(did, device).unwrap();
-        let n2 = derive_node_id(did, device).unwrap();
+        let n1 = derive_node_id(&did, device).unwrap();
+        let n2 = derive_node_id(&did, device).unwrap();
         assert_eq!(n1, n2);
     }
 
     #[test]
     fn different_device_changes_nodeid() {
         let did = sample_did();
-        let a = derive_node_id(did, "device-1").unwrap();
-        let b = derive_node_id(did, "device-2").unwrap();
+        let a = derive_node_id(&did, "device-1").unwrap();
+        let b = derive_node_id(&did, "device-2").unwrap();
         assert_ne!(a, b);
     }
 
     #[test]
     fn empty_device_rejected() {
         let did = sample_did();
-        assert!(derive_node_id(did, "").is_err());
+        assert!(derive_node_id(&did, "").is_err());
     }
 
     #[test]

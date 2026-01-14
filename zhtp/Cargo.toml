@@ -111,8 +111,9 @@ tempfile = "3.8"
 criterion = "0.5"
 
 [features]
-default = ["production", "full-blockchain", "windows-bluetooth"]  # Enable Windows Bluetooth by default
+default = ["production", "full-blockchain", "windows-bluetooth"]  # See Issue #739 for planned TLS pinning behavior
 production = []
+# unsafe-bootstrap removed - TLS certificate pinning is now required (Issue #739)
 development = ["tracing-subscriber/env-filter"]
 pure-mesh = []  # Pure mesh mode without TCP/IP fallback
 hybrid = []     # Hybrid mesh + TCP/IP mode

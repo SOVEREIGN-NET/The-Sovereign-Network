@@ -548,7 +548,8 @@ mod tests {
     }
 
     fn test_ctx_pair() -> (HandshakeContext, HandshakeContext) {
-        let nonce_cache = NonceCache::new_test(300, 1000);
+        let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let nonce_cache = NonceCache::new_test(300, 1000, epoch);
         let base = HandshakeContext::new(nonce_cache)
             .with_channel_binding(vec![1u8; 32])
             .with_required_capabilities(vec!["wifi-direct".to_string()])
@@ -584,7 +585,8 @@ mod tests {
         let server_task = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             
-            let nonce_cache = NonceCache::new_test(300, 1000);
+            let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+            let nonce_cache = NonceCache::new_test(300, 1000, epoch);
             let ctx = HandshakeContext::new(nonce_cache);
             
             handshake_as_responder(&mut stream, &group_owner_identity_clone, &ctx).await.unwrap()
@@ -596,7 +598,8 @@ mod tests {
         // Connect as WiFi Direct client
         let mut client_stream = TcpStream::connect(addr).await.unwrap();
         
-        let nonce_cache = NonceCache::new_test(300, 1000);
+        let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let nonce_cache = NonceCache::new_test(300, 1000, epoch);
         let ctx = HandshakeContext::new(nonce_cache);
         
         let client_result = handshake_as_initiator(&mut client_stream, &client_identity, &ctx).await.unwrap();
@@ -615,7 +618,7 @@ mod tests {
             group_owner_identity.node_id,
             "Client should see group owner's identity"
         );
-        
+
         assert_eq!(
             server_result.peer_identity.node_id,
             client_identity.node_id,

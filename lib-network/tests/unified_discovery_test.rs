@@ -386,10 +386,10 @@ fn test_discovery_result_to_unified_peer_id() -> Result<()> {
     let unified_peer = result.to_unified_peer_id(&identity)?;
 
     // Verify the conversion
-    assert_eq!(unified_peer.did, identity.did);
-    assert_eq!(unified_peer.node_id, identity.node_id);
+    assert_eq!(unified_peer.did(), identity.did);
+    assert_eq!(*unified_peer.node_id(), identity.node_id);
     assert_eq!(
-        unified_peer.public_key.as_bytes(),
+        unified_peer.public_key().as_bytes(),
         identity.public_key.as_bytes()
     );
 

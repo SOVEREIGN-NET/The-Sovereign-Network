@@ -12,7 +12,7 @@ use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, C
 pub struct StorageComponent {
     status: Arc<RwLock<ComponentStatus>>,
     start_time: Arc<RwLock<Option<Instant>>>,
-    storage_system: Arc<RwLock<Option<lib_storage::UnifiedStorageSystem>>>,
+    storage_system: Arc<RwLock<Option<lib_storage::PersistentStorageSystem>>>,
 }
 
 impl StorageComponent {
@@ -37,23 +37,52 @@ impl Component for StorageComponent {
 
     async fn start(&self) -> Result<()> {
         info!("Starting storage component with lib-storage implementation...");
-        
+
         *self.status.write().await = ComponentStatus::Starting;
-        
+
         match crate::runtime::components::identity::create_default_storage_config() {
             Ok(config) => {
-                match lib_storage::UnifiedStorageSystem::new(config).await {
+                // Get the persistence path from config
+                let db_path = config.storage_config.dht_persist_path.clone()
+                    .unwrap_or_else(|| {
+                        dirs::home_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("."))
+                            .join(".zhtp")
+                            .join("storage")
+                            .join("dht_db")
+                    });
+
+                // Ensure the storage directory exists
+                if let Some(parent) = db_path.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        warn!("Failed to create storage directory {:?}: {}", parent, e);
+                    }
+                }
+
+                match lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path).await {
                     Ok(storage) => {
-                        info!("unified storage system initialized successfully");
-                        info!("-style content addressing ready");
+                        info!("Persistent unified storage system initialized at {:?}", db_path);
+                        info!("DHT data will persist across restarts");
                         info!("DHT network integration active");
                         info!("Economic incentives for storage providers enabled");
-                        
-                        *self.storage_system.write().await = Some(storage);
-                        info!("Storage system stored in component state");
+
+                        // Wrap in Arc<RwLock> for sharing
+                        let storage_arc = Arc::new(RwLock::new(storage));
+
+                        // Set as global storage provider for other components
+                        if let Err(e) = crate::runtime::storage_provider::set_global_storage(storage_arc.clone()).await {
+                            warn!("Failed to set global storage provider: {}", e);
+                        } else {
+                            info!("Global storage provider initialized for component sharing");
+                        }
+
+                        // Keep a local reference (extract from Arc for component state)
+                        // Note: We can't easily store Arc<RwLock<Storage>> in Option<Storage>
+                        // so we'll just rely on the global provider
+                        info!("Storage system available via global provider");
                     }
                     Err(e) => {
-                        warn!("Failed to initialize storage system: {}", e);
+                        warn!("Failed to initialize persistent storage system: {}", e);
                         info!("Continuing with basic storage component");
                     }
                 }

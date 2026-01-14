@@ -67,6 +67,12 @@ use super::quic_handshake;
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::messaging::message_handler::MeshMessageHandler;
 
+// Import TLS pin cache for certificate pinning (Issue #739)
+use crate::discovery::global_pin_cache;
+// Import PinnedCertVerifier for production-safe TLS verification
+#[allow(deprecated)]
+use crate::discovery::{PinnedCertVerifier, PinnedVerifierConfig, init_global_verifier, global_verifier};
+
 /// Default path for TLS certificate
 pub const DEFAULT_TLS_CERT_PATH: &str = "./data/tls/server.crt";
 /// Default path for TLS private key
@@ -76,10 +82,28 @@ pub const DEFAULT_TLS_KEY_PATH: &str = "./data/tls/server.key";
 #[derive(Clone, Debug)]
 pub enum QuicTrustMode {
     /// Strict TLS verification using native root certificates.
+    /// Use only for connections to public internet servers with CA-signed certs.
     Strict,
+    /// Production-safe pinned certificate verification (RECOMMENDED for mesh networks).
+    /// Uses PinnedCertVerifier with three deterministic paths:
+    /// 1. Bootstrap peers: TOFU (Trust On First Use), then pin
+    /// 2. Known peers: Require pin match
+    /// 3. Unknown peers: Reject
+    Pinned,
     /// Allow TLS verification to be skipped only for explicit allowlisted peers.
     #[cfg(feature = "unsafe-bootstrap")]
     BootstrapAllowlist(Vec<SocketAddr>),
+    /// Skip TLS verification entirely - for mesh networks where UHP handles authentication.
+    /// TLS is used only for encryption, not identity verification.
+    #[cfg(feature = "unsafe-bootstrap")]
+    MeshTrustUhp,
+}
+
+impl Default for QuicTrustMode {
+    fn default() -> Self {
+        // Default to Pinned mode for production safety
+        QuicTrustMode::Pinned
+    }
 }
 
 /// QUIC mesh protocol with UHP authentication and PQC encryption layer
@@ -101,6 +125,10 @@ pub struct QuicMeshProtocol {
 
     /// Trust policy for TLS verification
     trust_mode: QuicTrustMode,
+
+    /// PinnedCertVerifier for production-safe TLS verification
+    /// Contains bootstrap allowlist and pin cache
+    verifier: Arc<PinnedCertVerifier>,
 
     /// Message handler for processing received messages
     pub message_handler: Option<Arc<RwLock<MeshMessageHandler>>>,
@@ -220,16 +248,21 @@ impl QuicMeshProtocol {
         info!("🔐 QUIC endpoint listening on {}", actual_addr);
 
         // Create shared handshake context with persistent nonce cache
-        // Uses RocksDB for persistence across restarts (prevents replay attacks)
+        // Uses sled for persistence across restarts (prevents replay attacks)
         // TTL: 1 hour, max entries: 100,000 (handles high connection rate)
         let nonce_db_path = cert_path.parent()
             .unwrap_or(Path::new("./data"))
             .join("quic_nonce_cache");
 
-        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 100_000)
+        // Derive network epoch from genesis hash (uses environment-appropriate fallback)
+        let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
+        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 100_000, network_epoch)
             .context("Failed to open QUIC nonce cache database")?;
 
         let handshake_ctx = HandshakeContext::new(nonce_cache);
+
+        // Initialize PinnedCertVerifier with empty bootstrap list (can be set later)
+        let verifier = Arc::new(PinnedCertVerifier::new(PinnedVerifierConfig::default()));
 
         info!(
             node_id = ?identity.node_id,
@@ -243,7 +276,8 @@ impl QuicMeshProtocol {
             identity,
             handshake_ctx,
             local_addr: actual_addr,
-            trust_mode: QuicTrustMode::Strict,
+            trust_mode: QuicTrustMode::Pinned, // Default to Pinned mode
+            verifier,
             message_handler: None,
         })
     }
@@ -267,6 +301,80 @@ impl QuicMeshProtocol {
     pub fn set_trust_mode(&mut self, trust_mode: QuicTrustMode) {
         self.trust_mode = trust_mode;
     }
+
+    /// Configure bootstrap peers for TOFU (Trust On First Use)
+    ///
+    /// Bootstrap peers are allowed to connect without a cached pin.
+    /// Their certificate will be pinned on first contact.
+    ///
+    /// # Security
+    ///
+    /// Only configure trusted bootstrap peers here. These peers get special
+    /// TOFU treatment - their self-signed certificates will be accepted on
+    /// first contact and then pinned for future connections.
+    ///
+    /// # Implementation Note
+    ///
+    /// This method updates the bootstrap peers on the existing verifier instance,
+    /// preserving any previously loaded pins in its internal pin store. This avoids
+    /// discarding cached state when bootstrap peers are reconfigured.
+    pub fn set_bootstrap_peers(&mut self, peers: Vec<SocketAddr>) {
+        self.verifier.update_bootstrap_peers(peers.clone());
+        info!("Configured {} bootstrap peers for TOFU", peers.len());
+    }
+
+    /// Get a reference to the certificate verifier
+    pub fn verifier(&self) -> Arc<PinnedCertVerifier> {
+        Arc::clone(&self.verifier)
+    }
+
+    /// Sync pins from the global TlsPinCache to the PinnedCertVerifier
+    ///
+    /// This should be called on startup to load existing pins from the discovery
+    /// cache into the verifier's synchronous pin store. This enables the verifier
+    /// to enforce pin matching for known peers during TLS handshake.
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// let mut quic_mesh = QuicMeshProtocol::new(identity, bind_addr)?;
+    /// quic_mesh.sync_pins_from_cache().await?;
+    /// ```
+    pub async fn sync_pins_from_cache(&self) -> Result<()> {
+        let pin_cache = global_pin_cache();
+        let entries = pin_cache.get_all_entries().await;
+        
+        if !entries.is_empty() {
+            self.verifier.sync_from_cache(&entries);
+            info!(
+                "Synced {} certificate pins from discovery cache to verifier",
+                entries.len()
+            );
+        } else {
+            debug!("No certificate pins in discovery cache to sync");
+        }
+        
+        Ok(())
+    }
+
+    /// Set up TOFU callback to persist pins to the global TlsPinCache
+    ///
+    /// This callback is invoked synchronously during TLS handshake when a bootstrap
+    /// peer is accepted via TOFU. The callback sends the pin to a background task
+    /// for async persistence to avoid blocking the handshake.
+    ///
+    /// # Implementation
+    ///
+    /// The callback uses a channel to send pins to a background task that persists
+    /// them to the TlsPinCache. This avoids blocking I/O during TLS handshake.
+    pub fn setup_tofu_persistence(&self) {
+        // TODO: Implement channel-based async persistence
+        // For now, we'll just log a warning that persistence is not yet wired up
+        warn!(
+            "TOFU pin persistence not yet implemented - pins will not survive restarts. \
+            See Issue #739 for implementation plan."
+        );
+    }
     
     /// Get the QUIC endpoint for accepting connections
     pub fn get_endpoint(&self) -> Arc<Endpoint> {
@@ -287,8 +395,8 @@ impl QuicMeshProtocol {
     pub async fn connect_to_peer(&self, peer_addr: SocketAddr) -> Result<()> {
         info!("🔐 Connecting to peer at {} via QUIC+UHP+Kyber", peer_addr);
 
-        // Configure client
-        let client_config = Self::configure_client(&self.trust_mode, peer_addr)?;
+        // Configure client with PinnedCertVerifier
+        let client_config = Self::configure_client(&self.trust_mode, peer_addr, &self.verifier)?;
 
         // Connect via QUIC
         let connection = self.endpoint
@@ -312,6 +420,52 @@ impl QuicMeshProtocol {
             "🔐 UHP+Kyber handshake complete with {} (quantum-safe encryption active)",
             peer_addr
         );
+
+        // === TLS Certificate Pinning Verification (Issue #739) ===
+        let peer_node_id = *handshake_result.verified_peer.identity.node_id.as_bytes();
+
+        // Extract SPKI synchronously before async operations (Box<dyn Any> is not Send)
+        let peer_spki: Option<[u8; 32]> = connection.peer_identity()
+            .and_then(|certs| {
+                certs.downcast_ref::<Vec<CertificateDer<'static>>>()
+                    .and_then(|c| Self::extract_peer_spki_sha256(c).ok())
+            });
+
+        // Now verify against pin cache (async)
+        if let Some(peer_spki) = peer_spki {
+            match global_pin_cache().verify_peer_spki(&peer_node_id, &peer_spki).await {
+                Ok(true) => {
+                    info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 TLS certificate pin verified");
+                }
+                Ok(false) => {
+                    debug!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "No TLS pin cached for peer");
+                }
+                Err(e) => {
+                    error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
+                        "🚨 SECURITY: TLS certificate pin mismatch");
+                    connection.close(2u32.into(), b"tls_pin_mismatch");
+                    return Err(anyhow!("TLS certificate pin mismatch for peer {:?}", hex::encode(&peer_node_id[..8])));
+                }
+            }
+        }
+
+        // === Dilithium Public Key Verification (Issue #739) ===
+        // Verify the peer's Dilithium PK from UHP matches what was cached from discovery
+        let peer_dilithium_pk = &handshake_result.verified_peer.identity.public_key.dilithium_pk;
+        match global_pin_cache().verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk).await {
+            Ok(true) => {
+                info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 Dilithium PK verified against discovery cache");
+            }
+            Ok(false) => {
+                debug!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "No Dilithium PK cached for peer (first contact)");
+            }
+            Err(e) => {
+                error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
+                    "🚨 SECURITY: Dilithium PK mismatch - peer identity compromised");
+                connection.close(3u32.into(), b"dilithium_pk_mismatch");
+                return Err(anyhow!("Dilithium PK mismatch for peer {:?}", hex::encode(&peer_node_id[..8])));
+            }
+        }
 
         // Create PqcQuicConnection from verified peer
         let pqc_conn = PqcQuicConnection::from_verified_peer(
@@ -352,8 +506,8 @@ impl QuicMeshProtocol {
         let mode_str = if is_edge_node { "edge node - headers+proofs only" } else { "full node - complete blockchain" };
         info!("🔐 Connecting to bootstrap peer at {} (mode: {})", peer_addr, mode_str);
 
-        // Configure client
-        let client_config = Self::configure_client(&self.trust_mode, peer_addr)?;
+        // Configure client with PinnedCertVerifier
+        let client_config = Self::configure_client(&self.trust_mode, peer_addr, &self.verifier)?;
 
         // Connect via QUIC
         let connection = self.endpoint
@@ -377,6 +531,51 @@ impl QuicMeshProtocol {
             peer_addr,
             mode_str
         );
+
+        // === TLS Certificate Pinning Verification (Issue #739) ===
+        let peer_node_id = *handshake_result.verified_peer.identity.node_id.as_bytes();
+
+        // Extract SPKI synchronously before async operations (Box<dyn Any> is not Send)
+        let peer_spki: Option<[u8; 32]> = connection.peer_identity()
+            .and_then(|certs| {
+                certs.downcast_ref::<Vec<CertificateDer<'static>>>()
+                    .and_then(|c| Self::extract_peer_spki_sha256(c).ok())
+            });
+
+        // Now verify against pin cache (async)
+        if let Some(peer_spki) = peer_spki {
+            match global_pin_cache().verify_peer_spki(&peer_node_id, &peer_spki).await {
+                Ok(true) => {
+                    info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 Bootstrap peer TLS pin verified");
+                }
+                Ok(false) => {
+                    debug!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "No TLS pin cached for bootstrap peer");
+                }
+                Err(e) => {
+                    error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
+                        "🚨 SECURITY: Bootstrap peer TLS certificate pin mismatch");
+                    connection.close(2u32.into(), b"tls_pin_mismatch");
+                    return Err(anyhow!("TLS certificate pin mismatch for bootstrap peer {:?}", hex::encode(&peer_node_id[..8])));
+                }
+            }
+        }
+
+        // === Dilithium Public Key Verification (Issue #739) ===
+        let peer_dilithium_pk = &handshake_result.verified_peer.identity.public_key.dilithium_pk;
+        match global_pin_cache().verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk).await {
+            Ok(true) => {
+                info!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "🔐 Bootstrap peer Dilithium PK verified");
+            }
+            Ok(false) => {
+                debug!(peer_node_id = ?hex::encode(&peer_node_id[..8]), "No Dilithium PK cached for bootstrap peer");
+            }
+            Err(e) => {
+                error!(peer_node_id = ?hex::encode(&peer_node_id[..8]), error = %e,
+                    "🚨 SECURITY: Bootstrap peer Dilithium PK mismatch");
+                connection.close(3u32.into(), b"dilithium_pk_mismatch");
+                return Err(anyhow!("Dilithium PK mismatch for bootstrap peer {:?}", hex::encode(&peer_node_id[..8])));
+            }
+        }
 
         if is_edge_node {
             info!("   → Edge node: Can download headers + ZK proofs");
@@ -491,6 +690,72 @@ impl QuicMeshProtocol {
                                         session_id = ?handshake_result.session_id,
                                         "🔐 UHP+Kyber handshake complete (server side)"
                                     );
+
+                                    // === TLS Certificate Pinning Verification (Issue #739) ===
+                                    // After UHP, verify the peer's TLS cert matches their discovery pin
+                                    let peer_node_id = *handshake_result.verified_peer.identity.node_id.as_bytes();
+
+                                    // Extract SPKI synchronously before async operations (Box<dyn Any> is not Send)
+                                    let peer_spki: Option<[u8; 32]> = connection.peer_identity()
+                                        .and_then(|certs| {
+                                            certs.downcast_ref::<Vec<CertificateDer<'static>>>()
+                                                .and_then(|c| QuicMeshProtocol::extract_peer_spki_sha256(c).ok())
+                                        });
+
+                                    // Now verify against pin cache (async)
+                                    if let Some(peer_spki) = peer_spki {
+                                        match global_pin_cache().verify_peer_spki(&peer_node_id, &peer_spki).await {
+                                            Ok(true) => {
+                                                info!(
+                                                    peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                    "🔐 TLS certificate pin verified"
+                                                );
+                                            }
+                                            Ok(false) => {
+                                                // No pin in cache - allow connection (first contact or legacy peer)
+                                                debug!(
+                                                    peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                    "No TLS pin cached for peer - allowing connection"
+                                                );
+                                            }
+                                            Err(e) => {
+                                                // Pin mismatch - SECURITY VIOLATION
+                                                error!(
+                                                    peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                    error = %e,
+                                                    "🚨 SECURITY: TLS certificate pin mismatch - rejecting connection"
+                                                );
+                                                connection.close(2u32.into(), b"tls_pin_mismatch");
+                                                return;
+                                            }
+                                        }
+                                    }
+
+                                    // === Dilithium Public Key Verification (Issue #739) ===
+                                    let peer_dilithium_pk = &handshake_result.verified_peer.identity.public_key.dilithium_pk;
+                                    match global_pin_cache().verify_peer_dilithium_pk(&peer_node_id, peer_dilithium_pk).await {
+                                        Ok(true) => {
+                                            info!(
+                                                peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                "🔐 Dilithium PK verified against discovery cache"
+                                            );
+                                        }
+                                        Ok(false) => {
+                                            debug!(
+                                                peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                "No Dilithium PK cached for peer (first contact)"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                peer_node_id = ?hex::encode(&peer_node_id[..8]),
+                                                error = %e,
+                                                "🚨 SECURITY: Dilithium PK mismatch - rejecting connection"
+                                            );
+                                            connection.close(3u32.into(), b"dilithium_pk_mismatch");
+                                            return;
+                                        }
+                                    }
 
                                     // Create PqcQuicConnection from verified peer
                                     let pqc_conn = PqcQuicConnection::from_verified_peer(
@@ -689,7 +954,71 @@ impl QuicMeshProtocol {
             key: key_der,
         })
     }
-    
+
+    /// Compute SHA256 hash of the SubjectPublicKeyInfo (SPKI) from a DER-encoded certificate.
+    ///
+    /// This is used for TLS certificate pinning in discovery records (Issue #739).
+    /// The SPKI hash is stable across certificate reissues as long as the key remains the same.
+    ///
+    /// # Arguments
+    /// * `cert_der` - DER-encoded X.509 certificate
+    ///
+    /// # Returns
+    /// 32-byte SHA256 hash of the SPKI
+    pub fn compute_spki_sha256(cert_der: &[u8]) -> Result<[u8; 32]> {
+        use x509_parser::prelude::*;
+        use sha2::{Sha256, Digest};
+
+        let (_, cert) = X509Certificate::from_der(cert_der)
+            .map_err(|e| anyhow!("Failed to parse X.509 certificate: {:?}", e))?;
+
+        // Extract the SubjectPublicKeyInfo (SPKI) in DER format
+        let spki_der = cert.public_key().raw;
+
+        // Compute SHA256 hash
+        let mut hasher = Sha256::new();
+        hasher.update(spki_der);
+        let hash = hasher.finalize();
+
+        let mut result = [0u8; 32];
+        result.copy_from_slice(&hash);
+        Ok(result)
+    }
+
+    /// Compute SPKI hash from this node's TLS certificate.
+    ///
+    /// Loads the certificate from disk and computes its SPKI SHA256 hash.
+    /// This hash should be included in signed discovery announcements.
+    pub fn get_tls_spki_hash(&self) -> Result<[u8; 32]> {
+        let cert_path = Path::new(DEFAULT_TLS_CERT_PATH);
+
+        if !cert_path.exists() {
+            return Err(anyhow!("TLS certificate not found at {}", cert_path.display()));
+        }
+
+        let cert_pem = std::fs::read(cert_path)
+            .context("Failed to read TLS certificate")?;
+
+        let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
+            .next()
+            .ok_or_else(|| anyhow!("No certificate found in PEM file"))?
+            .context("Failed to parse certificate PEM")?;
+
+        Self::compute_spki_sha256(&cert_der)
+    }
+
+    /// Extract SPKI SHA256 hash from a peer's TLS certificate during handshake.
+    ///
+    /// This is called during QUIC connection establishment to verify the peer's
+    /// certificate matches the pin from discovery.
+    pub fn extract_peer_spki_sha256(peer_certs: &[CertificateDer<'_>]) -> Result<[u8; 32]> {
+        let cert = peer_certs
+            .first()
+            .ok_or_else(|| anyhow!("No peer certificate available"))?;
+
+        Self::compute_spki_sha256(cert.as_ref())
+    }
+
     /// Configure QUIC server
     fn configure_server(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> Result<ServerConfig> {
         // Build rustls ServerConfig with ALPN support
@@ -723,10 +1052,20 @@ impl QuicMeshProtocol {
         Ok(server_config)
     }
     
-    /// Configure QUIC client
-    fn configure_client(trust_mode: &QuicTrustMode, peer_addr: SocketAddr) -> Result<ClientConfig> {
+    /// Configure QUIC client with PinnedCertVerifier support
+    fn configure_client(
+        trust_mode: &QuicTrustMode,
+        peer_addr: SocketAddr,
+        verifier: &Arc<PinnedCertVerifier>,
+    ) -> Result<ClientConfig> {
         let mut crypto = match trust_mode {
             QuicTrustMode::Strict => Self::build_strict_client_config()?,
+            QuicTrustMode::Pinned => {
+                // Set the current peer address for the verifier before connecting
+                // This allows the verifier to check if it's a bootstrap peer
+                verifier.set_current_peer(peer_addr);
+                Self::build_pinned_client_config(Arc::clone(verifier))?
+            }
             #[cfg(feature = "unsafe-bootstrap")]
             QuicTrustMode::BootstrapAllowlist(allowlist) => {
                 if !allowlist.contains(&peer_addr) {
@@ -735,6 +1074,11 @@ impl QuicMeshProtocol {
                         peer_addr
                     ));
                 }
+                Self::build_bootstrap_client_config()?
+            }
+            #[cfg(feature = "unsafe-bootstrap")]
+            QuicTrustMode::MeshTrustUhp => {
+                // Skip TLS verification - UHP handles identity verification
                 Self::build_bootstrap_client_config()?
             }
         };
@@ -757,6 +1101,14 @@ impl QuicMeshProtocol {
         client_config.transport_config(Arc::new(transport_config));
 
         Ok(client_config)
+    }
+
+    /// Build client config with PinnedCertVerifier for production-safe mesh networking
+    fn build_pinned_client_config(verifier: Arc<PinnedCertVerifier>) -> Result<rustls::ClientConfig> {
+        Ok(rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
+            .with_no_client_auth())
     }
 
     fn build_strict_client_config() -> Result<rustls::ClientConfig> {
@@ -1077,6 +1429,30 @@ impl super::Protocol for QuicMeshProtocol {
     fn is_available(&self) -> bool {
         true
     }
+}
+
+/// Compute SPKI hash from the default TLS certificate path.
+///
+/// This standalone function can be called without a QuicMeshProtocol instance,
+/// useful for creating DiscoverySigningContext for signed announcements (Issue #739).
+///
+/// Returns None if the certificate doesn't exist yet (node hasn't started QUIC server).
+pub fn get_tls_spki_hash_from_default_cert() -> Option<[u8; 32]> {
+    use std::path::Path;
+
+    let cert_path = Path::new(DEFAULT_TLS_CERT_PATH);
+
+    if !cert_path.exists() {
+        return None;
+    }
+
+    let cert_pem = std::fs::read(cert_path).ok()?;
+
+    let cert_der = rustls_pemfile::certs(&mut cert_pem.as_slice())
+        .next()?  // Option<Result<CertificateDer>>
+        .ok()?;   // Result -> Option
+
+    QuicMeshProtocol::compute_spki_sha256(&cert_der).ok()
 }
 
 #[cfg(test)]

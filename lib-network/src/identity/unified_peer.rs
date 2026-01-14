@@ -38,7 +38,7 @@
 
 use anyhow::{Result, anyhow};
 use lib_crypto::PublicKey;
-use lib_identity::{ZhtpIdentity, NodeId};
+use lib_identity::{DhtPeerIdentity, ZhtpIdentity, NodeId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -194,21 +194,8 @@ pub(crate) fn validate_device_id(device_id: &str) -> Result<()> {
 /// a different PublicKey, allowing them to impersonate the peer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedPeerId {
-    /// Decentralized Identifier (DID) - Sovereign Identity
-    /// Format: "did:zhtp:<hash>"
-    pub did: String,
-
-    /// Cryptographic public key for signature verification
-    /// This is the peer's public key from their identity
-    pub public_key: PublicKey,
-
-    /// Canonical node identifier from lib-identity
-    /// Derived as: Blake3(DID || device_name)
-    pub node_id: NodeId,
-
-    /// Device identifier (e.g., "laptop", "phone", "server-01")
-    /// Used to distinguish multiple devices under same DID
-    pub device_id: String,
+    /// Core peer identity fields shared across crates.
+    pub core: DhtPeerIdentity,
 
     /// Optional display name for this peer
     pub display_name: Option<String>,
@@ -268,10 +255,7 @@ impl UnifiedPeerId {
 
         // Create instance with bootstrap_mode = false (verified identity)
         let peer = Self {
-            did: identity.did.clone(),
-            public_key: identity.public_key.clone(),
-            node_id: identity.node_id.clone(),
-            device_id: identity.primary_device.clone(),
+            core: DhtPeerIdentity::from_zhtp_identity_full(identity),
             display_name: identity.metadata.get("display_name").cloned(),
             created_at: identity.created_at,
             bootstrap_mode: false, // CRITICAL-1: Verified identity, NOT in bootstrap mode
@@ -301,12 +285,12 @@ impl UnifiedPeerId {
 
     /// Verify that node_id matches Blake3(DID || device_id) per lib-identity rules
     pub fn verify_node_id(&self) -> Result<()> {
-        let expected = NodeId::from_did_device(&self.did, &self.device_id)?;
-        if self.node_id.as_bytes() != expected.as_bytes() {
+        let expected = NodeId::from_did_device(self.core.did(), self.core.device_id())?;
+        if self.core.node_id().as_bytes() != expected.as_bytes() {
             return Err(anyhow!(
                 "NodeId mismatch: expected {} but got {}",
                 expected.to_hex(),
-                self.node_id.to_hex()
+                self.core.node_id().to_hex()
             ));
         }
         Ok(())
@@ -314,27 +298,31 @@ impl UnifiedPeerId {
 
     /// Get a compact string representation for logging
     pub fn to_compact_string(&self) -> String {
-        format!("{}@{}", self.device_id, &self.did[..std::cmp::min(20, self.did.len())])
+        format!(
+            "{}@{}",
+            self.core.device_id(),
+            &self.core.did()[..std::cmp::min(20, self.core.did().len())]
+        )
     }
 
     /// Get the NodeId (canonical identifier)
     pub fn node_id(&self) -> &NodeId {
-        &self.node_id
+        self.core.node_id()
     }
 
     /// Get the PublicKey
     pub fn public_key(&self) -> &PublicKey {
-        &self.public_key
+        self.core.public_key()
     }
 
     /// Get the DID
     pub fn did(&self) -> &str {
-        &self.did
+        self.core.did()
     }
 
     /// Get the device ID
     pub fn device_id(&self) -> &str {
-        &self.device_id
+        self.core.device_id()
     }
 
     /// Create UnifiedPeerId from just a PublicKey (legacy compatibility)
@@ -406,10 +394,12 @@ impl UnifiedPeerId {
         );
 
         Self {
-            did,
-            public_key,
-            node_id,
-            device_id,
+            core: DhtPeerIdentity {
+                node_id,
+                public_key,
+                did,
+                device_id,
+            },
             display_name: None,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -467,10 +457,12 @@ impl UnifiedPeerId {
             .as_secs();
 
         Ok(Self {
-            did,
-            public_key,
-            node_id,
-            device_id,
+            core: DhtPeerIdentity {
+                node_id,
+                public_key,
+                did,
+                device_id,
+            },
             display_name: None,
             created_at: now,
             bootstrap_mode: false, // Verified peer
@@ -492,22 +484,22 @@ impl PartialEq for UnifiedPeerId {
     /// Now we compare all three cryptographic identifiers to ensure full identity match.
     fn eq(&self, other: &Self) -> bool {
         // CRITICAL-2: Check for collision attack - log if NodeId matches but other fields don't
-        if self.node_id == other.node_id {
-            if self.public_key.dilithium_pk != other.public_key.dilithium_pk {
+        if self.core.node_id == other.core.node_id {
+            if self.core.public_key.dilithium_pk != other.core.public_key.dilithium_pk {
                 error!(
                     "🚨 COLLISION ATTACK DETECTED: NodeId {} matches but PublicKey differs! \
                     This may be an impersonation attempt.",
-                    self.node_id.to_hex()
+                    self.core.node_id.to_hex()
                 );
                 return false; // Reject collision
             }
-            if self.did != other.did {
+            if self.core.did != other.core.did {
                 error!(
                     "🚨 COLLISION ATTACK DETECTED: NodeId {} matches but DID differs! \
                     Self DID: {}, Other DID: {}",
-                    self.node_id.to_hex(),
-                    &self.did[..30.min(self.did.len())],
-                    &other.did[..30.min(other.did.len())]
+                    self.core.node_id.to_hex(),
+                    &self.core.did[..30.min(self.core.did.len())],
+                    &other.core.did[..30.min(other.core.did.len())]
                 );
                 return false; // Reject collision
             }
@@ -530,9 +522,9 @@ impl std::hash::Hash for UnifiedPeerId {
     /// Migration may be required for persistent peer storage.
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // Include all cryptographic identifiers in hash
-        self.node_id.as_bytes().hash(state);
-        self.public_key.dilithium_pk.hash(state);
-        self.did.hash(state);
+        self.core.node_id.as_bytes().hash(state);
+        self.core.public_key.dilithium_pk.hash(state);
+        self.core.did.hash(state);
     }
 }
 
@@ -695,11 +687,11 @@ impl PeerIdMapper {
         validate_peer_timestamp(peer.created_at)?;
 
         // Validate device_id entropy (outside lock - pure computation)
-        validate_device_id(&peer.device_id)?;
+        validate_device_id(peer.device_id())?;
 
-        let node_id = peer.node_id.clone();
-        let public_key = peer.public_key.clone();
-        let did = peer.did.clone();
+        let node_id = peer.node_id().clone();
+        let public_key = peer.public_key().clone();
+        let did = peer.did().to_string();
 
         // CRITICAL FIX C3: SINGLE ATOMIC LOCK for entire registration
         // This prevents the TOCTOU race condition
@@ -786,13 +778,13 @@ impl PeerIdMapper {
         let peer = state.by_node_id.remove(node_id)?;
 
         // Remove PublicKey → NodeId index
-        state.by_public_key.remove(&peer.public_key);
+        state.by_public_key.remove(peer.public_key());
 
         // Remove from DID → Vec<NodeId> index
-        if let Some(nodes) = state.by_did.get_mut(&peer.did) {
+        if let Some(nodes) = state.by_did.get_mut(peer.did()) {
             nodes.retain(|n| n != node_id);
             if nodes.is_empty() {
-                state.by_did.remove(&peer.did);
+                state.by_did.remove(peer.did());
             }
         }
 
@@ -898,10 +890,10 @@ mod tests {
         let identity = create_test_identity("laptop-secure-001", None)?;
         let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
 
-        assert_eq!(peer_id.did, identity.did);
-        assert_eq!(peer_id.public_key.as_bytes(), identity.public_key.as_bytes());
-        assert_eq!(peer_id.node_id, identity.node_id);
-        assert_eq!(peer_id.device_id, identity.primary_device);
+        assert_eq!(peer_id.did(), identity.did);
+        assert_eq!(peer_id.public_key().as_bytes(), identity.public_key.as_bytes());
+        assert_eq!(peer_id.node_id(), &identity.node_id);
+        assert_eq!(peer_id.device_id(), identity.primary_device);
 
         // Verify NodeId is correct
         peer_id.verify_node_id()?;
@@ -1293,7 +1285,7 @@ mod tests {
 
         // Spoof NodeId (replace with random bytes)
         let fake_node_id = NodeId::from_bytes([0xFFu8; 32]);
-        peer_id.node_id = fake_node_id;
+        peer_id.core.node_id = fake_node_id;
 
         // Try to register - should fail cryptographic verification
         let result = mapper.register(peer_id);
@@ -1468,7 +1460,7 @@ mod tests {
 
         // DID should contain "unverified" marker
         assert!(
-            legacy_peer.did.contains("unverified"),
+            legacy_peer.did().contains("unverified"),
             "Legacy peer DID should contain 'unverified' marker"
         );
 
@@ -1488,8 +1480,8 @@ mod tests {
         let peer2 = UnifiedPeerId::from_zhtp_identity(&identity2)?;
 
         // Simulate collision attack: modify peer1's NodeId to match peer2's
-        let original_node_id = peer1.node_id.clone();
-        peer1.node_id = peer2.node_id.clone();
+        let original_node_id = peer1.core.node_id.clone();
+        peer1.core.node_id = peer2.core.node_id.clone();
 
         // CRITICAL-2: Even though NodeId matches, peers should NOT be equal
         // because PublicKey and DID are different
@@ -1499,7 +1491,7 @@ mod tests {
         );
 
         // Restore original NodeId
-        peer1.node_id = original_node_id;
+        peer1.core.node_id = original_node_id;
 
         println!("CRITICAL-2: Collision attack detection test passed");
         Ok(())
@@ -1556,14 +1548,14 @@ mod tests {
 
             // Device ID should be unique
             assert!(
-                device_ids.insert(peer.device_id.clone()),
+                device_ids.insert(peer.device_id().to_string()),
                 "Legacy device_ids should be unique (got duplicate: {})",
-                peer.device_id
+                peer.device_id()
             );
 
             // Device ID should have bootstrap prefix
             assert!(
-                peer.device_id.starts_with("bootstrap-"),
+                peer.device_id().starts_with("bootstrap-"),
                 "Legacy device_id should start with 'bootstrap-'"
             );
         }

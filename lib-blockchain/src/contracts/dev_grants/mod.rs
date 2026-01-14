@@ -1,5 +1,5 @@
 pub mod core;
 pub mod types;
 
-pub use core::DevelopmentGrants;
-pub use types::{ProposalId, Amount, Recipient, Disbursement, ProposalStatus, ProposalData};
+pub use core::DevGrants;
+pub use types::{ProposalId, Amount, ApprovedGrant, Disbursement, ProposalStatus, Error};

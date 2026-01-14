@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use tracing::{info, warn, error, debug};
-use crate::types::{Hash, Difficulty};
+use crate::types::{Hash, Difficulty, DifficultyConfig};
 use crate::transaction::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData};
 use crate::types::transaction_type::TransactionType;
 use crate::block::Block;
@@ -40,6 +40,8 @@ pub struct Blockchain {
     pub height: u64,
     /// Current mining difficulty
     pub difficulty: Difficulty,
+    /// Difficulty adjustment configuration (governance-controlled)
+    pub difficulty_config: DifficultyConfig,
     /// Total work done (cumulative difficulty)
     pub total_work: u128,
     /// UTXO set for transaction validation
@@ -99,6 +101,8 @@ pub struct Blockchain {
     /// Broadcast channel for real-time block/transaction propagation
     #[serde(skip)]
     pub broadcast_sender: Option<tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>>,
+    /// Track executed DAO proposals to prevent double-execution
+    pub executed_dao_proposals: HashSet<Hash>,
 }
 
 /// Validator information stored on-chain
@@ -162,6 +166,7 @@ impl Blockchain {
             blocks: vec![genesis_block.clone()],
             height: 0,
             difficulty: Difficulty::from_bits(crate::INITIAL_DIFFICULTY),
+            difficulty_config: DifficultyConfig::default(),
             total_work: 0,
             utxo_set: HashMap::new(),
             nullifier_set: HashSet::new(),
@@ -189,6 +194,7 @@ impl Blockchain {
             auto_persist_enabled: true,
             blocks_since_last_persist: 0,
             broadcast_sender: None,
+            executed_dao_proposals: HashSet::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -279,6 +285,8 @@ impl Blockchain {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
         
         // Add genesis transaction to genesis block
@@ -541,6 +549,13 @@ impl Blockchain {
         self.process_wallet_transactions(&block)?;
         self.process_contract_transactions(&block)?;
 
+        // Process approved governance proposals (e.g., difficulty parameter updates)
+        // This executes any proposals that have passed voting since the last block
+        if let Err(e) = self.process_approved_governance_proposals() {
+            warn!("Error processing governance proposals at height {}: {}", self.height, e);
+            // Don't fail block processing, governance is non-critical
+        }
+
         // Update persistence counter
         self.blocks_since_last_persist += 1;
 
@@ -783,33 +798,180 @@ impl Blockchain {
         crate::types::hash::blake3_hash(&data)
     }
 
-    /// Adjust mining difficulty based on block times
+    /// Adjust blockchain difficulty based on block time targets.
+    ///
+    /// This method delegates to the consensus coordinator's DifficultyManager when available,
+    /// falling back to `self.difficulty_config` for backward compatibility.
+    /// The consensus engine owns the difficulty policy per architectural design.
+    ///
+    /// # Fallback Behavior
+    /// - If consensus coordinator is available:
+    ///   - Uses coordinator's `calculate_difficulty_adjustment()` for the calculation
+    ///   - If calculation fails: falls back to `calculate_difficulty_with_config()` using coordinator's config
+    ///   - If getting config fails: returns error without fallback (this indicates a consensus layer problem)
+    /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters directly
     fn adjust_difficulty(&mut self) -> Result<()> {
-        if self.height % crate::DIFFICULTY_ADJUSTMENT_INTERVAL != 0 {
-            return Ok(());
+        // Get adjustment parameters and calculate difficulty in a single lock acquisition
+        // to avoid race conditions between reading config and calculating adjustment
+        if let Some(coordinator) = &self.consensus_coordinator {
+            // Use a single tokio block_in_place to call async methods from sync context
+            // Acquire the coordinator read lock once to avoid race conditions and redundant locking
+            let result = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let coord = coordinator.read().await;
+                    let adjustment_interval = coord.get_difficulty_adjustment_interval().await;
+                    let config = coord.get_difficulty_config().await;
+                    
+                    // Check if we should adjust at this height
+                    if self.height % adjustment_interval != 0 {
+                        return Ok::<Option<(u32, lib_consensus::difficulty::DifficultyConfig)>, anyhow::Error>(None);
+                    }
+                    if self.height < adjustment_interval {
+                        return Ok(None);
+                    }
+                    
+                    let current_block = &self.blocks[self.height as usize];
+                    let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
+                    let interval_start_time = interval_start.timestamp();
+                    let interval_end_time = current_block.timestamp();
+                    
+                    // Calculate new difficulty
+                    match coord.calculate_difficulty_adjustment(
+                        self.height,
+                        self.difficulty.bits(),
+                        interval_start_time,
+                        interval_end_time,
+                    ).await {
+                        Ok(Some(new_bits)) => Ok(Some((new_bits, config))),
+                        Ok(None) => Ok(None),
+                        Err(e) => {
+                            tracing::warn!("Difficulty adjustment via coordinator failed: {}, using fallback with config", e);
+                            // Fallback to config-aware calculation
+                            let new_bits = self.calculate_difficulty_with_config(
+                                interval_start_time,
+                                interval_end_time,
+                                config.target_timespan,
+                                config.max_adjustment_factor,
+                                config.max_adjustment_factor,
+                            );
+                            Ok(Some((new_bits, config)))
+                        }
+                    }
+                })
+            });
+            
+            match result {
+                Ok(Some((new_bits, config))) => {
+                    let old_difficulty = self.difficulty.bits();
+                    self.difficulty = Difficulty::from_bits(new_bits);
+                    tracing::info!(
+                        "Difficulty adjusted from {} to {} at height {} \
+                         (config: target_timespan={}, adjustment_interval={}, max_adjustment={}x)",
+                        old_difficulty,
+                        new_bits,
+                        self.height,
+                        config.target_timespan,
+                        config.adjustment_interval,
+                        config.max_adjustment_factor,
+                    );
+                }
+                Ok(None) => {} // No adjustment needed
+                Err(e) => {
+                    tracing::error!(
+                        "Difficulty adjustment via coordinator failed: {}. \
+                         This indicates a consensus layer problem requiring attention.", e
+                    );
+                    return Err(e);
+                }
+            }
+        } else {
+            // Use self.difficulty_config instead of hardcoded constants
+            let adjustment_interval = self.difficulty_config.adjustment_interval;
+            let target_timespan = self.difficulty_config.target_timespan;
+            let max_increase = self.difficulty_config.max_difficulty_increase_factor;
+            let max_decrease = self.difficulty_config.max_difficulty_decrease_factor;
+            
+            // Check if we should adjust at this height
+            if self.height % adjustment_interval != 0 {
+                return Ok(());
+            }
+            if self.height < adjustment_interval {
+                return Ok(());
+            }
+            
+            let current_block = &self.blocks[self.height as usize];
+            let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
+            let interval_start_time = interval_start.timestamp();
+            let interval_end_time = current_block.timestamp();
+            
+            let new_difficulty_bits = self.calculate_difficulty_with_config(
+                interval_start_time,
+                interval_end_time,
+                target_timespan,
+                max_increase,
+                max_decrease,
+            );
+            let old_difficulty = self.difficulty.bits();
+            self.difficulty = Difficulty::from_bits(new_difficulty_bits);
+            
+            tracing::info!(
+                "Difficulty adjusted from {} to {} at height {} \
+                 (config: target_timespan={}, adjustment_interval={}, max_increase={}x, max_decrease={}x)",
+                old_difficulty,
+                new_difficulty_bits,
+                self.height,
+                target_timespan,
+                adjustment_interval,
+                max_increase,
+                max_decrease,
+            );
         }
-
-        if self.height < crate::DIFFICULTY_ADJUSTMENT_INTERVAL {
-            return Ok(());
-        }
-
-        let current_block = &self.blocks[self.height as usize];
-        let interval_start = &self.blocks[(self.height - crate::DIFFICULTY_ADJUSTMENT_INTERVAL) as usize];
         
-        let actual_timespan = current_block.timestamp() - interval_start.timestamp();
-        let actual_timespan = actual_timespan.max(crate::TARGET_TIMESPAN / 4).min(crate::TARGET_TIMESPAN * 4);
-
-        let new_difficulty_bits = (self.difficulty.bits() as u64 * crate::TARGET_TIMESPAN / actual_timespan) as u32;
-        self.difficulty = Difficulty::from_bits(new_difficulty_bits);
-
-        tracing::info!(
-            "Difficulty adjusted from {} to {} at height {}",
-            self.difficulty.bits(),
-            new_difficulty_bits,
-            self.height
-        );
-
         Ok(())
+    }
+    
+    /// Difficulty calculation using DifficultyConfig parameters.
+    /// Uses configurable clamping factors instead of hardcoded 4x.
+    fn calculate_difficulty_with_config(
+        &self,
+        interval_start_time: u64,
+        interval_end_time: u64,
+        target_timespan: u64,
+        max_increase_factor: u64,
+        max_decrease_factor: u64,
+    ) -> u32 {
+        // Defensive check: target_timespan should be validated to be non-zero upstream,
+        // but avoid panicking here if that validation is ever bypassed.
+        if target_timespan == 0 {
+            tracing::warn!(
+                "calculate_difficulty_with_config called with target_timespan = 0; \
+                 returning current difficulty without adjustment"
+            );
+            return self.difficulty.bits();
+        }
+        
+        let actual_timespan = interval_end_time.saturating_sub(interval_start_time);
+        
+        // Clamp using configurable factors instead of hardcoded 4x
+        // min_timespan prevents difficulty from increasing more than max_increase_factor
+        // max_timespan prevents difficulty from decreasing more than max_decrease_factor
+        let min_timespan = target_timespan / max_increase_factor.max(1);
+        let max_timespan = target_timespan.saturating_mul(max_decrease_factor);
+        let clamped_timespan = actual_timespan.clamp(min_timespan, max_timespan);
+        
+        // Additional defensive check in case clamping still results in zero
+        // (can happen if target_timespan / max_increase_factor == 0 due to integer division)
+        if clamped_timespan == 0 {
+            tracing::warn!(
+                "calculate_difficulty_with_config computed clamped_timespan = 0; \
+                 returning current difficulty without adjustment"
+            );
+            return self.difficulty.bits();
+        }
+        
+        // Calculate new difficulty and ensure it doesn't go to zero
+        let new_difficulty = (self.difficulty.bits() as u64 * target_timespan / clamped_timespan) as u32;
+        new_difficulty.max(1)
     }
 
     /// Get the latest block
@@ -828,6 +990,33 @@ impl Blockchain {
     /// Get current blockchain height
     pub fn get_height(&self) -> u64 {
         self.height
+    }
+
+    /// Get the current difficulty configuration
+    pub fn get_difficulty_config(&self) -> &DifficultyConfig {
+        &self.difficulty_config
+    }
+
+    /// Update the difficulty configuration (for governance updates)
+    ///
+    /// This method validates the new configuration before applying it.
+    /// The `last_updated_at_height` field will be set to the current blockchain height.
+    ///
+    /// # Errors
+    /// Returns an error if the configuration parameters are invalid.
+    pub fn set_difficulty_config(&mut self, mut config: DifficultyConfig) -> Result<()> {
+        config.validate().map_err(|e| anyhow::anyhow!("Invalid difficulty config: {}", e))?;
+        config.last_updated_at_height = self.height;
+        info!(
+            "Updating difficulty config at height {}: target_timespan={}, adjustment_interval={}, max_decrease={}, max_increase={}",
+            self.height,
+            config.target_timespan,
+            config.adjustment_interval,
+            config.max_difficulty_decrease_factor,
+            config.max_difficulty_increase_factor
+        );
+        self.difficulty_config = config;
+        Ok(())
     }
 
     /// Check if a nullifier has been used
@@ -2275,6 +2464,233 @@ impl Blockchain {
         
         info!("✅ DAO proposal {:?} executed, transaction: {:?}", proposal_id, tx_hash);
         Ok(tx_hash)
+    }
+
+    // ============================================================================
+    // GOVERNANCE PARAMETER UPDATE METHODS
+    // ============================================================================
+
+    /// Apply a difficulty parameter update from a passed DAO proposal.
+    ///
+    /// This method:
+    /// 1. Verifies the proposal exists and has passed voting
+    /// 2. Extracts and validates the new difficulty parameters
+    /// 3. Updates the blockchain's difficulty_config
+    /// 4. Synchronizes changes with the consensus coordinator
+    /// 5. Logs all changes at info level
+    ///
+    /// # Arguments
+    /// * `proposal_id` - The hash ID of the passed difficulty parameter update proposal
+    ///
+    /// # Returns
+    /// * `Ok(())` on successful update
+    /// * `Err` if proposal doesn't exist, hasn't passed, or parameters are invalid
+    ///
+    /// # Errors
+    /// - Proposal not found (`InvalidProposal`)
+    /// - Proposal not passed (`InvalidProposal`)
+    /// - Wrong proposal type (`InvalidProposal`)
+    /// - New parameters fail validation (`ParameterValidationError`)
+    /// - Parameters were already applied at this proposal_id
+    pub fn apply_difficulty_parameter_update(&mut self, proposal_id: Hash) -> Result<()> {
+        // 0. Check if already executed (prevent double-execution)
+        if self.executed_dao_proposals.contains(&proposal_id) {
+            debug!(
+                "Difficulty proposal {:?} already executed, skipping",
+                proposal_id
+            );
+            return Ok(());
+        }
+
+        // 1. Verify proposal exists and get its quorum requirement
+        let proposal = self.get_dao_proposal(&proposal_id)
+            .ok_or_else(|| anyhow::anyhow!(
+                "InvalidProposal: Difficulty parameter update proposal {:?} not found",
+                proposal_id
+            ))?;
+
+        // 2. Verify proposal has passed using its configured quorum requirement
+        if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
+            return Err(anyhow::anyhow!(
+                "InvalidProposal: Proposal {:?} has not passed voting",
+                proposal_id
+            ));
+        }
+
+        // 3. Get the execution parameters from the proposal (already fetched above)
+        let execution_params_bytes = proposal.execution_params.clone()
+            .ok_or_else(|| anyhow::anyhow!(
+                "InvalidProposal: Proposal {:?} has no execution parameters",
+                proposal_id
+            ))?;
+
+        // 4. Decode execution parameters
+        let execution_params: lib_consensus::dao::dao_types::DaoExecutionParams = 
+            bincode::deserialize(&execution_params_bytes)
+                .map_err(|e| anyhow::anyhow!(
+                    "ParameterValidationError: Failed to decode execution params: {}",
+                    e
+                ))?;
+
+        // 5. Extract the governance parameter update
+        let update = match execution_params.action {
+            lib_consensus::dao::dao_types::DaoExecutionAction::GovernanceParameterUpdate(update) => {
+                update
+            }
+            _ => return Err(anyhow::anyhow!(
+                "InvalidProposal: Proposal {:?} is not a governance parameter update",
+                proposal_id
+            )),
+        };
+
+        // 6. Extract difficulty-specific parameters from the update vector
+        let mut new_target_timespan: Option<u64> = None;
+        let mut new_adjustment_interval: Option<u64> = None;
+
+        for param in &update.updates {
+            match param {
+                lib_consensus::dao::dao_types::GovernanceParameterValue::BlockchainTargetTimespan(v) => {
+                    new_target_timespan = Some(*v);
+                }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::BlockchainAdjustmentInterval(v) => {
+                    new_adjustment_interval = Some(*v);
+                }
+                _ => {
+                    // Other parameters are handled elsewhere
+                }
+            }
+        }
+
+        // 7. Validate that at least one difficulty parameter was provided
+        if new_target_timespan.is_none() && new_adjustment_interval.is_none() {
+            return Err(anyhow::anyhow!(
+                "ParameterValidationError: No difficulty parameters found in governance update"
+            ));
+        }
+
+        // 8. Validate parameters
+        if let Some(ts) = new_target_timespan {
+            if ts == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: target_timespan cannot be zero"
+                ));
+            }
+        }
+        if let Some(ai) = new_adjustment_interval {
+            if ai == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: adjustment_interval cannot be zero"
+                ));
+            }
+        }
+
+        // 9. Log the update
+        info!(
+            "📊 Applying difficulty parameter update from proposal {:?}",
+            proposal_id
+        );
+        if let Some(ts) = new_target_timespan {
+            info!(
+                "   target_timespan: {} → {}",
+                self.difficulty_config.target_timespan, ts
+            );
+        }
+        if let Some(ai) = new_adjustment_interval {
+            info!(
+                "   adjustment_interval: {} → {}",
+                self.difficulty_config.adjustment_interval, ai
+            );
+        }
+
+        // 10. Apply the update
+        if let Some(ts) = new_target_timespan {
+            self.difficulty_config.target_timespan = ts;
+        }
+        if let Some(ai) = new_adjustment_interval {
+            self.difficulty_config.adjustment_interval = ai;
+        }
+        self.difficulty_config.last_updated_at_height = self.height;
+
+        // Sync with consensus coordinator if available
+        if let Some(ref coordinator) = self.consensus_coordinator {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let coord = coordinator.write().await;
+                    coord.apply_difficulty_governance_update(
+                        None, // initial_difficulty not in DifficultyConfig
+                        new_adjustment_interval,
+                        new_target_timespan,
+                    ).await
+                })
+            })?;
+        }
+
+        // 11. Mark proposal as executed to prevent double-execution
+        self.executed_dao_proposals.insert(proposal_id);
+
+        Ok(())
+    }
+
+    /// Process all approved governance proposals that haven't been executed yet.
+    /// This is called during block processing to execute any passed proposals.
+    ///
+    /// Currently handles:
+    /// - DifficultyParameterUpdate proposals
+    ///
+    /// Future: Treasury allocations, protocol upgrades, etc.
+    pub fn process_approved_governance_proposals(&mut self) -> Result<()> {
+        // Get difficulty parameter update proposals with their quorum requirements
+        // Collect to avoid borrowing issues with self.has_proposal_passed()
+        let difficulty_proposals: Vec<(Hash, u8)> = self.get_dao_proposals()
+            .iter()
+            .filter(|p| p.proposal_type == "difficulty_parameter_update")
+            .map(|p| (p.proposal_id.clone(), p.quorum_required))
+            .collect();
+
+        for (proposal_id, quorum_required) in difficulty_proposals {
+            // Skip if already executed
+            if self.executed_dao_proposals.contains(&proposal_id) {
+                continue;
+            }
+
+            // Check if proposal has passed voting using its configured quorum requirement
+            match self.has_proposal_passed(&proposal_id, quorum_required as u32) {
+                Ok(true) => {
+                    // Proposal passed, try to execute it
+                    match self.apply_difficulty_parameter_update(proposal_id.clone()) {
+                        Ok(()) => {
+                            info!(
+                                "✅ Successfully executed difficulty parameter update proposal {:?}",
+                                proposal_id
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to execute difficulty parameter update proposal {:?}: {}",
+                                proposal_id, e
+                            );
+                            // Don't fail the whole block processing, just log the warning
+                        }
+                    }
+                }
+                Ok(false) => {
+                    // Proposal hasn't passed yet, skip
+                    debug!(
+                        "Difficulty proposal {:?} has not passed voting yet",
+                        proposal_id
+                    );
+                }
+                Err(e) => {
+                    // Error checking proposal status, skip
+                    debug!(
+                        "Error checking status of proposal {:?}: {}",
+                        proposal_id, e
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 
 

@@ -845,6 +845,16 @@ pub enum DomainAction {
         #[command(flatten)]
         trust: TrustFlags,
     },
+
+    /// Admin: migrate legacy domain records to the latest format
+    Migrate {
+        /// Path to identity keystore directory (REQUIRED)
+        #[arg(short, long)]
+        keystore: String,
+
+        #[command(flatten)]
+        trust: TrustFlags,
+    },
 }
 
 /// Man page generation
@@ -954,6 +964,12 @@ pub enum ServiceAction {
 
 /// Main CLI runner
 pub async fn run_cli() -> Result<()> {
+    // Initialize network genesis for replay protection
+    // Uses testnet genesis hash from shared constant - CLI commands need this for network communication
+    let _ = lib_identity::types::node_id::try_set_network_genesis(
+        lib_identity::constants::TESTNET_GENESIS_HASH
+    );
+
     let cli = ZhtpCli::parse();
 
     if cli.verbose {

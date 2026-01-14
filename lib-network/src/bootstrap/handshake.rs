@@ -465,7 +465,8 @@ mod tests {
         let server_addr = listener.local_addr()?;
 
         // Create shared handshake context
-        let ctx = HandshakeContext::new(NonceCache::new_test(300, 10000));
+        let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let ctx = HandshakeContext::new(NonceCache::new_test(300, 10000, epoch));
         let server_ctx = ctx.clone();
 
         // Spawn server task
@@ -512,7 +513,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let server_addr = listener.local_addr()?;
         
-        let ctx = HandshakeContext::new(NonceCache::new_test(300, 10000));
+        let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
+        let ctx = HandshakeContext::new(NonceCache::new_test(300, 10000, epoch));
         let server_ctx = ctx.clone();
         
         // First handshake should succeed

@@ -251,6 +251,9 @@ pub struct ConsensusEngine {
     byzantine_detector: ByzantineFaultDetector,
     /// Reward calculation system
     reward_calculator: RewardCalculator,
+    /// Fee router for fee collection integration (Week 7)
+    /// Option allows for lazy initialization
+    fee_router: Option<std::sync::Arc<std::sync::Mutex<dyn std::any::Any + Send>>>,
     /// Message broadcaster for network distribution
     ///
     /// Invariant CE-ENG-1: ConsensusEngine never constructs, configures, or inspects
@@ -324,6 +327,7 @@ impl ConsensusEngine {
             dao_engine: DaoEngine::new(),
             byzantine_detector: ByzantineFaultDetector::new(),
             reward_calculator: RewardCalculator::new(),
+            fee_router: None,
             broadcaster,
             message_rx: None,
             liveness_event_tx: None,
@@ -345,6 +349,14 @@ impl ConsensusEngine {
     /// Set liveness event sender for monitoring/alert bridges.
     pub fn set_liveness_event_sender(&mut self, tx: mpsc::UnboundedSender<ConsensusEvent>) {
         self.liveness_event_tx = Some(tx);
+    }
+
+    /// Set fee router for fee collection integration (Week 7)
+    ///
+    /// Allows the consensus engine to collect and distribute fees at block finalization.
+    /// FeeRouter must implement Send trait for thread-safe storage.
+    pub fn set_fee_router<T: std::any::Any + Send + 'static>(&mut self, fee_router: T) {
+        self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_router)));
     }
 
     fn emit_liveness_event(&self, event: ConsensusEvent) {
@@ -416,8 +428,7 @@ impl ConsensusEngine {
         proposal: &DaoProposal,
     ) -> ConsensusResult<()> {
         let params = proposal
-            .execution_params
-            .as_ref()
+            .execution_params()
             .ok_or_else(|| ConsensusError::ValidatorError("Proposal missing execution params".to_string()))?;
         let decoded = self
             .dao_engine

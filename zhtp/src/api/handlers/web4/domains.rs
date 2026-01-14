@@ -2,7 +2,7 @@
 
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpResult;
-use lib_network::web4::{DomainRegistrationRequest, DomainMetadata, DomainEconomicSettings};
+use lib_network::web4::{DomainRegistrationRequest, DomainMetadata, DomainEconomicSettings, DomainLookupResponse, PublicOwnerInfo};
 use lib_identity::ZhtpIdentity;
 use lib_proofs::ZeroKnowledgeProof;
 use serde::{Deserialize, Serialize};
@@ -483,6 +483,8 @@ impl Web4Handler {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
         
         // Calculate transaction hash for signing
@@ -654,13 +656,9 @@ impl Web4Handler {
         info!(" Domain {} registered with {} ZHTP fees", simple_request.domain, total_fees);
 
         // Get the ACTUAL content mappings from domain registry (with correct DHT hashes)
-        let domain_lookup = self.domain_registry.lookup_domain(&simple_request.domain).await
-            .map_err(|e| anyhow!("Failed to lookup registered domain: {}", e))?;
-
-        let actual_content_mappings = if domain_lookup.found {
-            domain_lookup.content_mappings
-        } else {
-            content_hash_map.clone() // Fallback to computed hashes if lookup fails
+        let actual_content_mappings = match self.name_resolver.resolve(&simple_request.domain).await {
+            Ok(record) => record.content_mappings,
+            Err(_) => content_hash_map.clone(),
         };
 
         info!(" Retrieved actual content mappings from DHT:");
@@ -940,8 +938,22 @@ impl Web4Handler {
         info!(" Looking up Web4 domain: {}", domain);
 
         
-        match self.domain_registry.lookup_domain(domain).await {
-            Ok(response) => {
+        match self.name_resolver.resolve(domain).await {
+            Ok(record) => {
+                let owner_info = PublicOwnerInfo {
+                    identity_hash: hex::encode(&record.owner.0[..16]),
+                    registered_at: record.registered_at,
+                    verified: true,
+                    alias: None,
+                };
+
+                let response = DomainLookupResponse {
+                    found: true,
+                    record: None,
+                    content_mappings: record.content_mappings,
+                    owner_info: Some(owner_info),
+                };
+
                 let response_json = serde_json::to_vec(&response)
                     .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
 
@@ -953,9 +965,19 @@ impl Web4Handler {
             }
             Err(e) => {
                 error!("Failed to lookup domain {}: {}", domain, e);
-                Ok(ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    "Domain lookup failed".to_string(),
+                let response = DomainLookupResponse {
+                    found: false,
+                    record: None,
+                    content_mappings: HashMap::new(),
+                    owner_info: None,
+                };
+                let response_json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
+
+                Ok(ZhtpResponse::success_with_content_type(
+                    response_json,
+                    "application/json".to_string(),
+                    None,
                 ))
             }
         }
@@ -1576,6 +1598,36 @@ impl Web4Handler {
                 Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     format!("Rollback failed: {}", e),
+                ))
+            }
+        }
+    }
+
+    /// Admin: migrate legacy domain records to the latest format
+    pub async fn migrate_domains(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        info!("Running domain migration");
+
+        match self.domain_registry.migrate_domains().await {
+            Ok(count) => {
+                let response = serde_json::json!({
+                    "success": true,
+                    "migrated": count,
+                });
+
+                let response_json = serde_json::to_vec(&response)
+                    .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
+
+                Ok(ZhtpResponse::success_with_content_type(
+                    response_json,
+                    "application/json".to_string(),
+                    None,
+                ))
+            }
+            Err(e) => {
+                error!("Domain migration failed: {}", e);
+                Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!("Domain migration failed: {}", e),
                 ))
             }
         }
