@@ -516,7 +516,7 @@ impl FeeRouter {
         block_height: u64,
     ) -> Result<(), FeeRouterError> {
         // Validate pool address is set
-        let _addr = pool_address.ok_or(FeeRouterError::InvalidPoolAddress)?;
+        pool_address.ok_or(FeeRouterError::InvalidPoolAddress)?;
 
         // Track transfer in history
         self.transfer_history.push(PoolTransfer {

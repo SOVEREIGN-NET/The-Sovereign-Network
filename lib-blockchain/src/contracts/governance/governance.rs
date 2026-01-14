@@ -572,7 +572,12 @@ impl Governance {
         };
 
         // Calculate percentage of For votes relative to For + Against votes
-        let for_percentage = (proposal.votes_for as u64 * 10_000) / total_yea_nay;
+        let for_percentage = proposal
+            .votes_for
+            .checked_mul(10_000)
+            .ok_or(GovernanceError::Overflow)?
+            .checked_div(total_yea_nay)
+            .ok_or(GovernanceError::Overflow)?;
 
         if for_percentage >= threshold as u64 {
             proposal.status = ProposalStatus::Approved;
