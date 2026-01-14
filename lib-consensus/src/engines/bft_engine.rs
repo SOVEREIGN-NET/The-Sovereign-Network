@@ -12,6 +12,7 @@ use crate::types::{
     ConsensusVote, VoteType,
 };
 use crate::validators::ValidatorManager;
+use crate::engines::TransactionExecutor;
 use crate::{ConsensusError, ConsensusResult};
 
 /// Byzantine Fault Tolerance consensus engine
@@ -34,6 +35,8 @@ pub struct BftEngine {
     byzantine_detector: ByzantineFaultDetector,
     /// Local validator identity
     validator_identity: Option<IdentityId>,
+    /// Transaction executor for block proposal
+    transaction_executor: TransactionExecutor,
 }
 
 impl BftEngine {
@@ -64,6 +67,12 @@ impl BftEngine {
             round_history: VecDeque::new(),
             byzantine_detector: ByzantineFaultDetector::new(),
             validator_identity: None,
+            transaction_executor: TransactionExecutor::new(
+                256,                    // max_transactions_per_block
+                5_000_000,              // max_block_size_bytes (5MB)
+                10_000,                 // mempool_max_size
+                10_000,                 // mempool_max_age (blocks)
+            ),
         }
     }
 
@@ -278,10 +287,11 @@ impl BftEngine {
     }
 
     /// Create a BFT proposal
-    async fn create_bft_proposal(&self, previous_hash: Hash) -> ConsensusResult<ConsensusProposal> {
+    async fn create_bft_proposal(&mut self, previous_hash: Hash) -> ConsensusResult<ConsensusProposal> {
+        // Extract validator_id early to avoid borrow conflicts
         let validator_id = self
             .validator_identity
-            .as_ref()
+            .clone()
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
         // Collect transactions for the block
@@ -304,7 +314,7 @@ impl BftEngine {
 
         // Sign the proposal
         let signature = self
-            .sign_proposal_data(&proposal_id, validator_id, &block_data)
+            .sign_proposal_data(&proposal_id, &validator_id, &block_data)
             .await?;
 
         let proposal = ConsensusProposal {
@@ -514,23 +524,44 @@ impl BftEngine {
         tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms)).await;
     }
 
-    /// Collect transactions for block
-    async fn collect_block_transactions(&self) -> ConsensusResult<Vec<u8>> {
-        // In production, this would collect transactions from mempool
+    /// Collect transactions for block from mempool
+    async fn collect_block_transactions(&mut self) -> ConsensusResult<Vec<u8>> {
+        // Prepare transactions from mempool
+        let (tx_hashes, total_fees, total_size) =
+            self.transaction_executor.prepare_block_transactions(self.current_round.height);
+
+        // Create block metadata with transaction data
+        #[derive(serde::Serialize)]
+        struct BlockData {
+            height: u64,
+            round: u32,
+            timestamp: u64,
+            active_validators: usize,
+            transaction_count: usize,
+            total_fees: u64,
+            total_size: usize,
+            transaction_hashes: Vec<[u8; 32]>,
+        }
+
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| ConsensusError::TimeError(e))?
             .as_secs();
 
-        let block_data = format!(
-            "bft_block_height:{},round:{},timestamp:{},validators:{}",
-            self.current_round.height,
-            self.current_round.round,
+        let block_data = BlockData {
+            height: self.current_round.height,
+            round: self.current_round.round,
             timestamp,
-            self.validator_manager.get_active_validators().len()
-        );
+            active_validators: self.validator_manager.get_active_validators().len(),
+            transaction_count: tx_hashes.len(),
+            total_fees,
+            total_size,
+            transaction_hashes: tx_hashes,
+        };
 
-        Ok(block_data.into_bytes())
+        // Serialize block data using bincode
+        bincode::serialize(&block_data)
+            .map_err(|e| ConsensusError::CryptoError(anyhow::anyhow!("Block serialization failed: {}", e)))
     }
 
     /// Create BFT consensus proof
