@@ -585,21 +585,29 @@ impl BlockchainConsensusCoordinator {
             let blockchain = self.blockchain.read().await;
             let stateful_validator = crate::transaction::validation::StatefulTransactionValidator::new(&blockchain);
 
-            match stateful_validator.validate_transactions_for_block_inclusion(&transactions) {
-                Ok((validated_fees, tx_count)) => {
-                    info!(
-                        "Week 10 Phase 2: Validated {} transactions for block at height {} (total_fees={})",
-                        tx_count, height, validated_fees
-                    );
-                }
-                Err(e) => {
-                    error!(
-                        "Week 10 Phase 2: Transaction validation failed for block at height {}: {:?}",
-                        height, e
-                    );
-                    return Err(anyhow::anyhow!("Block validation failed: {:?}", e));
+            let mut total_fees = 0u64;
+            let mut validated_count = 0usize;
+
+            for tx in &transactions {
+                match stateful_validator.validate_transaction_with_state(tx) {
+                    Ok(_) => {
+                        total_fees = total_fees.saturating_add(tx.fee);
+                        validated_count += 1;
+                    }
+                    Err(e) => {
+                        error!(
+                            "Week 10 Phase 2: Transaction validation failed for block at height {}: {:?}",
+                            height, e
+                        );
+                        return Err(anyhow::anyhow!("Block validation failed: {:?}", e));
+                    }
                 }
             }
+
+            info!(
+                "Week 10 Phase 2: Validated {} transactions for block at height {} (total_fees={})",
+                validated_count, height, total_fees
+            );
             drop(blockchain);
 
             let block = self.consensus_proposal_to_block_with_transactions(&winning_proposal, transactions).await?;
