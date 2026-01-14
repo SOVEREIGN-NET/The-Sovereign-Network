@@ -103,6 +103,12 @@ pub struct Blockchain {
     pub broadcast_sender: Option<tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>>,
     /// Track executed DAO proposals to prevent double-execution
     pub executed_dao_proposals: HashSet<Hash>,
+    /// Transaction receipts for confirmation tracking (tx_hash -> receipt)
+    pub receipts: HashMap<Hash, crate::receipts::TransactionReceipt>,
+    /// Finality depth (number of confirmations required for finality)
+    pub finality_depth: u64,
+    /// Track finalized block heights to avoid reprocessing
+    pub finalized_blocks: HashSet<u64>,
 }
 
 /// Validator information stored on-chain
@@ -195,6 +201,9 @@ impl Blockchain {
             blocks_since_last_persist: 0,
             broadcast_sender: None,
             executed_dao_proposals: HashSet::new(),
+            receipts: HashMap::new(),
+            finality_depth: 12, // Default: 12 confirmations for finality
+            finalized_blocks: HashSet::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -554,6 +563,15 @@ impl Blockchain {
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
             // Don't fail block processing, governance is non-critical
+        }
+
+        // Create transaction receipts for all transactions in block
+        let block_hash = block.hash();
+        for (tx_index, tx) in block.transactions.iter().enumerate() {
+            if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
+                warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
+                // Continue processing even if receipt creation fails
+            }
         }
 
         // Update persistence counter
@@ -5012,6 +5030,128 @@ impl Blockchain {
     /// Check if auto-persist should trigger based on block count
     pub fn should_auto_persist(&self, interval: u64) -> bool {
         self.auto_persist_enabled && self.blocks_since_last_persist >= interval
+    }
+
+    // ========================================================================
+    // TRANSACTION RECEIPT AND FINALITY MANAGEMENT
+    // ========================================================================
+
+    /// Create a transaction receipt for a transaction included in a block
+    pub fn create_receipt(
+        &mut self,
+        tx: &Transaction,
+        block_hash: Hash,
+        block_height: u64,
+        tx_index: u32,
+    ) -> Result<()> {
+        let receipt = crate::receipts::TransactionReceipt::new(
+            tx.hash(),
+            block_hash,
+            block_height,
+            tx_index,
+            tx.fee,
+            chrono::Utc::now().timestamp() as u64,
+        );
+
+        self.receipts.insert(tx.hash(), receipt);
+        debug!(
+            "📋 Receipt created for tx {} at block {} (index {})",
+            hex::encode(tx.hash().as_bytes()),
+            block_height,
+            tx_index
+        );
+
+        Ok(())
+    }
+
+    /// Get transaction receipt by hash
+    pub fn get_receipt(&self, tx_hash: &Hash) -> Option<crate::receipts::TransactionReceipt> {
+        self.receipts.get(tx_hash).cloned()
+    }
+
+    /// Update confirmation counts for all receipts
+    pub fn update_confirmation_counts(&mut self) {
+        for receipt in self.receipts.values_mut() {
+            receipt.update_confirmations(self.height);
+            if receipt.is_finalized() && receipt.status != crate::receipts::TransactionStatus::Finalized {
+                receipt.finalize();
+            }
+        }
+    }
+
+    /// Get blocks that have reached finality (12+ confirmations)
+    pub fn get_finalized_blocks(&self, depth: u64) -> Vec<&Block> {
+        let current_height = self.height;
+        if current_height < depth {
+            return vec![];
+        }
+
+        let finality_height = current_height.saturating_sub(depth);
+        self.blocks
+            .iter()
+            .filter(|b| b.header.height <= finality_height)
+            .collect()
+    }
+
+    /// Check if a block has already been finalized
+    pub fn is_block_finalized(&self, block_height: u64) -> bool {
+        self.finalized_blocks.contains(&block_height)
+    }
+
+    /// Mark a block as finalized
+    pub fn mark_block_finalized(&mut self, block_height: u64) {
+        self.finalized_blocks.insert(block_height);
+    }
+
+    /// Trigger finalization for blocks that have reached 12+ confirmations
+    /// Returns number of blocks finalized
+    pub fn finalize_blocks(&mut self) -> Result<u64> {
+        self.update_confirmation_counts();
+
+        // Collect finalized block data before modifying self
+        let finalized_data: Vec<(u64, usize)> = {
+            let finalized = self.get_finalized_blocks(self.finality_depth);
+            finalized
+                .iter()
+                .filter(|b| !self.is_block_finalized(b.header.height))
+                .map(|b| (b.header.height, b.transactions.len()))
+                .collect()
+        };
+
+        let mut count = 0u64;
+
+        for (block_height, tx_count) in finalized_data {
+            // Collect transaction hashes for this block
+            let tx_hashes: Vec<Hash> = self.blocks
+                .iter()
+                .find(|b| b.header.height == block_height)
+                .map(|b| b.transactions.iter().map(|tx| tx.hash()).collect())
+                .unwrap_or_default();
+
+            // Mark all transactions as finalized
+            for tx_hash in tx_hashes {
+                if let Some(receipt) = self.receipts.get_mut(&tx_hash) {
+                    receipt.status = crate::receipts::TransactionStatus::Finalized;
+                }
+            }
+
+            // Mark block as finalized
+            self.mark_block_finalized(block_height);
+            count += 1;
+
+            info!(
+                "✅ Block {} finalized ({} transactions, {} confirmations)",
+                block_height,
+                tx_count,
+                self.height.saturating_sub(block_height)
+            );
+        }
+
+        if count > 0 {
+            info!("🎯 {} blocks finalized", count);
+        }
+
+        Ok(count)
     }
 }
 
