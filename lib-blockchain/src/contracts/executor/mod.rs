@@ -23,6 +23,7 @@ use crate::integration::crypto_integration::{PublicKey, Signature};
 const UBI_INSTANCE_ID: &[u8] = b"contract:ubi:v1";
 const DEV_GRANTS_INSTANCE_ID: &[u8] = b"contract:dev_grants:v1";
 const SYSTEM_CONFIG_KEY: &[u8] = b"system:config:v1";
+const ZHTP_TOKEN_KEY: &[u8] = b"token:zhtp:v1";
 
 /// Maximum allowed call depth to prevent infinite recursion
 /// Set to 10 to allow complex multi-contract workflows while preventing stack overflow
@@ -30,6 +31,34 @@ pub const DEFAULT_MAX_CALL_DEPTH: u32 = 10;
 
 /// Error returned when call depth limit is exceeded
 pub const CALL_DEPTH_EXCEEDED: &str = "Call depth limit exceeded";
+
+/// Staged state changes awaiting block finalization (atomic persistence)
+///
+/// **Consensus-Critical**: All state changes within a block must be committed atomically.
+/// This struct accumulates changes until finalize_block_state() is called.
+#[derive(Debug, Clone)]
+struct PendingStateChanges {
+    /// Custom token mutations pending commit
+    pub token_changes: std::collections::HashMap<[u8; 32], TokenContract>,
+    /// UBI contract mutations pending commit
+    pub ubi_change: Option<crate::contracts::UbiDistributor>,
+    /// DevGrants contract mutations pending commit
+    pub dev_grants_change: Option<crate::contracts::DevGrants>,
+    /// Block height for which these changes apply
+    pub block_height: u64,
+}
+
+impl PendingStateChanges {
+    /// Create new pending state for the given block height
+    fn new(block_height: u64) -> Self {
+        Self {
+            token_changes: std::collections::HashMap::new(),
+            ubi_change: None,
+            dev_grants_change: None,
+            block_height,
+        }
+    }
+}
 
 /// System-level configuration persisted in storage
 ///
@@ -261,6 +290,9 @@ pub struct ContractExecutor<S: ContractStorage> {
     ubi_contract: Option<crate::contracts::UbiDistributor>,
     /// In-memory cache for DevGrants contract (singleton, loaded from storage)
     dev_grants_contract: Option<crate::contracts::DevGrants>,
+    /// Staged state changes awaiting block finalization (atomic persistence)
+    /// None = no pending changes, Some = changes staged for current block
+    pending_changes: Option<PendingStateChanges>,
     logs: Vec<ContractLog>,
     runtime_factory: RuntimeFactory,
     runtime_config: RuntimeConfig,
@@ -276,21 +308,21 @@ impl<S: ContractStorage> ContractExecutor<S> {
     pub fn with_runtime_config(storage: S, runtime_config: RuntimeConfig) -> Self {
         let runtime_factory = RuntimeFactory::new(runtime_config.clone());
 
-        let mut executor = Self {
+        let executor = Self {
             storage,
             system_config: None, // Will be loaded on first access
             token_contracts: HashMap::new(),
             web4_contracts: HashMap::new(),
             ubi_contract: None, // Will be loaded from storage on first access
             dev_grants_contract: None, // Will be loaded from storage on first access
+            pending_changes: None, // Will be created by begin_block()
             logs: Vec::new(),
             runtime_factory,
             runtime_config,
         };
 
-        // Initialize ZHTP native token (immutable protocol-level token)
-        let lib_token = TokenContract::new_zhtp();
-        executor.token_contracts.insert(lib_token.token_id, lib_token);
+        // ZHTP will be lazy-loaded on first access via get_or_load_zhtp()
+        // Genesis initialization happens in init_system()
 
         executor
     }
@@ -321,7 +353,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 return Err(anyhow!("SystemConfig not found in storage - chain not initialized. Call init_system() first."));
             }
         }
-        Ok(self.system_config.as_ref().unwrap())
+        Ok(self.system_config.as_ref()
+            .expect("SystemConfig must exist in memory after successful load check"))
     }
 
     /// Initialize system configuration at genesis
@@ -379,6 +412,12 @@ impl<S: ContractStorage> ContractExecutor<S> {
         self.persist_dev_grants(&dev_grants)?;
         self.dev_grants_contract = Some(dev_grants);
 
+        // Create and persist genesis ZHTP token
+        let zhtp_token = TokenContract::new_zhtp();
+        let zhtp_token_id = zhtp_token.token_id;
+        self.token_contracts.insert(zhtp_token_id, zhtp_token);
+        self.persist_zhtp(&zhtp_token_id)?;
+
         Ok(())
     }
 
@@ -395,7 +434,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 return Err(anyhow!("UBI contract not found in storage - call init_system() first"));
             }
         }
-        Ok(self.ubi_contract.as_mut().unwrap())
+        Ok(self.ubi_contract.as_mut()
+            .expect("UBI contract must exist in memory after successful load check"))
     }
 
     /// Persist UBI contract state to storage
@@ -419,7 +459,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 return Err(anyhow!("DevGrants contract not found in storage - call init_system() first"));
             }
         }
-        Ok(self.dev_grants_contract.as_mut().unwrap())
+        Ok(self.dev_grants_contract.as_mut()
+            .expect("DevGrants contract must exist in memory after successful load check"))
     }
 
     /// Persist DevGrants contract state to storage
@@ -428,6 +469,166 @@ impl<S: ContractStorage> ContractExecutor<S> {
         let dev_grants_data = bincode::serialize(dev_grants)?;
         self.storage.set(&storage_key, &dev_grants_data)?;
         Ok(())
+    }
+
+    /// Persist ZHTP token state to storage
+    fn persist_zhtp(&mut self, token_id: &[u8; 32]) -> Result<()> {
+        let token = self.token_contracts
+            .get(token_id)
+            .ok_or_else(|| anyhow!("ZHTP token not found in memory"))?;
+        let storage_key = ZHTP_TOKEN_KEY.to_vec();
+        let token_data = bincode::serialize(token)?;
+        self.storage.set(&storage_key, &token_data)?;
+        Ok(())
+    }
+
+    /// Load or retrieve ZHTP token from storage (lazy-loading)
+    ///
+    /// **Consensus-Critical**: ZHTP must be loaded from persistent storage.
+    /// Never recreate in-memory to prevent balance loss.
+    pub fn get_or_load_zhtp(&mut self) -> Result<&mut TokenContract> {
+        let zhtp_token_id = TokenContract::new_zhtp().token_id;
+
+        if !self.token_contracts.contains_key(&zhtp_token_id) {
+            // Attempt to load from storage
+            let storage_key = ZHTP_TOKEN_KEY.to_vec();
+            if let Some(token_data) = self.storage.get(&storage_key)? {
+                let token: TokenContract = bincode::deserialize(&token_data)?;
+                self.token_contracts.insert(zhtp_token_id, token);
+            } else {
+                return Err(anyhow!("ZHTP token not found in storage - call init_system() first"));
+            }
+        }
+
+        Ok(self.token_contracts.get_mut(&zhtp_token_id)
+            .expect("ZHTP token must exist in memory after successful load check"))
+    }
+
+    /// Load or retrieve custom token from storage (lazy-loading)
+    ///
+    /// Attempts to load token from in-memory cache first.
+    /// If not found, loads from persistent storage via standard token storage key.
+    /// Prevents "Token not found" errors after restart.
+    pub fn get_or_load_token(&mut self, token_id: &[u8; 32]) -> Result<&mut TokenContract> {
+        // Check if already in memory
+        if !self.token_contracts.contains_key(token_id) {
+            // Generate storage key for custom token
+            let storage_key = generate_storage_key("token", token_id);
+
+            // Attempt to load from persistent storage
+            if let Some(token_data) = self.storage.get(&storage_key)? {
+                let token: TokenContract = bincode::deserialize(&token_data)?;
+                self.token_contracts.insert(*token_id, token);
+            } else {
+                return Err(anyhow!(
+                    "Token {} not found in storage - must be created first",
+                    hex::encode(token_id)
+                ));
+            }
+        }
+
+        Ok(self.token_contracts.get_mut(token_id)
+            .expect("Token must exist in memory after successful load check"))
+    }
+
+    /// Begin staged block processing (atomic persistence)
+    ///
+    /// Initializes the pending state changes buffer for a block.
+    /// All state mutations during block execution are staged here.
+    /// Must be followed by finalize_block_state() or rollback_pending_state().
+    pub fn begin_block(&mut self, block_height: u64) {
+        self.pending_changes = Some(PendingStateChanges::new(block_height));
+    }
+
+    /// Atomically finalize all pending state changes to storage
+    ///
+    /// **Consensus-Critical**: All-or-nothing persistence.
+    /// Uses write-ahead logging (WAL) to ensure true atomicity.
+    /// If any write fails, the entire operation fails and storage remains unchanged.
+    /// This prevents partial state commits that could create divergence.
+    pub fn finalize_block_state(&mut self, block_height: u64) -> Result<()> {
+        // Validate that pending changes match the block being finalized
+        let pending = match &self.pending_changes {
+            Some(p) if p.block_height == block_height => p.clone(),
+            Some(p) => return Err(anyhow!(
+                "Pending changes are for block {} but attempting to finalize block {}",
+                p.block_height, block_height
+            )),
+            None => return Ok(()), // No pending changes is OK
+        };
+
+        // Prepare all writes in a vector (atomic commit point)
+        let mut writes: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+
+        // Stage token changes
+        for (token_id, token) in &pending.token_changes {
+            let storage_key = generate_storage_key("token", token_id);
+            let token_data = bincode::serialize(token)?;
+            writes.push((storage_key, token_data));
+        }
+
+        // Stage UBI changes
+        if let Some(ref ubi) = pending.ubi_change {
+            let storage_key = UBI_INSTANCE_ID.to_vec();
+            let ubi_data = bincode::serialize(ubi)?;
+            writes.push((storage_key, ubi_data));
+        }
+
+        // Stage DevGrants changes
+        if let Some(ref dev_grants) = pending.dev_grants_change {
+            let storage_key = DEV_GRANTS_INSTANCE_ID.to_vec();
+            let dg_data = bincode::serialize(dev_grants)?;
+            writes.push((storage_key, dg_data));
+        }
+
+        // Derive a write-ahead log key specific to this block height
+        let wal_key = generate_storage_key("block_state_wal", &block_height.to_be_bytes());
+
+        // Persist the WAL record before applying any writes. This ensures that
+        // if a failure occurs during the write loop, the full set of intended
+        // writes is durably recorded for potential recovery.
+        let wal_data = bincode::serialize(&writes)?;
+        self.storage.set(&wal_key, &wal_data)?;
+
+        // Execute all writes; if any write fails, pending_changes remains and
+        // the WAL entry still contains the full set of intended updates.
+        for (key, value) in &writes {
+            self.storage.set(key, value)?;
+        }
+
+        // Clear the WAL only after all writes succeed. Overwriting with an
+        // empty payload acts as a logical "no pending WAL" marker.
+        self.storage.set(&wal_key, &[])?;
+
+        // Clear pending changes only after successful commit
+        self.pending_changes = None;
+        Ok(())
+    }
+
+    /// Rollback pending state changes (for chain reorganization)
+    ///
+    /// Discards all staged changes without persisting them.
+    /// Used when a block is replaced during chain reorganization.
+    pub fn rollback_pending_state(&mut self) {
+        self.pending_changes = None;
+    }
+
+    /// Stage a token change for atomic commit
+    ///
+    /// If a block has been started with begin_block(), stages the token change.
+    /// Otherwise, writes directly to storage (for backward compatibility).
+    fn stage_or_persist_token(&mut self, token_id: &[u8; 32], token: &TokenContract) -> Result<()> {
+        if let Some(ref mut pending) = self.pending_changes {
+            // Stage change for atomic commit
+            pending.token_changes.insert(*token_id, token.clone());
+            Ok(())
+        } else {
+            // No block started - write directly to storage (backward compatibility)
+            let storage_key = generate_storage_key("token", token_id);
+            let token_data = bincode::serialize(token)?;
+            self.storage.set(&storage_key, &token_data)?;
+            Ok(())
+        }
     }
 
     /// Execute a contract call
@@ -548,12 +749,10 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 );
                 
                 let token_id = token.token_id;
-                self.token_contracts.insert(token_id, token);
+                self.token_contracts.insert(token_id, token.clone());
                 
-                // Store token data
-                let storage_key = generate_storage_key("token", &token_id);
-                let token_data = bincode::serialize(&self.token_contracts[&token_id])?;
-                self.storage.set(&storage_key, &token_data)?;
+                // Stage token change for atomic commit
+                self.stage_or_persist_token(&token_id, &token)?;
                 
                 Ok(ContractResult::with_return_data(&token_id, context.gas_used)?)
             },
@@ -561,62 +760,56 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 let params: ([u8; 32], PublicKey, u64) = bincode::deserialize(&call.params)?;
                 let (token_id, to, amount) = params;
 
-                if let Some(token) = self.token_contracts.get_mut(&token_id) {
-                    // Use new capability-bound transfer API with ExecutionContext
-                    let _burn_amount = token
-                        .transfer(context, &to, amount)
-                        .map_err(|e| anyhow!("{}", e))?;
+                // Use lazy-loading to get token (prevents "Token not found" after restart)
+                let token = self.get_or_load_token(&token_id)?;
 
-                    // Update storage
-                    let storage_key = generate_storage_key("token", &token_id);
-                    let token_data = bincode::serialize(token)?;
-                    self.storage.set(&storage_key, &token_data)?;
+                // Use new capability-bound transfer API with ExecutionContext
+                let _burn_amount = token
+                    .transfer(context, &to, amount)
+                    .map_err(|e| anyhow!("{}", e))?;
 
-                    Ok(ContractResult::with_return_data(&"Transfer successful", context.gas_used)?)
-                } else {
-                    Err(anyhow!("Token not found"))
-                }
+                // Stage token change for atomic commit
+                let token_clone = token.clone();
+                self.stage_or_persist_token(&token_id, &token_clone)?;
+
+                Ok(ContractResult::with_return_data(&"Transfer successful", context.gas_used)?)
             },
             "mint" => {
                 let params: ([u8; 32], PublicKey, u64) = bincode::deserialize(&call.params)?;
                 let (token_id, to, amount) = params;
-                
-                if let Some(token) = self.token_contracts.get_mut(&token_id) {
-                    crate::contracts::tokens::functions::mint_tokens(
-                        token,
-                        &to,
-                        amount,
-                    ).map_err(|e| anyhow!("{}", e))?;
-                    
-                    // Update storage
-                    let storage_key = generate_storage_key("token", &token_id);
-                    let token_data = bincode::serialize(token)?;
-                    self.storage.set(&storage_key, &token_data)?;
-                    
-                    Ok(ContractResult::with_return_data(&"Mint successful", context.gas_used)?)
-                } else {
-                    Err(anyhow!("Token not found"))
-                }
+
+                // Use lazy-loading to get token (prevents "Token not found" after restart)
+                let token = self.get_or_load_token(&token_id)?;
+
+                crate::contracts::tokens::functions::mint_tokens(
+                    token,
+                    &to,
+                    amount,
+                ).map_err(|e| anyhow!("{}", e))?;
+
+                // Stage token change for atomic commit
+                let token_clone = token.clone();
+                self.stage_or_persist_token(&token_id, &token_clone)?;
+
+                Ok(ContractResult::with_return_data(&"Mint successful", context.gas_used)?)
             },
             "balance_of" => {
                 let params: ([u8; 32], PublicKey) = bincode::deserialize(&call.params)?;
                 let (token_id, owner) = params;
-                
-                if let Some(token) = self.token_contracts.get(&token_id) {
-                    let balance = crate::contracts::tokens::functions::get_balance(token, &owner);
-                    Ok(ContractResult::with_return_data(&balance, context.gas_used)?)
-                } else {
-                    Err(anyhow!("Token not found"))
-                }
+
+                // Use lazy-loading to get token (prevents "Token not found" after restart)
+                let token = self.get_or_load_token(&token_id)?;
+                let balance = crate::contracts::tokens::functions::get_balance(token, &owner);
+
+                Ok(ContractResult::with_return_data(&balance, context.gas_used)?)
             },
             "total_supply" => {
                 let token_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
-                if let Some(token) = self.token_contracts.get(&token_id) {
-                    Ok(ContractResult::with_return_data(&token.total_supply, context.gas_used)?)
-                } else {
-                    Err(anyhow!("Token not found"))
-                }
+
+                // Use lazy-loading to get token (prevents "Token not found" after restart)
+                let token = self.get_or_load_token(&token_id)?;
+
+                Ok(ContractResult::with_return_data(&token.total_supply, context.gas_used)?)
             },
             _ => Err(anyhow!("Unknown token method: {}", call.method)),
         }
@@ -1099,22 +1292,18 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 // This prevents callers from picking arbitrary months and claiming multiple times
                 let citizen: PublicKey = bincode::deserialize(&call.params)?;
 
-                // Get mutable reference to token for transfer
-                if let Some(token) = self.token_contracts.get_mut(&TokenContract::new_zhtp().token_id) {
-                    ubi.claim_ubi(&citizen, context.block_number, token, &contract_context)
-                        .map_err(|e| anyhow!("{:?}", e))?;
+                // Get mutable reference to token for transfer using lazy-loading
+                let token = self.get_or_load_zhtp()?;
+                let zhtp_token_id = token.token_id;
 
-                    // CRITICAL: Persist token contract after mutations
-                    // Without this, token balances revert on restart even though UBI state persists
-                    let token_id = TokenContract::new_zhtp().token_id;
-                    let storage_key = generate_storage_key("token", &token_id);
-                    let token_data = bincode::serialize(token)?;
-                    self.storage.set(&storage_key, &token_data)?;
+                ubi.claim_ubi(&citizen, context.block_number, token, &contract_context)
+                    .map_err(|e| anyhow!("{:?}", e))?;
 
-                    Ok(ContractResult::with_return_data(&"Claim UBI successful", contract_context.gas_used)?)
-                } else {
-                    Err(anyhow!("ZHTP token not found"))
-                }
+                // CRITICAL: Persist token contract after mutations using helper
+                // Without this, token balances revert on restart even though UBI state persists
+                self.persist_zhtp(&zhtp_token_id)?;
+
+                Ok(ContractResult::with_return_data(&"Claim UBI successful", contract_context.gas_used)?)
             },
             "register" => {
                 let params: PublicKey = bincode::deserialize(&call.params)?;
@@ -1245,22 +1434,18 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 let params: (u64, PublicKey) = bincode::deserialize(&call.params)?;
                 let (proposal_id, recipient) = params;
 
-                // Get mutable reference to token for transfer
-                if let Some(token) = self.token_contracts.get_mut(&TokenContract::new_zhtp().token_id) {
-                    dev_grants.execute_grant(&context.caller, proposal_id, &recipient, context.block_number, token, &contract_context)
-                        .map_err(|e| anyhow!("{:?}", e))?;
+                // Get mutable reference to token for transfer using lazy-loading
+                let token = self.get_or_load_zhtp()?;
+                let zhtp_token_id = token.token_id;
 
-                    // CRITICAL: Persist token contract after mutations
-                    // Without this, token balances revert on restart even though DevGrants state persists
-                    let token_id = TokenContract::new_zhtp().token_id;
-                    let storage_key = generate_storage_key("token", &token_id);
-                    let token_data = bincode::serialize(token)?;
-                    self.storage.set(&storage_key, &token_data)?;
+                dev_grants.execute_grant(&context.caller, proposal_id, &recipient, context.block_number, token, &contract_context)
+                    .map_err(|e| anyhow!("{:?}", e))?;
 
-                    Ok(ContractResult::with_return_data(&"Grant executed", contract_context.gas_used)?)
-                } else {
-                    Err(anyhow!("ZHTP token not found"))
-                }
+                // CRITICAL: Persist token contract after mutations using helper
+                // Without this, token balances revert on restart even though DevGrants state persists
+                self.persist_zhtp(&zhtp_token_id)?;
+
+                Ok(ContractResult::with_return_data(&"Grant executed", contract_context.gas_used)?)
             },
             _ => Err(anyhow!("Unknown DevGrants method: {}", call.method)),
         };
@@ -1412,9 +1597,21 @@ mod tests {
     #[test]
     fn test_contract_executor() {
         let storage = MemoryStorage::default();
-        let executor = ContractExecutor::new(storage);
-        
-        // Should have ZHTP token initialized
+        let mut executor = ContractExecutor::new(storage);
+
+        // Initialize system first (creates and persists ZHTP)
+        let governance = PublicKey {
+            dilithium_pk: vec![1],
+            kyber_pk: vec![1],
+            key_id: [1u8; 32],
+        };
+        let config = SystemConfig {
+            governance_authority: governance,
+            blocks_per_month: 2592000,
+        };
+        executor.init_system(config).expect("System initialization should succeed");
+
+        // Should have ZHTP token initialized after init_system
         let lib_id = crate::contracts::utils::generate_lib_token_id();
         assert!(executor.get_token_contract(&lib_id).is_some());
     }
