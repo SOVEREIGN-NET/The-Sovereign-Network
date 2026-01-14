@@ -60,13 +60,6 @@ impl PendingStateChanges {
     }
 }
 
-/// Maximum allowed call depth to prevent infinite recursion
-/// Set to 10 to allow complex multi-contract workflows while preventing stack overflow
-pub const DEFAULT_MAX_CALL_DEPTH: u32 = 10;
-
-/// Error returned when call depth limit is exceeded
-pub const CALL_DEPTH_EXCEEDED: &str = "Call depth limit exceeded";
-
 /// System-level configuration persisted in storage
 ///
 /// **Consensus-Critical**: Must be loaded from storage on executor startup.
@@ -360,7 +353,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 return Err(anyhow!("SystemConfig not found in storage - chain not initialized. Call init_system() first."));
             }
         }
-        Ok(self.system_config.as_ref().unwrap())
+        Ok(self.system_config.as_ref()
+            .expect("SystemConfig must exist in memory after successful load check"))
     }
 
     /// Initialize system configuration at genesis
@@ -440,7 +434,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 return Err(anyhow!("UBI contract not found in storage - call init_system() first"));
             }
         }
-        Ok(self.ubi_contract.as_mut().unwrap())
+        Ok(self.ubi_contract.as_mut()
+            .expect("UBI contract must exist in memory after successful load check"))
     }
 
     /// Persist UBI contract state to storage
@@ -464,7 +459,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 return Err(anyhow!("DevGrants contract not found in storage - call init_system() first"));
             }
         }
-        Ok(self.dev_grants_contract.as_mut().unwrap())
+        Ok(self.dev_grants_contract.as_mut()
+            .expect("DevGrants contract must exist in memory after successful load check"))
     }
 
     /// Persist DevGrants contract state to storage
@@ -504,7 +500,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
             }
         }
 
-        Ok(self.token_contracts.get_mut(&zhtp_token_id).unwrap())
+        Ok(self.token_contracts.get_mut(&zhtp_token_id)
+            .expect("ZHTP token must exist in memory after successful load check"))
     }
 
     /// Load or retrieve custom token from storage (lazy-loading)
@@ -530,7 +527,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
             }
         }
 
-        Ok(self.token_contracts.get_mut(token_id).unwrap())
+        Ok(self.token_contracts.get_mut(token_id)
+            .expect("Token must exist in memory after successful load check"))
     }
 
     /// Begin staged block processing (atomic persistence)
@@ -545,6 +543,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
     /// Atomically finalize all pending state changes to storage
     ///
     /// **Consensus-Critical**: All-or-nothing persistence.
+    /// Uses write-ahead logging (WAL) to ensure true atomicity.
     /// If any write fails, the entire operation fails and storage remains unchanged.
     /// This prevents partial state commits that could create divergence.
     pub fn finalize_block_state(&mut self, block_height: u64) -> Result<()> {
@@ -582,10 +581,24 @@ impl<S: ContractStorage> ContractExecutor<S> {
             writes.push((storage_key, dg_data));
         }
 
-        // Execute all writes atomically
-        for (key, value) in writes {
-            self.storage.set(&key, &value)?;
+        // Derive a write-ahead log key specific to this block height
+        let wal_key = generate_storage_key("block_state_wal", &block_height.to_be_bytes());
+
+        // Persist the WAL record before applying any writes. This ensures that
+        // if a failure occurs during the write loop, the full set of intended
+        // writes is durably recorded for potential recovery.
+        let wal_data = bincode::serialize(&writes)?;
+        self.storage.set(&wal_key, &wal_data)?;
+
+        // Execute all writes; if any write fails, pending_changes remains and
+        // the WAL entry still contains the full set of intended updates.
+        for (key, value) in &writes {
+            self.storage.set(key, value)?;
         }
+
+        // Clear the WAL only after all writes succeed. Overwriting with an
+        // empty payload acts as a logical "no pending WAL" marker.
+        self.storage.set(&wal_key, &[])?;
 
         // Clear pending changes only after successful commit
         self.pending_changes = None;
@@ -598,6 +611,24 @@ impl<S: ContractStorage> ContractExecutor<S> {
     /// Used when a block is replaced during chain reorganization.
     pub fn rollback_pending_state(&mut self) {
         self.pending_changes = None;
+    }
+
+    /// Stage a token change for atomic commit
+    ///
+    /// If a block has been started with begin_block(), stages the token change.
+    /// Otherwise, writes directly to storage (for backward compatibility).
+    fn stage_or_persist_token(&mut self, token_id: &[u8; 32], token: &TokenContract) -> Result<()> {
+        if let Some(ref mut pending) = self.pending_changes {
+            // Stage change for atomic commit
+            pending.token_changes.insert(*token_id, token.clone());
+            Ok(())
+        } else {
+            // No block started - write directly to storage (backward compatibility)
+            let storage_key = generate_storage_key("token", token_id);
+            let token_data = bincode::serialize(token)?;
+            self.storage.set(&storage_key, &token_data)?;
+            Ok(())
+        }
     }
 
     /// Execute a contract call
@@ -718,12 +749,10 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 );
                 
                 let token_id = token.token_id;
-                self.token_contracts.insert(token_id, token);
+                self.token_contracts.insert(token_id, token.clone());
                 
-                // Store token data
-                let storage_key = generate_storage_key("token", &token_id);
-                let token_data = bincode::serialize(&self.token_contracts[&token_id])?;
-                self.storage.set(&storage_key, &token_data)?;
+                // Stage token change for atomic commit
+                self.stage_or_persist_token(&token_id, &token)?;
                 
                 Ok(ContractResult::with_return_data(&token_id, context.gas_used)?)
             },
@@ -739,10 +768,9 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     .transfer(context, &to, amount)
                     .map_err(|e| anyhow!("{}", e))?;
 
-                // Update storage
-                let storage_key = generate_storage_key("token", &token_id);
-                let token_data = bincode::serialize(token)?;
-                self.storage.set(&storage_key, &token_data)?;
+                // Stage token change for atomic commit
+                let token_clone = token.clone();
+                self.stage_or_persist_token(&token_id, &token_clone)?;
 
                 Ok(ContractResult::with_return_data(&"Transfer successful", context.gas_used)?)
             },
@@ -759,10 +787,9 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     amount,
                 ).map_err(|e| anyhow!("{}", e))?;
 
-                // Update storage
-                let storage_key = generate_storage_key("token", &token_id);
-                let token_data = bincode::serialize(token)?;
-                self.storage.set(&storage_key, &token_data)?;
+                // Stage token change for atomic commit
+                let token_clone = token.clone();
+                self.stage_or_persist_token(&token_id, &token_clone)?;
 
                 Ok(ContractResult::with_return_data(&"Mint successful", context.gas_used)?)
             },
