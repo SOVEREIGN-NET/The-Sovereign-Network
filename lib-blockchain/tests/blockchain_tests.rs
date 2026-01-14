@@ -45,7 +45,8 @@ fn create_test_validator(id: &str, stake: u64) -> ValidatorInfo {
         identity_id: id.to_string(),
         stake,
         storage_provided: 1000000u64,
-        consensus_key: vec![1, 2, 3, 4, 5],
+        // Use realistic 32-byte key size (similar to post-quantum key representations)
+        consensus_key: vec![1u8; 32],
         network_address: format!("127.0.0.1:{}", 8000 + stake % 1000),
         commission_rate: 5u8,
         status: "active".to_string(),
