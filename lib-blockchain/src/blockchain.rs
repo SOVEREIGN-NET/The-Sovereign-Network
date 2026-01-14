@@ -103,6 +103,16 @@ pub struct Blockchain {
     pub broadcast_sender: Option<tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>>,
     /// Track executed DAO proposals to prevent double-execution
     pub executed_dao_proposals: HashSet<Hash>,
+    /// Transaction receipts for confirmation tracking (tx_hash -> receipt)
+    pub receipts: HashMap<Hash, crate::receipts::TransactionReceipt>,
+    /// Finality depth (number of confirmations required for finality)
+    pub finality_depth: u64,
+    /// Track finalized block heights to avoid reprocessing
+    pub finalized_blocks: HashSet<u64>,
+    /// Per-contract state storage (contract_id -> state bytes)
+    pub contract_states: HashMap<[u8; 32], Vec<u8>>,
+    /// Contract state snapshots per block height for historical queries
+    pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
 }
 
 /// Validator information stored on-chain
@@ -195,6 +205,11 @@ impl Blockchain {
             blocks_since_last_persist: 0,
             broadcast_sender: None,
             executed_dao_proposals: HashSet::new(),
+            receipts: HashMap::new(),
+            finality_depth: 12, // Default: 12 confirmations for finality
+            finalized_blocks: HashSet::new(),
+            contract_states: HashMap::new(),
+            contract_state_history: std::collections::BTreeMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -554,6 +569,26 @@ impl Blockchain {
         if let Err(e) = self.process_approved_governance_proposals() {
             warn!("Error processing governance proposals at height {}: {}", self.height, e);
             // Don't fail block processing, governance is non-critical
+        }
+
+        // Process economic features (UBI claims and profit declarations)
+        if let Err(e) = self.process_ubi_claim_transactions(&block) {
+            warn!("Error processing UBI claims at height {}: {}", self.height, e);
+            // Don't fail block processing for UBI errors
+        }
+
+        if let Err(e) = self.process_profit_declarations(&block) {
+            warn!("Error processing profit declarations at height {}: {}", self.height, e);
+            // Don't fail block processing for profit declaration errors
+        }
+
+        // Create transaction receipts for all transactions in block
+        let block_hash = block.hash();
+        for (tx_index, tx) in block.transactions.iter().enumerate() {
+            if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
+                warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
+                // Continue processing even if receipt creation fails
+            }
         }
 
         // Update persistence counter
@@ -5012,6 +5047,293 @@ impl Blockchain {
     /// Check if auto-persist should trigger based on block count
     pub fn should_auto_persist(&self, interval: u64) -> bool {
         self.auto_persist_enabled && self.blocks_since_last_persist >= interval
+    }
+
+    // ========================================================================
+    // TRANSACTION RECEIPT AND FINALITY MANAGEMENT
+    // ========================================================================
+
+    /// Create a transaction receipt for a transaction included in a block
+    pub fn create_receipt(
+        &mut self,
+        tx: &Transaction,
+        block_hash: Hash,
+        block_height: u64,
+        tx_index: u32,
+    ) -> Result<()> {
+        let receipt = crate::receipts::TransactionReceipt::new(
+            tx.hash(),
+            block_hash,
+            block_height,
+            tx_index,
+            tx.fee,
+            chrono::Utc::now().timestamp() as u64,
+        );
+
+        self.receipts.insert(tx.hash(), receipt);
+        debug!(
+            "📋 Receipt created for tx {} at block {} (index {})",
+            hex::encode(tx.hash().as_bytes()),
+            block_height,
+            tx_index
+        );
+
+        Ok(())
+    }
+
+    /// Get transaction receipt by hash
+    pub fn get_receipt(&self, tx_hash: &Hash) -> Option<crate::receipts::TransactionReceipt> {
+        self.receipts.get(tx_hash).cloned()
+    }
+
+    /// Update confirmation counts for all receipts
+    pub fn update_confirmation_counts(&mut self) {
+        for receipt in self.receipts.values_mut() {
+            receipt.update_confirmations(self.height);
+            if receipt.is_finalized() && receipt.status != crate::receipts::TransactionStatus::Finalized {
+                receipt.finalize();
+            }
+        }
+    }
+
+    /// Get blocks that have reached finality (12+ confirmations)
+    pub fn get_finalized_blocks(&self, depth: u64) -> Vec<&Block> {
+        let current_height = self.height;
+        if current_height < depth {
+            return vec![];
+        }
+
+        let finality_height = current_height.saturating_sub(depth);
+        self.blocks
+            .iter()
+            .filter(|b| b.header.height <= finality_height)
+            .collect()
+    }
+
+    /// Check if a block has already been finalized
+    pub fn is_block_finalized(&self, block_height: u64) -> bool {
+        self.finalized_blocks.contains(&block_height)
+    }
+
+    /// Mark a block as finalized
+    pub fn mark_block_finalized(&mut self, block_height: u64) {
+        self.finalized_blocks.insert(block_height);
+    }
+
+    /// Trigger finalization for blocks that have reached 12+ confirmations
+    /// Returns number of blocks finalized
+    pub fn finalize_blocks(&mut self) -> Result<u64> {
+        self.update_confirmation_counts();
+
+        // Collect finalized block data before modifying self
+        let finalized_data: Vec<(u64, usize)> = {
+            let finalized = self.get_finalized_blocks(self.finality_depth);
+            finalized
+                .iter()
+                .filter(|b| !self.is_block_finalized(b.header.height))
+                .map(|b| (b.header.height, b.transactions.len()))
+                .collect()
+        };
+
+        let mut count = 0u64;
+
+        for (block_height, tx_count) in finalized_data {
+            // Collect transaction hashes for this block
+            let tx_hashes: Vec<Hash> = self.blocks
+                .iter()
+                .find(|b| b.header.height == block_height)
+                .map(|b| b.transactions.iter().map(|tx| tx.hash()).collect())
+                .unwrap_or_default();
+
+            // Mark all transactions as finalized
+            for tx_hash in tx_hashes {
+                if let Some(receipt) = self.receipts.get_mut(&tx_hash) {
+                    receipt.status = crate::receipts::TransactionStatus::Finalized;
+                }
+            }
+
+            // Mark block as finalized
+            self.mark_block_finalized(block_height);
+            count += 1;
+
+            info!(
+                "✅ Block {} finalized ({} transactions, {} confirmations)",
+                block_height,
+                tx_count,
+                self.height.saturating_sub(block_height)
+            );
+        }
+
+        if count > 0 {
+            info!("🎯 {} blocks finalized", count);
+        }
+
+        Ok(count)
+    }
+
+    // ========================================================================
+    // CONTRACT STATE MANAGEMENT
+    // ========================================================================
+
+    /// Update and persist contract state after execution
+    ///
+    /// # Arguments
+    /// * `contract_id` - 32-byte contract identifier
+    /// * `new_state` - Serialized contract state bytes
+    /// * `block_height` - Current block height for historical snapshots
+    pub fn update_contract_state(
+        &mut self,
+        contract_id: [u8; 32],
+        new_state: Vec<u8>,
+        block_height: u64,
+    ) -> Result<()> {
+        // Update current state
+        self.contract_states.insert(contract_id, new_state.clone());
+
+        // Save snapshot for this block height
+        let snapshot = self.contract_state_history
+            .entry(block_height)
+            .or_insert_with(HashMap::new);
+        snapshot.insert(contract_id, new_state);
+
+        debug!("💾 Contract state updated: {:?} at block {}", contract_id, block_height);
+        Ok(())
+    }
+
+    /// Get current contract state
+    pub fn get_contract_state(&self, contract_id: &[u8; 32]) -> Option<Vec<u8>> {
+        self.contract_states.get(contract_id).cloned()
+    }
+
+    /// Get contract state at a specific block height (for historical queries)
+    ///
+    /// # Arguments
+    /// * `contract_id` - 32-byte contract identifier
+    /// * `height` - Block height to query
+    ///
+    /// # Returns
+    /// State bytes at the specified height, or None if not found
+    pub fn get_contract_state_at_height(
+        &self,
+        contract_id: &[u8; 32],
+        height: u64,
+    ) -> Option<Vec<u8>> {
+        // Try to find snapshot at or before requested height
+        for h in (0..=height).rev() {
+            if let Some(snapshot) = self.contract_state_history.get(&h) {
+                if let Some(state) = snapshot.get(contract_id) {
+                    return Some(state.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Prune old contract state history to save memory
+    ///
+    /// Keeps snapshots for recent blocks and removes older ones.
+    /// # Arguments
+    /// * `keep_blocks` - Number of recent blocks to keep in history
+    pub fn prune_contract_history(&mut self, keep_blocks: u64) {
+        if self.height < keep_blocks {
+            return; // Not enough blocks to prune
+        }
+
+        let prune_before = self.height.saturating_sub(keep_blocks - 1);
+        let keys_to_remove: Vec<u64> = self.contract_state_history
+            .iter()
+            .filter(|(h, _)| **h < prune_before)
+            .map(|(h, _)| *h)
+            .collect();
+
+        for key in keys_to_remove {
+            self.contract_state_history.remove(&key);
+        }
+
+        debug!("🧹 Pruned contract history before block {}", prune_before);
+    }
+
+    // ========================================================================
+    // ECONOMIC FEATURE PROCESSING
+    // ========================================================================
+
+    /// Process UBI claim transactions
+    ///
+    /// Validates and tracks UBI claims to prevent double-claiming in same month.
+    /// This is a simplified implementation tracking claims on-chain.
+    pub fn process_ubi_claim_transactions(&mut self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if let Some(ubi_data) = &tx.ubi_claim_data {
+                // Create claim tracking key: (identity, month_index)
+                let claim_key = format!(
+                    "ubi_claim:{}:{}",
+                    ubi_data.claimant_identity, ubi_data.month_index
+                );
+
+                // Check if already claimed this month
+                if self.identity_blocks.contains_key(&claim_key) {
+                    warn!(
+                        "⚠️ Duplicate UBI claim attempt: {} for month {}",
+                        ubi_data.claimant_identity, ubi_data.month_index
+                    );
+                    return Err(anyhow::anyhow!(
+                        "UBI already claimed for this month: {}",
+                        ubi_data.claimant_identity
+                    ));
+                }
+
+                // Record claim
+                self.identity_blocks.insert(claim_key, block.header.height);
+
+                info!(
+                    "✅ UBI claim processed: identity={}, month={}, amount={}",
+                    ubi_data.claimant_identity, ubi_data.month_index, ubi_data.claim_amount
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Process profit declaration transactions
+    ///
+    /// Validates that tribute amount equals 20% of profit amount.
+    /// Enforces mandatory profit-to-nonprofit redistribution.
+    pub fn process_profit_declarations(&mut self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if let Some(profit_data) = &tx.profit_declaration_data {
+                // Validate tribute calculation (must be exactly 20%)
+                let expected_tribute = profit_data.profit_amount * 20 / 100;
+
+                if profit_data.tribute_amount != expected_tribute {
+                    error!(
+                        "❌ Invalid tribute amount: expected {}, got {}",
+                        expected_tribute, profit_data.tribute_amount
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Invalid tribute amount: expected {}, got {}",
+                        expected_tribute,
+                        profit_data.tribute_amount
+                    ));
+                }
+
+                // Record declaration
+                let declaration_key = format!(
+                    "profit_declaration:{}:{}",
+                    profit_data.declarant_identity, profit_data.fiscal_period
+                );
+                self.identity_blocks
+                    .insert(declaration_key, block.header.height);
+
+                info!(
+                    "💸 Profit declaration processed: entity={}, fiscal_period={}, profit={}, tribute={}",
+                    profit_data.declarant_identity,
+                    profit_data.fiscal_period,
+                    profit_data.profit_amount,
+                    profit_data.tribute_amount
+                );
+            }
+        }
+        Ok(())
     }
 }
 
