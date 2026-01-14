@@ -81,6 +81,7 @@ fn create_test_claim_id(citizen_id: u8, month: u64) -> Hash {
 // =============================================================================
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_01_consensus_block_finalization() {
     // Test: Fee collection triggered at block finalization
     // Validates: FeeRouter receives fees from consensus layer
@@ -88,6 +89,7 @@ fn test_fee_pipeline_01_consensus_block_finalization() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_02_fee_distribution_split() {
     // Test: 45% to UBI, 30% to governance, 15% to validation, 10% to treasury
     // Validates: FeeRouter calculates correct allocation percentages
@@ -95,6 +97,7 @@ fn test_fee_pipeline_02_fee_distribution_split() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_03_ubi_pool_receives_45_percent() {
     // Test: UBI distributor receives 45% of collected fees
     // Validates: UbiDistributor balance increases by exact amount
@@ -102,6 +105,7 @@ fn test_fee_pipeline_03_ubi_pool_receives_45_percent() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_04_citizen_claims_from_pool() {
     // Test: Citizen creates UBIClaim transaction to claim from pool
     // Validates: UBIClaim transaction is created with correct data
@@ -109,6 +113,7 @@ fn test_fee_pipeline_04_citizen_claims_from_pool() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_05_claim_validation_passes() {
     // Test: UBIClaim validation succeeds with valid data
     // Validates: validate_ubi_claim_transaction() approves valid claims
@@ -116,6 +121,7 @@ fn test_fee_pipeline_05_claim_validation_passes() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_06_claim_processing() {
     // Test: UbiDistributor.claim_ubi() processes valid claim
     // Validates: Balance deducted, citizen marked as paid
@@ -123,6 +129,7 @@ fn test_fee_pipeline_06_claim_processing() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_07_double_claim_prevention() {
     // Test: Second claim in same month rejected
     // Validates: has_claimed() check prevents double claims
@@ -130,6 +137,7 @@ fn test_fee_pipeline_07_double_claim_prevention() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_08_insufficient_balance_handling() {
     // Test: Claim rejected when UBI pool insufficient
     // Validates: InsufficientBalance error returned
@@ -137,6 +145,7 @@ fn test_fee_pipeline_08_insufficient_balance_handling() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_09_audit_trail_integrity() {
     // Test: Fee collection recorded in audit trail
     // Validates: total_collected, total_distributed match
@@ -144,6 +153,7 @@ fn test_fee_pipeline_09_audit_trail_integrity() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_10_end_to_end_scenario() {
     // Test: Complete flow - block finalization → fee collection → claim → processing
     // Validates: All pipeline stages work together
@@ -151,6 +161,7 @@ fn test_fee_pipeline_10_end_to_end_scenario() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_11_fee_collection_with_large_amounts() {
     // Test: Pipeline handles large fee amounts correctly
     // Validates: No overflow, correct arithmetic
@@ -158,6 +169,7 @@ fn test_fee_pipeline_11_fee_collection_with_large_amounts() {
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_12_fee_collection_with_zero_fees() {
     // Test: Pipeline handles blocks with zero fees gracefully
     // Validates: No errors, proper zero handling
@@ -215,7 +227,7 @@ fn test_ubi_claim_02_validation_with_valid_data() {
 #[test]
 fn test_ubi_claim_03_validation_zero_amount() {
     // Test: Claim with zero amount fails validation
-    let mut claim_data = UbiClaimData {
+    let claim_data = UbiClaimData {
         claim_id: create_test_claim_id(1, 0),
         claimant_identity: "did:zhtp:citizen001".to_string(),
         month_index: 0,
@@ -233,7 +245,7 @@ fn test_ubi_claim_03_validation_zero_amount() {
 #[test]
 fn test_ubi_claim_04_validation_missing_proof() {
     // Test: Claim without citizenship proof fails validation
-    let mut claim_data = UbiClaimData {
+    let claim_data = UbiClaimData {
         claim_id: create_test_claim_id(1, 0),
         claimant_identity: "did:zhtp:citizen001".to_string(),
         month_index: 0,
@@ -650,48 +662,56 @@ fn test_profit_declaration_10_declarant_identity() {
 // =============================================================================
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_consensus_integration_01_fee_router_initialization() {
     // Test: FeeRouter can be initialized in ConsensusEngine
     println!("✓ Test 4.1: FeeRouter initializes in ConsensusEngine");
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_consensus_integration_02_block_metadata_creation() {
     // Test: BlockMetadata created from committed block
     println!("✓ Test 4.2: BlockMetadata created from committed block");
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_consensus_integration_03_fee_collection_hook() {
     // Test: Fee collection hook executes in process_committed_block()
     println!("✓ Test 4.3: Fee collection hook executes properly");
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_consensus_integration_04_fee_distribution_triggered() {
     // Test: FeeRouter.distribute() called after block finalization
     println!("✓ Test 4.4: Fee distribution triggered at finalization");
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_consensus_integration_05_atomic_fee_collection() {
     // Test: Fee collection is atomic - all-or-nothing
     println!("✓ Test 4.5: Fee collection is atomic");
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_consensus_integration_06_reward_and_fee_together() {
     // Test: Reward distribution and fee collection work together
     println!("✓ Test 4.6: Reward distribution + fee collection");
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_consensus_integration_07_fee_collection_with_zero_fees() {
     // Test: Process handles blocks with zero fees
     println!("✓ Test 4.7: Handles zero-fee blocks");
 }
 
 #[test]
+#[ignore]  // TODO: Implement full test - currently stub only
 fn test_consensus_integration_08_deterministic_fee_simulation() {
     // Test: Deterministic fee simulation for Week 7 testing
     println!("✓ Test 4.8: Deterministic fee simulation");

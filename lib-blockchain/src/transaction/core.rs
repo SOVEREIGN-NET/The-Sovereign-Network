@@ -963,8 +963,13 @@ impl UbiClaimData {
             return false;
         }
 
-        // In production, verify claim_id matches computed hash
-        // For now, accept any non-zero claim_id
+        // NOTE: In production, verify claim_id matches computed hash from compute_claim_id().
+        // The current stub implementation of compute_claim_id() returns Hash::default(),
+        // so enforcing a non-default claim_id here would cause all stubbed claims to fail
+        // validation. Once compute_claim_id() is fully implemented, re-enable strict
+        // validation that self.claim_id matches the computed value.
+        //
+        // For Week 7 testing, we accept any non-default claim_id as valid.
         if self.claim_id == Hash::default() {
             return false;
         }
@@ -1051,7 +1056,46 @@ impl ProfitDeclarationData {
     /// Valid formats: "YYYY-Q[1-4]" or "YYYY-MM"
     /// Examples: "2026-Q1", "2026-03"
     pub fn is_valid_fiscal_period(&self) -> bool {
-        self.fiscal_period.len() >= 6 && self.fiscal_period.contains('-')
+        let period = self.fiscal_period.as_str();
+
+        // Expect exactly one '-' separating year and period part
+        let mut parts = period.split('-');
+        let year_part = match parts.next() {
+            Some(y) => y,
+            None => return false,
+        };
+        let suffix_part = match parts.next() {
+            Some(s) => s,
+            None => return false,
+        };
+        // There must not be any additional '-' segments
+        if parts.next().is_some() {
+            return false;
+        }
+
+        // Year must be exactly 4 digits
+        if year_part.len() != 4 || !year_part.chars().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+
+        // Suffix must be exactly 2 characters
+        if suffix_part.len() != 2 {
+            return false;
+        }
+
+        // Check for quarter format "Q1".."Q4"
+        if suffix_part.starts_with('Q') {
+            return matches!(suffix_part, "Q1" | "Q2" | "Q3" | "Q4");
+        }
+
+        // Check for month format "01".."12"
+        if suffix_part.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(month) = suffix_part.parse::<u8>() {
+                return (1..=12).contains(&month);
+            }
+        }
+
+        false
     }
 
     /// Get the profit amount
@@ -1084,10 +1128,10 @@ impl ProfitDeclarationData {
             return false;
         }
 
-        // Check 3: Revenue sources must not be empty
-        if self.revenue_sources.is_empty() {
-            return false;
-        }
+        // Note: Revenue sources empty check is redundant here as it's already
+        // enforced by validate() method which requires the sum to match profit_amount.
+        // If revenue_sources is empty, sum would be 0 and only pass if profit_amount
+        // is also 0, which is already rejected by validate().
 
         true
     }

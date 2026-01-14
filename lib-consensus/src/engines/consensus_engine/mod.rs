@@ -81,7 +81,6 @@ use crate::rewards::RewardCalculator;
 use crate::types::*;
 use crate::validators::ValidatorManager;
 use crate::{ConsensusError, ConsensusResult};
-use super::TransactionExecutor;
 
 mod liveness;
 mod network;
@@ -255,9 +254,6 @@ pub struct ConsensusEngine {
     /// Fee router for fee collection integration (Week 7)
     /// Option allows for lazy initialization
     fee_router: Option<std::sync::Arc<std::sync::Mutex<dyn std::any::Any + Send>>>,
-    /// Transaction executor for mempool and fee extraction (Week 9)
-    /// Manages pending transactions and block proposal selection
-    transaction_executor: Option<TransactionExecutor>,
     /// Message broadcaster for network distribution
     ///
     /// Invariant CE-ENG-1: ConsensusEngine never constructs, configures, or inspects
@@ -332,7 +328,6 @@ impl ConsensusEngine {
             byzantine_detector: ByzantineFaultDetector::new(),
             reward_calculator: RewardCalculator::new(),
             fee_router: None,
-            transaction_executor: None,
             broadcaster,
             message_rx: None,
             liveness_event_tx: None,
@@ -362,14 +357,6 @@ impl ConsensusEngine {
     /// FeeRouter must implement Send trait for thread-safe storage.
     pub fn set_fee_router<T: std::any::Any + Send + 'static>(&mut self, fee_router: T) {
         self.fee_router = Some(std::sync::Arc::new(std::sync::Mutex::new(fee_router)));
-    }
-
-    /// Set transaction executor for mempool and fee extraction (Week 9)
-    ///
-    /// Enables actual transaction fee extraction from blocks instead of simulation.
-    /// Mempool-based block proposal selection by transaction priority.
-    pub fn set_transaction_executor(&mut self, executor: TransactionExecutor) {
-        self.transaction_executor = Some(executor);
     }
 
     fn emit_liveness_event(&self, event: ConsensusEvent) {
