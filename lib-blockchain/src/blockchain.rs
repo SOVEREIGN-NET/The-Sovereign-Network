@@ -285,6 +285,8 @@ impl Blockchain {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
         
         // Add genesis transaction to genesis block
@@ -803,9 +805,11 @@ impl Blockchain {
     /// The consensus engine owns the difficulty policy per architectural design.
     ///
     /// # Fallback Behavior
-    /// - If consensus coordinator is available: uses coordinator's difficulty calculation
-    /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters
-    /// - If coordinator call fails: returns error (does NOT fall back to legacy calculation)
+    /// - If consensus coordinator is available:
+    ///   - Uses coordinator's `calculate_difficulty_adjustment()` for the calculation
+    ///   - If calculation fails: falls back to `calculate_difficulty_with_config()` using coordinator's config
+    ///   - If getting config fails: returns error without fallback (this indicates a consensus layer problem)
+    /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters directly
     fn adjust_difficulty(&mut self) -> Result<()> {
         // Get adjustment parameters and calculate difficulty in a single lock acquisition
         // to avoid race conditions between reading config and calculating adjustment

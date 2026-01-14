@@ -179,6 +179,8 @@ impl TransactionBuilder {
             dao_proposal_data: None,
             dao_vote_data: None,
             dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
         };
 
         // Sign the transaction
@@ -468,6 +470,14 @@ pub mod utils {
             TransactionType::DaoExecution |
             TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation will be handled during transaction validation
+            }
+            TransactionType::UBIClaim => {
+                // UBI claim transactions - citizen-initiated pull-based claims (Week 7)
+                // Validation will be handled during transaction validation
+            }
+            TransactionType::ProfitDeclaration => {
+                // Profit declaration transactions - enforces 20% tribute (Week 7)
+                // Validation will be handled during transaction validation
             }
         }
 
