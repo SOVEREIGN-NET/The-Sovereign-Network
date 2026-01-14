@@ -169,7 +169,7 @@ impl TransactionBuilder {
             ubi_claim_data: None,
             profit_declaration_data: None,
         };
-        
+
         // Create signing hash using the exact same method as blockchain validation
         let signing_hash = lib_blockchain::transaction::hashing::hash_for_signature(&temp_transaction);
         
