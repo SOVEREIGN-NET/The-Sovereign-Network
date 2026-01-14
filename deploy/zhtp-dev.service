@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/zhtp/zhtp node start --network dev --dev
+ExecStart=/opt/zhtp/zhtp node start --network dev --dev --config /opt/zhtp/config.toml
 WorkingDirectory=/opt/zhtp
 Restart=always
 RestartSec=5

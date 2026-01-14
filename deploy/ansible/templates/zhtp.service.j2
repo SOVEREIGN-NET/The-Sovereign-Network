@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart={{ zhtp_dir }}/zhtp node start --network {{ zhtp_network }}
+ExecStart={{ zhtp_dir }}/zhtp node start --network {{ zhtp_network }} --config {{ zhtp_dir }}/config.toml
 WorkingDirectory={{ zhtp_dir }}
 Restart=always
 RestartSec=5
