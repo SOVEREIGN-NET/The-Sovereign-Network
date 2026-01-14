@@ -799,12 +799,12 @@ impl Blockchain {
     /// Adjust blockchain difficulty based on block time targets.
     ///
     /// This method delegates to the consensus coordinator's DifficultyManager when available,
-    /// falling back to the legacy hardcoded constants for backward compatibility.
+    /// falling back to `self.difficulty_config` for backward compatibility.
     /// The consensus engine owns the difficulty policy per architectural design.
     ///
     /// # Fallback Behavior
     /// - If consensus coordinator is available: uses coordinator's difficulty calculation
-    /// - If consensus coordinator is not available: uses hardcoded legacy constants for backward compatibility
+    /// - If consensus coordinator is not available: uses `self.difficulty_config` parameters
     /// - If coordinator call fails: returns error (does NOT fall back to legacy calculation)
     fn adjust_difficulty(&mut self) -> Result<()> {
         // Get adjustment parameters and calculate difficulty in a single lock acquisition
@@ -820,7 +820,7 @@ impl Blockchain {
                     
                     // Check if we should adjust at this height
                     if self.height % adjustment_interval != 0 {
-                        return Ok::<Option<u32>, anyhow::Error>(None);
+                        return Ok::<Option<(u32, lib_consensus::difficulty::DifficultyConfig)>, anyhow::Error>(None);
                     }
                     if self.height < adjustment_interval {
                         return Ok(None);
@@ -838,26 +838,37 @@ impl Blockchain {
                         interval_start_time,
                         interval_end_time,
                     ).await {
-                        Ok(Some(new_bits)) => Ok(Some(new_bits)),
+                        Ok(Some(new_bits)) => Ok(Some((new_bits, config))),
                         Ok(None) => Ok(None),
                         Err(e) => {
-                            tracing::warn!("Difficulty adjustment via coordinator failed: {}, using fallback", e);
-                            // Fallback to legacy calculation
-                            Ok(Some(self.calculate_difficulty_legacy(interval_start_time, interval_end_time, config.target_timespan)))
+                            tracing::warn!("Difficulty adjustment via coordinator failed: {}, using fallback with config", e);
+                            // Fallback to config-aware calculation
+                            let new_bits = self.calculate_difficulty_with_config(
+                                interval_start_time,
+                                interval_end_time,
+                                config.target_timespan,
+                                config.max_adjustment_factor,
+                                config.max_adjustment_factor,
+                            );
+                            Ok(Some((new_bits, config)))
                         }
                     }
                 })
             });
             
             match result {
-                Ok(Some(new_bits)) => {
+                Ok(Some((new_bits, config))) => {
                     let old_difficulty = self.difficulty.bits();
                     self.difficulty = Difficulty::from_bits(new_bits);
                     tracing::info!(
-                        "Difficulty adjusted from {} to {} at height {}",
+                        "Difficulty adjusted from {} to {} at height {} \
+                         (config: target_timespan={}, adjustment_interval={}, max_adjustment={}x)",
                         old_difficulty,
                         new_bits,
-                        self.height
+                        self.height,
+                        config.target_timespan,
+                        config.adjustment_interval,
+                        config.max_adjustment_factor,
                     );
                 }
                 Ok(None) => {} // No adjustment needed
@@ -870,9 +881,11 @@ impl Blockchain {
                 }
             }
         } else {
-            // Fallback to hardcoded constants for backward compatibility (no coordinator)
-            let adjustment_interval = crate::DIFFICULTY_ADJUSTMENT_INTERVAL;
-            let target_timespan = crate::TARGET_TIMESPAN;
+            // Use self.difficulty_config instead of hardcoded constants
+            let adjustment_interval = self.difficulty_config.adjustment_interval;
+            let target_timespan = self.difficulty_config.target_timespan;
+            let max_increase = self.difficulty_config.max_difficulty_increase_factor;
+            let max_decrease = self.difficulty_config.max_difficulty_decrease_factor;
             
             // Check if we should adjust at this height
             if self.height % adjustment_interval != 0 {
@@ -887,51 +900,74 @@ impl Blockchain {
             let interval_start_time = interval_start.timestamp();
             let interval_end_time = current_block.timestamp();
             
-            let new_difficulty_bits = self.calculate_difficulty_legacy(interval_start_time, interval_end_time, target_timespan);
+            let new_difficulty_bits = self.calculate_difficulty_with_config(
+                interval_start_time,
+                interval_end_time,
+                target_timespan,
+                max_increase,
+                max_decrease,
+            );
             let old_difficulty = self.difficulty.bits();
             self.difficulty = Difficulty::from_bits(new_difficulty_bits);
             
             tracing::info!(
-                "Difficulty adjusted from {} to {} at height {}",
+                "Difficulty adjusted from {} to {} at height {} \
+                 (config: target_timespan={}, adjustment_interval={}, max_increase={}x, max_decrease={}x)",
                 old_difficulty,
                 new_difficulty_bits,
-                self.height
+                self.height,
+                target_timespan,
+                adjustment_interval,
+                max_increase,
+                max_decrease,
             );
         }
         
         Ok(())
     }
     
-    /// Legacy difficulty calculation using hardcoded constants.
-    /// Used when consensus coordinator is not available.
-    fn calculate_difficulty_legacy(&self, interval_start_time: u64, interval_end_time: u64, target_timespan: u64) -> u32 {
+    /// Difficulty calculation using DifficultyConfig parameters.
+    /// Uses configurable clamping factors instead of hardcoded 4x.
+    fn calculate_difficulty_with_config(
+        &self,
+        interval_start_time: u64,
+        interval_end_time: u64,
+        target_timespan: u64,
+        max_increase_factor: u64,
+        max_decrease_factor: u64,
+    ) -> u32 {
         // Defensive check: target_timespan should be validated to be non-zero upstream,
         // but avoid panicking here if that validation is ever bypassed.
         if target_timespan == 0 {
             tracing::warn!(
-                "calculate_difficulty_legacy called with target_timespan = 0; \
+                "calculate_difficulty_with_config called with target_timespan = 0; \
                  returning current difficulty without adjustment"
             );
             return self.difficulty.bits();
         }
         
         let actual_timespan = interval_end_time.saturating_sub(interval_start_time);
-        // Clamp to prevent extreme adjustments (4x range)
-        let actual_timespan = actual_timespan
-            .max(target_timespan / 4)
-            .min(target_timespan * 4);
+        
+        // Clamp using configurable factors instead of hardcoded 4x
+        // min_timespan prevents difficulty from increasing more than max_increase_factor
+        // max_timespan prevents difficulty from decreasing more than max_decrease_factor
+        let min_timespan = target_timespan / max_increase_factor.max(1);
+        let max_timespan = target_timespan.saturating_mul(max_decrease_factor);
+        let clamped_timespan = actual_timespan.clamp(min_timespan, max_timespan);
         
         // Additional defensive check in case clamping still results in zero
-        // (can happen if target_timespan / 4 == 0 due to integer division with small values)
-        if actual_timespan == 0 {
+        // (can happen if target_timespan / max_increase_factor == 0 due to integer division)
+        if clamped_timespan == 0 {
             tracing::warn!(
-                "calculate_difficulty_legacy computed actual_timespan = 0 after clamping; \
+                "calculate_difficulty_with_config computed clamped_timespan = 0; \
                  returning current difficulty without adjustment"
             );
             return self.difficulty.bits();
         }
         
-        (self.difficulty.bits() as u64 * target_timespan / actual_timespan) as u32
+        // Calculate new difficulty and ensure it doesn't go to zero
+        let new_difficulty = (self.difficulty.bits() as u64 * target_timespan / clamped_timespan) as u32;
+        new_difficulty.max(1)
     }
 
     /// Get the latest block
