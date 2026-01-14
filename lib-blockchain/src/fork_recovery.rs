@@ -74,8 +74,8 @@ impl ForkDetector {
 
     /// Evaluate two chains and return which is canonical
     ///
-    /// Uses longest-chain rule with timestamp tiebreaker:
-    /// 1. Longer chain wins
+    /// Uses longest-chain rule with difficulty and timestamp tiebreakers:
+    /// 1. Longer chain wins (more blocks)
     /// 2. If equal length, higher cumulative difficulty wins
     /// 3. If equal difficulty, newer timestamp wins
     ///
@@ -90,7 +90,45 @@ impl ForkDetector {
         our_chain: &[Block],
         candidate_chain: &[Block],
     ) -> ChainEvaluation {
-        // Compare by cumulative difficulty (last block's cumulative_difficulty)
+        // Step 1: Compare chain lengths (number of blocks)
+        let our_length = our_chain.len();
+        let candidate_length = candidate_chain.len();
+
+        if candidate_length > our_length {
+            // Candidate chain is longer
+            let our_difficulty = our_chain
+                .last()
+                .map(|b| b.header.cumulative_difficulty.bits())
+                .unwrap_or(0);
+            let candidate_difficulty = candidate_chain
+                .last()
+                .map(|b| b.header.cumulative_difficulty.bits())
+                .unwrap_or(0);
+
+            return ChainEvaluation::SwitchToCandidate {
+                our_work: our_difficulty as u128,
+                candidate_work: candidate_difficulty as u128,
+                reason: format!("candidate chain is longer ({} vs {} blocks)", candidate_length, our_length),
+            };
+        } else if our_length > candidate_length {
+            // Our chain is longer
+            let our_difficulty = our_chain
+                .last()
+                .map(|b| b.header.cumulative_difficulty.bits())
+                .unwrap_or(0);
+            let candidate_difficulty = candidate_chain
+                .last()
+                .map(|b| b.header.cumulative_difficulty.bits())
+                .unwrap_or(0);
+
+            return ChainEvaluation::KeepOurChain {
+                our_work: our_difficulty as u128,
+                candidate_work: candidate_difficulty as u128,
+                reason: format!("our chain is longer ({} vs {} blocks)", our_length, candidate_length),
+            };
+        }
+
+        // Step 2: Equal length - compare by cumulative difficulty
         let our_difficulty = our_chain
             .last()
             .map(|b| b.header.cumulative_difficulty.bits())
@@ -105,10 +143,10 @@ impl ForkDetector {
             ChainEvaluation::SwitchToCandidate {
                 our_work: our_difficulty as u128,
                 candidate_work: candidate_difficulty as u128,
-                reason: "candidate has more cumulative work".to_string(),
+                reason: "equal length, candidate has more cumulative work".to_string(),
             }
         } else if candidate_difficulty == our_difficulty && !candidate_chain.is_empty() && !our_chain.is_empty() {
-            // Equal work, use timestamp as tiebreaker
+            // Step 3: Equal work - use timestamp as tiebreaker
             let our_timestamp = our_chain.last().map(|b| b.header.timestamp).unwrap_or(0);
             let candidate_timestamp = candidate_chain
                 .last()
@@ -119,20 +157,20 @@ impl ForkDetector {
                 ChainEvaluation::SwitchToCandidate {
                     our_work: our_difficulty as u128,
                     candidate_work: candidate_difficulty as u128,
-                    reason: "equal work, candidate has newer timestamp".to_string(),
+                    reason: "equal work and length, candidate has newer timestamp".to_string(),
                 }
             } else {
                 ChainEvaluation::KeepOurChain {
                     our_work: our_difficulty as u128,
                     candidate_work: candidate_difficulty as u128,
-                    reason: "our chain preferred (older timestamp tiebreaker)".to_string(),
+                    reason: "equal work and length, our chain preferred (older or equal timestamp)".to_string(),
                 }
             }
         } else {
             ChainEvaluation::KeepOurChain {
                 our_work: our_difficulty as u128,
                 candidate_work: candidate_difficulty as u128,
-                reason: "our chain has more work".to_string(),
+                reason: "equal length, our chain has more work".to_string(),
             }
         }
     }
