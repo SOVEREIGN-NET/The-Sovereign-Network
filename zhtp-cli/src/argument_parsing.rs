@@ -58,6 +58,9 @@ pub enum ZhtpCommand {
     /// Citizen management (orchestrated)
     Citizen(CitizenArgs),
 
+    /// UBI status and operations (orchestrated)
+    Ubi(UbiArgs),
+
     /// Identity operations (orchestrated)
     Identity(IdentityArgs),
 
@@ -257,6 +260,23 @@ pub enum CitizenAction {
     },
     /// List all registered citizens
     List,
+}
+
+/// UBI status and operations commands
+#[derive(Args, Debug, Clone)]
+pub struct UbiArgs {
+    #[command(subcommand)]
+    pub action: UbiAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum UbiAction {
+    /// Show UBI status (eligibility, next payout, pool balance)
+    Status {
+        /// Optional identity ID (shows personal status if provided, pool status if omitted)
+        #[arg(short, long)]
+        identity_id: Option<String>,
+    },
 }
 
 /// Identity operation commands
@@ -1004,6 +1024,7 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Wallet(args) => commands::wallet::handle_wallet_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Dao(args) => commands::dao::handle_dao_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Citizen(args) => commands::citizen::handle_citizen_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Ubi(args) => commands::ubi::handle_ubi_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Identity(args) => commands::identity::handle_identity_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Network(args) => commands::network::handle_network_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
         ZhtpCommand::Blockchain(args) => commands::blockchain::handle_blockchain_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),

@@ -25,6 +25,7 @@ pub mod update;
 pub mod service;
 pub mod web4_utils;
 pub mod citizen;
+pub mod ubi;
 
 pub use node::handle_node_command;
 pub use wallet::handle_wallet_command;
@@ -50,3 +51,4 @@ pub use man::handle_man_command;
 pub use update::handle_update_command;
 pub use service::handle_service_command;
 pub use citizen::handle_citizen_command;
+pub use ubi::handle_ubi_command;
