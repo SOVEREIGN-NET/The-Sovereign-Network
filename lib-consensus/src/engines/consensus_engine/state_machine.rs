@@ -602,7 +602,7 @@ impl ConsensusEngine {
         BlockMetadata {
             height: proposal.height,
             timestamp: chrono::Utc::now().timestamp(),
-            transaction_count: 0, // Week 7: Stub (will be actual tx count in Week 10)
+            transaction_count: 0, // Temporary stub - will be replaced in Week 10
             total_fees_collected: simulated_fees,
             proposer: proposal.proposer.clone(),
         }

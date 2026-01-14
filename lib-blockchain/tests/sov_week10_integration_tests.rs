@@ -31,12 +31,14 @@ mod sov_week10_integration_tests {
     /// a more realistic key by using the index as a seed and applying a simple
     /// deterministic hash-like transformation to create varied byte patterns.
     fn create_test_public_key(index: u32) -> PublicKey {
+        const KEY_PATTERN_MULTIPLIER: u8 = 7; // Prime number for better distribution
         let mut key_bytes = vec![0u8; 32];
         let index_bytes = index.to_le_bytes();
         
         // Fill key with a deterministic but varied pattern based on index
         for i in 0..32 {
-            key_bytes[i] = (index_bytes[i % 4].wrapping_add(i as u8)).wrapping_mul(7);
+            key_bytes[i] = (index_bytes[i % 4].wrapping_add(i as u8))
+                .wrapping_mul(KEY_PATTERN_MULTIPLIER);
         }
         
         PublicKey::new(key_bytes)
