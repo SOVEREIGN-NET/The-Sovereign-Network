@@ -49,15 +49,16 @@ impl StateVerifier {
     
     /// Verify manifest has required fields
     pub fn manifest_has_fields(&self, domain: &str, required_fields: &[&str]) -> bool {
-        let manifest = self.get_manifest(domain)?;
-        
-        for field in required_fields {
-            if !manifest.contains_key(*field) {
-                return false;
+        if let Some(manifest) = self.get_manifest(domain) {
+            for field in required_fields {
+                if !manifest.contains_key(*field) {
+                    return false;
+                }
             }
+            true
+        } else {
+            false
         }
-        
-        true
     }
     
     /// Get version information for a domain
@@ -126,7 +127,10 @@ impl StateVerifier {
     
     /// Verify persistence: check if state is identical after restart
     pub fn verify_persistence(&self, domain: &str, original_state: &serde_json::Map<String, Value>) -> bool {
-        let current_state = self.get_manifest(domain)?;
+        let current_state = match self.get_manifest(domain) {
+            Some(state) => state,
+            None => return false,
+        };
         
         // Compare critical fields
         let same_cid = original_state.get("web4_manifest_cid") == current_state.get("web4_manifest_cid");

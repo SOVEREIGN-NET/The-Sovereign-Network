@@ -44,8 +44,9 @@ use std::thread;
 use std::time::Duration;
 use std::io::Write;
 
-mod support;
-use support::{TestEnv, CliExecutor, SiteGenerator, StateVerifier};
+#[path = "web4_functional/mod.rs"]
+mod web4_functional_support;
+use web4_functional_support::{TestEnv, CliExecutor, SiteGenerator, StateVerifier};
 
 // ============================================================================
 // PHASE 1: DOMAIN REGISTRATION TESTS
@@ -123,8 +124,8 @@ fn deployment_simple_site() {
     site.write_to(&site_path).expect("Failed to write site");
     
     // Deploy
-    let result = cli.deploy_site("simple.web4.test", &site_path);
-    assert!(result.success, "Deployment failed: {}", result.output);
+    let deploy_result = cli.deploy_site("simple.web4.test", &site_path);
+    assert!(deploy_result.success, "Deployment failed: {}", deploy_result.output);
     
     // Verify manifest
     let verify = StateVerifier::new(&env);
