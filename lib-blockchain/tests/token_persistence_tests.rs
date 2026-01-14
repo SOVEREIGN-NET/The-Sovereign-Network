@@ -283,7 +283,7 @@ fn test_token_mint_with_staging() -> Result<()> {
         max_call_depth: 10,
     };
 
-    let call = ContractCall::token_call("create_custom_token".to_string(), bincode::serialize(&("TestToken".to_string(), "TEST".to_string(), 1000000u64))?,
+    let call = ContractCall::token_call("create_custom_token".to_string(), bincode::serialize(&("TestToken".to_string(), "TEST".to_string(), 1000000u64))?
     );
 
     let result = executor.execute_call(call, &mut context)?;
@@ -360,7 +360,7 @@ fn test_multiple_token_operations_in_block() -> Result<()> {
         max_call_depth: 10,
     };
 
-    let call = ContractCall::token_call("create_custom_token".to_string(), bincode::serialize(&("TestToken".to_string(), "TEST".to_string(), 1000000u64))?,
+    let call = ContractCall::token_call("create_custom_token".to_string(), bincode::serialize(&("TestToken".to_string(), "TEST".to_string(), 1000000u64))?
     );
 
     let result = executor.execute_call(call, &mut context)?;
