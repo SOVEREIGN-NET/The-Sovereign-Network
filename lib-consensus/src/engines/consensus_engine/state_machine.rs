@@ -12,9 +12,11 @@ use lib_crypto::hash_blake3;
 /// Full audit trails are still maintained in the audit data structures.
 ///
 /// **Usage**: `.take(MAX_AUDIT_RECORDS_TO_LOG)` on audit record iterators
-/// when displaying in logs. This will be used when FeeCollector trait
-/// integration adds per-transaction audit record logging.
-#[allow(dead_code)] // Will be used when audit logging is added
+/// when displaying in logs.
+///
+/// **Timeline**: Will be used in Week 13 when FeeCollector trait integration
+/// adds per-transaction audit record logging to collect_and_distribute_fees().
+#[allow(dead_code)] // Will be used in Week 13 audit logging
 const MAX_AUDIT_RECORDS_TO_LOG: usize = 10;
 
 impl ConsensusEngine {
