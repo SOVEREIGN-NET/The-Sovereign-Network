@@ -25,6 +25,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEST_PHASE="${1:-all}"
 VERBOSE="${VERBOSE:-0}"
 NOCAPTURE="${NOCAPTURE:-0}"
+BUILD_MODE="${BUILD_MODE:-debug}"
 
 # Color codes for output
 RED='\033[0;31m'
