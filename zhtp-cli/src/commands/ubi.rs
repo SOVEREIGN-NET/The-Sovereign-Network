@@ -7,9 +7,9 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for validation
 
-use anyhow::Result;
 use crate::argument_parsing::{UbiArgs, UbiAction, ZhtpCli, format_output};
 use crate::error::{CliResult, CliError};
+use crate::commands::common::validate_identity_id;
 use serde_json::{json, Value};
 
 // ============================================================================
@@ -20,15 +20,13 @@ use serde_json::{json, Value};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UbiOperation {
     Status,
-    PoolStatus,
 }
 
 impl UbiOperation {
     /// Get user-friendly description
     pub fn description(&self) -> &'static str {
         match self {
-            UbiOperation::Status => "Get personal UBI status",
-            UbiOperation::PoolStatus => "Get global UBI pool status",
+            UbiOperation::Status => "Get UBI status (personal or pool)",
         }
     }
 
@@ -47,40 +45,8 @@ impl UbiOperation {
                     "ubi/pool".to_string()
                 }
             }
-            UbiOperation::PoolStatus => "ubi/pool".to_string(),
         }
     }
-}
-
-/// Validate identity ID format (optional for global pool status)
-///
-/// Pure function - format validation only
-pub fn validate_identity_id(identity_id: &str) -> CliResult<()> {
-    if identity_id.is_empty() {
-        return Err(CliError::ConfigError(
-            "Identity ID cannot be empty".to_string(),
-        ));
-    }
-
-    if identity_id.len() < 10 {
-        return Err(CliError::ConfigError(format!(
-            "Invalid identity ID: {}. Must be at least 10 characters",
-            identity_id
-        )));
-    }
-
-    // Identity IDs can contain alphanumeric, colons, and hyphens (for DID format)
-    if !identity_id
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == ':' || c == '-')
-    {
-        return Err(CliError::ConfigError(format!(
-            "Invalid identity ID: {}. Use only alphanumeric characters, colons, and hyphens (DID format)",
-            identity_id
-        )));
-    }
-
-    Ok(())
 }
 
 // ============================================================================
@@ -121,11 +87,7 @@ async fn fetch_ubi_status(
         }
     }
 
-    let operation = if identity_id.is_some() {
-        UbiOperation::Status
-    } else {
-        UbiOperation::PoolStatus
-    };
+    let operation = UbiOperation::Status;
 
     // Build endpoint URL
     let endpoint = operation.endpoint_path(identity_id);
@@ -189,31 +151,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_validate_identity_id_valid() {
-        assert!(validate_identity_id("did:example:123456").is_ok());
-    }
-
-    #[test]
-    fn test_validate_identity_id_with_hyphens() {
-        assert!(validate_identity_id("did:sovereign:citizen-001").is_ok());
-    }
-
-    #[test]
-    fn test_validate_identity_id_empty() {
-        assert!(validate_identity_id("").is_err());
-    }
-
-    #[test]
-    fn test_validate_identity_id_too_short() {
-        assert!(validate_identity_id("short").is_err());
-    }
-
-    #[test]
-    fn test_validate_identity_id_invalid_chars() {
-        assert!(validate_identity_id("did:example:@invalid!").is_err());
-    }
-
-    #[test]
     fn test_ubi_operation_personal_endpoint() {
         let endpoint = UbiOperation::Status.endpoint_path(Some("did:example:123"));
         assert_eq!(endpoint, "ubi/status/did:example:123");
@@ -226,20 +163,12 @@ mod tests {
     }
 
     #[test]
-    fn test_ubi_operation_pool_status_endpoint() {
-        let endpoint = UbiOperation::PoolStatus.endpoint_path(None);
-        assert_eq!(endpoint, "ubi/pool");
-    }
-
-    #[test]
     fn test_ubi_operation_http_method() {
         assert_eq!(UbiOperation::Status.http_method(), "GET");
-        assert_eq!(UbiOperation::PoolStatus.http_method(), "GET");
     }
 
     #[test]
-    fn test_ubi_operation_descriptions() {
+    fn test_ubi_operation_description() {
         assert!(!UbiOperation::Status.description().is_empty());
-        assert!(!UbiOperation::PoolStatus.description().is_empty());
     }
 }
