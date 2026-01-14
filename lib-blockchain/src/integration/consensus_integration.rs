@@ -529,7 +529,7 @@ impl BlockchainConsensusCoordinator {
         let block = self.consensus_proposal_to_block(&proposal).await?;
 
         // Validate block against blockchain rules
-        let should_reject_proposal = {
+        {
             let blockchain = self.blockchain.read().await;
             let previous_block = blockchain.latest_block();
 
@@ -564,8 +564,7 @@ impl BlockchainConsensusCoordinator {
                     }
                 }
             }
-            false
-        };
+        }
 
         // If we're a validator, cast our vote
         if let Some(ref _validator_id) = self.local_validator_id {
