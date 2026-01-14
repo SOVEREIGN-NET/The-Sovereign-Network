@@ -14,6 +14,7 @@ pub mod chain_evaluation;
 pub mod dao;
 pub mod difficulty;
 pub mod engines;
+pub mod mempool;
 pub mod mining;
 pub mod network;
 pub mod proofs;
@@ -27,6 +28,7 @@ pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, Chai
 pub use difficulty::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
 pub use engines::enhanced_bft_engine::{ConsensusStatus, EnhancedBftEngine};
 pub use engines::ConsensusEngine;
+pub use mempool::{Mempool, MempoolTransaction, MempoolStats};
 pub use mining::{should_mine_block, IdentityData};
 pub use network::{BincodeConsensusCodec, CodecError, ConsensusMessageCodec};
 pub use proofs::*;
