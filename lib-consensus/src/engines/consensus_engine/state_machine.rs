@@ -577,13 +577,16 @@ impl ConsensusEngine {
     ///
     /// Creates BlockMetadata structure for fee tracking.
     /// Week 7: Uses simulated fees (production will extract from actual transactions)
+    ///
+    /// **NOTE**: Temporary stub for transaction_count. Will be replaced with actual
+    /// transaction count extraction in Week 10 when full transaction execution is integrated.
     fn extract_block_metadata(&self, proposal: &ConsensusProposal) -> BlockMetadata {
         let simulated_fees = self.simulate_block_fees(proposal.height);
 
         BlockMetadata {
             height: proposal.height,
             timestamp: chrono::Utc::now().timestamp(),
-            transaction_count: 0, // Week 7: Stub (will be actual tx count in Week 8)
+            transaction_count: 0, // Week 7: Stub (will be actual tx count in Week 10)
             total_fees_collected: simulated_fees,
             proposer: proposal.proposer.clone(),
         }
@@ -593,6 +596,9 @@ impl ConsensusEngine {
     ///
     /// Production implementation will extract fees from actual transactions.
     /// This stub provides deterministic simulated fees for testing fee collection.
+    ///
+    /// **NOTE**: This is temporary simulation logic. Will be replaced with actual
+    /// transaction fee extraction in Week 10 when full transaction execution is integrated.
     fn simulate_block_fees(&self, height: u64) -> u64 {
         // Genesis block (height 0) has no transaction fees
         if height == 0 {
