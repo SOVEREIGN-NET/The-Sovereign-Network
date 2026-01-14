@@ -255,7 +255,7 @@ pub struct PoolAddresses {
 }
 
 impl PoolAddresses {
-    /// Check if all required addresses are set
+    /// Check if all required addresses are set (basic pools)
     pub fn is_complete(&self) -> bool {
         self.ubi_pool.is_some()
             && self.emergency_reserve.is_some()
@@ -265,6 +265,53 @@ impl PoolAddresses {
             && self.energy_dao.is_some()
             && self.housing_dao.is_some()
             && self.food_dao.is_some()
+    }
+
+    /// Check if all required addresses are set including consensus pools
+    pub fn is_fully_initialized(&self) -> bool {
+        self.is_complete()
+            && self.consensus_pool.is_some()
+            && self.governance_pool.is_some()
+            && self.treasury_pool.is_some()
+    }
+
+    /// Get all pool addresses as a collection
+    pub fn get_all_pools(&self) -> Vec<([u8; 32], &'static str)> {
+        let mut pools = Vec::new();
+        if let Some(addr) = self.ubi_pool {
+            pools.push((addr, "UBI"));
+        }
+        if let Some(addr) = self.emergency_reserve {
+            pools.push((addr, "Emergency Reserve"));
+        }
+        if let Some(addr) = self.dev_grants {
+            pools.push((addr, "Dev Grants"));
+        }
+        if let Some(addr) = self.healthcare_dao {
+            pools.push((addr, "Healthcare DAO"));
+        }
+        if let Some(addr) = self.education_dao {
+            pools.push((addr, "Education DAO"));
+        }
+        if let Some(addr) = self.energy_dao {
+            pools.push((addr, "Energy DAO"));
+        }
+        if let Some(addr) = self.housing_dao {
+            pools.push((addr, "Housing DAO"));
+        }
+        if let Some(addr) = self.food_dao {
+            pools.push((addr, "Food DAO"));
+        }
+        if let Some(addr) = self.consensus_pool {
+            pools.push((addr, "Consensus"));
+        }
+        if let Some(addr) = self.governance_pool {
+            pools.push((addr, "Governance"));
+        }
+        if let Some(addr) = self.treasury_pool {
+            pools.push((addr, "Treasury"));
+        }
+        pools
     }
 }
 
@@ -1340,5 +1387,73 @@ mod tests {
         // Integer division rounds down
         assert_eq!(FeeRouter::calculate_fee(99), 0);
         assert_eq!(FeeRouter::calculate_fee(199), 1);
+    }
+
+    // ========================================================================
+    // ISSUE #10: FEE ROUTER POOL ADDRESSES DEFINITION TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_all_pool_addresses_fully_configured() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Verify all pools are configured
+        let addresses = router.pool_addresses();
+
+        // Check basic pools
+        assert!(addresses.is_complete());
+        assert!(addresses.ubi_pool.is_some());
+        assert!(addresses.emergency_reserve.is_some());
+        assert!(addresses.dev_grants.is_some());
+        assert!(addresses.healthcare_dao.is_some());
+        assert!(addresses.education_dao.is_some());
+        assert!(addresses.energy_dao.is_some());
+        assert!(addresses.housing_dao.is_some());
+        assert!(addresses.food_dao.is_some());
+
+        // Check consensus pools (Week 11)
+        assert!(addresses.is_fully_initialized());
+        assert!(addresses.consensus_pool.is_some());
+        assert!(addresses.governance_pool.is_some());
+        assert!(addresses.treasury_pool.is_some());
+
+        // Verify no zero addresses
+        assert_ne!(addresses.ubi_pool, Some([0u8; 32]));
+        assert_ne!(addresses.consensus_pool, Some([0u8; 32]));
+        assert_ne!(addresses.governance_pool, Some([0u8; 32]));
+        assert_ne!(addresses.treasury_pool, Some([0u8; 32]));
+    }
+
+    #[test]
+    fn test_pool_addresses_enumeration() {
+        let mut router = FeeRouter::new();
+        init_router(&mut router);
+
+        // Get all pool addresses
+        let all_pools = router.pool_addresses().get_all_pools();
+
+        // Should have 11 pools: 8 basic + 3 consensus
+        assert_eq!(all_pools.len(), 11);
+
+        // Verify pool names are correct
+        let pool_names: Vec<&str> = all_pools.iter().map(|(_, name)| *name).collect();
+        assert!(pool_names.contains(&"UBI"));
+        assert!(pool_names.contains(&"Emergency Reserve"));
+        assert!(pool_names.contains(&"Dev Grants"));
+        assert!(pool_names.contains(&"Healthcare DAO"));
+        assert!(pool_names.contains(&"Education DAO"));
+        assert!(pool_names.contains(&"Energy DAO"));
+        assert!(pool_names.contains(&"Housing DAO"));
+        assert!(pool_names.contains(&"Food DAO"));
+        assert!(pool_names.contains(&"Consensus"));
+        assert!(pool_names.contains(&"Governance"));
+        assert!(pool_names.contains(&"Treasury"));
+
+        // Verify all addresses are unique (no duplicates)
+        let mut addresses: Vec<[u8; 32]> = all_pools.iter().map(|(addr, _)| *addr).collect();
+        addresses.sort();
+        addresses.dedup();
+        assert_eq!(addresses.len(), 11);
     }
 }
