@@ -199,6 +199,112 @@ impl RootRegistry {
         self.welfare_sector_to_dao.get(sector)
     }
 
+    /// Register a welfare subdomain from the WelfareIssuerAdapter (Issue #658)
+    ///
+    /// This is a privileged method that allows ratified sector DAOs to issue
+    /// welfare subdomains. The caller must be the authorized WelfareIssuerAdapter.
+    ///
+    /// # Arguments
+    /// * `sector` - The welfare sector (Food, Health, etc.)
+    /// * `label` - The subdomain label (e.g., "farm" for "farm.food.dao.sov")
+    /// * `owner` - The owner of the new subdomain
+    /// * `verification_level` - The verification level of the owner
+    /// * `expires_at` - When the subdomain expires
+    /// * `caller_dao_id` - The DAO ID making the request (must be bound to sector)
+    /// * `metadata_hash` - Hash of WelfareMetadata for this issuance
+    ///
+    /// # Returns
+    /// * `Ok(NameHash)` - The hash of the newly registered name
+    /// * `Err(String)` - If registration fails
+    pub fn register_from_welfare_adapter(
+        &mut self,
+        sector: WelfareSector,
+        label: &str,
+        owner: PublicKey,
+        verification_level: VerificationLevel,
+        now: u64,
+        expires_at: u64,
+        caller_dao_id: DaoId,
+        _metadata_hash: [u8; 32],
+    ) -> Result<NameHash, String> {
+        // Verify the caller DAO is authorized for this sector
+        let authorized_dao = self
+            .welfare_sector_to_dao
+            .get(&sector)
+            .ok_or_else(|| format!("No DAO registered for sector {:?}", sector))?;
+
+        if *authorized_dao != caller_dao_id {
+            return Err(format!(
+                "DAO {:?} is not authorized for sector {:?}",
+                &caller_dao_id[..8],
+                sector
+            ));
+        }
+
+        // Construct the full name (e.g., "farm.food.dao.sov")
+        let full_name = format!("{}.{}", label, sector.dao_domain());
+        let normalized = normalize_name(&full_name);
+
+        // Verify it's classified as a welfare child
+        let classification = self.policy.classify_name(&normalized);
+        match &classification {
+            NameClass::WelfareChild { sector: class_sector, .. } => {
+                if class_sector != &sector {
+                    return Err("Classification sector mismatch".to_string());
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "Name '{}' is not classified as welfare child",
+                    full_name
+                ));
+            }
+        }
+
+        // Get the parent (sector root) hash
+        let parent_name = sector.dao_domain();
+        let parent_hash = hash_name(&normalize_name(&parent_name));
+
+        // Verify parent exists and is active
+        if let Some(parent_record) = self.get_record(&parent_hash) {
+            if !matches!(parent_record.status, NameStatus::Active) {
+                return Err("Parent welfare root is not active".to_string());
+            }
+        } else {
+            return Err(format!("Parent welfare root '{}' not found", parent_name));
+        }
+
+        // Create the welfare subdomain record
+        let name_hash = hash_name(&normalized);
+        if self.records.contains_key(&name_hash) {
+            return Err(format!("Welfare name '{}' already registered", full_name));
+        }
+
+        let record = CoreNameRecord {
+            name_hash,
+            owner,
+            controller: None,
+            zone_controller: None,
+            parent: Some(parent_hash),
+            depth: 3, // e.g., farm.food.dao.sov = 3 levels deep
+            classification,
+            verification_level,
+            governance_pointer: Some(caller_dao_id),
+            status: NameStatus::Active,
+            expires_at,
+            grace_ends_at: None,
+        };
+
+        // Register in delegation tree
+        self.delegation_tree.add_child(parent_hash, name_hash);
+
+        // Store the record
+        self.records.insert(name_hash, CoreStoredRecord::V2(record));
+        let _ = now;
+
+        Ok(name_hash)
+    }
+
     fn suspend_children(&mut self, parent: &NameHash) {
         let children = self.delegation_tree.children_of(parent);
         for child in children {
