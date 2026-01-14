@@ -109,6 +109,10 @@ pub struct Blockchain {
     pub finality_depth: u64,
     /// Track finalized block heights to avoid reprocessing
     pub finalized_blocks: HashSet<u64>,
+    /// Per-contract state storage (contract_id -> state bytes)
+    pub contract_states: HashMap<[u8; 32], Vec<u8>>,
+    /// Contract state snapshots per block height for historical queries
+    pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
 }
 
 /// Validator information stored on-chain
@@ -204,6 +208,8 @@ impl Blockchain {
             receipts: HashMap::new(),
             finality_depth: 12, // Default: 12 confirmations for finality
             finalized_blocks: HashSet::new(),
+            contract_states: HashMap::new(),
+            contract_state_history: std::collections::BTreeMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -5152,6 +5158,88 @@ impl Blockchain {
         }
 
         Ok(count)
+    }
+
+    // ========================================================================
+    // CONTRACT STATE MANAGEMENT
+    // ========================================================================
+
+    /// Update and persist contract state after execution
+    ///
+    /// # Arguments
+    /// * `contract_id` - 32-byte contract identifier
+    /// * `new_state` - Serialized contract state bytes
+    /// * `block_height` - Current block height for historical snapshots
+    pub fn update_contract_state(
+        &mut self,
+        contract_id: [u8; 32],
+        new_state: Vec<u8>,
+        block_height: u64,
+    ) -> Result<()> {
+        // Update current state
+        self.contract_states.insert(contract_id, new_state.clone());
+
+        // Save snapshot for this block height
+        let snapshot = self.contract_state_history
+            .entry(block_height)
+            .or_insert_with(HashMap::new);
+        snapshot.insert(contract_id, new_state);
+
+        debug!("💾 Contract state updated: {:?} at block {}", contract_id, block_height);
+        Ok(())
+    }
+
+    /// Get current contract state
+    pub fn get_contract_state(&self, contract_id: &[u8; 32]) -> Option<Vec<u8>> {
+        self.contract_states.get(contract_id).cloned()
+    }
+
+    /// Get contract state at a specific block height (for historical queries)
+    ///
+    /// # Arguments
+    /// * `contract_id` - 32-byte contract identifier
+    /// * `height` - Block height to query
+    ///
+    /// # Returns
+    /// State bytes at the specified height, or None if not found
+    pub fn get_contract_state_at_height(
+        &self,
+        contract_id: &[u8; 32],
+        height: u64,
+    ) -> Option<Vec<u8>> {
+        // Try to find snapshot at or before requested height
+        for h in (0..=height).rev() {
+            if let Some(snapshot) = self.contract_state_history.get(&h) {
+                if let Some(state) = snapshot.get(contract_id) {
+                    return Some(state.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Prune old contract state history to save memory
+    ///
+    /// Keeps snapshots for recent blocks and removes older ones.
+    /// # Arguments
+    /// * `keep_blocks` - Number of recent blocks to keep in history
+    pub fn prune_contract_history(&mut self, keep_blocks: u64) {
+        if self.height < keep_blocks {
+            return; // Not enough blocks to prune
+        }
+
+        let prune_before = self.height.saturating_sub(keep_blocks - 1);
+        let keys_to_remove: Vec<u64> = self.contract_state_history
+            .iter()
+            .filter(|(h, _)| **h < prune_before)
+            .map(|(h, _)| *h)
+            .collect();
+
+        for key in keys_to_remove {
+            self.contract_state_history.remove(&key);
+        }
+
+        debug!("🧹 Pruned contract history before block {}", prune_before);
     }
 }
 
