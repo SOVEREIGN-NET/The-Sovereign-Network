@@ -14,6 +14,12 @@ Welcome to the ZHTP Consensus documentation. This directory contains comprehensi
   - Reward system
   - Configuration and monitoring
 
+- **[DIFFICULTY_GOVERNANCE.md](DIFFICULTY_GOVERNANCE.md)** - Comprehensive difficulty parameter governance documentation
+  - Adaptive difficulty adjustment for PoUW consensus
+  - Governance flow and DAO integration
+  - Parameter validation and configuration
+  - API reference and examples
+
 ### API Reference
 
 - **[API_REFERENCE.md](api-reference.md)** - API documentation for consensus components

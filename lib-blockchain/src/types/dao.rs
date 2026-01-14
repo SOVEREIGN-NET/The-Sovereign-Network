@@ -307,23 +307,69 @@ pub struct DAOMetadata {
 /// to be controlled by governance rather than hardcoded values.
 ///
 /// # Validation Rules
+///
 /// - `target_timespan` must be > 0
 /// - `adjustment_interval` must be > 0
 /// - `min_adjustment_factor` must be >= 1 (if provided)
 /// - `max_adjustment_factor` must be >= 1 (if provided)
 /// - `max_adjustment_factor` must be >= `min_adjustment_factor` (if both provided)
 ///
-/// # Example
-/// ```
-/// use lib_blockchain::types::dao::DifficultyParameterUpdateData;
+/// # Examples
 ///
+/// ## Basic Usage
+///
+/// ```rust
+/// use lib_blockchain::types::DifficultyParameterUpdateData;
+///
+/// // Create a proposal to reduce adjustment interval
 /// let update = DifficultyParameterUpdateData::new(
-///     14 * 24 * 60 * 60,  // 2 weeks in seconds
-///     2016,                // blocks between adjustments
+///     7 * 24 * 60 * 60,  // 1 week target_timespan
+///     1008,               // 1008 blocks (half of default)
 /// ).expect("valid parameters");
 ///
-/// assert!(update.validate().is_ok());
+/// // Verify target block time is unchanged (10 minutes)
+/// assert_eq!(update.target_block_time_secs(), 600);
 /// ```
+///
+/// ## With Custom Adjustment Factors
+///
+/// ```rust
+/// use lib_blockchain::types::DifficultyParameterUpdateData;
+///
+/// // Create proposal with asymmetric factors
+/// let update = DifficultyParameterUpdateData::new_with_factors(
+///     14 * 24 * 60 * 60,  // 2 weeks
+///     2016,                // 2016 blocks
+///     Some(2),             // Allow 2x decrease (conservative)
+///     Some(8),             // Allow 8x increase (aggressive)
+/// ).expect("valid parameters");
+///
+/// assert_eq!(update.min_adjustment_factor, Some(2));
+/// assert_eq!(update.max_adjustment_factor, Some(8));
+/// ```
+///
+/// ## Builder Pattern
+///
+/// ```rust
+/// use lib_blockchain::types::DifficultyParameterUpdateData;
+///
+/// let update = DifficultyParameterUpdateData::new(604800, 1008)
+///     .expect("valid parameters")
+///     .with_min_factor(2)
+///     .with_max_factor(8);
+///
+/// assert_eq!(update.min_adjustment_factor, Some(2));
+/// assert_eq!(update.max_adjustment_factor, Some(8));
+/// ```
+///
+/// # Governance Flow
+///
+/// 1. Create `DifficultyParameterUpdateData` with desired parameters
+/// 2. Submit as `DaoProposalType::DifficultyParameterUpdate` proposal
+/// 3. Community votes (requires 30% quorum)
+/// 4. After passing and 7-day timelock, execute with `apply_difficulty_parameter_update()`
+///
+/// See [DIFFICULTY_GOVERNANCE.md](../../../docs/DIFFICULTY_GOVERNANCE.md) for full documentation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DifficultyParameterUpdateData {
     /// Target time for difficulty adjustment interval (in seconds)
