@@ -78,6 +78,14 @@ impl ForkDetector {
     /// 1. Longer chain wins
     /// 2. If equal length, higher cumulative difficulty wins
     /// 3. If equal difficulty, newer timestamp wins
+    ///
+    /// **Timestamp Tiebreaker Rationale:**
+    /// Newer timestamps are chosen to prefer recently-produced blocks when
+    /// cumulative work is equal. This is acceptable because:
+    /// - Block timestamps are validated against network time during consensus
+    /// - BFT consensus requires 2/3+ validator agreement, limiting manipulation
+    /// - Timestamp must be within acceptable drift bounds (enforced in block validation)
+    /// - This tiebreaker is rare (only when cumulative difficulty is exactly equal)
     pub fn evaluate_chains(
         our_chain: &[Block],
         candidate_chain: &[Block],
@@ -195,9 +203,10 @@ mod tests {
     use crate::block::BlockHeader;
     use crate::types::Difficulty;
 
-    fn create_test_block(height: u64, previous_hash: Hash, work_bits: u32) -> Block {
+    fn create_test_block(height: u64, previous_hash: Hash, work_bits: u32, identifier: u64) -> Block {
         let mut hash_bytes = [0u8; 32];
         hash_bytes[..8].copy_from_slice(&height.to_le_bytes());
+        hash_bytes[8..16].copy_from_slice(&identifier.to_le_bytes());
 
         Block {
             header: BlockHeader {
@@ -206,7 +215,7 @@ mod tests {
                 merkle_root: Hash::default(),
                 timestamp: height * 1000, // Deterministic timestamps
                 difficulty: Difficulty::from_bits(1),
-                nonce: 0,
+                nonce: identifier,
                 height,
                 block_hash: Hash::new(hash_bytes),
                 transaction_count: 0,
@@ -219,8 +228,8 @@ mod tests {
 
     #[test]
     fn test_fork_detection_at_same_height() {
-        let block_a = create_test_block(100, Hash::default(), 100);
-        let block_b = create_test_block(100, Hash::default(), 100);
+        let block_a = create_test_block(100, Hash::default(), 100, 1);
+        let block_b = create_test_block(100, Hash::default(), 100, 2);
 
         let fork = ForkDetector::detect_fork(&block_a, &block_b);
         assert!(fork.is_some());
@@ -228,8 +237,8 @@ mod tests {
 
     #[test]
     fn test_no_fork_at_different_heights() {
-        let block_a = create_test_block(100, Hash::default(), 100);
-        let block_b = create_test_block(101, Hash::default(), 101);
+        let block_a = create_test_block(100, Hash::default(), 100, 1);
+        let block_b = create_test_block(101, Hash::default(), 101, 1);
 
         let fork = ForkDetector::detect_fork(&block_a, &block_b);
         assert!(fork.is_none());
@@ -238,14 +247,14 @@ mod tests {
     #[test]
     fn test_longer_chain_wins() {
         let chain_a = vec![
-            create_test_block(1, Hash::default(), 1),
-            create_test_block(2, Hash::default(), 2),
-            create_test_block(3, Hash::default(), 3),
+            create_test_block(1, Hash::default(), 1, 1),
+            create_test_block(2, Hash::default(), 2, 2),
+            create_test_block(3, Hash::default(), 3, 3),
         ];
 
         let chain_b = vec![
-            create_test_block(1, Hash::default(), 1),
-            create_test_block(2, Hash::default(), 2),
+            create_test_block(1, Hash::default(), 1, 1),
+            create_test_block(2, Hash::default(), 2, 2),
         ];
 
         let eval = ForkDetector::evaluate_chains(&chain_a, &chain_b);
@@ -255,13 +264,13 @@ mod tests {
     #[test]
     fn test_chain_with_more_work_wins() {
         let chain_a = vec![
-            create_test_block(1, Hash::default(), 100),
-            create_test_block(2, Hash::default(), 200),
+            create_test_block(1, Hash::default(), 100, 1),
+            create_test_block(2, Hash::default(), 200, 2),
         ];
 
         let chain_b = vec![
-            create_test_block(1, Hash::default(), 1000),
-            create_test_block(2, Hash::default(), 2000),
+            create_test_block(1, Hash::default(), 1000, 1),
+            create_test_block(2, Hash::default(), 2000, 2),
         ];
 
         let eval = ForkDetector::evaluate_chains(&chain_a, &chain_b);
@@ -271,13 +280,13 @@ mod tests {
     #[test]
     fn test_newer_timestamp_wins_at_equal_work() {
         let mut chain_a = vec![
-            create_test_block(1, Hash::default(), 100),
-            create_test_block(2, Hash::default(), 100),
+            create_test_block(1, Hash::default(), 100, 1),
+            create_test_block(2, Hash::default(), 100, 2),
         ];
 
         let mut chain_b = vec![
-            create_test_block(1, Hash::default(), 100),
-            create_test_block(2, Hash::default(), 100),
+            create_test_block(1, Hash::default(), 100, 1),
+            create_test_block(2, Hash::default(), 100, 2),
         ];
 
         // Set different timestamps for last block
