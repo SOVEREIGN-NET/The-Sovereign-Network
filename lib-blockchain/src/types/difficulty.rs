@@ -77,6 +77,59 @@ impl std::fmt::Display for Difficulty {
 /// This struct stores configurable parameters that control how mining difficulty
 /// adjusts over time. These parameters can be updated through governance proposals
 /// to adapt to changing network conditions.
+///
+/// # Design Principles
+///
+/// - **Determinism**: All calculations depend only on chain data, not wall-clock time
+/// - **Safety**: Clamping prevents extreme difficulty swings (max 4x by default)
+/// - **Governance**: Parameters can only be changed through DAO proposals
+/// - **Auditability**: `last_updated_at_height` tracks when config was modified
+///
+/// # Default Values
+///
+/// | Parameter | Default | Rationale |
+/// |-----------|---------|----------|
+/// | `target_timespan` | 1,209,600 sec (14 days) | Bitcoin-compatible |
+/// | `adjustment_interval` | 2016 blocks | ~2 weeks at 10-min blocks |
+/// | `max_difficulty_decrease_factor` | 4 | Prevents >75% difficulty drop |
+/// | `max_difficulty_increase_factor` | 4 | Prevents >4x difficulty jump |
+///
+/// # Example
+///
+/// ```rust
+/// use lib_blockchain::types::DifficultyConfig;
+///
+/// // Create with defaults (Bitcoin-compatible)
+/// let config = DifficultyConfig::default();
+/// assert_eq!(config.target_timespan, 14 * 24 * 60 * 60); // 2 weeks
+/// assert_eq!(config.adjustment_interval, 2016);
+/// assert_eq!(config.target_block_time(), 600); // 10 minutes
+///
+/// // Create with custom parameters
+/// let custom = DifficultyConfig::with_params(
+///     7 * 24 * 60 * 60,  // 1 week target
+///     1008,              // 1008 blocks
+///     4,                 // max 4x decrease
+///     4,                 // max 4x increase
+///     0,                 // genesis height
+/// ).expect("Valid parameters");
+/// assert_eq!(custom.target_block_time(), 600); // Still 10 minutes
+///
+/// // Clamping prevents extreme adjustments
+/// let fast_timespan = 1000; // Much faster than target
+/// let clamped = config.clamp_timespan(fast_timespan);
+/// assert!(clamped >= config.target_timespan / 4); // Clamped to min
+/// ```
+///
+/// # Governance Integration
+///
+/// To modify difficulty parameters through governance:
+///
+/// 1. Create a `DifficultyParameterUpdateData` proposal
+/// 2. Submit through DAO with `DaoProposalType::DifficultyParameterUpdate`
+/// 3. After voting passes and timelock expires, call `apply_difficulty_parameter_update()`
+///
+/// See [`DifficultyParameterUpdateData`](crate::types::DifficultyParameterUpdateData) for proposal creation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DifficultyConfig {
     /// Target timespan for difficulty adjustment period (in seconds)
