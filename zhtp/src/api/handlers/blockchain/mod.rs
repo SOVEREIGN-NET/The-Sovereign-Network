@@ -103,6 +103,13 @@ impl ZhtpRequestHandler for BlockchainHandler {
             (ZhtpMethod::Post, "/api/v1/blockchain/transaction/broadcast") => {
                 self.handle_broadcast_transaction(request).await
             }
+            // Identity and Wallet Query endpoints (Phase 4)
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/blockchain/identities/") => {
+                self.handle_get_identity(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/blockchain/wallets") => {
+                self.handle_list_wallets(request).await
+            }
             // Smart Contract endpoints
             (ZhtpMethod::Post, "/api/v1/blockchain/contracts/deploy") => {
                 self.handle_deploy_contract(request).await
@@ -1770,6 +1777,114 @@ impl BlockchainHandler {
         );
 
         let json_response = serde_json::to_vec(&stats)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// Get identity by DID
+    async fn handle_get_identity(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        // Extract DID from path: /api/v1/blockchain/identities/{did}
+        let path_parts: Vec<&str> = request.uri.split('/').collect();
+        let did = path_parts
+            .get(5)
+            .ok_or_else(|| anyhow::anyhow!("DID required"))?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        // Query identity from registry
+        if let Some(identity) = blockchain.identity_registry.get(&did.to_string()) {
+            let response_data = serde_json::json!({
+                "status": "identity_found",
+                "did": identity.did,
+                "display_name": identity.display_name,
+                "identity_type": identity.identity_type,
+                "registration_fee": identity.registration_fee,
+                "created_at": identity.created_at,
+                "controlled_nodes": identity.controlled_nodes,
+                "owned_wallets": identity.owned_wallets,
+            });
+
+            let json_response = serde_json::to_vec(&response_data)?;
+            return Ok(ZhtpResponse::success_with_content_type(
+                json_response,
+                "application/json".to_string(),
+                None,
+            ));
+        }
+
+        // Identity not found
+        let response_data = serde_json::json!({
+            "status": "identity_not_found",
+            "did": did,
+            "message": format!("Identity not found for DID: {}", did),
+        });
+
+        let json_response = serde_json::to_vec(&response_data)?;
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            "application/json".to_string(),
+            None,
+        ))
+    }
+
+    /// List wallets, optionally filtered by owner identity
+    async fn handle_list_wallets(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        // Try to parse owner filter from query parameters if present
+        let owner_filter = if let Some(query_pos) = request.uri.find('?') {
+            let query_part = &request.uri[query_pos + 1..];
+            if query_part.starts_with("owner_identity=") {
+                let owner_str = &query_part[15..];
+                Some(owner_str.to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Collect wallets, optionally filtering by owner_identity_id
+        let wallets: Vec<serde_json::Value> = blockchain
+            .wallet_registry
+            .iter()
+            .filter(|(_, wallet)| {
+                if let Some(ref owner_id) = owner_filter {
+                    if let Some(wallet_owner) = &wallet.owner_identity_id {
+                        wallet_owner.to_string() == *owner_id
+                    } else {
+                        false
+                    }
+                } else {
+                    true
+                }
+            })
+            .map(|(wallet_id, wallet)| {
+                serde_json::json!({
+                    "wallet_id": wallet_id,
+                    "wallet_name": wallet.wallet_name,
+                    "wallet_type": wallet.wallet_type,
+                    "alias": wallet.alias,
+                    "owner_identity_id": wallet.owner_identity_id,
+                    "capabilities": wallet.capabilities,
+                    "created_at": wallet.created_at,
+                })
+            })
+            .collect();
+
+        let response_data = serde_json::json!({
+            "status": "success",
+            "wallet_count": wallets.len(),
+            "owner_filter": owner_filter,
+            "wallets": wallets,
+        });
+
+        let json_response = serde_json::to_vec(&response_data)?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
             "application/json".to_string(),
