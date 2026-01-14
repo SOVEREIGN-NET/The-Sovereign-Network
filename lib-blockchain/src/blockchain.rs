@@ -1027,18 +1027,70 @@ impl Blockchain {
         self.height
     }
 
-    /// Get the current difficulty configuration
+    /// Get the current difficulty configuration.
+    ///
+    /// Returns a reference to the blockchain's current `DifficultyConfig`,
+    /// which contains parameters governing difficulty adjustment behavior.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let blockchain = Blockchain::new(genesis_block, coordinator)?;
+    /// let config = blockchain.get_difficulty_config();
+    /// 
+    /// println!("Target timespan: {} seconds", config.target_timespan);
+    /// println!("Adjustment interval: {} blocks", config.adjustment_interval);
+    /// println!("Max decrease factor: {}", config.max_difficulty_decrease_factor);
+    /// println!("Max increase factor: {}", config.max_difficulty_increase_factor);
+    /// ```
     pub fn get_difficulty_config(&self) -> &DifficultyConfig {
         &self.difficulty_config
     }
 
-    /// Update the difficulty configuration (for governance updates)
+    /// Update the difficulty configuration (for governance updates).
     ///
     /// This method validates the new configuration before applying it.
     /// The `last_updated_at_height` field will be set to the current blockchain height.
     ///
+    /// # Arguments
+    ///
+    /// * `config` - The new difficulty configuration to apply
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the configuration was successfully updated
+    /// * `Err` if validation fails (invalid parameters)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use lib_blockchain::DifficultyConfig;
+    ///
+    /// let mut blockchain = Blockchain::new(genesis_block, coordinator)?;
+    ///
+    /// // Create a custom difficulty configuration
+    /// let new_config = DifficultyConfig {
+    ///     target_timespan: 900,  // 15 minutes
+    ///     adjustment_interval: 100,
+    ///     max_difficulty_decrease_factor: 0.75,
+    ///     max_difficulty_increase_factor: 1.5,
+    ///     last_updated_at_height: 0,  // Will be set automatically
+    /// };
+    ///
+    /// // Apply the new configuration
+    /// blockchain.set_difficulty_config(new_config)?;
+    ///
+    /// // Verify the update
+    /// assert_eq!(blockchain.get_difficulty_config().target_timespan, 900);
+    /// ```
+    ///
     /// # Errors
-    /// Returns an error if the configuration parameters are invalid.
+    ///
+    /// Returns an error if the configuration parameters are invalid:
+    /// - `target_timespan` must be > 0
+    /// - `adjustment_interval` must be > 0
+    /// - `max_difficulty_decrease_factor` must be in range (0.0, 1.0]
+    /// - `max_difficulty_increase_factor` must be >= 1.0
     pub fn set_difficulty_config(&mut self, mut config: DifficultyConfig) -> Result<()> {
         config.validate().map_err(|e| anyhow::anyhow!("Invalid difficulty config: {}", e))?;
         config.last_updated_at_height = self.height;
@@ -2507,26 +2559,66 @@ impl Blockchain {
 
     /// Apply a difficulty parameter update from a passed DAO proposal.
     ///
-    /// This method:
-    /// 1. Verifies the proposal exists and has passed voting
-    /// 2. Extracts and validates the new difficulty parameters
-    /// 3. Updates the blockchain's difficulty_config
-    /// 4. Synchronizes changes with the consensus coordinator
-    /// 5. Logs all changes at info level
+    /// This method implements the governance flow for updating difficulty parameters:
+    /// 1. Verifies the proposal exists and has passed voting (30% quorum)
+    /// 2. Checks the proposal hasn't already been executed (idempotency guard)
+    /// 3. Extracts and validates the new difficulty parameters
+    /// 4. Updates the blockchain's `difficulty_config`
+    /// 5. Synchronizes changes with the consensus coordinator
+    /// 6. Logs all changes at info level
+    ///
+    /// The method is idempotent - calling it multiple times with the same
+    /// proposal_id will succeed but only apply changes once.
     ///
     /// # Arguments
+    ///
     /// * `proposal_id` - The hash ID of the passed difficulty parameter update proposal
     ///
     /// # Returns
-    /// * `Ok(())` on successful update
+    ///
+    /// * `Ok(())` on successful update (or if already executed)
     /// * `Err` if proposal doesn't exist, hasn't passed, or parameters are invalid
     ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use lib_blockchain::{Blockchain, Hash};
+    ///
+    /// let mut blockchain = Blockchain::new(genesis_block, coordinator)?;
+    ///
+    /// // After a DifficultyParameterUpdate proposal has passed voting...
+    /// let proposal_id: Hash = /* passed proposal hash */;
+    ///
+    /// // Apply the governance update
+    /// match blockchain.apply_difficulty_parameter_update(proposal_id) {
+    ///     Ok(()) => {
+    ///         println!("Difficulty parameters updated successfully");
+    ///         let config = blockchain.get_difficulty_config();
+    ///         println!("New target timespan: {}", config.target_timespan);
+    ///     }
+    ///     Err(e) => {
+    ///         eprintln!("Failed to apply update: {}", e);
+    ///     }
+    /// }
+    ///
+    /// // Idempotent: calling again is safe
+    /// blockchain.apply_difficulty_parameter_update(proposal_id)?; // No-op, already applied
+    /// ```
+    ///
+    /// # Governance Flow
+    ///
+    /// This method is typically called after:
+    /// 1. A `DaoProposalType::DifficultyParameterUpdate` proposal is created
+    /// 2. The 7-day voting period completes
+    /// 3. The proposal achieves 30% quorum with majority approval
+    /// 4. The timelock period expires (if any)
+    ///
     /// # Errors
-    /// - Proposal not found (`InvalidProposal`)
-    /// - Proposal not passed (`InvalidProposal`)
-    /// - Wrong proposal type (`InvalidProposal`)
-    /// - New parameters fail validation (`ParameterValidationError`)
-    /// - Parameters were already applied at this proposal_id
+    ///
+    /// - `InvalidProposal`: Proposal not found
+    /// - `InvalidProposal`: Proposal has not passed voting
+    /// - `InvalidProposal`: Wrong proposal type
+    /// - `ParameterValidationError`: New parameters fail validation
     pub fn apply_difficulty_parameter_update(&mut self, proposal_id: Hash) -> Result<()> {
         // 0. Check if already executed (prevent double-execution)
         if self.executed_dao_proposals.contains(&proposal_id) {
