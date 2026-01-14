@@ -242,6 +242,10 @@ pub enum DaoAction {
     },
     /// Claim UBI (orchestrated)
     ClaimUbi,
+    /// Get DAO treasury balance
+    Balance,
+    /// Get treasury balance (alias for Balance)
+    TreasuryBalance,
 }
 
 /// Citizen management commands
