@@ -25,6 +25,23 @@ mod sov_week10_integration_tests {
     // TEST UTILITIES AND FIXTURES
     // ========================================================================
 
+    /// Generate a deterministic but varied test public key from an index
+    ///
+    /// Instead of repeating a single byte (e.g., [42, 42, 42, ...]), this creates
+    /// a more realistic key by using the index as a seed and applying a simple
+    /// deterministic hash-like transformation to create varied byte patterns.
+    fn create_test_public_key(index: u32) -> PublicKey {
+        let mut key_bytes = vec![0u8; 32];
+        let index_bytes = index.to_le_bytes();
+        
+        // Fill key with a deterministic but varied pattern based on index
+        for i in 0..32 {
+            key_bytes[i] = (index_bytes[i % 4].wrapping_add(i as u8)).wrapping_mul(7);
+        }
+        
+        PublicKey::new(key_bytes)
+    }
+
     /// Create a test transaction with specified type and fee
     fn create_test_transaction(tx_type: TransactionType, fee: u64, index: u32) -> Transaction {
         Transaction {
@@ -36,13 +53,13 @@ mod sov_week10_integration_tests {
                 TransactionOutput {
                     commitment: Hash::default(),
                     note: Hash::default(),
-                    recipient: PublicKey::new(vec![index as u8; 32]),
+                    recipient: create_test_public_key(index),
                 }
             ],
             fee,
             signature: Signature {
                 signature: format!("sig_{}", index).as_bytes().to_vec(),
-                public_key: PublicKey::new(vec![index as u8; 32]),
+                public_key: create_test_public_key(index),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: 0,
             },
