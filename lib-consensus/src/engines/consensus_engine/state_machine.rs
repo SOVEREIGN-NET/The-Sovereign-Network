@@ -1,6 +1,24 @@
 use super::*;
 use lib_crypto::hash_blake3;
 
+// ============================================================================
+// AUDIT AND LOGGING CONSTANTS
+// ============================================================================
+
+/// Maximum number of audit records to display in logs
+///
+/// When logging per-transaction fee audit records during fee collection,
+/// limit output to avoid log spam in blocks with many transactions.
+/// Full audit trails are still maintained in the audit data structures.
+///
+/// **Usage**: `.take(MAX_AUDIT_RECORDS_TO_LOG)` on audit record iterators
+/// when displaying in logs.
+///
+/// **Timeline**: Will be used in Week 13 when FeeCollector trait integration
+/// adds per-transaction audit record logging to collect_and_distribute_fees().
+#[allow(dead_code)] // Will be used in Week 13 audit logging
+const MAX_AUDIT_RECORDS_TO_LOG: usize = 10;
+
 impl ConsensusEngine {
     /// Process a single consensus event (pure component method)
     /// This replaces the standalone start_consensus() loop pattern
@@ -577,13 +595,16 @@ impl ConsensusEngine {
     ///
     /// Creates BlockMetadata structure for fee tracking.
     /// Week 7: Uses simulated fees (production will extract from actual transactions)
+    ///
+    /// **NOTE**: Temporary stub for transaction_count. Will be replaced with actual
+    /// transaction count extraction in Week 10 when full transaction execution is integrated.
     fn extract_block_metadata(&self, proposal: &ConsensusProposal) -> BlockMetadata {
         let simulated_fees = self.simulate_block_fees(proposal.height);
 
         BlockMetadata {
             height: proposal.height,
             timestamp: chrono::Utc::now().timestamp(),
-            transaction_count: 0, // Week 7: Stub (will be actual tx count in Week 8)
+            transaction_count: 0, // Temporary stub - will be replaced in Week 10
             total_fees_collected: simulated_fees,
             proposer: proposal.proposer.clone(),
         }
@@ -593,6 +614,9 @@ impl ConsensusEngine {
     ///
     /// Production implementation will extract fees from actual transactions.
     /// This stub provides deterministic simulated fees for testing fee collection.
+    ///
+    /// **NOTE**: This is temporary simulation logic. Will be replaced with actual
+    /// transaction fee extraction in Week 10 when full transaction execution is integrated.
     fn simulate_block_fees(&self, height: u64) -> u64 {
         // Genesis block (height 0) has no transaction fees
         if height == 0 {
