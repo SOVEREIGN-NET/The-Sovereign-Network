@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use anyhow::{Result, anyhow};
+use blake3;
 use crate::integration::crypto_integration::PublicKey;
 
 // ============================================================================
