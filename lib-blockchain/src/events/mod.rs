@@ -5,8 +5,10 @@
 //! transactions are processed, contracts are executed, etc.
 
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use anyhow::Result;
+use async_trait::async_trait;
 
 // ============================================================================
 // EVENT TYPES
@@ -87,9 +89,13 @@ impl std::fmt::Display for BlockchainEvent {
 // ============================================================================
 
 /// Trait for entities that listen to blockchain events
+#[async_trait]
 pub trait BlockchainEventListener: Send {
     /// Called when a blockchain event occurs
-    fn on_event(&mut self, event: BlockchainEvent) -> Result<()>;
+    /// 
+    /// This method is async to allow listeners to perform async operations
+    /// without blocking other listeners or the blockchain thread.
+    async fn on_event(&mut self, event: BlockchainEvent) -> Result<()>;
 }
 
 // ============================================================================
@@ -119,23 +125,19 @@ impl BlockchainEventPublisher {
     }
 
     /// Subscribe to blockchain events
-    pub fn subscribe(&self, listener: Box<dyn BlockchainEventListener>) -> Result<()> {
-        let mut listeners = self.listeners.lock().map_err(|e| {
-            anyhow::anyhow!("Failed to lock listeners: {}", e)
-        })?;
+    pub async fn subscribe(&self, listener: Box<dyn BlockchainEventListener>) -> Result<()> {
+        let mut listeners = self.listeners.lock().await;
         listeners.push(listener);
         Ok(())
     }
 
     /// Publish an event to all subscribers
-    pub fn publish(&self, event: BlockchainEvent) -> Result<()> {
-        let mut listeners = self.listeners.lock().map_err(|e| {
-            anyhow::anyhow!("Failed to lock listeners: {}", e)
-        })?;
+    pub async fn publish(&self, event: BlockchainEvent) -> Result<()> {
+        let mut listeners = self.listeners.lock().await;
 
         // Notify all listeners
         for listener in listeners.iter_mut() {
-            if let Err(e) = listener.on_event(event.clone()) {
+            if let Err(e) = listener.on_event(event.clone()).await {
                 tracing::warn!("Event listener error: {}", e);
                 // Continue notifying other listeners even if one fails
             }
@@ -145,18 +147,14 @@ impl BlockchainEventPublisher {
     }
 
     /// Get number of subscribed listeners
-    pub fn listener_count(&self) -> Result<usize> {
-        let listeners = self.listeners.lock().map_err(|e| {
-            anyhow::anyhow!("Failed to lock listeners: {}", e)
-        })?;
+    pub async fn listener_count(&self) -> Result<usize> {
+        let listeners = self.listeners.lock().await;
         Ok(listeners.len())
     }
 
     /// Clear all listeners (for testing)
-    pub fn clear_listeners(&self) -> Result<()> {
-        let mut listeners = self.listeners.lock().map_err(|e| {
-            anyhow::anyhow!("Failed to lock listeners: {}", e)
-        })?;
+    pub async fn clear_listeners(&self) -> Result<()> {
+        let mut listeners = self.listeners.lock().await;
         listeners.clear();
         Ok(())
     }
@@ -188,18 +186,14 @@ impl TestEventListener {
     }
 
     /// Get captured events
-    pub fn get_events(&self) -> Result<Vec<BlockchainEvent>> {
-        let events = self.events.lock().map_err(|e| {
-            anyhow::anyhow!("Failed to lock events: {}", e)
-        })?;
+    pub async fn get_events(&self) -> Result<Vec<BlockchainEvent>> {
+        let events = self.events.lock().await;
         Ok(events.clone())
     }
 
     /// Clear captured events
-    pub fn clear(&self) -> Result<()> {
-        let mut events = self.events.lock().map_err(|e| {
-            anyhow::anyhow!("Failed to lock events: {}", e)
-        })?;
+    pub async fn clear(&self) -> Result<()> {
+        let mut events = self.events.lock().await;
         events.clear();
         Ok(())
     }
@@ -211,11 +205,10 @@ impl Default for TestEventListener {
     }
 }
 
+#[async_trait]
 impl BlockchainEventListener for TestEventListener {
-    fn on_event(&mut self, event: BlockchainEvent) -> Result<()> {
-        let mut events = self.events.lock().map_err(|e| {
-            anyhow::anyhow!("Failed to lock events: {}", e)
-        })?;
+    async fn on_event(&mut self, event: BlockchainEvent) -> Result<()> {
+        let mut events = self.events.lock().await;
         events.push(event);
         Ok(())
     }
@@ -229,26 +222,26 @@ impl BlockchainEventListener for TestEventListener {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_event_publisher_creation() {
+    #[tokio::test]
+    async fn test_event_publisher_creation() {
         let publisher = BlockchainEventPublisher::new();
-        assert_eq!(publisher.listener_count().unwrap(), 0);
+        assert_eq!(publisher.listener_count().await.unwrap(), 0);
     }
 
-    #[test]
-    fn test_subscribe_listener() {
+    #[tokio::test]
+    async fn test_subscribe_listener() {
         let publisher = BlockchainEventPublisher::new();
         let listener = Box::new(TestEventListener::new());
-        publisher.subscribe(listener).unwrap();
-        assert_eq!(publisher.listener_count().unwrap(), 1);
+        publisher.subscribe(listener).await.unwrap();
+        assert_eq!(publisher.listener_count().await.unwrap(), 1);
     }
 
-    #[test]
-    fn test_publish_event_to_listeners() {
+    #[tokio::test]
+    async fn test_publish_event_to_listeners() {
         let publisher = BlockchainEventPublisher::new();
         let listener = Box::new(TestEventListener::new());
         let listener_ref = listener.clone();
-        publisher.subscribe(listener).unwrap();
+        publisher.subscribe(listener).await.unwrap();
 
         // Publish an event
         let event = BlockchainEvent::BlockAdded {
@@ -258,16 +251,16 @@ mod tests {
             transaction_count: 5,
         };
 
-        publisher.publish(event.clone()).unwrap();
+        publisher.publish(event.clone()).await.unwrap();
 
         // Verify listener captured the event
-        let events = listener_ref.get_events().unwrap();
+        let events = listener_ref.get_events().await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0], event);
     }
 
-    #[test]
-    fn test_multiple_listeners_receive_events() {
+    #[tokio::test]
+    async fn test_multiple_listeners_receive_events() {
         let publisher = BlockchainEventPublisher::new();
 
         let listener1 = Box::new(TestEventListener::new());
@@ -276,10 +269,10 @@ mod tests {
         let listener2 = Box::new(TestEventListener::new());
         let listener2_ref = listener2.clone();
 
-        publisher.subscribe(listener1).unwrap();
-        publisher.subscribe(listener2).unwrap();
+        publisher.subscribe(listener1).await.unwrap();
+        publisher.subscribe(listener2).await.unwrap();
 
-        assert_eq!(publisher.listener_count().unwrap(), 2);
+        assert_eq!(publisher.listener_count().await.unwrap(), 2);
 
         // Publish an event
         let event = BlockchainEvent::BlockFinalized {
@@ -287,11 +280,11 @@ mod tests {
             block_hash: [2u8; 32],
         };
 
-        publisher.publish(event.clone()).unwrap();
+        publisher.publish(event.clone()).await.unwrap();
 
         // Both listeners should receive the event
-        let events1 = listener1_ref.get_events().unwrap();
-        let events2 = listener2_ref.get_events().unwrap();
+        let events1 = listener1_ref.get_events().await.unwrap();
+        let events2 = listener2_ref.get_events().await.unwrap();
 
         assert_eq!(events1.len(), 1);
         assert_eq!(events2.len(), 1);

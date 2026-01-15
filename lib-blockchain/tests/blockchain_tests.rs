@@ -100,8 +100,8 @@ fn create_mined_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -
     Ok(Block::new(header, transactions))
 }
 
-#[test]
-fn test_blockchain_creation() -> Result<()> {
+#[tokio::test]
+async fn test_blockchain_creation() -> Result<()> {
     let blockchain = Blockchain::new()?;
     
     // Check initial state
@@ -121,15 +121,15 @@ fn test_blockchain_creation() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_block_addition() -> Result<()> {
+#[tokio::test]
+async fn test_block_addition() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Create a test block using helper function
     let block = create_mined_block(&blockchain, Vec::new())?;
     
     // Add the block
-    blockchain.add_block(block)?;
+    blockchain.add_block(block).await?;
     
     // Verify the state
     assert_eq!(blockchain.height, 1);
@@ -138,8 +138,8 @@ fn test_block_addition() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_identity_registration() -> Result<()> {
+#[tokio::test]
+async fn test_identity_registration() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Create identity data
@@ -168,8 +168,8 @@ fn test_identity_registration() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_identity_update() -> Result<()> {
+#[tokio::test]
+async fn test_identity_update() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // First register an identity directly
@@ -210,8 +210,8 @@ fn test_identity_update() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_identity_revocation() -> Result<()> {
+#[tokio::test]
+async fn test_identity_revocation() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Register an identity first directly
@@ -246,15 +246,15 @@ fn test_identity_revocation() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_difficulty_adjustment() -> Result<()> {
+#[tokio::test]
+async fn test_difficulty_adjustment() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     let _initial_difficulty = blockchain.difficulty;
     
     // Add enough blocks to trigger difficulty adjustment
     for _i in 1..=crate::DIFFICULTY_ADJUSTMENT_INTERVAL {
         let block = create_mined_block(&blockchain, Vec::new())?;
-        blockchain.add_block(block)?;
+        blockchain.add_block(block).await?;
     }
     
     // Difficulty should have been checked for adjustment
@@ -264,15 +264,15 @@ fn test_difficulty_adjustment() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_utxo_management() -> Result<()> {
+#[tokio::test]
+async fn test_utxo_management() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Create a simple block without transactions first to test block validation
     let empty_block = create_mined_block(&blockchain, Vec::new())?;
     
     // Add the block - this should work with no transactions
-    blockchain.add_block(empty_block)?;
+    blockchain.add_block(empty_block).await?;
     
     // Verify that the block was added successfully
     assert_eq!(blockchain.height, 1);
@@ -281,8 +281,8 @@ fn test_utxo_management() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_pending_transactions() -> Result<()> {
+#[tokio::test]
+async fn test_pending_transactions() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Create a simple test transaction
@@ -299,8 +299,8 @@ fn test_pending_transactions() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_block_verification() -> Result<()> {
+#[tokio::test]
+async fn test_block_verification() -> Result<()> {
     let blockchain = Blockchain::new()?;
     let mining_config = get_mining_config_from_env();
     
@@ -343,8 +343,8 @@ fn test_block_verification() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_economics_transactions() -> Result<()> {
+#[tokio::test]
+async fn test_economics_transactions() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Create economics transaction with a specific address
@@ -375,8 +375,8 @@ fn test_economics_transactions() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_identity_confirmations() -> Result<()> {
+#[tokio::test]
+async fn test_identity_confirmations() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Create a proper identity registration using the register_identity method
@@ -402,7 +402,7 @@ fn test_identity_confirmations() -> Result<()> {
             // Add more blocks to increase confirmations
             for _i in 1..=2 {
                 let empty_block = create_mined_block(&blockchain, Vec::new())?;
-                blockchain.add_block(empty_block)?;
+                blockchain.add_block(empty_block).await?;
             }
             
             // Check confirmations again - should now be 3
@@ -447,8 +447,8 @@ fn test_identity_confirmations() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_blockchain_serialization() -> Result<()> {
+#[tokio::test]
+async fn test_blockchain_serialization() -> Result<()> {
     let blockchain = Blockchain::new()?;
 
     // Test serialization
@@ -467,8 +467,8 @@ fn test_blockchain_serialization() -> Result<()> {
 // FINALITY TRACKING TESTS
 // ============================================================================
 
-#[test]
-fn test_finality_tracking_basic() -> Result<()> {
+#[tokio::test]
+async fn test_finality_tracking_basic() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Initially, block should not be finalized
@@ -483,8 +483,8 @@ fn test_finality_tracking_basic() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_finality_depth_calculation() -> Result<()> {
+#[tokio::test]
+async fn test_finality_depth_calculation() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Set finality depth to 12
@@ -510,8 +510,8 @@ fn test_finality_depth_calculation() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_finalize_blocks_tracking() -> Result<()> {
+#[tokio::test]
+async fn test_finalize_blocks_tracking() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Manually mark blocks as finalized
@@ -531,8 +531,8 @@ fn test_finalize_blocks_tracking() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_cannot_reorg_below_finality() -> Result<()> {
+#[tokio::test]
+async fn test_cannot_reorg_below_finality() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Manually mark blocks 1-5 as finalized
@@ -557,8 +557,8 @@ fn test_cannot_reorg_below_finality() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_finalized_blocks_set_operations() -> Result<()> {
+#[tokio::test]
+async fn test_finalized_blocks_set_operations() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Finalize a few blocks
@@ -587,8 +587,8 @@ fn test_finalized_blocks_set_operations() -> Result<()> {
 // VALIDATOR REGISTRY SYNCHRONIZATION TESTS
 // ============================================================================
 
-#[test]
-fn test_register_validator_added_to_blockchain() -> Result<()> {
+#[tokio::test]
+async fn test_register_validator_added_to_blockchain() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Register the validator identity first
@@ -609,8 +609,8 @@ fn test_register_validator_added_to_blockchain() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_consensus_queries_validator_set() -> Result<()> {
+#[tokio::test]
+async fn test_consensus_queries_validator_set() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Register validator identities first
@@ -642,8 +642,8 @@ fn test_consensus_queries_validator_set() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_validator_set_in_sync() -> Result<()> {
+#[tokio::test]
+async fn test_validator_set_in_sync() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Register validator identities first
@@ -673,8 +673,8 @@ fn test_validator_set_in_sync() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_validator_stake_update_propagates() -> Result<()> {
+#[tokio::test]
+async fn test_validator_stake_update_propagates() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Register validator identity first
@@ -707,8 +707,8 @@ fn test_validator_stake_update_propagates() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_total_validator_stake_calculation() -> Result<()> {
+#[tokio::test]
+async fn test_total_validator_stake_calculation() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Register validator identities first
@@ -730,8 +730,8 @@ fn test_total_validator_stake_calculation() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_is_validator_active_check() -> Result<()> {
+#[tokio::test]
+async fn test_is_validator_active_check() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Register validator identity first
@@ -749,8 +749,8 @@ fn test_is_validator_active_check() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_sync_validator_set_to_consensus() -> Result<()> {
+#[tokio::test]
+async fn test_sync_validator_set_to_consensus() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Register validator identities first

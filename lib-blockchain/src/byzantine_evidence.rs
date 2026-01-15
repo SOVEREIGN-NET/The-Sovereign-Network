@@ -6,7 +6,18 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use anyhow::{Result, anyhow};
+use blake3;
 use crate::integration::crypto_integration::PublicKey;
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/// Slashing amount per strike (in SOV tokens)
+const SLASHING_AMOUNT_PER_STRIKE: u64 = 10;
+
+/// Number of strikes before validator is marked for slashing
+const STRIKE_THRESHOLD_FOR_SLASHING: u64 = 3;
 
 // ============================================================================
 // EVIDENCE TYPES
@@ -135,19 +146,19 @@ impl ByzantineEvidenceRecorder {
 
     /// Record a piece of Byzantine evidence
     pub fn record_evidence(&mut self, evidence: ByzantineEvidence) -> Result<[u8; 32]> {
-        // Generate unique evidence ID from validator key, block height, and evidence type
+        // Generate unique evidence ID using Blake3 cryptographic hash over all components
+        // This ensures collision resistance even when same validator has multiple evidence
+        // types at the same block height
         let evidence_id = {
-            let mut id = [0u8; 32];
-            // Use validator key as base
-            id[..32].copy_from_slice(&evidence.validator.key_id);
-
-            // XOR with block height bytes to ensure uniqueness across blocks
-            let height_bytes = evidence.block_height.to_le_bytes();
-            for i in 0..8 {
-                id[i] ^= height_bytes[i];
-            }
-
-            // XOR with evidence type discriminant
+            let mut hasher = blake3::Hasher::new();
+            
+            // Hash validator key
+            hasher.update(&evidence.validator.key_id);
+            
+            // Hash block height
+            hasher.update(&evidence.block_height.to_le_bytes());
+            
+            // Hash evidence type discriminant
             let type_discriminant = match evidence.evidence_type {
                 ByzantineEvidenceType::DoubleProposal => 1u8,
                 ByzantineEvidenceType::EquivocationOnBlock => 2u8,
@@ -156,7 +167,15 @@ impl ByzantineEvidenceRecorder {
                 ByzantineEvidenceType::MissedBlocks => 5u8,
                 ByzantineEvidenceType::ConsensusViolation => 6u8,
             };
-            id[8] ^= type_discriminant;
+            hasher.update(&[type_discriminant]);
+            
+            // Hash timestamp to ensure uniqueness even for duplicate evidence submissions
+            hasher.update(&evidence.recorded_at.to_le_bytes());
+            
+            // Finalize hash to 32-byte array
+            let hash = hasher.finalize();
+            let mut id = [0u8; 32];
+            id.copy_from_slice(hash.as_bytes());
             id
         };
 
@@ -173,12 +192,12 @@ impl ByzantineEvidenceRecorder {
         let strikes = self.validator_strikes.entry(validator_key).or_insert(0);
         *strikes += 1;
 
-        // Add to slashing amount: 10 SOV per strike
+        // Add to slashing amount based on configured amount per strike
         let slashing_amount = self.slashing_amounts.entry(validator_key).or_insert(0);
-        *slashing_amount += 10;
+        *slashing_amount += SLASHING_AMOUNT_PER_STRIKE;
 
-        // Mark for slashing if too many strikes (3 strikes = slashing)
-        if *strikes >= 3 {
+        // Mark for slashing if strikes exceed threshold
+        if *strikes >= STRIKE_THRESHOLD_FOR_SLASHING {
             self.marked_for_slashing.insert(validator_key);
         }
 
@@ -395,5 +414,42 @@ mod tests {
         assert_eq!(recorder.evidence_count(), 2);
         assert_eq!(recorder.get_validator_strikes(&[4u8; 32]), 1);
         assert_eq!(recorder.get_validator_strikes(&[5u8; 32]), 1);
+    }
+
+    #[test]
+    fn test_evidence_id_uniqueness_different_types_same_height() {
+        // Test that different evidence types at the same height generate unique IDs
+        // This verifies the Blake3 hash approach prevents collisions
+        let mut recorder = ByzantineEvidenceRecorder::new();
+        let validator = test_public_key(6);
+
+        // Create two different evidence types at the same height but different timestamps
+        let evidence1 = ByzantineEvidence::new(
+            ByzantineEvidenceType::DoubleProposal,
+            validator.clone(),
+            100, // same height
+            1000, // timestamp 1
+            "Double proposal".to_string(),
+        );
+
+        let evidence2 = ByzantineEvidence::new(
+            ByzantineEvidenceType::InvalidProposal,
+            validator.clone(),
+            100, // same height
+            1001, // timestamp 2 - slightly different
+            "Invalid proposal".to_string(),
+        );
+
+        // Both should be recorded successfully with different IDs
+        let id1 = recorder.record_evidence(evidence1).unwrap();
+        let id2 = recorder.record_evidence(evidence2).unwrap();
+
+        // Evidence IDs must be different
+        assert_ne!(id1, id2, "Evidence IDs should be unique even for same validator at same height");
+        
+        // Both pieces of evidence should be stored
+        assert_eq!(recorder.evidence_count(), 2);
+        assert!(recorder.get_evidence(&id1).is_some());
+        assert!(recorder.get_evidence(&id2).is_some());
     }
 }
