@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::integration::crypto_integration::PublicKey;
+use crate::contracts::utils::integer_sqrt;
 
 /// A liquidity provider position in a pool
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -402,33 +403,6 @@ impl LpPositionsManager {
     pub fn position_count(&self) -> usize {
         self.positions.len()
     }
-}
-
-/// Integer square root using Newton's method
-/// Uses saturating arithmetic to prevent overflow
-fn integer_sqrt(n: u64) -> u64 {
-    if n == 0 {
-        return 0;
-    }
-    if n < 4 {
-        return 1;
-    }
-
-    // For very large numbers, use bit-length based initial guess
-    // sqrt(n) ≈ 2^(floor(log2(n)/2))
-    let bit_length = (n.ilog2() + 1) as u64;
-    let initial = 1u64 << (bit_length / 2);
-
-    let mut x = initial;
-    loop {
-        // Use saturating operations to prevent overflow
-        let next_x = x.saturating_add(n.saturating_div(x.max(1))) / 2;
-        if next_x >= x {
-            break;
-        }
-        x = next_x;
-    }
-    x
 }
 
 // ============================================================================

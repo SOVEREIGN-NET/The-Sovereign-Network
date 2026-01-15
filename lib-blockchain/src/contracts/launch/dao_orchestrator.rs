@@ -257,10 +257,29 @@ fn derive_token_address(config: &DaoLaunchConfig) -> PublicKey {
     hasher.update(b"token_addr");
     hasher.update(config.name.as_bytes());
     let id = hasher.finalize();
+    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap();
+
+    // Derive high-entropy, domain-separated public key material from key_id
+    let dilithium_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_token_dilithium");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
+    let kyber_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_token_kyber");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
     PublicKey {
-        dilithium_pk: id.as_bytes()[0..32].to_vec(),
-        kyber_pk: id.as_bytes()[0..32].to_vec(),
-        key_id: <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap(),
+        dilithium_pk,
+        kyber_pk,
+        key_id,
     }
 }
 
@@ -270,10 +289,29 @@ fn derive_treasury_address(config: &DaoLaunchConfig) -> PublicKey {
     hasher.update(b"treasury_addr");
     hasher.update(config.symbol.as_bytes());
     let id = hasher.finalize();
+    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap();
+
+    // Derive high-entropy, domain-separated public key material from key_id
+    let dilithium_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_treasury_dilithium");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
+    let kyber_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_treasury_kyber");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
     PublicKey {
-        dilithium_pk: id.as_bytes()[0..32].to_vec(),
-        kyber_pk: id.as_bytes()[0..32].to_vec(),
-        key_id: <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap(),
+        dilithium_pk,
+        kyber_pk,
+        key_id,
     }
 }
 
@@ -283,10 +321,29 @@ fn derive_staking_address(config: &DaoLaunchConfig) -> PublicKey {
     hasher.update(b"staking_addr");
     hasher.update(config.symbol.as_bytes());
     let id = hasher.finalize();
+    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap();
+
+    // Derive high-entropy, domain-separated public key material from key_id
+    let dilithium_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_staking_dilithium");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
+    let kyber_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_staking_kyber");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
     PublicKey {
-        dilithium_pk: id.as_bytes()[0..32].to_vec(),
-        kyber_pk: id.as_bytes()[0..32].to_vec(),
-        key_id: <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap(),
+        dilithium_pk,
+        kyber_pk,
+        key_id,
     }
 }
 
@@ -296,10 +353,29 @@ fn derive_brokerage_address(config: &DaoLaunchConfig) -> PublicKey {
     hasher.update(b"brokerage_addr");
     hasher.update(config.symbol.as_bytes());
     let id = hasher.finalize();
+    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap();
+
+    // Derive high-entropy, domain-separated public key material from key_id
+    let dilithium_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_brokerage_dilithium");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
+    let kyber_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_brokerage_kyber");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
     PublicKey {
-        dilithium_pk: id.as_bytes()[0..32].to_vec(),
-        kyber_pk: id.as_bytes()[0..32].to_vec(),
-        key_id: <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap(),
+        dilithium_pk,
+        kyber_pk,
+        key_id,
     }
 }
 
@@ -309,10 +385,29 @@ fn derive_employment_registry_address(config: &DaoLaunchConfig) -> PublicKey {
     hasher.update(b"employment_addr");
     hasher.update(config.symbol.as_bytes());
     let id = hasher.finalize();
+    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap();
+
+    // Derive high-entropy, domain-separated public key material from key_id
+    let dilithium_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_employment_dilithium");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
+    let kyber_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_employment_kyber");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
     PublicKey {
-        dilithium_pk: id.as_bytes()[0..32].to_vec(),
-        kyber_pk: id.as_bytes()[0..32].to_vec(),
-        key_id: <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap(),
+        dilithium_pk,
+        kyber_pk,
+        key_id,
     }
 }
 
