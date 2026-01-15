@@ -5361,7 +5361,11 @@ impl Blockchain {
             if let Some(block) = self.blocks.iter().find(|b| b.header.height == block_height) {
                 let event = crate::events::BlockchainEvent::BlockFinalized {
                     height: block_height,
-                    block_hash: block.hash().as_bytes().try_into().unwrap_or([0u8; 32]),
+                    block_hash: block
+                        .hash()
+                        .as_bytes()
+                        .try_into()
+                        .expect("Block hash must be 32 bytes when emitting BlockFinalized event"),
                 };
                 if let Err(e) = self.event_publisher.publish(event) {
                     warn!("Failed to publish BlockFinalized event: {}", e);
