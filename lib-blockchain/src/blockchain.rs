@@ -628,9 +628,22 @@ impl Blockchain {
         }
 
         // Emit BlockAdded event (Issue #11)
+        let block_hash_bytes = block.hash();
+        let block_hash_array: [u8; 32] = match block_hash_bytes.as_bytes().try_into() {
+            Ok(arr) => arr,
+            Err(e) => {
+                error!(
+                    "Invariant violation: block hash for height {} is not 32 bytes (len = {}, error = {:?})",
+                    block.header.height,
+                    block_hash_bytes.as_bytes().len(),
+                    e
+                );
+                [0u8; 32]
+            }
+        };
         let event = crate::events::BlockchainEvent::BlockAdded {
             height: block.header.height,
-            block_hash: block.hash().as_bytes().try_into().unwrap_or([0u8; 32]),
+            block_hash: block_hash_array,
             timestamp: block.header.timestamp,
             transaction_count: block.transactions.len() as u64,
         };
