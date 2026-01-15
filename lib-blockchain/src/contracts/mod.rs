@@ -39,6 +39,8 @@ pub mod ubi_distribution;
 #[cfg(feature = "contracts")]
 pub mod sov_swap;
 #[cfg(feature = "contracts")]
+pub mod staking;
+#[cfg(feature = "contracts")]
 pub mod governance;
 #[cfg(feature = "contracts")]
 pub mod dao;
@@ -92,6 +94,8 @@ pub use dev_grants::{DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement,
 pub use ubi_distribution::{UbiDistributor, MonthIndex, Error as UbiError};
 #[cfg(feature = "contracts")]
 pub use sov_swap::{SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError};
+#[cfg(feature = "contracts")]
+pub use staking::{SovDaoStaking, GlobalStakingGuardrails, PendingDao, StakingPosition, LaunchedDao};
 #[cfg(feature = "contracts")]
 pub use governance::{EntityRegistry, EntityType, Role, EntityRegistryError};
 #[cfg(feature = "contracts")]
