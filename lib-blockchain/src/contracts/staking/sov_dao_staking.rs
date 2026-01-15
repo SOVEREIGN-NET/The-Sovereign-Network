@@ -639,7 +639,7 @@ mod tests {
     fn test_claim_dao_tokens() {
         let mut staking = SovDaoStaking::default();
         let creator = test_public_key(1);
-        let staker = test_public_key(2);
+        let _staker = test_public_key(2);
 
         let dao_id = staking
             .create_pending_dao(
