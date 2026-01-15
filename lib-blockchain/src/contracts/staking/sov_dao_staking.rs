@@ -496,9 +496,27 @@ fn derive_token_address(dao: &PendingDao, current_height: u64) -> PublicKey {
     hasher.update(&dao.dao_id);
     hasher.update(&current_height.to_le_bytes());
     let key_id: [u8; 32] = hasher.finalize().into();
+
+    // Derive high-entropy, domain-separated public key material from key_id
+    let dilithium_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_token_dilithium");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
+    let kyber_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_token_kyber");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
     PublicKey {
-        dilithium_pk: vec![key_id[0]; 32],
-        kyber_pk: vec![key_id[1]; 32],
+        dilithium_pk,
+        kyber_pk,
         key_id,
     }
 }
@@ -510,9 +528,27 @@ fn derive_treasury_address(dao: &PendingDao, current_height: u64) -> PublicKey {
     hasher.update(&dao.dao_id);
     hasher.update(&current_height.to_le_bytes());
     let key_id: [u8; 32] = hasher.finalize().into();
+
+    // Derive high-entropy, domain-separated public key material from key_id
+    let dilithium_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_treasury_dilithium");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
+    let kyber_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_treasury_kyber");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
     PublicKey {
-        dilithium_pk: vec![key_id[0]; 32],
-        kyber_pk: vec![key_id[1]; 32],
+        dilithium_pk,
+        kyber_pk,
         key_id,
     }
 }

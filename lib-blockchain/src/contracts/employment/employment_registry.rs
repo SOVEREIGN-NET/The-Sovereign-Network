@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
 use crate::integration::crypto_integration::PublicKey;
+use crate::contracts::utils::integer_sqrt;
 use blake3;
 use std::collections::HashMap;
 
@@ -401,30 +402,6 @@ fn derive_contract_id(dao_id: &[u8; 32], sid: &[u8; 32], height: u64) -> [u8; 32
     hasher.update(sid);
     hasher.update(&height.to_le_bytes());
     hasher.finalize().into()
-}
-
-/// Integer square root using Newton's method with bit-length initial guess
-fn integer_sqrt(n: u64) -> u64 {
-    if n == 0 {
-        return 0;
-    }
-    if n == 1 {
-        return 1;
-    }
-
-    // Bit-length based initial guess
-    let bit_length = (n.ilog2() + 1) as u64;
-    let mut x = 1u64 << (bit_length / 2);
-
-    loop {
-        let next_x = x.saturating_add(n.saturating_div(x.max(1))) / 2;
-        if next_x >= x {
-            break;
-        }
-        x = next_x;
-    }
-
-    x
 }
 
 // ============================================================================
