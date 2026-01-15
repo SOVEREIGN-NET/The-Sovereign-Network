@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use super::ContractType;
+use serde::{Deserialize, Serialize};
 
 /// Contract function call request
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,11 +31,7 @@ impl ContractCall {
     }
 
     /// Create a public contract call (no special permissions required)
-    pub fn public_call(
-        contract_type: ContractType,
-        method: String,
-        params: Vec<u8>,
-    ) -> Self {
+    pub fn public_call(contract_type: ContractType, method: String, params: Vec<u8>) -> Self {
         Self::new(contract_type, method, params, CallPermissions::Public)
     }
 
@@ -75,11 +71,7 @@ impl ContractCall {
         }
 
         // Validate method name contains only alphanumeric characters and underscores
-        if !self
-            .method
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_')
-        {
+        if !self.method.chars().all(|c| c.is_alphanumeric() || c == '_') {
             return Err("Method name contains invalid characters".to_string());
         }
 
@@ -94,15 +86,9 @@ impl ContractCall {
     /// Get the caller's public key from permissions (if available)
     pub fn get_caller(&self) -> Result<crate::integration::crypto_integration::PublicKey, String> {
         match &self.permissions {
-            CallPermissions::Public => {
-                Err("Public call does not specify caller".to_string())
-            }
-            CallPermissions::Restricted { caller, .. } => {
-                Ok(caller.clone())
-            }
-            CallPermissions::AdminOnly { admin } => {
-                Ok(admin.clone())
-            }
+            CallPermissions::Public => Err("Public call does not specify caller".to_string()),
+            CallPermissions::Restricted { caller, .. } => Ok(caller.clone()),
+            CallPermissions::AdminOnly { admin } => Ok(admin.clone()),
         }
     }
 
@@ -151,8 +137,14 @@ pub enum CallPermissions {
 
 impl CallPermissions {
     /// Create restricted permissions
-    pub fn restricted(caller: crate::integration::crypto_integration::PublicKey, permissions: Vec<String>) -> Self {
-        Self::Restricted { caller, permissions }
+    pub fn restricted(
+        caller: crate::integration::crypto_integration::PublicKey,
+        permissions: Vec<String>,
+    ) -> Self {
+        Self::Restricted {
+            caller,
+            permissions,
+        }
     }
 
     /// Create admin-only permissions
@@ -161,11 +153,19 @@ impl CallPermissions {
     }
 
     /// Check if permissions allow a specific operation
-    pub fn allows_operation(&self, operation: &str, caller: &crate::integration::crypto_integration::PublicKey) -> bool {
+    pub fn allows_operation(
+        &self,
+        operation: &str,
+        caller: &crate::integration::crypto_integration::PublicKey,
+    ) -> bool {
         match self {
             CallPermissions::Public => true,
-            CallPermissions::Restricted { caller: allowed_caller, permissions } => {
-                allowed_caller == caller && (permissions.is_empty() || permissions.contains(&operation.to_string()))
+            CallPermissions::Restricted {
+                caller: allowed_caller,
+                permissions,
+            } => {
+                allowed_caller == caller
+                    && (permissions.is_empty() || permissions.contains(&operation.to_string()))
             }
             CallPermissions::AdminOnly { admin } => admin == caller,
         }
@@ -202,7 +202,8 @@ mod tests {
         let token_call = ContractCall::token_call("mint".to_string(), vec![1, 2, 3]);
         assert_eq!(token_call.contract_type, ContractType::Token);
 
-        let messaging_call = ContractCall::messaging_call("send_message".to_string(), vec![4, 5, 6]);
+        let messaging_call =
+            ContractCall::messaging_call("send_message".to_string(), vec![4, 5, 6]);
         assert_eq!(messaging_call.contract_type, ContractType::WhisperMessaging);
 
         let contact_call = ContractCall::contact_call("add_contact".to_string(), vec![7, 8, 9]);
@@ -254,6 +255,9 @@ mod tests {
         assert_eq!(token_call.base_gas_cost(), ContractType::Token.gas_cost());
 
         let messaging_call = ContractCall::messaging_call("send_message".to_string(), vec![]);
-        assert_eq!(messaging_call.base_gas_cost(), ContractType::WhisperMessaging.gas_cost());
+        assert_eq!(
+            messaging_call.base_gas_cost(),
+            ContractType::WhisperMessaging.gas_cost()
+        );
     }
 }

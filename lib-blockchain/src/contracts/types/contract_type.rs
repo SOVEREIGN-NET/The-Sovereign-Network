@@ -46,10 +46,7 @@ impl ContractType {
 
     /// Check if this contract type supports burning operations
     pub fn supports_burning(&self) -> bool {
-        matches!(
-            self,
-            ContractType::Token | ContractType::WhisperMessaging
-        )
+        matches!(self, ContractType::Token | ContractType::WhisperMessaging)
     }
 
     /// Get human-readable name for the contract type

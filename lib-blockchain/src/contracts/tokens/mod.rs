@@ -1,6 +1,6 @@
 pub mod core;
-pub mod functions;
 pub mod dao_token;
+pub mod functions;
 pub mod token_id;
 
 // Re-export core types and canonical token ID function

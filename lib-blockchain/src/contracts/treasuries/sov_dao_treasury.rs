@@ -1,7 +1,7 @@
+use crate::integration::crypto_integration::PublicKey;
+use crate::types::dao::{EconomicPeriod, SectorDao};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::integration::crypto_integration::PublicKey;
-use crate::types::dao::{SectorDao, EconomicPeriod};
 
 /// Minimal DAO treasury contract: stateful ledger only.
 ///
@@ -39,7 +39,7 @@ pub struct SovDaoTreasury {
     // Mutable but auditable (block-height based)
     total_received: u64,
     last_credit_height: u64,
-    
+
     // Economic period tracking (Invariants C1-C3)
     allocation_period: Option<EconomicPeriod>,
     current_period: Option<u64>,        // Current period ID
@@ -107,9 +107,7 @@ impl SovDaoTreasury {
 
         // Authorization check
         if caller != &self.authorized_fee_collector {
-            return Err(
-                "Only authorized fee collector can credit this treasury".to_string(),
-            );
+            return Err("Only authorized fee collector can credit this treasury".to_string());
         }
 
         // Reject zero amounts
@@ -134,20 +132,17 @@ impl SovDaoTreasury {
         // Period validation (Invariants C1-C3)
         let period_id = if let Some(period) = self.allocation_period {
             let pid = period.period_id_for_height(block_height);
-            
+
             // Invariant C2: Monotonic period progression
             if let Some(last_period) = self.last_recorded_period {
                 if pid < last_period {
-                    return Err(format!(
-                        "Period moved backwards: {} < {}",
-                        pid, last_period
-                    ));
+                    return Err(format!("Period moved backwards: {} < {}", pid, last_period));
                 }
             }
-            
+
             // Update current period
             self.current_period = Some(pid);
-            
+
             Some(pid)
         } else {
             None
@@ -156,7 +151,7 @@ impl SovDaoTreasury {
         // MUTATE only after all validations pass (atomicity)
         self.total_received += amount;
         self.last_credit_height = block_height;
-        
+
         // Track per-period accumulation (Invariant C3)
         if let Some(pid) = period_id {
             let period_sum = self.period_received.entry(pid).or_insert(0);
@@ -244,7 +239,8 @@ mod tests {
     fn test_init_sets_fee_collector() {
         let fee_collector = create_test_public_key(1);
 
-        let treasury = SovDaoTreasury::init(SectorDao::Education, fee_collector.clone(), None).unwrap();
+        let treasury =
+            SovDaoTreasury::init(SectorDao::Education, fee_collector.clone(), None).unwrap();
 
         assert_eq!(treasury.authorized_fee_collector(), &fee_collector);
     }
@@ -507,9 +503,7 @@ mod tests {
             SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
 
         // Credit at block 1000
-        treasury
-            .credit(&fee_collector, 1_000_000, 1000)
-            .unwrap();
+        treasury.credit(&fee_collector, 1_000_000, 1000).unwrap();
 
         // Try to sneak in a credit at block 500 (earlier)
         let result = treasury.credit(&fee_collector, 100_000, 500);
@@ -518,9 +512,7 @@ mod tests {
         assert!(result.is_err());
 
         // Later blocks are always accepted
-        treasury
-            .credit(&fee_collector, 500_000, 2000)
-            .unwrap();
+        treasury.credit(&fee_collector, 500_000, 2000).unwrap();
         assert_eq!(treasury.last_credit_height(), 2000);
     }
 

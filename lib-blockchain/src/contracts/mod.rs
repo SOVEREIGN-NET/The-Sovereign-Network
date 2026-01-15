@@ -7,9 +7,13 @@
 #[cfg(feature = "contracts")]
 pub mod base;
 #[cfg(feature = "contracts")]
-pub mod types;
-#[cfg(feature = "contracts")]
 pub mod contacts;
+#[cfg(feature = "contracts")]
+pub mod dao_registry;
+#[cfg(feature = "contracts")]
+pub mod dev_grants;
+#[cfg(feature = "contracts")]
+pub mod emergency_reserve;
 #[cfg(feature = "contracts")]
 pub mod executor;
 #[cfg(feature = "contracts")]
@@ -23,19 +27,15 @@ pub mod messaging;
 #[cfg(feature = "contracts")]
 pub mod runtime;
 #[cfg(feature = "contracts")]
+pub mod sov_swap;
+#[cfg(feature = "contracts")]
 pub mod tokens;
 #[cfg(feature = "contracts")]
 pub mod treasuries;
 #[cfg(feature = "contracts")]
-pub mod emergency_reserve;
-#[cfg(feature = "contracts")]
-pub mod dao_registry;
-#[cfg(feature = "contracts")]
-pub mod dev_grants;
+pub mod types;
 #[cfg(feature = "contracts")]
 pub mod ubi_distribution;
-#[cfg(feature = "contracts")]
-pub mod sov_swap;
 #[cfg(feature = "contracts")]
 pub mod utils;
 #[cfg(feature = "contracts")]
@@ -43,49 +43,61 @@ pub mod web4;
 
 // Re-export core types and functionality when contracts feature is enabled
 #[cfg(feature = "contracts")]
+pub use crate::types::{
+    CallPermissions, ContractCall, ContractLog, ContractPermissions, ContractResult, ContractType,
+    EventType, MessageType,
+};
+#[cfg(feature = "contracts")]
 pub use base::SmartContract;
 #[cfg(feature = "contracts")]
-pub use executor::{ContractExecutor, ExecutionContext, MemoryStorage, ContractStorage};
+pub use executor::{ContractExecutor, ContractStorage, ExecutionContext, MemoryStorage};
 #[cfg(feature = "contracts")]
-pub use integration::{BlockchainIntegration, ContractTransactionBuilder, ContractEvent, ContractEventListener, ContractEventPublisher};
+pub use integration::{
+    BlockchainIntegration, ContractEvent, ContractEventListener, ContractEventPublisher,
+    ContractTransactionBuilder,
+};
 #[cfg(feature = "contracts")]
-pub use runtime::{ContractRuntime, RuntimeConfig, RuntimeContext, RuntimeResult, RuntimeFactory, NativeRuntime};
+pub use runtime::sandbox::{ContractSandbox, SandboxConfig, SecurityLevel};
 #[cfg(all(feature = "contracts", feature = "wasm-runtime"))]
 pub use runtime::wasm_engine::WasmEngine;
 #[cfg(feature = "contracts")]
-pub use runtime::sandbox::{SandboxConfig, SecurityLevel, ContractSandbox};
-#[cfg(feature = "contracts")]
-pub use crate::types::{
-    ContractCall, ContractLog, ContractPermissions, ContractResult, ContractType, MessageType, CallPermissions, EventType,
+pub use runtime::{
+    ContractRuntime, NativeRuntime, RuntimeConfig, RuntimeContext, RuntimeFactory, RuntimeResult,
 };
 
 // Re-export all contract-specific types
 #[cfg(feature = "contracts")]
 pub use contacts::ContactEntry;
 #[cfg(feature = "contracts")]
-pub use files::{SharedFile, FileContract};
+pub use dao_registry::{derive_dao_id, DAOEntry, DAORegistry};
 #[cfg(feature = "contracts")]
-pub use groups::GroupChat;
-#[cfg(feature = "contracts")]
-pub use messaging::{WhisperMessage, MessageContract, MessageThread, GroupThread};
-#[cfg(feature = "contracts")]
-pub use tokens::{TokenContract, functions};
-#[cfg(feature = "contracts")]
-pub use treasuries::SovDaoTreasury;
+pub use dev_grants::{
+    Amount, ApprovedGrant, DevGrants, Disbursement, Error as DevGrantsError, ProposalId,
+    ProposalStatus,
+};
 #[cfg(feature = "contracts")]
 pub use emergency_reserve::EmergencyReserve;
 #[cfg(feature = "contracts")]
-pub use dao_registry::{DAORegistry, DAOEntry, derive_dao_id};
+pub use files::{FileContract, SharedFile};
 #[cfg(feature = "contracts")]
-pub use dev_grants::{DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement, ProposalStatus, Error as DevGrantsError};
+pub use groups::GroupChat;
 #[cfg(feature = "contracts")]
-pub use ubi_distribution::{UbiDistributor, MonthIndex, Error as UbiError};
+pub use messaging::{GroupThread, MessageContract, MessageThread, WhisperMessage};
 #[cfg(feature = "contracts")]
-pub use sov_swap::{SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError};
+pub use sov_swap::{PoolState, SovSwapPool, SwapDirection, SwapError, SwapResult};
+#[cfg(feature = "contracts")]
+pub use tokens::{functions, TokenContract};
+#[cfg(feature = "contracts")]
+pub use treasuries::SovDaoTreasury;
+#[cfg(feature = "contracts")]
+pub use ubi_distribution::{Error as UbiError, MonthIndex, UbiDistributor};
 #[cfg(feature = "contracts")]
 pub use utils::*;
 #[cfg(feature = "contracts")]
-pub use web4::{Web4Contract, WebsiteContract, WebsiteMetadata, ContentRoute, DomainRecord, WebsiteDeploymentData};
+pub use web4::{
+    ContentRoute, DomainRecord, Web4Contract, WebsiteContract, WebsiteDeploymentData,
+    WebsiteMetadata,
+};
 
 // Re-export testing framework when available
 #[cfg(all(feature = "contracts", feature = "testing"))]
@@ -103,7 +115,7 @@ pub const GAS_BASE: u64 = 1000; // Base gas cost for any contract operation
 #[cfg(feature = "contracts")]
 pub const GAS_TOKEN: u64 = 2000; // Gas cost for token operations
 #[cfg(feature = "contracts")]
-pub const GAS_MESSAGING: u64 = 3000; // Gas cost for messaging operations  
+pub const GAS_MESSAGING: u64 = 3000; // Gas cost for messaging operations
 #[cfg(feature = "contracts")]
 pub const GAS_CONTACT: u64 = 1500; // Gas cost for contact operations
 #[cfg(feature = "contracts")]

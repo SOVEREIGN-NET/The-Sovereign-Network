@@ -4,7 +4,7 @@
 //! Starts the unified server and manages the network node lifecycle.
 
 use zhtp::config::{CliArgs, load_configuration, Environment};
-use zhtp::runtime::RuntimeOrchestrator;
+use zhtp::runtime::{RuntimeOrchestrator, NodeType, StartupOptions};
 use tracing_subscriber;
 use std::env;
 use std::path::PathBuf;
@@ -25,11 +25,9 @@ async fn main() -> anyhow::Result<()> {
     // Load and validate configuration
     let config = load_configuration(&args).await?;
 
-    // Create the orchestrator with the configuration
-    let orchestrator = RuntimeOrchestrator::new(config).await?;
-
-    // Start the node with full startup sequence (includes identity creation)
-    orchestrator.start_node().await?;
+    let options = StartupOptions::from_config(&config);
+    let node_type = NodeType::from_config(&config, None);
+    let _orchestrator = RuntimeOrchestrator::start_for_node_type(config, node_type, options).await?;
 
     // Keep running indefinitely
     loop {

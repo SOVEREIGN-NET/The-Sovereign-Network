@@ -1,6 +1,6 @@
 use super::core::{TokenContract, TokenInfo};
-use crate::integration::crypto_integration::PublicKey;
 use crate::contracts::utils;
+use crate::integration::crypto_integration::PublicKey;
 use std::collections::HashMap;
 
 /// Token operation functions for contract system integration
@@ -44,11 +44,7 @@ pub fn get_balance(contract: &TokenContract, account: &PublicKey) -> u64 {
 }
 
 /// Get spending allowance
-pub fn get_allowance(
-    contract: &TokenContract,
-    owner: &PublicKey,
-    spender: &PublicKey,
-) -> u64 {
+pub fn get_allowance(contract: &TokenContract, owner: &PublicKey, spender: &PublicKey) -> u64 {
     contract.allowance(owner, spender)
 }
 
@@ -118,11 +114,11 @@ pub fn create_deflationary_token(
         burn_rate,
         creator.clone(),
     );
-    
+
     if initial_supply > 0 {
         let _ = token.mint(&creator, initial_supply);
     }
-    
+
     token
 }
 
@@ -133,7 +129,8 @@ pub fn create_deflationary_token(
 
 /// Get all non-zero balances
 pub fn get_all_balances(contract: &TokenContract) -> HashMap<PublicKey, u64> {
-    contract.balances
+    contract
+        .balances
         .iter()
         .filter(|(_, &balance)| balance > 0)
         .map(|(key, &balance)| (key.clone(), balance))
@@ -141,11 +138,9 @@ pub fn get_all_balances(contract: &TokenContract) -> HashMap<PublicKey, u64> {
 }
 
 /// Get all allowances for an owner
-pub fn get_all_allowances(
-    contract: &TokenContract,
-    owner: &PublicKey,
-) -> HashMap<PublicKey, u64> {
-    contract.allowances
+pub fn get_all_allowances(contract: &TokenContract, owner: &PublicKey) -> HashMap<PublicKey, u64> {
+    contract
+        .allowances
         .get(owner)
         .map(|allowances| {
             allowances
@@ -165,29 +160,30 @@ pub fn calculate_tvl(contract: &TokenContract, price_per_token: f64) -> f64 {
 
 /// Get token distribution statistics
 pub fn get_distribution_stats(contract: &TokenContract) -> TokenDistributionStats {
-    let balances: Vec<u64> = contract.balances
+    let balances: Vec<u64> = contract
+        .balances
         .values()
         .filter(|&&balance| balance > 0)
         .copied()
         .collect();
-    
+
     if balances.is_empty() {
         return TokenDistributionStats::default();
     }
-    
+
     let total_holders = balances.len();
     let total_supply = contract.total_supply;
     let largest_balance = *balances.iter().max().unwrap_or(&0);
     let smallest_balance = *balances.iter().min().unwrap_or(&0);
     let average_balance = total_supply / total_holders as u64;
-    
+
     // Calculate concentration (percentage held by top holder)
     let concentration = if total_supply > 0 {
         (largest_balance as f64 / total_supply as f64) * 100.0
     } else {
         0.0
     };
-    
+
     TokenDistributionStats {
         total_holders,
         largest_balance,
@@ -239,15 +235,15 @@ pub fn token_swap(
     if token_b.balance_of(user) < amount_b {
         return Err("Insufficient balance in token B".to_string());
     }
-    
+
     // Burn tokens from user (simplified swap mechanism)
     token_a.burn(user, amount_a)?;
     token_b.burn(user, amount_b)?;
-    
+
     // Mint swapped amounts (simplified)
     token_a.mint(user, amount_b)?;
     token_b.mint(user, amount_a)?;
-    
+
     Ok((amount_a, amount_b))
 }
 

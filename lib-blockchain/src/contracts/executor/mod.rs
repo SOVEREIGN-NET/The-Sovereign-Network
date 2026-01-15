@@ -1,19 +1,16 @@
 pub mod platform_isolation;
 
-use crate::{
-    types::*,
-    contracts::tokens::*,
-    contracts::messaging::*,
-    contracts::contacts::*,
-    contracts::groups::*,
-};
-use crate::contracts::utils::{generate_storage_key, generate_contract_id};
 use crate::contracts::files::SharedFile;
-use crate::contracts::runtime::{RuntimeFactory, RuntimeConfig, RuntimeContext, ContractRuntime};
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use crate::contracts::runtime::{ContractRuntime, RuntimeConfig, RuntimeContext, RuntimeFactory};
+use crate::contracts::utils::{generate_contract_id, generate_storage_key};
 use crate::integration::crypto_integration::{PublicKey, Signature};
+use crate::{
+    contracts::contacts::*, contracts::groups::*, contracts::messaging::*, contracts::tokens::*,
+    types::*,
+};
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ============================================================================
 // SYSTEM CONFIGURATION - Persistent consensus-critical state
@@ -145,8 +142,11 @@ impl ExecutionContext {
     /// Check if there's enough gas remaining
     pub fn check_gas(&self, required: u64) -> Result<()> {
         if self.gas_used + required > self.gas_limit {
-            return Err(anyhow!("Out of gas: required {}, available {}", 
-                required, self.gas_limit - self.gas_used));
+            return Err(anyhow!(
+                "Out of gas: required {}, available {}",
+                required,
+                self.gas_limit - self.gas_used
+            ));
         }
         Ok(())
     }
@@ -168,20 +168,19 @@ impl ExecutionContext {
 pub trait ContractStorage {
     /// Get value from storage
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
-    
+
     /// Set value in storage
     fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()>;
-    
+
     /// Delete value from storage
     fn delete(&mut self, key: &[u8]) -> Result<()>;
-    
+
     /// Check if key exists in storage
     fn exists(&self, key: &[u8]) -> Result<bool>;
 }
 
 /// Simple in-memory storage implementation for testing
-#[derive(Debug, Default)]
-#[derive(Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct MemoryStorage {
     data: HashMap<Vec<u8>, Vec<u8>>,
 }
@@ -190,17 +189,17 @@ impl ContractStorage for MemoryStorage {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         Ok(self.data.get(key).cloned())
     }
-    
+
     fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         self.data.insert(key.to_vec(), value.to_vec());
         Ok(())
     }
-    
+
     fn delete(&mut self, key: &[u8]) -> Result<()> {
         self.data.remove(key);
         Ok(())
     }
-    
+
     fn exists(&self, key: &[u8]) -> Result<bool> {
         Ok(self.data.contains_key(key))
     }
@@ -246,7 +245,9 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         // Initialize ZHTP native token (immutable protocol-level token)
         let lib_token = TokenContract::new_zhtp();
-        executor.token_contracts.insert(lib_token.token_id, lib_token);
+        executor
+            .token_contracts
+            .insert(lib_token.token_id, lib_token);
 
         executor
     }
@@ -270,7 +271,9 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 let config: SystemConfig = bincode::deserialize(&data)?;
                 // Enforce non-zero governance authority
                 if config.governance_authority.key_id == [0u8; 32] {
-                    return Err(anyhow!("SystemConfig loaded but governance authority is zero (invalid)"));
+                    return Err(anyhow!(
+                        "SystemConfig loaded but governance authority is zero (invalid)"
+                    ));
                 }
                 self.system_config = Some(config);
             } else {
@@ -287,7 +290,9 @@ impl<S: ContractStorage> ContractExecutor<S> {
     pub fn init_system(&mut self, config: SystemConfig) -> Result<()> {
         // Reject zero governance authority
         if config.governance_authority.key_id == [0u8; 32] {
-            return Err(anyhow!("Cannot initialize system with zero governance authority"));
+            return Err(anyhow!(
+                "Cannot initialize system with zero governance authority"
+            ));
         }
         if config.blocks_per_month == 0 {
             return Err(anyhow!("blocks_per_month must be > 0"));
@@ -323,10 +328,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
         self.system_config = Some(config);
 
         // Create and persist genesis UBI instance
-        let ubi = crate::contracts::UbiDistributor::new(
-            gov_authority.clone(),
-            blocks_per_month,
-        ).map_err(|e| anyhow!("Failed to initialize UBI: {:?}", e))?;
+        let ubi = crate::contracts::UbiDistributor::new(gov_authority.clone(), blocks_per_month)
+            .map_err(|e| anyhow!("Failed to initialize UBI: {:?}", e))?;
         self.persist_ubi(&ubi)?;
         self.ubi_contract = Some(ubi);
 
@@ -348,7 +351,9 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 self.ubi_contract = Some(ubi);
             } else {
                 // No persisted UBI found - this should only happen if chain is not initialized
-                return Err(anyhow!("UBI contract not found in storage - call init_system() first"));
+                return Err(anyhow!(
+                    "UBI contract not found in storage - call init_system() first"
+                ));
             }
         }
         Ok(self.ubi_contract.as_mut().unwrap())
@@ -372,7 +377,9 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 self.dev_grants_contract = Some(dev_grants);
             } else {
                 // No persisted DevGrants found - this should only happen if chain is not initialized
-                return Err(anyhow!("DevGrants contract not found in storage - call init_system() first"));
+                return Err(anyhow!(
+                    "DevGrants contract not found in storage - call init_system() first"
+                ));
             }
         }
         Ok(self.dev_grants_contract.as_mut().unwrap())
@@ -388,17 +395,17 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
     /// Execute a contract call
     pub fn execute_call(
-        &mut self, 
+        &mut self,
         call: ContractCall,
         context: &mut ExecutionContext,
     ) -> Result<ContractResult> {
         // Check basic gas cost
         context.consume_gas(crate::GAS_BASE)?;
-        
+
         // Store values needed for logging before moving call
         let contract_type = call.contract_type.clone();
         let method = call.method.clone();
-        
+
         let result = match call.contract_type {
             ContractType::Token => self.execute_token_call(call, context),
             ContractType::WhisperMessaging => self.execute_messaging_call(call, context),
@@ -440,7 +447,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
     ) -> Result<ContractResult> {
         // Check basic gas cost for WASM execution
         context.consume_gas(crate::GAS_BASE)?;
-        
+
         // Create runtime context
         let runtime_context = RuntimeContext {
             caller: context.caller.clone(),
@@ -452,7 +459,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         // Get WASM runtime
         let mut runtime = self.runtime_factory.create_runtime("wasm")?;
-        
+
         // Execute in sandboxed environment
         let runtime_result = runtime.execute(
             contract_code,
@@ -467,10 +474,17 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         // Convert runtime result to contract result
         if runtime_result.success {
-            Ok(ContractResult::with_return_data(&runtime_result.return_data, context.gas_used)?)
+            Ok(ContractResult::with_return_data(
+                &runtime_result.return_data,
+                context.gas_used,
+            )?)
         } else {
-            Err(anyhow!("WASM execution failed: {}", 
-                runtime_result.error.unwrap_or_else(|| "Unknown error".to_string())))
+            Err(anyhow!(
+                "WASM execution failed: {}",
+                runtime_result
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string())
+            ))
         }
     }
 
@@ -486,24 +500,27 @@ impl<S: ContractStorage> ContractExecutor<S> {
             "create_custom_token" => {
                 let params: (String, String, u64) = bincode::deserialize(&call.params)?;
                 let (name, symbol, initial_supply) = params;
-                
+
                 let token = TokenContract::new_custom(
                     name.clone(),
                     symbol.clone(),
                     initial_supply,
                     context.caller.clone(),
                 );
-                
+
                 let token_id = token.token_id;
                 self.token_contracts.insert(token_id, token);
-                
+
                 // Store token data
                 let storage_key = generate_storage_key("token", &token_id);
                 let token_data = bincode::serialize(&self.token_contracts[&token_id])?;
                 self.storage.set(&storage_key, &token_data)?;
-                
-                Ok(ContractResult::with_return_data(&token_id, context.gas_used)?)
-            },
+
+                Ok(ContractResult::with_return_data(
+                    &token_id,
+                    context.gas_used,
+                )?)
+            }
             "transfer" => {
                 let params: ([u8; 32], PublicKey, u64) = bincode::deserialize(&call.params)?;
                 let (token_id, to, amount) = params;
@@ -519,52 +536,61 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     let token_data = bincode::serialize(token)?;
                     self.storage.set(&storage_key, &token_data)?;
 
-                    Ok(ContractResult::with_return_data(&"Transfer successful", context.gas_used)?)
+                    Ok(ContractResult::with_return_data(
+                        &"Transfer successful",
+                        context.gas_used,
+                    )?)
                 } else {
                     Err(anyhow!("Token not found"))
                 }
-            },
+            }
             "mint" => {
                 let params: ([u8; 32], PublicKey, u64) = bincode::deserialize(&call.params)?;
                 let (token_id, to, amount) = params;
-                
+
                 if let Some(token) = self.token_contracts.get_mut(&token_id) {
-                    crate::contracts::tokens::functions::mint_tokens(
-                        token,
-                        &to,
-                        amount,
-                    ).map_err(|e| anyhow!("{}", e))?;
-                    
+                    crate::contracts::tokens::functions::mint_tokens(token, &to, amount)
+                        .map_err(|e| anyhow!("{}", e))?;
+
                     // Update storage
                     let storage_key = generate_storage_key("token", &token_id);
                     let token_data = bincode::serialize(token)?;
                     self.storage.set(&storage_key, &token_data)?;
-                    
-                    Ok(ContractResult::with_return_data(&"Mint successful", context.gas_used)?)
+
+                    Ok(ContractResult::with_return_data(
+                        &"Mint successful",
+                        context.gas_used,
+                    )?)
                 } else {
                     Err(anyhow!("Token not found"))
                 }
-            },
+            }
             "balance_of" => {
                 let params: ([u8; 32], PublicKey) = bincode::deserialize(&call.params)?;
                 let (token_id, owner) = params;
-                
+
                 if let Some(token) = self.token_contracts.get(&token_id) {
                     let balance = crate::contracts::tokens::functions::get_balance(token, &owner);
-                    Ok(ContractResult::with_return_data(&balance, context.gas_used)?)
+                    Ok(ContractResult::with_return_data(
+                        &balance,
+                        context.gas_used,
+                    )?)
                 } else {
                     Err(anyhow!("Token not found"))
                 }
-            },
+            }
             "total_supply" => {
                 let token_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 if let Some(token) = self.token_contracts.get(&token_id) {
-                    Ok(ContractResult::with_return_data(&token.total_supply, context.gas_used)?)
+                    Ok(ContractResult::with_return_data(
+                        &token.total_supply,
+                        context.gas_used,
+                    )?)
                 } else {
                     Err(anyhow!("Token not found"))
                 }
-            },
+            }
             _ => Err(anyhow!("Unknown token method: {}", call.method)),
         }
     }
@@ -579,10 +605,23 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         match call.method.as_str() {
             "send_message" => {
-                let params: (Option<PublicKey>, Option<[u8; 32]>, String, Option<[u8; 32]>, bool, Option<u64>) = 
-                    bincode::deserialize(&call.params)?;
-                let (recipient, group_id, content, _file_attachment, _is_auto_burn, _burn_timestamp) = params;
-                
+                let params: (
+                    Option<PublicKey>,
+                    Option<[u8; 32]>,
+                    String,
+                    Option<[u8; 32]>,
+                    bool,
+                    Option<u64>,
+                ) = bincode::deserialize(&call.params)?;
+                let (
+                    recipient,
+                    group_id,
+                    content,
+                    _file_attachment,
+                    _is_auto_burn,
+                    _burn_timestamp,
+                ) = params;
+
                 let message = if let Some(recipient) = recipient {
                     WhisperMessage::new_direct_message(
                         context.caller.clone(),
@@ -600,32 +639,39 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 } else {
                     return Err(anyhow!("Must specify either recipient or group_id"));
                 };
-                
+
                 // Store message
                 let storage_key = generate_storage_key("message", &message.message_id);
                 let message_data = bincode::serialize(&message)?;
                 self.storage.set(&storage_key, &message_data)?;
-                
-                Ok(ContractResult::with_return_data(&message.message_id, context.gas_used)?)
-            },
+
+                Ok(ContractResult::with_return_data(
+                    &message.message_id,
+                    context.gas_used,
+                )?)
+            }
             "get_message" => {
                 let message_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 let storage_key = generate_storage_key("message", &message_id);
                 if let Some(message_data) = self.storage.get(&storage_key)? {
                     let message: WhisperMessage = bincode::deserialize(&message_data)?;
-                    
+
                     // Check access permissions
-                    if message.sender == context.caller || 
-                       message.recipient == Some(context.caller.clone()) {
-                        Ok(ContractResult::with_return_data(&message, context.gas_used)?)
+                    if message.sender == context.caller
+                        || message.recipient == Some(context.caller.clone())
+                    {
+                        Ok(ContractResult::with_return_data(
+                            &message,
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("Access denied"))
                     }
                 } else {
                     Err(anyhow!("Message not found"))
                 }
-            },
+            }
             _ => Err(anyhow!("Unknown messaging method: {}", call.method)),
         }
     }
@@ -642,60 +688,65 @@ impl<S: ContractStorage> ContractExecutor<S> {
             "add_contact" => {
                 let params: (PublicKey, String) = bincode::deserialize(&call.params)?;
                 let (contact_key, display_name) = params;
-                
-                let contact = ContactEntry::new(
-                    context.caller.clone(),
-                    display_name,
-                    contact_key,
-                );
-                
+
+                let contact = ContactEntry::new(context.caller.clone(), display_name, contact_key);
+
                 // Store contact
                 let storage_key = contact.storage_key();
                 let contact_data = bincode::serialize(&contact)?;
                 self.storage.set(&storage_key, &contact_data)?;
-                
-                Ok(ContractResult::with_return_data(&contact.contact_id, context.gas_used)?)
-            },
+
+                Ok(ContractResult::with_return_data(
+                    &contact.contact_id,
+                    context.gas_used,
+                )?)
+            }
             "get_contact" => {
                 let contact_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 let storage_key = generate_storage_key("contact", &contact_id);
                 if let Some(contact_data) = self.storage.get(&storage_key)? {
                     let contact: ContactEntry = bincode::deserialize(&contact_data)?;
-                    
+
                     // Check access permissions
                     if contact.owner == context.caller {
-                        Ok(ContractResult::with_return_data(&contact, context.gas_used)?)
+                        Ok(ContractResult::with_return_data(
+                            &contact,
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("Access denied"))
                     }
                 } else {
                     Err(anyhow!("Contact not found"))
                 }
-            },
+            }
             "verify_contact" => {
                 let contact_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 let storage_key = generate_storage_key("contact", &contact_id);
                 if let Some(contact_data) = self.storage.get(&storage_key)? {
                     let mut contact: ContactEntry = bincode::deserialize(&contact_data)?;
-                    
+
                     // Only owner can verify
                     if contact.owner == context.caller {
                         contact.verify();
-                        
+
                         // Update storage
                         let updated_data = bincode::serialize(&contact)?;
                         self.storage.set(&storage_key, &updated_data)?;
-                        
-                        Ok(ContractResult::with_return_data(&"Contact verified", context.gas_used)?)
+
+                        Ok(ContractResult::with_return_data(
+                            &"Contact verified",
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("Access denied"))
                     }
                 } else {
                     Err(anyhow!("Contact not found"))
                 }
-            },
+            }
             _ => Err(anyhow!("Unknown contact method: {}", call.method)),
         }
     }
@@ -712,7 +763,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
             "create_group" => {
                 let params: (String, String, u32, bool, u64) = bincode::deserialize(&call.params)?;
                 let (name, description, max_members, is_private, whisper_token_cost) = params;
-                
+
                 let group = GroupChat::new(
                     name,
                     description,
@@ -721,50 +772,63 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     is_private,
                     whisper_token_cost,
                 );
-                
+
                 // Store group
                 let storage_key = group.storage_key();
                 let group_data = bincode::serialize(&group)?;
                 self.storage.set(&storage_key, &group_data)?;
-                
-                Ok(ContractResult::with_return_data(&group.group_id, context.gas_used)?)
-            },
+
+                Ok(ContractResult::with_return_data(
+                    &group.group_id,
+                    context.gas_used,
+                )?)
+            }
             "join_group" => {
                 let group_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 let storage_key = generate_storage_key("group", &group_id);
                 if let Some(group_data) = self.storage.get(&storage_key)? {
                     let mut group: GroupChat = bincode::deserialize(&group_data)?;
-                    
-                    group.add_member(context.caller.clone()).map_err(|e| anyhow!(e))?;
-                    
+
+                    group
+                        .add_member(context.caller.clone())
+                        .map_err(|e| anyhow!(e))?;
+
                     // Update storage
                     let updated_data = bincode::serialize(&group)?;
                     self.storage.set(&storage_key, &updated_data)?;
-                    
-                    Ok(ContractResult::with_return_data(&"Joined group", context.gas_used)?)
+
+                    Ok(ContractResult::with_return_data(
+                        &"Joined group",
+                        context.gas_used,
+                    )?)
                 } else {
                     Err(anyhow!("Group not found"))
                 }
-            },
+            }
             "leave_group" => {
                 let group_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 let storage_key = generate_storage_key("group", &group_id);
                 if let Some(group_data) = self.storage.get(&storage_key)? {
                     let mut group: GroupChat = bincode::deserialize(&group_data)?;
-                    
-                    group.remove_member(&context.caller).map_err(|e| anyhow!(e))?;
-                    
+
+                    group
+                        .remove_member(&context.caller)
+                        .map_err(|e| anyhow!(e))?;
+
                     // Update storage
                     let updated_data = bincode::serialize(&group)?;
                     self.storage.set(&storage_key, &updated_data)?;
-                    
-                    Ok(ContractResult::with_return_data(&"Left group", context.gas_used)?)
+
+                    Ok(ContractResult::with_return_data(
+                        &"Left group",
+                        context.gas_used,
+                    )?)
                 } else {
                     Err(anyhow!("Group not found"))
                 }
-            },
+            }
             _ => Err(anyhow!("Unknown group method: {}", call.method)),
         }
     }
@@ -779,11 +843,33 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         match call.method.as_str() {
             "share_file" => {
-                let params: (String, String, [u8; 32], u64, String, bool, u64, bool, Option<[u8; 32]>, Vec<String>, u64) =
-                    bincode::deserialize(&call.params)?;
-                let (filename, description, content_hash, file_size, mime_type, is_public, download_cost,
-                     is_encrypted, encryption_key_hash, tags, max_downloads) = params;
-                
+                let params: (
+                    String,
+                    String,
+                    [u8; 32],
+                    u64,
+                    String,
+                    bool,
+                    u64,
+                    bool,
+                    Option<[u8; 32]>,
+                    Vec<String>,
+                    u64,
+                ) = bincode::deserialize(&call.params)?;
+                let (
+                    filename,
+                    description,
+                    content_hash,
+                    file_size,
+                    mime_type,
+                    is_public,
+                    download_cost,
+                    is_encrypted,
+                    encryption_key_hash,
+                    tags,
+                    max_downloads,
+                ) = params;
+
                 let file = SharedFile::new(
                     filename,
                     description,
@@ -798,92 +884,110 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     tags,
                     max_downloads,
                 );
-                
+
                 // Store file
                 let storage_key = file.storage_key();
                 let file_data = bincode::serialize(&file)?;
                 self.storage.set(&storage_key, &file_data)?;
-                
-                Ok(ContractResult::with_return_data(&file.file_id, context.gas_used)?)
-            },
+
+                Ok(ContractResult::with_return_data(
+                    &file.file_id,
+                    context.gas_used,
+                )?)
+            }
             "download_file" => {
                 let file_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
-                let storage_key = crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
+
+                let storage_key =
+                    crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
                 if let Some(file_data) = self.storage.get(&storage_key)? {
                     let mut file: SharedFile = bincode::deserialize(&file_data)?;
-                    
+
                     // Check access and availability
                     if file.is_available_for_download(&context.caller) {
                         file.record_download().map_err(|e| anyhow!("{}", e))?;
-                        
+
                         // Update storage
                         let updated_data = bincode::serialize(&file)?;
                         self.storage.set(&storage_key, &updated_data)?;
-                        
-                        Ok(ContractResult::with_return_data(&file.content_hash, context.gas_used)?)
+
+                        Ok(ContractResult::with_return_data(
+                            &file.content_hash,
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("File not accessible or download limit reached"))
                     }
                 } else {
                     Err(anyhow!("File not found"))
                 }
-            },
+            }
             "grant_file_access" => {
-                let params: ([u8; 32], crate::integration::crypto_integration::PublicKey) = bincode::deserialize(&call.params)?;
+                let params: ([u8; 32], crate::integration::crypto_integration::PublicKey) =
+                    bincode::deserialize(&call.params)?;
                 let (file_id, user) = params;
-                
-                let storage_key = crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
+
+                let storage_key =
+                    crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
                 if let Some(file_data) = self.storage.get(&storage_key)? {
                     let mut file: SharedFile = bincode::deserialize(&file_data)?;
-                    
+
                     // Only owner can grant access
                     if file.owner == context.caller {
                         file.grant_access(user).map_err(|e| anyhow!("{}", e))?;
-                        
+
                         // Update storage
                         let updated_data = bincode::serialize(&file)?;
                         self.storage.set(&storage_key, &updated_data)?;
-                        
-                        Ok(ContractResult::with_return_data(&"Access granted", context.gas_used)?)
+
+                        Ok(ContractResult::with_return_data(
+                            &"Access granted",
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("Access denied"))
                     }
                 } else {
                     Err(anyhow!("File not found"))
                 }
-            },
+            }
             "revoke_file_access" => {
-                let params: ([u8; 32], crate::integration::crypto_integration::PublicKey) = bincode::deserialize(&call.params)?;
+                let params: ([u8; 32], crate::integration::crypto_integration::PublicKey) =
+                    bincode::deserialize(&call.params)?;
                 let (file_id, user) = params;
-                
-                let storage_key = crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
+
+                let storage_key =
+                    crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
                 if let Some(file_data) = self.storage.get(&storage_key)? {
                     let mut file: SharedFile = bincode::deserialize(&file_data)?;
-                    
+
                     // Only owner can revoke access
                     if file.owner == context.caller {
                         file.revoke_access(&user).map_err(|e| anyhow!("{}", e))?;
-                        
+
                         // Update storage
                         let updated_data = bincode::serialize(&file)?;
                         self.storage.set(&storage_key, &updated_data)?;
-                        
-                        Ok(ContractResult::with_return_data(&"Access revoked", context.gas_used)?)
+
+                        Ok(ContractResult::with_return_data(
+                            &"Access revoked",
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("Access denied"))
                     }
                 } else {
                     Err(anyhow!("File not found"))
                 }
-            },
+            }
             "get_file_info" => {
                 let file_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
-                let storage_key = crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
+
+                let storage_key =
+                    crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
                 if let Some(file_data) = self.storage.get(&storage_key)? {
                     let file: SharedFile = bincode::deserialize(&file_data)?;
-                    
+
                     // Only accessible users can get file info
                     if file.has_access(&context.caller) {
                         let file_info = (
@@ -896,14 +1000,17 @@ impl<S: ContractStorage> ContractExecutor<S> {
                             file.download_count,
                             file.tags,
                         );
-                        Ok(ContractResult::with_return_data(&file_info, context.gas_used)?)
+                        Ok(ContractResult::with_return_data(
+                            &file_info,
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("File not accessible"))
                     }
                 } else {
                     Err(anyhow!("File not found"))
                 }
-            },
+            }
             _ => Err(anyhow!("Unknown file method: {}", call.method)),
         }
     }
@@ -919,8 +1026,11 @@ impl<S: ContractStorage> ContractExecutor<S> {
         match call.method.as_str() {
             "create_proposal" => {
                 // For now, return a simple success
-                Ok(ContractResult::with_return_data(&"Governance not fully implemented", context.gas_used)?)
-            },
+                Ok(ContractResult::with_return_data(
+                    &"Governance not fully implemented",
+                    context.gas_used,
+                )?)
+            }
             _ => Err(anyhow!("Unknown governance method: {}", call.method)),
         }
     }
@@ -931,7 +1041,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
         context: &mut ExecutionContext,
     ) -> Result<ContractResult> {
         use crate::contracts::web4::Web4Contract;
-        
+
         context.consume_gas(3000)?; // Base gas for Web4 operations
 
         // Get or create Web4 contract
@@ -949,7 +1059,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
             // Create new Web4 contract with basic initialization
             use crate::contracts::web4::types::*;
             use std::collections::HashMap;
-            
+
             let metadata = WebsiteMetadata {
                 title: "New Web4 Site".to_string(),
                 description: "Deployed via smart contract".to_string(),
@@ -1037,7 +1147,10 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 let citizen: PublicKey = bincode::deserialize(&call.params)?;
 
                 // Get mutable reference to token for transfer
-                if let Some(token) = self.token_contracts.get_mut(&TokenContract::new_zhtp().token_id) {
+                if let Some(token) = self
+                    .token_contracts
+                    .get_mut(&TokenContract::new_zhtp().token_id)
+                {
                     ubi.claim_ubi(&citizen, context.block_number, token, &contract_context)
                         .map_err(|e| anyhow!("{:?}", e))?;
 
@@ -1048,20 +1161,22 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     let token_data = bincode::serialize(token)?;
                     self.storage.set(&storage_key, &token_data)?;
 
-                    Ok(ContractResult::with_return_data(&"Claim UBI successful", contract_context.gas_used)?)
+                    Ok(ContractResult::with_return_data(
+                        &"Claim UBI successful",
+                        contract_context.gas_used,
+                    )?)
                 } else {
                     Err(anyhow!("ZHTP token not found"))
                 }
-            },
+            }
             "register" => {
                 let params: PublicKey = bincode::deserialize(&call.params)?;
 
-                ubi.register(&params)
-                    .map_err(|e| anyhow!("{:?}", e))?;
+                ubi.register(&params).map_err(|e| anyhow!("{:?}", e))?;
 
                 ContractResult::with_return_data(&"Citizen registered", contract_context.gas_used)
                     .map_err(|e| anyhow!("{:?}", e))
-            },
+            }
             "receive_funds" => {
                 let amount: u64 = bincode::deserialize(&call.params)?;
 
@@ -1072,7 +1187,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
                 ContractResult::with_return_data(&"Funds received", contract_context.gas_used)
                     .map_err(|e| anyhow!("{:?}", e))
-            },
+            }
             "set_month_amount" => {
                 let params: (u64, u64) = bincode::deserialize(&call.params)?;
                 let (month_index, amount) = params;
@@ -1083,7 +1198,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
                 ContractResult::with_return_data(&"Month amount set", contract_context.gas_used)
                     .map_err(|e| anyhow!("{:?}", e))
-            },
+            }
             "set_amount_range" => {
                 let params: (u64, u64, u64) = bincode::deserialize(&call.params)?;
                 let (start_month, end_month, amount) = params;
@@ -1094,7 +1209,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
                 ContractResult::with_return_data(&"Amount range set", contract_context.gas_used)
                     .map_err(|e| anyhow!("{:?}", e))
-            },
+            }
             _ => Err(anyhow!("Unknown UBI method: {}", call.method)),
         };
 
@@ -1154,27 +1269,52 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
                 // Authorization check delegated to DevGrants.receive_fees()
                 // (consistent with approve_grant, execute_grant pattern)
-                dev_grants.receive_fees(&context.caller, amount)
+                dev_grants
+                    .receive_fees(&context.caller, amount)
                     .map_err(|e| anyhow!("{:?}", e))?;
 
-                Ok(ContractResult::with_return_data(&"Fees received", contract_context.gas_used)?)
-            },
+                Ok(ContractResult::with_return_data(
+                    &"Fees received",
+                    contract_context.gas_used,
+                )?)
+            }
             "approve_grant" => {
                 let params: (u64, PublicKey, u64) = bincode::deserialize(&call.params)?;
                 let (proposal_id, recipient, amount) = params;
 
-                dev_grants.approve_grant(&context.caller, proposal_id, &recipient, amount, context.block_number)
+                dev_grants
+                    .approve_grant(
+                        &context.caller,
+                        proposal_id,
+                        &recipient,
+                        amount,
+                        context.block_number,
+                    )
                     .map_err(|e| anyhow!("{:?}", e))?;
 
-                Ok(ContractResult::with_return_data(&"Grant approved", contract_context.gas_used)?)
-            },
+                Ok(ContractResult::with_return_data(
+                    &"Grant approved",
+                    contract_context.gas_used,
+                )?)
+            }
             "execute_grant" => {
                 let params: (u64, PublicKey) = bincode::deserialize(&call.params)?;
                 let (proposal_id, recipient) = params;
 
                 // Get mutable reference to token for transfer
-                if let Some(token) = self.token_contracts.get_mut(&TokenContract::new_zhtp().token_id) {
-                    dev_grants.execute_grant(&context.caller, proposal_id, &recipient, context.block_number, token, &contract_context)
+                if let Some(token) = self
+                    .token_contracts
+                    .get_mut(&TokenContract::new_zhtp().token_id)
+                {
+                    dev_grants
+                        .execute_grant(
+                            &context.caller,
+                            proposal_id,
+                            &recipient,
+                            context.block_number,
+                            token,
+                            &contract_context,
+                        )
                         .map_err(|e| anyhow!("{:?}", e))?;
 
                     // CRITICAL: Persist token contract after mutations
@@ -1184,11 +1324,14 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     let token_data = bincode::serialize(token)?;
                     self.storage.set(&storage_key, &token_data)?;
 
-                    Ok(ContractResult::with_return_data(&"Grant executed", contract_context.gas_used)?)
+                    Ok(ContractResult::with_return_data(
+                        &"Grant executed",
+                        contract_context.gas_used,
+                    )?)
                 } else {
                     Err(anyhow!("ZHTP token not found"))
                 }
-            },
+            }
             _ => Err(anyhow!("Unknown DevGrants method: {}", call.method)),
         };
 
@@ -1295,21 +1438,16 @@ mod tests {
     #[test]
     fn test_execution_context() {
         let keypair = KeyPair::generate().unwrap();
-        let mut context = ExecutionContext::new(
-            keypair.public_key,
-            100,
-            1234567890,
-            10000,
-            [1u8; 32],
-        );
+        let mut context =
+            ExecutionContext::new(keypair.public_key, 100, 1234567890, 10000, [1u8; 32]);
 
         assert_eq!(context.remaining_gas(), 10000);
-        
+
         // Consume some gas
         assert!(context.consume_gas(1000).is_ok());
         assert_eq!(context.gas_used, 1000);
         assert_eq!(context.remaining_gas(), 9000);
-        
+
         // Try to consume more gas than available
         assert!(context.consume_gas(10000).is_err());
     }
@@ -1317,19 +1455,19 @@ mod tests {
     #[test]
     fn test_memory_storage() {
         let mut storage = MemoryStorage::default();
-        
+
         let key = b"test_key";
         let value = b"test_value";
-        
+
         // Initially empty
         assert!(!storage.exists(key).unwrap());
         assert!(storage.get(key).unwrap().is_none());
-        
+
         // Set value
         storage.set(key, value).unwrap();
         assert!(storage.exists(key).unwrap());
         assert_eq!(storage.get(key).unwrap().unwrap(), value);
-        
+
         // Delete value
         storage.delete(key).unwrap();
         assert!(!storage.exists(key).unwrap());
@@ -1340,7 +1478,7 @@ mod tests {
     fn test_contract_executor() {
         let storage = MemoryStorage::default();
         let executor = ContractExecutor::new(storage);
-        
+
         // Should have ZHTP token initialized
         let lib_id = crate::contracts::utils::generate_lib_token_id();
         assert!(executor.get_token_contract(&lib_id).is_some());
@@ -1350,7 +1488,7 @@ mod tests {
     fn test_token_execution() {
         let storage = MemoryStorage::default();
         let mut executor = ContractExecutor::new(storage);
-        
+
         let creator_keypair = KeyPair::generate().unwrap();
         let mut context = ExecutionContext::new(
             creator_keypair.public_key.clone(),
@@ -1364,13 +1502,14 @@ mod tests {
         let call = ContractCall {
             contract_type: ContractType::Token,
             method: "create_custom_token".to_string(),
-            params: bincode::serialize(&("Test Token".to_string(), "TEST".to_string(), 1000000u64)).unwrap(),
+            params: bincode::serialize(&("Test Token".to_string(), "TEST".to_string(), 1000000u64))
+                .unwrap(),
             permissions: crate::types::CallPermissions::Public,
         };
 
         let result = executor.execute_call(call, &mut context).unwrap();
         assert!(result.success);
-        
+
         let token_id: [u8; 32] = bincode::deserialize(&result.return_data).unwrap();
         assert!(executor.get_token_contract(&token_id).is_some());
     }
@@ -1412,10 +1551,13 @@ mod tests {
             governance_authority: gov_authority.clone(),
             blocks_per_month: 100,
         };
-        executor.init_system(config).expect("System initialization failed");
+        executor
+            .init_system(config)
+            .expect("System initialization failed");
 
         // Verify system config was persisted to storage by checking we can load it
-        let loaded_config = executor.get_system_config()
+        let loaded_config = executor
+            .get_system_config()
             .expect("System config should be loaded from storage");
         assert_eq!(loaded_config.governance_authority, gov_authority);
         assert_eq!(loaded_config.blocks_per_month, 100);
@@ -1424,13 +1566,8 @@ mod tests {
         let citizen_keypair = KeyPair::generate().unwrap();
         let citizen = citizen_keypair.public_key.clone();
 
-        let mut context = ExecutionContext::new(
-            citizen.clone(),
-            1000,
-            1234567890,
-            100000,
-            [1u8; 32],
-        );
+        let mut context =
+            ExecutionContext::new(citizen.clone(), 1000, 1234567890, 100000, [1u8; 32]);
 
         let register_call = ContractCall {
             contract_type: ContractType::UbiDistribution,
@@ -1439,7 +1576,8 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        executor.execute_call(register_call, &mut context)
+        executor
+            .execute_call(register_call, &mut context)
             .expect("Citizen registration failed");
 
         // Set monthly amount (governance-only)
@@ -1450,15 +1588,11 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut gov_context = ExecutionContext::new(
-            gov_authority.clone(),
-            1000,
-            1234567890,
-            100000,
-            [2u8; 32],
-        );
+        let mut gov_context =
+            ExecutionContext::new(gov_authority.clone(), 1000, 1234567890, 100000, [2u8; 32]);
 
-        executor.execute_call(set_amount_call, &mut gov_context)
+        executor
+            .execute_call(set_amount_call, &mut gov_context)
             .expect("set_month_amount failed");
 
         // Receive funds into UBI
@@ -1469,20 +1603,17 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut operator_context = ExecutionContext::new(
-            gov_authority.clone(),
-            1000,
-            1234567890,
-            100000,
-            [3u8; 32],
-        );
+        let mut operator_context =
+            ExecutionContext::new(gov_authority.clone(), 1000, 1234567890, 100000, [3u8; 32]);
 
-        executor.execute_call(receive_call, &mut operator_context)
+        executor
+            .execute_call(receive_call, &mut operator_context)
             .expect("Receive funds failed");
 
         // ====== PHASE 2: Verify persistence ======
         // After all these operations, verify the UBI state was persisted
-        let ubi = executor.get_or_load_ubi()
+        let ubi = executor
+            .get_or_load_ubi()
             .expect("UBI should be loaded from persistent storage");
 
         // Verify citizen was still registered (registered_count should be 1)
@@ -1534,7 +1665,9 @@ mod tests {
             governance_authority: gov_authority.clone(),
             blocks_per_month: 100,
         };
-        executor.init_system(config).expect("System initialization failed");
+        executor
+            .init_system(config)
+            .expect("System initialization failed");
 
         // ====== ATTACK TEST: Non-governance caller tries to set_month_amount ======
         let malicious_call = ContractCall {
@@ -1545,7 +1678,7 @@ mod tests {
         };
 
         let mut attacker_context = ExecutionContext::new(
-            attacker.clone(),  // NOT the governance authority!
+            attacker.clone(), // NOT the governance authority!
             1000,
             1234567890,
             100000,
@@ -1553,7 +1686,10 @@ mod tests {
         );
 
         let result = executor.execute_call(malicious_call, &mut attacker_context);
-        assert!(result.is_err(), "Non-governance caller should not be able to set_month_amount");
+        assert!(
+            result.is_err(),
+            "Non-governance caller should not be able to set_month_amount"
+        );
 
         // ====== ATTACK TEST: Non-governance caller tries to set_amount_range ======
         let malicious_range_call = ContractCall {
@@ -1564,7 +1700,10 @@ mod tests {
         };
 
         let result = executor.execute_call(malicious_range_call, &mut attacker_context);
-        assert!(result.is_err(), "Non-governance caller should not be able to set_amount_range");
+        assert!(
+            result.is_err(),
+            "Non-governance caller should not be able to set_amount_range"
+        );
 
         // ====== LEGITIMATE TEST: Governance authority CAN set_month_amount ======
         let legitimate_call = ContractCall {
@@ -1574,16 +1713,14 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut gov_context = ExecutionContext::new(
-            gov_authority.clone(),
-            1000,
-            1234567890,
-            100000,
-            [5u8; 32],
-        );
+        let mut gov_context =
+            ExecutionContext::new(gov_authority.clone(), 1000, 1234567890, 100000, [5u8; 32]);
 
         let result = executor.execute_call(legitimate_call, &mut gov_context);
-        assert!(result.is_ok(), "Governance authority should be able to set_month_amount");
+        assert!(
+            result.is_ok(),
+            "Governance authority should be able to set_month_amount"
+        );
     }
 
     #[test]
@@ -1609,7 +1746,9 @@ mod tests {
             governance_authority: gov_authority.clone(),
             blocks_per_month: 100,
         };
-        executor.init_system(config).expect("System initialization failed");
+        executor
+            .init_system(config)
+            .expect("System initialization failed");
 
         // ====== STEP 1: Fund DevGrants pool ======
         let fund_call = ContractCall {
@@ -1619,15 +1758,11 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut operator_context = ExecutionContext::new(
-            gov_authority.clone(),
-            1000,
-            1234567890,
-            100000,
-            [7u8; 32],
-        );
+        let mut operator_context =
+            ExecutionContext::new(gov_authority.clone(), 1000, 1234567890, 100000, [7u8; 32]);
 
-        executor.execute_call(fund_call, &mut operator_context)
+        executor
+            .execute_call(fund_call, &mut operator_context)
             .expect("DevGrants funding failed");
 
         // ====== STEP 2: Governance approves grant (proposal_id=1, amount=10000) ======
@@ -1638,15 +1773,11 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut gov_context2 = ExecutionContext::new(
-            gov_authority.clone(),
-            1000,
-            1234567890,
-            100000,
-            [8u8; 32],
-        );
+        let mut gov_context2 =
+            ExecutionContext::new(gov_authority.clone(), 1000, 1234567890, 100000, [8u8; 32]);
 
-        executor.execute_call(approve_call, &mut gov_context2)
+        executor
+            .execute_call(approve_call, &mut gov_context2)
             .expect("Grant approval failed");
 
         // ====== STEP 3: Execute grant (transfer 10000 tokens to recipient) ======
@@ -1657,13 +1788,8 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut executor_context = ExecutionContext::new(
-            applicant.clone(),
-            1000,
-            1234567890,
-            100000,
-            [9u8; 32],
-        );
+        let mut executor_context =
+            ExecutionContext::new(applicant.clone(), 1000, 1234567890, 100000, [9u8; 32]);
 
         let result = executor.execute_call(execute_call, &mut executor_context);
 

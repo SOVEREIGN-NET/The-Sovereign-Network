@@ -14,6 +14,8 @@ use lib_blockchain::{Blockchain, Transaction};
 use lib_consensus::ValidatorManager;
 use lib_identity::IdentityId;
 
+const DEFAULT_EDGE_MAX_HEADERS: usize = 500;
+
 /// Blockchain component - manages blockchain lifecycle and delegates business logic to services
 #[derive(Debug)]
 pub struct BlockchainComponent {
@@ -28,7 +30,7 @@ pub struct BlockchainComponent {
     joined_existing_network: bool,
     validator_manager: Arc<RwLock<Option<Arc<RwLock<ValidatorManager>>>>>,
     node_identity: Arc<RwLock<Option<IdentityId>>>,
-    is_edge_node: bool,
+    edge_sync_max_headers: Option<usize>,
 }
 
 impl BlockchainComponent {
@@ -45,7 +47,7 @@ impl BlockchainComponent {
             joined_existing_network: false,
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
-            is_edge_node: false,
+            edge_sync_max_headers: None,
         }
     }
 
@@ -62,7 +64,7 @@ impl BlockchainComponent {
             joined_existing_network: false,
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
-            is_edge_node: false,
+            edge_sync_max_headers: None,
         }
     }
     
@@ -82,7 +84,7 @@ impl BlockchainComponent {
             joined_existing_network: false,
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
-            is_edge_node: false,
+            edge_sync_max_headers: None,
         }
     }
     
@@ -104,7 +106,7 @@ impl BlockchainComponent {
             joined_existing_network,
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
-            is_edge_node: false,
+            edge_sync_max_headers: None,
         }
     }
     
@@ -117,7 +119,15 @@ impl BlockchainComponent {
     }
     
     pub fn set_edge_mode(&mut self, is_edge: bool) {
-        self.is_edge_node = is_edge;
+        if is_edge {
+            self.edge_sync_max_headers = Some(DEFAULT_EDGE_MAX_HEADERS);
+        } else {
+            self.edge_sync_max_headers = None;
+        }
+    }
+
+    pub fn set_edge_sync_mode(&mut self, max_headers: usize) {
+        self.edge_sync_max_headers = Some(max_headers);
     }
     
     pub async fn set_user_wallet(&self, wallet: crate::runtime::did_startup::WalletStartupResult) {
@@ -156,7 +166,7 @@ impl BlockchainComponent {
     }
     
     pub fn is_edge_mode(&self) -> bool {
-        self.is_edge_node
+        self.edge_sync_max_headers.is_some()
     }
     
     pub async fn get_initialized_blockchain(&self) -> Result<Arc<RwLock<Blockchain>>> {
@@ -435,22 +445,21 @@ impl Component for BlockchainComponent {
         *self.status.write().await = ComponentStatus::Starting;
         
         // Edge node initialization
-        if self.is_edge_node {
-            info!("🔷 Edge node mode: Initializing EdgeNodeState (header-only sync)");
-            const EDGE_MAX_HEADERS: usize = 500;
-            let edge_state = lib_blockchain::edge_node_state::EdgeNodeState::new(EDGE_MAX_HEADERS);
+        if let Some(max_headers) = self.edge_sync_max_headers {
+            info!("Edge node mode: Initializing EdgeNodeState (header-only sync)");
+            let edge_state = lib_blockchain::edge_node_state::EdgeNodeState::new(max_headers);
             let edge_state_arc = Arc::new(RwLock::new(edge_state));
             *self.edge_state.write().await = Some(edge_state_arc.clone());
-            
+
             crate::runtime::edge_state_provider::initialize_global_edge_state_provider();
             crate::runtime::edge_state_provider::set_global_edge_state(edge_state_arc).await?;
-            
-            info!("✓ EdgeNodeState initialized");
+
+            info!("EdgeNodeState initialized");
             *self.start_time.write().await = Some(Instant::now());
             *self.status.write().await = ComponentStatus::Running;
             return Ok(());
         }
-        
+
         // Full node initialization
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(shared_blockchain) => {

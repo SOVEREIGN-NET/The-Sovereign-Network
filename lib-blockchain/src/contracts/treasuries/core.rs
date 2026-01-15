@@ -4,10 +4,10 @@
 //! Pure routing contract: zero economic logic, zero percentage math.
 //! Phase 1: immutable after initialization.
 
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use crate::integration::crypto_integration::PublicKey;
 use crate::types::dao::SectorDao;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Treasury Registry: canonical mapping from sector to treasury address.
 ///
@@ -43,7 +43,7 @@ use crate::types::dao::SectorDao;
 /// - Track balances
 /// - Perform fee math
 /// - Infer sector from caller
-/// 
+///
 /// It is pure routing: SectorDao -> Address
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TreasuryRegistry {
@@ -92,20 +92,11 @@ impl TreasuryRegistry {
 
         // Invariant A1: Validate all 5 sectors are present
         // Note: sector names are lowercase to match SectorDao::as_str() output
-        let required_sectors = vec![
-            "healthcare",
-            "education",
-            "energy",
-            "housing",
-            "food",
-        ];
+        let required_sectors = vec!["healthcare", "education", "energy", "housing", "food"];
 
         for sector in &required_sectors {
             if !sector_treasury_map.contains_key(*sector) {
-                return Err(format!(
-                    "Sector {} not registered in treasury map",
-                    sector
-                ));
+                return Err(format!("Sector {} not registered in treasury map", sector));
             }
         }
 
@@ -113,10 +104,7 @@ impl TreasuryRegistry {
         let mut seen_addresses = std::collections::HashSet::new();
         for (sector, address) in &sector_treasury_map {
             if !seen_addresses.insert(address.clone()) {
-                return Err(format!(
-                    "Duplicate treasury address for sector {}",
-                    sector
-                ));
+                return Err(format!("Duplicate treasury address for sector {}", sector));
             }
 
             // Also validate treasury address is non-zero
@@ -180,13 +168,7 @@ impl TreasuryRegistry {
     /// Validate that all 5 sectors are registered with distinct addresses.
     /// Returns true if invariants A1 and A2 hold.
     pub fn validate_registry(&self) -> Result<(), String> {
-        let required_sectors = vec![
-            "healthcare",
-            "education",
-            "energy",
-            "housing",
-            "food",
-        ];
+        let required_sectors = vec!["healthcare", "education", "energy", "housing", "food"];
 
         // Check all sectors present
         for sector in &required_sectors {
@@ -269,9 +251,9 @@ pub fn initialize_sector_treasuries(
     allocation_period: Option<crate::types::dao::EconomicPeriod>,
 ) -> Result<HashMap<String, crate::contracts::treasuries::SovDaoTreasury>, String> {
     use crate::contracts::treasuries::SovDaoTreasury;
-    
+
     let mut treasuries = HashMap::new();
-    
+
     // Initialize all 5 sectors
     let sectors = vec![
         (SectorDao::Healthcare, "healthcare"),
@@ -280,12 +262,12 @@ pub fn initialize_sector_treasuries(
         (SectorDao::Housing, "housing"),
         (SectorDao::Food, "food"),
     ];
-    
+
     for (sector, sector_name) in sectors {
         let treasury = SovDaoTreasury::init(sector, fee_collector.clone(), allocation_period)?;
         treasuries.insert(sector_name.to_string(), treasury);
     }
-    
+
     Ok(treasuries)
 }
 
@@ -324,7 +306,7 @@ mod tests {
         // Verify all sectors are registered
         assert!(registry.is_initialized());
         assert_eq!(registry.all_sectors().len(), 5);
-        
+
         // Verify validate passes
         assert!(registry.validate_registry().is_ok());
     }
@@ -429,8 +411,14 @@ mod tests {
             .expect("Registry init should succeed");
 
         // Verify each sector resolves to correct address
-        assert_eq!(registry.get_treasury(&SectorDao::Healthcare), Some(healthcare));
-        assert_eq!(registry.get_treasury(&SectorDao::Education), Some(education));
+        assert_eq!(
+            registry.get_treasury(&SectorDao::Healthcare),
+            Some(healthcare)
+        );
+        assert_eq!(
+            registry.get_treasury(&SectorDao::Education),
+            Some(education)
+        );
         assert_eq!(registry.get_treasury(&SectorDao::Energy), Some(energy));
         assert_eq!(registry.get_treasury(&SectorDao::Housing), Some(housing));
         assert_eq!(registry.get_treasury(&SectorDao::Food), Some(food));
@@ -543,10 +531,10 @@ mod tests {
     fn test_initialize_five_sector_treasuries_creates_all_instances() {
         // INVARIANT A1: Five distinct treasuries, one per sector
         let fee_collector = create_test_public_key(100);
-        
+
         let treasuries = initialize_sector_treasuries(fee_collector.clone(), None)
             .expect("Should initialize all 5 sectors");
-        
+
         // Verify all 5 sectors exist
         assert_eq!(treasuries.len(), 5);
         assert!(treasuries.contains_key("healthcare"));
@@ -560,26 +548,41 @@ mod tests {
     fn test_sector_treasuries_are_immutably_bound_to_sectors() {
         // INVARIANT A2: Each treasury is permanently bound to its sector
         let fee_collector = create_test_public_key(101);
-        
+
         let treasuries = initialize_sector_treasuries(fee_collector.clone(), None)
             .expect("Should initialize all 5 sectors");
-        
+
         // Verify each treasury has the correct sector
-        assert_eq!(treasuries["healthcare"].sector(), crate::types::dao::SectorDao::Healthcare);
-        assert_eq!(treasuries["education"].sector(), crate::types::dao::SectorDao::Education);
-        assert_eq!(treasuries["energy"].sector(), crate::types::dao::SectorDao::Energy);
-        assert_eq!(treasuries["housing"].sector(), crate::types::dao::SectorDao::Housing);
-        assert_eq!(treasuries["food"].sector(), crate::types::dao::SectorDao::Food);
+        assert_eq!(
+            treasuries["healthcare"].sector(),
+            crate::types::dao::SectorDao::Healthcare
+        );
+        assert_eq!(
+            treasuries["education"].sector(),
+            crate::types::dao::SectorDao::Education
+        );
+        assert_eq!(
+            treasuries["energy"].sector(),
+            crate::types::dao::SectorDao::Energy
+        );
+        assert_eq!(
+            treasuries["housing"].sector(),
+            crate::types::dao::SectorDao::Housing
+        );
+        assert_eq!(
+            treasuries["food"].sector(),
+            crate::types::dao::SectorDao::Food
+        );
     }
 
     #[test]
     fn test_sector_treasuries_share_same_fee_collector() {
         // All treasuries have the same authorized fee_collector
         let fee_collector = create_test_public_key(102);
-        
+
         let treasuries = initialize_sector_treasuries(fee_collector.clone(), None)
             .expect("Should initialize all 5 sectors");
-        
+
         for (sector_name, treasury) in treasuries.iter() {
             assert_eq!(
                 treasury.authorized_fee_collector(),
@@ -594,10 +597,10 @@ mod tests {
     fn test_sector_treasuries_start_with_zero_balance() {
         // All newly initialized treasuries have total_received = 0
         let fee_collector = create_test_public_key(103);
-        
+
         let treasuries = initialize_sector_treasuries(fee_collector.clone(), None)
             .expect("Should initialize all 5 sectors");
-        
+
         for (sector_name, treasury) in treasuries.iter() {
             assert_eq!(
                 treasury.total_received(),
@@ -613,7 +616,7 @@ mod tests {
         // INVARIANT A3: Registry deterministically routes sectors to treasury addresses
         let admin = create_test_public_key(104);
         let fee_collector = create_test_public_key(105);
-        
+
         // Create distinct addresses for each sector treasury
         let treasury_addresses: HashMap<String, PublicKey> = vec![
             ("healthcare".to_string(), create_test_public_key(1)),
@@ -624,10 +627,10 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        
+
         let registry = init_registry(admin, fee_collector, treasury_addresses.clone())
             .expect("Should initialize registry");
-        
+
         // Verify registry routes to correct addresses
         assert_eq!(
             registry.get_treasury(&crate::types::dao::SectorDao::Healthcare),
@@ -655,20 +658,20 @@ mod tests {
     fn test_year_5_scenario_allocation_projection() {
         // INVARIANT B3: Integration test - Year 5 example
         // $5B volume → $50M fees → $15M DAOs (30% allocation) → $3M per DAO
-        
+
         let fee_collector = create_test_public_key(106);
-        
+
         let treasuries = initialize_sector_treasuries(fee_collector.clone(), None)
             .expect("Should initialize all 5 sectors");
-        
+
         // Simulate Year 5 fee distribution
         // Total DAO allocation: 15M tokens (30% of 50M fees)
         // Split evenly across 5 sectors: 3M per sector
         let total_dao_fees = 15_000_000u64;
         let per_sector_amount = total_dao_fees / 5; // 3M per sector
-        
+
         assert_eq!(per_sector_amount, 3_000_000);
-        
+
         // Verify each sector can receive this amount (no overflow, within u64)
         for (_sector_name, _treasury) in treasuries.iter() {
             // Treasury is initialized and ready to receive credits
@@ -700,5 +703,4 @@ mod tests {
         // Validation must pass
         assert!(registry.validate_registry().is_ok());
     }
-
 }
