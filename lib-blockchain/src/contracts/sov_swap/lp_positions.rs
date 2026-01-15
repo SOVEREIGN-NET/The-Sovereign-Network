@@ -179,8 +179,22 @@ impl LpPositionsManager {
             last_reward_claim_height: current_height,
         });
 
+        // Update time-weighted stake before adding new liquidity
+        // This accumulates the time value of existing stake
+        let blocks_since_provision = current_height.saturating_sub(position.provided_at_height);
+        if blocks_since_provision > 0 && position.lp_tokens > 0 {
+            // Add accumulated time weight: existing_lp_tokens * blocks_held
+            let accumulated_weight = (position.lp_tokens as u128)
+                .saturating_mul(blocks_since_provision as u128);
+            position.time_weighted_stake = position.time_weighted_stake
+                .saturating_add(accumulated_weight as u64);
+        }
+
         // Update position (use saturating_add to prevent panics in tests)
         position.lp_tokens = position.lp_tokens.saturating_add(lp_tokens_to_mint);
+        
+        // Reset provision height to current when adding new liquidity
+        position.provided_at_height = current_height;
 
         // Update total supply (use saturating_add to prevent panics in tests)
         self.total_lp_supply = self.total_lp_supply.saturating_add(lp_tokens_to_mint);
@@ -284,10 +298,29 @@ impl LpPositionsManager {
             return Err("Must wait at least one block before claiming again".to_string());
         }
 
-        // Time decay formula: min(blocks, max_weight) / max_weight
-        // After 100,000 blocks, full weight
-        let _max_time_weight = 100_000u64;
-        let _time_weight = std::cmp::min(blocks_since_provision, _max_time_weight);
+        // Update time-weighted stake before calculating rewards
+        // Add the accumulated weight since last update
+        if blocks_since_provision > 0 && position.lp_tokens > 0 {
+            let accumulated_weight = (position.lp_tokens as u128)
+                .saturating_mul(blocks_since_provision as u128);
+            position.time_weighted_stake = position.time_weighted_stake
+                .saturating_add(accumulated_weight as u64);
+        }
+
+        // Calculate time-weighting multiplier (0-100)
+        // After 100,000 blocks (~11.5 days at 10s blocks), full weight
+        // Formula: min(time_weighted_stake / (lp_tokens * max_blocks), 100)
+        const MAX_TIME_WEIGHT_BLOCKS: u64 = 100_000;
+        let time_multiplier = if position.lp_tokens > 0 {
+            let max_possible_weight = (position.lp_tokens as u128)
+                .saturating_mul(MAX_TIME_WEIGHT_BLOCKS as u128);
+            let multiplier = (position.time_weighted_stake as u128)
+                .saturating_mul(100)
+                .saturating_div(max_possible_weight.max(1)) as u64;
+            std::cmp::min(multiplier, 100)
+        } else {
+            0
+        };
 
         // Calculate proportional share of each reward stream
         if self.total_lp_supply == 0 {
@@ -297,16 +330,20 @@ impl LpPositionsManager {
         // Share as basis points (provider_lp_tokens / total_lp_supply) * 10000
         let provider_share_basis = ((position.lp_tokens as u128 * 10_000) / (self.total_lp_supply as u128)) as u64;
 
-        // Stream 1: Base LP Yield (60% of fees)
-        let base_yield = (self.base_lp_pool as u128 * provider_share_basis as u128 / 10_000) as u64;
+        // Stream 1: Base LP Yield (60% of fees) - apply time-weighting
+        let base_yield = (self.base_lp_pool as u128 
+            * provider_share_basis as u128 
+            * time_multiplier as u128 
+            / (10_000 * 100)) as u64;
 
-        // Stream 2: DAO Alignment Multiplier (25% of fees) - scaled by health score
+        // Stream 2: DAO Alignment Multiplier (25% of fees) - scaled by health score and time-weighting
         let alignment_bonus = (self.alignment_multiplier_pool as u128
             * provider_share_basis as u128
             * self.dao_health_score as u128
-            / (10_000 * 100)) as u64;
+            * time_multiplier as u128
+            / (10_000 * 100 * 100)) as u64;
 
-        // Stream 3: UBI Feedback (15% of fees) - auto-routed, but tracked for accounting
+        // Stream 3: UBI Feedback (15% of fees) - auto-routed, tracked for accounting (no time-weighting)
         let ubi_contribution = (self.ubi_routing_pool as u128 * provider_share_basis as u128 / 10_000) as u64;
 
         let total_sov = base_yield
@@ -315,6 +352,9 @@ impl LpPositionsManager {
 
         // Update position claim height
         position.last_reward_claim_height = current_height;
+        
+        // Reset provision height to restart time-weighting accumulation
+        position.provided_at_height = current_height;
 
         // Deduct from pools
         self.base_lp_pool = self.base_lp_pool.saturating_sub(base_yield);
@@ -560,8 +600,9 @@ mod tests {
         lp_mgr.alignment_multiplier_pool = 500_00000000; // 500 SOV
         lp_mgr.ubi_routing_pool = 300_00000000;   // 300 SOV
 
-        // Claim rewards
-        let rewards = lp_mgr.claim_lp_rewards(&provider, 200).unwrap();
+        // Claim rewards after waiting long enough to have some time weight
+        // Wait 10,000 blocks to get 10% time multiplier
+        let rewards = lp_mgr.claim_lp_rewards(&provider, 10_100).unwrap();
         assert!(rewards.total_sov > 0);
         assert!(rewards.base_yield > 0);
     }
@@ -581,5 +622,146 @@ mod tests {
         // With 100 SOV volume, 0.3% fee, and 1500 SOV equivalent liquidity,
         // APY should be positive
         assert!(apy >= 0);
+    }
+
+    #[test]
+    fn test_time_weighted_stake_accumulation() {
+        let mut lp_mgr = LpPositionsManager::new();
+        let provider = test_public_key(1);
+
+        // Add initial liquidity
+        let lp_tokens = lp_mgr.add_liquidity(
+            10_000_00000000,
+            5_000_00000000,
+            0,
+            0,
+            provider.clone(),
+            100,
+        ).unwrap();
+
+        // Check position was created with zero time-weighted stake
+        let position = lp_mgr.get_position(&provider).unwrap();
+        assert_eq!(position.time_weighted_stake, 0);
+        assert_eq!(position.provided_at_height, 100);
+
+        // Add more liquidity after 1000 blocks
+        // This should accumulate time weight for existing stake
+        lp_mgr.add_liquidity(
+            1_000_00000000,
+            500_00000000,
+            10_000_00000000,
+            5_000_00000000,
+            provider.clone(),
+            1100,
+        ).unwrap();
+
+        // Time-weighted stake should be: lp_tokens * blocks_held = lp_tokens * 1000
+        let position = lp_mgr.get_position(&provider).unwrap();
+        let expected_weight = lp_tokens * 1000;
+        assert_eq!(position.time_weighted_stake, expected_weight);
+        assert_eq!(position.provided_at_height, 1100); // Reset to new height
+    }
+
+    #[test]
+    fn test_time_weighted_rewards_short_term() {
+        let mut lp_mgr = LpPositionsManager::new();
+        let provider = test_public_key(1);
+
+        // Add liquidity
+        lp_mgr.add_liquidity(
+            10_000_00000000,
+            5_000_00000000,
+            0,
+            0,
+            provider.clone(),
+            100,
+        ).unwrap();
+
+        // Fund reward pools
+        lp_mgr.base_lp_pool = 1_000_00000000;
+        lp_mgr.alignment_multiplier_pool = 500_00000000;
+        lp_mgr.ubi_routing_pool = 300_00000000;
+
+        // Claim after only 100 blocks (very short term)
+        // Time multiplier should be low: 100 / 100,000 = 0.1%
+        let rewards = lp_mgr.claim_lp_rewards(&provider, 200).unwrap();
+        
+        // Rewards should be very low due to short holding period
+        // With time_multiplier = 0 (since 100 < 100,000 and time_weighted_stake accumulates)
+        // The base_yield will be reduced by the time multiplier
+        assert!(rewards.base_yield < lp_mgr.base_lp_pool / 10); // Much less than full share
+    }
+
+    #[test]
+    fn test_time_weighted_rewards_long_term() {
+        let mut lp_mgr = LpPositionsManager::new();
+        let provider = test_public_key(1);
+
+        // Add liquidity
+        lp_mgr.add_liquidity(
+            10_000_00000000,
+            5_000_00000000,
+            0,
+            0,
+            provider.clone(),
+            100,
+        ).unwrap();
+
+        // Fund reward pools
+        lp_mgr.base_lp_pool = 1_000_00000000;
+        lp_mgr.alignment_multiplier_pool = 500_00000000;
+        lp_mgr.ubi_routing_pool = 300_00000000;
+
+        let original_base_pool = lp_mgr.base_lp_pool;
+
+        // Claim after 100,000+ blocks (full time weight)
+        let rewards = lp_mgr.claim_lp_rewards(&provider, 100_100).unwrap();
+        
+        // With full time weight (100%), should get full share
+        // Since provider has 100% of LP tokens, should get ~100% of pools
+        assert_eq!(rewards.base_yield, original_base_pool);
+    }
+
+    #[test]
+    fn test_time_weighted_stake_prevents_gaming() {
+        let mut lp_mgr = LpPositionsManager::new();
+        let provider1 = test_public_key(1);
+        let provider2 = test_public_key(2);
+
+        // Provider 1: Long-term LP (adds at block 100)
+        lp_mgr.add_liquidity(
+            10_000_00000000,
+            5_000_00000000,
+            0,
+            0,
+            provider1.clone(),
+            100,
+        ).unwrap();
+
+        // Provider 2: Short-term LP (adds at block 10,000)
+        lp_mgr.add_liquidity(
+            10_000_00000000,
+            5_000_00000000,
+            10_000_00000000,
+            5_000_00000000,
+            provider2.clone(),
+            10_000,
+        ).unwrap();
+
+        // Fund reward pools
+        lp_mgr.base_lp_pool = 2_000_00000000; // 2000 SOV total
+        lp_mgr.alignment_multiplier_pool = 1_000_00000000;
+        lp_mgr.ubi_routing_pool = 600_00000000;
+
+        // Both claim at block 10,100
+        let rewards1 = lp_mgr.claim_lp_rewards(&provider1, 10_100).unwrap();
+        let rewards2 = lp_mgr.claim_lp_rewards(&provider2, 10_100).unwrap();
+
+        // Provider 1 held for 10,000 blocks, Provider 2 for only 100 blocks
+        // Provider 1's time multiplier: 10,000 / 100,000 = 10%
+        // Provider 2's time multiplier: 100 / 100,000 = 0.1%
+        // Provider 1 should get significantly more rewards despite equal LP tokens
+        assert!(rewards1.base_yield > rewards2.base_yield);
+        assert!(rewards1.alignment_bonus > rewards2.alignment_bonus);
     }
 }
