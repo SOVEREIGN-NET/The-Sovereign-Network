@@ -5359,17 +5359,24 @@ impl Blockchain {
 
             // Emit BlockFinalized event (Issue #11)
             if let Some(block) = self.blocks.iter().find(|b| b.header.height == block_height) {
-                let event = crate::events::BlockchainEvent::BlockFinalized {
-                    height: block_height,
-                    block_hash: block
-                        .hash()
-                        .as_bytes()
-                        .try_into()
-                        .expect("Block hash must be 32 bytes when emitting BlockFinalized event"),
-                };
-                if let Err(e) = self.event_publisher.publish(event).await {
-                    warn!("Failed to publish BlockFinalized event: {}", e);
-                    // Don't fail finalization for event publishing errors
+                // Block hash should always be 32 bytes, but handle gracefully if not
+                let block_hash = block.hash();
+                let block_hash_bytes = block_hash.as_bytes();
+                if block_hash_bytes.len() == 32 {
+                    let mut block_hash_array = [0u8; 32];
+                    block_hash_array.copy_from_slice(block_hash_bytes);
+
+                    let event = crate::events::BlockchainEvent::BlockFinalized {
+                        height: block_height,
+                        block_hash: block_hash_array,
+                    };
+                    if let Err(e) = self.event_publisher.publish(event).await {
+                        warn!("Failed to publish BlockFinalized event: {}", e);
+                        // Don't fail finalization for event publishing errors
+                    }
+                } else {
+                    warn!("Unexpected block hash size {} bytes for finalization event at height {}",
+                          block_hash_bytes.len(), block_height);
                 }
             }
         }

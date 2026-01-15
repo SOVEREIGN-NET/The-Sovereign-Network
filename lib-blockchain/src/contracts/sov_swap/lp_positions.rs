@@ -285,9 +285,10 @@ impl LpPositionsManager {
         }
 
         // Time decay formula: min(blocks, max_weight) / max_weight
-        // After 100,000 blocks, full weight
+        // After 100,000 blocks, full weight (future enhancement: apply to alignment_bonus weighting)
         let _max_time_weight = 100_000u64;
         let _time_weight = std::cmp::min(blocks_since_provision, _max_time_weight);
+        // TODO: Apply time_weight multiplier to alignment_bonus when staker seniority features are enabled
 
         // Calculate proportional share of each reward stream
         if self.total_lp_supply == 0 {
@@ -379,9 +380,10 @@ impl LpPositionsManager {
             .saturating_mul(fee_bps as u128)
             .saturating_mul(365);
 
-        // Divide by (total_liquidity * 10000) and return as u64
+        // Divide by (total_liquidity * 10000) to normalize basis points and return as u64
+        // Note: basis points divide by 10_000, not 100
         let apy = daily_fees
-            .saturating_div(total_liquidity.saturating_mul(100)) as u64;
+            .saturating_div(total_liquidity.saturating_mul(10_000)) as u64;
 
         apy
     }
