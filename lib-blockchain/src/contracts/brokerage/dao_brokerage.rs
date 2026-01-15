@@ -9,6 +9,13 @@ use anyhow::{Result, anyhow};
 use crate::integration::crypto_integration::PublicKey;
 use blake3;
 
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/// SOV token has 8 decimals: 1 SOV = 100,000,000 units
+const SOV_DECIMALS_DIVISOR: u128 = 100_000_000;
+
 /// A buyback offer from a DAO treasury
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuybackOffer {
@@ -168,7 +175,7 @@ impl DaoBrokerage {
         let max_sov_total = (token_amount as u128)
             .checked_mul(sov_price_per_token as u128)
             .ok_or_else(|| anyhow!("Overflow in SOV calculation"))?
-            .checked_div(100000000) // SOV has 8 decimals
+            .checked_div(SOV_DECIMALS_DIVISOR)
             .ok_or_else(|| anyhow!("Division error"))? as u64;
 
         // Generate offer ID
@@ -232,7 +239,7 @@ impl DaoBrokerage {
         let sov_payout = (token_amount as u128)
             .checked_mul(offer.sov_price_per_token as u128)
             .ok_or_else(|| anyhow!("Overflow in payout calculation"))?
-            .checked_div(100000000)
+            .checked_div(SOV_DECIMALS_DIVISOR)
             .ok_or_else(|| anyhow!("Division error"))? as u64;
 
         // Check treasury has sufficient SOV
@@ -336,7 +343,7 @@ impl DaoBrokerage {
         let sov_amount = (offer.token_amount as u128)
             .checked_mul(sov_price_per_token as u128)
             .ok_or_else(|| anyhow!("Overflow in calculation"))?
-            .checked_div(100000000)
+            .checked_div(SOV_DECIMALS_DIVISOR)
             .ok_or_else(|| anyhow!("Division error"))? as u64;
 
         self.completed_trades.push(CompletedTrade {
@@ -418,7 +425,7 @@ impl DaoBrokerage {
         let total_sell_volume: u64 = self.active_sell_offers.iter().map(|o| o.token_amount).sum();
 
         let recent_24h_trades: u64 = self.completed_trades.iter()
-            .map(|t| (t.token_amount as u128 * t.price_per_token as u128 / 100000000) as u64)
+            .map(|t| (t.token_amount as u128 * t.price_per_token as u128 / SOV_DECIMALS_DIVISOR) as u64)
             .sum();
 
         MarketSummary {

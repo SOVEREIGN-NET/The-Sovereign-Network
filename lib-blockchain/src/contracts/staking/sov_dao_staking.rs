@@ -166,13 +166,15 @@ impl SovDaoStaking {
             return Err(anyhow!("Min stakers must be at least 10, got {}", min_stakers));
         }
 
-        // Validate deadline (30-365 days, assuming ~8,640 blocks per day)
-        let min_deadline_blocks = 30 * 8_640; // ~30 days
-        let max_deadline_blocks = 365 * 8_640; // ~365 days
+        // Validate deadline (30-365 days, assuming 10s blocks = 8,640 blocks/day)
+        // NOTE: This differs from employment_registry.rs which assumes 6s blocks (~5,840 blocks/day).
+        // Block time assumptions should be standardized with a shared constant (future enhancement).
+        let min_deadline_blocks = 30 * 8_640; // ~30 days at 10s/block
+        let max_deadline_blocks = 365 * 8_640; // ~365 days at 10s/block
         if deadline_blocks < min_deadline_blocks || deadline_blocks > max_deadline_blocks {
             return Err(anyhow!(
-                "Deadline must be 30-365 days, got {} blocks",
-                deadline_blocks
+                "Deadline must be 30-365 days ({}-{} blocks at 10s/block), got {} blocks",
+                min_deadline_blocks, max_deadline_blocks, deadline_blocks
             ));
         }
 
