@@ -429,12 +429,13 @@ mod tests {
         assert_eq!(integer_sqrt(9), 3);
         assert_eq!(integer_sqrt(16), 4);
 
-        // Approximation for larger numbers (within ±15% tolerance for LP purposes)
+        // Newton's method should converge to exact values for small numbers
         let sqrt_100 = integer_sqrt(100);
-        assert!(sqrt_100 >= 8 && sqrt_100 <= 12, "sqrt(100) ≈ {}", sqrt_100);
+        assert_eq!(sqrt_100, 10, "sqrt(100) should be exact, got {}", sqrt_100);
 
+        // For larger numbers: approximation within ±5% for production use
         let sqrt_10k = integer_sqrt(10_000);
-        assert!(sqrt_10k >= 85 && sqrt_10k <= 115, "sqrt(10000) ≈ {}", sqrt_10k);
+        assert_eq!(sqrt_10k, 100, "sqrt(10000) should be exact, got {}", sqrt_10k);
     }
 
     #[test]
