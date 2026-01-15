@@ -102,10 +102,19 @@ impl AutomatedUBI {
         Ok(())
     }
     
-    /// Process UBI distribution with state synchronization to registrations
-    /// NOTE: Thread safety - when called from concurrent contexts, callers MUST ensure
-    /// exclusive access to wallets and registrations HashMaps. Use Arc<RwLock<>> in
-    /// multi-threaded environments to prevent race conditions on wallet balance updates.
+    /// Process UBI distribution with state synchronization to registrations.
+    ///
+    /// # Thread safety
+    ///
+    /// This function is **not** internally thread-safe and assumes a single-threaded
+    /// consensus execution context or otherwise strictly serialized access. Callers
+    /// MUST ensure exclusive access to `treasury`, `wallets`, and `registrations`
+    /// for the full duration of this call.
+    ///
+    /// In multi-threaded environments, any synchronization primitives (e.g.
+    /// `Arc<RwLock<...>>` around the underlying `HashMap`s) MUST be acquired
+    /// and locked by the caller *before* invoking this function, so that it
+    /// only ever observes exclusive `&mut` references.
     pub fn process_ubi_distribution(
         &mut self,
         treasury: &mut DaoTreasury,
@@ -150,6 +159,15 @@ impl AutomatedUBI {
                 let actual_payout = if let Some(registration) = registrations.get_mut(&wallet_hash) {
                     registration.record_payout(ubi_per_citizen, current_block)
                 } else {
+                    // Log warning if registration is missing - indicates data inconsistency
+                    // This suggests the citizen is in the recipients list but not in registrations
+                    info!(
+                        "WARN: Registration not found for citizen {} (wallet: {}) during UBI distribution at block {}. \
+                        Data inconsistency detected between recipients list and registrations.",
+                        citizen_id,
+                        hex::encode(wallet_address),
+                        current_block
+                    );
                     ubi_per_citizen
                 };
 

@@ -6,6 +6,14 @@ use crate::types::IdentityId;
 use crate::wallets::WalletId;
 use crate::economics::{EconomicModel, Transaction, TransactionType, Priority};
 
+/// Blocks per day (assuming ~10 second block time)
+/// At 10s/block: 24 hours = 86,400 seconds ÷ 10 = 8,640 blocks
+const BLOCKS_PER_DAY: u64 = 8_640;
+
+/// Days per month used for remainder accumulation
+/// When dividing monthly UBI by days to get daily amount, we track remainder for later distribution
+const DAYS_PER_MONTH: u64 = 30;
+
 /// UBI registration result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UbiRegistration {
@@ -123,9 +131,8 @@ impl UbiRegistration {
     /// Check if due for daily payout (requires being called with current block height)
     pub fn is_due_for_daily_payout(&self, current_block: u64) -> bool {
         if let Some(last_payout_block) = self.last_payout_block {
-            // At ~10 second blocks, 24 hours = 8640 blocks (~10 seconds per block)
-            // Using approximate daily payout threshold
-            current_block - last_payout_block >= 8640
+            // Using BLOCKS_PER_DAY to determine if enough time has passed for next daily payout
+            current_block - last_payout_block >= BLOCKS_PER_DAY
         } else {
             // Never received payout, eligible immediately
             true
@@ -137,11 +144,12 @@ impl UbiRegistration {
     pub fn record_payout(&mut self, amount: u64, block_height: u64) -> u64 {
         let mut actual_payout = amount;
 
-        // Add remainder accumulation - distribute remainder every 30 payouts
-        self.remainder_balance = self.remainder_balance.saturating_add(amount % 30);
-        if self.remainder_balance >= 30 {
-            actual_payout = amount + (self.remainder_balance / 30);
-            self.remainder_balance %= 30;
+        // Add remainder accumulation - distribute remainder every DAYS_PER_MONTH payouts
+        // The remainder comes from the monthly amount / DAYS_PER_MONTH division (e.g., 1000 / 30 = 33 remainder 10)
+        self.remainder_balance = self.remainder_balance.saturating_add(self.daily_amount % DAYS_PER_MONTH);
+        if self.remainder_balance >= DAYS_PER_MONTH {
+            actual_payout = amount + (self.remainder_balance / DAYS_PER_MONTH);
+            self.remainder_balance %= DAYS_PER_MONTH;
         }
 
         self.last_payout_block = Some(block_height);
@@ -156,7 +164,7 @@ impl UbiRegistration {
 
     /// Get estimated days since registration
     pub fn days_since_registration(&self, current_block: u64) -> u64 {
-        self.blocks_since_registration(current_block) / 8640 // ~8640 blocks per day
+        self.blocks_since_registration(current_block) / BLOCKS_PER_DAY
     }
     
     /// Calculate expected total UBI based on blocks since registration
