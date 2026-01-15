@@ -9,6 +9,8 @@ use crate::treasury_economics::DaoTreasury;
 use crate::wallets::WalletBalance;
 use crate::wasm::logging::info;
 use std::collections::HashMap;
+use lib_identity::citizenship::UbiRegistration;
+use lib_crypto::Hash;
 
 /// Automated payout schedule
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,42 +102,87 @@ impl AutomatedUBI {
         Ok(())
     }
     
-    /// Process UBI distribution
+    /// Process UBI distribution with state synchronization to registrations.
+    ///
+    /// # Thread safety
+    ///
+    /// This function is **not** internally thread-safe and assumes a single-threaded
+    /// consensus execution context or otherwise strictly serialized access. Callers
+    /// MUST ensure exclusive access to `treasury`, `wallets`, and `registrations`
+    /// for the full duration of this call.
+    ///
+    /// In multi-threaded environments, any synchronization primitives (e.g.
+    /// `Arc<RwLock<...>>` around the underlying `HashMap`s) MUST be acquired
+    /// and locked by the caller *before* invoking this function, so that it
+    /// only ever observes exclusive `&mut` references.
     pub fn process_ubi_distribution(
         &mut self,
         treasury: &mut DaoTreasury,
         wallets: &mut HashMap<[u8; 32], WalletBalance>,
+        registrations: &mut HashMap<Hash, UbiRegistration>,
+        current_block: u64,
     ) -> Result<u64> {
         if !self.schedule.is_payout_due() || self.recipients.is_empty() {
             return Ok(0);
         }
-        
+
         let total_recipients = self.recipients.len() as u64;
         let ubi_per_citizen = treasury.calculate_ubi_per_citizen(total_recipients);
-        
+
         if ubi_per_citizen == 0 {
             info!("No UBI funds available for distribution");
             return Ok(0);
         }
-        
-        let total_distribution = ubi_per_citizen * total_recipients;
+
+        let total_distribution = match ubi_per_citizen.checked_mul(total_recipients) {
+            Some(amount) => amount,
+            None => {
+                info!("UBI distribution overflow: ubi_per_citizen ({}) * recipients ({}) exceeds u64::MAX", ubi_per_citizen, total_recipients);
+                return Ok(0);
+            }
+        };
         let current_time = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
-        
+
         // Record distribution in treasury
         treasury.record_ubi_distribution(total_distribution, current_time)?;
-        
-        // Distribute to recipients
+
+        // Distribute to recipients with state synchronization
         let mut successful_distributions = 0u64;
         for (citizen_id, wallet_address) in &self.recipients {
             if let Some(wallet) = wallets.get_mut(wallet_address) {
-                wallet.available_balance += ubi_per_citizen;
+                wallet.available_balance = wallet.available_balance.saturating_add(ubi_per_citizen);
                 successful_distributions += 1;
-                
+
+                // Synchronize registration state - record the payout with block height
+                // Handles remainder distribution automatically
+                let wallet_hash = Hash(*wallet_address);
+                let actual_payout = if let Some(registration) = registrations.get_mut(&wallet_hash) {
+                    registration.record_payout(ubi_per_citizen, current_block)
+                } else {
+                    // Log warning if registration is missing - indicates data inconsistency
+                    // This suggests the citizen is in the recipients list but not in registrations
+                    info!(
+                        "WARN: Registration not found for citizen {} (wallet: {}) during UBI distribution at block {}. \
+                        Data inconsistency detected between recipients list and registrations.",
+                        citizen_id,
+                        hex::encode(wallet_address),
+                        current_block
+                    );
+                    ubi_per_citizen
+                };
+
+                // If remainder was distributed, update wallet accordingly
+                if actual_payout > ubi_per_citizen {
+                    let remainder = actual_payout - ubi_per_citizen;
+                    wallet.available_balance = wallet.available_balance.saturating_add(remainder);
+                }
+
                 info!(
-                    "Distributed {} ZHTP UBI to citizen {} (wallet: {})",
+                    "Distributed {} ZHTP UBI to citizen {} (wallet: {}) at block {}",
                     ubi_per_citizen,
                     citizen_id,
-                    hex::encode(wallet_address)
+                    hex::encode(wallet_address),
+                    current_block
                 );
             }
         }
@@ -278,15 +325,17 @@ impl AutomatedPayoutProcessor {
         }
     }
     
-    /// Process all scheduled payouts
+    /// Process all scheduled payouts with state synchronization
     pub fn process_all_payouts(
         &mut self,
         treasury: &mut DaoTreasury,
         wallets: &mut HashMap<[u8; 32], WalletBalance>,
+        registrations: &mut HashMap<Hash, UbiRegistration>,
+        current_block: u64,
     ) -> Result<(u64, u64)> {
-        let ubi_distributed = self.ubi_system.process_ubi_distribution(treasury, wallets)?;
+        let ubi_distributed = self.ubi_system.process_ubi_distribution(treasury, wallets, registrations, current_block)?;
         let infrastructure_distributed = self.infrastructure_system.process_infrastructure_rewards(wallets)?;
-        
+
         Ok((ubi_distributed, infrastructure_distributed))
     }
     
@@ -300,21 +349,23 @@ impl AutomatedPayoutProcessor {
     }
 }
 
-/// Process automated payouts (main entry point)
+/// Process automated payouts (main entry point with state synchronization)
 pub fn process_automated_payouts(
     processor: &mut AutomatedPayoutProcessor,
     treasury: &mut DaoTreasury,
     wallets: &mut HashMap<[u8; 32], WalletBalance>,
+    registrations: &mut HashMap<Hash, UbiRegistration>,
+    current_block: u64,
 ) -> Result<()> {
-    let (ubi_distributed, infrastructure_distributed) = processor.process_all_payouts(treasury, wallets)?;
-    
+    let (ubi_distributed, infrastructure_distributed) = processor.process_all_payouts(treasury, wallets, registrations, current_block)?;
+
     if ubi_distributed > 0 || infrastructure_distributed > 0 {
         info!(
-            " Automated payouts completed: {} UBI + {} infrastructure = {} total ZHTP",
-            ubi_distributed, infrastructure_distributed, ubi_distributed + infrastructure_distributed
+            " Automated payouts completed: {} UBI + {} infrastructure = {} total ZHTP at block {}",
+            ubi_distributed, infrastructure_distributed, ubi_distributed + infrastructure_distributed, current_block
         );
     }
-    
+
     Ok(())
 }
 
