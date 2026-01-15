@@ -9,6 +9,7 @@ use tracing::{info, warn, debug};
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
 use crate::runtime::services::{GenesisFundingService, TransactionBuilder, GenesisValidator};
 use crate::runtime::dht_indexing::index_block_in_dht;
+use crate::runtime::node_runtime::NodeRole;
 use crate::config::aggregation::BootstrapValidator;
 use lib_blockchain::{Blockchain, Transaction};
 use lib_consensus::ValidatorManager;
@@ -29,6 +30,8 @@ pub struct BlockchainComponent {
     validator_manager: Arc<RwLock<Option<Arc<RwLock<ValidatorManager>>>>>,
     node_identity: Arc<RwLock<Option<IdentityId>>>,
     is_edge_node: bool,
+    /// Node role determines what operations this node can perform
+    node_role: NodeRole,
 }
 
 impl BlockchainComponent {
@@ -46,6 +49,9 @@ impl BlockchainComponent {
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
             is_edge_node: false,
+            // Default to FullValidator for backward compatibility
+            // Will be overridden by set_node_role() if called
+            node_role: NodeRole::FullValidator,
         }
     }
 
@@ -63,6 +69,7 @@ impl BlockchainComponent {
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
             is_edge_node: false,
+            node_role: NodeRole::FullValidator,
         }
     }
     
@@ -83,6 +90,7 @@ impl BlockchainComponent {
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
             is_edge_node: false,
+            node_role: NodeRole::FullValidator,
         }
     }
     
@@ -105,7 +113,19 @@ impl BlockchainComponent {
             validator_manager: Arc::new(RwLock::new(None)),
             node_identity: Arc::new(RwLock::new(None)),
             is_edge_node: false,
+            node_role: NodeRole::FullValidator,
         }
+    }
+    
+    /// Set the node role for this component.
+    /// This determines whether mining and validation services can run.
+    pub fn set_node_role(&mut self, role: NodeRole) {
+        self.node_role = role;
+    }
+    
+    /// Get the current node role
+    pub fn get_node_role(&self) -> &NodeRole {
+        &self.node_role
     }
     
     pub async fn set_validator_manager(&self, validator_manager: Arc<RwLock<ValidatorManager>>) {
@@ -288,7 +308,15 @@ impl BlockchainComponent {
         validator_manager_arc: Arc<RwLock<Option<Arc<RwLock<ValidatorManager>>>>>,
         node_identity_arc: Arc<RwLock<Option<IdentityId>>>,
         env_for_persist: crate::config::Environment,
+        node_role: NodeRole,
     ) {
+        // Runtime assertion: only FullValidator nodes should ever reach this code path
+        debug_assert!(
+            node_role.can_mine(),
+            "CRITICAL: Non-mining node {:?} entered mining loop - this is a programming error",
+            node_role
+        );
+        
         info!(" Mining loop started - waiting 2 seconds for consensus to wire...");
         tokio::time::sleep(Duration::from_secs(2)).await;
         info!(" Starting mining checks every 30 seconds");
@@ -473,27 +501,47 @@ impl Component for BlockchainComponent {
             }
         }
         
+        // Check if this node can mine before starting the mining loop
+        // Only FullValidator nodes should participate in block mining
+        if !self.node_role.can_mine() {
+            info!(
+                "ℹ️ Node type {:?} does not mine blocks - running as {} node",
+                self.node_role,
+                match self.node_role {
+                    crate::runtime::node_runtime::NodeRole::Observer => "observer (full blockchain, no mining)",
+                    crate::runtime::node_runtime::NodeRole::LightNode => "light (headers only)",
+                    _ => "non-validator",
+                }
+            );
+            // Node starts successfully but skips mining service
+            *self.status.write().await = ComponentStatus::Running;
+            return Ok(());
+        }
+        
+        info!("✓ Node role {:?} can mine - starting mining service", self.node_role);
+        
         // Start mining loop
         // CRITICAL FIX: Pass None for local blockchain to force using global provider
         // This ensures the mining loop always sees the latest state from Genesis/Sync
         let validator_manager_arc = self.validator_manager.clone();
         let node_identity_arc = self.node_identity.clone();
         let env_for_persist = self.environment.clone();
+        let node_role_for_loop = self.node_role.clone();
 
         // We pass a new empty Arc for the local fallback, effectively disabling it
         // The mining loop prefers the global provider anyway
         let dummy_local_blockchain = Arc::new(RwLock::new(None));
 
         let mining_handle = tokio::spawn(async move {
-            info!(" Mining task spawned, starting mining loop...");
-            Self::real_mining_loop(dummy_local_blockchain, validator_manager_arc, node_identity_arc, env_for_persist).await;
+            info!("⛏️ Mining task spawned, starting mining loop...");
+            Self::real_mining_loop(dummy_local_blockchain, validator_manager_arc, node_identity_arc, env_for_persist, node_role_for_loop).await;
         });
         
         *self.mining_handle.write().await = Some(mining_handle);
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
         
-        info!(" Blockchain component started");
+        info!("✓ Blockchain component started with mining enabled");
         Ok(())
     }
 

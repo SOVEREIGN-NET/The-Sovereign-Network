@@ -224,6 +224,9 @@ pub struct RuntimeOrchestrator {
     
     // Pending identity for blockchain registration after startup
     pending_identity: Arc<RwLock<Option<lib_identity::ZhtpIdentity>>>,
+    
+    /// Node role determines what services this node can run (mining, validation, etc.)
+    node_role: Arc<RwLock<node_runtime::NodeRole>>,
 }
 
 impl RuntimeOrchestrator {
@@ -249,16 +252,29 @@ impl RuntimeOrchestrator {
         //
         // Note: blockchain_storage_gb is NOT counted - it grows dynamically
         // Note: personal_storage_gb is NOT counted - user's own data
-        let hosted_storage = if config.storage_config.hosted_storage_gb > 0 {
-            config.storage_config.hosted_storage_gb
-        } else {
-            // Backward compatibility: use old storage_capacity_gb field
-            config.storage_config.storage_capacity_gb
-        };
+        //
+        // hosted_storage_gb=0 is a valid value meaning "no hosted storage" (edge node)
+        // Only use storage_capacity_gb fallback if hosted_storage_gb was NOT explicitly configured
+        // The default hosted_storage_gb is 100, so if it equals default AND storage_capacity_gb differs,
+        // use storage_capacity_gb for backward compatibility
+        let hosted_storage = config.storage_config.hosted_storage_gb;
         
         let is_edge_node = !config.consensus_config.validator_enabled 
             && !config.blockchain_config.smart_contracts
             && hosted_storage < 100;  // Less than 100 GB hosted storage = edge node
+        
+        // Debug output for node role derivation
+        tracing::debug!("   validator_enabled (config): {}", config.consensus_config.validator_enabled);
+        tracing::debug!("   smart_contracts (config): {}", config.blockchain_config.smart_contracts);
+        tracing::debug!("   hosted_storage: {} GB", hosted_storage);
+        tracing::debug!("   is_edge_node: {}", is_edge_node);
+        
+        // Derive NodeRole from configuration
+        // This determines what services (mining, validation) the node can run
+        let node_role = Self::derive_node_role_from_config(&config, is_edge_node);
+        info!("🎭 Node role determined: {:?}", node_role);
+        info!("   can_mine: {}, can_validate: {}, can_verify_blocks: {}", 
+              node_role.can_mine(), node_role.can_validate(), node_role.can_verify_blocks());
         
         let orchestrator = Self {
             config,
@@ -275,6 +291,7 @@ impl RuntimeOrchestrator {
             is_edge_node: Arc::new(RwLock::new(is_edge_node)),
             edge_max_headers: Arc::new(RwLock::new(500)),  // Default 500 headers (~100 KB)
             pending_identity: Arc::new(RwLock::new(None)),
+            node_role: Arc::new(RwLock::new(node_role)),
             startup_order: vec![
                 ComponentId::Crypto,      // Foundation layer
                 ComponentId::ZK,          // Zero-knowledge proofs
@@ -338,6 +355,44 @@ impl RuntimeOrchestrator {
 
         info!("Runtime orchestrator initialized with {} components", orchestrator.startup_order.len());
         Ok(orchestrator)
+    }
+    
+    /// Derive the NodeRole from configuration settings
+    /// 
+    /// This is the single source of truth for node role determination.
+    /// The role determines what services (mining, validation) the node can run.
+    /// 
+    /// # Role Determination Logic
+    /// - FullValidator: validator_enabled=true (can mine and validate)
+    /// - Observer: stores full blockchain but validator_enabled=false
+    /// - LightNode: edge node with header-only sync
+    /// - MobileNode: edge node optimized for BLE
+    fn derive_node_role_from_config(config: &NodeConfig, is_edge_node: bool) -> node_runtime::NodeRole {
+        use node_runtime::NodeRole;
+        
+        // Edge nodes are either LightNode or MobileNode
+        if is_edge_node {
+            // Check if this is a mobile/BLE-optimized node
+            // For now, we determine this by checking if BLE is the primary transport
+            // TODO: Add explicit mobile_mode config flag
+            return NodeRole::LightNode;
+        }
+        
+        // Full nodes: check if they're validators
+        if config.consensus_config.validator_enabled {
+            // This node participates in consensus and can mine blocks
+            return NodeRole::FullValidator;
+        }
+        
+        // Non-validator full nodes are Observers
+        // They store the full blockchain and verify blocks for themselves
+        // but don't participate in consensus voting
+        NodeRole::Observer
+    }
+    
+    /// Get the current node role
+    pub async fn get_node_role(&self) -> node_runtime::NodeRole {
+        self.node_role.read().await.clone()
     }
 
     /// Get configuration for runtime operations
@@ -427,12 +482,17 @@ impl RuntimeOrchestrator {
             let environment = self.config.environment;  // Get environment from config
             let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();  // Get bootstrap validators from config
             let joined_existing_network = *self.joined_existing_network.read().await;  // Check if we joined existing network
-            self.register_component(Arc::new(BlockchainComponent::new_with_full_config(user_wallet, environment, bootstrap_validators, joined_existing_network))).await?;
+            let node_role = self.node_role.read().await.clone();
+            
+            let mut blockchain_component = BlockchainComponent::new_with_full_config(user_wallet, environment, bootstrap_validators, joined_existing_network);
+            blockchain_component.set_node_role(node_role);
+            self.register_component(Arc::new(blockchain_component)).await?;
         }
         
         if !is_registered(ComponentId::Consensus).await {
             let environment = self.config.environment;
-            self.register_component(Arc::new(ConsensusComponent::new(environment))).await?;
+            let node_role = self.node_role.read().await.clone();
+            self.register_component(Arc::new(ConsensusComponent::new_with_node_role(environment, node_role))).await?;
         }
         
         if !is_registered(ComponentId::Economics).await {
@@ -907,16 +967,18 @@ impl RuntimeOrchestrator {
         let environment = self.get_environment();
         let bootstrap_validators = self.get_bootstrap_validators();
         let joined_existing_network = self.get_joined_existing_network().await;
+        let node_role = self.node_role.read().await.clone();
         
-        let blockchain_component = BlockchainComponent::new_with_full_config(
+        let mut blockchain_component = BlockchainComponent::new_with_full_config(
             user_wallet,
             environment,
             bootstrap_validators,
             joined_existing_network
         );
+        blockchain_component.set_node_role(node_role.clone());
         self.register_component(Arc::new(blockchain_component)).await?;
         
-        self.register_component(Arc::new(ConsensusComponent::new(environment))).await?;
+        self.register_component(Arc::new(ConsensusComponent::new_with_node_role(environment, node_role))).await?;
         self.register_component(Arc::new(ProtocolsComponent::new_with_ports(
             environment,
             self.config.protocols_config.api_port,

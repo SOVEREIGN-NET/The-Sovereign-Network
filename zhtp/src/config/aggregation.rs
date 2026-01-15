@@ -9,19 +9,34 @@ use std::path::Path;
 use std::collections::HashMap;
 use super::{MeshMode, SecurityLevel, Environment, ConfigError, CliArgs};
 
-/// Partial configuration for simple TOML files with just [network] section
-/// This allows users to provide minimal config files like:
+/// Partial configuration for simple TOML files with optional sections
+/// This allows users to provide minimal config files with just the sections they need:
 /// ```toml
-/// [network]
+/// [network_config]
 /// bootstrap_peers = ["192.168.1.1:9334"]
+/// 
+/// [consensus_config]
+/// validator_enabled = true
 /// ```
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PartialConfig {
     #[serde(default)]
+    pub environment: Option<super::Environment>,
+    #[serde(default)]
     pub network: Option<PartialNetworkConfig>,
+    #[serde(default)]
+    pub network_config: Option<PartialNetworkConfig>,
+    #[serde(default)]
+    pub consensus_config: Option<PartialConsensusConfig>,
+    #[serde(default)]
+    pub blockchain_config: Option<PartialBlockchainConfig>,
+    #[serde(default)]
+    pub storage_config: Option<PartialStorageConfig>,
+    #[serde(default)]
+    pub validator_config: Option<PartialValidatorConfig>,
 }
 
-/// Partial network configuration (matches user-friendly [network] section)
+/// Partial network configuration (matches user-friendly [network_config] section)
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PartialNetworkConfig {
     #[serde(default)]
@@ -32,6 +47,50 @@ pub struct PartialNetworkConfig {
     pub max_peers: Option<usize>,
     #[serde(default)]
     pub network_id: Option<String>,
+}
+
+/// Partial consensus configuration (matches [consensus_config] section)
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialConsensusConfig {
+    #[serde(default)]
+    pub validator_enabled: Option<bool>,
+    #[serde(default)]
+    pub consensus_type: Option<String>,
+    #[serde(default)]
+    pub dao_enabled: Option<bool>,
+    #[serde(default)]
+    pub min_stake: Option<u64>,
+}
+
+/// Partial blockchain configuration (matches [blockchain_config] section)
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialBlockchainConfig {
+    #[serde(default)]
+    pub network_id: Option<String>,
+    #[serde(default)]
+    pub edge_mode: Option<bool>,
+    #[serde(default)]
+    pub edge_max_headers: Option<usize>,
+    #[serde(default)]
+    pub smart_contracts: Option<bool>,
+}
+
+/// Partial storage configuration (matches [storage_config] section)
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialStorageConfig {
+    #[serde(default)]
+    pub hosted_storage_gb: Option<u64>,
+    #[serde(default)]
+    pub blockchain_storage_gb: Option<u64>,
+}
+
+/// Partial validator configuration (matches [validator_config] section)
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PartialValidatorConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub stake: Option<u64>,
 }
 
 /// Complete node configuration aggregating all packages
@@ -148,8 +207,14 @@ pub struct BlockchainConfig {
     pub max_block_size: usize,
     pub zk_transactions: bool,
     pub smart_contracts: bool,
+    #[serde(default)]
     pub edge_mode: bool,
+    #[serde(default = "default_edge_max_headers")]
     pub edge_max_headers: usize,
+}
+
+fn default_edge_max_headers() -> usize {
+    500
 }
 
 /// Consensus configuration
@@ -635,11 +700,13 @@ impl NodeConfig {
     }
     
     /// Apply environment-specific configuration
+    /// Note: This applies environment defaults for settings NOT explicitly specified in the config file.
+    /// The validator_enabled setting is always taken from the config file and is not overridden here.
     pub fn apply_environment_config(&mut self, _env_config: super::environment::EnvironmentConfig) -> Result<()> {
         match self.environment {
             Environment::Development => {
                 self.security_level = SecurityLevel::Medium;
-                self.consensus_config.validator_enabled = false;
+                // Note: validator_enabled is NOT overridden here - respect the config file setting
                 self.economics_config.ubi_enabled = true; // For testing
             }
             Environment::Testnet => {
@@ -688,29 +755,118 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
         let config_content = tokio::fs::read_to_string(config_path).await?;
 
         // First try full NodeConfig parsing
-        if let Ok(loaded_config) = toml::from_str::<NodeConfig>(&config_content) {
-            config = loaded_config;
-            tracing::info!("Loaded main configuration file (full NodeConfig)");
-        } else if let Ok(partial) = toml::from_str::<PartialConfig>(&config_content) {
-            // Fall back to partial config parsing (for simple [network] section configs)
-            if let Some(network) = partial.network {
-                if !network.bootstrap_peers.is_empty() {
-                    tracing::info!("Loaded {} bootstrap peer(s) from config file", network.bootstrap_peers.len());
-                    config.network_config.bootstrap_peers = network.bootstrap_peers;
-                }
-                if let Some(mesh_port) = network.mesh_port {
-                    config.network_config.mesh_port = mesh_port;
-                }
-                if let Some(max_peers) = network.max_peers {
-                    config.network_config.max_peers = max_peers;
-                }
-                if let Some(network_id) = network.network_id {
-                    config.blockchain_config.network_id = network_id;
-                }
-                tracing::info!("Loaded partial configuration file ([network] section)");
+        match toml::from_str::<NodeConfig>(&config_content) {
+            Ok(loaded_config) => {
+                tracing::info!("Loaded main configuration file (full NodeConfig)");
+                tracing::debug!("  validator_enabled = {}", loaded_config.consensus_config.validator_enabled);
+                config = loaded_config;
             }
-        } else {
-            tracing::warn!("Config file exists but could not be parsed - using defaults");
+            Err(e) => {
+                tracing::debug!("Full NodeConfig parsing failed: {}", e);
+                // Fall back to partial config parsing (for config files with optional sections)
+                if let Ok(partial) = toml::from_str::<PartialConfig>(&config_content) {
+                    tracing::info!("Loaded partial configuration file (merging with defaults)");
+                    
+                    // Merge top-level environment if present
+                    if let Some(env) = partial.environment {
+                        tracing::info!("Loaded environment = {:?} from config file", env);
+                        config.environment = env;
+                    }
+                    
+                    // Merge [network] section (legacy support)
+                    if let Some(network) = partial.network {
+                        if !network.bootstrap_peers.is_empty() {
+                            tracing::info!("Loaded {} bootstrap peer(s) from [network] section", network.bootstrap_peers.len());
+                            config.network_config.bootstrap_peers = network.bootstrap_peers;
+                        }
+                        if let Some(mesh_port) = network.mesh_port {
+                            config.network_config.mesh_port = mesh_port;
+                        }
+                        if let Some(max_peers) = network.max_peers {
+                            config.network_config.max_peers = max_peers;
+                        }
+                        if let Some(network_id) = network.network_id {
+                            config.blockchain_config.network_id = network_id;
+                        }
+                    }
+                    
+                    // Merge [network_config] section
+                    if let Some(network) = partial.network_config {
+                        if !network.bootstrap_peers.is_empty() {
+                            tracing::info!("Loaded {} bootstrap peer(s) from [network_config] section", network.bootstrap_peers.len());
+                            config.network_config.bootstrap_peers = network.bootstrap_peers;
+                        }
+                        if let Some(mesh_port) = network.mesh_port {
+                            config.network_config.mesh_port = mesh_port;
+                        }
+                        if let Some(max_peers) = network.max_peers {
+                            config.network_config.max_peers = max_peers;
+                        }
+                        if let Some(network_id) = network.network_id {
+                            config.blockchain_config.network_id = network_id;
+                        }
+                    }
+                    
+                    // Merge [consensus_config] section - CRITICAL for validator_enabled
+                    if let Some(consensus) = partial.consensus_config {
+                        if let Some(validator_enabled) = consensus.validator_enabled {
+                            tracing::info!("Loaded validator_enabled = {} from [consensus_config] section", validator_enabled);
+                            config.consensus_config.validator_enabled = validator_enabled;
+                        }
+                        if let Some(consensus_type) = consensus.consensus_type {
+                            config.consensus_config.consensus_type = consensus_type;
+                        }
+                        if let Some(dao_enabled) = consensus.dao_enabled {
+                            config.consensus_config.dao_enabled = dao_enabled;
+                        }
+                        if let Some(min_stake) = consensus.min_stake {
+                            config.consensus_config.min_stake = min_stake;
+                        }
+                    }
+                    
+                    // Merge [blockchain_config] section
+                    if let Some(blockchain) = partial.blockchain_config {
+                        if let Some(network_id) = blockchain.network_id {
+                            config.blockchain_config.network_id = network_id;
+                        }
+                        if let Some(edge_mode) = blockchain.edge_mode {
+                            config.blockchain_config.edge_mode = edge_mode;
+                        }
+                        if let Some(edge_max_headers) = blockchain.edge_max_headers {
+                            config.blockchain_config.edge_max_headers = edge_max_headers;
+                        }
+                        if let Some(smart_contracts) = blockchain.smart_contracts {
+                            tracing::info!("Loaded smart_contracts = {} from [blockchain_config] section", smart_contracts);
+                            config.blockchain_config.smart_contracts = smart_contracts;
+                        }
+                    }
+                    
+                    // Merge [storage_config] section - CRITICAL for edge node detection
+                    if let Some(storage) = partial.storage_config {
+                        if let Some(hosted_storage_gb) = storage.hosted_storage_gb {
+                            tracing::info!("Loaded hosted_storage_gb = {} from [storage_config] section", hosted_storage_gb);
+                            config.storage_config.hosted_storage_gb = hosted_storage_gb;
+                        }
+                        if let Some(blockchain_storage_gb) = storage.blockchain_storage_gb {
+                            config.storage_config.blockchain_storage_gb = blockchain_storage_gb;
+                        }
+                    }
+                    
+                    // Merge [validator_config] section
+                    if let Some(validator) = partial.validator_config {
+                        if validator.enabled.unwrap_or(false) || validator.stake.is_some() {
+                            tracing::info!("Loaded [validator_config] section");
+                            // If validator_config is specified, also enable validator_enabled in consensus
+                            if validator.enabled.unwrap_or(false) {
+                                config.consensus_config.validator_enabled = true;
+                                tracing::info!("  validator_config.enabled = true implies consensus_config.validator_enabled = true");
+                            }
+                        }
+                    }
+                } else {
+                    tracing::warn!("Config file exists but could not be parsed - using defaults");
+                }
+            }
         }
     } else {
         tracing::info!("Using default configuration (no config file found)");
