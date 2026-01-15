@@ -121,6 +121,9 @@ pub struct Blockchain {
     pub reorg_count: u64,
     /// Fork recovery configuration
     pub fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
+    /// Event publisher for blockchain state changes (Issue #11)
+    #[serde(skip)]
+    pub event_publisher: crate::events::BlockchainEventPublisher,
 }
 
 /// Validator information stored on-chain
@@ -222,6 +225,7 @@ impl Blockchain {
             fork_points: HashMap::new(),
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
+            event_publisher: crate::events::BlockchainEventPublisher::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -615,6 +619,18 @@ impl Blockchain {
             } else {
                 debug!("Block {} broadcast to mesh network", block.height());
             }
+        }
+
+        // Emit BlockAdded event (Issue #11)
+        let event = crate::events::BlockchainEvent::BlockAdded {
+            height: block.header.height,
+            block_hash: block.hash().as_bytes().try_into().unwrap_or([0u8; 32]),
+            timestamp: block.header.timestamp,
+            transaction_count: block.transactions.len() as u64,
+        };
+        if let Err(e) = self.event_publisher.publish(event) {
+            warn!("Failed to publish BlockAdded event: {}", e);
+            // Don't fail block processing for event publishing errors
         }
 
         Ok(())
@@ -5321,6 +5337,18 @@ impl Blockchain {
                 tx_count,
                 self.height.saturating_sub(block_height)
             );
+
+            // Emit BlockFinalized event (Issue #11)
+            if let Some(block) = self.blocks.iter().find(|b| b.header.height == block_height) {
+                let event = crate::events::BlockchainEvent::BlockFinalized {
+                    height: block_height,
+                    block_hash: block.hash().as_bytes().try_into().unwrap_or([0u8; 32]),
+                };
+                if let Err(e) = self.event_publisher.publish(event) {
+                    warn!("Failed to publish BlockFinalized event: {}", e);
+                    // Don't fail finalization for event publishing errors
+                }
+            }
         }
 
         if count > 0 {
