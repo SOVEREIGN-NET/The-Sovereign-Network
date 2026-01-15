@@ -8,9 +8,9 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 
 use lib_blockchain::{
-    Blockchain, Mempool, IdentityTransactionData,
-    initialize_consensus_integration, BlockchainConsensusCoordinator,
-    create_dao_proposal_transaction, create_dao_vote_transaction, Hash,
+    Blockchain, Mempool,
+    initialize_consensus_integration,
+    create_dao_proposal_transaction, create_dao_vote_transaction,
 };
 use lib_consensus::{
     ConsensusType, DaoProposalType, DaoVoteChoice,

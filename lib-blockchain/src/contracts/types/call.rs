@@ -180,7 +180,6 @@ impl CallPermissions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integration::crypto_integration::PublicKey;
 
     #[test]
     fn test_contract_call_creation() {

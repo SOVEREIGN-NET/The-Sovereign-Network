@@ -93,7 +93,10 @@ pub use dev_grants::{DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement,
 #[cfg(feature = "contracts")]
 pub use ubi_distribution::{UbiDistributor, MonthIndex, Error as UbiError};
 #[cfg(feature = "contracts")]
-pub use sov_swap::{SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError};
+pub use sov_swap::{
+    SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError,
+    LiquidityPosition, LpRewardBreakdown, LpPositionsManager,
+};
 #[cfg(feature = "contracts")]
 pub use staking::{SovDaoStaking, GlobalStakingGuardrails, PendingDao, StakingPosition, LaunchedDao};
 #[cfg(feature = "contracts")]
@@ -104,8 +107,7 @@ pub use economics::{
     FEE_RATE_BASIS_POINTS, UBI_ALLOCATION_PERCENT, DAO_ALLOCATION_PERCENT,
     EMERGENCY_ALLOCATION_PERCENT, DEV_ALLOCATION_PERCENT,
 };
-#[cfg(feature = "contracts")]
-pub use utils::*;
+// Note: utils is a sub-module available for internal contract utilities
 #[cfg(feature = "contracts")]
 pub use web4::{Web4Contract, WebsiteContract, WebsiteMetadata, ContentRoute, DomainRecord, WebsiteDeploymentData};
 #[cfg(feature = "contracts")]

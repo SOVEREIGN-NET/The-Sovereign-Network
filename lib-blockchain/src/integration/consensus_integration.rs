@@ -7,7 +7,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{info, warn, error, debug};
 
