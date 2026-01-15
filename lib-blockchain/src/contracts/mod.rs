@@ -93,7 +93,10 @@ pub use dev_grants::{DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement,
 #[cfg(feature = "contracts")]
 pub use ubi_distribution::{UbiDistributor, MonthIndex, Error as UbiError};
 #[cfg(feature = "contracts")]
-pub use sov_swap::{SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError};
+pub use sov_swap::{
+    SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError,
+    LiquidityPosition, LpRewardBreakdown, LpPositionsManager,
+};
 #[cfg(feature = "contracts")]
 pub use staking::{SovDaoStaking, GlobalStakingGuardrails, PendingDao, StakingPosition, LaunchedDao};
 #[cfg(feature = "contracts")]
