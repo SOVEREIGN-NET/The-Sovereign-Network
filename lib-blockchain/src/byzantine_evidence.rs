@@ -9,6 +9,14 @@ use anyhow::{Result, anyhow};
 use crate::integration::crypto_integration::PublicKey;
 
 // ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/// Number of strikes before a validator is marked for slashing
+/// This threshold can be adjusted through governance mechanisms
+pub const SLASHING_THRESHOLD: u64 = 3;
+
+// ============================================================================
 // EVIDENCE TYPES
 // ============================================================================
 
@@ -177,8 +185,8 @@ impl ByzantineEvidenceRecorder {
         let slashing_amount = self.slashing_amounts.entry(validator_key).or_insert(0);
         *slashing_amount += 10;
 
-        // Mark for slashing if too many strikes (3 strikes = slashing)
-        if *strikes >= 3 {
+        // Mark for slashing if too many strikes
+        if *strikes >= SLASHING_THRESHOLD {
             self.marked_for_slashing.insert(validator_key);
         }
 
