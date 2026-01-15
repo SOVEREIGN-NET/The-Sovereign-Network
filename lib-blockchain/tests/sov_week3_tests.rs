@@ -13,13 +13,13 @@
 //! - WIND_DOWN_MIN_DURATION = 15,552,000 (180 days)
 
 use lib_blockchain::contracts::dao::{
-    DaoTreasury, SpendingProposal, SpendingRecord, SpendingCategory, DaoTreasuryError,
+    DaoTreasury, SpendingCategory, DaoTreasuryError,
     DAO_ALLOCATION_PERCENTAGE, NUM_SECTOR_DAOS, PER_DAO_ALLOCATION_PERCENTAGE, DAO_TIMELOCK_SECONDS,
     MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
 };
 use lib_blockchain::contracts::dao::ProposalStatus as DaoProposalStatus;
 use lib_blockchain::contracts::governance::{
-    Sunset, StateTransitionProposal, SunsetState, SpendingPolicy, SunsetError,
+    Sunset, SunsetState, SpendingPolicy, SunsetError,
     RESTRICTED_MIN_DURATION, WIND_DOWN_MIN_DURATION, FINAL_PAYOUT_TO_NONPROFIT_PERCENTAGE,
     SUNSET_STATE_TRANSITION_TIMELOCK,
 };

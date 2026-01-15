@@ -4,7 +4,7 @@
 //! Implements longest-chain rule with timestamp tiebreaker for canonical chain selection.
 
 use serde::{Serialize, Deserialize};
-use crate::types::{Hash, Difficulty};
+use crate::types::Hash;
 use crate::block::Block;
 
 /// Fork point record - tracks when the chain diverged

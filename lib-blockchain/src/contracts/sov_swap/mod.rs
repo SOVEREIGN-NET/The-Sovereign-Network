@@ -30,6 +30,7 @@
 //! Partial initialization states are impossible.
 
 pub mod core;
+pub mod lp_positions;
 
 // Re-export core types
 pub use core::{
@@ -38,6 +39,13 @@ pub use core::{
     SwapResult,
     PoolState,
     SwapError,
+};
+
+// Re-export LP types
+pub use lp_positions::{
+    LiquidityPosition,
+    LpRewardBreakdown,
+    LpPositionsManager,
 };
 
 /// Gas cost for swap operations

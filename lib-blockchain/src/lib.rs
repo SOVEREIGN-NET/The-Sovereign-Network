@@ -29,13 +29,51 @@ pub mod byzantine_evidence;
 pub mod contracts;
 
 // Re-export core types for convenience
-pub use types::*;
-pub use transaction::{*, WalletReference, WalletPrivateData};
-pub use block::*;
-pub use blockchain::{Blockchain, BlockchainImport, BlockchainBroadcastMessage, EconomicsTransaction, ValidatorInfo};
-pub use mempool::*;
-pub use utils::*;
-pub use dht_index::*;
+// Types module (all types are already explicitly re-exported in types/mod.rs)
+pub use types::{
+    TransactionType, Hash, Difficulty,
+    blake3_hash, hash_to_hex, hex_to_hash, zero_hash, is_zero_hash, Hashable,
+    calculate_target, meets_difficulty, target_to_difficulty, max_target, min_target,
+    adjust_difficulty, adjust_difficulty_with_config, difficulty_to_work,
+    MiningProfile, MiningConfig, get_mining_config_from_env, validate_mining_for_chain,
+    DAOType, TokenClass, DAOMetadata, TreasuryAllocation, SectorDao, DifficultyParameterUpdateData,
+    WelfareSectorId, SectorVerificationFloor,
+};
+
+// Transaction module (core types and functions)
+pub use transaction::{
+    Transaction, DaoProposalData, DaoVoteData, DaoExecutionData, UbiClaimData,
+    ProfitDeclarationData, RevenueSource, TransactionInput, TransactionOutput,
+    IdentityTransactionData, WalletTransactionData, WalletReference, WalletPrivateData,
+    ValidatorTransactionData, ValidatorOperation,
+    TransactionBuilder, TransactionCreateError,
+    create_transfer_transaction, create_identity_transaction, create_wallet_transaction,
+    create_contract_transaction, create_token_transaction,
+    ValidationError, ValidationResult, TransactionValidator, StatefulTransactionValidator,
+    hash_transaction, hash_transaction_for_signing, hash_transaction_input, hash_transaction_output,
+    calculate_transaction_merkle_root, generate_nullifier, create_commitment, create_encrypted_note, hash_for_signature,
+    SigningError, sign_transaction, verify_transaction_signature,
+};
+
+// Block module (core types and functions)
+pub use block::{
+    Block, BlockHeader, create_genesis_block, BlockValidationResult, BlockValidationError,
+    BlockBuilder, create_block, create_genesis_block_with_transactions,
+    mine_block, mine_block_with_config, estimate_block_time, select_transactions_for_block,
+};
+
+// Blockchain module
+pub use blockchain::{
+    Blockchain, BlockchainImport, BlockchainBroadcastMessage, EconomicsTransaction, ValidatorInfo
+};
+
+// Mempool module
+pub use mempool::{Mempool, MempoolStats, MempoolError};
+
+// DHT Index module
+pub use dht_index::{IndexedBlockHeader, IndexedTransactionSummary};
+
+// Receipts module
 pub use receipts::{TransactionReceipt, TransactionStatus};
 pub use fork_recovery::{ForkPoint, ForkDetector, ForkDetection, ChainEvaluation, ForkRecoveryConfig, ForkResolution};
 
@@ -73,8 +111,33 @@ pub use integration::consensus_integration::{
 pub use lib_consensus::{DifficultyConfig, DifficultyManager, DifficultyError, DifficultyResult};
 
 // Re-export contracts when feature is enabled
+// contracts/mod.rs has explicit re-exports, so this is safe and curated
 #[cfg(feature = "contracts")]
-pub use contracts::*;
+pub use contracts::{
+    SmartContract, ContractExecutor, ExecutionContext, MemoryStorage, ContractStorage,
+    BlockchainIntegration, ContractTransactionBuilder, ContractEvent, ContractEventListener, ContractEventPublisher,
+    ContractRuntime, RuntimeConfig, RuntimeContext, RuntimeResult, RuntimeFactory, NativeRuntime,
+    ContractCall, ContractLog, ContractPermissions, ContractResult, ContractType, MessageType, CallPermissions, EventType,
+    ContactEntry, SharedFile, FileContract, GroupChat,
+    WhisperMessage, MessageContract, MessageThread, GroupThread,
+    TokenContract, SovDaoTreasury, EmergencyReserve,
+    DAORegistry, DAOEntry, derive_dao_id,
+    DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement, ProposalStatus,
+    UbiDistributor, MonthIndex,
+    SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError,
+    LiquidityPosition, LpRewardBreakdown, LpPositionsManager,
+    SovDaoStaking, GlobalStakingGuardrails, PendingDao, StakingPosition, LaunchedDao,
+    EntityRegistry, EntityType, Role, EntityRegistryError,
+    FeeRouter, FeeRouterError, FeeDistribution, DaoDistribution,
+    FEE_RATE_BASIS_POINTS, UBI_ALLOCATION_PERCENT, DAO_ALLOCATION_PERCENT,
+    EMERGENCY_ALLOCATION_PERCENT, DEV_ALLOCATION_PERCENT,
+    Web4Contract, WebsiteContract, WebsiteMetadata, ContentRoute, DomainRecord, WebsiteDeploymentData,
+    RootRegistry, NameRecord, NameClass, ZoneController, NameStatus, VerificationLevel,
+    ReservedReason, WelfareSector, NameHash, DaoId, NameClassification,
+    GovernanceRecord, parse_and_validate, compute_name_hash,
+    Error, Result,
+    GAS_BASE, GAS_TOKEN, GAS_MESSAGING, GAS_CONTACT, GAS_GROUP,
+};
 
 /// ZHTP blockchain protocol version
 pub const BLOCKCHAIN_VERSION: u32 = 1;

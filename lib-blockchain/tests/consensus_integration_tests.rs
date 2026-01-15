@@ -122,7 +122,7 @@ async fn test_consensus_status() {
 async fn test_consensus_integration_with_blockchain() {
     let mut blockchain = Blockchain::new().unwrap();
     let mempool = Arc::new(RwLock::new(Mempool::default()));
-    let blockchain_arc = Arc::new(RwLock::new(blockchain.clone()));
+    let _blockchain_arc = Arc::new(RwLock::new(blockchain.clone()));
 
     // Initialize consensus coordinator
     blockchain.initialize_consensus_coordinator(
@@ -261,8 +261,6 @@ async fn test_consensus_coordinator_lifecycle() {
 
 #[tokio::test]
 async fn test_difficulty_manager_integration() {
-    use lib_consensus::difficulty::DifficultyConfig;
-    
     let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
     

@@ -7,6 +7,7 @@
 mod transaction_executor_tests {
     use lib_consensus::{Mempool, MempoolTransaction};
     use lib_consensus::engines::{TransactionExecutor, BlockExecutionContext};
+    use lib_crypto::Hash;
 
     #[test]
     fn test_mempool_add_and_remove() {
@@ -120,7 +121,7 @@ mod transaction_executor_tests {
 
     #[test]
     fn test_block_execution_context() {
-        let proposer = [1u8; 32];
+        let proposer = Hash([1u8; 32]);
         let mut ctx = BlockExecutionContext::new(100, proposer);
 
         // Add transactions
@@ -251,7 +252,7 @@ mod transaction_executor_tests {
 
     #[test]
     fn test_consensus_block_execution_context_fees() {
-        let proposer = [1u8; 32];
+        let proposer = Hash([1u8; 32]);
         let mut ctx = BlockExecutionContext::new(100, proposer);
 
         // Simulate mixed transaction types

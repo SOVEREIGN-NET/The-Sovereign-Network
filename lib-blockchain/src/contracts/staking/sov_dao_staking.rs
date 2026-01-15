@@ -347,13 +347,17 @@ impl SovDaoStaking {
             return Err(anyhow!("Tokens already claimed"));
         }
 
-        // Calculate proportional share
-        // Formula: (staker_amount / total_staked) * total_dao_tokens
-        // For simplicity: assume total_dao_tokens = total_staked (1:1 ratio scaled by decimals)
-        let total_staked = self.launched_daos[&dao_id].total_staked_sov;
+        // Calculate staker's share of DAO tokens.
+        //
+        // Current economics: the DAO mints governance tokens at a 1:1 ratio
+        // with SOV staked. That is, `total_dao_tokens == total_staked_sov`,
+        // so the proportional formula:
+        //
+        //     (staker_amount / total_staked_sov) * total_dao_tokens
+        //
+        // simplifies to `staker_amount`. We therefore return the staker's
+        // original stake amount as the DAO token allocation.
         let staker_share = position.amount;
-
-        // For 1:1 ratio, tokens = amount
         let tokens_to_receive = staker_share;
 
         position.claimed = true;
