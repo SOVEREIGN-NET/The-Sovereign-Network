@@ -2,6 +2,17 @@
 ///
 /// Returns floor(sqrt(n)) for all u64 inputs using Newton's method for fast convergence.
 /// Uses saturating arithmetic to prevent overflow on large numbers.
+///
+/// # Error bounds
+///
+/// Newton's method converges quadratically for this function. For most inputs, the result
+/// is exact when `n` is a perfect square (e.g., sqrt(100) = 10, sqrt(10000) = 100).
+/// For non-perfect squares, returns the floor of the true mathematical square root,
+/// with 0 error in integer terms (e.g., sqrt(99) = 9, sqrt(101) = 10).
+///
+/// This implementation prioritizes correctness for small and medium numbers (which are
+/// typical for LP position calculations and voting power computations) while maintaining
+/// safety through saturating arithmetic for very large inputs.
 pub fn integer_sqrt(n: u64) -> u64 {
     if n == 0 {
         return 0;
