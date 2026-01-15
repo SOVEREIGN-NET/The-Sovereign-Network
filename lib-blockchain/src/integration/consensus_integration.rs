@@ -7,7 +7,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{info, warn, error, debug};
 
@@ -658,7 +657,7 @@ impl BlockchainConsensusCoordinator {
             } else {
                 // Another validator proposed this block - just accept it (already has proof)
                 info!("Accepting block from proposer {} at height {}", hex::encode(winning_proposal.proposer.as_bytes()), height);
-                blockchain.add_block(block.clone())?;
+                blockchain.add_block(block.clone()).await?;
             }
 
             // Week 11 Phase 5a: Collect and distribute fees from finalized block

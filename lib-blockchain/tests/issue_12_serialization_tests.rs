@@ -154,7 +154,7 @@ fn test_token_unicode_strings() {
     // Verify serialization handles unicode characters properly
     let mut token = TokenContract::new(
         [4u8; 32],
-        "Token with émojis 🎯🚀".to_string(),
+        "Token with emojis 🎯🚀".to_string(),
         "ÉMOJI".to_string(),
         6,
         1000000,
@@ -175,7 +175,7 @@ fn test_token_unicode_strings() {
     // Verify unicode strings survived
     assert_eq!(
         deserialized.name,
-        "Token with émojis 🎯🚀"
+        "Token with emojis 🎯🚀"
     );
     assert_eq!(deserialized.symbol, "ÉMOJI");
 }
