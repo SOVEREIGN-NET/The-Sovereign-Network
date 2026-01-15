@@ -43,12 +43,21 @@ pub enum EconomicPeriod {
 }
 
 impl EconomicPeriod {
-    /// Get period duration in blocks (assuming 6s per block)
+    /// Get period duration in blocks
+    ///
+    /// **Block time assumptions:**
+    /// - Using ~6s per block for these calculations
+    /// - Monthly: 175,200 blocks ≈ 12.16 days (1,051,200 seconds ÷ 86,400 sec/day)
+    /// - Quarterly: 525,600 blocks ≈ 36.5 days
+    /// - Annually: 2,102,400 blocks ≈ 145.6 days
+    ///
+    /// **Note:** These values differ from sov_dao_staking.rs which assumes 10s blocks.
+    /// This inconsistency should be addressed with shared block time constant (future).
     pub fn blocks(&self) -> u64 {
         match self {
-            EconomicPeriod::Monthly => 175_200,
-            EconomicPeriod::Quarterly => 525_600,
-            EconomicPeriod::Annually => 2_102_400,
+            EconomicPeriod::Monthly => 175_200,    // ~12 days at 6s/block
+            EconomicPeriod::Quarterly => 525_600,  // ~37 days
+            EconomicPeriod::Annually => 2_102_400, // ~146 days
         }
     }
 }
@@ -634,7 +643,8 @@ mod tests {
         let power = registry
             .update_voting_power(contract_id, 10_000, 100 + 1_000_000)
             .unwrap();
-        // sqrt(1_000_000) = 1000, bonus = 1000/1000 = 1, voting power = 10_000 * (1 + 0.001) ≈ 10_010
+        // sqrt(1_000_000) = 1000, bonus_bp = 1000/1000 = 1 basis point
+        // voting_power = 10_000 * (10_000 + 1) / 10_000 = 10_000 * 10_001 / 10_000 = 10_001
         assert!(power > 10_000);
     }
 
