@@ -103,6 +103,13 @@ pub struct BlockchainEventPublisher {
     listeners: Arc<Mutex<Vec<Box<dyn BlockchainEventListener>>>>,
 }
 
+impl std::fmt::Debug for BlockchainEventPublisher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockchainEventPublisher")
+            .finish()
+    }
+}
+
 impl BlockchainEventPublisher {
     /// Create a new event publisher
     pub fn new() -> Self {
