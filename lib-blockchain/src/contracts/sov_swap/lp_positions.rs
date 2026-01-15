@@ -184,10 +184,13 @@ impl LpPositionsManager {
         let blocks_since_provision = current_height.saturating_sub(position.provided_at_height);
         if blocks_since_provision > 0 && position.lp_tokens > 0 {
             // Add accumulated time weight: existing_lp_tokens * blocks_held
+            // Use saturating operations to prevent overflow
             let accumulated_weight = (position.lp_tokens as u128)
                 .saturating_mul(blocks_since_provision as u128);
+            // Cap at u64::MAX to prevent overflow on cast
+            let accumulated_weight_u64 = accumulated_weight.min(u64::MAX as u128) as u64;
             position.time_weighted_stake = position.time_weighted_stake
-                .saturating_add(accumulated_weight as u64);
+                .saturating_add(accumulated_weight_u64);
         }
 
         // Update position (use saturating_add to prevent panics in tests)
@@ -303,8 +306,10 @@ impl LpPositionsManager {
         if blocks_since_provision > 0 && position.lp_tokens > 0 {
             let accumulated_weight = (position.lp_tokens as u128)
                 .saturating_mul(blocks_since_provision as u128);
+            // Cap at u64::MAX to prevent overflow on cast
+            let accumulated_weight_u64 = accumulated_weight.min(u64::MAX as u128) as u64;
             position.time_weighted_stake = position.time_weighted_stake
-                .saturating_add(accumulated_weight as u64);
+                .saturating_add(accumulated_weight_u64);
         }
 
         // Calculate time-weighting multiplier (0-100)
@@ -314,10 +319,11 @@ impl LpPositionsManager {
         let time_multiplier = if position.lp_tokens > 0 {
             let max_possible_weight = (position.lp_tokens as u128)
                 .saturating_mul(MAX_TIME_WEIGHT_BLOCKS as u128);
-            let multiplier = (position.time_weighted_stake as u128)
+            let multiplier_calc = (position.time_weighted_stake as u128)
                 .saturating_mul(100)
-                .saturating_div(max_possible_weight.max(1)) as u64;
-            std::cmp::min(multiplier, 100)
+                .saturating_div(max_possible_weight.max(1));
+            // Cap at 100 and ensure it fits in u64
+            std::cmp::min(multiplier_calc.min(u64::MAX as u128) as u64, 100)
         } else {
             0
         };
@@ -353,8 +359,9 @@ impl LpPositionsManager {
         // Update position claim height
         position.last_reward_claim_height = current_height;
         
-        // Reset provision height to restart time-weighting accumulation
-        position.provided_at_height = current_height;
+        // Note: We do NOT reset provided_at_height here
+        // This ensures time-weighted stake continues to accumulate
+        // even after claiming rewards, preventing gaming through frequent claims
 
         // Deduct from pools
         self.base_lp_pool = self.base_lp_pool.saturating_sub(base_yield);
