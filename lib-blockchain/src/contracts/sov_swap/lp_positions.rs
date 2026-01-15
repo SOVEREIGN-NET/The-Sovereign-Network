@@ -89,7 +89,7 @@ impl LpPositionsManager {
             last_volume_reset_height: 0,
             volatility_factor: 100, // Default 100 = no penalty
             twap_sov_per_token: 0,
-            twap_window_blocks: 30 * 60 * 6, // ~30 minutes at 10s blocks (for FP default)
+            twap_window_blocks: 30 * 60 / 10, // ~30 minutes at 10s blocks (for FP default)
             dao_health_score: 75, // Default moderate health
         }
     }
