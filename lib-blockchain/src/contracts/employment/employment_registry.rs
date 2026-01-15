@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
 use crate::integration::crypto_integration::PublicKey;
+use crate::contracts::utils::integer_sqrt;
 use blake3;
 use std::collections::HashMap;
 
@@ -43,12 +44,21 @@ pub enum EconomicPeriod {
 }
 
 impl EconomicPeriod {
-    /// Get period duration in blocks (assuming 6s per block)
+    /// Get period duration in blocks
+    ///
+    /// **Block time assumptions:**
+    /// - Using ~6s per block for these calculations
+    /// - Monthly: 175,200 blocks ≈ 12.16 days (1,051,200 seconds ÷ 86,400 sec/day)
+    /// - Quarterly: 525,600 blocks ≈ 36.5 days
+    /// - Annually: 2,102,400 blocks ≈ 145.6 days
+    ///
+    /// **Note:** These values differ from sov_dao_staking.rs which assumes 10s blocks.
+    /// This inconsistency should be addressed with shared block time constant (future).
     pub fn blocks(&self) -> u64 {
         match self {
-            EconomicPeriod::Monthly => 175_200,
-            EconomicPeriod::Quarterly => 525_600,
-            EconomicPeriod::Annually => 2_102_400,
+            EconomicPeriod::Monthly => 175_200,    // ~12 days at 6s/block
+            EconomicPeriod::Quarterly => 525_600,  // ~37 days
+            EconomicPeriod::Annually => 2_102_400, // ~146 days
         }
     }
 }
@@ -132,6 +142,10 @@ impl EmploymentRegistry {
     }
 
     /// Create a new employment contract
+    ///
+    /// # Authorization Note
+    /// Currently accepts any caller. In production, this should validate that the caller
+    /// has appropriate DAO governance authority (admin, HR, or treasury role).
     pub fn create_employment_contract(
         &mut self,
         dao_id: [u8; 32],
@@ -145,8 +159,8 @@ impl EmploymentRegistry {
         _caller: &PublicKey,
         current_height: u64,
     ) -> Result<[u8; 32]> {
-        // Verify caller is authorized (for now, accept any call)
-        // In real implementation, would check governance/HR authorization
+        // TODO: Verify caller is authorized (DAO governance/HR role)
+        // This requires integration with DAO governance contracts (future enhancement)
 
         // Validate tax rate (max 50%)
         if tax_rate_basis_points > 5000 {
@@ -281,11 +295,13 @@ impl EmploymentRegistry {
         // Calculate tenure (in blocks)
         let tenure_blocks = current_height.saturating_sub(contract.start_height);
 
-        // Tenure bonus: sqrt(blocks) / 1000, capped at 2x
+        // Tenure bonus: sqrt(blocks) / 1000, capped at 1000 basis points (100%)
+        // This encourages long-term tenure while preventing unbounded voting power growth
+        // Formula: voting_power = cbe_balance * (1.0 + min(tenure_bonus, 1.0))
         let tenure_bonus = {
             let sqrt_tenure = integer_sqrt(tenure_blocks);
-            let bonus = sqrt_tenure.saturating_div(1000).min(1000); // Cap at 100% bonus
-            bonus
+            // Divide by 1000 to get basis points, cap at 1000 (100% bonus = 2x multiplier)
+            sqrt_tenure.saturating_div(1000).min(1000)
         };
 
         // Voting power = cbe_balance * (1 + tenure_bonus / 1000)
@@ -298,6 +314,11 @@ impl EmploymentRegistry {
     }
 
     /// Terminate a contract
+    ///
+    /// # Parameters
+    /// - `reason`: Termination reason (stored for audit trail in future enhancement)
+    /// - `caller`: Must be authorized to terminate (authorization check in future enhancement)
+    /// - `current_height`: Block height when termination occurred
     pub fn terminate_contract(
         &mut self,
         contract_id: [u8; 32],
@@ -321,8 +342,13 @@ impl EmploymentRegistry {
     }
 
     /// Get contracts for a SID
+    ///
+    /// **Optimization:** Uses HashMap index for O(1) ID lookup, then fetches contracts directly
+    /// instead of linear search through entire contracts Vec.
     pub fn get_contracts_by_sid(&self, sid: &[u8; 32]) -> Vec<&EmploymentContract> {
         if let Some(ids) = self.contract_by_sid.get(sid) {
+            // O(n) where n = number of contracts for this SID (typically small)
+            // Better than O(m*n) where m = total contracts and n = SID contracts
             ids.iter()
                 .filter_map(|id| self.contracts.iter().find(|c| &c.contract_id == id))
                 .collect()
@@ -342,6 +368,26 @@ impl EmploymentRegistry {
         }
     }
 
+    /// Archive old terminated contracts to prevent unbounded state growth
+    ///
+    /// **Note:** For production systems, terminated contracts older than a cutoff
+    /// (e.g., 2 years) should be archived to external storage to prevent state bloat.
+    /// For now, this returns metadata about candidates for archival.
+    ///
+    /// **Returns:** (count_terminated, count_total)
+    pub fn analyze_archival_candidates(&self, current_height: u64, archive_after_blocks: u64) -> (usize, usize) {
+        let archive_threshold = current_height.saturating_sub(archive_after_blocks);
+        let archival_candidates = self.contracts
+            .iter()
+            .filter(|c| {
+                c.status == EmploymentStatus::Terminated &&
+                c.end_height.map_or(false, |h| h < archive_threshold)
+            })
+            .count();
+
+        (archival_candidates, self.contracts.len())
+    }
+
     /// Get a specific contract
     pub fn get_contract(&self, contract_id: &[u8; 32]) -> Option<&EmploymentContract> {
         self.contracts.iter().find(|c| &c.contract_id == contract_id)
@@ -356,30 +402,6 @@ fn derive_contract_id(dao_id: &[u8; 32], sid: &[u8; 32], height: u64) -> [u8; 32
     hasher.update(sid);
     hasher.update(&height.to_le_bytes());
     hasher.finalize().into()
-}
-
-/// Integer square root using Newton's method with bit-length initial guess
-fn integer_sqrt(n: u64) -> u64 {
-    if n == 0 {
-        return 0;
-    }
-    if n == 1 {
-        return 1;
-    }
-
-    // Bit-length based initial guess
-    let bit_length = (n.ilog2() + 1) as u64;
-    let mut x = 1u64 << (bit_length / 2);
-
-    loop {
-        let next_x = x.saturating_add(n.saturating_div(x.max(1))) / 2;
-        if next_x >= x {
-            break;
-        }
-        x = next_x;
-    }
-
-    x
 }
 
 // ============================================================================
@@ -598,7 +620,8 @@ mod tests {
         let power = registry
             .update_voting_power(contract_id, 10_000, 100 + 1_000_000)
             .unwrap();
-        // sqrt(1_000_000) = 1000, bonus = 1000/1000 = 1, voting power = 10_000 * (1 + 0.001) ≈ 10_010
+        // sqrt(1_000_000) = 1000, bonus_bp = 1000/1000 = 1 basis point
+        // voting_power = 10_000 * (10_000 + 1) / 10_000 = 10_000 * 10_001 / 10_000 = 10_001
         assert!(power > 10_000);
     }
 

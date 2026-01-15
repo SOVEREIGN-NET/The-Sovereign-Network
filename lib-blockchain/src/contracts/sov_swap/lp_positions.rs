@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::integration::crypto_integration::PublicKey;
+use crate::contracts::utils::integer_sqrt;
 
 /// A liquidity provider position in a pool
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -89,7 +90,7 @@ impl LpPositionsManager {
             last_volume_reset_height: 0,
             volatility_factor: 100, // Default 100 = no penalty
             twap_sov_per_token: 0,
-            twap_window_blocks: 30 * 60 * 6, // ~30 minutes at 10s blocks (for FP default)
+            twap_window_blocks: 30 * 60 / 10, // ~30 minutes at 10s blocks (for FP default)
             dao_health_score: 75, // Default moderate health
         }
     }
@@ -285,9 +286,10 @@ impl LpPositionsManager {
         }
 
         // Time decay formula: min(blocks, max_weight) / max_weight
-        // After 100,000 blocks, full weight
+        // After 100,000 blocks, full weight (future enhancement: apply to alignment_bonus weighting)
         let _max_time_weight = 100_000u64;
         let _time_weight = std::cmp::min(blocks_since_provision, _max_time_weight);
+        // TODO: Apply time_weight multiplier to alignment_bonus when staker seniority features are enabled
 
         // Calculate proportional share of each reward stream
         if self.total_lp_supply == 0 {
@@ -379,9 +381,10 @@ impl LpPositionsManager {
             .saturating_mul(fee_bps as u128)
             .saturating_mul(365);
 
-        // Divide by (total_liquidity * 10000) and return as u64
+        // Divide by (total_liquidity * 10000) to normalize basis points and return as u64
+        // Note: basis points divide by 10_000, not 100
         let apy = daily_fees
-            .saturating_div(total_liquidity.saturating_mul(100)) as u64;
+            .saturating_div(total_liquidity.saturating_mul(10_000)) as u64;
 
         apy
     }
@@ -400,33 +403,6 @@ impl LpPositionsManager {
     pub fn position_count(&self) -> usize {
         self.positions.len()
     }
-}
-
-/// Integer square root using Newton's method
-/// Uses saturating arithmetic to prevent overflow
-fn integer_sqrt(n: u64) -> u64 {
-    if n == 0 {
-        return 0;
-    }
-    if n < 4 {
-        return 1;
-    }
-
-    // For very large numbers, use bit-length based initial guess
-    // sqrt(n) ≈ 2^(floor(log2(n)/2))
-    let bit_length = (n.ilog2() + 1) as u64;
-    let initial = 1u64 << (bit_length / 2);
-
-    let mut x = initial;
-    loop {
-        // Use saturating operations to prevent overflow
-        let next_x = x.saturating_add(n.saturating_div(x.max(1))) / 2;
-        if next_x >= x {
-            break;
-        }
-        x = next_x;
-    }
-    x
 }
 
 // ============================================================================
@@ -453,12 +429,13 @@ mod tests {
         assert_eq!(integer_sqrt(9), 3);
         assert_eq!(integer_sqrt(16), 4);
 
-        // Approximation for larger numbers (within ±15% tolerance for LP purposes)
+        // Newton's method should converge to exact values for small numbers
         let sqrt_100 = integer_sqrt(100);
-        assert!(sqrt_100 >= 8 && sqrt_100 <= 12, "sqrt(100) ≈ {}", sqrt_100);
+        assert_eq!(sqrt_100, 10, "sqrt(100) should be exact, got {}", sqrt_100);
 
+        // For larger numbers: approximation within ±5% for production use
         let sqrt_10k = integer_sqrt(10_000);
-        assert!(sqrt_10k >= 85 && sqrt_10k <= 115, "sqrt(10000) ≈ {}", sqrt_10k);
+        assert_eq!(sqrt_10k, 100, "sqrt(10000) should be exact, got {}", sqrt_10k);
     }
 
     #[test]

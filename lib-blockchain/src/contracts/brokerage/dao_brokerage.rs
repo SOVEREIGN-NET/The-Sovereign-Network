@@ -9,6 +9,13 @@ use anyhow::{Result, anyhow};
 use crate::integration::crypto_integration::PublicKey;
 use blake3;
 
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/// SOV token has 8 decimals: 1 SOV = 100,000,000 units
+const SOV_DECIMALS_DIVISOR: u128 = 100_000_000;
+
 /// A buyback offer from a DAO treasury
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuybackOffer {
@@ -168,7 +175,7 @@ impl DaoBrokerage {
         let max_sov_total = (token_amount as u128)
             .checked_mul(sov_price_per_token as u128)
             .ok_or_else(|| anyhow!("Overflow in SOV calculation"))?
-            .checked_div(100000000) // SOV has 8 decimals
+            .checked_div(SOV_DECIMALS_DIVISOR)
             .ok_or_else(|| anyhow!("Division error"))? as u64;
 
         // Generate offer ID
@@ -232,7 +239,7 @@ impl DaoBrokerage {
         let sov_payout = (token_amount as u128)
             .checked_mul(offer.sov_price_per_token as u128)
             .ok_or_else(|| anyhow!("Overflow in payout calculation"))?
-            .checked_div(100000000)
+            .checked_div(SOV_DECIMALS_DIVISOR)
             .ok_or_else(|| anyhow!("Division error"))? as u64;
 
         // Check treasury has sufficient SOV
@@ -336,7 +343,7 @@ impl DaoBrokerage {
         let sov_amount = (offer.token_amount as u128)
             .checked_mul(sov_price_per_token as u128)
             .ok_or_else(|| anyhow!("Overflow in calculation"))?
-            .checked_div(100000000)
+            .checked_div(SOV_DECIMALS_DIVISOR)
             .ok_or_else(|| anyhow!("Division error"))? as u64;
 
         self.completed_trades.push(CompletedTrade {
@@ -418,7 +425,7 @@ impl DaoBrokerage {
         let total_sell_volume: u64 = self.active_sell_offers.iter().map(|o| o.token_amount).sum();
 
         let recent_24h_trades: u64 = self.completed_trades.iter()
-            .map(|t| (t.token_amount as u128 * t.price_per_token as u128 / 100000000) as u64)
+            .map(|t| (t.token_amount as u128 * t.price_per_token as u128 / SOV_DECIMALS_DIVISOR) as u64)
             .sum();
 
         MarketSummary {
@@ -430,6 +437,32 @@ impl DaoBrokerage {
             average_sell_price: avg_sell_price,
             recent_trade_volume_24h: recent_24h_trades,
         }
+    }
+
+    /// Clean up expired offers to prevent unbounded state growth
+    ///
+    /// **Note:** Smart contracts should periodically call this to prevent state bloat.
+    /// Expired buyback and sell offers are removed, but completed_trades are permanent
+    /// for audit trail purposes. Callers should implement their own archival strategy
+    /// for historical trades if state becomes too large.
+    pub fn cleanup_expired_offers(&mut self, current_height: u64) -> (usize, usize) {
+        let buyback_removed = self.active_buyback_offers
+            .iter()
+            .filter(|o| current_height >= o.expires_height)
+            .count();
+
+        let sellback_removed = self.active_sell_offers
+            .iter()
+            .filter(|o| current_height >= o.expires_height)
+            .count();
+
+        // Remove expired buyback offers
+        self.active_buyback_offers.retain(|o| current_height < o.expires_height);
+
+        // Remove expired sell offers
+        self.active_sell_offers.retain(|o| current_height < o.expires_height);
+
+        (buyback_removed, sellback_removed)
     }
 
     /// Validate price is within allowed deviation bands

@@ -166,13 +166,15 @@ impl SovDaoStaking {
             return Err(anyhow!("Min stakers must be at least 10, got {}", min_stakers));
         }
 
-        // Validate deadline (30-365 days, assuming ~8,640 blocks per day)
-        let min_deadline_blocks = 30 * 8_640; // ~30 days
-        let max_deadline_blocks = 365 * 8_640; // ~365 days
+        // Validate deadline (30-365 days, assuming 10s blocks = 8,640 blocks/day)
+        // NOTE: This differs from employment_registry.rs which assumes 6s blocks (~5,840 blocks/day).
+        // Block time assumptions should be standardized with a shared constant (future enhancement).
+        let min_deadline_blocks = 30 * 8_640; // ~30 days at 10s/block
+        let max_deadline_blocks = 365 * 8_640; // ~365 days at 10s/block
         if deadline_blocks < min_deadline_blocks || deadline_blocks > max_deadline_blocks {
             return Err(anyhow!(
-                "Deadline must be 30-365 days, got {} blocks",
-                deadline_blocks
+                "Deadline must be 30-365 days ({}-{} blocks at 10s/block), got {} blocks",
+                min_deadline_blocks, max_deadline_blocks, deadline_blocks
             ));
         }
 
@@ -347,13 +349,17 @@ impl SovDaoStaking {
             return Err(anyhow!("Tokens already claimed"));
         }
 
-        // Calculate proportional share
-        // Formula: (staker_amount / total_staked) * total_dao_tokens
-        // For simplicity: assume total_dao_tokens = total_staked (1:1 ratio scaled by decimals)
-        let total_staked = self.launched_daos[&dao_id].total_staked_sov;
+        // Calculate staker's share of DAO tokens.
+        //
+        // Current economics: the DAO mints governance tokens at a 1:1 ratio
+        // with SOV staked. That is, `total_dao_tokens == total_staked_sov`,
+        // so the proportional formula:
+        //
+        //     (staker_amount / total_staked_sov) * total_dao_tokens
+        //
+        // simplifies to `staker_amount`. We therefore return the staker's
+        // original stake amount as the DAO token allocation.
         let staker_share = position.amount;
-
-        // For 1:1 ratio, tokens = amount
         let tokens_to_receive = staker_share;
 
         position.claimed = true;
@@ -490,9 +496,27 @@ fn derive_token_address(dao: &PendingDao, current_height: u64) -> PublicKey {
     hasher.update(&dao.dao_id);
     hasher.update(&current_height.to_le_bytes());
     let key_id: [u8; 32] = hasher.finalize().into();
+
+    // Derive high-entropy, domain-separated public key material from key_id
+    let dilithium_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_token_dilithium");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
+    let kyber_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_token_kyber");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
     PublicKey {
-        dilithium_pk: vec![key_id[0]; 32],
-        kyber_pk: vec![key_id[1]; 32],
+        dilithium_pk,
+        kyber_pk,
         key_id,
     }
 }
@@ -504,9 +528,27 @@ fn derive_treasury_address(dao: &PendingDao, current_height: u64) -> PublicKey {
     hasher.update(&dao.dao_id);
     hasher.update(&current_height.to_le_bytes());
     let key_id: [u8; 32] = hasher.finalize().into();
+
+    // Derive high-entropy, domain-separated public key material from key_id
+    let dilithium_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_treasury_dilithium");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
+    let kyber_pk = {
+        let mut h = blake3::Hasher::new();
+        h.update(b"dao_treasury_kyber");
+        h.update(&key_id);
+        let bytes: [u8; 32] = h.finalize().into();
+        bytes.to_vec()
+    };
+
     PublicKey {
-        dilithium_pk: vec![key_id[0]; 32],
-        kyber_pk: vec![key_id[1]; 32],
+        dilithium_pk,
+        kyber_pk,
         key_id,
     }
 }
@@ -635,7 +677,7 @@ mod tests {
     fn test_claim_dao_tokens() {
         let mut staking = SovDaoStaking::default();
         let creator = test_public_key(1);
-        let staker = test_public_key(2);
+        let _staker = test_public_key(2);
 
         let dao_id = staking
             .create_pending_dao(
