@@ -206,9 +206,9 @@ pub enum TokenClass {
     /// Base SOV token
     SOV,
     /// DAO-issued token for non-profit DAOs
-    DAO_NP,
+    DaoNp,
     /// DAO-issued token for for-profit DAOs
-    DAO_FP,
+    DaoFp,
     /// ZHTP utility token
     ZHTP,
 }
@@ -218,8 +218,8 @@ impl TokenClass {
     pub fn as_str(&self) -> &'static str {
         match self {
             TokenClass::SOV => "sov",
-            TokenClass::DAO_NP => "dao_np",
-            TokenClass::DAO_FP => "dao_fp",
+            TokenClass::DaoNp => "dao_np",
+            TokenClass::DaoFp => "dao_fp",
             TokenClass::ZHTP => "zhtp",
         }
     }
@@ -228,8 +228,8 @@ impl TokenClass {
     pub fn from_str(value: &str) -> Option<Self> {
         match value.to_ascii_lowercase().as_str() {
             "sov" => Some(TokenClass::SOV),
-            "dao_np" | "dao-np" => Some(TokenClass::DAO_NP),
-            "dao_fp" | "dao-fp" => Some(TokenClass::DAO_FP),
+            "dao_np" | "dao-np" => Some(TokenClass::DaoNp),
+            "dao_fp" | "dao-fp" => Some(TokenClass::DaoFp),
             "zhtp" => Some(TokenClass::ZHTP),
             _ => None,
         }
@@ -237,7 +237,7 @@ impl TokenClass {
 
     /// Determine if the token belongs to a DAO
     pub fn is_dao_token(&self) -> bool {
-        matches!(self, TokenClass::DAO_NP | TokenClass::DAO_FP)
+        matches!(self, TokenClass::DaoNp | TokenClass::DaoFp)
     }
 }
 
@@ -528,12 +528,12 @@ impl DAOMetadata {
         }
 
         // Invariant: Token-type consistency
-        if matches!(self.token_class, TokenClass::DAO_NP) && !self.dao_type.is_non_profit() {
-            return Err("DAO_NP tokens require NP DAO type");
+        if matches!(self.token_class, TokenClass::DaoNp) && !self.dao_type.is_non_profit() {
+            return Err("DaoNp tokens require NP DAO type");
         }
 
-        if matches!(self.token_class, TokenClass::DAO_FP) && !self.dao_type.is_for_profit() {
-            return Err("DAO_FP tokens require FP DAO type");
+        if matches!(self.token_class, TokenClass::DaoFp) && !self.dao_type.is_for_profit() {
+            return Err("DaoFp tokens require FP DAO type");
         }
 
         Ok(())
@@ -569,8 +569,8 @@ mod tests {
 
     #[test]
     fn token_class_round_trip() {
-        assert_eq!(TokenClass::from_str("dao_np"), Some(TokenClass::DAO_NP));
-        assert_eq!(TokenClass::from_str("DAO-FP"), Some(TokenClass::DAO_FP));
+        assert_eq!(TokenClass::from_str("dao_np"), Some(TokenClass::DaoNp));
+        assert_eq!(TokenClass::from_str("DAO-FP"), Some(TokenClass::DaoFp));
         assert_eq!(TokenClass::from_str("zhtp"), Some(TokenClass::ZHTP));
         assert_eq!(TokenClass::SOV.as_str(), "sov");
         assert!(TokenClass::from_str("invalid").is_none());
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn dao_metadata_validation_and_serialization() {
         let allocation = TreasuryAllocation::new(50, Some(6)).unwrap();
-        let metadata = DAOMetadata::new(DAOType::NP, TokenClass::DAO_NP, allocation.clone()).unwrap();
+        let metadata = DAOMetadata::new(DAOType::NP, TokenClass::DaoNp, allocation.clone()).unwrap();
         metadata.validate().unwrap();
 
         let serialized = bincode::serialize(&metadata).expect("serialize metadata");
@@ -601,7 +601,7 @@ mod tests {
         assert_eq!(deserialized.treasury_allocation, allocation);
 
         // Mismatched token/DAO type should fail
-        let invalid = DAOMetadata::new(DAOType::NP, TokenClass::DAO_FP, allocation);
+        let invalid = DAOMetadata::new(DAOType::NP, TokenClass::DaoFp, allocation);
         assert!(invalid.is_err());
     }
 

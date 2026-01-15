@@ -6,7 +6,7 @@
 //! so downstream developers can continue integrating. Any placeholder is clearly
 //! labeled as dummy data.
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::block::Block;
