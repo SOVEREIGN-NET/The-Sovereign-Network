@@ -557,7 +557,7 @@ impl Blockchain {
     }
 
     /// Add a new block to the chain
-    pub fn add_block(&mut self, block: Block) -> Result<()> {
+    pub async fn add_block(&mut self, block: Block) -> Result<()> {
         // Verify the block
         let previous_block = self.blocks.last();
         if !self.verify_block(&block, previous_block)? {
@@ -647,7 +647,7 @@ impl Blockchain {
             timestamp: block.header.timestamp,
             transaction_count: block.transactions.len() as u64,
         };
-        if let Err(e) = self.event_publisher.publish(event) {
+        if let Err(e) = self.event_publisher.publish(event).await {
             warn!("Failed to publish BlockAdded event: {}", e);
             // Don't fail block processing for event publishing errors
         }
@@ -658,7 +658,7 @@ impl Blockchain {
     /// Add a block and generate recursive proof for blockchain sync
     pub async fn add_block_with_proof(&mut self, block: Block) -> Result<()> {
         // Add block using existing validation logic
-        self.add_block(block.clone())?;
+        self.add_block(block.clone()).await?;
 
         // Generate recursive proof for this block (for edge node sync)
         if let Err(e) = self.generate_proof_for_block(&block).await {
@@ -680,7 +680,7 @@ impl Blockchain {
         block: Block,
         dht_storage: std::sync::Arc<tokio::sync::Mutex<DhtStorage>>,
     ) -> Result<()> {
-        self.add_block(block.clone())?;
+        self.add_block(block.clone()).await?;
 
         {
             let mut guard = dht_storage.lock().await;
@@ -751,7 +751,7 @@ impl Blockchain {
     /// Add a new block to the chain with automatic persistence (without proof generation - for syncing)
     pub async fn add_block_with_persistence(&mut self, block: Block) -> Result<()> {
         // Just add block without generating proof (useful for network sync where blocks already have proofs)
-        self.add_block(block.clone())?;
+        self.add_block(block.clone()).await?;
 
         // Persist the block to storage if storage manager is available
         if let Some(_) = self.persist_block(&block).await? {
@@ -5316,7 +5316,7 @@ impl Blockchain {
 
     /// Trigger finalization for blocks that have reached 12+ confirmations
     /// Returns number of blocks finalized
-    pub fn finalize_blocks(&mut self) -> Result<u64> {
+    pub async fn finalize_blocks(&mut self) -> Result<u64> {
         self.update_confirmation_counts();
 
         // Collect finalized block data before modifying self
@@ -5367,7 +5367,7 @@ impl Blockchain {
                         .try_into()
                         .expect("Block hash must be 32 bytes when emitting BlockFinalized event"),
                 };
-                if let Err(e) = self.event_publisher.publish(event) {
+                if let Err(e) = self.event_publisher.publish(event).await {
                     warn!("Failed to publish BlockFinalized event: {}", e);
                     // Don't fail finalization for event publishing errors
                 }
@@ -5463,7 +5463,7 @@ impl Blockchain {
     ///
     /// # Returns
     /// Number of blocks removed and replaced
-    pub fn reorg_to_fork(&mut self, target_height: u64, new_blocks: Vec<Block>) -> Result<u64> {
+    pub async fn reorg_to_fork(&mut self, target_height: u64, new_blocks: Vec<Block>) -> Result<u64> {
         // Safety checks
         self.can_reorg_to_height_anyhow(target_height)?;
 
@@ -5522,7 +5522,7 @@ impl Blockchain {
             }
 
             // Add block and update state
-            self.add_block(block)?;
+            self.add_block(block).await?;
         }
 
         // Increment reorg counter for monitoring
