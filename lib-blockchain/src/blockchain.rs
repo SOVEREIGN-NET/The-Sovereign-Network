@@ -121,7 +121,13 @@ pub struct Blockchain {
     pub reorg_count: u64,
     /// Fork recovery configuration
     pub fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
-    /// Event publisher for blockchain state changes (Issue #11)
+    /// Event publisher for blockchain state changes (Issue #11).
+    ///
+    /// NOTE: This field is marked with `#[serde(skip)]` and is **not** serialized.
+    /// When a [`Blockchain`] instance is persisted and later deserialized, the
+    /// `event_publisher` will not be restored, and any existing event listeners
+    /// will be lost. Callers must re-create the publisher and re-subscribe all
+    /// listeners after loading a blockchain from storage.
     #[serde(skip)]
     pub event_publisher: crate::events::BlockchainEventPublisher,
 }
