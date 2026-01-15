@@ -45,6 +45,8 @@ pub mod brokerage;
 #[cfg(feature = "contracts")]
 pub mod employment;
 #[cfg(feature = "contracts")]
+pub mod launch;
+#[cfg(feature = "contracts")]
 pub mod governance;
 #[cfg(feature = "contracts")]
 pub mod dao;
@@ -109,6 +111,11 @@ pub use brokerage::{DaoBrokerage, BuybackOffer, SellOffer, CompletedTrade, Trade
 pub use employment::{
     EmploymentRegistry, EmploymentContract, ContractAccessType, EmploymentStatus,
     EconomicPeriod, TerminationReason, PaymentDetails, ProfitShareResult,
+};
+#[cfg(feature = "contracts")]
+pub use launch::{
+    DaoLaunchOrchestrator, DaoLaunchConfig, DaoLaunchResult, LaunchMechanism, LaunchStatus,
+    ApprovalVerifierType,
 };
 #[cfg(feature = "contracts")]
 pub use governance::{EntityRegistry, EntityType, Role, EntityRegistryError};
