@@ -43,6 +43,8 @@ pub mod staking;
 #[cfg(feature = "contracts")]
 pub mod brokerage;
 #[cfg(feature = "contracts")]
+pub mod employment;
+#[cfg(feature = "contracts")]
 pub mod governance;
 #[cfg(feature = "contracts")]
 pub mod dao;
@@ -103,6 +105,11 @@ pub use sov_swap::{
 pub use staking::{SovDaoStaking, GlobalStakingGuardrails, PendingDao, StakingPosition, LaunchedDao};
 #[cfg(feature = "contracts")]
 pub use brokerage::{DaoBrokerage, BuybackOffer, SellOffer, CompletedTrade, TradeType, MarketSummary};
+#[cfg(feature = "contracts")]
+pub use employment::{
+    EmploymentRegistry, EmploymentContract, ContractAccessType, EmploymentStatus,
+    EconomicPeriod, TerminationReason, PaymentDetails, ProfitShareResult,
+};
 #[cfg(feature = "contracts")]
 pub use governance::{EntityRegistry, EntityType, Role, EntityRegistryError};
 #[cfg(feature = "contracts")]
