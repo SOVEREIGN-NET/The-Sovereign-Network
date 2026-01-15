@@ -658,7 +658,7 @@ impl BlockchainConsensusCoordinator {
             } else {
                 // Another validator proposed this block - just accept it (already has proof)
                 info!("Accepting block from proposer {} at height {}", hex::encode(winning_proposal.proposer.as_bytes()), height);
-                blockchain.add_block(block.clone())?;
+                blockchain.add_block(block.clone()).await?;
             }
 
             // Week 11 Phase 5a: Collect and distribute fees from finalized block

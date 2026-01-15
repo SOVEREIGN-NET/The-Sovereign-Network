@@ -21,6 +21,8 @@ pub mod edge_node_state;
 pub mod dht_index;
 pub mod receipts;
 pub mod fork_recovery;
+pub mod events;
+pub mod byzantine_evidence;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
