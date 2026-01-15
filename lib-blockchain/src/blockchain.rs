@@ -121,7 +121,13 @@ pub struct Blockchain {
     pub reorg_count: u64,
     /// Fork recovery configuration
     pub fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
-    /// Event publisher for blockchain state changes (Issue #11)
+    /// Event publisher for blockchain state changes (Issue #11).
+    ///
+    /// NOTE: This field is marked with `#[serde(skip)]` and is **not** serialized.
+    /// When a [`Blockchain`] instance is persisted and later deserialized, the
+    /// `event_publisher` will not be restored, and any existing event listeners
+    /// will be lost. Callers must re-create the publisher and re-subscribe all
+    /// listeners after loading a blockchain from storage.
     #[serde(skip)]
     pub event_publisher: crate::events::BlockchainEventPublisher,
 }
@@ -551,7 +557,7 @@ impl Blockchain {
     }
 
     /// Add a new block to the chain
-    pub fn add_block(&mut self, block: Block) -> Result<()> {
+    pub async fn add_block(&mut self, block: Block) -> Result<()> {
         // Verify the block
         let previous_block = self.blocks.last();
         if !self.verify_block(&block, previous_block)? {
@@ -622,13 +628,26 @@ impl Blockchain {
         }
 
         // Emit BlockAdded event (Issue #11)
+        let block_hash_bytes = block.hash();
+        let block_hash_array: [u8; 32] = match block_hash_bytes.as_bytes().try_into() {
+            Ok(arr) => arr,
+            Err(e) => {
+                error!(
+                    "Invariant violation: block hash for height {} is not 32 bytes (len = {}, error = {:?})",
+                    block.header.height,
+                    block_hash_bytes.as_bytes().len(),
+                    e
+                );
+                [0u8; 32]
+            }
+        };
         let event = crate::events::BlockchainEvent::BlockAdded {
             height: block.header.height,
-            block_hash: block.hash().as_bytes().try_into().unwrap_or([0u8; 32]),
+            block_hash: block_hash_array,
             timestamp: block.header.timestamp,
             transaction_count: block.transactions.len() as u64,
         };
-        if let Err(e) = self.event_publisher.publish(event) {
+        if let Err(e) = self.event_publisher.publish(event).await {
             warn!("Failed to publish BlockAdded event: {}", e);
             // Don't fail block processing for event publishing errors
         }
@@ -639,7 +658,7 @@ impl Blockchain {
     /// Add a block and generate recursive proof for blockchain sync
     pub async fn add_block_with_proof(&mut self, block: Block) -> Result<()> {
         // Add block using existing validation logic
-        self.add_block(block.clone())?;
+        self.add_block(block.clone()).await?;
 
         // Generate recursive proof for this block (for edge node sync)
         if let Err(e) = self.generate_proof_for_block(&block).await {
@@ -661,7 +680,7 @@ impl Blockchain {
         block: Block,
         dht_storage: std::sync::Arc<tokio::sync::Mutex<DhtStorage>>,
     ) -> Result<()> {
-        self.add_block(block.clone())?;
+        self.add_block(block.clone()).await?;
 
         {
             let mut guard = dht_storage.lock().await;
@@ -732,7 +751,7 @@ impl Blockchain {
     /// Add a new block to the chain with automatic persistence (without proof generation - for syncing)
     pub async fn add_block_with_persistence(&mut self, block: Block) -> Result<()> {
         // Just add block without generating proof (useful for network sync where blocks already have proofs)
-        self.add_block(block.clone())?;
+        self.add_block(block.clone()).await?;
 
         // Persist the block to storage if storage manager is available
         if let Some(_) = self.persist_block(&block).await? {
@@ -5297,7 +5316,7 @@ impl Blockchain {
 
     /// Trigger finalization for blocks that have reached 12+ confirmations
     /// Returns number of blocks finalized
-    pub fn finalize_blocks(&mut self) -> Result<u64> {
+    pub async fn finalize_blocks(&mut self) -> Result<u64> {
         self.update_confirmation_counts();
 
         // Collect finalized block data before modifying self
@@ -5340,13 +5359,24 @@ impl Blockchain {
 
             // Emit BlockFinalized event (Issue #11)
             if let Some(block) = self.blocks.iter().find(|b| b.header.height == block_height) {
-                let event = crate::events::BlockchainEvent::BlockFinalized {
-                    height: block_height,
-                    block_hash: block.hash().as_bytes().try_into().unwrap_or([0u8; 32]),
-                };
-                if let Err(e) = self.event_publisher.publish(event) {
-                    warn!("Failed to publish BlockFinalized event: {}", e);
-                    // Don't fail finalization for event publishing errors
+                // Block hash should always be 32 bytes, but handle gracefully if not
+                let block_hash = block.hash();
+                let block_hash_bytes = block_hash.as_bytes();
+                if block_hash_bytes.len() == 32 {
+                    let mut block_hash_array = [0u8; 32];
+                    block_hash_array.copy_from_slice(block_hash_bytes);
+
+                    let event = crate::events::BlockchainEvent::BlockFinalized {
+                        height: block_height,
+                        block_hash: block_hash_array,
+                    };
+                    if let Err(e) = self.event_publisher.publish(event).await {
+                        warn!("Failed to publish BlockFinalized event: {}", e);
+                        // Don't fail finalization for event publishing errors
+                    }
+                } else {
+                    warn!("Unexpected block hash size {} bytes for finalization event at height {}",
+                          block_hash_bytes.len(), block_height);
                 }
             }
         }
@@ -5440,7 +5470,7 @@ impl Blockchain {
     ///
     /// # Returns
     /// Number of blocks removed and replaced
-    pub fn reorg_to_fork(&mut self, target_height: u64, new_blocks: Vec<Block>) -> Result<u64> {
+    pub async fn reorg_to_fork(&mut self, target_height: u64, new_blocks: Vec<Block>) -> Result<u64> {
         // Safety checks
         self.can_reorg_to_height_anyhow(target_height)?;
 
@@ -5499,7 +5529,7 @@ impl Blockchain {
             }
 
             // Add block and update state
-            self.add_block(block)?;
+            self.add_block(block).await?;
         }
 
         // Increment reorg counter for monitoring

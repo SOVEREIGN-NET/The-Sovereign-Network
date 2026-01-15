@@ -432,6 +432,32 @@ impl DaoBrokerage {
         }
     }
 
+    /// Clean up expired offers to prevent unbounded state growth
+    ///
+    /// **Note:** Smart contracts should periodically call this to prevent state bloat.
+    /// Expired buyback and sell offers are removed, but completed_trades are permanent
+    /// for audit trail purposes. Callers should implement their own archival strategy
+    /// for historical trades if state becomes too large.
+    pub fn cleanup_expired_offers(&mut self, current_height: u64) -> (usize, usize) {
+        let buyback_removed = self.active_buyback_offers
+            .iter()
+            .filter(|o| current_height >= o.expires_height)
+            .count();
+
+        let sellback_removed = self.active_sell_offers
+            .iter()
+            .filter(|o| current_height >= o.expires_height)
+            .count();
+
+        // Remove expired buyback offers
+        self.active_buyback_offers.retain(|o| current_height < o.expires_height);
+
+        // Remove expired sell offers
+        self.active_sell_offers.retain(|o| current_height < o.expires_height);
+
+        (buyback_removed, sellback_removed)
+    }
+
     /// Validate price is within allowed deviation bands
     fn validate_price_within_bands(
         &self,
