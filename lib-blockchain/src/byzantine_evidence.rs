@@ -9,6 +9,16 @@ use anyhow::{Result, anyhow};
 use crate::integration::crypto_integration::PublicKey;
 
 // ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/// Slashing amount per strike (in SOV tokens)
+const SLASHING_AMOUNT_PER_STRIKE: u64 = 10;
+
+/// Number of strikes before validator is marked for slashing
+const STRIKE_THRESHOLD_FOR_SLASHING: u64 = 3;
+
+// ============================================================================
 // EVIDENCE TYPES
 // ============================================================================
 
@@ -173,12 +183,12 @@ impl ByzantineEvidenceRecorder {
         let strikes = self.validator_strikes.entry(validator_key).or_insert(0);
         *strikes += 1;
 
-        // Add to slashing amount: 10 SOV per strike
+        // Add to slashing amount based on configured amount per strike
         let slashing_amount = self.slashing_amounts.entry(validator_key).or_insert(0);
-        *slashing_amount += 10;
+        *slashing_amount += SLASHING_AMOUNT_PER_STRIKE;
 
-        // Mark for slashing if too many strikes (3 strikes = slashing)
-        if *strikes >= 3 {
+        // Mark for slashing if strikes exceed threshold
+        if *strikes >= STRIKE_THRESHOLD_FOR_SLASHING {
             self.marked_for_slashing.insert(validator_key);
         }
 
