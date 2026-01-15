@@ -27,11 +27,41 @@ pub mod contract_result;
 #[cfg(feature = "contracts")]
 pub mod message_type;
 
-// Re-export blockchain core types
-pub use transaction_type::*;
-pub use hash::*;
-pub use difficulty::{Difficulty, DifficultyConfig, calculate_target, meets_difficulty, target_to_difficulty, max_target, min_target, adjust_difficulty, adjust_difficulty_with_config, difficulty_to_work};
-pub use mining::*;
+// Explicit re-exports from transaction_type module
+pub use transaction_type::TransactionType;
+
+// Explicit re-exports from hash module
+pub use hash::{
+    Hash,
+    blake3_hash,
+    hash_to_hex,
+    hex_to_hash,
+    zero_hash,
+    is_zero_hash,
+    Hashable,
+};
+
+// Explicit re-exports from difficulty module
+pub use difficulty::{
+    Difficulty,
+    DifficultyConfig,
+    calculate_target,
+    meets_difficulty,
+    target_to_difficulty,
+    max_target,
+    min_target,
+    adjust_difficulty,
+    adjust_difficulty_with_config,
+    difficulty_to_work,
+};
+
+// Explicit re-exports from mining module
+pub use mining::{
+    MiningProfile,
+    MiningConfig,
+    get_mining_config_from_env,
+    validate_mining_for_chain,
+};
 
 // Re-export DAO and SOV economy types
 pub use dao::{DAOType, TokenClass, DAOMetadata, TreasuryAllocation, SectorDao, DifficultyParameterUpdateData};

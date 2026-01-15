@@ -41,8 +41,6 @@ pub mod sov_swap;
 #[cfg(feature = "contracts")]
 pub mod staking;
 #[cfg(feature = "contracts")]
-pub mod brokerage;
-#[cfg(feature = "contracts")]
 pub mod governance;
 #[cfg(feature = "contracts")]
 pub mod dao;
@@ -102,8 +100,6 @@ pub use sov_swap::{
 #[cfg(feature = "contracts")]
 pub use staking::{SovDaoStaking, GlobalStakingGuardrails, PendingDao, StakingPosition, LaunchedDao};
 #[cfg(feature = "contracts")]
-pub use brokerage::{DaoBrokerage, BuybackOffer, SellOffer, CompletedTrade, TradeType, MarketSummary};
-#[cfg(feature = "contracts")]
 pub use governance::{EntityRegistry, EntityType, Role, EntityRegistryError};
 #[cfg(feature = "contracts")]
 pub use economics::{
@@ -111,8 +107,7 @@ pub use economics::{
     FEE_RATE_BASIS_POINTS, UBI_ALLOCATION_PERCENT, DAO_ALLOCATION_PERCENT,
     EMERGENCY_ALLOCATION_PERCENT, DEV_ALLOCATION_PERCENT,
 };
-#[cfg(feature = "contracts")]
-pub use utils::*;
+// Note: utils is a sub-module available for internal contract utilities
 #[cfg(feature = "contracts")]
 pub use web4::{Web4Contract, WebsiteContract, WebsiteMetadata, ContentRoute, DomainRecord, WebsiteDeploymentData};
 #[cfg(feature = "contracts")]

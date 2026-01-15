@@ -9,7 +9,7 @@
 //! proposals and votes are persisted as transactions on-chain.
 
 use anyhow::Result;
-use lib_consensus::{DaoEngine, DaoProposalType, DaoVoteChoice};
+use lib_consensus::{DaoEngine, DaoProposalType, DaoVoteChoice, ConsensusConfig};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -251,9 +251,9 @@ async fn test_governance_parameter_validation() -> Result<()> {
 
 #[tokio::test]
 async fn test_voting_power_calculation() -> Result<()> {
-    let dao_engine = DaoEngine::new();
+    let _dao_engine = DaoEngine::new();
 
-    let user_id = create_test_identity("power_user");
+    let _user_id = create_test_identity("power_user");
 
     // Calculate voting power from test values
     let power = lib_consensus::DaoEngine::calculate_voting_power(100, 50, 80, 85, 10);
@@ -385,7 +385,7 @@ async fn test_quorum_requirements() -> Result<()> {
     let proposer = create_test_identity("quorum_tester");
 
     // Create proposal with high stakes (requires more quorum)
-    let proposal_id = dao_engine
+    let _proposal_id = dao_engine
         .create_dao_proposal(
             proposer,
             "High-Stakes Treasury Proposal".to_string(),
@@ -409,7 +409,7 @@ async fn test_quorum_requirements() -> Result<()> {
 
 #[tokio::test]
 async fn test_governance_update_application() -> Result<()> {
-    let mut dao_engine = DaoEngine::new();
+    let dao_engine = DaoEngine::new();
 
     // Create valid governance update
     let update = lib_consensus::GovernanceParameterUpdate {
@@ -424,7 +424,8 @@ async fn test_governance_update_application() -> Result<()> {
     assert!(result.is_ok());
 
     // Apply update (updates internal state)
-    let apply_result = dao_engine.apply_governance_update(&update);
+    let mut consensus_config = ConsensusConfig::default();
+    let apply_result = dao_engine.apply_governance_update(&mut consensus_config, &update);
     assert!(apply_result.is_ok());
 
     Ok(())
