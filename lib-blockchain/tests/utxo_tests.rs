@@ -45,9 +45,9 @@ fn create_mined_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -
     mine_block(block, 1_000_000) // Mine with up to 1M iterations (should be fast with easy difficulty)
 }
 
-#[test]
+#[tokio::test]
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
-fn test_utxo_creation_and_tracking() -> Result<()> {
+async fn test_utxo_creation_and_tracking() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Create a transaction that creates UTXOs
@@ -93,7 +93,7 @@ fn test_utxo_creation_and_tracking() -> Result<()> {
     let block = create_mined_block(&blockchain, vec![transaction.clone()])?;
 
     // Add the block and verify UTXOs were created
-    blockchain.add_block(block)?;
+    blockchain.add_block(block).await?;
     
     assert_eq!(blockchain.utxo_set.len(), 2);
     
@@ -111,9 +111,9 @@ fn test_utxo_creation_and_tracking() -> Result<()> {
     Ok(())
 }
 
-#[test]
+#[tokio::test]
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
-fn test_nullifier_tracking() -> Result<()> {
+async fn test_nullifier_tracking() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Create a transaction with nullifiers
@@ -153,7 +153,7 @@ fn test_nullifier_tracking() -> Result<()> {
     
     // Create and add block using helper function
     let block = create_mined_block(&blockchain, vec![transaction])?;
-    blockchain.add_block(block)?;
+    blockchain.add_block(block).await?;
     
     // Verify nullifiers were tracked
     assert_eq!(blockchain.nullifier_set.len(), 2);
@@ -167,9 +167,9 @@ fn test_nullifier_tracking() -> Result<()> {
     Ok(())
 }
 
-#[test]
+#[tokio::test]
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
-fn test_double_spend_prevention() -> Result<()> {
+async fn test_double_spend_prevention() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     let shared_nullifier = Hash::from_hex("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")?;
@@ -201,7 +201,7 @@ fn test_double_spend_prevention() -> Result<()> {
     
     // Add first transaction to blockchain
     let block1 = create_mined_block(&blockchain, vec![transaction1])?;
-    blockchain.add_block(block1)?;
+    blockchain.add_block(block1).await?;
     
     // Verify nullifier is now used
     assert!(blockchain.is_nullifier_used(&shared_nullifier));
@@ -235,7 +235,7 @@ fn test_double_spend_prevention() -> Result<()> {
     let block2 = create_mined_block(&blockchain, vec![transaction2])?;
     
     // This should fail due to double spend detection
-    let add_result = blockchain.add_block(block2);
+    let add_result = blockchain.add_block(block2).await;
     assert!(add_result.is_err());
     
     // Blockchain should still be at height 1
@@ -244,9 +244,9 @@ fn test_double_spend_prevention() -> Result<()> {
     Ok(())
 }
 
-#[test]
+#[tokio::test]
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
-fn test_utxo_spending() -> Result<()> {
+async fn test_utxo_spending() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Step 1: Create a UTXO
@@ -284,7 +284,7 @@ fn test_utxo_spending() -> Result<()> {
     
     // Add creation transaction
     let block1 = create_mined_block(&blockchain, vec![creation_tx.clone()])?;
-    blockchain.add_block(block1)?;
+    blockchain.add_block(block1).await?;
     
     // Verify UTXO was created
     assert_eq!(blockchain.utxo_set.len(), 1);
@@ -321,7 +321,7 @@ fn test_utxo_spending() -> Result<()> {
     
     // Add spending transaction
     let block2 = create_mined_block(&blockchain, vec![spending_tx])?;
-    blockchain.add_block(block2)?;
+    blockchain.add_block(block2).await?;
     
     // Verify UTXO set was updated
     // We still have UTXOs (the new one), and nullifier was added
@@ -331,9 +331,9 @@ fn test_utxo_spending() -> Result<()> {
     Ok(())
 }
 
-#[test]
+#[tokio::test]
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
-fn test_utxo_set_consistency() -> Result<()> {
+async fn test_utxo_set_consistency() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     let mut expected_utxos = HashSet::new();
     
@@ -381,7 +381,7 @@ fn test_utxo_set_consistency() -> Result<()> {
         
         // Add to blockchain
         let block = create_mined_block(&blockchain, vec![transaction])?;
-        blockchain.add_block(block)?;
+        blockchain.add_block(block).await?;
     }
     
     // Verify UTXO set matches expectations
@@ -394,9 +394,9 @@ fn test_utxo_set_consistency() -> Result<()> {
     Ok(())
 }
 
-#[test]
+#[tokio::test]
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
-fn test_large_nullifier_set() -> Result<()> {
+async fn test_large_nullifier_set() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     let nullifier_count = 2; // Further reduced to narrow down the issue
     
@@ -437,7 +437,7 @@ fn test_large_nullifier_set() -> Result<()> {
     
     // Add to blockchain
     let block = create_mined_block(&blockchain, vec![transaction])?;
-    blockchain.add_block(block)?;
+    blockchain.add_block(block).await?;
     
     // Verify all nullifiers were tracked
     assert_eq!(blockchain.nullifier_set.len(), nullifier_count);
@@ -449,9 +449,9 @@ fn test_large_nullifier_set() -> Result<()> {
     Ok(())
 }
 
-#[test]
+#[tokio::test]
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
-fn test_mixed_transaction_block() -> Result<()> {
+async fn test_mixed_transaction_block() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     
     // Create a block with mixed transaction types
@@ -519,7 +519,7 @@ fn test_mixed_transaction_block() -> Result<()> {
     // Create block with both transactions
     let transactions = vec![creation_tx, spending_tx];
     let block = create_mined_block(&blockchain, transactions)?;
-    blockchain.add_block(block)?;
+    blockchain.add_block(block).await?;
     
     // Verify mixed state updates
     assert_eq!(blockchain.utxo_set.len(), 2); // Two outputs created
