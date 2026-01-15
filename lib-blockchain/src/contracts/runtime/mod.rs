@@ -3,24 +3,24 @@
 //! Sandboxed WebAssembly runtime for secure smart contract execution.
 //! Provides process isolation, memory limits, and capability-based security.
 
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use std::time::{Duration, Instant};
 use crate::integration::crypto_integration::PublicKey;
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "wasm-runtime")]
-pub mod wasm_engine;
+pub mod host_functions;
 #[cfg(feature = "wasm-runtime")]
 pub mod sandbox;
 #[cfg(feature = "wasm-runtime")]
-pub mod host_functions;
+pub mod wasm_engine;
 
 #[cfg(feature = "wasm-runtime")]
+pub use host_functions::{is_safe_host_function, HostFunctions};
+#[cfg(feature = "wasm-runtime")]
+pub use sandbox::{ContractSandbox, SandboxConfig};
+#[cfg(feature = "wasm-runtime")]
 pub use wasm_engine::WasmEngine;
-#[cfg(feature = "wasm-runtime")]
-pub use sandbox::{SandboxConfig, ContractSandbox};
-#[cfg(feature = "wasm-runtime")]
-pub use host_functions::{HostFunctions, is_safe_host_function};
 
 /// Contract runtime configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,10 +40,10 @@ pub struct RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            max_memory_pages: 16,           // 1MB memory limit
+            max_memory_pages: 16,                            // 1MB memory limit
             max_execution_time: Duration::from_millis(1000), // 1 second timeout
-            max_fuel: 1_000_000,           // 1M instructions
-            max_stack_size: 1024,          // 1KB stack
+            max_fuel: 1_000_000,                             // 1M instructions
+            max_stack_size: 1024,                            // 1KB stack
             debug_mode: false,
         }
     }
@@ -68,7 +68,12 @@ pub struct RuntimeResult {
 
 impl RuntimeResult {
     /// Create successful result
-    pub fn success(return_data: Vec<u8>, gas_used: u64, execution_time: Duration, memory_used: u64) -> Self {
+    pub fn success(
+        return_data: Vec<u8>,
+        gas_used: u64,
+        execution_time: Duration,
+        memory_used: u64,
+    ) -> Self {
         Self {
             success: true,
             return_data,
@@ -185,7 +190,7 @@ impl ContractRuntime for NativeRuntime {
         config: &RuntimeConfig,
     ) -> Result<RuntimeResult> {
         let start_time = Instant::now();
-        
+
         // For native runtime, we'll just validate method exists
         // implementation would execute native contract methods
         if method.is_empty() {
@@ -197,7 +202,7 @@ impl ContractRuntime for NativeRuntime {
         }
 
         let execution_time = start_time.elapsed();
-        
+
         // Check execution time limit
         if execution_time > config.max_execution_time {
             return Ok(RuntimeResult::error(
@@ -210,7 +215,7 @@ impl ContractRuntime for NativeRuntime {
         // Update stats
         self.stats.contracts_executed += 1;
         self.stats.total_execution_time += execution_time;
-        self.stats.avg_execution_time = 
+        self.stats.avg_execution_time =
             self.stats.total_execution_time / self.stats.contracts_executed as u32;
 
         Ok(RuntimeResult::success(
@@ -225,7 +230,8 @@ impl ContractRuntime for NativeRuntime {
         if code.is_empty() {
             return Err(anyhow!("Contract code cannot be empty"));
         }
-        if code.len() > 1024 * 1024 {  // 1MB limit
+        if code.len() > 1024 * 1024 {
+            // 1MB limit
             return Err(anyhow!("Contract code too large"));
         }
         Ok(())
@@ -304,7 +310,7 @@ mod tests {
     fn test_native_runtime() {
         let mut runtime = NativeRuntime::new();
         let keypair = KeyPair::generate().unwrap();
-        
+
         let context = RuntimeContext {
             caller: keypair.public_key,
             block_number: 1,
@@ -312,17 +318,19 @@ mod tests {
             gas_limit: 100000,
             tx_hash: [1u8; 32],
         };
-        
+
         let config = RuntimeConfig::default();
-        
-        let result = runtime.execute(
-            b"test_code",
-            "test_method",
-            b"test_params",
-            &context,
-            &config,
-        ).unwrap();
-        
+
+        let result = runtime
+            .execute(
+                b"test_code",
+                "test_method",
+                b"test_params",
+                &context,
+                &config,
+            )
+            .unwrap();
+
         assert!(result.success);
         assert_eq!(result.return_data, b"test_params");
     }

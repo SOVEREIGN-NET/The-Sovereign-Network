@@ -72,7 +72,7 @@ impl ContractLog {
         if let Some(recipient) = recipient {
             indexed_fields.push(recipient.to_vec());
         }
-        
+
         Self::with_data(
             contract_id,
             "MessageSent".to_string(),
@@ -156,33 +156,33 @@ pub enum EventType {
     Mint,
     Burn,
     Approval,
-    
+
     // Messaging events
     MessageSent,
     MessageBurned,
     MessageDelivered,
-    
+
     // Contact events
     ContactAdded,
     ContactRemoved,
     ContactVerified,
-    
+
     // Group events
     GroupCreated,
     MemberJoined,
     MemberLeft,
     AdminAdded,
-    
+
     // File events
     FileShared,
     FileAccessed,
     FileRemoved,
-    
+
     // Governance events
     ProposalCreated,
     VoteCast,
     ProposalExecuted,
-    
+
     // System events
     ContractUpgraded,
     ContractPaused,
@@ -231,7 +231,12 @@ mod tests {
         let data = vec![1, 2, 3, 4];
         let indexed_fields = vec![vec![5, 6], vec![7, 8]];
 
-        let log = ContractLog::new(contract_id, event.clone(), data.clone(), indexed_fields.clone());
+        let log = ContractLog::new(
+            contract_id,
+            event.clone(),
+            data.clone(),
+            indexed_fields.clone(),
+        );
 
         assert_eq!(log.contract_id, contract_id);
         assert_eq!(log.event, event);
@@ -250,7 +255,8 @@ mod tests {
             "TestEvent".to_string(),
             &test_data,
             indexed_fields,
-        ).unwrap();
+        )
+        .unwrap();
 
         let recovered_data: (u64, String) = log.get_data().unwrap();
         assert_eq!(recovered_data, test_data);
@@ -270,7 +276,8 @@ mod tests {
         assert!(log.has_indexed_field(from));
         assert!(log.has_indexed_field(to));
 
-        let (recovered_from, recovered_to, recovered_amount): (Vec<u8>, Vec<u8>, u64) = log.get_data().unwrap();
+        let (recovered_from, recovered_to, recovered_amount): (Vec<u8>, Vec<u8>, u64) =
+            log.get_data().unwrap();
         assert_eq!(recovered_from.as_slice(), from);
         assert_eq!(recovered_to.as_slice(), to);
         assert_eq!(recovered_amount, amount);
@@ -283,7 +290,8 @@ mod tests {
         let recipient = Some(b"recipient_key".as_slice());
         let message_id = [3u8; 32];
 
-        let log = ContractLog::message_sent_event(contract_id, sender, recipient, &message_id).unwrap();
+        let log =
+            ContractLog::message_sent_event(contract_id, sender, recipient, &message_id).unwrap();
 
         assert_eq!(log.event, "MessageSent");
         assert_eq!(log.indexed_fields.len(), 2);
@@ -298,7 +306,8 @@ mod tests {
         let group_id = [5u8; 32];
         let group_name = "Test Group";
 
-        let log = ContractLog::group_created_event(contract_id, creator, &group_id, group_name).unwrap();
+        let log =
+            ContractLog::group_created_event(contract_id, creator, &group_id, group_name).unwrap();
 
         assert_eq!(log.event, "GroupCreated");
         assert_eq!(log.indexed_fields.len(), 1);

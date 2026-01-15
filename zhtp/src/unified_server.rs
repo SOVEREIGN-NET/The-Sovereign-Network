@@ -291,7 +291,22 @@ impl ZhtpUnifiedServer {
         economic_model: Arc<RwLock<EconomicModel>>,
         port: u16, // Port from configuration
     ) -> Result<Self> {
-        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None, None, None, None, None).await
+        let runtime: Arc<dyn crate::runtime::NodeRuntime> =
+            Arc::new(crate::runtime::DefaultNodeRuntime::observer());
+        Self::new_with_peer_notification(
+            blockchain,
+            storage,
+            identity_manager,
+            economic_model,
+            port,
+            None,
+            None,
+            None,
+            None,
+            None,
+            runtime,
+        )
+        .await
     }
     
     /// Create new unified server with peer discovery notification channel
@@ -306,6 +321,7 @@ impl ZhtpUnifiedServer {
         quic_port: Option<u16>,
         protocols_config: Option<crate::config::aggregation::ProtocolsConfig>,
         bootstrap_peers: Option<Vec<String>>,
+        runtime: Arc<dyn crate::runtime::NodeRuntime>,
     ) -> Result<Self> {
         let server_id = Uuid::new_v4();
         let monitoring_system = Some(MonitoringSystem::new().await?);
@@ -453,10 +469,7 @@ impl ZhtpUnifiedServer {
 
         // Initialize NodeRuntime - Policy Authority (NR-1: Policy Ownership)
         // Delegates all "should we?" decisions to runtime, server only executes "can we?" operations
-        let runtime: Arc<dyn crate::runtime::NodeRuntime> = Arc::new(
-            crate::runtime::DefaultNodeRuntime::full_validator()
-        );
-        info!("✓ NodeRuntime initialized - Policy authority ready");
+        info!("NodeRuntime initialized - Policy authority ready");
 
         // Initialize NodeRuntimeOrchestrator - Periodic policy driver
         let runtime_orchestrator = Arc::new(

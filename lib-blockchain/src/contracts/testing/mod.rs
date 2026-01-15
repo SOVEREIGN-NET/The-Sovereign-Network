@@ -1,16 +1,16 @@
+use crate::contracts::contacts::*;
+use crate::contracts::files::*;
+use crate::contracts::groups::*;
+use crate::contracts::messaging::*;
+use crate::contracts::tokens::*;
 use crate::contracts::{
     executor::{ContractExecutor, ExecutionContext, MemoryStorage},
-    integration::{BlockchainIntegration, ContractTransactionBuilder, ContractEvent},
+    integration::{BlockchainIntegration, ContractEvent, ContractTransactionBuilder},
     utils::*,
 };
-use crate::types::*;
-use crate::contracts::tokens::*;
-use crate::contracts::messaging::*;
-use crate::contracts::contacts::*;
-use crate::contracts::groups::*;
-use crate::contracts::files::*;
-use anyhow::Result;
 use crate::integration::crypto_integration::{KeyPair, PublicKey};
+use crate::types::*;
+use anyhow::Result;
 use std::collections::HashMap;
 
 /// Comprehensive test framework for smart contracts
@@ -26,7 +26,7 @@ impl ContractTestFramework {
     pub fn new() -> Self {
         let storage = MemoryStorage::default();
         let executor = ContractExecutor::new(storage);
-        
+
         Self {
             executor,
             keypairs: HashMap::new(),
@@ -60,7 +60,9 @@ impl ContractTestFramework {
         call: ContractCall,
         gas_limit: u64,
     ) -> Result<ContractResult> {
-        let keypair = self.keypairs.get(user)
+        let keypair = self
+            .keypairs
+            .get(user)
             .ok_or_else(|| anyhow::anyhow!("User not found: {}", user))?;
 
         let mut context = ExecutionContext::new(
@@ -132,7 +134,8 @@ impl ContractTestFramework {
         token_id: &[u8; 32],
         amount: u64,
     ) -> Result<ContractResult> {
-        let to_key = self.get_user(to)
+        let to_key = self
+            .get_user(to)
             .ok_or_else(|| anyhow::anyhow!("Recipient not found"))?
             .clone();
 
@@ -154,11 +157,13 @@ impl ContractTestFramework {
         content: &str,
         group_id: Option<[u8; 32]>,
     ) -> Result<[u8; 32]> {
-        let recipient_key = recipient.map(|r| 
-            self.get_user(r)
-                .ok_or_else(|| anyhow::anyhow!("Recipient not found"))
-                .map(|k| k.clone())
-        ).transpose()?;
+        let recipient_key = recipient
+            .map(|r| {
+                self.get_user(r)
+                    .ok_or_else(|| anyhow::anyhow!("Recipient not found"))
+                    .map(|k| k.clone())
+            })
+            .transpose()?;
 
         let call = ContractCall {
             contract_type: ContractType::WhisperMessaging,
@@ -168,8 +173,8 @@ impl ContractTestFramework {
                 group_id,
                 content.to_string(),
                 None::<[u8; 32]>, // No file attachment
-                false, // Not auto-burn
-                None::<u64>, // No burn timestamp
+                false,            // Not auto-burn
+                None::<u64>,      // No burn timestamp
             ))?,
             permissions: CallPermissions::Public,
         };
@@ -189,7 +194,8 @@ impl ContractTestFramework {
         contact: &str,
         display_name: &str,
     ) -> Result<[u8; 32]> {
-        let contact_key = self.get_user(contact)
+        let contact_key = self
+            .get_user(contact)
             .ok_or_else(|| anyhow::anyhow!("Contact not found"))?
             .clone();
 
@@ -257,11 +263,11 @@ impl ContractTestFramework {
                 file_size,
                 "application/octet-stream".to_string(), // mime_type
                 is_public,
-                0u64, // download_cost
-                false, // is_encrypted
-                None::<[u8; 32]>, // encryption_key_hash
+                0u64,                     // download_cost
+                false,                    // is_encrypted
+                None::<[u8; 32]>,         // encryption_key_hash
                 vec!["test".to_string()], // tags
-                0u64, // max_downloads (unlimited)
+                0u64,                     // max_downloads (unlimited)
             ))?,
             permissions: CallPermissions::Public,
         };
@@ -291,7 +297,7 @@ impl ContractTestFramework {
         println!("Current Block: {}", self.current_block);
         println!("Current Timestamp: {}", self.current_timestamp);
         println!("Logs: {}", self.executor.get_logs().len());
-        
+
         // Print user balances
         for (name, _keypair) in &self.keypairs {
             let lib_balance = self.get_lib_balance(name);
@@ -313,7 +319,7 @@ impl IntegrationTestScenarios {
     /// Test complete token lifecycle
     pub fn test_token_lifecycle() -> Result<()> {
         let mut framework = ContractTestFramework::new();
-        
+
         // Add test users
         framework.add_user("alice")?;
         framework.add_user("bob")?;
@@ -321,7 +327,7 @@ impl IntegrationTestScenarios {
 
         // Create custom token
         let token_id = framework.create_test_token("alice", "TestCoin", "TEST", 1000000)?;
-        
+
         // Check initial balance
         assert_eq!(framework.get_token_balance("alice", &token_id), 1000000);
         assert_eq!(framework.get_token_balance("bob", &token_id), 0);
@@ -350,18 +356,13 @@ impl IntegrationTestScenarios {
     /// Test messaging system
     pub fn test_messaging_system() -> Result<()> {
         let mut framework = ContractTestFramework::new();
-        
+
         // Add test users
         framework.add_user("alice")?;
         framework.add_user("bob")?;
 
         // Send direct message
-        let message_id = framework.send_message(
-            "alice",
-            Some("bob"),
-            "Hello Bob!",
-            None,
-        )?;
+        let message_id = framework.send_message("alice", Some("bob"), "Hello Bob!", None)?;
 
         // Verify message was created
         assert_ne!(message_id, [0u8; 32]);
@@ -373,7 +374,7 @@ impl IntegrationTestScenarios {
     /// Test contact management
     pub fn test_contact_management() -> Result<()> {
         let mut framework = ContractTestFramework::new();
-        
+
         // Add test users
         framework.add_user("alice")?;
         framework.add_user("bob")?;
@@ -391,7 +392,7 @@ impl IntegrationTestScenarios {
     /// Test group functionality
     pub fn test_group_functionality() -> Result<()> {
         let mut framework = ContractTestFramework::new();
-        
+
         // Add test users
         framework.add_user("alice")?;
         framework.add_user("bob")?;
@@ -410,12 +411,7 @@ impl IntegrationTestScenarios {
         assert_ne!(group_id, [0u8; 32]);
 
         // Send group message
-        let message_id = framework.send_message(
-            "alice",
-            None,
-            "Hello group!",
-            Some(group_id),
-        )?;
+        let message_id = framework.send_message("alice", None, "Hello group!", Some(group_id))?;
 
         assert_ne!(message_id, [0u8; 32]);
 
@@ -426,20 +422,14 @@ impl IntegrationTestScenarios {
     /// Test file sharing
     pub fn test_file_sharing() -> Result<()> {
         let mut framework = ContractTestFramework::new();
-        
+
         // Add test users
         framework.add_user("alice")?;
         framework.add_user("bob")?;
 
         // Share file
         let content_hash = [1u8; 32];
-        let file_id = framework.share_file(
-            "alice",
-            "test.txt",
-            content_hash,
-            1024,
-            true,
-        )?;
+        let file_id = framework.share_file("alice", "test.txt", content_hash, 1024, true)?;
 
         // Verify file was shared
         assert_ne!(file_id, [0u8; 32]);
@@ -470,7 +460,7 @@ impl PerformanceBenchmarks {
     /// Benchmark token transfers
     pub fn benchmark_token_transfers(num_transfers: usize) -> Result<()> {
         let mut framework = ContractTestFramework::new();
-        
+
         // Add test users
         framework.add_user("alice")?;
         framework.add_user("bob")?;
@@ -501,7 +491,7 @@ impl PerformanceBenchmarks {
     /// Benchmark message sending
     pub fn benchmark_message_sending(num_messages: usize) -> Result<()> {
         let mut framework = ContractTestFramework::new();
-        
+
         // Add test users
         framework.add_user("alice")?;
         framework.add_user("bob")?;
@@ -551,7 +541,7 @@ mod tests {
     #[test]
     fn test_user_management() {
         let mut framework = ContractTestFramework::new();
-        
+
         let alice_key = framework.add_user("alice").unwrap();
         let bob_key = framework.add_user("bob").unwrap();
 

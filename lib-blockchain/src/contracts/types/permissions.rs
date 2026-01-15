@@ -25,7 +25,11 @@ impl ContractPermissions {
     }
 
     /// Create permissions for a token contract
-    pub fn for_token(creator: crate::integration::crypto_integration::PublicKey, can_mint: bool, can_burn: bool) -> Self {
+    pub fn for_token(
+        creator: crate::integration::crypto_integration::PublicKey,
+        can_mint: bool,
+        can_burn: bool,
+    ) -> Self {
         Self {
             can_mint,
             can_burn,
@@ -37,7 +41,7 @@ impl ContractPermissions {
     /// Create permissions for ZHTP native token
     pub fn for_lib_token() -> Self {
         Self {
-            can_mint: true, // For network rewards
+            can_mint: true,  // For network rewards
             can_burn: false, // ZHTP is not deflationary
             can_pause: false,
             admins: vec![], // No single admin for native token
@@ -87,7 +91,11 @@ impl ContractPermissions {
     }
 
     /// Validate permissions for a specific operation
-    pub fn can_perform_operation(&self, operation: &str, caller: &crate::integration::crypto_integration::PublicKey) -> bool {
+    pub fn can_perform_operation(
+        &self,
+        operation: &str,
+        caller: &crate::integration::crypto_integration::PublicKey,
+    ) -> bool {
         match operation {
             "mint" => self.can_mint && (self.admins.is_empty() || self.is_admin(caller)),
             "burn" => self.can_burn,
@@ -126,7 +134,7 @@ mod tests {
     fn test_contract_permissions_for_token() {
         let public_key = create_test_public_key(1);
         let permissions = ContractPermissions::for_token(public_key.clone(), true, true);
-        
+
         assert!(permissions.can_mint);
         assert!(permissions.can_burn);
         assert!(!permissions.can_pause);
@@ -150,7 +158,7 @@ mod tests {
         let mut permissions = ContractPermissions::new();
 
         assert!(!permissions.is_admin(&public_key1));
-        
+
         permissions.add_admin(public_key1.clone());
         assert!(permissions.is_admin(&public_key1));
         assert!(!permissions.is_admin(&public_key2));

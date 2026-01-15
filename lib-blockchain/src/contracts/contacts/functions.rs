@@ -77,10 +77,7 @@ pub fn get_verified_contacts<'a>(
 }
 
 /// Get contact count for a user
-pub fn get_contact_count(
-    contract: &ContactContract,
-    owner: &PublicKey,
-) -> usize {
+pub fn get_contact_count(contract: &ContactContract, owner: &PublicKey) -> usize {
     contract.get_contact_count(owner)
 }
 
@@ -111,10 +108,7 @@ pub fn get_recent_contacts<'a>(
 }
 
 /// Export contacts for backup
-pub fn export_contacts(
-    contract: &ContactContract,
-    owner: &PublicKey,
-) -> Vec<ContactEntry> {
+pub fn export_contacts(contract: &ContactContract, owner: &PublicKey) -> Vec<ContactEntry> {
     contract.export_contacts(owner)
 }
 
@@ -141,16 +135,12 @@ pub fn bulk_add_contacts(
     contacts: Vec<(String, PublicKey)>, // (display_name, public_key) pairs
 ) -> Result<Vec<[u8; 32]>, String> {
     let mut contact_ids = Vec::new();
-    
+
     for (display_name, public_key) in contacts {
-        let contact_id = contract.add_contact(
-            owner.clone(),
-            display_name,
-            public_key,
-        )?;
+        let contact_id = contract.add_contact(owner.clone(), display_name, public_key)?;
         contact_ids.push(contact_id);
     }
-    
+
     Ok(contact_ids)
 }
 
@@ -162,29 +152,38 @@ pub fn get_contact_suggestions(
 ) -> Vec<ContactSuggestion> {
     let mut suggestions = Vec::new();
     let user_contacts = contract.get_user_contacts(user);
-    
+
     // Find contacts of contacts (second-degree connections)
     for contact in &user_contacts {
         let contact_contacts = contract.get_user_contacts(&contact.public_key);
-        
+
         for suggested_contact in contact_contacts {
             // Don't suggest themselves or existing contacts
             if suggested_contact.public_key == *user {
                 continue;
             }
-            
-            let already_contact = user_contacts.iter().any(|c| c.public_key == suggested_contact.public_key);
+
+            let already_contact = user_contacts
+                .iter()
+                .any(|c| c.public_key == suggested_contact.public_key);
             if already_contact {
                 continue;
             }
-            
+
             // Check if already in suggestions
-            let already_suggested = suggestions.iter().any(|s: &ContactSuggestion| s.public_key == suggested_contact.public_key);
+            let already_suggested = suggestions
+                .iter()
+                .any(|s: &ContactSuggestion| s.public_key == suggested_contact.public_key);
             if already_suggested {
                 // Increment mutual connection count
-                if let Some(suggestion) = suggestions.iter_mut().find(|s| s.public_key == suggested_contact.public_key) {
+                if let Some(suggestion) = suggestions
+                    .iter_mut()
+                    .find(|s| s.public_key == suggested_contact.public_key)
+                {
                     suggestion.mutual_connections += 1;
-                    suggestion.connection_names.push(contact.display_name.clone());
+                    suggestion
+                        .connection_names
+                        .push(contact.display_name.clone());
                 }
             } else {
                 suggestions.push(ContactSuggestion {
@@ -197,10 +196,10 @@ pub fn get_contact_suggestions(
             }
         }
     }
-    
+
     // Sort by number of mutual connections (descending)
     suggestions.sort_by(|a, b| b.mutual_connections.cmp(&a.mutual_connections));
-    
+
     suggestions.into_iter().take(max_suggestions).collect()
 }
 
@@ -223,7 +222,7 @@ pub fn get_contacts_by_verification(
     let all_contacts = contract.get_user_contacts(owner);
     let verified_count = all_contacts.iter().filter(|c| c.verified).count();
     let unverified_count = all_contacts.len() - verified_count;
-    
+
     ContactVerificationStats {
         total_contacts: all_contacts.len(),
         verified_contacts: verified_count,
@@ -244,11 +243,14 @@ pub fn find_similar_contacts<'a>(
     max_distance: usize,
 ) -> Vec<&'a ContactEntry> {
     let user_contacts = contract.get_user_contacts(owner);
-    
+
     user_contacts
         .into_iter()
         .filter(|contact| {
-            levenshtein_distance(&contact.display_name.to_lowercase(), &name_pattern.to_lowercase()) <= max_distance
+            levenshtein_distance(
+                &contact.display_name.to_lowercase(),
+                &name_pattern.to_lowercase(),
+            ) <= max_distance
         })
         .collect()
 }
@@ -261,12 +263,19 @@ pub fn get_contact_distribution(
     let contacts = contract.get_user_contacts(owner);
     let total_contacts = contacts.len();
     let mut distribution = std::collections::HashMap::new();
-    
+
     for contact in contacts {
-        let first_char = contact.display_name.chars().next().unwrap_or('#').to_uppercase().next().unwrap_or('#');
+        let first_char = contact
+            .display_name
+            .chars()
+            .next()
+            .unwrap_or('#')
+            .to_uppercase()
+            .next()
+            .unwrap_or('#');
         *distribution.entry(first_char).or_insert(0) += 1;
     }
-    
+
     ContactDistribution {
         total_contacts,
         distribution,
@@ -305,36 +314,36 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     let chars2: Vec<char> = s2.chars().collect();
     let len1 = chars1.len();
     let len2 = chars2.len();
-    
+
     if len1 == 0 {
         return len2;
     }
     if len2 == 0 {
         return len1;
     }
-    
+
     let mut matrix = vec![vec![0; len2 + 1]; len1 + 1];
-    
+
     for i in 0..=len1 {
         matrix[i][0] = i;
     }
     for j in 0..=len2 {
         matrix[0][j] = j;
     }
-    
+
     for i in 1..=len1 {
         for j in 1..=len2 {
             let cost = if chars1[i - 1] == chars2[j - 1] { 0 } else { 1 };
             matrix[i][j] = std::cmp::min(
                 std::cmp::min(
-                    matrix[i - 1][j] + 1,      // deletion
-                    matrix[i][j - 1] + 1       // insertion
+                    matrix[i - 1][j] + 1, // deletion
+                    matrix[i][j - 1] + 1, // insertion
                 ),
-                matrix[i - 1][j - 1] + cost    // substitution
+                matrix[i - 1][j - 1] + cost, // substitution
             );
         }
     }
-    
+
     matrix[len1][len2]
 }
 
@@ -358,7 +367,8 @@ mod tests {
             owner.clone(),
             "Test Contact".to_string(),
             contact_pk.clone(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Get contact
         let contact = get_contact(&contract, &contact_id).unwrap();
@@ -376,7 +386,8 @@ mod tests {
             Some("Updated Name".to_string()),
             None,
             Some("Online".to_string()),
-        ).unwrap();
+        )
+        .unwrap();
 
         let updated_contact = get_contact(&contract, &contact_id).unwrap();
         assert_eq!(updated_contact.display_name, "Updated Name");
@@ -387,18 +398,14 @@ mod tests {
     fn test_bulk_add_contacts() {
         let mut contract = ContactContract::new();
         let owner = create_test_public_key(1);
-        
+
         let contacts_to_add = vec![
             ("Alice".to_string(), create_test_public_key(2)),
             ("Bob".to_string(), create_test_public_key(3)),
             ("Charlie".to_string(), create_test_public_key(4)),
         ];
 
-        let contact_ids = bulk_add_contacts(
-            &mut contract,
-            owner.clone(),
-            contacts_to_add,
-        ).unwrap();
+        let contact_ids = bulk_add_contacts(&mut contract, owner.clone(), contacts_to_add).unwrap();
 
         assert_eq!(contact_ids.len(), 3);
         assert_eq!(get_contact_count(&contract, &owner), 3);
@@ -414,14 +421,16 @@ mod tests {
             owner.clone(),
             "Alice Smith".to_string(),
             create_test_public_key(2),
-        ).unwrap();
+        )
+        .unwrap();
 
         add_contact(
             &mut contract,
             owner.clone(),
             "Bob Johnson".to_string(),
             create_test_public_key(3),
-        ).unwrap();
+        )
+        .unwrap();
 
         let results = search_contacts(&contract, &owner, "alice");
         assert_eq!(results.len(), 1);
@@ -438,14 +447,16 @@ mod tests {
             owner.clone(),
             "Contact 1".to_string(),
             create_test_public_key(2),
-        ).unwrap();
+        )
+        .unwrap();
 
         let _contact_id2 = add_contact(
             &mut contract,
             owner.clone(),
             "Contact 2".to_string(),
             create_test_public_key(3),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Verify one contact
         verify_contact(&mut contract, &owner, &contact_id1).unwrap();
@@ -469,14 +480,16 @@ mod tests {
             user1.clone(),
             "User2".to_string(),
             user2.clone(),
-        ).unwrap();
+        )
+        .unwrap();
 
         add_contact(
             &mut contract,
             user2.clone(),
             "User1".to_string(),
             user1.clone(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(are_mutual_contacts(&contract, &user1, &user2));
     }
@@ -494,7 +507,8 @@ mod tests {
             user1.clone(),
             "User2".to_string(),
             user2.clone(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // User2 knows User3
         add_contact(
@@ -502,7 +516,8 @@ mod tests {
             user2.clone(),
             "User3".to_string(),
             user3.clone(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // User1 should get User3 as a suggestion
         let suggestions = get_contact_suggestions(&contract, &user1, 5);
@@ -530,21 +545,24 @@ mod tests {
             owner.clone(),
             "Alice".to_string(),
             create_test_public_key(2),
-        ).unwrap();
+        )
+        .unwrap();
 
         add_contact(
             &mut contract,
             owner.clone(),
             "Alicia".to_string(),
             create_test_public_key(3),
-        ).unwrap();
+        )
+        .unwrap();
 
         add_contact(
             &mut contract,
             owner.clone(),
             "Bob".to_string(),
             create_test_public_key(4),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Find contacts similar to "alice" with max distance 2
         let similar = find_similar_contacts(&contract, &owner, "alice", 2);

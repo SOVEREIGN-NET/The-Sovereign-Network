@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::integration::crypto_integration::PublicKey;
 use crate::types::MessageType;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Whisper message structure for encrypted messaging
@@ -38,7 +38,7 @@ impl WhisperMessage {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let message_id = crate::contracts::utils::id_generation::generate_message_id(
             &sender.key_id,
             timestamp as u128 * 1_000_000_000, // Convert to nanoseconds
@@ -68,7 +68,7 @@ impl WhisperMessage {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let message_id = crate::contracts::utils::id_generation::generate_message_id(
             &sender.key_id,
             timestamp as u128 * 1_000_000_000,
@@ -99,7 +99,7 @@ impl WhisperMessage {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let message_id = crate::contracts::utils::id_generation::generate_message_id(
             &sender.key_id,
             timestamp as u128 * 1_000_000_000,
@@ -128,7 +128,7 @@ impl WhisperMessage {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let message_id = crate::contracts::utils::id_generation::generate_message_id(
             &sender.key_id,
             timestamp as u128 * 1_000_000_000,
@@ -160,7 +160,7 @@ impl WhisperMessage {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let message_id = crate::contracts::utils::id_generation::generate_message_id(
             &sender.key_id,
             timestamp as u128 * 1_000_000_000,
@@ -295,7 +295,9 @@ impl WhisperMessage {
             MessageType::FileAttachment => {
                 // File attachments can be either direct or group
                 if self.recipient.is_none() && self.group_id.is_none() {
-                    return Err("File attachment must have either recipient or group ID".to_string());
+                    return Err(
+                        "File attachment must have either recipient or group ID".to_string()
+                    );
                 }
             }
             MessageType::SystemMessage => {
@@ -347,7 +349,7 @@ impl MessageContract {
         message.validate()?;
 
         let message_id = message.message_id;
-        
+
         // Add to user message index
         self.user_messages
             .entry(message.sender.clone())
@@ -412,7 +414,8 @@ impl MessageContract {
         self.groups
             .get(group_id)
             .map(|group| {
-                group.message_ids
+                group
+                    .message_ids
                     .iter()
                     .filter_map(|id| self.messages.get(id))
                     .collect()
@@ -422,7 +425,8 @@ impl MessageContract {
 
     /// Burn expired messages
     pub fn burn_expired_messages(&mut self, current_height: u64) -> usize {
-        let expired_ids: Vec<[u8; 32]> = self.messages
+        let expired_ids: Vec<[u8; 32]> = self
+            .messages
             .iter()
             .filter(|(_, message)| message.is_expired(current_height))
             .map(|(id, _)| *id)
@@ -477,7 +481,7 @@ impl MessageContract {
     /// Get thread ID for two users (deterministic)
     fn get_thread_id(&self, user1: &PublicKey, user2: &PublicKey) -> [u8; 32] {
         let mut data = Vec::new();
-        
+
         // Ensure deterministic ordering
         if user1.key_id < user2.key_id {
             data.extend_from_slice(&user1.key_id);
@@ -486,7 +490,7 @@ impl MessageContract {
             data.extend_from_slice(&user2.key_id);
             data.extend_from_slice(&user1.key_id);
         }
-        
+
         crate::contracts::utils::id_generation::hash_data(&data)
     }
 
@@ -522,7 +526,7 @@ impl MessageThread {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Self {
             participant1,
             participant2,
@@ -568,7 +572,7 @@ impl GroupThread {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Self {
             group_id,
             message_ids: Vec::new(),
@@ -696,7 +700,8 @@ mod tests {
         let future_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() + 3600; // 1 hour from now
+            .as_secs()
+            + 3600; // 1 hour from now
 
         let message = WhisperMessage::new_auto_burn(
             sender.clone(),

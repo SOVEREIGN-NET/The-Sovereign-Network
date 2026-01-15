@@ -3,8 +3,8 @@
 //! Provides configuration and management for secure contract execution sandboxes.
 
 use super::RuntimeConfig;
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -88,8 +88,8 @@ impl SandboxConfig {
         Self {
             security_level: SecurityLevel::Minimal,
             memory_limits: MemoryLimits {
-                max_pages: 64,        // 4MB
-                max_stack_size: 8192, // 8KB
+                max_pages: 64,                  // 4MB
+                max_stack_size: 8192,           // 8KB
                 max_heap_size: 4 * 1024 * 1024, // 4MB
                 allow_memory_growth: true,
             },
@@ -122,8 +122,8 @@ impl SandboxConfig {
         Self {
             security_level: SecurityLevel::Standard,
             memory_limits: MemoryLimits {
-                max_pages: 32,        // 2MB
-                max_stack_size: 4096, // 4KB
+                max_pages: 32,                  // 2MB
+                max_stack_size: 4096,           // 4KB
                 max_heap_size: 2 * 1024 * 1024, // 2MB
                 allow_memory_growth: false,
             },
@@ -155,8 +155,8 @@ impl SandboxConfig {
         Self {
             security_level: SecurityLevel::Maximum,
             memory_limits: MemoryLimits {
-                max_pages: 16,        // 1MB
-                max_stack_size: 2048, // 2KB
+                max_pages: 16,              // 1MB
+                max_stack_size: 2048,       // 2KB
                 max_heap_size: 1024 * 1024, // 1MB
                 allow_memory_growth: false,
             },
@@ -198,7 +198,8 @@ impl SandboxConfig {
         if self.memory_limits.max_pages == 0 {
             return Err(anyhow!("Max pages must be greater than 0"));
         }
-        if self.memory_limits.max_pages > 1024 { // 64MB max
+        if self.memory_limits.max_pages > 1024 {
+            // 64MB max
             return Err(anyhow!("Max pages too large"));
         }
 
@@ -222,7 +223,8 @@ impl SandboxConfig {
 
     /// Check if host function is allowed
     pub fn is_host_function_allowed(&self, function_name: &str) -> bool {
-        self.allowed_host_functions.contains(&function_name.to_string())
+        self.allowed_host_functions
+            .contains(&function_name.to_string())
     }
 }
 
@@ -248,7 +250,7 @@ impl ContractSandbox {
     /// Create new sandbox with configuration
     pub fn new(config: SandboxConfig) -> Result<Self> {
         config.validate()?;
-        
+
         Ok(Self {
             config,
             active_executions: HashMap::new(),
@@ -277,11 +279,13 @@ impl ContractSandbox {
 
     /// End execution and cleanup
     pub fn end_execution(&mut self, execution_id: &str) -> Result<SandboxExecutionReport> {
-        let execution = self.active_executions.remove(execution_id)
+        let execution = self
+            .active_executions
+            .remove(execution_id)
             .ok_or_else(|| anyhow!("Execution not found: {}", execution_id))?;
 
         let execution_time = execution.start_time.elapsed();
-        
+
         Ok(SandboxExecutionReport {
             execution_time,
             memory_used: execution.memory_used,
@@ -295,16 +299,18 @@ impl ContractSandbox {
 
     /// Track storage operation
     pub fn track_storage_op(&mut self, execution_id: &str, data_size: u64) -> Result<()> {
-        let execution = self.active_executions.get_mut(execution_id)
+        let execution = self
+            .active_executions
+            .get_mut(execution_id)
             .ok_or_else(|| anyhow!("Execution not found: {}", execution_id))?;
 
         execution.storage_ops += 1;
-        
+
         // Check limits
         if execution.storage_ops > self.config.resource_limits.max_storage_ops {
             return Err(anyhow!("Storage operation limit exceeded"));
         }
-        
+
         if data_size > self.config.resource_limits.max_storage_data_size {
             return Err(anyhow!("Storage data size limit exceeded"));
         }
@@ -314,11 +320,13 @@ impl ContractSandbox {
 
     /// Track event emission
     pub fn track_event(&mut self, execution_id: &str) -> Result<()> {
-        let execution = self.active_executions.get_mut(execution_id)
+        let execution = self
+            .active_executions
+            .get_mut(execution_id)
             .ok_or_else(|| anyhow!("Execution not found: {}", execution_id))?;
 
         execution.events_emitted += 1;
-        
+
         if execution.events_emitted > self.config.resource_limits.max_events {
             return Err(anyhow!("Event limit exceeded"));
         }
@@ -328,17 +336,19 @@ impl ContractSandbox {
 
     /// Track function call
     pub fn track_function_call(&mut self, execution_id: &str, call_depth: u32) -> Result<()> {
-        let execution = self.active_executions.get_mut(execution_id)
+        let execution = self
+            .active_executions
+            .get_mut(execution_id)
             .ok_or_else(|| anyhow!("Execution not found: {}", execution_id))?;
 
         execution.function_calls += 1;
         execution.call_depth = execution.call_depth.max(call_depth);
-        
+
         // Check limits
         if execution.function_calls > self.config.execution_limits.max_function_calls {
             return Err(anyhow!("Function call limit exceeded"));
         }
-        
+
         if call_depth > self.config.execution_limits.max_call_depth {
             return Err(anyhow!("Call depth limit exceeded"));
         }
@@ -366,15 +376,16 @@ pub struct SandboxExecutionReport {
 
 /// Check if host function is considered safe
 fn is_safe_host_function(function_name: &str) -> bool {
-    matches!(function_name,
-        "zhtp_log" |
-        "zhtp_get_caller" |
-        "zhtp_get_block_number" |
-        "zhtp_get_timestamp" |
-        "zhtp_storage_get" |
-        "zhtp_storage_set" |
-        "zhtp_emit_event" |
-        "zhtp_get_gas_remaining"
+    matches!(
+        function_name,
+        "zhtp_log"
+            | "zhtp_get_caller"
+            | "zhtp_get_block_number"
+            | "zhtp_get_timestamp"
+            | "zhtp_storage_get"
+            | "zhtp_storage_set"
+            | "zhtp_emit_event"
+            | "zhtp_get_gas_remaining"
     )
 }
 
@@ -421,15 +432,15 @@ mod tests {
         let mut sandbox = ContractSandbox::new(config).unwrap();
 
         let exec_id = "test_execution".to_string();
-        
+
         // Start execution
         assert!(sandbox.start_execution(exec_id.clone()).is_ok());
-        
+
         // Track operations
         assert!(sandbox.track_storage_op(&exec_id, 1024).is_ok());
         assert!(sandbox.track_event(&exec_id).is_ok());
         assert!(sandbox.track_function_call(&exec_id, 5).is_ok());
-        
+
         // End execution
         let report = sandbox.end_execution(&exec_id).unwrap();
         assert_eq!(report.storage_ops, 1);

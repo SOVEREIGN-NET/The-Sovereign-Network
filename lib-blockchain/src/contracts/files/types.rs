@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::integration::crypto_integration::PublicKey;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Shared file structure
@@ -168,7 +168,7 @@ impl SharedFile {
     /// Get file size in human-readable format
     pub fn get_formatted_size(&self) -> String {
         let size = self.file_size as f64;
-        
+
         if size < 1024.0 {
             format!("{} B", size)
         } else if size < 1024.0 * 1024.0 {
@@ -301,7 +301,7 @@ impl FileContract {
         file.validate()?;
 
         let file_id = file.file_id;
-        
+
         // Add to user file index
         self.user_files
             .entry(file.owner.clone())
@@ -434,7 +434,11 @@ impl FileContract {
     }
 
     /// Update file visibility
-    pub fn update_file_visibility(&mut self, file_id: &[u8; 32], is_public: bool) -> Result<(), String> {
+    pub fn update_file_visibility(
+        &mut self,
+        file_id: &[u8; 32],
+        is_public: bool,
+    ) -> Result<(), String> {
         if let Some(file) = self.files.get_mut(file_id) {
             if file.is_public == is_public {
                 return Ok(()); // No change needed
@@ -468,7 +472,11 @@ impl FileContract {
     }
 
     /// Revoke access from a file
-    pub fn revoke_file_access(&mut self, file_id: &[u8; 32], user: &PublicKey) -> Result<(), String> {
+    pub fn revoke_file_access(
+        &mut self,
+        file_id: &[u8; 32],
+        user: &PublicKey,
+    ) -> Result<(), String> {
         if let Some(file) = self.files.get_mut(file_id) {
             file.revoke_access(user)
         } else {
@@ -501,8 +509,8 @@ impl FileContract {
         self.files
             .values()
             .filter(|file| {
-                file.filename.to_lowercase().contains(&pattern_lower) ||
-                file.description.to_lowercase().contains(&pattern_lower)
+                file.filename.to_lowercase().contains(&pattern_lower)
+                    || file.description.to_lowercase().contains(&pattern_lower)
             })
             .collect()
     }
@@ -523,7 +531,7 @@ mod tests {
     fn test_file_creation() {
         let owner_keypair = KeyPair::generate().unwrap();
         let content_hash = [1u8; 32];
-        
+
         let file = SharedFile::new(
             "test.txt".to_string(),
             "A test file".to_string(),
@@ -551,7 +559,7 @@ mod tests {
         assert!(file.encryption_key_hash.is_none());
         assert_eq!(file.tags, vec!["test", "document"]);
         assert_eq!(file.max_downloads, 0);
-        
+
         // Owner should have access
         assert!(file.has_access(&owner_keypair.public_key));
         assert_eq!(file.download_count, 0);
@@ -562,7 +570,7 @@ mod tests {
         let mut contract = FileContract::new();
         let owner_keypair = KeyPair::generate().unwrap();
         let content_hash = [1u8; 32];
-        
+
         let file = SharedFile::new(
             "test.txt".to_string(),
             "A test file".to_string(),
@@ -581,18 +589,18 @@ mod tests {
         let file_id = file.file_id;
         assert!(contract.add_file(file).is_ok());
         assert_eq!(contract.file_count(), 1);
-        
+
         // Should be able to retrieve the file
         assert!(contract.get_file(&file_id).is_some());
-        
+
         // Should be in user files
         let user_files = contract.get_user_files(&owner_keypair.public_key);
         assert_eq!(user_files.len(), 1);
-        
+
         // Should be in public files
         let public_files = contract.get_public_files();
         assert_eq!(public_files.len(), 1);
-        
+
         // Should be in tag index
         let tagged_files = contract.get_files_by_tag("test");
         assert_eq!(tagged_files.len(), 1);
@@ -604,7 +612,7 @@ mod tests {
         let owner_keypair = KeyPair::generate().unwrap();
         let user_keypair = KeyPair::generate().unwrap();
         let content_hash = [1u8; 32];
-        
+
         let file = SharedFile::new(
             "private.txt".to_string(),
             "A private file".to_string(),
@@ -622,18 +630,22 @@ mod tests {
 
         let file_id = file.file_id;
         assert!(contract.add_file(file).is_ok());
-        
+
         // User should not have access initially
         let file = contract.get_file(&file_id).unwrap();
         assert!(!file.has_access(&user_keypair.public_key));
-        
+
         // Grant access to user
-        assert!(contract.grant_file_access(&file_id, user_keypair.public_key.clone()).is_ok());
+        assert!(contract
+            .grant_file_access(&file_id, user_keypair.public_key.clone())
+            .is_ok());
         let file = contract.get_file(&file_id).unwrap();
         assert!(file.has_access(&user_keypair.public_key));
-        
+
         // Revoke access
-        assert!(contract.revoke_file_access(&file_id, &user_keypair.public_key).is_ok());
+        assert!(contract
+            .revoke_file_access(&file_id, &user_keypair.public_key)
+            .is_ok());
         let file = contract.get_file(&file_id).unwrap();
         assert!(!file.has_access(&user_keypair.public_key));
     }

@@ -10,12 +10,15 @@ use zhtp::runtime::ComponentId;
 
 #[tokio::test]
 async fn test_integration_manager_lifecycle() -> Result<()> {
+    eprintln!("lifecycle: create manager");
     let integration = IntegrationManager::new().await?;
     
     // Initialize
+    eprintln!("lifecycle: initialize");
     integration.initialize().await?;
     
     // Test health check
+    eprintln!("lifecycle: health check");
     let health = integration.health_check().await?;
     assert!(health.overall_healthy);
     assert!(health.service_container_healthy);
@@ -23,7 +26,14 @@ async fn test_integration_manager_lifecycle() -> Result<()> {
     assert!(health.component_manager_healthy);
     
     // Shutdown
-    integration.shutdown().await?;
+    eprintln!("lifecycle: shutdown component manager");
+    integration.component_manager().shutdown_all().await?;
+    eprintln!("lifecycle: shutdown service container");
+    integration.service_container().shutdown().await?;
+    eprintln!("lifecycle: shutdown event bus");
+    integration.event_bus().stop().await?;
+
+    eprintln!("lifecycle: done");
     
     Ok(())
 }

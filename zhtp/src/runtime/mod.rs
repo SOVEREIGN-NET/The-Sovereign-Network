@@ -4,6 +4,7 @@
 
 use anyhow::{Result, Context};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, Mutex};
 use tokio::time::{Duration, Instant};
@@ -27,6 +28,141 @@ pub struct ExistingNetworkInfo {
     pub network_id: String,
     pub bootstrap_peers: Vec<String>,
     pub environment: crate::config::Environment,
+}
+
+/// Supported node types for startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeType {
+    FullNode,
+    EdgeNode,
+    Validator,
+}
+
+impl NodeType {
+    pub fn from_config(config: &NodeConfig, edge_override: Option<bool>) -> Self {
+        let is_validator = config.consensus_config.validator_enabled;
+        if is_validator {
+            return NodeType::Validator;
+        }
+
+        let hosted_storage = if config.storage_config.hosted_storage_gb > 0 {
+            config.storage_config.hosted_storage_gb
+        } else {
+            config.storage_config.storage_capacity_gb
+        };
+
+        let edge_mode = edge_override.unwrap_or(config.blockchain_config.edge_mode);
+        let inferred_edge = !config.blockchain_config.smart_contracts && hosted_storage < 100;
+
+        if edge_mode || inferred_edge {
+            NodeType::EdgeNode
+        } else {
+            NodeType::FullNode
+        }
+    }
+
+    pub fn is_edge(self) -> bool {
+        matches!(self, NodeType::EdgeNode)
+    }
+
+    pub fn role(self) -> NodeRole {
+        match self {
+            NodeType::FullNode => NodeRole::Observer,
+            NodeType::EdgeNode => NodeRole::LightNode,
+            NodeType::Validator => NodeRole::FullValidator,
+        }
+    }
+}
+
+/// Startup options for node initialization.
+#[derive(Debug, Clone)]
+pub struct StartupOptions {
+    pub keystore_path: Option<PathBuf>,
+    pub edge_max_headers: Option<usize>,
+}
+
+impl StartupOptions {
+    pub fn from_config(config: &NodeConfig) -> Self {
+        Self {
+            keystore_path: None,
+            edge_max_headers: Some(config.blockchain_config.edge_max_headers),
+        }
+    }
+
+    pub fn edge_max_headers(&self, config: &NodeConfig) -> usize {
+        self.edge_max_headers
+            .unwrap_or(config.blockchain_config.edge_max_headers)
+    }
+}
+
+/// Derived startup profile used to configure component initialization.
+#[derive(Debug, Clone)]
+pub struct StartupProfile {
+    pub node_type: NodeType,
+    pub node_role: NodeRole,
+    pub edge_max_headers: Option<usize>,
+    pub requires_existing_network: bool,
+}
+
+impl StartupProfile {
+    pub fn for_node_type(
+        node_type: NodeType,
+        config: &NodeConfig,
+        options: &StartupOptions,
+    ) -> Self {
+        let edge_max_headers = if node_type.is_edge() {
+            Some(options.edge_max_headers(config))
+        } else {
+            None
+        };
+
+        Self {
+            node_type,
+            node_role: node_type.role(),
+            edge_max_headers,
+            requires_existing_network: node_type.is_edge(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod startup_profile_tests {
+    use super::*;
+
+    #[test]
+    fn node_type_from_config_prefers_validator() {
+        let mut config = NodeConfig::default();
+        config.consensus_config.validator_enabled = true;
+        config.blockchain_config.edge_mode = true;
+
+        let node_type = NodeType::from_config(&config, None);
+        assert_eq!(node_type, NodeType::Validator);
+    }
+
+    #[test]
+    fn startup_profile_edge_node_uses_edge_headers() {
+        let config = NodeConfig::default();
+        let options = StartupOptions {
+            keystore_path: None,
+            edge_max_headers: Some(1234),
+        };
+        let profile = StartupProfile::for_node_type(NodeType::EdgeNode, &config, &options);
+
+        assert_eq!(profile.node_role, NodeRole::LightNode);
+        assert_eq!(profile.edge_max_headers, Some(1234));
+        assert!(profile.requires_existing_network);
+    }
+
+    #[test]
+    fn startup_profile_full_node_defaults() {
+        let config = NodeConfig::default();
+        let options = StartupOptions::from_config(&config);
+        let profile = StartupProfile::for_node_type(NodeType::FullNode, &config, &options);
+
+        assert_eq!(profile.node_role, NodeRole::Observer);
+        assert_eq!(profile.edge_max_headers, None);
+        assert!(!profile.requires_existing_network);
+    }
 }
 
 pub mod components;
@@ -215,8 +351,8 @@ pub struct RuntimeOrchestrator {
     // Unified reward orchestrator
     reward_orchestrator: Arc<RwLock<Option<Arc<reward_orchestrator::RewardOrchestrator>>>>,
     
-    // Node type detection
-    is_edge_node: Arc<RwLock<bool>>,
+    // Node type for startup decisions
+    node_type: Arc<RwLock<NodeType>>,
     
     // Edge node configuration
     edge_max_headers: Arc<RwLock<usize>>,
@@ -240,25 +376,9 @@ impl RuntimeOrchestrator {
         
         // Store shutdown monitor handle for cleanup
         let _shutdown_handle = shutdown_monitor;
-        // Detect node type from config
-        // Edge nodes are constrained devices that:
-        // 1. Don't validate blocks (validator_enabled = false)
-        // 2. Don't run smart contracts (resource constrained)
-        // 3. Don't host storage for others (hosted_storage_gb = 0 or very small)
-        //
-        // Note: blockchain_storage_gb is NOT counted - it grows dynamically
-        // Note: personal_storage_gb is NOT counted - user's own data
-        let hosted_storage = if config.storage_config.hosted_storage_gb > 0 {
-            config.storage_config.hosted_storage_gb
-        } else {
-            // Backward compatibility: use old storage_capacity_gb field
-            config.storage_config.storage_capacity_gb
-        };
-        
-        let is_edge_node = !config.consensus_config.validator_enabled 
-            && !config.blockchain_config.smart_contracts
-            && hosted_storage < 100;  // Less than 100 GB hosted storage = edge node
-        
+        let node_type = NodeType::from_config(&config, None);
+        let edge_max_headers = config.blockchain_config.edge_max_headers;
+
         let orchestrator = Self {
             config,
             components: Arc::new(RwLock::new(HashMap::new())),
@@ -271,8 +391,8 @@ impl RuntimeOrchestrator {
             genesis_private_data: Arc::new(RwLock::new(Vec::new())),
             joined_existing_network: Arc::new(RwLock::new(false)),
             reward_orchestrator: Arc::new(RwLock::new(None)),
-            is_edge_node: Arc::new(RwLock::new(is_edge_node)),
-            edge_max_headers: Arc::new(RwLock::new(500)),  // Default 500 headers (~100 KB)
+            node_type: Arc::new(RwLock::new(node_type)),
+            edge_max_headers: Arc::new(RwLock::new(edge_max_headers)),
             pending_identity: Arc::new(RwLock::new(None)),
             startup_order: vec![
                 ComponentId::Crypto,      // Foundation layer
@@ -385,6 +505,8 @@ impl RuntimeOrchestrator {
         };
 
         // Register components in dependency order
+        let node_type = *self.node_type.read().await;
+        let edge_max_headers = *self.edge_max_headers.read().await;
         
         if !is_registered(ComponentId::Crypto).await {
             self.register_component(Arc::new(CryptoComponent::new())).await?;
@@ -426,7 +548,16 @@ impl RuntimeOrchestrator {
             let environment = self.config.environment;  // Get environment from config
             let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();  // Get bootstrap validators from config
             let joined_existing_network = *self.joined_existing_network.read().await;  // Check if we joined existing network
-            self.register_component(Arc::new(BlockchainComponent::new_with_full_config(user_wallet, environment, bootstrap_validators, joined_existing_network))).await?;
+            let mut blockchain_component = BlockchainComponent::new_with_full_config(
+                user_wallet,
+                environment,
+                bootstrap_validators,
+                joined_existing_network,
+            );
+            if node_type.is_edge() {
+                blockchain_component.set_edge_sync_mode(edge_max_headers);
+            }
+            self.register_component(Arc::new(blockchain_component)).await?;
         }
         
         if !is_registered(ComponentId::Consensus).await {
@@ -441,8 +572,12 @@ impl RuntimeOrchestrator {
         if !is_registered(ComponentId::Protocols).await {
             let environment = self.config.environment;
             let api_port = self.config.protocols_config.api_port;
-            let is_edge_node = *self.is_edge_node.read().await;
-            self.register_component(Arc::new(ProtocolsComponent::new_with_node_type(environment, api_port, is_edge_node))).await?;
+            let runtime = Arc::new(crate::runtime::DefaultNodeRuntime::new(node_type.role()));
+            let mut protocols_component = ProtocolsComponent::new_with_runtime(environment, api_port, runtime);
+            if node_type.is_edge() {
+                protocols_component = protocols_component.with_edge_sync_mode(edge_max_headers);
+            }
+            self.register_component(Arc::new(protocols_component)).await?;
         }
         
         if !is_registered(ComponentId::Api).await {
@@ -671,7 +806,7 @@ impl RuntimeOrchestrator {
     }
     
     /// Start blockchain sync from existing network (called before identity setup)
-    pub async fn start_blockchain_sync(&mut self, network_info: &ExistingNetworkInfo) -> Result<()> {
+    pub async fn start_blockchain_sync(&self, network_info: &ExistingNetworkInfo) -> Result<()> {
         info!("📦 Starting blockchain sync from {} peers...", network_info.peer_count);
         
         // Initialize a temporary blockchain to receive sync data
@@ -694,14 +829,30 @@ impl RuntimeOrchestrator {
         Ok(())
     }
     
+    /// Get the configured node type
+    pub async fn node_type(&self) -> NodeType {
+        *self.node_type.read().await
+    }
+
+    /// Set the configured node type
+    pub async fn set_node_type(&self, node_type: NodeType) {
+        *self.node_type.write().await = node_type;
+    }
+
     /// Check if this node is configured as an edge node
     pub async fn is_edge_node(&self) -> bool {
-        *self.is_edge_node.read().await
+        matches!(self.node_type().await, NodeType::EdgeNode)
     }
 
     /// Set edge node mode (overrides auto-detection)
     pub async fn set_edge_node(&self, is_edge: bool) {
-        *self.is_edge_node.write().await = is_edge;
+        if is_edge {
+            self.set_node_type(NodeType::EdgeNode).await;
+        } else if self.config.consensus_config.validator_enabled {
+            self.set_node_type(NodeType::Validator).await;
+        } else {
+            self.set_node_type(NodeType::FullNode).await;
+        }
     }
 
     /// Set edge node max headers configuration
@@ -714,88 +865,96 @@ impl RuntimeOrchestrator {
         *self.edge_max_headers.read().await
     }
 
-    /// Start the node with full startup sequence
-    /// 
-    /// This is the main entry point called by CLI after configuration is loaded.
-    /// It handles:
-    /// 1. Network discovery and peer bootstrapping (delegated to lib-network)
-    /// 2. Identity/wallet setup (delegated to lib-identity + lib-blockchain)
-    /// 3. Blockchain sync coordination
-    /// 4. Component registration and startup
-    /// 
-    /// Architecture:
-    /// - lib-identity: Creates identity/wallet objects (in-memory)
-    /// - lib-blockchain: Registers them on-chain (permanent storage)
-    /// - RuntimeOrchestrator: Coordinates the flow
+    /// Start a node using an explicit node type.
+    pub async fn start_for_node_type(
+        config: NodeConfig,
+        node_type: NodeType,
+        options: StartupOptions,
+    ) -> Result<Self> {
+        let profile = StartupProfile::for_node_type(node_type, &config, &options);
+        let orchestrator = Self::new(config).await?;
+        orchestrator.start_with_profile(&profile, &options).await?;
+        Ok(orchestrator)
+    }
+
+    /// Start a full node - canonical startup path.
+    pub async fn start_full_node(config: NodeConfig, options: StartupOptions) -> Result<Self> {
+        Self::start_for_node_type(config, NodeType::FullNode, options).await
+    }
+
+    /// Start an edge node - canonical startup path.
+    pub async fn start_edge_node(config: NodeConfig, options: StartupOptions) -> Result<Self> {
+        Self::start_for_node_type(config, NodeType::EdgeNode, options).await
+    }
+
+    /// Start a validator node - canonical startup path.
+    pub async fn start_validator_node(config: NodeConfig, options: StartupOptions) -> Result<Self> {
+        Self::start_for_node_type(config, NodeType::Validator, options).await
+    }
+
+    /// Start the node using its configured settings.
     pub async fn start_node(&self) -> Result<()> {
-        info!("🚀 Starting ZHTP node with full startup sequence");
-        
-        // ========================================================================
-        // PHASE 1: Network Components (for peer discovery)
-        // ========================================================================
-        info!("📡 Starting network components for peer discovery...");
-        use crate::runtime::components::{CryptoComponent, NetworkComponent};
-        
-        self.register_component(Arc::new(CryptoComponent::new())).await?;
-        self.start_component(ComponentId::Crypto).await?;
-        
-        self.register_component(Arc::new(NetworkComponent::new())).await?;
-        self.start_component(ComponentId::Network).await?;
-        
-        // Give network time to initialize
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        
-        // ========================================================================
-        // PHASE 2: Peer Discovery
-        // ========================================================================
-        info!("🔍 Discovering peers on local network...");
-        
-        // Start local network discovery via multicast
-        let node_uuid = uuid::Uuid::new_v4();
-        let mesh_port = self.config.network_config.mesh_port;
-        
-        // Generate a temporary public key for discovery
-        let keypair = lib_crypto::generate_keypair()?;
-        let public_key = lib_crypto::PublicKey {
-            dilithium_pk: keypair.public_key.dilithium_pk.clone(),
-            kyber_pk: keypair.public_key.kyber_pk.clone(),
-            key_id: keypair.public_key.key_id.clone(),
-        };
-        
-        // Start local discovery service (runs in background)
-        if let Err(e) = lib_network::discovery::start_local_discovery(
-            node_uuid,
-            mesh_port,
-            public_key,
-            None, // No callback needed for now
-        ).await {
-            warn!("Failed to start local discovery: {}", e);
+        let options = StartupOptions::from_config(&self.config);
+        let node_type = NodeType::from_config(&self.config, None);
+        let profile = StartupProfile::for_node_type(node_type, &self.config, &options);
+        self.start_with_profile(&profile, &options).await
+    }
+
+    async fn apply_startup_profile(&self, profile: &StartupProfile) -> Result<()> {
+        self.set_node_type(profile.node_type).await;
+        if let Some(edge_max_headers) = profile.edge_max_headers {
+            self.set_edge_max_headers(edge_max_headers).await;
         }
-        
-        // For now, assume we're creating a new network
-        // TODO: Check DHT and bootstrap peers for existing networks
-        let joined_existing_network = false;
-        self.set_joined_existing_network(joined_existing_network).await;
-        
-        // ========================================================================
-        // PHASE 3: Identity/Wallet Setup
-        // ========================================================================
-        info!("🆔 Setting up node identity and wallet...");
-        
-        // Use existing wallet startup flow from did_startup module
-        let wallet_result = crate::runtime::did_startup::WalletStartupManager::handle_startup_wallet_flow()
-            .await
-            .context("Failed to complete wallet startup flow")?;
-        
-        info!("✅ Identity and wallet setup complete:");
-        info!("   User Identity: {}", hex::encode(&wallet_result.user_identity.id.0[..8]));
-        info!("   Node Identity: {}", hex::encode(&wallet_result.node_identity.id.0[..8]));
-        info!("   Primary Wallet: {}", hex::encode(&wallet_result.node_wallet_id.0[..8]));
-        
-        // Store wallet result for blockchain component
+        Ok(())
+    }
+
+    async fn start_with_profile(
+        &self,
+        profile: &StartupProfile,
+        options: &StartupOptions,
+    ) -> Result<()> {
+        self.apply_startup_profile(profile).await?;
+
+        info!("Starting ZHTP node startup sequence...");
+
+        // Phase 1: Network components for discovery
+        self.start_network_components_for_discovery().await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Phase 2: Network discovery
+        let network_info = self
+            .discover_network_with_retry(profile.requires_existing_network)
+            .await?;
+
+        if let Some(network_info) = network_info {
+            self.set_joined_existing_network(true).await?;
+            self.start_blockchain_sync(&network_info).await?;
+
+            if let Err(e) = self.wait_for_initial_sync(Duration::from_secs(30)).await {
+                warn!("Initial sync timeout: {} - continuing in background", e);
+            }
+        } else {
+            if profile.requires_existing_network {
+                return Err(anyhow::anyhow!("Edge nodes must find an existing network"));
+            }
+            self.set_joined_existing_network(false).await?;
+        }
+
+        // Phase 3: Identity and wallet setup
+        info!("Setting up node identity and wallet...");
+        let wallet_result = crate::runtime::did_startup::WalletStartupManager::handle_startup_wallet_flow_with_keystore(
+            options.keystore_path.clone(),
+        )
+        .await
+        .context("Failed to complete wallet startup flow")?;
+
+        info!("Identity and wallet setup complete");
+        info!("  User Identity: {}", hex::encode(&wallet_result.user_identity.id.0[..8]));
+        info!("  Node Identity: {}", hex::encode(&wallet_result.node_identity.id.0[..8]));
+        info!("  Primary Wallet: {}", hex::encode(&wallet_result.node_wallet_id.0[..8]));
+
         self.set_user_wallet(wallet_result.clone()).await?;
 
-        // Derive deterministic NodeId from DID + device name and cache for runtime access
         let device_name = resolve_device_name(Some(&wallet_result.node_identity.primary_device))
             .context("Device name resolution failed (set ZHTP_DEVICE_NAME or configure device name)")?;
         let node_id = derive_node_id(&wallet_result.node_identity.did, &device_name)
@@ -804,107 +963,64 @@ impl RuntimeOrchestrator {
             did: wallet_result.node_identity.did.clone(),
             device_name,
             node_id,
-        }).context("Failed to cache runtime NodeId")?;
+        })
+        .context("Failed to cache runtime NodeId")?;
         log_runtime_node_identity();
-        
-        // Store user identity for blockchain registration in Phase 6
+
         self.set_pending_identity_registration(wallet_result.user_identity.clone()).await;
-        
-        // ========================================================================
-        // PHASE 4: Register Remaining Components
-        // ========================================================================
-        info!("📦 Registering remaining components...");
-        use crate::runtime::components::{
-            ZKComponent, IdentityComponent, StorageComponent, BlockchainComponent,
-            ConsensusComponent, EconomicsComponent, ProtocolsComponent, ApiComponent
-        };
-        
-        self.register_component(Arc::new(ZKComponent::new())).await?;
 
-        // CRITICAL: Pass genesis identities explicitly to IdentityComponent
-        // These were created in PHASE 3 and must be injected as a dependency
-        // This ensures deterministic initialization and prevents silent empty state
-        let genesis_ids = self.genesis_identities.read().await.clone();
-        let genesis_private = self.genesis_private_data.read().await.clone();
-        self.register_component(
-            Arc::new(IdentityComponent::new_with_identities_and_private_data(genesis_ids, genesis_private))
-        ).await?;
+        // Phase 4: Start remaining components
+        self.start_all_components().await?;
 
-        self.register_component(Arc::new(StorageComponent::new())).await?;
-        
-        let user_wallet = self.get_user_wallet().await;
-        let environment = self.get_environment();
-        let bootstrap_validators = self.get_bootstrap_validators();
-        let joined_existing_network = self.get_joined_existing_network().await;
-        
-        let blockchain_component = BlockchainComponent::new_with_full_config(
-            user_wallet,
-            environment,
-            bootstrap_validators,
-            joined_existing_network
-        );
-        self.register_component(Arc::new(blockchain_component)).await?;
-        
-        self.register_component(Arc::new(ConsensusComponent::new(environment))).await?;
-        self.register_component(Arc::new(ProtocolsComponent::new(environment, self.config.protocols_config.api_port))).await?;
-        self.register_component(Arc::new(EconomicsComponent::new())).await?;
-        self.register_component(Arc::new(ApiComponent::new())).await?;
-        
-        // ========================================================================
-        // PHASE 5: Start Remaining Components
-        // ========================================================================
-        info!("▶️  Starting remaining components...");
-        self.start_component(ComponentId::ZK).await?;
-        self.start_component(ComponentId::Identity).await?;
-        self.start_component(ComponentId::Storage).await?;
-        self.start_component(ComponentId::Blockchain).await?;
-        self.start_component(ComponentId::Consensus).await?;
-        self.start_component(ComponentId::Protocols).await?;
-        self.start_component(ComponentId::Economics).await?;
-        self.start_component(ComponentId::Api).await?;
-        
-        // ========================================================================
-        // PHASE 6: Post-Startup Blockchain Registration
-        // ========================================================================
-        info!("📝 Registering identity on blockchain...");
-        
-        // Get pending identity from Phase 3
+        // Phase 5: Register identity on-chain if available
+        self.register_pending_identity_on_blockchain().await?;
+
+        info!("ZHTP node started successfully");
+        info!("ZHTP server active on port {}", self.config.protocols_config.api_port);
+
+        Ok(())
+    }
+
+    async fn register_pending_identity_on_blockchain(&self) -> Result<()> {
         if let Some(identity) = self.get_pending_identity_registration().await {
-            // Get blockchain component for registration
             if let Ok(Some(shared_blockchain)) = self.get_shared_blockchain().await {
                 let mut blockchain = shared_blockchain.write().await;
-                
+
                 if let Some(blockchain_ref) = blockchain.as_mut() {
-                    // Create identity transaction data for blockchain registration
                     let identity_data = lib_blockchain::transaction::IdentityTransactionData {
                         did: format!("did:zhtp:{}", hex::encode(&identity.id.0)),
                         display_name: format!("User {}", hex::encode(&identity.id.0[..4])),
                         public_key: identity.public_key.as_bytes(),
-                        ownership_proof: vec![], // Convert ZK proof to bytes if needed
+                        ownership_proof: vec![],
                         identity_type: format!("{:?}", identity.identity_type),
-                        did_document_hash: identity.did_document_hash
+                        did_document_hash: identity
+                            .did_document_hash
                             .map(|h| lib_blockchain::Hash::from_slice(&h.0))
                             .unwrap_or(lib_blockchain::Hash::zero()),
                         created_at: identity.created_at,
                         registration_fee: 0,
                         dao_fee: 0,
                         controlled_nodes: vec![],
-                        owned_wallets: identity.wallet_manager.wallets.keys()
+                        owned_wallets: identity
+                            .wallet_manager
+                            .wallets
+                            .keys()
                             .map(|id| hex::encode(&id.0))
                             .collect(),
                     };
-                    
-                    // Register identity on blockchain
-                    match blockchain_ref.register_identity(identity_data.clone()) {
+
+                    match blockchain_ref.register_identity(identity_data) {
                         Ok(tx_hash) => {
-                            info!("✅ Identity registered on blockchain: {}", hex::encode(&tx_hash.as_bytes()[..8]));
+                            info!(
+                                "Identity registered on blockchain: {}",
+                                hex::encode(&tx_hash.as_bytes()[..8])
+                            );
                         }
                         Err(e) => {
-                            warn!("⚠️  Failed to register identity on blockchain: {}", e);
+                            warn!("Failed to register identity on blockchain: {}", e);
                         }
                     }
-                    
-                    // Register wallets on blockchain
+
                     for (wallet_id, wallet) in &identity.wallet_manager.wallets {
                         let wallet_data = lib_blockchain::transaction::WalletTransactionData {
                             wallet_id: lib_blockchain::Hash::from_slice(&wallet_id.0),
@@ -917,38 +1033,39 @@ impl RuntimeOrchestrator {
                             created_at: wallet.created_at,
                             registration_fee: 0,
                             initial_balance: wallet.balance,
-                            seed_commitment: wallet.seed_commitment.as_ref()
+                            seed_commitment: wallet
+                                .seed_commitment
+                                .as_ref()
                                 .map(|s| lib_blockchain::Hash::from_slice(s.as_bytes()))
                                 .unwrap_or(lib_blockchain::Hash::zero()),
                         };
-                        
+
                         match blockchain_ref.register_wallet(wallet_data) {
                             Ok(tx_hash) => {
-                                info!("✅ Wallet registered: {} ({})", 
+                                info!(
+                                    "Wallet registered: {} ({})",
                                     hex::encode(&wallet_id.0[..8]),
-                                    hex::encode(&tx_hash.as_bytes()[..8]));
+                                    hex::encode(&tx_hash.as_bytes()[..8])
+                                );
                             }
                             Err(e) => {
-                                warn!("⚠️  Failed to register wallet: {}", e);
+                                warn!("Failed to register wallet: {}", e);
                             }
                         }
                     }
                 } else {
-                    warn!("⚠️  Blockchain not initialized");
+                    warn!("Blockchain not initialized");
                 }
             } else {
-                warn!("⚠️  Blockchain service not available for identity registration");
+                warn!("Blockchain service not available for identity registration");
             }
         } else {
-            info!("ℹ️  No pending identity registration (existing identity loaded)");
+            info!("No pending identity registration");
         }
-        
-        info!("✅ ZHTP node started successfully");
-        info!("🌐 ZHTP server active on port {}", self.config.protocols_config.api_port);
-        
+
         Ok(())
     }
-    
+
     /// Helper: Load existing identity from storage (if any)
     async fn load_existing_identity(&self) -> Option<lib_identity::ZhtpIdentity> {
         // TODO: Load from persistent storage
@@ -2036,80 +2153,31 @@ impl RuntimeOrchestrator {
         self.send_message(ComponentId::Blockchain, message).await
     }
     
-    /// Complete node startup sequence - orchestrates discovery, identity, and component initialization
-    /// 
-    /// This is the main entry point for starting a ZHTP node. It handles:
-    /// 1. Network component initialization
-    /// 2. Peer discovery (via DiscoveryCoordinator)
-    /// 3. Identity/wallet setup
-    /// 4. Blockchain initialization or sync
-    /// 5. Starting remaining components
+    /// Complete node startup sequence - legacy wrapper for canonical startup paths.
+    #[deprecated(note = "Use start_full_node/start_edge_node/start_validator_node")]
     pub async fn startup_sequence(
         config: NodeConfig,
         is_edge_node: bool,
         edge_max_headers: usize,
     ) -> Result<Self> {
-        info!("🚀 Starting ZHTP node startup sequence...");
-        
-        // Create orchestrator
-        let mut orchestrator = Self::new(config.clone()).await?;
-        
-        // Configure edge node settings
-        if is_edge_node {
-            orchestrator.set_edge_node(true).await;
-            orchestrator.set_edge_max_headers(edge_max_headers).await;
-            info!("⚡ Edge mode: max_headers={}", edge_max_headers);
-        }
-        
-        // PHASE 1: Start minimal components for peer discovery (Crypto + Network)
-        info!("🔌 Phase 1: Starting network components for peer discovery...");
-        orchestrator.start_network_components_for_discovery().await?;
-        
-        // Wait for network stack initialization
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        
-        // PHASE 2: Discover existing network
-        info!("🔍 Phase 2: Discovering ZHTP network...");
-        let network_info = orchestrator.discover_network_with_retry(is_edge_node).await?;
-        
-        // PHASE 3: Setup identity and blockchain
-        info!("🔑 Phase 3: Setting up identity and blockchain...");
-        if let Some(ref net_info) = network_info {
-            // Joining existing network
-            orchestrator.set_joined_existing_network(true).await?;
-            orchestrator.start_blockchain_sync(net_info).await?;
-            
-            // Wait for initial sync
-            info!("⏳ Waiting for initial blockchain sync...");
-            match orchestrator.wait_for_initial_sync(Duration::from_secs(30)).await {
-                Ok(()) => {
-                    let height = orchestrator.get_blockchain_height().await?;
-                    info!("✓ Sync started: height {}", height);
-                }
-                Err(e) => {
-                    warn!("⚠ Initial sync timeout: {} - will continue in background", e);
-                }
-            }
+        let node_type = if is_edge_node {
+            NodeType::EdgeNode
+        } else if config.consensus_config.validator_enabled {
+            NodeType::Validator
         } else {
-            // Creating genesis network
-            if is_edge_node {
-                return Err(anyhow::anyhow!("Edge nodes must find an existing network"));
-            }
-            orchestrator.set_joined_existing_network(false).await?;
-            info!("🌱 Creating genesis network");
-        }
-        
-        // PHASE 4: Register and start all remaining components
-        info!("⚙️ Phase 4: Starting all components...");
-        orchestrator.register_all_components().await?;
-        orchestrator.start_all_components().await?;
-        
-        info!("✅ ZHTP node startup sequence complete");
-        Ok(orchestrator)
+            NodeType::FullNode
+        };
+
+        let options = StartupOptions {
+            keystore_path: None,
+            edge_max_headers: Some(edge_max_headers),
+        };
+
+        Self::start_for_node_type(config, node_type, options).await
     }
-    
+
     /// Start only Crypto and Network components for initial peer discovery
-    pub async fn start_network_components_for_discovery(&mut self) -> Result<()> {
+    pub async fn start_network_components_for_discovery(&self) -> Result<()> {
         use crate::runtime::components::{CryptoComponent, NetworkComponent};
         
         info!("   → Registering CryptoComponent...");
@@ -2151,7 +2219,7 @@ impl RuntimeOrchestrator {
     }
     
     /// Discover network with retry logic for edge nodes
-    pub async fn discover_network_with_retry(&mut self, is_edge_node: bool) -> Result<Option<ExistingNetworkInfo>> {
+    pub async fn discover_network_with_retry(&self, is_edge_node: bool) -> Result<Option<ExistingNetworkInfo>> {
         use crate::discovery_coordinator::DiscoveryCoordinator;
         
         let config = crate::discovery_coordinator::DiscoveryConfig::new(

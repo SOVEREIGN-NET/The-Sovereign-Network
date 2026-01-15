@@ -8,10 +8,10 @@
 //! CRITICAL: This contract verifies signatures itself. No delegation to callers or runtime assumptions.
 //! A vault is only as strong as its own verification boundary.
 
-use std::collections::{HashMap, HashSet};
-use serde::{Deserialize, Serialize};
-use crate::integration::crypto_integration::{PublicKey, Signature, hash_data};
+use crate::integration::crypto_integration::{hash_data, PublicKey, Signature};
 use lib_crypto::verify_signature;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 /// Emergency Reserve: Multisig-protected custody with on-chain signature verification.
 ///
@@ -76,7 +76,7 @@ pub struct EmergencyReserve {
 
     // Replay protection with monotonic nonce (Invariant I6)
     next_nonce: u64,
-    
+
     // Contract identifier for message signing
     contract_id: [u8; 32],
 }
@@ -103,31 +103,31 @@ impl WithdrawalMessage {
     /// Fixed-width encoding with domain separation prevents ambiguity.
     fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        
+
         // Domain string (length-prefixed for safety)
         let domain_bytes = self.domain.as_bytes();
         buf.extend_from_slice(&(domain_bytes.len() as u32).to_be_bytes());
         buf.extend_from_slice(domain_bytes);
-        
+
         // Contract ID (fixed 32 bytes)
         buf.extend_from_slice(&self.contract_id);
-        
+
         // Recipient address (length-prefixed)
         buf.extend_from_slice(&(self.to.len() as u32).to_be_bytes());
         buf.extend_from_slice(&self.to);
-        
+
         // Amount (8 bytes, big-endian)
         buf.extend_from_slice(&self.amount.to_be_bytes());
-        
+
         // Nonce (8 bytes, big-endian)
         buf.extend_from_slice(&self.nonce.to_be_bytes());
-        
+
         // Expiry period ID (8 bytes, big-endian)
         buf.extend_from_slice(&self.expiry_period_id.to_be_bytes());
-        
+
         buf
     }
-    
+
     /// Hash the canonical message to produce a message hash for signature verification.
     fn hash(&self) -> Vec<u8> {
         let encoded = self.encode();
@@ -299,10 +299,7 @@ impl EmergencyReserve {
         // Validate amount <= balance (Invariant I3: Conservation)
         let balance = self.balance()?;
         if amount > balance {
-            return Err(format!(
-                "Insufficient balance: {} > {}",
-                amount, balance
-            ));
+            return Err(format!("Insufficient balance: {} > {}", amount, balance));
         }
 
         // Monotonic nonce check (Invariant I6: Replay Protection)
@@ -330,7 +327,7 @@ impl EmergencyReserve {
             nonce,
             expiry_period_id,
         };
-        
+
         let message_hash = message.hash();
 
         // Verify signatures and collect valid signers (Invariant I5 + I7)
@@ -338,7 +335,7 @@ impl EmergencyReserve {
         // A signature is valid if exactly one signer can verify it
         // Only unique signers count toward the threshold
         let mut valid_signers = HashSet::new();
-        
+
         for sig in sigs {
             // Try to find which signer created this signature
             for signer in &self.signers {
@@ -355,7 +352,7 @@ impl EmergencyReserve {
                     }
                 }
             }
-            
+
             // If no signer could verify this signature, the signature is invalid
             // We continue processing other signatures but the invalid ones don't count
             // This is intentional: garbage signatures don't reduce valid signature count
@@ -459,14 +456,15 @@ mod tests {
             nonce,
             expiry_period_id,
         };
-        
+
         let message_hash = message.hash();
-        
+
         // Sign the message hash using the keypair
         // keypair.sign() returns a Signature object, extract the signature bytes
-        let signature_obj = keypair.sign(&message_hash)
+        let signature_obj = keypair
+            .sign(&message_hash)
             .map_err(|e| format!("Failed to sign message: {:?}", e))?;
-        
+
         Ok(Signature {
             signature: signature_obj.signature,
             public_key: keypair.public_key.clone(),
@@ -561,9 +559,8 @@ mod tests {
         let signer = create_test_public_key(10);
         let contract_id = create_test_contract_id(100);
 
-        let mut reserve =
-            EmergencyReserve::init(fee_collector, vec![signer], 1, contract_id)
-                .expect("Should initialize");
+        let mut reserve = EmergencyReserve::init(fee_collector, vec![signer], 1, contract_id)
+            .expect("Should initialize");
 
         let result = reserve.credit(&unauthorized, 1_000_000, 1);
         assert!(result.is_err());
@@ -582,7 +579,9 @@ mod tests {
                 .expect("Should initialize");
 
         // Credit period 5
-        reserve.credit(&fee_collector, 100, 5).expect("Should credit period 5");
+        reserve
+            .credit(&fee_collector, 100, 5)
+            .expect("Should credit period 5");
 
         // Try to credit period 3 (earlier)
         let result = reserve.credit(&fee_collector, 100, 3);
@@ -611,7 +610,7 @@ mod tests {
             .expect("Should credit");
 
         let recipient = create_test_public_key(200);
-        
+
         // Create an invalid signature (random bytes)
         let invalid_sig = Signature {
             signature: vec![0u8; 64],
@@ -620,14 +619,7 @@ mod tests {
             timestamp: 0,
         };
 
-        let result = reserve.withdraw(
-            &recipient,
-            500_000,
-            1,
-            10,
-            5,
-            &[invalid_sig],
-        );
+        let result = reserve.withdraw(&recipient, 500_000, 1, 10, 5, &[invalid_sig]);
 
         // Invalid signatures must fail
         assert!(result.is_err());
@@ -834,7 +826,7 @@ mod tests {
         let initial_withdrawn = reserve.total_withdrawn();
 
         let recipient = create_test_public_key(200);
-        
+
         // Try invalid withdrawal (bad signatures)
         let _ = reserve.withdraw(
             &recipient,
@@ -842,7 +834,7 @@ mod tests {
             1,
             10,
             5,
-            &[Signature { 
+            &[Signature {
                 signature: vec![0u8; 64],
                 public_key: PublicKey::new(vec![0u8; 1312]),
                 algorithm: lib_crypto::types::signatures::SignatureAlgorithm::Dilithium5,
@@ -864,16 +856,14 @@ mod tests {
     fn test_valid_threshold_signatures_allow_withdrawal() {
         // Test that valid signatures from threshold signers authorize withdrawal
         let fee_collector = create_test_public_key(1);
-        
+
         // Create keypairs for signers
-        let signer1_keypair = KeyPair::generate()
-            .expect("Should create keypair 1");
+        let signer1_keypair = KeyPair::generate().expect("Should create keypair 1");
         let signer1_pubkey = signer1_keypair.public_key.clone();
-        
-        let signer2_keypair = KeyPair::generate()
-            .expect("Should create keypair 2");
+
+        let signer2_keypair = KeyPair::generate().expect("Should create keypair 2");
         let signer2_pubkey = signer2_keypair.public_key.clone();
-        
+
         let contract_id = create_test_contract_id(100);
 
         // Initialize with 2-of-2 multisig
@@ -893,38 +883,22 @@ mod tests {
         let recipient = create_test_public_key(200);
 
         // Create valid signatures from both signers
-        let sig1 = create_withdrawal_signature(
-            &signer1_keypair,
-            &contract_id,
-            &recipient,
-            500_000,
-            1,
-            10,
-        )
-        .expect("Should create signature 1");
+        let sig1 =
+            create_withdrawal_signature(&signer1_keypair, &contract_id, &recipient, 500_000, 1, 10)
+                .expect("Should create signature 1");
 
-        let sig2 = create_withdrawal_signature(
-            &signer2_keypair,
-            &contract_id,
-            &recipient,
-            500_000,
-            1,
-            10,
-        )
-        .expect("Should create signature 2");
+        let sig2 =
+            create_withdrawal_signature(&signer2_keypair, &contract_id, &recipient, 500_000, 1, 10)
+                .expect("Should create signature 2");
 
         // Withdraw with valid signatures
-        let result = reserve.withdraw(
-            &recipient,
-            500_000,
-            1,
-            10,
-            5,
-            &[sig1, sig2],
-        );
+        let result = reserve.withdraw(&recipient, 500_000, 1, 10, 5, &[sig1, sig2]);
 
         // Should succeed with threshold met
-        assert!(result.is_ok(), "Withdrawal should succeed with 2-of-2 valid signatures");
+        assert!(
+            result.is_ok(),
+            "Withdrawal should succeed with 2-of-2 valid signatures"
+        );
         assert_eq!(reserve.total_withdrawn(), 500_000);
         assert_eq!(reserve.next_nonce(), 2); // Nonce incremented
         assert_eq!(reserve.balance().unwrap(), 500_000); // Half remaining
@@ -934,13 +908,13 @@ mod tests {
     fn test_below_threshold_signatures_fail() {
         // Test that below-threshold valid signatures fail
         let fee_collector = create_test_public_key(1);
-        
+
         let signer1_keypair = KeyPair::generate().expect("Should create keypair 1");
         let signer1_pubkey = signer1_keypair.public_key.clone();
-        
+
         let signer2_keypair = KeyPair::generate().expect("Should create keypair 2");
         let signer2_pubkey = signer2_keypair.public_key.clone();
-        
+
         let contract_id = create_test_contract_id(100);
 
         let mut reserve = EmergencyReserve::init(
@@ -958,29 +932,18 @@ mod tests {
         let recipient = create_test_public_key(200);
 
         // Only one valid signature (need 2)
-        let sig1 = create_withdrawal_signature(
-            &signer1_keypair,
-            &contract_id,
-            &recipient,
-            500_000,
-            1,
-            10,
-        )
-        .expect("Should create signature");
+        let sig1 =
+            create_withdrawal_signature(&signer1_keypair, &contract_id, &recipient, 500_000, 1, 10)
+                .expect("Should create signature");
 
-        let result = reserve.withdraw(
-            &recipient,
-            500_000,
-            1,
-            10,
-            5,
-            &[sig1],
-        );
+        let result = reserve.withdraw(&recipient, 500_000, 1, 10, 5, &[sig1]);
 
         // Should fail - only 1 valid signature, need 2
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Insufficient valid signatures"));
-        
+        assert!(result
+            .unwrap_err()
+            .contains("Insufficient valid signatures"));
+
         // State should be unchanged
         assert_eq!(reserve.balance().unwrap(), 1_000_000);
         assert_eq!(reserve.next_nonce(), 1);
@@ -990,10 +953,10 @@ mod tests {
     fn test_signature_for_different_amount_fails() {
         // Test that signatures for a different amount are rejected
         let fee_collector = create_test_public_key(1);
-        
+
         let signer_keypair = KeyPair::generate().expect("Should create keypair");
         let signer_pubkey = signer_keypair.public_key.clone();
-        
+
         let contract_id = create_test_contract_id(100);
 
         let mut reserve = EmergencyReserve::init(
@@ -1033,8 +996,10 @@ mod tests {
 
         // Should fail - signature is for different message
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Insufficient valid signatures"));
-        
+        assert!(result
+            .unwrap_err()
+            .contains("Insufficient valid signatures"));
+
         // State unchanged
         assert_eq!(reserve.balance().unwrap(), 1_000_000);
         assert_eq!(reserve.next_nonce(), 1);
@@ -1044,19 +1009,15 @@ mod tests {
     fn test_nonce_replay_protection() {
         // Test that the same nonce cannot be used twice
         let fee_collector = create_test_public_key(1);
-        
+
         let signer_keypair = KeyPair::generate().expect("Should create keypair");
         let signer_pubkey = signer_keypair.public_key.clone();
-        
+
         let contract_id = create_test_contract_id(100);
 
-        let mut reserve = EmergencyReserve::init(
-            fee_collector.clone(),
-            vec![signer_pubkey],
-            1,
-            contract_id,
-        )
-        .expect("Should initialize");
+        let mut reserve =
+            EmergencyReserve::init(fee_collector.clone(), vec![signer_pubkey], 1, contract_id)
+                .expect("Should initialize");
 
         reserve
             .credit(&fee_collector, 2_000_000, 1)
@@ -1065,15 +1026,9 @@ mod tests {
         let recipient = create_test_public_key(200);
 
         // First withdrawal with nonce 1
-        let sig1 = create_withdrawal_signature(
-            &signer_keypair,
-            &contract_id,
-            &recipient,
-            500_000,
-            1,
-            10,
-        )
-        .expect("Should create signature");
+        let sig1 =
+            create_withdrawal_signature(&signer_keypair, &contract_id, &recipient, 500_000, 1, 10)
+                .expect("Should create signature");
 
         reserve
             .withdraw(&recipient, 500_000, 1, 10, 5, &[sig1])
@@ -1104,7 +1059,7 @@ mod tests {
         // Should fail - nonce already used
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Nonce mismatch"));
-        
+
         // State unchanged
         assert_eq!(reserve.total_withdrawn(), 500_000);
         assert_eq!(reserve.next_nonce(), 2);
@@ -1114,13 +1069,13 @@ mod tests {
     fn test_duplicate_signer_counted_once() {
         // Test that passing the same signature twice doesn't double-count the signer
         let fee_collector = create_test_public_key(1);
-        
+
         let signer_keypair = KeyPair::generate().expect("Should create keypair");
         let signer_pubkey = signer_keypair.public_key.clone();
-        
+
         let signer2_keypair = KeyPair::generate().expect("Should create keypair 2");
         let signer2_pubkey = signer2_keypair.public_key.clone();
-        
+
         let contract_id = create_test_contract_id(100);
 
         let mut reserve = EmergencyReserve::init(
@@ -1138,15 +1093,9 @@ mod tests {
         let recipient = create_test_public_key(200);
 
         // Create signature from signer1
-        let sig1 = create_withdrawal_signature(
-            &signer_keypair,
-            &contract_id,
-            &recipient,
-            500_000,
-            1,
-            10,
-        )
-        .expect("Should create signature");
+        let sig1 =
+            create_withdrawal_signature(&signer_keypair, &contract_id, &recipient, 500_000, 1, 10)
+                .expect("Should create signature");
 
         // Try to pass same signature twice (duplicate signer)
         let result = reserve.withdraw(
@@ -1160,8 +1109,10 @@ mod tests {
 
         // Should fail - only 1 unique signer, need 2
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Insufficient valid signatures"));
-        
+        assert!(result
+            .unwrap_err()
+            .contains("Insufficient valid signatures"));
+
         // State unchanged
         assert_eq!(reserve.balance().unwrap(), 1_000_000);
         assert_eq!(reserve.next_nonce(), 1);
@@ -1171,19 +1122,15 @@ mod tests {
     fn test_expired_withdrawal_rejected() {
         // Test that withdrawals with expired expiry_period_id are rejected
         let fee_collector = create_test_public_key(1);
-        
+
         let signer_keypair = KeyPair::generate().expect("Should create keypair");
         let signer_pubkey = signer_keypair.public_key.clone();
-        
+
         let contract_id = create_test_contract_id(100);
 
-        let mut reserve = EmergencyReserve::init(
-            fee_collector.clone(),
-            vec![signer_pubkey],
-            1,
-            contract_id,
-        )
-        .expect("Should initialize");
+        let mut reserve =
+            EmergencyReserve::init(fee_collector.clone(), vec![signer_pubkey], 1, contract_id)
+                .expect("Should initialize");
 
         reserve
             .credit(&fee_collector, 1_000_000, 1)
@@ -1207,7 +1154,7 @@ mod tests {
             &recipient,
             500_000,
             1,
-            5, // expiry_period_id
+            5,  // expiry_period_id
             10, // current_period_id (past expiry)
             &[sig],
         );
@@ -1215,7 +1162,7 @@ mod tests {
         // Should fail - withdrawal expired
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("expired"));
-        
+
         // State unchanged
         assert_eq!(reserve.balance().unwrap(), 1_000_000);
         assert_eq!(reserve.next_nonce(), 1);
@@ -1226,13 +1173,13 @@ mod tests {
         // CRITICAL: Verify that ANY validation failure leaves ALL state unchanged
         // This tests the atomicity guarantee: all checks before any mutation
         let fee_collector = create_test_public_key(1);
-        
+
         let signer1_keypair = KeyPair::generate().expect("Should create keypair 1");
         let signer1_pubkey = signer1_keypair.public_key.clone();
-        
+
         let signer2_keypair = KeyPair::generate().expect("Should create keypair 2");
         let signer2_pubkey = signer2_keypair.public_key.clone();
-        
+
         let contract_id = create_test_contract_id(100);
 
         let mut reserve = EmergencyReserve::init(
@@ -1250,15 +1197,9 @@ mod tests {
         let recipient = create_test_public_key(200);
 
         // Create a valid signature from signer1 for nonce 1
-        let valid_sig = create_withdrawal_signature(
-            &signer1_keypair,
-            &contract_id,
-            &recipient,
-            500_000,
-            1,
-            10,
-        )
-        .expect("Should create signature");
+        let valid_sig =
+            create_withdrawal_signature(&signer1_keypair, &contract_id, &recipient, 500_000, 1, 10)
+                .expect("Should create signature");
 
         let initial_balance = reserve.balance().unwrap();
         let initial_nonce = reserve.next_nonce();

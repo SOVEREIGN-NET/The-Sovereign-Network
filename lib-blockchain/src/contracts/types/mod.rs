@@ -5,7 +5,7 @@ pub mod permissions;
 pub mod result;
 
 // Re-export all types for convenience
-pub use call::{ContractCall, CallPermissions};
+pub use call::{CallPermissions, ContractCall};
 pub use contract_type::ContractType;
 pub use logs::{ContractLog, EventType};
 pub use permissions::ContractPermissions;
@@ -63,7 +63,7 @@ impl MessageType {
             MessageType::GroupMessage => 4000, // Higher cost for group distribution
             MessageType::FileAttachment => 5000, // Highest cost for file handling
             MessageType::SystemMessage => 1000, // Lower cost for system messages
-            MessageType::BurnRequest => 1500, // Moderate cost for burning
+            MessageType::BurnRequest => 1500,  // Moderate cost for burning
         }
     }
 }

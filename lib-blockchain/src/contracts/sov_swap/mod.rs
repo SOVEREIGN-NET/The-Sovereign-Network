@@ -32,13 +32,7 @@
 pub mod core;
 
 // Re-export core types
-pub use core::{
-    SovSwapPool,
-    SwapDirection,
-    SwapResult,
-    PoolState,
-    SwapError,
-};
+pub use core::{PoolState, SovSwapPool, SwapDirection, SwapError, SwapResult};
 
 /// Gas cost for swap operations
 pub const GAS_SWAP: u64 = 5000;

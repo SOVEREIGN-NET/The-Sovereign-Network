@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 use tracing::{info, warn, debug};
 
-use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
+use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage, NodeRuntime};
 use crate::runtime::components::identity::create_default_storage_config;
 use crate::server::https_gateway::{HttpsGateway, GatewayTlsConfig};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
@@ -25,7 +25,8 @@ pub struct ProtocolsComponent {
     lib_integration: Arc<RwLock<Option<ZhtpIntegration>>>,
     environment: crate::config::environment::Environment,
     api_port: u16,
-    is_edge_node: bool,
+    node_runtime: Arc<dyn NodeRuntime>,
+    edge_sync_max_headers: Option<usize>,
     /// Enable ZDNS transport server (UDP/TCP DNS on port 53)
     enable_zdns_transport: bool,
     /// Gateway IP for ZDNS transport responses
@@ -52,6 +53,7 @@ impl std::fmt::Debug for ProtocolsComponent {
 
 impl ProtocolsComponent {
     pub fn new(environment: crate::config::environment::Environment, api_port: u16) -> Self {
+        let runtime: Arc<dyn NodeRuntime> = Arc::new(crate::runtime::DefaultNodeRuntime::observer());
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -62,7 +64,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
-            is_edge_node: false,
+            node_runtime: runtime,
+            edge_sync_max_headers: None,
             enable_zdns_transport: false, // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -72,25 +75,19 @@ impl ProtocolsComponent {
         }
     }
 
-    pub fn new_with_node_type(environment: crate::config::environment::Environment, api_port: u16, is_edge_node: bool) -> Self {
-        Self {
-            status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
-            start_time: Arc::new(RwLock::new(None)),
-            unified_server: Arc::new(RwLock::new(None)),
-            zdns_server: Arc::new(RwLock::new(None)),
-            zdns_resolver: Arc::new(RwLock::new(None)),
-            zdns_transport: Arc::new(RwLock::new(None)),
-            lib_integration: Arc::new(RwLock::new(None)),
-            environment,
-            api_port,
-            is_edge_node,
-            enable_zdns_transport: false, // Disabled by default
-            zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
-            zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
-            enable_https_gateway: false,
-            https_gateway_config: None,
-            https_gateway: Arc::new(RwLock::new(None)),
-        }
+    pub fn new_with_runtime(
+        environment: crate::config::environment::Environment,
+        api_port: u16,
+        runtime: Arc<dyn NodeRuntime>,
+    ) -> Self {
+        let mut component = Self::new(environment, api_port);
+        component.node_runtime = runtime;
+        component
+    }
+
+    pub fn with_edge_sync_mode(mut self, max_headers: usize) -> Self {
+        self.edge_sync_max_headers = Some(max_headers);
+        self
     }
 
     /// Create with ZDNS transport enabled (for gateway nodes)
@@ -100,6 +97,7 @@ impl ProtocolsComponent {
         api_port: u16,
         gateway_ip: std::net::Ipv4Addr,
     ) -> Self {
+        let runtime: Arc<dyn NodeRuntime> = Arc::new(crate::runtime::DefaultNodeRuntime::observer());
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -110,7 +108,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
-            is_edge_node: false,
+            node_runtime: runtime,
+            edge_sync_max_headers: None,
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
             // SECURITY: Default to localhost even when enabled
@@ -128,6 +127,7 @@ impl ProtocolsComponent {
         api_port: u16,
         gateway_config: GatewayTlsConfig,
     ) -> Self {
+        let runtime: Arc<dyn NodeRuntime> = Arc::new(crate::runtime::DefaultNodeRuntime::observer());
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -138,7 +138,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
-            is_edge_node: false,
+            node_runtime: runtime,
+            edge_sync_max_headers: None,
             enable_zdns_transport: false,
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -155,6 +156,7 @@ impl ProtocolsComponent {
         gateway_ip: std::net::Ipv4Addr,
         https_config: GatewayTlsConfig,
     ) -> Self {
+        let runtime: Arc<dyn NodeRuntime> = Arc::new(crate::runtime::DefaultNodeRuntime::observer());
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -165,7 +167,8 @@ impl ProtocolsComponent {
             lib_integration: Arc::new(RwLock::new(None)),
             environment,
             api_port,
-            is_edge_node: false,
+            node_runtime: runtime,
+            edge_sync_max_headers: None,
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -268,6 +271,7 @@ impl Component for ProtocolsComponent {
             None,  // quic_port - use default
             None,  // protocols_config - will use defaults (Bluetooth disabled by default)
             None,  // bootstrap_peers - will use defaults
+            self.node_runtime.clone(),
         ).await?;
         
         // Initialize blockchain provider
@@ -275,12 +279,12 @@ impl Component for ProtocolsComponent {
         let blockchain_provider = Arc::new(crate::runtime::network_blockchain_provider::ZhtpBlockchainProvider::new());
         unified_server.set_blockchain_provider(blockchain_provider).await;
         
-        // Configure sync mode based on node type
-        if self.is_edge_node {
-            info!("📱 Configuring Edge Node sync mode (headers + ZK proofs only)...");
-            unified_server.set_edge_sync_mode(500).await;
+        // Configure sync mode if edge settings are provided
+        if let Some(max_headers) = self.edge_sync_max_headers {
+            info!("Configuring edge sync mode: max_headers={}", max_headers);
+            unified_server.set_edge_sync_mode(max_headers).await;
         }
-        
+
         // Initialize auth manager
         let mgr = identity_manager.read().await;
         let identities = mgr.list_identities();

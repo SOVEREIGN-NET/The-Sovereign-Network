@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::integration::crypto_integration::PublicKey;
-use crate::types::{ContractType, ContractPermissions};
+use crate::types::{ContractPermissions, ContractType};
+use serde::{Deserialize, Serialize};
 
 /// Core smart contract structure
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,13 +195,18 @@ impl SmartContract {
             ContractType::Token => {
                 // Token contracts should have appropriate minting/burning permissions
                 if !self.permissions.can_mint && !self.permissions.can_burn {
-                    return Err("Token contracts should have at least minting or burning permissions".to_string());
+                    return Err(
+                        "Token contracts should have at least minting or burning permissions"
+                            .to_string(),
+                    );
                 }
             }
             ContractType::WhisperMessaging => {
                 // Messaging contracts should allow burning (for message deletion)
                 if !self.permissions.can_burn {
-                    return Err("Messaging contracts should allow burning for message deletion".to_string());
+                    return Err(
+                        "Messaging contracts should allow burning for message deletion".to_string(),
+                    );
                 }
             }
             _ => {} // Other contract types have no specific requirements
@@ -211,7 +216,11 @@ impl SmartContract {
     }
 
     /// Update contract permissions (only by admins)
-    pub fn update_permissions(&mut self, new_permissions: ContractPermissions, caller: &PublicKey) -> Result<(), String> {
+    pub fn update_permissions(
+        &mut self,
+        new_permissions: ContractPermissions,
+        caller: &PublicKey,
+    ) -> Result<(), String> {
         if !self.is_authorized(caller, "admin") {
             return Err("Only admins can update contract permissions".to_string());
         }
@@ -331,7 +340,7 @@ mod tests {
     fn test_authorization() {
         let public_key1 = create_test_public_key(1);
         let public_key2 = create_test_public_key(2);
-        
+
         let contract = SmartContract::new_token_contract(
             [5u8; 32],
             vec![1, 2, 3],

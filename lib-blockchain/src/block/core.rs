@@ -2,9 +2,9 @@
 //!
 //! Defines the fundamental block data structures used in the ZHTP blockchain.
 
-use serde::{Serialize, Deserialize};
-use crate::types::{Hash, Difficulty};
 use crate::transaction::Transaction;
+use crate::types::{Difficulty, Hash};
+use serde::{Deserialize, Serialize};
 
 /// ZHTP blockchain block
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +103,8 @@ impl Block {
 
     /// Verify the Merkle root of transactions
     pub fn verify_merkle_root(&self) -> bool {
-        let calculated_root = crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
+        let calculated_root =
+            crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
         let matches = calculated_root == self.header.merkle_root;
         if !matches {
             tracing::warn!(
@@ -146,9 +147,9 @@ impl Block {
     /// Check if block header is valid
     pub fn has_valid_header(&self) -> bool {
         // Basic header validation
-        self.header.version > 0 &&
-        self.header.timestamp > 0 &&
-        self.header.transaction_count == self.transactions.len() as u32
+        self.header.version > 0
+            && self.header.timestamp > 0
+            && self.header.transaction_count == self.transactions.len() as u32
     }
 
     /// Calculate merkle root of transactions
@@ -192,7 +193,7 @@ impl BlockHeader {
     /// Calculate the hash of this block header
     pub fn calculate_hash(&self) -> Hash {
         let mut hasher = blake3::Hasher::new();
-        
+
         hasher.update(&self.version.to_le_bytes());
         hasher.update(self.previous_block_hash.as_bytes());
         hasher.update(self.merkle_root.as_bytes());
@@ -202,7 +203,7 @@ impl BlockHeader {
         hasher.update(&self.height.to_le_bytes());
         hasher.update(&self.transaction_count.to_le_bytes());
         hasher.update(&self.block_size.to_le_bytes());
-        
+
         Hash::from_slice(hasher.finalize().as_bytes())
     }
 
@@ -247,7 +248,7 @@ impl BlockHeader {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         // Allow up to 2 hours in the future
         self.timestamp <= now + 7200
     }
@@ -274,24 +275,24 @@ pub fn create_genesis_block() -> Block {
     let genesis_timestamp = 1730419200;
     // Genesis blocks should use easy consensus difficulty like other system transaction blocks
     let genesis_difficulty = Difficulty::from_bits(0x1fffffff);
-    
+
     let header = BlockHeader::new(
-        1, // version
+        1,               // version
         Hash::default(), // previous_block_hash (none for genesis)
         Hash::default(), // merkle_root (will be calculated)
         genesis_timestamp,
         genesis_difficulty,
-        0, // height
-        0, // transaction_count
-        0, // block_size
+        0,                  // height
+        0,                  // transaction_count
+        0,                  // block_size
         genesis_difficulty, // cumulative_difficulty
     );
 
     let genesis_block = Block::new(header, Vec::new());
-    
+
     // For genesis block, we might want to add special transactions
     // This is handled by the blockchain initialization logic
-    
+
     genesis_block
 }
 

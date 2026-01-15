@@ -12,8 +12,7 @@ use crate::error::{CliResult, CliError};
 use crate::output::Output;
 
 use zhtp::config::environment::Environment;
-use zhtp::runtime::RuntimeOrchestrator;
-use zhtp::runtime::did_startup::WalletStartupManager;
+use zhtp::runtime::{RuntimeOrchestrator, NodeType, StartupOptions};
 use std::path::PathBuf;
 
 // ============================================================================
@@ -139,7 +138,7 @@ async fn handle_node_command_impl(
                 pure_mesh,
                 network_env,
                 edge_mode,
-                edge_max_headers as u32,
+                edge_max_headers,
                 keystore_path,
                 output,
             )
@@ -172,7 +171,7 @@ async fn start_node_impl(
     pure_mesh: bool,
     network_env: Environment,
     edge_mode: bool,
-    edge_max_headers: u32,
+    edge_max_headers: usize,
     keystore_path: Option<PathBuf>,
     output: &dyn Output,
 ) -> CliResult<()> {
@@ -202,26 +201,14 @@ async fn start_node_impl(
         })?;
 
     // Detect node type
-    let hosted_storage = if node_config.storage_config.hosted_storage_gb > 0 {
-        node_config.storage_config.hosted_storage_gb
-    } else {
-        node_config.storage_config.storage_capacity_gb
-    };
-
-    let is_edge_node = edge_mode
-        || (!node_config.consensus_config.validator_enabled
-            && !node_config.blockchain_config.smart_contracts
-            && hosted_storage < 100);
-
-    let is_validator = node_config.consensus_config.validator_enabled;
+    let edge_override = if edge_mode { Some(true) } else { None };
+    let node_type = NodeType::from_config(&node_config, edge_override);
 
     // Display node type
-    if is_edge_node {
-        output.print("Node Type: EDGE NODE")?;
-    } else if is_validator {
-        output.print("Node Type: VALIDATOR")?;
-    } else {
-        output.print("Node Type: FULL NODE")?;
+    match node_type {
+        NodeType::EdgeNode => output.print("Node Type: EDGE NODE")?,
+        NodeType::Validator => output.print("Node Type: VALIDATOR")?,
+        NodeType::FullNode => output.print("Node Type: FULL NODE")?,
     }
 
     // Apply network override
@@ -239,97 +226,18 @@ async fn start_node_impl(
 
     // Start orchestrator
     output.info("Starting runtime orchestrator...")?;
-    let mut orchestrator = RuntimeOrchestrator::new(node_config.clone()).await.map_err(|e| {
-        CliError::ConfigError(format!("Failed to create orchestrator: {}", e))
-    })?;
-
-    // Configure edge node if needed
-    if is_edge_node {
-        orchestrator.set_edge_node(true).await;
-        orchestrator.set_edge_max_headers(edge_max_headers as usize).await;
-    }
-
-    // PHASE 1: Start network components for peer discovery
-    output.info("Starting network components for peer discovery...")?;
-    orchestrator
-        .start_network_components_for_discovery()
-        .await
-        .map_err(|e| CliError::ConfigError(format!("Failed to start network: {}", e)))?;
-
-    output.print("Waiting for network stack to initialize...")?;
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-    // PHASE 2: Discover existing network
-    output.info("Discovering existing network...")?;
-    let network_info_opt = orchestrator
-        .discover_network_with_retry(is_edge_node)
-        .await
-        .map_err(|e| {
-            CliError::ConfigError(format!("Failed to discover network: {}", e))
-        })?;
-
-    // PHASE 3: Setup identity and blockchain
-    if let Some(network_info) = network_info_opt {
-        output.success("Connected to existing ZHTP network!")?;
-        output.print(&format!("Network peers: {}", network_info.peer_count))?;
-        output.print(&format!("Blockchain height: {}", network_info.blockchain_height))?;
-
-        output.info("Initializing blockchain for sync...")?;
-        orchestrator
-            .start_blockchain_sync(&network_info)
-            .await
-            .map_err(|e| {
-                CliError::ConfigError(format!("Failed to start blockchain sync: {}", e))
-            })?;
-
-        output.print("Waiting for initial sync to start...")?;
-        if let Err(_e) = orchestrator
-            .wait_for_initial_sync(tokio::time::Duration::from_secs(30))
-            .await
-        {
-            output.warning("Initial sync timeout - will continue syncing in background")?;
-        }
-
-        orchestrator.set_joined_existing_network(true).await.map_err(|e| {
-            CliError::ConfigError(format!("Failed to set network status: {}", e))
-        })?;
-
-        output.info("Starting in guest mode - blockchain will sync")?;
-        WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path)
-            .await
-            .map_err(|e| {
-                CliError::IdentityError(format!("Failed to setup wallet: {}", e))
-            })?
-    } else {
-        output.warning("No existing ZHTP network found")?;
-
-        if is_edge_node {
-            return Err(CliError::ConfigError(
-                "Edge nodes must find an existing network".to_string(),
-            ));
-        }
-
-        output.print("Starting new genesis network...")?;
-        orchestrator.set_joined_existing_network(false).await.map_err(|e| {
-            CliError::ConfigError(format!("Failed to set network status: {}", e))
-        })?;
-
-        WalletStartupManager::handle_startup_wallet_flow_with_keystore(keystore_path)
-            .await
-            .map_err(|e| {
-                CliError::IdentityError(format!("Failed to setup wallet: {}", e))
-            })?
+    let options = StartupOptions {
+        keystore_path,
+        edge_max_headers: if edge_mode { Some(edge_max_headers) } else { None },
     };
 
-    // PHASE 4: Register and start remaining components
-    output.info("Registering remaining system components...")?;
-    orchestrator.register_all_components().await.map_err(|e| {
-        CliError::ConfigError(format!("Failed to register components: {}", e))
-    })?;
-
-    output.info("Starting remaining system components...")?;
-    orchestrator.start_all_components().await.map_err(|e| {
-        CliError::ConfigError(format!("Failed to start components: {}", e))
+    let orchestrator = match node_type {
+        NodeType::FullNode => RuntimeOrchestrator::start_full_node(node_config.clone(), options.clone()).await,
+        NodeType::EdgeNode => RuntimeOrchestrator::start_edge_node(node_config.clone(), options.clone()).await,
+        NodeType::Validator => RuntimeOrchestrator::start_validator_node(node_config.clone(), options.clone()).await,
+    }
+    .map_err(|e| {
+        CliError::ConfigError(format!("Failed to start node: {}", e))
     })?;
 
     output.success("ZHTP orchestrator fully operational!")?;

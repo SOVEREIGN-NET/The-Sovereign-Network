@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use zhtp::config::{CliArgs, NodeConfig};
-use zhtp::runtime::RuntimeOrchestrator;
+use zhtp::runtime::{RuntimeOrchestrator, NodeType, StartupOptions};
 use tokio::sync::mpsc;
 use tracing::{info, warn, error, debug};
 
@@ -126,13 +126,20 @@ async fn execute_start(context: &mut CommandContext) -> Result<String> {
 
     info!(" Starting ZHTP node...");
     
-    // Create runtime orchestrator
-    let runtime = RuntimeOrchestrator::new(context.config.clone()).await
-        .context("Failed to create runtime orchestrator")?;
-    
-    // Start all components
-    runtime.start_all_components().await
-        .context("Failed to start node components")?;
+    let options = StartupOptions::from_config(&context.config);
+    let node_type = NodeType::from_config(&context.config, None);
+    let runtime = match node_type {
+        NodeType::FullNode => {
+            RuntimeOrchestrator::start_full_node(context.config.clone(), options.clone()).await
+        }
+        NodeType::EdgeNode => {
+            RuntimeOrchestrator::start_edge_node(context.config.clone(), options.clone()).await
+        }
+        NodeType::Validator => {
+            RuntimeOrchestrator::start_validator_node(context.config.clone(), options.clone()).await
+        }
+    }
+    .context("Failed to start node")?;
     
     context.runtime = Some(runtime);
     

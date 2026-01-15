@@ -1,11 +1,11 @@
+use crate::integration::crypto_integration::{KeyPair, PublicKey, Signature};
 use crate::{
-    contracts::executor::{ContractExecutor, ExecutionContext, ContractStorage},
-    types::*,
+    contracts::executor::{ContractExecutor, ContractStorage, ExecutionContext},
     transaction::{Transaction, TransactionInput, TransactionOutput},
+    types::*,
 };
-use anyhow::{Result, anyhow};
-use crate::integration::crypto_integration::{PublicKey, Signature, KeyPair};
-use serde::{Serialize, Deserialize};
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
 /// Integration with ZHTP blockchain for contract execution
@@ -16,9 +16,7 @@ pub struct BlockchainIntegration<S: ContractStorage> {
 impl<S: ContractStorage> BlockchainIntegration<S> {
     /// Create new blockchain integration
     pub fn new(executor: ContractExecutor<S>) -> Self {
-        Self {
-            executor,
-        }
+        Self { executor }
     }
 
     /// Process contract transaction from blockchain
@@ -29,10 +27,10 @@ impl<S: ContractStorage> BlockchainIntegration<S> {
         timestamp: u64,
     ) -> Result<Vec<ContractResult>> {
         let mut results = Vec::new();
-        
+
         // Extract contract calls from transaction data
         let contract_calls = self.extract_contract_calls(transaction)?;
-        
+
         for (call, signature) in contract_calls {
             // Create execution context from height and timestamp
             let mut context = ExecutionContext::new(
@@ -45,7 +43,10 @@ impl<S: ContractStorage> BlockchainIntegration<S> {
 
             // Validate transaction signature
             let caller_key = self.extract_public_key(transaction)?;
-            if !self.executor.validate_signature(&call, &signature, &caller_key)? {
+            if !self
+                .executor
+                .validate_signature(&call, &signature, &caller_key)?
+            {
                 return Err(anyhow!("Invalid signature"));
             }
 
@@ -69,14 +70,14 @@ impl<S: ContractStorage> BlockchainIntegration<S> {
     ) -> Result<Vec<(ContractCall, Signature)>> {
         // Parse transaction memo to extract contract calls
         let mut calls = Vec::new();
-        
+
         // Check if this is a contract transaction based on transaction type
         if transaction.transaction_type == TransactionType::ContractExecution {
             // For contract execution transactions, the memo contains serialized contract calls
             if transaction.memo.len() > 4 && &transaction.memo[0..4] == b"ZHTP" {
                 // ZHTP contract transaction marker
                 let contract_data = &transaction.memo[4..];
-                let (call, signature): (ContractCall, Signature) = 
+                let (call, signature): (ContractCall, Signature) =
                     bincode::deserialize(contract_data)?;
                 calls.push((call, signature));
             }
@@ -92,8 +93,11 @@ impl<S: ContractStorage> BlockchainIntegration<S> {
         if let Some(input) = transaction.inputs.first() {
             // Use the public key from the input's scriptPubKey or signature
             // In ZHTP, the previous output's public key becomes the input's verification key
-            debug!("Extracting public key from input: prev_hash={}", hex::encode(&input.previous_output.as_bytes()));
-            
+            debug!(
+                "Extracting public key from input: prev_hash={}",
+                hex::encode(&input.previous_output.as_bytes())
+            );
+
             // For contract calls, use the transaction signature's public key
             Ok(transaction.signature.public_key.clone())
         } else {
@@ -106,7 +110,7 @@ impl<S: ContractStorage> BlockchainIntegration<S> {
         // Calculate gas limit based on transaction size and type
         let base_gas = 21000u64; // Base transaction gas
         let data_gas = transaction.memo.len() as u64 * 16; // 16 gas per byte of memo data
-        
+
         Ok(base_gas + data_gas)
     }
 
@@ -235,7 +239,7 @@ impl ContractTransactionBuilder {
         // Serialize contract calls
         let mut memo = Vec::new();
         memo.extend_from_slice(b"ZHTP"); // Contract transaction marker
-        
+
         for (call, signature) in &self.calls {
             let call_data = bincode::serialize(&(call, signature))?;
             memo.extend_from_slice(&call_data);
@@ -537,7 +541,7 @@ mod tests {
     fn test_event_publisher() {
         let mut publisher = ContractEventPublisher::new();
         let listener = TestEventListener { events: Vec::new() };
-        
+
         publisher.add_listener(Box::new(listener));
 
         let keypair1 = KeyPair::generate().unwrap();
