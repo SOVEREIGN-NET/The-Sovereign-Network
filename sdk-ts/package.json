@@ -1,0 +1,62 @@
+{
+  "name": "@zhtp/sdk",
+  "version": "1.0.0",
+  "description": "Production-ready TypeScript SDK for ZHTP/Web4 API",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "vitest run tests/e2e",
+    "type-check": "tsc --noEmit",
+    "lint": "tsc --noEmit && echo 'Type checking passed'",
+    "prepublishOnly": "npm run build && npm run test && npm run lint"
+  },
+  "keywords": [
+    "zhtp",
+    "web4",
+    "blockchain",
+    "domains",
+    "dapps",
+    "typescript",
+    "sdk"
+  ],
+  "author": "SOVN Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhtp-community/sdk-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zhtp-community/sdk-ts/issues"
+  },
+  "homepage": "https://github.com/zhtp-community/sdk-ts#readme",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "devDependencies": {
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^25.0.9",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.17"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.0.1",
+    "mime-types": "^3.0.2",
+    "zod": "^4.3.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
