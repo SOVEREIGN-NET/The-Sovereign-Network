@@ -39,8 +39,13 @@
   "dependencies": {
     "@noble/hashes": "^1.3.3",
     "cbor": "^9.0.0",
+    "crystals-kyber-js": "^2.5.0",
+    "dilithium-crystals-js": "^1.1.3",
     "dotenv": "^16.3.1",
     "zod": "^3.22.4"
+  },
+  "optionalDependencies": {
+    "@matrixai/quic": "^5.7.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
