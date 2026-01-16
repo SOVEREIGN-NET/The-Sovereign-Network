@@ -13,11 +13,17 @@ import {
 
 describe('Validation Functions', () => {
   describe('validateDomain', () => {
-    it('accepts valid domains', () => {
+    it('accepts valid domains with .zhtp suffix', () => {
       expect(validateDomain('example.zhtp').valid).toBe(true);
       expect(validateDomain('my-app.zhtp').valid).toBe(true);
       expect(validateDomain('a.zhtp').valid).toBe(true);
       expect(validateDomain('verylongdomainname.zhtp').valid).toBe(true);
+    });
+
+    it('accepts valid domains without .zhtp suffix', () => {
+      expect(validateDomain('example').valid).toBe(true);
+      expect(validateDomain('my-app').valid).toBe(true);
+      expect(validateDomain('a').valid).toBe(true);
     });
 
     it('rejects empty domain', () => {
@@ -186,6 +192,11 @@ describe('Validation Functions', () => {
       expect(validateDid('did:zhtp:').valid).toBe(false);
     });
 
+    it('rejects uppercase hexadecimal in DID', () => {
+      expect(validateDid('did:zhtp:ABCDEF').valid).toBe(false);
+      expect(validateDid('did:zhtp:0123ABCD').valid).toBe(false);
+    });
+
     it('rejects empty DID', () => {
       const result = validateDid('');
       expect(result.valid).toBe(false);
@@ -203,7 +214,8 @@ describe('Validation Functions', () => {
       expect(validateMetadata(undefined).valid).toBe(true);
     });
 
-    it('accepts empty string metadata', () => {
+    it('accepts empty string metadata (treated as no metadata)', () => {
+      // Empty strings bypass JSON.parse due to falsy check - this is intentional
       expect(validateMetadata('').valid).toBe(true);
     });
 
@@ -228,12 +240,12 @@ describe('Fee Calculation', () => {
       expect(calculateDomainRegistrationFee('xy.zhtp')).toBe(500_000_000_000n);
     });
 
-    it('returns fee for 3+ char domains', () => {
-      // 1000 ZHTP * 100_000_000 = 100_000_000_000
+    it('returns fee for 3–4 and 5+ char domains', () => {
+      // 3–4 char domains: 1000 ZHTP * 100_000_000 = 100_000_000_000
       expect(calculateDomainRegistrationFee('abc.zhtp')).toBe(100_000_000_000n);
-      // 100 ZHTP * 100_000_000 = 10_000_000_000
+      // 3–4 char domains: 1000 ZHTP * 100_000_000 = 100_000_000_000
       expect(calculateDomainRegistrationFee('abcd.zhtp')).toBe(100_000_000_000n);
-      // 100 ZHTP * 100_000_000 = 10_000_000_000
+      // 5+ char domains: 100 ZHTP * 100_000_000 = 10_000_000_000
       expect(calculateDomainRegistrationFee('verylongdomainname.zhtp')).toBe(10_000_000_000n);
     });
 
