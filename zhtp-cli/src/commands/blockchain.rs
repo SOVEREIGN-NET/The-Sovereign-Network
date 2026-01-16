@@ -12,7 +12,6 @@ use crate::commands::web4_utils::connect_default;
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
 use lib_network::client::ZhtpClient;
-use serde_json::json;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -35,14 +34,11 @@ fn validate_tx_hash(tx_hash: &str) -> CliResult<()> {
     Ok(())
 }
 
-/// Build transaction lookup request body
+/// Build transaction lookup endpoint path
 ///
-/// Pure function - creates JSON request data
-fn build_transaction_request(tx_hash: &str) -> serde_json::Value {
-    json!({
-        "tx_hash": tx_hash,
-        "orchestrated": true
-    })
+/// Pure function - URL path construction
+fn build_transaction_endpoint(tx_hash: &str) -> String {
+    format!("/api/v1/blockchain/transaction/{}", tx_hash)
 }
 
 // ============================================================================
@@ -129,22 +125,22 @@ async fn fetch_and_display_transaction(
 
     output.print(&format!("Looking up transaction: {}", tx_hash))?;
 
-    // Pure request building
-    let request_body = build_transaction_request(tx_hash);
+    // Pure endpoint path building
+    let endpoint = build_transaction_endpoint(tx_hash);
 
-    // Imperative: QUIC call
+    // Imperative: QUIC call (GET with hash in path)
     let response = client
-        .post_json("/api/v1/blockchain/transaction", &request_body)
+        .get(&endpoint)
         .await
         .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/blockchain/transaction".to_string(),
+            endpoint: endpoint.clone(),
             status: 0,
             reason: e.to_string(),
         })?;
 
     let result: serde_json::Value = ZhtpClient::parse_json(&response)
         .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/blockchain/transaction".to_string(),
+            endpoint,
             status: 0,
             reason: format!("Failed to parse response: {}", e),
         })?;
@@ -211,10 +207,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_transaction_request() {
-        let req = build_transaction_request("abc123");
-        assert_eq!(req["tx_hash"], "abc123");
-        assert_eq!(req["orchestrated"], true);
+    fn test_build_transaction_endpoint() {
+        let endpoint = build_transaction_endpoint("abc123def456");
+        assert_eq!(endpoint, "/api/v1/blockchain/transaction/abc123def456");
     }
 
     #[tokio::test]
