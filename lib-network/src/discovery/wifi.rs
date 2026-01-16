@@ -64,6 +64,17 @@ pub struct WiFiNetworkInfo {
 }
 
 /// Discover high-power WiFi relays
+///
+/// ⚠️ DEPRECATED: This function performs redundant hardware detection.
+/// Use `discover_wifi_relays_with_capabilities()` with pre-detected capabilities instead.
+///
+/// # Performance Note
+/// This calls `HardwareCapabilities::detect()` which scans all hardware (5-10 seconds).
+/// For optimal performance, detect capabilities once and reuse across discovery functions.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use discover_wifi_relays_with_capabilities() to avoid redundant hardware detection"
+)]
 pub async fn discover_wifi_relays() -> Result<Vec<WiFiNetworkInfo>> {
     discover_wifi_relays_with_capabilities(&HardwareCapabilities::detect().await?).await
 }
