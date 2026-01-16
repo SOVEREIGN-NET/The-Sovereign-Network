@@ -1,503 +1,281 @@
-# @zhtp/sdk - TypeScript SDK for ZHTP/Web4
+# @zhtp/sdk - TypeScript SDK for ZHTP/Web4 Protocol
 
-Production-ready TypeScript SDK for the ZHTP/Web4 API. Register domains, deploy dApps, and manage wallets from Node.js or browser environments.
+**QUIC-native TypeScript SDK for the ZHTP network** - Built following [zhtp-cli](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/tree/development/zhtp-cli) architectural patterns.
 
-## Features
+## Architecture Overview
 
-- ✅ **Domain Management** - Register, lookup, transfer, and renew domains
-- ✅ **Content Storage** - Upload blobs and manifests to IPFS-like storage
-- ✅ **dApp Deployment** - One-command deployment of SPAs and static sites
-- ✅ **Wallet Operations** - Send tokens, stake, check balances
-- ✅ **Type-Safe API** - Full TypeScript support with IntelliSense
-- ✅ **Automatic Retry** - Exponential backoff on network errors
-- ✅ **Progress Tracking** - Callbacks for upload and deployment progress
+This SDK follows zhtp-cli's **three-layer initialization pattern** and **operation enum** architecture:
 
-## Installation
+```
+Layer 1: Load Identity
+   loadIdentityFromKeystore() → LoadedIdentity
 
-```bash
-npm install @zhtp/sdk
+Layer 2: Build Trust Configuration
+   buildTrustConfig() → TrustConfig
+
+Layer 3: Create Authenticated Client
+   connectClient() → ZhtpClient (with UHP + Kyber authentication)
+
+Use Client:
+   client.domains.register()
+   client.wallet.send()
+   client.deploy.site()
 ```
 
-## Quick Start
+### Design Principles
 
-```typescript
-import { createClient } from '@zhtp/sdk';
+1. **QUIC-First** - No HTTP. All communication over QUIC with UHP handshake
+2. **Pure Functions** - Validation functions return results without side effects
+3. **Operation Enums** - Polymorphic routing via enum → config lookup
+4. **Dependency Injection** - Output trait pattern for testability
+5. **Error Context** - Errors carry domain-specific context for debugging
+6. **Signed Requests** - All mutations signed with Dilithium5 keypairs
+7. **Type Safety** - Full TypeScript with strict mode
 
-// Create client with your public key
-const client = createClient('your-public-key-hex', 'http://localhost:8080');
+## Project Structure
 
-// Register a domain
-const result = await client.domains.register('myapp.zhtp', {
-  contentCid: 'QmXxxx...',
-  fee: 1080,
-});
+```
+src/
+├── error.ts              # Domain-specific error types
+├── output.ts             # Output abstraction (console/mock/silent)
+├── identity.ts           # Identity loading + DID management
+├── validation.ts         # Pure validation functions
+├── types.ts              # Operation enums + core types
+├── managers/             # [TODO] Domain/Wallet/Deploy managers
+│   ├── domain.ts
+│   ├── wallet.ts
+│   └── deploy.ts
+├── quic/                 # [TODO] QUIC transport + UHP handshake
+│   ├── client.ts
+│   ├── handshake.ts
+│   └── wire.ts
+└── index.ts              # Main exports
 
-console.log(`Registered: ${result.domain}`);
-console.log(`Expires: ${new Date(result.expiresAt)}`);
+tests/
+├── unit/                 # [TODO] Unit tests for validation
+└── integration/          # [TODO] Integration tests with local node
+
+examples/
+├── register-domain.ts    # [TODO] Domain registration example
+├── send-tokens.ts        # [TODO] Wallet transfer example
+└── deploy-spa.ts         # [TODO] dApp deployment example
 ```
 
-## Usage Examples
-
-### Domain Management
-
-```typescript
-import { IdentityManager, createZhtpClient } from '@zhtp/sdk';
-
-// Create identity from public key
-const identity = IdentityManager.fromPublicKey('public-key-hex');
-const client = createZhtpClient(identity, 'http://localhost:8080');
-
-// Check domain availability
-const available = await client.domains.check('myapp.zhtp');
-
-// Register domain
-const domain = await client.domains.register('myapp.zhtp', {
-  contentCid: 'QmXxxx...',
-  metadata: {
-    description: 'My awesome dApp',
-    author: 'me@example.com',
-  },
-});
-
-// Get domain info
-const info = await client.domains.getInfo('myapp.zhtp');
-
-// Renew domain
-const renewed = await client.domains.renew('myapp.zhtp', 2);
-
-// Get domain history
-const history = await client.domains.getHistory('myapp.zhtp', 10);
-```
-
-### Content Management
-
-```typescript
-import fs from 'fs';
-
-// Upload a blob (file)
-const fileData = fs.readFileSync('index.html');
-const cid = await client.content.uploadBlob(
-  fileData,
-  'text/html'
-);
-
-console.log(`Uploaded to: ${cid}`);
-
-// Fetch blob
-const content = await client.content.fetchBlob(cid);
-
-// Upload manifest
-const manifest = {
-  version: 1,
-  created: Date.now(),
-  updated: Date.now(),
-  files: {
-    'index.html': {
-      cid: 'QmXxxx...',
-      size: 1234,
-      mimeType: 'text/html',
-      path: 'index.html',
-    },
-  },
-};
-
-const manifestCid = await client.content.uploadManifest(manifest);
-```
-
-### dApp Deployment
-
-```typescript
-// Deploy a website to a domain
-const deployment = await client.deploy.deploySite(
-  'myapp.zhtp',
-  './dist',
-  'spa',
-  (progress) => {
-    console.log(`${progress.percentage.toFixed(0)}% - ${progress.status}`);
-  }
-);
-
-console.log(`Deployed to: ${deployment.url}`);
-console.log(`Files: ${deployment.filesDeployed}`);
-console.log(`Size: ${deployment.totalSize} bytes`);
-
-// Update existing deployment
-const updated = await client.deploy.update('myapp.zhtp', './dist');
-
-// Get deployment history
-const deployments = await client.deploy.getDeployments('myapp.zhtp');
-
-// Rollback to previous version
-await client.deploy.rollback('myapp.zhtp', 2);
-```
-
-### Wallet Operations
-
-```typescript
-// Get wallet balance
-const balance = await client.wallet.getBalance();
-
-console.log(`Balance: ${balance.balance} ZHTP`);
-console.log(`Staked: ${balance.stakedAmount || 0} ZHTP`);
-
-// List all wallets
-const wallets = await client.wallet.listWallets();
-
-// Send tokens
-const txHash = await client.wallet.send(
-  'recipient-address',
-  1000, // amount in ZHTP
-  {
-    memo: 'Payment for service',
-  }
-);
-
-console.log(`Transaction: ${txHash}`);
-
-// Stake tokens
-const stakeTx = await client.wallet.stake(5000);
-
-// Unstake tokens
-const unstakeTx = await client.wallet.unstake(2000);
-
-// Get transaction history
-const transactions = await client.wallet.getTransactions(undefined, 20);
-
-// Get single transaction
-const tx = await client.wallet.getTransaction(txHash);
-```
-
-## API Reference
-
-### ZhtpClient
-
-Main client for interacting with ZHTP/Web4 API.
-
-```typescript
-const client = new ZhtpClient(identity, {
-  baseUrl: 'http://localhost:8080',
-  timeout: 30000,
-  retryAttempts: 3,
-  retryDelay: 100,
-});
-
-// Properties
-client.domains   // DomainManager
-client.content   // ContentManager
-client.deploy    // DeployManager
-client.wallet    // WalletManager
-
-// Methods
-await client.healthCheck()           // Check server connectivity
-await client.getServerInfo()         // Get server version info
-client.setHeader(name, value)        // Set default header
-client.removeHeader(name)            // Remove default header
-client.getIdentity()                 // Get identity
-client.getTransport()                // Get transport layer
-```
-
-### DomainManager
-
-```typescript
-// Register domain
-await client.domains.register(domain, options)
-
-// Check availability
-await client.domains.check(domain)
-
-// Get info
-await client.domains.getInfo(domain)
-
-// Transfer ownership
-await client.domains.transfer(domain, newOwner, proof)
-
-// Release domain
-await client.domains.release(domain)
-
-// Get status
-await client.domains.getStatus(domain)
-
-// Get history
-await client.domains.getHistory(domain, limit)
-
-// Renew domain
-await client.domains.renew(domain, years, fee)
-
-// Batch operations
-await client.domains.checkBatch(domains)
-await client.domains.getInfoBatch(domains)
-```
-
-### ContentManager
-
-```typescript
-// Upload blob
-await client.content.uploadBlob(data, contentType, onProgress)
-
-// Upload chunked (automatic for >5MB)
-// Large files are automatically split into 5MB chunks
-
-// Fetch blob
-await client.content.fetchBlob(cid)
-
-// Upload manifest
-await client.content.uploadManifest(manifest)
-
-// Fetch manifest
-await client.content.fetchManifest(cid)
-
-// Check existence
-await client.content.contentExists(cid)
-
-// Get info
-await client.content.getContentInfo(cid)
-
-// Publish content
-await client.content.publishContent(cid, metadata)
-
-// Delete content
-await client.content.deleteContent(cid)
-```
-
-### DeployManager
-
-```typescript
-// Deploy site
-await client.deploy.deploySite(
-  domain,
-  buildDir,
-  'spa' | 'static',
-  onProgress,
-  metadata
-)
-
-// Update deployment
-await client.deploy.update(domain, buildDir, onProgress, metadata)
-
-// Get deployments
-await client.deploy.getDeployments(domain)
-
-// Rollback
-await client.deploy.rollback(domain, version)
-
-// Delete
-await client.deploy.delete(domain)
-```
-
-### WalletManager
-
-```typescript
-// List wallets
-await client.wallet.listWallets(identityId)
-
-// Get balance
-await client.wallet.getBalance(address, walletType)
-
-// Send tokens
-await client.wallet.send(to, amount, from, options)
-
-// Stake
-await client.wallet.stake(amount, options, identityId)
-
-// Unstake
-await client.wallet.unstake(amount, options, identityId)
-
-// Get transactions
-await client.wallet.getTransactions(address, limit, offset)
-
-// Get single transaction
-await client.wallet.getTransaction(txHash)
-
-// Estimate fee
-await client.wallet.estimateFee(amount, walletType)
-
-// Check address exists
-await client.wallet.addressExists(address)
-
-// Batch get wallets
-await client.wallet.getWalletsBatch(addresses)
-```
-
-### IdentityManager
-
-```typescript
-// Create from public key
-const identity = IdentityManager.fromPublicKey('public-key-hex');
-
-// Create from config
-const identity = IdentityManager.from({
-  id: 'identity-id',
-  publicKey: 'public-key-hex',
-  privateKey: 'private-key-hex', // optional
-});
-
-// Get properties
-identity.getIdentity()           // Full identity object
-identity.getId()                 // Identity ID
-identity.getDid()                // DID (did:zhtp:...)
-identity.getPublicKey()          // Hex-encoded public key
-identity.getPublicKeyBytes()     // Uint8Array
-identity.hasPrivateKey()         // Check if private key available
-identity.getPrivateKey()         // Get private key if available
-identity.setPrivateKey(key)      // Set private key
-identity.serialize()             // Export for storage
-```
-
-## Crypto Utilities
+## Implementation Roadmap
+
+### ✅ Phase 1: Foundation (Current)
+- [x] Error types with context
+- [x] Output abstraction (Console/Mock/Silent)
+- [x] Identity loading interface
+- [x] Pure validation functions
+- [x] Operation enum definitions
+- [x] Core type definitions
+
+### 🔄 Phase 2: QUIC Transport (Next)
+- [ ] QUIC client wrapper
+- [ ] UHP handshake orchestration
+- [ ] Kyber512 key encapsulation
+- [ ] Dilithium5 signature verification
+- [ ] CBOR wire protocol encoding
+- [ ] Request MAC computation
+
+### 🔄 Phase 3: Managers
+- [ ] DomainManager (register, lookup, transfer, etc.)
+- [ ] WalletManager (send, stake, history, etc.)
+- [ ] DeployManager (deploy site, rollback, etc.)
+
+### 🔄 Phase 4: Examples & Testing
+- [ ] Domain registration example
+- [ ] Token transfer example
+- [ ] dApp deployment example
+- [ ] Unit tests
+- [ ] Integration tests
+
+## Usage (When Complete)
+
+### Initialize Client
 
 ```typescript
 import {
-  blake3Hash,
-  calculateContentHash,
-  bytesToHex,
-  hexToBytes,
-  base64Encode,
-  base64Decode,
-  stringToBytes,
-  bytesToString,
-  calculateDomainFee,
-  validateDomain,
-  generateDid,
-  extractPublicKeyFromDid,
+  loadIdentityFromKeystore,
+  buildTrustConfig,
+  connectClient,
 } from '@zhtp/sdk';
 
-// Hash content
-const hash = blake3Hash(data);
-const hashHex = calculateContentHash(data);
+// Layer 1: Load identity
+const loaded = await loadIdentityFromKeystore('~/.zhtp/keystore');
 
-// Encoding
-const hex = bytesToHex(bytes);
-const bytes = hexToBytes(hex);
-const b64 = base64Encode(data);
-const decoded = base64Decode(b64);
+// Layer 2: Build trust config
+const trustConfig = buildTrustConfig({
+  trustNode: true,  // Bootstrap mode
+  nodeDid: 'did:zhtp:...',  // Optional: expect specific node
+});
 
-// Domain operations
-const isValid = validateDomain('myapp.zhtp');
-const fee = calculateDomainFee('myapp.zhtp', 1);
+// Layer 3: Create authenticated QUIC client
+const client = await connectClient(loaded.identity, trustConfig, 'quic://node.zhtp:5555');
 
-// Identity
-const did = generateDid('public-key-hex');
-const key = extractPublicKeyFromDid('did:zhtp:xxx');
+// Ready to use
+await client.domains.register('myapp.zhtp', {
+  contentCid: 'QmXxxx...',
+  fee: 100n,
+});
 ```
 
-## Configuration
-
-### Client Options
+### Validation (Pure Functions)
 
 ```typescript
-interface ClientOptions {
-  baseUrl: string;           // API server URL
-  timeout?: number;          // Request timeout (ms), default: 30000
-  retryAttempts?: number;    // Max retry attempts, default: 3
-  retryDelay?: number;       // Initial retry delay (ms), default: 100
-  debug?: boolean;           // Enable debug logging, default: false
+import { validateDomain, validateWalletAddress } from '@zhtp/sdk';
+
+// Validation returns result object, doesn't throw
+const domainResult = validateDomain('my-app.zhtp');
+if (!domainResult.valid) {
+  console.log('Errors:', domainResult.errors);
+}
+
+// Validation errors accumulate
+const walletResult = validateWalletAddress('invalid');
+// {
+//   valid: false,
+//   errors: [
+//     { field: 'address', message: 'must start with "z"' }
+//   ]
+// }
+```
+
+### Dependency Injection for Testing
+
+```typescript
+import { MockOutput } from '@zhtp/sdk';
+
+// Use real output
+const realOutput = new ConsoleOutput();
+await client.domains.register('test.zhtp', {}, realOutput);
+
+// Use mock for testing
+const mockOutput = new MockOutput();
+await client.domains.register('test.zhtp', {}, mockOutput);
+console.log(mockOutput.successes); // ['Domain registered']
+```
+
+## Architecture Compared to zhtp-cli
+
+| Aspect | zhtp-cli | SDK |
+|--------|----------|-----|
+| **Language** | Rust | TypeScript |
+| **Transport** | QUIC + UHP | QUIC + UHP |
+| **Auth** | Dilithium5 + Kyber512 | Dilithium5 + Kyber512 |
+| **Wire Format** | CBOR (4-byte framed) | CBOR (4-byte framed) |
+| **Validation** | Pure functions in logic/ | Pure functions in validation.ts |
+| **Output** | Output trait | Output interface |
+| **Operations** | Enum + config | Enum + config |
+| **Error Types** | Domain-specific | Domain-specific |
+| **Client Init** | 3-layer pattern | 3-layer pattern |
+
+## Key Files (Reference Implementation)
+
+From zhtp-cli that this SDK mirrors:
+
+- `lib-network/src/client/zhtp_client.rs` - QUIC client pattern
+- `lib-network/src/protocols/quic_handshake.rs` - UHP + Kyber handshake
+- `lib-protocols/src/wire/mod.rs` - CBOR wire protocol (4-byte framing)
+- `zhtp-cli/src/commands/web4_utils.rs` - Client initialization pattern
+- `zhtp-cli/src/logic/*.rs` - Pure validation functions
+
+## Development Guide
+
+### Adding a New Operation
+
+1. Add operation enum variant to `types.ts`:
+```typescript
+export enum DomainOp {
+  // ... existing
+  MyNewOp = 'my-new-op',
 }
 ```
 
-### Register Options
-
+2. Add configuration to ops map:
 ```typescript
-interface RegisterOptions {
-  contentCid?: string;       // Content to link
-  fee?: number;              // Registration fee (auto-calculated if not provided)
-  years?: number;            // Registration period, default: 1
-  metadata?: Record<string, string>;
-  governance?: {
-    config?: {
-      contractAddress?: string;
-      did?: string;
-    };
-    delegate?: {
-      delegate: string;
-      expiration?: number;
-    };
-  };
+const DOMAIN_OPS: Record<DomainOp, DomainOpConfig> = {
+  // ... existing
+  [DomainOp.MyNewOp]: {
+    endpointPath: '/api/v1/web4/domains/my-op',
+    method: 'POST',
+    title: 'My New Operation',
+  },
+};
+```
+
+3. Add validation function to `validation.ts`:
+```typescript
+export function validateMyNewOp(param: string): ValidationResult {
+  const errors = [];
+  // validation logic
+  return { valid: errors.length === 0, errors };
 }
 ```
 
-## Error Handling
-
+4. Implement in manager:
 ```typescript
-import { HttpError } from '@zhtp/sdk';
-
-try {
-  await client.domains.register('invalid domain!');
-} catch (error) {
-  if (error instanceof HttpError) {
-    console.error(`HTTP ${error.status}: ${error.statusText}`);
-    console.error(error.body);
-  } else {
-    console.error(error.message);
+// In managers/domain.ts
+async myNewOp(params: MyNewOpParams, output: Output): Promise<Result> {
+  // Validate
+  const validation = validateMyNewOp(params.field);
+  if (!validation.valid) {
+    throw new ValidationError('Validation failed', validation.errors);
   }
+
+  // Build request
+  const config = getDomainOpConfig(DomainOp.MyNewOp);
+  const body = { /* ... */ };
+
+  // Send (via QUIC client)
+  return await this.client.request(
+    config.method,
+    config.endpointPath,
+    { body },
+  );
 }
 ```
 
-## Progress Callbacks
+### Testing
+
+Use MockOutput for unit tests:
 
 ```typescript
-interface ProgressCallback {
-  (progress: {
-    loaded: number;      // Bytes loaded
-    total: number;       // Total bytes
-    percentage: number;  // 0-100
-    status: string;      // Current status
-  }): void;
-}
+import { MockOutput } from '@zhtp/sdk';
 
-// Use in uploads and deployments
-await client.deploy.deploySite(
-  'myapp.zhtp',
-  './dist',
-  'spa',
-  (progress) => {
-    console.log(`${progress.percentage.toFixed(0)}% - ${progress.status}`);
-  }
-);
+it('should register domain', async () => {
+  const output = new MockOutput();
+  await client.domains.register('test.zhtp', {}, output);
+
+  expect(output.successes.length).toBe(1);
+  expect(output.successes[0]).toContain('registered');
+});
 ```
 
-## Comparison with zhtp-cli
+## Security Considerations
 
-| Feature | SDK | CLI |
-|---------|-----|-----|
-| Domain registration | ✅ | ✅ |
-| Deploy websites | ✅ | ✅ |
-| Wallet operations | ✅ | ✅ |
-| Programmatic access | ✅ | ❌ |
-| JavaScript/TypeScript | ✅ | ❌ |
-| Scripting | ✅ | ✅ |
-| Browser support | Planned | ❌ |
+- ✅ **Post-Quantum Ready**: Kyber512 KEM + Dilithium5 signatures
+- ✅ **Signed Requests**: All mutations require Dilithium5 signature
+- ✅ **Session MAC**: Every request includes BLAKE3-HMAC with session key
+- ✅ **Replay Protection**: Sequence numbers prevent replay attacks
+- ✅ **TLS 1.3**: QUIC transport layer uses TLS 1.3
 
-## Roadmap
+## Status
 
-### v1.0.0 (Current)
-- ✅ HTTP/REST transport
-- ✅ Domain management
-- ✅ Content uploads
-- ✅ dApp deployment
-- ✅ Wallet operations
-- ✅ Type-safe API
-
-### v2.0.0 (Planned)
-- 🚀 Native QUIC transport
-- 🚀 Dilithium2 signatures via WASM
-- 🚀 Browser support
-- 🚀 React hooks
-- 🚀 GitHub Actions
-
-## Contributing
-
-Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+**Alpha (v1.0.0-alpha)** - Foundation layer complete, QUIC transport and managers in progress.
 
 ## License
 
-MIT - See [LICENSE](LICENSE) file for details
+MIT - See LICENSE file
 
-## Support
+## Contributing
 
-- GitHub Issues: [Report bugs](https://github.com/zhtp-community/sdk-ts/issues)
-- Documentation: [Full API docs](https://docs.zhtp.io/sdk)
-- Community: [Discord](https://discord.gg/zhtp)
+See CONTRIBUTING.md for guidelines
 
----
+## Resources
 
-**Built for ZHTP** - The next generation of decentralized internet infrastructure
+- [ZHTP Network](https://github.com/SOVEREIGN-NET/The-Sovereign-Network)
+- [zhtp-cli](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/tree/development/zhtp-cli)
+- [lib-network](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/tree/development/lib-network)
+- [lib-protocols](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/tree/development/lib-protocols)
