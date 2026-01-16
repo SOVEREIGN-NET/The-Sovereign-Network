@@ -23,7 +23,10 @@ export class ConsoleOutput implements Output {
   }
 
   async printJson(data: any): Promise<void> {
-    console.log(JSON.stringify(data, null, 2));
+    console.log(JSON.stringify(data, (_, value) => {
+      // Handle bigint serialization
+      return typeof value === 'bigint' ? value.toString() : value;
+    }, 2));
   }
 
   async error(message: string): Promise<void> {
@@ -84,7 +87,10 @@ export class MockOutput implements Output {
   }
 
   async printJson(data: any): Promise<void> {
-    this.messages.push(JSON.stringify(data));
+    this.messages.push(JSON.stringify(data, (_, value) => {
+      // Handle bigint serialization
+      return typeof value === 'bigint' ? value.toString() : value;
+    }));
   }
 
   async error(message: string): Promise<void> {

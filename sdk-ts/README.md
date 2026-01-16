@@ -91,40 +91,12 @@ examples/
 - [ ] Unit tests
 - [ ] Integration tests
 
-## Usage (When Complete)
+## Phase 1: Available Now
 
-### Initialize Client
-
-```typescript
-import {
-  loadIdentityFromKeystore,
-  buildTrustConfig,
-  connectClient,
-} from '@zhtp/sdk';
-
-// Layer 1: Load identity
-const loaded = await loadIdentityFromKeystore('~/.zhtp/keystore');
-
-// Layer 2: Build trust config
-const trustConfig = buildTrustConfig({
-  trustNode: true,  // Bootstrap mode
-  nodeDid: 'did:zhtp:...',  // Optional: expect specific node
-});
-
-// Layer 3: Create authenticated QUIC client
-const client = await connectClient(loaded.identity, trustConfig, 'quic://node.zhtp:5555');
-
-// Ready to use
-await client.domains.register('myapp.zhtp', {
-  contentCid: 'QmXxxx...',
-  fee: 100n,
-});
-```
-
-### Validation (Pure Functions)
+### Validation Functions (Pure Functions)
 
 ```typescript
-import { validateDomain, validateWalletAddress } from '@zhtp/sdk';
+import { validateDomain, validateWalletAddress, validateDid } from '@zhtp/sdk';
 
 // Validation returns result object, doesn't throw
 const domainResult = validateDomain('my-app.zhtp');
@@ -140,21 +112,87 @@ const walletResult = validateWalletAddress('invalid');
 //     { field: 'address', message: 'must start with "z"' }
 //   ]
 // }
+
+// DID validation
+const didResult = validateDid('did:zhtp:abc123');
+if (didResult.valid) {
+  console.log('Valid DID');
+}
+```
+
+### Fee Calculation
+
+```typescript
+import { calculateDomainRegistrationFee, calculateTransactionFee } from '@zhtp/sdk';
+
+// Domain registration fees based on length (in ZHTP)
+const fee1 = calculateDomainRegistrationFee('a.zhtp');           // 5000 ZHTP (1 char)
+const fee2 = calculateDomainRegistrationFee('ab.zhtp');          // 1000 ZHTP (2 chars)
+const fee3 = calculateDomainRegistrationFee('abc.zhtp');         // 100 ZHTP (3+ chars)
+
+// Transaction fees (base + per-byte)
+const txFee = calculateTransactionFee(1000);  // 1000 base + (size * 10)
 ```
 
 ### Dependency Injection for Testing
 
 ```typescript
-import { MockOutput } from '@zhtp/sdk';
+import { ConsoleOutput, MockOutput, SilentOutput } from '@zhtp/sdk';
 
-// Use real output
-const realOutput = new ConsoleOutput();
-await client.domains.register('test.zhtp', {}, realOutput);
-
-// Use mock for testing
+// Mock output for unit tests
 const mockOutput = new MockOutput();
-await client.domains.register('test.zhtp', {}, mockOutput);
-console.log(mockOutput.successes); // ['Domain registered']
+console.log(mockOutput.getAll()); // View all recorded output
+
+// Silent output for production
+const silent = new SilentOutput(); // No I/O
+
+// Console output for CLI
+const console = new ConsoleOutput(); // Real console with emoji prefixes
+```
+
+### Types and Constants
+
+```typescript
+import { DomainOp, WalletOp, getDomainOpConfig, VERSION } from '@zhtp/sdk';
+
+// Operation enums for Phase 2+ managers
+const domainRegisterOp = getDomainOpConfig(DomainOp.Register);
+// { endpointPath: '/api/v1/web4/domains/register', method: 'POST', title: 'Register Domain' }
+
+const walletTransferOp = getDomainOpConfig(WalletOp.Transfer);
+// { endpointPath: '/api/v1/wallet/send', method: 'POST', title: 'Transfer' }
+
+console.log(VERSION); // '1.0.0-alpha'
+```
+
+## Usage (When Complete - Phase 2+)
+
+### Initialize Client (Phase 2)
+
+```typescript
+import {
+  loadIdentityFromKeystore,
+  buildTrustConfig,
+  connectClient,
+} from '@zhtp/sdk';
+
+// Layer 1: Load identity
+const loaded = await loadIdentityFromKeystore('~/.zhtp/keystore');
+
+// Layer 2: Build trust config
+const trustConfig = buildTrustConfig({
+  mode: 'bootstrap',  // Bootstrap mode
+  nodeDidExpectation: 'did:zhtp:...',  // Optional: expect specific node
+});
+
+// Layer 3: Create authenticated QUIC client
+const client = await connectClient(loaded.identity, trustConfig, 'quic://node.zhtp:5555');
+
+// Ready to use (Phase 3)
+await client.domains.register('myapp.zhtp', {
+  contentCid: 'QmXxxx...',
+  fee: 100n,
+});
 ```
 
 ## Architecture Compared to zhtp-cli
@@ -181,19 +219,25 @@ From zhtp-cli that this SDK mirrors:
 - `zhtp-cli/src/commands/web4_utils.rs` - Client initialization pattern
 - `zhtp-cli/src/logic/*.rs` - Pure validation functions
 
-## Development Guide
+## Development Guide (Phase 2+)
 
-### Adding a New Operation
+### Architecture Pattern: Operation Enums + Config Maps
 
-1. Add operation enum variant to `types.ts`:
+This SDK follows zhtp-cli's design pattern for adding new operations. When implementing Phase 2 (QUIC transport) and Phase 3 (managers), follow this pattern:
+
+#### 1. Define Operation Enum (types.ts)
+
 ```typescript
 export enum DomainOp {
-  // ... existing
+  // ... existing operations
   MyNewOp = 'my-new-op',
 }
 ```
 
-2. Add configuration to ops map:
+#### 2. Add Operation Configuration (types.ts)
+
+Map operations to HTTP endpoint metadata (for Phase 2 QUIC client to use):
+
 ```typescript
 const DOMAIN_OPS: Record<DomainOp, DomainOpConfig> = {
   // ... existing
@@ -205,30 +249,39 @@ const DOMAIN_OPS: Record<DomainOp, DomainOpConfig> = {
 };
 ```
 
-3. Add validation function to `validation.ts`:
+#### 3. Add Validation Function (validation.ts)
+
+Pure validation functions (no side effects, fully testable):
+
 ```typescript
 export function validateMyNewOp(param: string): ValidationResult {
-  const errors = [];
-  // validation logic
+  const errors: ValidationIssue[] = [];
+
+  if (!param) {
+    errors.push({ field: 'param', message: 'required' });
+  }
+
   return { valid: errors.length === 0, errors };
 }
 ```
 
-4. Implement in manager:
+#### 4. Implement in Manager (managers/domain.ts - Phase 3)
+
 ```typescript
-// In managers/domain.ts
 async myNewOp(params: MyNewOpParams, output: Output): Promise<Result> {
-  // Validate
+  // 1. Validate
   const validation = validateMyNewOp(params.field);
   if (!validation.valid) {
     throw new ValidationError('Validation failed', validation.errors);
   }
 
-  // Build request
+  // 2. Get operation config
   const config = getDomainOpConfig(DomainOp.MyNewOp);
+
+  // 3. Build request body
   const body = { /* ... */ };
 
-  // Send (via QUIC client)
+  // 4. Send via QUIC client
   return await this.client.request(
     config.method,
     config.endpointPath,
@@ -237,7 +290,7 @@ async myNewOp(params: MyNewOpParams, output: Output): Promise<Result> {
 }
 ```
 
-### Testing
+### Testing Pattern (Phase 2+)
 
 Use MockOutput for unit tests:
 
@@ -246,8 +299,11 @@ import { MockOutput } from '@zhtp/sdk';
 
 it('should register domain', async () => {
   const output = new MockOutput();
-  await client.domains.register('test.zhtp', {}, output);
 
+  // When Phase 3 managers are implemented:
+  // await client.domains.register('test.zhtp', {}, output);
+
+  // Then verify output
   expect(output.successes.length).toBe(1);
   expect(output.successes[0]).toContain('registered');
 });

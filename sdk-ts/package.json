@@ -3,12 +3,13 @@
   "version": "1.0.0",
   "description": "QUIC-native TypeScript SDK for ZHTP/Web4 protocol",
   "main": "dist/index.js",
+  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": "./dist/index.mjs"
     }
   },
   "scripts": {
