@@ -55,6 +55,18 @@ export type {
   ZhtpClientConfig,
 } from './types.js';
 
-// Placeholder: TODO - Add managers and client implementation
-export const VERSION = '1.0.0-alpha';
+// QUIC client and connection
+export { ZhtpQuicClient, connectClient } from './quic/client.js';
+export type { QuicClientConfig, AuthenticatedConnection } from './quic/types.js';
+
+// Main client and initialization
+export { ZhtpClient, loadIdentity, buildTrustConfig, initializeClient, connect } from './client.js';
+
+// Managers
+export { DomainManager } from './managers/domain.js';
+export type { RegisterOptions, TransferProof } from './managers/domain.js';
+export { WalletManager } from './managers/wallet.js';
+
+// Export version and name
+export const VERSION = '1.0.0';
 export const SDK_NAME = '@zhtp/sdk';

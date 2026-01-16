@@ -17,7 +17,6 @@
     "noImplicitReturns": true,
     "noImplicitAny": true,
     "useDefineForClassFields": true,
-    "declaration": true,
     "sourceMap": true,
     "exactOptionalPropertyTypes": false
   },
