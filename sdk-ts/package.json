@@ -16,7 +16,9 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "type-check": "tsc --noEmit",
-    "test": "vitest",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest --run --coverage",
     "test:integration": "vitest run tests/integration",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build && npm run test && npm run lint"
@@ -43,6 +45,7 @@
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@types/cbor": "^6.0.0",
+    "@vitest/coverage-v8": "^1.1.0",
     "typescript": "^5.3.3",
     "vitest": "^1.1.0",
     "tsup": "^8.0.1",
