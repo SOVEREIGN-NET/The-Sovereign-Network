@@ -241,9 +241,9 @@ describe('Fee Calculation', () => {
     });
 
     it('returns fee for 3–4 and 5+ char domains', () => {
-      // 3–4 char domains: 1000 ZHTP * 100_000_000 = 100_000_000_000
+      // 3-char domains: 1000 ZHTP * 100_000_000 = 100_000_000_000
       expect(calculateDomainRegistrationFee('abc.zhtp')).toBe(100_000_000_000n);
-      // 3–4 char domains: 1000 ZHTP * 100_000_000 = 100_000_000_000
+      // 4-char domains: 1000 ZHTP * 100_000_000 = 100_000_000_000
       expect(calculateDomainRegistrationFee('abcd.zhtp')).toBe(100_000_000_000n);
       // 5+ char domains: 100 ZHTP * 100_000_000 = 10_000_000_000
       expect(calculateDomainRegistrationFee('verylongdomainname.zhtp')).toBe(10_000_000_000n);
