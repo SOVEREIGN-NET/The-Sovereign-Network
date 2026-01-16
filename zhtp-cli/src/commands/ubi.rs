@@ -2,18 +2,17 @@
 //!
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
-//! - **Pure Logic**: Identity validation, request body construction, API endpoint generation
-//! - **Imperative Shell**: QUIC client calls, response handling, output formatting
+//! - **Pure Logic**: Identity validation, operation types
+//! - **Imperative Shell**: Placeholder - awaiting server-side implementation
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for validation
+//!
+//! NOTE: The /api/v1/ubi/* endpoints are not yet implemented on the server.
+//! This module is a placeholder that will be enabled once the server implements
+//! the UBI distribution and status APIs.
 
-use crate::argument_parsing::{UbiArgs, UbiAction, ZhtpCli, format_output};
-use crate::commands::common::validate_identity_id;
-use crate::commands::web4_utils::connect_default;
-use crate::error::{CliResult, CliError};
-use crate::output::Output;
-use lib_network::client::ZhtpClient;
-use serde_json::Value;
+use crate::argument_parsing::{UbiArgs, UbiAction, ZhtpCli};
+use crate::error::CliResult;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -33,24 +32,6 @@ impl UbiOperation {
         }
     }
 
-    /// Get request method for this operation
-    pub fn method(&self) -> &'static str {
-        "GET"
-    }
-
-    /// Get endpoint path for this operation
-    pub fn endpoint_path(&self, identity_id: Option<&str>) -> String {
-        match self {
-            UbiOperation::Status => {
-                if let Some(id) = identity_id {
-                    format!("/api/v1/ubi/status/{}", id)
-                } else {
-                    "/api/v1/ubi/pool".to_string()
-                }
-            }
-        }
-    }
-
     /// Get a user-friendly title for this operation
     pub fn title(&self, is_personal: bool) -> &'static str {
         if is_personal {
@@ -62,111 +43,39 @@ impl UbiOperation {
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - QUIC calls and side effects
+// IMPERATIVE SHELL - Placeholder awaiting server-side implementation
 // ============================================================================
 
 /// Handle UBI command
+///
+/// NOTE: UBI endpoints are not yet implemented on the server.
 pub async fn handle_ubi_command(
     args: UbiArgs,
-    cli: &ZhtpCli,
+    _cli: &ZhtpCli,
 ) -> CliResult<()> {
-    let output = crate::output::ConsoleOutput;
-    handle_ubi_command_impl(args, cli, &output).await
-}
-
-/// Internal implementation with dependency injection
-async fn handle_ubi_command_impl(
-    args: UbiArgs,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    if cli.verbose {
-        eprintln!("[ubi] UBI status command");
-    }
-
-    // Connect using default keystore with bootstrap mode
-    let client = connect_default(&cli.server).await?;
-
-    match args.action {
-        UbiAction::Status { identity_id } => {
-            fetch_ubi_status(&client, identity_id.as_deref(), cli, output).await
-        }
-    }
-}
-
-/// Fetch UBI status for an identity (or global pool if None)
-async fn fetch_ubi_status(
-    client: &ZhtpClient,
-    identity_id: Option<&str>,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    // Validate identity ID if provided
-    if let Some(id) = identity_id {
-        validate_identity_id(id)?;
-    }
-
-    let is_personal = identity_id.is_some();
-
-    if cli.verbose {
-        if let Some(id) = identity_id {
-            eprintln!("[ubi:status] Fetching personal UBI status for: {}", id);
-        } else {
-            eprintln!("[ubi:status] Fetching global UBI pool status");
-        }
-    }
+    let is_personal = match &args.action {
+        UbiAction::Status { identity_id } => identity_id.is_some(),
+    };
 
     let operation = UbiOperation::Status;
-    let endpoint = operation.endpoint_path(identity_id);
 
-    output.info(&format!("Fetching {}...", operation.title(is_personal).to_lowercase()))?;
+    println!("UBI: {}", operation.title(is_personal));
+    println!();
+    println!("Not implemented: requires server-side UBI system.");
+    println!();
+    println!("The UBI endpoints are not yet available:");
+    println!("  - GET /api/v1/ubi/status/{{identity_id}}  (personal status)");
+    println!("  - GET /api/v1/ubi/pool                   (global pool status)");
+    println!();
+    println!("This functionality will be available once the server implements");
+    println!("the Universal Basic Income distribution system.");
 
-    if cli.verbose {
-        eprintln!("[ubi:status] GET {}", endpoint);
-    }
-
-    let response = client
-        .get(&endpoint)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.clone(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let result: Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.clone(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
-
-    let formatted = format_output(&result, &cli.format)?;
-    output.header(operation.title(is_personal))?;
-    output.print(&formatted)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_ubi_operation_personal_endpoint() {
-        let endpoint = UbiOperation::Status.endpoint_path(Some("did:example:123"));
-        assert_eq!(endpoint, "/api/v1/ubi/status/did:example:123");
-    }
-
-    #[test]
-    fn test_ubi_operation_pool_endpoint() {
-        let endpoint = UbiOperation::Status.endpoint_path(None);
-        assert_eq!(endpoint, "/api/v1/ubi/pool");
-    }
-
-    #[test]
-    fn test_ubi_operation_method() {
-        assert_eq!(UbiOperation::Status.method(), "GET");
-    }
 
     #[test]
     fn test_ubi_operation_description() {
