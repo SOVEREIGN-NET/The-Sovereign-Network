@@ -6,6 +6,7 @@ use tokio::time::{Duration, Instant};
 use tracing::{info, warn, debug, error};
 
 use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
+use crate::runtime::node_runtime::NodeRole;
 use lib_consensus::{ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorManager, NoOpBroadcaster};
 use crate::monitoring::{Alert, AlertLevel, AlertManager};
 use lib_blockchain::Blockchain;
@@ -55,6 +56,10 @@ pub struct ConsensusComponent {
     validator_manager: Arc<RwLock<ValidatorManager>>,
     blockchain: Arc<RwLock<Option<Arc<RwLock<Blockchain>>>>>,
     environment: crate::config::Environment,
+    /// Node role determines whether this node participates in consensus validation
+    /// This is IMMUTABLE and set at construction time based on configuration
+    /// The role cannot change after the component is created
+    node_role: Arc<NodeRole>,
 }
 
 // Manual Debug implementation because ConsensusEngine doesn't derive Debug
@@ -67,26 +72,29 @@ impl std::fmt::Debug for ConsensusComponent {
             .field("validator_manager", &"<ValidatorManager>")
             .field("blockchain", &"<Blockchain>")
             .field("environment", &self.environment)
+            .field("node_role", &*self.node_role)
             .finish()
     }
 }
 
 impl ConsensusComponent {
-    pub fn new(environment: crate::config::Environment) -> Self {
+    /// Create a new ConsensusComponent with the specified node role
+    /// CRITICAL: node_role must be derived from configuration before calling this
+    pub fn new(environment: crate::config::Environment, node_role: NodeRole) -> Self {
         let development_mode = matches!(environment, crate::config::Environment::Development);
-        
+
         let min_stake = if development_mode {
             1_000
         } else {
             100_000_000
         };
-        
+
         let validator_manager = ValidatorManager::new_with_development_mode(
             100,
             min_stake,
             development_mode,
         );
-        
+
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
             start_time: Arc::new(RwLock::new(None)),
@@ -94,7 +102,18 @@ impl ConsensusComponent {
             validator_manager: Arc::new(RwLock::new(validator_manager)),
             blockchain: Arc::new(RwLock::new(None)),
             environment,
+            node_role: Arc::new(node_role),
         }
+    }
+
+    #[deprecated = "Use new(environment, node_role) instead to properly initialize node role from config"]
+    pub fn new_deprecated(environment: crate::config::Environment) -> Self {
+        Self::new(environment, NodeRole::Observer)
+    }
+
+    /// Get the current node role (immutable)
+    pub fn get_node_role(&self) -> NodeRole {
+        (*self.node_role).clone()
     }
     
     pub async fn set_blockchain(&self, blockchain: Arc<RwLock<Blockchain>>) {
@@ -214,18 +233,35 @@ impl Component for ConsensusComponent {
         
         *self.status.write().await = ComponentStatus::Starting;
         
+        // Check if this node can participate in consensus validation
+        // Only FullValidator nodes should run the consensus engine
+        if !self.node_role.can_validate() {
+            let role_desc = match &*self.node_role {
+                crate::runtime::node_runtime::NodeRole::Observer => "observer (verifies blocks, no voting)",
+                crate::runtime::node_runtime::NodeRole::LightNode => "light (trusts validators)",
+                _ => "non-validator",
+            };
+            info!(
+                "ℹ️ Node type {:?} does not participate in consensus - running as {} node",
+                *self.node_role,
+                role_desc
+            );
+            // Node starts successfully but skips consensus engine
+            *self.status.write().await = ComponentStatus::Running;
+            return Ok(());
+        }
+
+        info!("✓ Node role {:?} can validate - starting consensus engine", *self.node_role);
+        
         let mut config = ConsensusConfig::default();
         
         config.development_mode = matches!(self.environment, crate::config::Environment::Development);
         if config.development_mode {
-            info!(" Development mode enabled - single validator consensus allowed for testing");
-            info!("    Production deployment requires minimum 4 validators for BFT");
+            info!("🔧 Development mode enabled - single validator consensus allowed for testing");
+            info!("   Production deployment requires minimum 4 validators for BFT");
         } else {
-            info!(" Production mode: Full consensus validation required (minimum 4 validators for BFT)");
+            info!("🛡️ Production mode: Full consensus validation required (minimum 4 validators for BFT)");
         }
-        
-        // Note: Edge nodes will still initialize consensus component but won't participate in validation
-        // Edge node check happens at validator registration (requires min stake + storage)
 
         let broadcaster = Arc::new(NoOpBroadcaster);
         let mut consensus_engine = lib_consensus::init_consensus(config, broadcaster)?;
