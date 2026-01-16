@@ -3,7 +3,7 @@
  * Coordinates identity loading, QUIC connection, and manager initialization
  */
 
-import { ZhtpIdentity, LoadedIdentity, PrivateKeyMaterial } from './identity.js';
+import { ZhtpIdentity, LoadedIdentity, PrivateKeyMaterial, KeyPair } from './identity.js';
 import { TrustConfig } from './types.js';
 import { Output, ConsoleOutput } from './output.js';
 import { ZhtpQuicClient, connectClient } from './quic/client.js';
@@ -118,12 +118,13 @@ export function buildTrustConfig(options: {
  */
 export async function initializeClient(
   identity: ZhtpIdentity,
+  keypair: KeyPair,
   trustConfig: TrustConfig,
   quicEndpoint: string,
   output: Output = new ConsoleOutput(),
 ): Promise<ZhtpClient> {
   // Connect and authenticate
-  const quicClient = await connectClient(identity, trustConfig, quicEndpoint, output);
+  const quicClient = await connectClient(identity, keypair, trustConfig, quicEndpoint, output);
 
   // Create main client
   return new ZhtpClient(identity, quicClient, output);
@@ -154,5 +155,5 @@ export async function connect(
   });
 
   // Layer 3: Create authenticated client
-  return await initializeClient(loaded.identity, trustConfig, quicEndpoint, output);
+  return await initializeClient(loaded.identity, loaded.keypair, trustConfig, quicEndpoint, output);
 }

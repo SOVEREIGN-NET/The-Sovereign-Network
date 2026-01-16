@@ -37,7 +37,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@matrixai/quic": "^2.0.0",
+    "@matrixai/quic": "^2.0.9",
     "@noble/hashes": "^1.3.3",
     "cbor": "^9.0.0",
     "crystals-kyber-js": "^2.5.0",

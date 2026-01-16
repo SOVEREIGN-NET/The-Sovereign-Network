@@ -51,17 +51,21 @@ async function initializeDilithium() {
 }
 
 /**
- * Create ClientHello message
+ * Create ClientHello message with Kyber512 public key
  */
-export function createClientHello(clientDid: string, nonce: Uint8Array): UhpClientHello {
+export function createClientHello(clientDid: string, nonce: Uint8Array, kyberPublicKey: Uint8Array): UhpClientHello {
   if (nonce.length !== 32) {
     throw new Error('Nonce must be 32 bytes');
+  }
+  if (kyberPublicKey.length !== 1184) {
+    throw new Error('Kyber512 public key must be 1184 bytes');
   }
 
   return {
     clientDid,
     timestamp: BigInt(Date.now()) * 1_000_000n, // Nanoseconds
     nonce,
+    kyberPublicKey,
   };
 }
 
@@ -73,7 +77,7 @@ export function serializeClientHello(hello: UhpClientHello): Uint8Array {
   const tsBytes = new Uint8Array(8);
   new DataView(tsBytes.buffer).setBigInt64(0, hello.timestamp, false);
 
-  const serialized = new Uint8Array(didBytes.length + 1 + 8 + 32);
+  const serialized = new Uint8Array(didBytes.length + 1 + 8 + 32 + 1184);
   let offset = 0;
 
   // Length-prefixed clientDid
@@ -87,6 +91,10 @@ export function serializeClientHello(hello: UhpClientHello): Uint8Array {
 
   // Nonce
   serialized.set(hello.nonce, offset);
+  offset += 32;
+
+  // Kyber512 public key
+  serialized.set(hello.kyberPublicKey, offset);
 
   return serialized;
 }
@@ -101,7 +109,7 @@ export function serializeServerHello(hello: UhpServerHello): Uint8Array {
   new DataView(tsBytes.buffer).setBigInt64(0, hello.timestamp, false);
 
   const serialized = new Uint8Array(
-    1 + sessionIdBytes.length + 1 + didBytes.length + hello.serverEphemeralPk.length + 8,
+    1 + sessionIdBytes.length + 1 + didBytes.length + hello.serverEphemeralPk.length + hello.kyberCiphertext.length + 8,
   );
   let offset = 0;
 
@@ -118,6 +126,10 @@ export function serializeServerHello(hello: UhpServerHello): Uint8Array {
   // Server ephemeral public key
   serialized.set(hello.serverEphemeralPk, offset);
   offset += hello.serverEphemeralPk.length;
+
+  // Kyber512 encapsulated key (ciphertext)
+  serialized.set(hello.kyberCiphertext, offset);
+  offset += hello.kyberCiphertext.length;
 
   // Timestamp
   serialized.set(tsBytes, offset);
