@@ -2,14 +2,16 @@
 //!
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
-//! - **Pure Logic**: Command parsing, validation, endpoint generation, message formatting
-//! - **Imperative Shell**: HTTP requests, I/O, user interaction loop
+//! - **Pure Logic**: Command parsing, validation, message formatting
+//! - **Imperative Shell**: User interaction loop (placeholder - awaiting QUIC control surfaces)
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for command validation and parsing
+//!
+//! NOTE: This module is a placeholder. The interactive shell requires server-side
+//! QUIC control surfaces that are not yet implemented.
 
 use anyhow::Result;
-use std::io::{self, Write};
-use crate::argument_parsing::{InteractiveArgs, ZhtpCli, format_output};
+use crate::argument_parsing::{InteractiveArgs, ZhtpCli};
 use crate::error::{CliResult, CliError};
 
 // ============================================================================
@@ -45,28 +47,6 @@ impl InteractiveCommand {
             InteractiveCommand::Exit => "Exit shell",
             InteractiveCommand::Empty => "No command",
             InteractiveCommand::Unknown => "Unknown command",
-        }
-    }
-
-    /// Get API endpoint for this command
-    pub fn endpoint(&self) -> Option<&'static str> {
-        match self {
-            InteractiveCommand::Status => Some("status"),
-            InteractiveCommand::Health => Some("monitor/health"),
-            InteractiveCommand::Components => Some("component/list"),
-            InteractiveCommand::Start => Some("component/start"),
-            InteractiveCommand::Stop => Some("component/stop"),
-            InteractiveCommand::Info => Some("component/status"),
-            _ => None,
-        }
-    }
-
-    /// Get HTTP method for this command
-    pub fn http_method(&self) -> &'static str {
-        match self {
-            InteractiveCommand::Status | InteractiveCommand::Health | InteractiveCommand::Components => "GET",
-            InteractiveCommand::Start | InteractiveCommand::Stop | InteractiveCommand::Info => "POST",
-            _ => "GET",
         }
     }
 }
@@ -147,13 +127,6 @@ pub fn validate_component_name(name: &str) -> CliResult<()> {
     Ok(())
 }
 
-/// Build API endpoint URL
-///
-/// Pure function - URL construction only
-pub fn build_api_url(server: &str, endpoint: &str) -> String {
-    format!("http://{}/api/v1/{}", server, endpoint)
-}
-
 /// Get help message
 ///
 /// Pure function - message formatting only
@@ -181,246 +154,29 @@ pub fn get_prompt() -> &'static str {
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - All side effects here (I/O, HTTP requests)
+// IMPERATIVE SHELL - Placeholder awaiting server-side QUIC support
 // ============================================================================
 
 /// Handle interactive command
-pub async fn handle_interactive_command(_args: InteractiveArgs, cli: &ZhtpCli) -> Result<()> {
-    println!("🌐 ZHTP Orchestrator Interactive Shell");
-    println!("======================================");
-    println!("Type 'help' for available commands, 'exit' to quit");
-    println!("Server: {}", cli.server);
-    println!("Format: {}", cli.format);
-    println!("");
-
-    let client = reqwest::Client::new();
-    let base_url = format!("http://{}/api/v1", cli.server);
-
-    loop {
-        print!("{}", get_prompt());
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        match io::stdin().read_line(&mut input) {
-            Ok(_) => {
-                let (command, component) = parse_command_input(&input);
-
-                match command {
-                    InteractiveCommand::Exit => {
-                        println!("Goodbye!");
-                        break;
-                    }
-                    InteractiveCommand::Help => {
-                        println!("{}", get_help_message());
-                    }
-                    InteractiveCommand::Empty => {
-                        // Just show prompt again
-                    }
-                    InteractiveCommand::Unknown => {
-                        println!("Unknown command: {}", input.trim());
-                        println!("Type 'help' for available commands");
-                    }
-                    InteractiveCommand::Status => {
-                        if let Err(e) = handle_status(&client, &base_url, cli).await {
-                            println!("❌ Error: {}", e);
-                        }
-                    }
-                    InteractiveCommand::Health => {
-                        if let Err(e) = handle_health(&client, &base_url, cli).await {
-                            println!("❌ Error: {}", e);
-                        }
-                    }
-                    InteractiveCommand::Components => {
-                        if let Err(e) = handle_list_components(&client, &base_url, cli).await {
-                            println!("❌ Error: {}", e);
-                        }
-                    }
-                    InteractiveCommand::Start => {
-                        if let Some(comp) = component {
-                            if let Err(e) = validate_component_name(&comp) {
-                                println!("❌ Error: {}", e);
-                            } else if let Err(e) =
-                                handle_start_component(&client, &base_url, &comp, cli).await
-                            {
-                                println!("❌ Error: {}", e);
-                            }
-                        } else {
-                            println!("Usage: start <component-name>");
-                        }
-                    }
-                    InteractiveCommand::Stop => {
-                        if let Some(comp) = component {
-                            if let Err(e) = validate_component_name(&comp) {
-                                println!("❌ Error: {}", e);
-                            } else if let Err(e) =
-                                handle_stop_component(&client, &base_url, &comp, cli).await
-                            {
-                                println!("❌ Error: {}", e);
-                            }
-                        } else {
-                            println!("Usage: stop <component-name>");
-                        }
-                    }
-                    InteractiveCommand::Info => {
-                        if let Some(comp) = component {
-                            if let Err(e) = validate_component_name(&comp) {
-                                println!("❌ Error: {}", e);
-                            } else if let Err(e) = handle_component_info(&client, &base_url, &comp, cli).await
-                            {
-                                println!("❌ Error: {}", e);
-                            }
-                        } else {
-                            println!("Usage: info <component-name>");
-                        }
-                    }
-                }
-            }
-            Err(error) => {
-                println!("Error reading input: {}", error);
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Handle status command
-async fn handle_status(client: &reqwest::Client, base_url: &str, cli: &ZhtpCli) -> Result<()> {
-    println!("📊 Checking orchestrator status...");
-    let url = build_api_url(base_url.trim_start_matches("http://").split("/api/v1").next().unwrap_or(base_url), "status");
-
-    let response = client.get(&url).send().await?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        println!("✓ Status:\n{}", formatted);
-    } else {
-        println!("❌ Orchestrator status unavailable: {}", response.status());
-    }
-
-    Ok(())
-}
-
-/// Handle health command
-async fn handle_health(client: &reqwest::Client, base_url: &str, cli: &ZhtpCli) -> Result<()> {
-    println!("❤️  Checking component health...");
-    let url = format!("{}/monitor/health", base_url);
-
-    let response = client.get(&url).send().await?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        println!("✓ Health:\n{}", formatted);
-    } else {
-        println!("❌ Component health check failed: {}", response.status());
-    }
-
-    Ok(())
-}
-
-/// Handle list components command
-async fn handle_list_components(client: &reqwest::Client, base_url: &str, cli: &ZhtpCli) -> Result<()> {
-    println!("📋 Listing components...");
-    let url = format!("{}/component/list", base_url);
-
-    let response = client.get(&url).send().await?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        println!("✓ Components:\n{}", formatted);
-    } else {
-        println!("❌ Component list unavailable: {}", response.status());
-    }
-
-    Ok(())
-}
-
-/// Handle start component command
-async fn handle_start_component(
-    client: &reqwest::Client,
-    base_url: &str,
-    component: &str,
-    cli: &ZhtpCli,
-) -> Result<()> {
-    println!("▶️  Starting component: {}", component);
-    let url = format!("{}/component/start", base_url);
-
-    let request_body = serde_json::json!({
-        "component": component,
-        "action": "start",
-        "orchestrated": true
-    });
-
-    let response = client.post(&url).json(&request_body).send().await?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        println!("✓ Started:\n{}", formatted);
-    } else {
-        println!("❌ Failed to start component: {}", response.status());
-    }
-
-    Ok(())
-}
-
-/// Handle stop component command
-async fn handle_stop_component(
-    client: &reqwest::Client,
-    base_url: &str,
-    component: &str,
-    cli: &ZhtpCli,
-) -> Result<()> {
-    println!("⏹️  Stopping component: {}", component);
-    let url = format!("{}/component/stop", base_url);
-
-    let request_body = serde_json::json!({
-        "component": component,
-        "action": "stop",
-        "orchestrated": true
-    });
-
-    let response = client.post(&url).json(&request_body).send().await?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        println!("✓ Stopped:\n{}", formatted);
-    } else {
-        println!("❌ Failed to stop component: {}", response.status());
-    }
-
-    Ok(())
-}
-
-/// Handle component info command
-async fn handle_component_info(
-    client: &reqwest::Client,
-    base_url: &str,
-    component: &str,
-    cli: &ZhtpCli,
-) -> Result<()> {
-    println!("ℹ️  Getting component info: {}", component);
-    let url = format!("{}/component/status", base_url);
-
-    let request_body = serde_json::json!({
-        "component": component,
-        "orchestrated": true
-    });
-
-    let response = client.post(&url).json(&request_body).send().await?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        println!("✓ Info:\n{}", formatted);
-    } else {
-        println!("❌ Failed to get component info: {}", response.status());
-    }
+///
+/// NOTE: Interactive shell is not yet implemented. Requires server-side QUIC
+/// control surfaces for component management and status queries.
+pub async fn handle_interactive_command(_args: InteractiveArgs, _cli: &ZhtpCli) -> Result<()> {
+    println!("ZHTP Orchestrator Interactive Shell");
+    println!("====================================");
+    println!();
+    println!("Not implemented: requires server-side QUIC support.");
+    println!();
+    println!("The interactive shell will be available once the server implements");
+    println!("QUIC-based control surfaces for:");
+    println!("  - Component status queries");
+    println!("  - Component lifecycle management (start/stop)");
+    println!("  - Health monitoring endpoints");
+    println!();
+    println!("For now, use individual CLI commands instead:");
+    println!("  zhtp-cli network status");
+    println!("  zhtp-cli blockchain info");
+    println!("  zhtp-cli wallet balance <identity>");
 
     Ok(())
 }
@@ -481,21 +237,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_api_url() {
-        let url = build_api_url("localhost:9333", "status");
-        assert_eq!(url, "http://localhost:9333/api/v1/status");
-    }
-
-    #[test]
     fn test_command_description() {
         assert_eq!(InteractiveCommand::Status.description(), "Show orchestrator status");
         assert_eq!(InteractiveCommand::Exit.description(), "Exit shell");
-    }
-
-    #[test]
-    fn test_command_endpoint() {
-        assert_eq!(InteractiveCommand::Status.endpoint(), Some("status"));
-        assert_eq!(InteractiveCommand::Exit.endpoint(), None);
     }
 
     #[test]
