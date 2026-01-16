@@ -483,16 +483,15 @@ impl RuntimeOrchestrator {
             let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();  // Get bootstrap validators from config
             let joined_existing_network = *self.joined_existing_network.read().await;  // Check if we joined existing network
             let node_role = self.node_role.read().await.clone();
-            
-            let mut blockchain_component = BlockchainComponent::new_with_full_config(user_wallet, environment, bootstrap_validators, joined_existing_network);
-            blockchain_component.set_node_role(node_role);
+
+            let blockchain_component = BlockchainComponent::new_with_full_config(node_role, user_wallet, environment, bootstrap_validators, joined_existing_network);
             self.register_component(Arc::new(blockchain_component)).await?;
         }
-        
+
         if !is_registered(ComponentId::Consensus).await {
             let environment = self.config.environment;
             let node_role = self.node_role.read().await.clone();
-            self.register_component(Arc::new(ConsensusComponent::new_with_node_role(environment, node_role))).await?;
+            self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
         }
         
         if !is_registered(ComponentId::Economics).await {
@@ -968,17 +967,17 @@ impl RuntimeOrchestrator {
         let bootstrap_validators = self.get_bootstrap_validators();
         let joined_existing_network = self.get_joined_existing_network().await;
         let node_role = self.node_role.read().await.clone();
-        
-        let mut blockchain_component = BlockchainComponent::new_with_full_config(
+
+        let blockchain_component = BlockchainComponent::new_with_full_config(
+            node_role.clone(),
             user_wallet,
             environment,
             bootstrap_validators,
             joined_existing_network
         );
-        blockchain_component.set_node_role(node_role.clone());
         self.register_component(Arc::new(blockchain_component)).await?;
-        
-        self.register_component(Arc::new(ConsensusComponent::new_with_node_role(environment, node_role))).await?;
+
+        self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
         self.register_component(Arc::new(ProtocolsComponent::new_with_ports(
             environment,
             self.config.protocols_config.api_port,

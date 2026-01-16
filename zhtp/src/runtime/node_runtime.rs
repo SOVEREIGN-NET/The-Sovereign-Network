@@ -86,6 +86,13 @@ pub enum NodeRole {
     ArchivalNode,
 }
 
+impl Default for NodeRole {
+    fn default() -> Self {
+        // Default to Observer: safe default that can verify blocks but doesn't mine/validate
+        NodeRole::Observer
+    }
+}
+
 impl NodeRole {
     pub fn is_full_node(&self) -> bool {
         matches!(self, NodeRole::FullValidator | NodeRole::Observer)
@@ -101,7 +108,7 @@ impl NodeRole {
 
     /// Check if this node role can participate in block mining/production.
     /// Only FullValidator nodes can mine blocks.
-    /// 
+    ///
     /// # Security
     /// Mining on non-validator nodes would produce invalid blocks because:
     /// - Edge nodes only have headers, not full blockchain state
@@ -114,7 +121,7 @@ impl NodeRole {
     /// Check if this node role can participate in consensus validation.
     /// Only FullValidator nodes participate in consensus.
     /// Observer nodes verify blocks for themselves but don't vote in consensus.
-    /// 
+    ///
     /// # Security
     /// Running consensus on inappropriate node types:
     /// - Wastes resources (CPU, power)

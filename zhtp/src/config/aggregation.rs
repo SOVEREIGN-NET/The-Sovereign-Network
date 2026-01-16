@@ -102,7 +102,12 @@ pub struct NodeConfig {
     pub security_level: SecurityLevel,
     pub environment: Environment,
     pub data_directory: String,
-    
+
+    // Node role determines what operations this node can perform
+    // This is derived from validator_enabled and other config settings during aggregation
+    #[serde(skip)]
+    pub node_role: crate::runtime::node_runtime::NodeRole,
+
     // Package-specific configurations
     pub crypto_config: CryptoConfig,
     pub zk_config: ZkConfig,
@@ -114,11 +119,11 @@ pub struct NodeConfig {
     pub economics_config: EconomicsConfig,
     pub protocols_config: ProtocolsConfig,
     pub rewards_config: RewardsConfig,
-    
+
     // Validator configuration (Gap 5)
     #[serde(default)]
     pub validator_config: Option<ValidatorConfig>,
-    
+
     // Cross-package coordination
     pub port_assignments: HashMap<String, u16>,
     pub resource_allocations: ResourceAllocations,
@@ -546,7 +551,11 @@ impl Default for NodeConfig {
             security_level: SecurityLevel::High,
             environment: Environment::Development,
             data_directory: "./lib-data".to_string(),
-            
+
+            // Default to Observer - can be overridden during aggregation
+            // based on validator_enabled and storage configuration
+            node_role: crate::runtime::node_runtime::NodeRole::Observer,
+
             crypto_config: CryptoConfig {
                 post_quantum_enabled: true,
                 dilithium_level: 3,
@@ -733,14 +742,51 @@ impl NodeConfig {
                     reason: "TCP protocol not allowed in pure mesh mode".to_string()
                 }.into());
             }
-            
+
             // Ensure long-range relays are available
             if !self.network_config.long_range_relays {
                 tracing::warn!("Pure mesh mode without long-range relays may have limited coverage");
             }
         }
-        
+
         Ok(())
+    }
+
+    /// Derive node role from configuration settings
+    /// Maps validator_enabled and storage settings to the appropriate NodeRole
+    ///
+    /// The role determines what operations this node can perform:
+    /// - FullValidator: Can mine blocks and participate in consensus (requires validator_enabled=true)
+    /// - Observer: Verifies blocks but doesn't participate in consensus (full blockchain, no mining)
+    /// - LightNode: Only stores headers and ZK proofs (minimal storage)
+    /// - EdgeNode: Minimal storage, BLE-optimized (if hosted_storage_gb=0)
+    pub fn derive_node_role(&mut self) {
+        use crate::runtime::node_runtime::NodeRole;
+
+        // Primary determination: Is this node configured to be a validator?
+        self.node_role = if self.consensus_config.validator_enabled {
+            // Validator is enabled - use FullValidator role for mining and consensus participation
+            tracing::info!(
+                "✓ Deriving NodeRole: validator_enabled=true → FullValidator (mines blocks, validates, stores full blockchain)"
+            );
+            NodeRole::FullValidator
+        } else {
+            // Validator is not enabled - determine if this is an edge node based on storage config
+            if self.storage_config.hosted_storage_gb == 0 {
+                // Edge node: no hosting storage, minimal blockchain storage
+                tracing::info!(
+                    "✓ Deriving NodeRole: validator_enabled=false, hosted_storage_gb=0 → LightNode (headers only)"
+                );
+                NodeRole::LightNode
+            } else {
+                // Full node but not a validator: acts as observer
+                tracing::info!(
+                    "✓ Deriving NodeRole: validator_enabled=false, hosted_storage_gb={} → Observer (full blockchain, no mining/consensus)",
+                    self.storage_config.hosted_storage_gb
+                );
+                NodeRole::Observer
+            }
+        };
     }
 }
 
@@ -957,7 +1003,12 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
         config.protocols_config.request_timeout_ms = protocols_config.request_timeout_ms;
         tracing::debug!("Loaded lib-protocols package configuration");
     }
-    
+
+    // CRITICAL: Derive node role from configuration settings
+    // This must be done after all config sections have been loaded/merged
+    // Maps validator_enabled and storage settings to the appropriate NodeRole
+    config.derive_node_role();
+
     Ok(config)
 }
 
