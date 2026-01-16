@@ -148,7 +148,6 @@ export class WalletManager {
     }
 
     const fee = calculateTransactionFee(64);
-    const total = amount + fee;
 
     const balance = await this.getBalance(address);
     const balanceValidation = validateSufficientBalance(balance, amount, fee);

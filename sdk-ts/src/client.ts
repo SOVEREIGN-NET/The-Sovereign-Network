@@ -9,7 +9,6 @@ import { Output, ConsoleOutput } from './output.js';
 import { ZhtpQuicClient, connectClient } from './quic/client.js';
 import { DomainManager } from './managers/domain.js';
 import { WalletManager } from './managers/wallet.js';
-import { NetworkError } from './error.js';
 
 /**
  * Main ZHTP Client with all managers

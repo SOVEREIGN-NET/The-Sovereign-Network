@@ -57,6 +57,12 @@ describe('Validation Functions', () => {
       expect(validateDomain('abc123.zhtp').valid).toBe(true);
       expect(validateDomain('123abc.zhtp').valid).toBe(true);
     });
+
+    it('accepts domains without .zhtp suffix', () => {
+      // validateDomain regex optionally removes .zhtp suffix
+      expect(validateDomain('example').valid).toBe(true);
+      expect(validateDomain('abc123').valid).toBe(true);
+    });
   });
 
   describe('validateWalletAddress', () => {
@@ -190,6 +196,12 @@ describe('Validation Functions', () => {
       const result = validateDid('');
       expect(result.valid).toBe(false);
     });
+
+    it('rejects uppercase hexadecimal in DID', () => {
+      // validateDid only accepts lowercase hex [0-9a-f]
+      expect(validateDid('did:zhtp:ABCDEF').valid).toBe(false);
+      expect(validateDid('did:zhtp:AbCdEf').valid).toBe(false);
+    });
   });
 
   describe('validateMetadata', () => {
@@ -204,6 +216,8 @@ describe('Validation Functions', () => {
     });
 
     it('accepts empty string metadata', () => {
+      // validateMetadata treats empty string as valid (falsy check prevents JSON.parse error)
+      // Note: empty string is technically not valid JSON, but SDK allows it for convenience
       expect(validateMetadata('').valid).toBe(true);
     });
 
@@ -229,11 +243,11 @@ describe('Fee Calculation', () => {
     });
 
     it('returns fee for 3+ char domains', () => {
-      // 1000 ZHTP * 100_000_000 = 100_000_000_000
+      // 3-4 char domains: 1000 ZHTP * 100_000_000 = 100_000_000_000
       expect(calculateDomainRegistrationFee('abc.zhtp')).toBe(100_000_000_000n);
-      // 100 ZHTP * 100_000_000 = 10_000_000_000
+      // 3-4 char domains: 1000 ZHTP * 100_000_000 = 100_000_000_000
       expect(calculateDomainRegistrationFee('abcd.zhtp')).toBe(100_000_000_000n);
-      // 100 ZHTP * 100_000_000 = 10_000_000_000
+      // 5+ char domains: 100 ZHTP * 100_000_000 = 10_000_000_000
       expect(calculateDomainRegistrationFee('verylongdomainname.zhtp')).toBe(10_000_000_000n);
     });
 

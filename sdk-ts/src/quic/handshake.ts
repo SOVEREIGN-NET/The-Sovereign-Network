@@ -12,11 +12,9 @@ import {
   UhpClientHello,
   UhpServerHello,
   UhpClientFinish,
-  UhpServerFinish,
   KyberEncapsulation,
   AuthenticatedConnection,
 } from './types.js';
-import { ZhtpIdentity } from '../identity.js';
 
 /**
  * Create ClientHello message

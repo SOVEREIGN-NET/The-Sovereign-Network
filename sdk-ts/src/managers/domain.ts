@@ -9,7 +9,6 @@ import { ZhtpQuicClient } from '../quic/client.js';
 import { DomainOp, DomainInfo, getDomainOpConfig } from '../types.js';
 import {
   validateDomain,
-  validateDid,
   calculateDomainRegistrationFee,
 } from '../validation.js';
 

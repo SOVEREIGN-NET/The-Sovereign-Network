@@ -75,7 +75,7 @@ export class ZhtpQuicClient {
       const phase1Hash = hashHandshakePhase1(clientHello, serverHello);
       const clientSignature = createDilithium5Signature(phase1Hash);
 
-      const clientFinish = createClientFinish(serverHello.sessionId, clientHello, serverHello, clientSignature);
+      createClientFinish(serverHello.sessionId, clientHello, serverHello, clientSignature);
 
       if (this.config.debug) {
         await this.output.debug(`Phase 1 hash computed (${phase1Hash.length} bytes)`);
@@ -156,7 +156,7 @@ export class ZhtpQuicClient {
       }
 
       // Encode request to wire format
-      const encoded = encodeRequest(request);
+      encodeRequest(request);
 
       // In production: Send encoded request over QUIC
       // For now: Return mock response

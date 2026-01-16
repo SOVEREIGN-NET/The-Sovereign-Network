@@ -6,7 +6,6 @@ import {
   validateIdentity,
   serializeIdentity,
 } from '../../src/identity.js';
-import { IdentityError, ValidationError } from '../../src/error.js';
 
 describe('Identity Management', () => {
   // Must be valid hex for DID format: did:zhtp:{hex_key}
@@ -36,8 +35,10 @@ describe('Identity Management', () => {
       });
     });
 
-    it('handles empty public key', () => {
+    it('handles empty public key (note: result fails validation)', () => {
       const did = generateDid('');
+      // generateDid itself doesn't validate - it just concatenates
+      // but 'did:zhtp:' would fail validateDid() since it requires hex characters
       expect(did).toBe('did:zhtp:');
     });
   });
