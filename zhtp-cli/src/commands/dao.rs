@@ -24,7 +24,6 @@ pub enum DaoOperation {
     Info,
     Propose,
     Vote,
-    ClaimUbi,
     Balance,
 }
 
@@ -35,7 +34,6 @@ impl DaoOperation {
             DaoOperation::Info => "Get DAO information",
             DaoOperation::Propose => "Create proposal",
             DaoOperation::Vote => "Vote on proposal",
-            DaoOperation::ClaimUbi => "Claim UBI",
             DaoOperation::Balance => "Get DAO treasury balance",
         }
     }
@@ -44,7 +42,7 @@ impl DaoOperation {
     pub fn method(&self) -> &'static str {
         match self {
             DaoOperation::Info | DaoOperation::Balance => "GET",
-            _ => "POST",
+            DaoOperation::Propose | DaoOperation::Vote => "POST",
         }
     }
 
@@ -54,7 +52,6 @@ impl DaoOperation {
             DaoOperation::Info => "/api/v1/dao/data",
             DaoOperation::Propose => "/api/v1/dao/proposal/create",
             DaoOperation::Vote => "/api/v1/dao/vote/cast",
-            DaoOperation::ClaimUbi => "/api/v1/dao/ubi/claim",
             DaoOperation::Balance => "/api/v1/dao/treasury/status",
         }
     }
@@ -65,7 +62,6 @@ impl DaoOperation {
             DaoOperation::Info => "DAO Information",
             DaoOperation::Propose => "Proposal Creation",
             DaoOperation::Vote => "Vote Submission",
-            DaoOperation::ClaimUbi => "UBI Claim",
             DaoOperation::Balance => "Treasury Status",
         }
     }
@@ -79,7 +75,6 @@ pub fn action_to_operation(action: &DaoAction) -> DaoOperation {
         DaoAction::Info => DaoOperation::Info,
         DaoAction::Propose { .. } => DaoOperation::Propose,
         DaoAction::Vote { .. } => DaoOperation::Vote,
-        DaoAction::ClaimUbi => DaoOperation::ClaimUbi,
         DaoAction::Balance | DaoAction::TreasuryBalance => DaoOperation::Balance,
     }
 }
@@ -148,7 +143,6 @@ pub fn build_request_body(
     description: Option<&str>,
     proposal_id: Option<&str>,
     choice: Option<&str>,
-    user_id: Option<&str>,
 ) -> Value {
     match operation {
         DaoOperation::Info => json!({}),
@@ -160,10 +154,6 @@ pub fn build_request_body(
         DaoOperation::Vote => json!({
             "proposal_id": proposal_id,
             "choice": choice,
-            "orchestrated": true
-        }),
-        DaoOperation::ClaimUbi => json!({
-            "user_id": user_id.unwrap_or("anonymous"),
             "orchestrated": true
         }),
         DaoOperation::Balance => json!({}),
@@ -189,7 +179,6 @@ pub fn get_operation_message(
             choice.unwrap_or("unknown"),
             proposal_id.unwrap_or("unknown")
         ),
-        DaoOperation::ClaimUbi => "Claiming UBI...".to_string(),
         DaoOperation::Balance => "Fetching DAO treasury balance...".to_string(),
     }
 }
@@ -229,10 +218,6 @@ async fn handle_dao_command_impl(
             let operation = DaoOperation::Vote;
             handle_dao_operation_impl(&client, operation, None, None, Some(&proposal_id), Some(&choice), cli, output).await
         }
-        DaoAction::ClaimUbi => {
-            let operation = DaoOperation::ClaimUbi;
-            handle_dao_operation_impl(&client, operation, None, None, None, None, cli, output).await
-        }
         DaoAction::Balance | DaoAction::TreasuryBalance => {
             let operation = DaoOperation::Balance;
             handle_dao_operation_impl(&client, operation, None, None, None, None, cli, output).await
@@ -253,7 +238,7 @@ async fn handle_dao_operation_impl(
 ) -> CliResult<()> {
     output.info(&get_operation_message(operation, title, proposal_id, choice))?;
 
-    let request_body = build_request_body(operation, title, description, proposal_id, choice, cli.user_id.as_deref());
+    let request_body = build_request_body(operation, title, description, proposal_id, choice);
 
     let response = match operation.method() {
         "GET" => client.get(operation.endpoint_path()).await,
@@ -314,7 +299,7 @@ mod tests {
         assert_eq!(DaoOperation::Info.description(), "Get DAO information");
         assert_eq!(DaoOperation::Propose.description(), "Create proposal");
         assert_eq!(DaoOperation::Vote.description(), "Vote on proposal");
-        assert_eq!(DaoOperation::ClaimUbi.description(), "Claim UBI");
+        assert_eq!(DaoOperation::Balance.description(), "Get DAO treasury balance");
     }
 
     #[test]
@@ -322,7 +307,7 @@ mod tests {
         assert_eq!(DaoOperation::Info.method(), "GET");
         assert_eq!(DaoOperation::Propose.method(), "POST");
         assert_eq!(DaoOperation::Vote.method(), "POST");
-        assert_eq!(DaoOperation::ClaimUbi.method(), "POST");
+        assert_eq!(DaoOperation::Balance.method(), "GET");
     }
 
     #[test]
@@ -330,7 +315,6 @@ mod tests {
         assert_eq!(DaoOperation::Info.endpoint_path(), "/api/v1/dao/data");
         assert_eq!(DaoOperation::Propose.endpoint_path(), "/api/v1/dao/proposal/create");
         assert_eq!(DaoOperation::Vote.endpoint_path(), "/api/v1/dao/vote/cast");
-        assert_eq!(DaoOperation::ClaimUbi.endpoint_path(), "/api/v1/dao/ubi/claim");
         assert_eq!(DaoOperation::Balance.endpoint_path(), "/api/v1/dao/treasury/status");
     }
 
@@ -378,7 +362,6 @@ mod tests {
             DaoOperation::Propose,
             Some("Title"),
             Some("Description"),
-            None,
             None,
             None,
         );

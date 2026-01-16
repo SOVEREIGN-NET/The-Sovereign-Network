@@ -251,8 +251,6 @@ pub enum DaoAction {
         #[arg(short, long)]
         choice: String,
     },
-    /// Claim UBI (orchestrated)
-    ClaimUbi,
     /// Get DAO treasury balance
     Balance,
     /// Get treasury balance (alias for Balance)
