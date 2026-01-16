@@ -86,6 +86,13 @@ pub enum NodeRole {
     ArchivalNode,
 }
 
+impl Default for NodeRole {
+    fn default() -> Self {
+        // Default to Observer: safe default that can verify blocks but doesn't mine/validate
+        NodeRole::Observer
+    }
+}
+
 impl NodeRole {
     pub fn is_full_node(&self) -> bool {
         matches!(self, NodeRole::FullValidator | NodeRole::Observer)
@@ -96,6 +103,38 @@ impl NodeRole {
     }
 
     pub fn stores_full_blockchain(&self) -> bool {
+        matches!(self, NodeRole::FullValidator | NodeRole::Observer | NodeRole::ArchivalNode)
+    }
+
+    /// Check if this node role can participate in block mining/production.
+    /// Only FullValidator nodes can mine blocks.
+    ///
+    /// # Security
+    /// Mining on non-validator nodes would produce invalid blocks because:
+    /// - Edge nodes only have headers, not full blockchain state
+    /// - Observer nodes should verify but not participate in consensus
+    /// - Light/Mobile nodes lack the full state needed for validation
+    pub fn can_mine(&self) -> bool {
+        matches!(self, NodeRole::FullValidator)
+    }
+
+    /// Check if this node role can participate in consensus validation.
+    /// Only FullValidator nodes participate in consensus.
+    /// Observer nodes verify blocks for themselves but don't vote in consensus.
+    ///
+    /// # Security
+    /// Running consensus on inappropriate node types:
+    /// - Wastes resources (CPU, power)
+    /// - Can cause network confusion if non-validators try to vote
+    /// - Edge/Light nodes lack full state to properly validate
+    pub fn can_validate(&self) -> bool {
+        matches!(self, NodeRole::FullValidator)
+    }
+
+    /// Check if this node role can verify blocks locally (for self-validation).
+    /// This is different from consensus validation - it's just checking blocks are valid.
+    /// Observer and FullValidator nodes can do this as they have full blockchain.
+    pub fn can_verify_blocks(&self) -> bool {
         matches!(self, NodeRole::FullValidator | NodeRole::Observer | NodeRole::ArchivalNode)
     }
 }
@@ -497,5 +536,131 @@ impl NodeRuntime for DefaultNodeRuntime {
         };
 
         attempt < max_attempts
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test the service capability matrix for all node roles.
+    /// 
+    /// This enforces the documented capability matrix:
+    /// | Service          | FullNode | EdgeNode | Validator | Relay |
+    /// |------------------|----------|----------|-----------|-------|
+    /// | Mining           | ❌       | ❌       | ✅        | ❌    |
+    /// | Block Validation | ✅(self) | ❌       | ✅        | ❌    |
+    /// | Block Production | ❌       | ❌       | ✅        | ❌    |
+    /// | Full Sync        | ✅       | ❌       | ✅        | ❌    |
+    /// | Header Sync      | ✅       | ✅       | ✅        | ❌    |
+    /// | ZK Proof Verify  | ✅       | ✅       | ✅        | ❌    |
+    #[test]
+    fn test_node_role_capabilities() {
+        // FullValidator: can mine, can validate, can verify blocks
+        let full_validator = NodeRole::FullValidator;
+        assert!(full_validator.can_mine(), "FullValidator must be able to mine");
+        assert!(full_validator.can_validate(), "FullValidator must be able to validate");
+        assert!(full_validator.can_verify_blocks(), "FullValidator must be able to verify blocks");
+        assert!(full_validator.stores_full_blockchain(), "FullValidator must store full blockchain");
+        
+        // Observer: cannot mine, cannot validate (consensus), but can verify blocks
+        let observer = NodeRole::Observer;
+        assert!(!observer.can_mine(), "Observer must NOT be able to mine");
+        assert!(!observer.can_validate(), "Observer must NOT participate in consensus validation");
+        assert!(observer.can_verify_blocks(), "Observer CAN verify blocks locally");
+        assert!(observer.stores_full_blockchain(), "Observer must store full blockchain");
+        
+        // LightNode: cannot mine, cannot validate, cannot verify blocks (no full state)
+        let light_node = NodeRole::LightNode;
+        assert!(!light_node.can_mine(), "LightNode must NOT be able to mine");
+        assert!(!light_node.can_validate(), "LightNode must NOT participate in consensus");
+        assert!(!light_node.can_verify_blocks(), "LightNode cannot verify full blocks");
+        assert!(!light_node.stores_full_blockchain(), "LightNode does NOT store full blockchain");
+        
+        // MobileNode: same as LightNode
+        let mobile_node = NodeRole::MobileNode;
+        assert!(!mobile_node.can_mine(), "MobileNode must NOT be able to mine");
+        assert!(!mobile_node.can_validate(), "MobileNode must NOT participate in consensus");
+        assert!(!mobile_node.can_verify_blocks(), "MobileNode cannot verify full blocks");
+        assert!(!mobile_node.stores_full_blockchain(), "MobileNode does NOT store full blockchain");
+        
+        // BootstrapNode: cannot mine, cannot validate
+        let bootstrap_node = NodeRole::BootstrapNode;
+        assert!(!bootstrap_node.can_mine(), "BootstrapNode must NOT be able to mine");
+        assert!(!bootstrap_node.can_validate(), "BootstrapNode must NOT participate in consensus");
+        
+        // ArchivalNode: cannot mine, cannot validate, but can verify blocks
+        let archival_node = NodeRole::ArchivalNode;
+        assert!(!archival_node.can_mine(), "ArchivalNode must NOT be able to mine");
+        assert!(!archival_node.can_validate(), "ArchivalNode must NOT participate in consensus");
+        assert!(archival_node.can_verify_blocks(), "ArchivalNode CAN verify blocks");
+        assert!(archival_node.stores_full_blockchain(), "ArchivalNode must store full blockchain");
+    }
+
+    #[test]
+    fn test_only_full_validator_can_mine() {
+        // This is a critical security test - only FullValidator should mine
+        let all_roles = vec![
+            NodeRole::FullValidator,
+            NodeRole::Observer,
+            NodeRole::LightNode,
+            NodeRole::MobileNode,
+            NodeRole::BootstrapNode,
+            NodeRole::ArchivalNode,
+        ];
+        
+        for role in all_roles {
+            let can_mine = role.can_mine();
+            match role {
+                NodeRole::FullValidator => {
+                    assert!(can_mine, "FullValidator MUST be able to mine");
+                }
+                _ => {
+                    assert!(!can_mine, "{:?} must NOT be able to mine", role);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_only_full_validator_can_validate() {
+        // This is a critical security test - only FullValidator participates in consensus
+        let all_roles = vec![
+            NodeRole::FullValidator,
+            NodeRole::Observer,
+            NodeRole::LightNode,
+            NodeRole::MobileNode,
+            NodeRole::BootstrapNode,
+            NodeRole::ArchivalNode,
+        ];
+        
+        for role in all_roles {
+            let can_validate = role.can_validate();
+            match role {
+                NodeRole::FullValidator => {
+                    assert!(can_validate, "FullValidator MUST be able to validate");
+                }
+                _ => {
+                    assert!(!can_validate, "{:?} must NOT participate in consensus validation", role);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_full_nodes_can_verify_blocks() {
+        // Full nodes (with full blockchain) can verify blocks locally
+        assert!(NodeRole::FullValidator.can_verify_blocks());
+        assert!(NodeRole::Observer.can_verify_blocks());
+        assert!(NodeRole::ArchivalNode.can_verify_blocks());
+        
+        // Light nodes cannot verify full blocks (no full state)
+        assert!(!NodeRole::LightNode.can_verify_blocks());
+        assert!(!NodeRole::MobileNode.can_verify_blocks());
+        assert!(!NodeRole::BootstrapNode.can_verify_blocks());
     }
 }
