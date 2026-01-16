@@ -3,13 +3,15 @@
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
 //! - **Pure Logic**: Validation, endpoint selection (pure functions)
-//! - **Imperative Shell**: HTTP client calls, output printing
+//! - **Imperative Shell**: QUIC client calls, output printing
 //! - **Error Handling**: Domain-specific CliError types
-//! - **Testability**: Traits for HTTP client and output injection
+//! - **Testability**: Traits for client and output injection
 
 use crate::argument_parsing::{MonitorArgs, MonitorAction, ZhtpCli, format_output};
+use crate::commands::web4_utils::connect_default;
 use crate::error::{CliResult, CliError};
 use crate::output::Output;
+use lib_network::client::ZhtpClient;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -28,10 +30,10 @@ impl MonitoringEndpoint {
     /// Get the API endpoint path for this monitoring type
     pub fn endpoint_path(&self) -> &'static str {
         match self {
-            MonitoringEndpoint::System => "monitor/system",
-            MonitoringEndpoint::Health => "monitor/health",
-            MonitoringEndpoint::Performance => "monitor/performance",
-            MonitoringEndpoint::Logs => "monitor/logs",
+            MonitoringEndpoint::System => "/api/v1/monitor/system",
+            MonitoringEndpoint::Health => "/api/v1/monitor/health",
+            MonitoringEndpoint::Performance => "/api/v1/monitor/performance",
+            MonitoringEndpoint::Logs => "/api/v1/monitor/logs",
         }
     }
 
@@ -69,7 +71,7 @@ pub fn action_to_endpoint(action: &MonitorAction) -> MonitoringEndpoint {
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - All side effects here (HTTP, output)
+// IMPERATIVE SHELL - All side effects here (QUIC, output)
 // ============================================================================
 
 /// Handle monitoring command with proper error handling and output
@@ -87,7 +89,7 @@ pub async fn handle_monitor_command(
 ///
 /// This is the imperative shell - it:
 /// 1. Converts action to endpoint (pure)
-/// 2. Makes HTTP requests (side effect)
+/// 2. Makes QUIC requests (side effect)
 /// 3. Formats and prints output (side effect)
 /// 4. Returns proper error types
 async fn handle_monitor_command_impl(
@@ -96,26 +98,24 @@ async fn handle_monitor_command_impl(
     output: &dyn Output,
 ) -> CliResult<()> {
     let endpoint = action_to_endpoint(&args.action);
-    let client = reqwest::Client::new();
-    let base_url = format!("http://{}/api/v1", cli.server);
 
-    fetch_and_display_monitoring(&client, &base_url, endpoint, cli, output).await
+    output.info(&format!("Fetching {}...", endpoint.description()))?;
+
+    // Connect using default keystore with bootstrap mode
+    let client = connect_default(&cli.server).await?;
+
+    fetch_and_display_monitoring(&client, endpoint, cli, output).await
 }
 
-/// Fetch monitoring data and display it
+/// Fetch monitoring data and display it via QUIC
 async fn fetch_and_display_monitoring(
-    client: &reqwest::Client,
-    base_url: &str,
+    client: &ZhtpClient,
     endpoint: MonitoringEndpoint,
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    output.info(&format!("Fetching {}...", endpoint.description()))?;
-
-    let url = format!("{}/{}", base_url, endpoint.endpoint_path());
     let response = client
-        .get(&url)
-        .send()
+        .get(endpoint.endpoint_path())
         .await
         .map_err(|e| CliError::ApiCallFailed {
             endpoint: endpoint.endpoint_path().to_string(),
@@ -123,19 +123,16 @@ async fn fetch_and_display_monitoring(
             reason: e.to_string(),
         })?;
 
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        let formatted = format_output(&result, &cli.format)?;
-        output.header(endpoint.title())?;
-        output.print(&formatted)?;
-        Ok(())
-    } else {
-        Err(CliError::ApiCallFailed {
+    let result: serde_json::Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
             endpoint: endpoint.endpoint_path().to_string(),
-            status: response.status().as_u16(),
-            reason: format!("HTTP {}", response.status()),
-        })
-    }
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        })?;
+    let formatted = format_output(&result, &cli.format)?;
+    output.header(endpoint.title())?;
+    output.print(&formatted)?;
+    Ok(())
 }
 
 // ============================================================================
@@ -148,13 +145,13 @@ mod tests {
 
     #[test]
     fn test_monitoring_endpoint_path() {
-        assert_eq!(MonitoringEndpoint::System.endpoint_path(), "monitor/system");
-        assert_eq!(MonitoringEndpoint::Health.endpoint_path(), "monitor/health");
+        assert_eq!(MonitoringEndpoint::System.endpoint_path(), "/api/v1/monitor/system");
+        assert_eq!(MonitoringEndpoint::Health.endpoint_path(), "/api/v1/monitor/health");
         assert_eq!(
             MonitoringEndpoint::Performance.endpoint_path(),
-            "monitor/performance"
+            "/api/v1/monitor/performance"
         );
-        assert_eq!(MonitoringEndpoint::Logs.endpoint_path(), "monitor/logs");
+        assert_eq!(MonitoringEndpoint::Logs.endpoint_path(), "/api/v1/monitor/logs");
     }
 
     #[test]

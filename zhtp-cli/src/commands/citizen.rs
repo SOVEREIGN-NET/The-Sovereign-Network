@@ -3,13 +3,16 @@
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 //!
 //! - **Pure Logic**: Identity validation, request body construction, API endpoint generation
-//! - **Imperative Shell**: HTTP requests, response handling, output formatting
+//! - **Imperative Shell**: QUIC client calls, response handling, output formatting
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for validation
 
 use crate::argument_parsing::{CitizenArgs, CitizenAction, ZhtpCli, format_output};
-use crate::error::{CliResult, CliError};
 use crate::commands::common::validate_identity_id;
+use crate::commands::web4_utils::connect_default;
+use crate::error::{CliResult, CliError};
+use crate::output::Output;
+use lib_network::client::ZhtpClient;
 use serde_json::{json, Value};
 
 // ============================================================================
@@ -32,8 +35,8 @@ impl CitizenOperation {
         }
     }
 
-    /// Get HTTP method for this operation
-    pub fn http_method(&self) -> &'static str {
+    /// Get request method for this operation
+    pub fn method(&self) -> &'static str {
         match self {
             CitizenOperation::Add => "POST",
             CitizenOperation::List => "GET",
@@ -43,8 +46,16 @@ impl CitizenOperation {
     /// Get endpoint path for this operation
     pub fn endpoint_path(&self) -> &'static str {
         match self {
-            CitizenOperation::Add => "citizens/register",
-            CitizenOperation::List => "citizens",
+            CitizenOperation::Add => "/api/v1/citizens/register",
+            CitizenOperation::List => "/api/v1/citizens",
+        }
+    }
+
+    /// Get a user-friendly title for this operation
+    pub fn title(&self) -> &'static str {
+        match self {
+            CitizenOperation::Add => "Citizen Registration",
+            CitizenOperation::List => "Registered Citizens",
         }
     }
 }
@@ -70,7 +81,7 @@ pub fn build_register_request(identity_id: &str) -> Value {
 }
 
 // ============================================================================
-// IMPERATIVE SHELL - API calls and side effects
+// IMPERATIVE SHELL - QUIC calls and side effects
 // ============================================================================
 
 /// Handle citizen command
@@ -78,26 +89,41 @@ pub async fn handle_citizen_command(
     args: CitizenArgs,
     cli: &ZhtpCli,
 ) -> CliResult<()> {
+    let output = crate::output::ConsoleOutput;
+    handle_citizen_command_impl(args, cli, &output).await
+}
+
+/// Internal implementation with dependency injection
+async fn handle_citizen_command_impl(
+    args: CitizenArgs,
+    cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
     let operation = action_to_operation(&args.action);
 
     if cli.verbose {
         eprintln!("[citizen] Operation: {:?}", operation.description());
     }
 
+    // Connect using default keystore with bootstrap mode
+    let client = connect_default(&cli.server).await?;
+
     match args.action {
         CitizenAction::Add { identity_id } => {
-            register_citizen(&identity_id, cli).await
+            register_citizen(&client, &identity_id, cli, output).await
         }
         CitizenAction::List => {
-            list_citizens(cli).await
+            list_citizens(&client, cli, output).await
         }
     }
 }
 
 /// Register a new citizen for UBI
 async fn register_citizen(
+    client: &ZhtpClient,
     identity_id: &str,
     cli: &ZhtpCli,
+    output: &dyn Output,
 ) -> CliResult<()> {
     // Validate identity ID format
     validate_identity_id(identity_id)?;
@@ -106,109 +132,70 @@ async fn register_citizen(
         eprintln!("[citizen:add] Validating identity ID: {}", identity_id);
     }
 
+    output.info("Registering citizen...")?;
+
     // Build request
     let request_body = build_register_request(identity_id);
 
-    // Create HTTP client and send request
-    let client = reqwest::Client::new();
-    let url = format!("http://{}/api/v1/citizens/register", cli.server);
-
     if cli.verbose {
-        eprintln!("[citizen:add] POST {}", url);
+        eprintln!("[citizen:add] POST {}", CitizenOperation::Add.endpoint_path());
     }
 
     let response = client
-        .post(&url)
-        .json(&request_body)
-        .send()
+        .post_json(CitizenOperation::Add.endpoint_path(), &request_body)
         .await
         .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "citizens/register".to_string(),
+            endpoint: CitizenOperation::Add.endpoint_path().to_string(),
             status: 0,
             reason: e.to_string(),
         })?;
 
-    let status = response.status();
-
-    if status.is_success() {
-        let result: Value = response.json().await.map_err(|e| {
-            CliError::ApiCallFailed {
-                endpoint: "citizens/register".to_string(),
-                status: status.as_u16(),
-                reason: format!("Failed to parse response: {}", e),
-            }
+    let result: Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: CitizenOperation::Add.endpoint_path().to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
         })?;
 
-        let formatted = format_output(&result, &cli.format)
-            .map_err(|e| CliError::Other(e.to_string()))?;
-
-        println!("✓ Citizen Registered\n{}", formatted);
-        Ok(())
-    } else {
-        let error_body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-
-        Err(CliError::ApiCallFailed {
-            endpoint: "citizens/register".to_string(),
-            status: status.as_u16(),
-            reason: error_body,
-        })
-    }
+    let formatted = format_output(&result, &cli.format)?;
+    output.header(CitizenOperation::Add.title())?;
+    output.print(&formatted)?;
+    Ok(())
 }
 
 /// List all registered citizens
-async fn list_citizens(cli: &ZhtpCli) -> CliResult<()> {
+async fn list_citizens(
+    client: &ZhtpClient,
+    cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
     if cli.verbose {
         eprintln!("[citizen:list] Fetching citizen list");
+        eprintln!("[citizen:list] GET {}", CitizenOperation::List.endpoint_path());
     }
 
-    let client = reqwest::Client::new();
-    let url = format!("http://{}/api/v1/citizens", cli.server);
-
-    if cli.verbose {
-        eprintln!("[citizen:list] GET {}", url);
-    }
+    output.info("Fetching citizen list...")?;
 
     let response = client
-        .get(&url)
-        .send()
+        .get(CitizenOperation::List.endpoint_path())
         .await
         .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "citizens".to_string(),
+            endpoint: CitizenOperation::List.endpoint_path().to_string(),
             status: 0,
             reason: e.to_string(),
         })?;
 
-    let status = response.status();
-
-    if status.is_success() {
-        let result: Value = response.json().await.map_err(|e| {
-            CliError::ApiCallFailed {
-                endpoint: "citizens".to_string(),
-                status: status.as_u16(),
-                reason: format!("Failed to parse response: {}", e),
-            }
+    let result: Value = ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: CitizenOperation::List.endpoint_path().to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
         })?;
 
-        let formatted = format_output(&result, &cli.format)
-            .map_err(|e| CliError::Other(e.to_string()))?;
-
-        println!("✓ Registered Citizens\n{}", formatted);
-        Ok(())
-    } else {
-        let error_body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-
-        Err(CliError::ApiCallFailed {
-            endpoint: "citizens".to_string(),
-            status: status.as_u16(),
-            reason: error_body,
-        })
-    }
+    let formatted = format_output(&result, &cli.format)?;
+    output.header(CitizenOperation::List.title())?;
+    output.print(&formatted)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -243,14 +230,14 @@ mod tests {
     }
 
     #[test]
-    fn test_citizen_operation_http_methods() {
-        assert_eq!(CitizenOperation::Add.http_method(), "POST");
-        assert_eq!(CitizenOperation::List.http_method(), "GET");
+    fn test_citizen_operation_methods() {
+        assert_eq!(CitizenOperation::Add.method(), "POST");
+        assert_eq!(CitizenOperation::List.method(), "GET");
     }
 
     #[test]
     fn test_citizen_operation_endpoints() {
-        assert_eq!(CitizenOperation::Add.endpoint_path(), "citizens/register");
-        assert_eq!(CitizenOperation::List.endpoint_path(), "citizens");
+        assert_eq!(CitizenOperation::Add.endpoint_path(), "/api/v1/citizens/register");
+        assert_eq!(CitizenOperation::List.endpoint_path(), "/api/v1/citizens");
     }
 }
