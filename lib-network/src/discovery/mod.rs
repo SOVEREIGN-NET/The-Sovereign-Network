@@ -42,34 +42,50 @@ pub struct DiscoveryStatistics {
     pub local_peers: u32,
     /// Number of regional peers
     pub regional_peers: u32,
-    /// Number of global peers  
+    /// Number of global peers
     pub global_peers: u32,
     /// Number of relay peers
     pub relay_peers: u32,
 }
 
 /// Get discovery statistics for peer distribution
+///
+/// OPTIMIZED: Detects hardware capabilities once and passes to all discovery functions.
+/// This eliminates redundant hardware scanning which was previously taking 15-30 seconds.
 pub async fn get_discovery_statistics() -> Result<DiscoveryStatistics> {
     let mut stats = DiscoveryStatistics::default();
-    
-    // Get WiFi discovery statistics
+
+    // Detect hardware capabilities once at the start - cached for reuse
+    // This is the ONLY hardware detection call for the entire discovery cycle
+    let capabilities = match hardware::HardwareCapabilities::detect().await {
+        Ok(caps) => caps,
+        Err(e) => {
+            tracing::warn!("Failed to detect hardware capabilities: {}", e);
+            // Continue with discovery anyway - non-critical capabilities info
+            hardware::HardwareCapabilities::default()
+        }
+    };
+
+    // Get WiFi discovery statistics using cached capabilities
     if let Ok(wifi_peers) = wifi::discover_wifi_direct_peers().await {
         stats.local_peers += wifi_peers.len() as u32;
     }
-    
-    // Get LoRaWAN discovery statistics
-    if let Ok(lorawan_peers) = lorawan::discover_lorawan_nodes().await {
+
+    // Get LoRaWAN discovery statistics using cached capabilities
+    // Uses discover_lorawan_gateways_with_capabilities to avoid redundant detection
+    if let Ok(lorawan_peers) = lorawan::discover_lorawan_gateways_with_capabilities(&capabilities).await {
         stats.regional_peers += lorawan_peers.len() as u32;
     }
-    
-    // Get satellite discovery statistics
-    if let Ok(satellite_peers) = satellite::discover_satellite_nodes().await {
+
+    // Get satellite discovery statistics using cached capabilities
+    // Uses discover_satellite_uplinks_with_capabilities to avoid redundant detection
+    if let Ok(satellite_peers) = satellite::discover_satellite_uplinks_with_capabilities(&capabilities).await {
         stats.global_peers += satellite_peers.len() as u32;
     }
-    
+
     // Count relay peers (nodes that provide internet connectivity)
     stats.relay_peers = count_relay_peers().await?;
-    
+
     Ok(stats)
 }
 
