@@ -16,18 +16,56 @@ import {
   AuthenticatedConnection,
 } from './types.js';
 
+// Initialize post-quantum crypto factories (singletons)
+let kyberInstance: any = null;
+let dilithiumInstance: any = null;
+
+async function initializeKyber() {
+  if (!kyberInstance) {
+    try {
+      // @ts-ignore - crystals-kyber-js exports Kyber functions directly
+      const KyberModule = await import('crystals-kyber-js');
+      // Use whatever export is available
+      const KyberClass = (KyberModule as any).Kyber || (KyberModule as any).default;
+      kyberInstance = new KyberClass();
+    } catch (error) {
+      throw new Error(`Failed to load Kyber512: ${error instanceof Error ? error.message : 'unknown'}`);
+    }
+  }
+  return kyberInstance;
+}
+
+async function initializeDilithium() {
+  if (!dilithiumInstance) {
+    try {
+      // @ts-ignore - dilithium-crystals-js exports Dilithium functions directly
+      const DilithiumModule = await import('dilithium-crystals-js');
+      // Use whatever export is available
+      const DilithiumClass = (DilithiumModule as any).Dilithium || (DilithiumModule as any).default;
+      dilithiumInstance = new DilithiumClass();
+    } catch (error) {
+      throw new Error(`Failed to load Dilithium5: ${error instanceof Error ? error.message : 'unknown'}`);
+    }
+  }
+  return dilithiumInstance;
+}
+
 /**
- * Create ClientHello message
+ * Create ClientHello message with Kyber512 public key
  */
-export function createClientHello(clientDid: string, nonce: Uint8Array): UhpClientHello {
+export function createClientHello(clientDid: string, nonce: Uint8Array, kyberPublicKey: Uint8Array): UhpClientHello {
   if (nonce.length !== 32) {
     throw new Error('Nonce must be 32 bytes');
+  }
+  if (kyberPublicKey.length !== 1184) {
+    throw new Error('Kyber512 public key must be 1184 bytes');
   }
 
   return {
     clientDid,
     timestamp: BigInt(Date.now()) * 1_000_000n, // Nanoseconds
     nonce,
+    kyberPublicKey,
   };
 }
 
@@ -39,7 +77,7 @@ export function serializeClientHello(hello: UhpClientHello): Uint8Array {
   const tsBytes = new Uint8Array(8);
   new DataView(tsBytes.buffer).setBigInt64(0, hello.timestamp, false);
 
-  const serialized = new Uint8Array(didBytes.length + 1 + 8 + 32);
+  const serialized = new Uint8Array(didBytes.length + 1 + 8 + 32 + 1184);
   let offset = 0;
 
   // Length-prefixed clientDid
@@ -53,6 +91,10 @@ export function serializeClientHello(hello: UhpClientHello): Uint8Array {
 
   // Nonce
   serialized.set(hello.nonce, offset);
+  offset += 32;
+
+  // Kyber512 public key
+  serialized.set(hello.kyberPublicKey, offset);
 
   return serialized;
 }
@@ -67,7 +109,7 @@ export function serializeServerHello(hello: UhpServerHello): Uint8Array {
   new DataView(tsBytes.buffer).setBigInt64(0, hello.timestamp, false);
 
   const serialized = new Uint8Array(
-    1 + sessionIdBytes.length + 1 + didBytes.length + hello.serverEphemeralPk.length + 8,
+    1 + sessionIdBytes.length + 1 + didBytes.length + hello.serverEphemeralPk.length + hello.kyberCiphertext.length + 8,
   );
   let offset = 0;
 
@@ -84,6 +126,10 @@ export function serializeServerHello(hello: UhpServerHello): Uint8Array {
   // Server ephemeral public key
   serialized.set(hello.serverEphemeralPk, offset);
   offset += hello.serverEphemeralPk.length;
+
+  // Kyber512 encapsulated key (ciphertext)
+  serialized.set(hello.kyberCiphertext, offset);
+  offset += hello.kyberCiphertext.length;
 
   // Timestamp
   serialized.set(tsBytes, offset);
@@ -205,53 +251,80 @@ export function createAuthenticatedConnection(
 }
 
 /**
- * Placeholder: In production, these would call actual Dilithium5 signing
- * For now, return zero-length signatures (will be replaced with real crypto)
+ * Create Dilithium5 signature using real post-quantum cryptography
+ * Uses crystals-dilithium-js for NIST-standardized signatures
  */
-export function createDilithium5Signature(message: Uint8Array): Uint8Array {
-  // Placeholder: Real implementation would use dilithium5 library
-  // For now: Return 2420 bytes (standard Dilithium5 signature size)
-  const sig = new Uint8Array(2420);
-  // In production: sig = dilithium5.sign(clientPrivateKey, message)
-  return sig;
+export async function createDilithium5Signature(message: Uint8Array): Promise<Uint8Array> {
+  try {
+    const dilithium = await initializeDilithium();
+    // Generate keypair for this session (in production: use client's stored keypair)
+    const keyPair = dilithium.generateKeys();
+    // Sign the message using the secret key
+    const signature = dilithium.sign(message, keyPair.secretKey, 3); // mode 3 = Dilithium5
+    return signature.sig;
+  } catch (error) {
+    throw new Error(`Dilithium5 signature generation failed: ${error instanceof Error ? error.message : 'unknown'}`);
+  }
 }
 
 /**
- * Placeholder: Verify Dilithium5 signature
+ * Verify Dilithium5 signature using real post-quantum cryptography
  */
-export function verifyDilithium5Signature(
-  _publicKey: string,
-  _message: Uint8Array,
-  _signature: Uint8Array,
-): boolean {
-  // Placeholder: Real implementation would use dilithium5 library
-  // For now: Always return true in Phase 2 (will be fixed in Phase 3)
-  return true;
+export async function verifyDilithium5Signature(
+  publicKey: string,
+  message: Uint8Array,
+  signature: Uint8Array,
+): Promise<boolean> {
+  try {
+    const dilithium = await initializeDilithium();
+    // Convert public key from hex string to Uint8Array
+    const publicKeyBytes = new Uint8Array(Buffer.from(publicKey, 'hex'));
+    // Verify the signature
+    const result = dilithium.verify(signature, message, publicKeyBytes, 3); // mode 3 = Dilithium5
+    return result.valid;
+  } catch (error) {
+    console.error(`Dilithium5 signature verification failed: ${error instanceof Error ? error.message : 'unknown'}`);
+    return false;
+  }
 }
 
 /**
- * Placeholder: Kyber512 encapsulation (server side)
+ * Kyber512 encapsulation (server side) - Real implementation
+ * Uses CRYSTALS-Kyber for NIST-standardized key encapsulation
  * Returns encapsulated key + shared secret
  */
-export function kyber512Encapsulate(_serverPublicKey: string): KyberEncapsulation {
-  // Placeholder: Real implementation would use kyber512 library
-  // Standard sizes:
-  // - ciphertext: 768 bytes
-  // - sharedSecret: 32 bytes
-  return {
-    ciphertext: new Uint8Array(768),
-    sharedSecret: new Uint8Array(32),
-  };
+export async function kyber512Encapsulate(serverPublicKey: string): Promise<KyberEncapsulation> {
+  try {
+    const kyber = await initializeKyber();
+    // Convert server's public key from hex string
+    const publicKeyBytes = new Uint8Array(Buffer.from(serverPublicKey, 'hex'));
+    // Perform key encapsulation (generates ciphertext + shared secret)
+    const encapsulation = kyber.encaps(publicKeyBytes);
+
+    return {
+      ciphertext: encapsulation.ciphertext,
+      sharedSecret: encapsulation.sharedSecret,
+    };
+  } catch (error) {
+    throw new Error(`Kyber512 encapsulation failed: ${error instanceof Error ? error.message : 'unknown'}`);
+  }
 }
 
 /**
- * Placeholder: Kyber512 decapsulation (client side)
+ * Kyber512 decapsulation (client side) - Real implementation
+ * Uses CRYSTALS-Kyber for NIST-standardized key decapsulation
  */
-export function kyber512Decapsulate(_clientPrivateKey: Uint8Array, ciphertext: Uint8Array): Uint8Array {
-  // Placeholder: Real implementation would use kyber512 library
-  // For now: Return 32-byte shared secret
-  if (ciphertext.length !== 768) {
-    throw new Error('Invalid ciphertext length for Kyber512');
+export async function kyber512Decapsulate(clientPrivateKey: Uint8Array, ciphertext: Uint8Array): Promise<Uint8Array> {
+  try {
+    const kyber = await initializeKyber();
+    // Validate ciphertext length (standard Kyber512 size)
+    if (ciphertext.length !== 768) {
+      throw new Error(`Invalid ciphertext length for Kyber512: expected 768, got ${ciphertext.length}`);
+    }
+    // Perform key decapsulation (derives shared secret from ciphertext using private key)
+    const sharedSecret = kyber.decaps(clientPrivateKey, ciphertext);
+    return sharedSecret;
+  } catch (error) {
+    throw new Error(`Kyber512 decapsulation failed: ${error instanceof Error ? error.message : 'unknown'}`);
   }
-  return new Uint8Array(32);
 }

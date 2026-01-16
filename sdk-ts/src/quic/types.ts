@@ -21,12 +21,14 @@ export interface UhpClientHello {
   clientDid: string; // Requesting client's DID
   timestamp: bigint; // Unix timestamp in nanoseconds
   nonce: Uint8Array; // 32-byte random nonce
+  kyberPublicKey: Uint8Array; // Client's Kyber512 public key (1184 bytes)
 }
 
 export interface UhpServerHello {
   sessionId: string; // Unique session from server
   serverDid: string; // Server's DID
-  serverEphemeralPk: Uint8Array; // Server's ephemeral public key
+  serverEphemeralPk: Uint8Array; // Server's ephemeral public key (32 bytes)
+  kyberCiphertext: Uint8Array; // Encapsulated key from Kyber512 KEM (768 bytes)
   timestamp: bigint; // Server's timestamp
 }
 
