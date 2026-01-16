@@ -1,127 +1,60 @@
 /**
- * @zhtp/sdk - TypeScript SDK for ZHTP/Web4 API
+ * @zhtp/sdk - TypeScript SDK for ZHTP/Web4 Protocol (QUIC-Native)
  *
- * A production-ready SDK for registering domains, deploying dApps,
- * and managing wallets on the ZHTP network.
+ * Following zhtp-cli patterns:
+ * - Three-layer client initialization (identity → trust config → connect)
+ * - Operation enums for polymorphic routing
+ * - Pure validation functions
+ * - Dependency injection for testability
+ * - Domain-specific error types with context
+ * - QUIC-native transport with UHP handshake
  */
 
-// Internal imports for use in this module
-import { ZhtpClient, createZhtpClient } from './client.js';
-import { IdentityManager } from './crypto/identity.js';
+// Error types
+export { SdkError, IdentityError, WalletError, DomainError, DeploymentError, NetworkError, ValidationError } from './error.js';
+export type { ValidationIssue, SdkResult } from './error.js';
 
-// Main client
-export { ZhtpClient, createZhtpClient } from './client.js';
+// Output abstraction
+export { ConsoleOutput, SilentOutput, MockOutput } from './output.js';
+export type { Output } from './output.js';
 
-// Managers
-export { DomainManager } from './managers/domain.js';
-export { ContentManager } from './managers/content.js';
-export { DeployManager } from './managers/deploy.js';
-export { WalletManager } from './managers/wallet.js';
-
-// Identity
-export { IdentityManager, loadIdentityFromKeystore, createIdentity } from './crypto/identity.js';
-export type { IdentityConfig } from './crypto/identity.js';
-
-// Crypto utilities
+// Identity and keystore
 export {
-  blake3Hash,
-  calculateContentHash,
-  bytesToHex,
-  hexToBytes,
-  base64Encode,
-  base64Decode,
-  stringToBytes,
-  bytesToString,
-  calculateDomainFee,
-  validateDomain,
+  loadIdentityFromKeystore,
   generateDid,
   extractPublicKeyFromDid,
-} from './crypto/utils.js';
+  createIdentity,
+  validateIdentity,
+  serializeIdentity,
+} from './identity.js';
+export type { LoadedIdentity, ZhtpIdentity, KeyPair, PrivateKeyMaterial } from './identity.js';
 
-// Transport
-export { HttpTransport } from './transport/http.js';
-export { HttpError } from './transport/http.js';
-export type { Transport, TransportOptions, RequestOptions, Response } from './transport/types.js';
+// Validation functions
+export {
+  validateDomain,
+  validateWalletAddress,
+  validateTransactionAmount,
+  validateWalletName,
+  validateSufficientBalance,
+  validateDid,
+  validateMetadata,
+  calculateDomainRegistrationFee,
+  calculateTransactionFee,
+} from './validation.js';
 
-// Domain types
+// Types
+export { DomainOp, WalletOp, getDomainOpConfig, getWalletOpConfig } from './types.js';
 export type {
-  RegisterOptions,
-  RegisterResult,
   DomainInfo,
-  DomainStatus,
-  DomainHistory,
-  DomainEvent,
-  TransferOptions,
-  Proof,
-  DeployOptions,
-  DeployResult,
-  UpdateOptions,
-  UpdateResult,
-  Deployment,
-  Manifest,
-  FileEntry,
-  ManifestMetadata,
-  Wallet,
-  WalletType,
-  Balance,
-  Transaction,
-  SendOptions,
-  StakeOptions,
-  UnstakeOptions,
-  Identity,
-  ClientOptions,
-  ProgressCallback,
-} from './types/domain.js';
-
-// Request types
-export type {
-  SimpleDomainRegistrationRequest,
-  DomainCheckRequest,
-  DomainLookupRequest,
-  DomainTransferRequest,
-  DomainReleaseRequest,
-  BlobUploadRequest,
-  ManifestUploadRequest,
-  ManifestContent,
-  ChunkedUploadInitRequest,
-  ChunkedUploadChunkRequest,
-  ChunkedUploadFinalizeRequest,
-  SendTransactionRequest,
-  StakeRequest,
-  UnstakeRequest,
-  SignatureVerificationRequest,
-  AuthSignRequest,
-  AuthSignResponse,
-} from './types/requests.js';
-
-// Response types
-export type {
-  ApiResponse,
-  SimpleDomainRegistrationResponse,
-  DomainCheckResponse,
-  DomainStatus as DomainStatusResponse,
-  DomainHistory as DomainHistoryResponse,
-  DomainEvent as DomainEventResponse,
-  BlobUploadResponse,
-  ManifestUploadResponse,
-  ManifestFetchResponse,
-  ChunkedUploadInitResponse,
-  ChunkedUploadChunkResponse,
-  ChunkedUploadFinalizeResponse,
-  TransactionResponse,
+  DomainRegisterRequest,
   WalletInfo,
-  Balance as BalanceResponse,
-  Transaction as TransactionHistoryResponse,
-  DeploymentResult,
-  Deployment as DeploymentResponse,
-  ErrorResponse,
-} from './types/responses.js';
+  Transaction,
+  DeployManifest,
+  FileEntry,
+  TrustConfig,
+  ZhtpClientConfig,
+} from './types.js';
 
-// Package version
-export const VERSION = '1.0.0';
-
-// Quick start helper - create a client from just a public key
-export function createClient(publicKey: string, baseUrl = 'http://localhost:8080') {
-  const identity = IdentityManager.fromPublicKey(publicKey);
-  return createZhtpClient(identity, baseUrl);
-}
+// Placeholder: TODO - Add managers and client implementation
+export const VERSION = '1.0.0-alpha';
+export const SDK_NAME = '@zhtp/sdk';

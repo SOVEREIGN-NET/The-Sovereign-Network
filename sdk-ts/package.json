@@ -1,62 +1,51 @@
 {
   "name": "@zhtp/sdk",
   "version": "1.0.0",
-  "description": "Production-ready TypeScript SDK for ZHTP/Web4 API",
+  "description": "QUIC-native TypeScript SDK for ZHTP/Web4 protocol",
   "main": "dist/index.js",
+  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": "./dist/index.mjs"
     }
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "type-check": "tsc --noEmit",
     "test": "vitest",
     "test:integration": "vitest run tests/integration",
-    "test:e2e": "vitest run tests/e2e",
-    "type-check": "tsc --noEmit",
-    "lint": "tsc --noEmit && echo 'Type checking passed'",
+    "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build && npm run test && npm run lint"
   },
   "keywords": [
     "zhtp",
     "web4",
+    "quic",
     "blockchain",
     "domains",
-    "dapps",
-    "typescript",
-    "sdk"
+    "dapps"
   ],
   "author": "SOVN Contributors",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/zhtp-community/sdk-ts.git"
-  },
-  "bugs": {
-    "url": "https://github.com/zhtp-community/sdk-ts/issues"
-  },
-  "homepage": "https://github.com/zhtp-community/sdk-ts#readme",
-  "files": [
-    "dist",
-    "src"
-  ],
-  "devDependencies": {
-    "@types/mime-types": "^3.0.1",
-    "@types/node": "^25.0.9",
-    "tsup": "^8.5.1",
-    "typescript": "^5.9.3",
-    "vitest": "^4.0.17"
-  },
-  "dependencies": {
-    "@noble/hashes": "^2.0.1",
-    "mime-types": "^3.0.2",
-    "zod": "^4.3.5"
-  },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.3.3",
+    "cbor": "^9.0.0",
+    "dotenv": "^16.3.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/cbor": "^6.0.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0",
+    "tsup": "^8.0.1",
+    "ts-node": "^10.9.1"
   }
 }
