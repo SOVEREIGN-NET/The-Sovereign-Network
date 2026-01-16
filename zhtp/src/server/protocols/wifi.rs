@@ -55,9 +55,13 @@ impl WiFiRouter {
         };
         
         // Create shared nonce cache for WiFi Direct handshakes
-        // SECURITY (HIGH-2): Persistent RocksDB cache for cross-restart replay protection
+        // SECURITY (HIGH-2): Persistent sled cache for cross-restart replay protection
         // Uses open_default() with 5-minute TTL
-        let db_path = PathBuf::from("./nonce_cache_wifi");
+        // Note: sled requires a DIRECTORY path (not a file)
+        let db_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("/var/lib"))
+            .join("zhtp")
+            .join("wifi_nonce_cache");
         let network_epoch = match lib_identity::types::node_id::get_network_genesis() {
             Ok(genesis) => lib_network::handshake::NetworkEpoch::from_genesis(genesis.as_slice()),
             Err(e) => {
@@ -81,11 +85,18 @@ impl WiFiRouter {
                 }
             }
         };
+        // Ensure the cache directory exists
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
         let nonce_cache = NonceCache::open_default(&db_path, 300, network_epoch)
             .unwrap_or_else(|e| {
-                warn!("Failed to initialize persistent nonce cache: {}, using fallback", e);
-                // Fallback: try again with different path
-                NonceCache::open_default(&PathBuf::from("/tmp/nonce_cache_wifi"), 300, network_epoch)
+                warn!("Failed to initialize persistent nonce cache at {:?}: {}, using fallback", db_path, e);
+                // Fallback: try again with /tmp path
+                let fallback_path = PathBuf::from("/tmp/zhtp/wifi_nonce_cache");
+                let _ = std::fs::create_dir_all(&fallback_path.parent().unwrap_or(&fallback_path));
+                NonceCache::open_default(&fallback_path, 300, network_epoch)
                     .expect("Failed to create WiFi nonce cache even with fallback path")
             });
         let handshake_context = HandshakeContext::new(nonce_cache);

@@ -459,7 +459,8 @@ async fn connect_to_bootstrap_peer(address: &str, local_identity: &ZhtpIdentity)
         }
     }
     
-    let cache_path = cache_dir.join("nonce_cache.db");
+    // Note: sled requires a DIRECTORY path (not a file)
+    let cache_path = cache_dir.join("nonce_cache");
     
     // Use the standard open_default method for secure nonce cache
     // Derive network epoch from genesis hash (uses environment-appropriate fallback)
