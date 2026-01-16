@@ -7,11 +7,9 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Traits for client and output injection
 
-use crate::argument_parsing::{MonitorArgs, MonitorAction, ZhtpCli, format_output};
-use crate::commands::web4_utils::connect_default;
-use crate::error::{CliResult, CliError};
+use crate::argument_parsing::{MonitorArgs, MonitorAction, ZhtpCli};
+use crate::error::CliResult;
 use crate::output::Output;
-use lib_network::client::ZhtpClient;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -94,46 +92,27 @@ pub async fn handle_monitor_command(
 /// 4. Returns proper error types
 async fn handle_monitor_command_impl(
     args: MonitorArgs,
-    cli: &ZhtpCli,
+    _cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
     let endpoint = action_to_endpoint(&args.action);
 
-    output.info(&format!("Fetching {}...", endpoint.description()))?;
+    // Note: The /api/v1/monitor/* endpoints are not yet implemented on the server.
+    // This command is a placeholder for future monitoring functionality.
+    output.warning(&format!(
+        "Monitoring endpoint '{}' is not yet implemented on the server.",
+        endpoint.endpoint_path()
+    ))?;
+    output.info(&format!(
+        "The {} functionality will be available in a future server release.",
+        endpoint.description().to_lowercase()
+    ))?;
 
-    // Connect using default keystore with bootstrap mode
-    let client = connect_default(&cli.server).await?;
-
-    fetch_and_display_monitoring(&client, endpoint, cli, output).await
-}
-
-/// Fetch monitoring data and display it via QUIC
-async fn fetch_and_display_monitoring(
-    client: &ZhtpClient,
-    endpoint: MonitoringEndpoint,
-    cli: &ZhtpCli,
-    output: &dyn Output,
-) -> CliResult<()> {
-    let response = client
-        .get(endpoint.endpoint_path())
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.endpoint_path().to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let result: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.endpoint_path().to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
-    let formatted = format_output(&result, &cli.format)?;
-    output.header(endpoint.title())?;
-    output.print(&formatted)?;
     Ok(())
 }
+
+// Note: fetch_and_display_monitoring removed - monitoring endpoints not implemented server-side.
+// Will be restored when /api/v1/monitor/* endpoints are available.
 
 // ============================================================================
 // TESTS - Pure logic is testable without mocks or side effects
