@@ -24,6 +24,7 @@ import { encodeRequest, decodeResponse, computeRequestMac, incrementSequence } f
  */
 export class ZhtpQuicClient {
   private connection: AuthenticatedConnection | null = null;
+  private quicConnection: any = null; // @matrixai/quic QUICConnection
   private config: QuicClientConfig;
   private identity: ZhtpIdentity;
   private trustConfig: TrustConfig;
@@ -49,28 +50,14 @@ export class ZhtpQuicClient {
 
   /**
    * Connect and perform UHP handshake over real QUIC transport
-   * Uses @matrixai/quic if available, otherwise falls back with instructions
+   * Establishes QUIC connection then performs cryptographic authentication
    */
   async connect(): Promise<ConnectionResult> {
     try {
       await this.output.info(`Connecting to ${this.config.quicEndpoint}`);
 
-      // Attempt to load real QUIC library
-      let QuicModule;
-      try {
-        QuicModule = await import('@matrixai/quic');
-      } catch {
-        await this.output.warning(
-          'Real QUIC transport not available. Install with: npm install @matrixai/quic',
-        );
-        await this.output.error(
-          'QUIC connectivity requires native bindings. This SDK now requires actual QUIC transport.',
-        );
-        return {
-          connected: false,
-          error: 'QUIC transport not configured. Install @matrixai/quic for real network connectivity.',
-        };
-      }
+      // Establish real QUIC connection to remote node
+      await this.establishQUICConnection();
 
       // Phase 1: Create ClientHello with UHP handshake
       const nonce = this.generateNonce();
@@ -91,7 +78,7 @@ export class ZhtpQuicClient {
       };
 
       const phase1Hash = hashHandshakePhase1(clientHello, serverHello);
-      const clientSignature = createDilithium5Signature(phase1Hash);
+      const clientSignature = await createDilithium5Signature(phase1Hash);
 
       createClientFinish(serverHello.sessionId, clientHello, serverHello, clientSignature);
 
@@ -104,7 +91,7 @@ export class ZhtpQuicClient {
       // In real implementation: Receive kyberCiphertext from server
       // For now: Use zeros (in production server provides real ciphertext)
       const kyberCiphertext = new Uint8Array(768);
-      const kyberSharedSecret = kyber512Decapsulate(new Uint8Array(32), kyberCiphertext);
+      const kyberSharedSecret = await kyber512Decapsulate(new Uint8Array(32), kyberCiphertext);
 
       if (this.config.debug) {
         await this.output.debug(`Kyber512 shared secret derived (${kyberSharedSecret.length} bytes)`);
@@ -184,7 +171,7 @@ export class ZhtpQuicClient {
 
       // Send request over QUIC and receive response
       // This requires actual QUIC transport - will throw if @matrixai/quic not installed
-      const timeout = options?.timeout || this.config.timeout;
+      const timeout = options?.timeout ?? this.config.timeout;
       const responseFrame = await this.sendQUICRequest(encodedRequest, timeout);
 
       // Decode response from wire format
@@ -211,28 +198,82 @@ export class ZhtpQuicClient {
 
   /**
    * Send QUIC request and receive response over real QUIC transport
-   * Requires @matrixai/quic library installed
+   * Uses @matrixai/quic for bidirectional stream communication
    */
-  private async sendQUICRequest(encodedRequest: Uint8Array, timeout: number): Promise<Uint8Array> {
-    try {
-      const QuicModule = await import('@matrixai/quic');
-      // Use @matrixai/quic Client to send request
-      // This is a placeholder - actual implementation requires:
-      // 1. Creating a QUIC client connection
-      // 2. Opening a bidirectional stream
-      // 3. Sending the encoded request
-      // 4. Reading the response with timeout
+  private async sendQUICRequest(encodedRequest: Uint8Array, timeout: number | undefined): Promise<Uint8Array> {
+    const actualTimeout = timeout ?? 30000;
+    if (!this.quicConnection) {
+      throw new NetworkError('QUIC connection not established', {
+        endpoint: this.config.quicEndpoint,
+      });
+    }
 
-      // For now: Throw clear error indicating @matrixai/quic setup needed
-      throw new Error(
-        'Real QUIC transport requires @matrixai/quic setup. ' +
-          'Install with: npm install @matrixai/quic. ' +
-          'Then initialize client and streams for bidirectional communication.',
-      );
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('Real QUIC transport requires')) {
-        throw error;
+    try {
+      // Open bidirectional stream for this request
+      const stream = await this.quicConnection.openStream(true);
+
+      if (!stream) {
+        throw new Error('Failed to open QUIC stream');
       }
+
+      // Send the encoded request (4-byte framing + CBOR payload)
+      await stream.write(encodedRequest);
+
+      // Read response with timeout
+      const responseChunks: Uint8Array[] = [];
+      const startTime = Date.now();
+
+      // Read response frame (must have at least 4-byte length header)
+      let lengthBuffer = new Uint8Array(4);
+      let bytesRead = 0;
+
+      // Read 4-byte length prefix (big-endian)
+      while (bytesRead < 4) {
+        if (Date.now() - startTime > actualTimeout) {
+          throw new Error(`QUIC request timeout (${actualTimeout}ms)`);
+        }
+        const chunk = await stream.read(4 - bytesRead);
+        if (!chunk || chunk.length === 0) {
+          throw new Error('QUIC stream closed unexpectedly');
+        }
+        lengthBuffer.set(chunk, bytesRead);
+        bytesRead += chunk.length;
+      }
+
+      // Parse length
+      const view = new DataView(lengthBuffer.buffer);
+      const messageLength = view.getUint32(0, false); // big-endian
+
+      if (messageLength > 16 * 1024 * 1024) {
+        throw new Error(`Response too large: ${messageLength} bytes (max 16MB)`);
+      }
+
+      // Read message body
+      let bodyBytesRead = 0;
+      const bodyBuffer = new Uint8Array(messageLength);
+
+      while (bodyBytesRead < messageLength) {
+        if (Date.now() - startTime > actualTimeout) {
+          throw new Error(`QUIC request timeout (${actualTimeout}ms)`);
+        }
+        const chunk = await stream.read(messageLength - bodyBytesRead);
+        if (!chunk || chunk.length === 0) {
+          throw new Error('QUIC stream closed before all data received');
+        }
+        bodyBuffer.set(chunk, bodyBytesRead);
+        bodyBytesRead += chunk.length;
+      }
+
+      // Combine length prefix + body
+      const fullResponse = new Uint8Array(4 + messageLength);
+      fullResponse.set(lengthBuffer);
+      fullResponse.set(bodyBuffer, 4);
+
+      // Close stream
+      await stream.destroy();
+
+      return fullResponse;
+    } catch (error) {
       throw new NetworkError(`QUIC request failed: ${error instanceof Error ? error.message : 'unknown'}`, {
         endpoint: this.config.quicEndpoint,
         requestSize: encodedRequest.length,
@@ -241,12 +282,56 @@ export class ZhtpQuicClient {
   }
 
   /**
-   * Close connection
+   * Establish real QUIC connection to remote node
+   * Requires @matrixai/quic library installed
+   */
+  private async establishQUICConnection(): Promise<void> {
+    try {
+      // Dynamically import @matrixai/quic to avoid hard dependency issues
+      // @ts-ignore - dynamic import of @matrixai/quic
+      const QuicModule = await import('@matrixai/quic');
+
+      const [host, port] = this.config.quicEndpoint.includes(':')
+        ? this.config.quicEndpoint.split(':')
+        : [this.config.quicEndpoint, '2048'];
+
+      const portNum = parseInt(port, 10);
+
+      // Create QUIC client connection (simplified for now)
+      // In production: use real certificate validation based on trustConfig
+      const quicClient = new QuicModule.QUICClient({
+        host,
+        port: portNum,
+        maxIdleTimeout: this.config.timeout,
+        alpn: ['zhtp/1.0'], // ZHTP protocol identifier
+      });
+
+      // Connect to ZHTP node
+      this.quicConnection = await quicClient.connect();
+
+      if (this.config.debug) {
+        await this.output.debug(`QUIC connection established to ${host}:${portNum}`);
+      }
+    } catch (error) {
+      throw new NetworkError(`Failed to establish QUIC connection: ${error instanceof Error ? error.message : 'unknown'}`, {
+        endpoint: this.config.quicEndpoint,
+      });
+    }
+  }
+
+  /**
+   * Close both authenticated session and QUIC connection
    */
   async disconnect(): Promise<void> {
     if (this.connection) {
       await this.output.info(`Disconnecting from ${this.connection.peerId}`);
       this.connection = null;
+    }
+
+    if (this.quicConnection) {
+      await this.quicConnection.destroy();
+      this.quicConnection = null;
+      await this.output.info('QUIC connection closed');
     }
   }
 
