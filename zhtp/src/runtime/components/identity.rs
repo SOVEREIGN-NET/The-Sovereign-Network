@@ -199,11 +199,12 @@ pub fn create_default_storage_config() -> Result<lib_storage::UnifiedStorageConf
     use lib_identity::NodeId;
 
     // Set up persistence path under ~/.zhtp/storage/
+    // Note: sled requires a DIRECTORY path, not a file path
     let zhtp_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join(".zhtp")
         .join("storage");
-    let dht_persist_path = zhtp_dir.join("dht_storage.bin");
+    let dht_persist_path = zhtp_dir.join("dht_db");
 
     Ok(UnifiedStorageConfig {
         node_id: NodeId::from_bytes([1u8; 32]),
