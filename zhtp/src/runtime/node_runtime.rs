@@ -102,6 +102,10 @@ impl NodeRole {
         matches!(self, NodeRole::LightNode | NodeRole::MobileNode)
     }
 
+    pub fn is_edge_node(&self) -> bool {
+        matches!(self, NodeRole::LightNode | NodeRole::MobileNode)
+    }
+
     pub fn stores_full_blockchain(&self) -> bool {
         matches!(self, NodeRole::FullValidator | NodeRole::Observer | NodeRole::ArchivalNode)
     }
