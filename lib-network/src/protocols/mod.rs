@@ -54,14 +54,18 @@ pub mod quic_encryption;         // QUIC application-level encryption adapter
 pub mod lorawan_encryption;      // LoRaWAN encryption adapter with frame counter domain separation
 
 // Other protocols
+#[cfg(feature = "mdns")]
 pub mod wifi_direct;
 pub mod wifi_direct_handshake; // UHP handshake adapter for WiFi Direct
 pub mod lorawan;
 pub mod satellite;
 pub mod zhtp_auth;
 pub mod zhtp_encryption;
+#[cfg(feature = "quic")]
 pub mod quic_mesh;           // QUIC transport with PQC encryption
+#[cfg(feature = "quic")]
 pub mod quic_handshake;      // UHP handshake adapter for QUIC with Kyber binding
+#[cfg(feature = "quic")]
 pub mod quic_api_dispatcher; // QUIC API request dispatcher for Web4 client
 
 // Enhanced protocol implementations with platform-specific optimizations

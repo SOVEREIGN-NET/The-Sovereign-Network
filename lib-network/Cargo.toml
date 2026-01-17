@@ -93,22 +93,19 @@ socket2 = "0.5"
 # Async utilities
 futures = "0.3"
 
-# REQUIRED for LoRaWAN hardware communication
-serialport = "4.2"           # USB LoRaWAN modules (NEEDED)
+# REQUIRED for LoRaWAN hardware communication (optional for mobile builds)
+serialport = { version = "4.2", optional = true }  # USB LoRaWAN modules
 
-# WiFi Direct P2P and service discovery
-mdns-sd = "0.16"                                  # mDNS service discovery (Bonjour/Zeroconf) - latest stable version
-# WPS functionality will be implemented using standard networking crates
+# WiFi Direct P2P and service discovery (optional for mobile builds)
+mdns-sd = { version = "0.16", optional = true }    # mDNS service discovery (Bonjour/Zeroconf)
 
-# QUIC protocol (modern transport replacing TCP/UDP split)
-# NOTE: QUIC integration ready but commented out until cmake/NASM dependencies resolved
-quinn = "0.11"                                    # Production-ready QUIC implementation (used by Google, Cloudflare)
-rustls = { version = "0.23", default-features = false, features = ["ring"] } # TLS 1.3 library (used by quinn)
-rustls-pemfile = "2.1"                              # PEM file parsing for persistent TLS certificates
-rustls-native-certs = "0.7"                         # Native root certificates for strict TLS verification
-rcgen = "0.14.5"                                    # Certificate generation for QUIC
-x509-parser = "0.16"                                # X.509 certificate parsing for SPKI extraction
-#To enable: Install cmake and NASM, then uncomment above lines
+# QUIC protocol (optional for mobile builds - iOS uses Network.framework)
+quinn = { version = "0.11", optional = true }                                    # Production-ready QUIC implementation
+rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true } # TLS 1.3 library
+rustls-pemfile = { version = "2.1", optional = true }                            # PEM file parsing
+rustls-native-certs = { version = "0.7", optional = true }                       # Native root certificates
+rcgen = { version = "0.14.5", optional = true }                                  # Certificate generation for QUIC
+x509-parser = { version = "0.16", optional = true }                              # X.509 certificate parsing
 
 # Enhanced parsing and crypto for production implementations
 quick-xml = { version = "0.31", optional = true }  # XML parsing for D-Bus responses
@@ -192,7 +189,18 @@ name = "lib_network"
 path = "src/lib.rs"
 
 [features]
-default = []                      # Minimal default; opt into storage/chain integration via features
+default = ["full"]                # Full features by default for backwards compatibility
+full = ["quic", "mdns", "lorawan"] # All transport protocols enabled
+
+# Transport protocol features (for mobile builds, disable these)
+quic = ["quinn", "rustls", "rustls-pemfile", "rustls-native-certs", "rcgen", "x509-parser"]  # QUIC transport
+mdns = ["mdns-sd"]                # mDNS service discovery
+lorawan = ["serialport"]          # LoRaWAN hardware support
+
+# Minimal build for mobile FFI (handshake + crypto only, no transport deps)
+handshake-only = []               # Just UHP handshake, no quinn/serialport/mdns
+
+# Platform-specific features
 windows-gatt = []                 # Windows GATT Server (BLE advertising) - always available on Windows with WinRT
 macos-corebluetooth = []          # macOS Core Bluetooth support
 linux-dbus = ["dbus", "dbus-tokio"] # Direct D-Bus BlueZ integration
