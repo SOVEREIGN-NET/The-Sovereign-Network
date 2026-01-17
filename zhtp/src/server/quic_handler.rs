@@ -96,8 +96,8 @@ struct TrackedConnection {
 /// Session state for authenticated control plane connections
 /// Created after successful UHP+Kyber handshake
 pub struct ControlPlaneSession {
-    /// Session ID from UHP handshake
-    pub session_id: [u8; 16],
+    /// Session ID from UHP handshake (v2: 32 bytes)
+    pub session_id: [u8; 32],
     /// Authenticated peer DID
     pub peer_did: String,
     /// Application-layer MAC key derived from master key
@@ -116,16 +116,13 @@ pub enum ConnectionMode {
     /// Allows: domain resolution, manifest fetch, content/blob retrieval
     /// Rejects: deploy, domain registration, admin operations, any mutations
     Public,
-    /// Control plane v1: UHP handshake required, then authenticated API requests
-    /// ALPN: zhtp-uhp/1
-    ControlPlane,
-    /// Control plane v2: UHP v2 handshake with transcript hash, HKDF-SHA3-256 key derivation
-    /// ALPN: zhtp-uhp/2
+    /// Control plane: UHP v2 handshake with transcript hash, HKDF-SHA3-256 key derivation
+    /// ALPN: zhtp-uhp/1 or zhtp-uhp/2 (both use v2 protocol)
     /// Features:
     /// - 32-byte session_id
     /// - HMAC-SHA3-256 request MAC
     /// - Canonical request format: method(1) + path_len(u16BE) + path + body_len(u32BE) + body + counter(u64BE) + session_id(32)
-    ControlPlaneV2,
+    ControlPlane,
     /// Mesh peer-to-peer: UHP handshake, then encrypted mesh messages
     /// ALPN: zhtp-mesh/1
     Mesh,
@@ -136,8 +133,8 @@ impl ConnectionMode {
     pub fn from_alpn(alpn: Option<&[u8]>) -> Self {
         match alpn {
             Some(b"zhtp-public/1") => ConnectionMode::Public,
-            Some(b"zhtp-uhp/1") => ConnectionMode::ControlPlane,
-            Some(b"zhtp-uhp/2") => ConnectionMode::ControlPlaneV2,
+            // Both v1 and v2 ALPN use the v2 protocol (v1 is deprecated but accepted for compatibility)
+            Some(b"zhtp-uhp/1") | Some(b"zhtp-uhp/2") => ConnectionMode::ControlPlane,
             Some(b"zhtp-mesh/1") => ConnectionMode::Mesh,
             _ => ConnectionMode::Public, // Default to public read-only for unknown (safe default)
         }
@@ -417,11 +414,7 @@ impl QuicHandler {
                 self.handle_public_connection(connection, peer_addr).await
             }
             ConnectionMode::ControlPlane => {
-                // Control plane v1: Perform UHP handshake, then handle authenticated API requests
-                self.handle_control_plane_connection(connection, peer_addr).await
-            }
-            ConnectionMode::ControlPlaneV2 => {
-                // Control plane v2: UHP v2 handshake with HKDF-SHA3-256 key derivation
+                // Control plane: UHP v2 handshake with HKDF-SHA3-256 key derivation
                 self.handle_control_plane_v2_connection(connection, peer_addr).await
             }
             ConnectionMode::Mesh => {
@@ -434,76 +427,18 @@ impl QuicHandler {
     /// Handle control plane connection (CLI, Web4 deploy, admin APIs)
     ///
     /// Protocol flow:
-    /// 1. Perform UHP+Kyber handshake to authenticate client
-    /// 2. Derive session keys and create authenticated session
-    /// 3. Accept streams with authenticated API requests
-    async fn handle_control_plane_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
-        info!("🔐 Control plane connection from {} - starting UHP handshake", peer_addr);
-
-        // Perform UHP+Kyber handshake with common setup (uses global nonce cache)
-        let (identity, handshake_result) = self.perform_uhp_handshake(
-            &connection,
-            &peer_addr,
-        ).await?;
-
-        let peer_did = handshake_result.verified_peer.identity.did.clone();
-        let session_id = handshake_result.session_id;
-        let master_key = handshake_result.master_key;
-
-        // Derive application-layer MAC key (same derivation as client)
-        let app_key = Self::derive_app_key(&master_key, &session_id, &identity.did, &peer_did);
-
-        info!(
-            peer_did = %peer_did,
-            session_id = ?hex::encode(&session_id[..8]),
-            "✅ Control plane authenticated from {} (PQC encryption active)",
-            peer_addr
-        );
-
-        // Auto-register the authenticated peer identity
-        // Authentication IS registration: successful UHP+Kyber proves identity control
-        self.auto_register_peer_identity(&handshake_result.verified_peer.identity).await;
-
-        // Create session state for authenticated requests
-        let session = ControlPlaneSession {
-            session_id,
-            peer_did: peer_did.clone(),
-            app_key,
-            created_at: Instant::now(),
-            sequence_window: std::sync::atomic::AtomicU64::new(0),
-        };
-
-        // Handle streams with this authenticated session
-        self.handle_control_plane_streams(connection, session, peer_addr).await
-    }
-
-    /// Derive application-layer MAC key from master key (v1)
-    /// MUST match client-side derivation in Web4Client/ZhtpClient
-    fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], server_did: &str, client_did: &str) -> [u8; 32] {
-        let mut input = Vec::new();
-        input.extend_from_slice(b"zhtp-web4-app-mac");
-        input.extend_from_slice(master_key);
-        input.extend_from_slice(session_id);
-        input.extend_from_slice(server_did.as_bytes());  // Server DID
-        input.extend_from_slice(client_did.as_bytes());  // Client DID
-        lib_crypto::hash_blake3(&input)
-    }
-
-    /// Handle control plane v2 connection (mobile apps with v2 key schedule)
-    ///
-    /// Protocol flow:
     /// 1. Perform UHP v2 handshake to authenticate client
     /// 2. Derive v2 session keys using HKDF-SHA3-256 with transcript hash
     /// 3. Create V2Session with 32-byte session_id and monotonic counter
     /// 4. Accept streams with v2 MAC verification (HMAC-SHA3-256)
     ///
-    /// Key differences from v1:
-    /// - 32-byte session_id (vs 16-byte in v1)
-    /// - HKDF-SHA3-256 with transcript hash salt (vs Blake3 in v1)
-    /// - HMAC-SHA3-256 request MAC (vs Blake3 in v1)
+    /// Security properties:
+    /// - 32-byte session_id
+    /// - HKDF-SHA3-256 with transcript hash salt
+    /// - HMAC-SHA3-256 request MAC
     /// - Canonical request format with counter and session_id binding
     async fn handle_control_plane_v2_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
-        info!("🔐 Control plane v2 connection from {} - starting UHP v2 handshake", peer_addr);
+        info!("🔐 Control plane connection from {} - starting UHP v2 handshake", peer_addr);
 
         // Perform UHP+Kyber handshake (same as v1, but we'll derive keys differently)
         let (identity, handshake_result) = self.perform_uhp_handshake(
@@ -512,29 +447,19 @@ impl QuicHandler {
         ).await?;
 
         let peer_did = handshake_result.verified_peer.identity.did.clone();
-        let master_key = handshake_result.master_key;
+        let session_key = handshake_result.session_key;
 
-        // For v2, we need the transcript hash for HKDF derivation
-        // The transcript hash should be available from the handshake result
-        // For now, we compute it from available data (this will be improved when
-        // the handshake module fully supports v2)
-        let transcript_hash = lib_crypto::hash_blake3(&[
-            &master_key[..],
-            &handshake_result.session_id[..],
-            identity.did.as_bytes(),
-            peer_did.as_bytes(),
-        ].concat());
+        // For v2, we use the handshake_hash from the result (UHP transcript hash)
+        let transcript_hash = handshake_result.handshake_hash;
 
         // Derive v2 session keys using HKDF-SHA3-256
         let v2_keys = lib_network::handshake::security::derive_v2_session_keys(
-            &master_key,
+            &session_key,
             &transcript_hash,
         ).context("Failed to derive v2 session keys")?;
 
-        // Generate 32-byte session_id for v2
-        let mut session_id_v2 = [0u8; 32];
-        use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut session_id_v2);
+        // Use the 32-byte session_id from the handshake result
+        let session_id_v2 = handshake_result.session_id;
 
         info!(
             peer_did = %peer_did,
@@ -1021,7 +946,7 @@ impl QuicHandler {
             connection.clone(),
             peer_addr,
             handshake_result.verified_peer,
-            handshake_result.master_key,
+            handshake_result.session_key,
             handshake_result.session_id,
             false,
         );
@@ -1238,7 +1163,7 @@ impl QuicHandler {
     /// - Mutual authentication via Dilithium signatures (verified by UHP)
     /// - NodeId verification: validates Blake3(DID || device_name)
     /// - Replay attack prevention via nonce cache
-    /// - Post-quantum security via Kyber512 KEM bound to UHP transcript
+    /// - Post-quantum security via Kyber1024 KEM bound to UHP transcript
     /// - Master key derived from both UHP session key and Kyber shared secret
     async fn handle_pqc_handshake_stream(
         &self,
@@ -1286,7 +1211,7 @@ impl QuicHandler {
             connection.clone(),
             peer_addr,
             handshake_result.verified_peer,
-            handshake_result.master_key,
+            handshake_result.session_key,
             handshake_result.session_id,
             false,
         );
@@ -1330,7 +1255,7 @@ impl QuicHandler {
         }
 
         // Get connection and validate authentication (P1-3: Authentication checks before decryption)
-        let (master_key, _connection_age) = {
+        let (session_key, _connection_age) = {
             let connections = self.pqc_connections.read().await;
             let tracked = connections.get(&peer_node_id.to_vec())
                 .ok_or_else(|| anyhow!("No PQC connection for peer - not authenticated"))?;
@@ -1342,9 +1267,9 @@ impl QuicHandler {
                 return Err(anyhow!("Connection expired - please re-authenticate"));
             }
 
-            // Verify master key exists (from UHP+Kyber handshake)
-            let key = tracked.connection.get_master_key_ref()
-                .ok_or_else(|| anyhow!("No master key for peer - handshake incomplete"))?;
+            // Verify session key exists (from UHP+Kyber handshake)
+            let key = tracked.connection.get_session_key_ref()
+                .ok_or_else(|| anyhow!("No session key for peer - handshake incomplete"))?;
 
             (*key, age)
         };
@@ -1352,8 +1277,8 @@ impl QuicHandler {
         // Update activity timestamp
         self.update_connection_activity(&peer_node_id).await;
 
-        // Decrypt with master key (derived from UHP+Kyber handshake)
-        let decrypted = lib_crypto::symmetric::chacha20::decrypt_data(&message_data, &master_key)
+        // Decrypt with session key (derived from UHP+Kyber handshake)
+        let decrypted = lib_crypto::symmetric::chacha20::decrypt_data(&message_data, &session_key)
             .context("Failed to decrypt mesh message - possible tampering")?;
 
         // Deserialize mesh message with size validation

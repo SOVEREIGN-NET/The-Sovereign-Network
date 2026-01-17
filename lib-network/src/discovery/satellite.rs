@@ -37,11 +37,11 @@ pub async fn discover_satellite_uplinks() -> Result<Vec<SatelliteInfo>> {
 
 /// Discover satellite uplinks with pre-detected hardware capabilities (avoids duplicate detection)
 pub async fn discover_satellite_uplinks_with_capabilities(_capabilities: &HardwareCapabilities) -> Result<Vec<SatelliteInfo>> {
-    println!("🛰️ Scanning for satellite uplinks...");
-    
+    tracing::debug!("🛰️ Scanning for satellite uplinks...");
+
     // Check for actual satellite modem hardware
     if !has_satellite_hardware().await {
-        println!("🛰️ No satellite hardware detected - skipping satellite discovery");
+        tracing::debug!("🛰️ No satellite hardware detected - skipping satellite discovery");
         return Ok(Vec::new());
     }
     

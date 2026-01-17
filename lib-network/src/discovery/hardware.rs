@@ -1,11 +1,15 @@
 //! Hardware detection utilities
-//! 
+//!
 //! Cross-platform hardware detection for mesh networking protocols
 
 use anyhow::Result;
 use tracing::{info, debug};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use super::lorawan_hardware::LoRaWANHardware;
+
+/// Global cache for hardware capabilities (detected once at startup)
+static HARDWARE_CACHE: OnceLock<HardwareCapabilities> = OnceLock::new();
 
 /// Hardware capabilities detected on the system
 #[derive(Debug, Clone, Default)]
@@ -36,26 +40,38 @@ pub struct HardwareDevice {
 }
 
 impl HardwareCapabilities {
-    /// Detect all available hardware capabilities
+    /// Detect all available hardware capabilities (cached after first call)
+    ///
+    /// Hardware detection is expensive and results don't change at runtime,
+    /// so we cache the result after the first detection.
     pub async fn detect() -> Result<Self> {
+        // Return cached result if already detected
+        if let Some(cached) = HARDWARE_CACHE.get() {
+            debug!("Using cached hardware capabilities (no hardware re-detection needed)");
+            return Ok(cached.clone());
+        }
+
         info!("Detecting available mesh networking hardware...");
-        
+
         let mut capabilities = Self::default();
-        
+
         // Detect LoRaWAN hardware
         capabilities.detect_lorawan().await?;
-        
+
         // Detect Bluetooth hardware
         capabilities.bluetooth_available = detect_bluetooth_hardware(&mut capabilities.hardware_details).await;
-        
+
         // Detect WiFi Direct hardware
         capabilities.wifi_direct_available = detect_wifi_direct_hardware(&mut capabilities.hardware_details).await;
-        
+
         info!("Hardware detection completed:");
         info!("   LoRaWAN: {}", if capabilities.lorawan_available() { "Available" } else { "Not detected" });
         info!("    Bluetooth LE: {}", if capabilities.bluetooth_available { "Available" } else { "Not detected" });
         info!("   WiFi Direct: {}", if capabilities.wifi_direct_available { "Available" } else { "Not detected" });
-        
+
+        // Cache the result for future calls
+        let _ = HARDWARE_CACHE.set(capabilities.clone());
+
         Ok(capabilities)
     }
     
