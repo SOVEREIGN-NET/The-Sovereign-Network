@@ -93,20 +93,11 @@ struct TrackedConnection {
     last_activity: Instant,
 }
 
-/// Session state for authenticated control plane connections
-/// Created after successful UHP+Kyber handshake
-pub struct ControlPlaneSession {
-    /// Session ID from UHP handshake (v2: 32 bytes)
-    pub session_id: [u8; 32],
-    /// Authenticated peer DID
-    pub peer_did: String,
-    /// Application-layer MAC key derived from master key
-    pub app_key: [u8; 32],
-    /// Session creation time for expiration checks
-    pub created_at: Instant,
-    /// Sequence number window for replay protection
-    pub sequence_window: std::sync::atomic::AtomicU64,
-}
+/// DEPRECATED: ControlPlaneSession replaced by V2Session in PR #816
+/// V2Session provides HMAC-SHA3-256 MAC verification with monotonic counter replay protection.
+/// This struct is kept for reference but is no longer instantiated.
+// Old code paths using ControlPlaneSession were replaced by handle_control_plane_v2_connection
+// which uses lib_network::protocols::types::session::V2Session for full UHP v2 support.
 
 /// Connection mode based on negotiated ALPN
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -778,146 +769,11 @@ impl QuicHandler {
         }
     }
 
-    /// Handle authenticated control plane streams
-    async fn handle_control_plane_streams(
-        &self,
-        connection: Connection,
-        session: ControlPlaneSession,
-        peer_addr: SocketAddr,
-    ) -> Result<()> {
-        let session = Arc::new(session);
-
-        loop {
-            let stream_result = tokio::time::timeout(
-                CLIENT_IDLE_TIMEOUT,
-                connection.accept_bi()
-            ).await;
-
-            match stream_result {
-                Ok(Ok((send, recv))) => {
-                    let handler = self.clone();
-                    let session = session.clone();
-
-                    tokio::spawn(async move {
-                        if let Err(e) = handler.handle_authenticated_stream(recv, send, &session).await {
-                            warn!("⚠️ Control plane stream error from {}: {}", peer_addr, e);
-                        }
-                    });
-                }
-                Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
-                    debug!("🔒 Control plane connection closed from {}", peer_addr);
-                    break;
-                }
-                Ok(Err(e)) => {
-                    warn!("⚠️ Control plane stream error from {}: {}", peer_addr, e);
-                    break;
-                }
-                Err(_) => {
-                    debug!("⏱️ Control plane connection idle timeout from {}", peer_addr);
-                    break;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Handle a single authenticated stream (ZHTP wire protocol)
-    ///
-    /// After UHP handshake, all streams use ZHTP length-prefixed CBOR format.
-    /// No protocol detection or HTTP fallback - the connection mode was already
-    /// determined by ALPN negotiation.
-    async fn handle_authenticated_stream(
-        &self,
-        mut recv: RecvStream,
-        mut send: SendStream,
-        session: &ControlPlaneSession,
-    ) -> Result<()> {
-        use lib_protocols::wire::{read_request, write_response, ZhtpResponseWire};
-        use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
-
-        // Read ZHTP wire request (length-prefixed CBOR)
-        let wire_request = read_request(&mut recv).await
-            .context("Failed to read ZHTP wire request")?;
-
-        debug!(
-            request_id = %wire_request.request_id_hex(),
-            uri = %wire_request.request.uri,
-            method = ?wire_request.request.method,
-            has_auth = wire_request.auth_context.is_some(),
-            peer_did = %session.peer_did,
-            "Received authenticated ZHTP request"
-        );
-
-        // Validate auth context if present
-        if let Some(ref auth_ctx) = wire_request.auth_context {
-            // Verify session ID matches
-            if auth_ctx.session_id != session.session_id {
-                warn!("Session ID mismatch in auth context");
-                let error_response = ZhtpResponseWire::error(
-                    wire_request.request_id,
-                    ZhtpStatus::Unauthorized,
-                    "Invalid session".to_string(),
-                );
-                write_response(&mut send, &error_response).await?;
-                return Ok(());
-            }
-
-            // Verify client DID matches
-            if auth_ctx.client_did != session.peer_did {
-                warn!("Client DID mismatch in auth context");
-                let error_response = ZhtpResponseWire::error(
-                    wire_request.request_id,
-                    ZhtpStatus::Unauthorized,
-                    "Invalid client".to_string(),
-                );
-                write_response(&mut send, &error_response).await?;
-                return Ok(());
-            }
-
-            // Verify MAC using canonical request hash
-            use lib_protocols::wire::ZhtpRequestWire;
-            let request_hash = ZhtpRequestWire::compute_canonical_request_hash(
-                &wire_request.request,
-                &wire_request.request_id,
-                wire_request.timestamp_ms,
-            );
-            if !auth_ctx.verify(&session.app_key, &request_hash) {
-                warn!("MAC verification failed for authenticated request");
-                let error_response = ZhtpResponseWire::error(
-                    wire_request.request_id,
-                    ZhtpStatus::Unauthorized,
-                    "Invalid MAC".to_string(),
-                );
-                write_response(&mut send, &error_response).await?;
-                return Ok(());
-            }
-        }
-
-        // Route request through ZHTP router
-        let mut request = wire_request.request;
-        request.requester = Some(lib_crypto::Hash(lib_crypto::hash_blake3(session.peer_did.as_bytes())));
-
-        let router = self.zhtp_router.read().await;
-        let response = router.route_request(request).await
-            .unwrap_or_else(|e| {
-                warn!("Handler error: {}", e);
-                ZhtpResponse::error(ZhtpStatus::InternalServerError, e.to_string())
-            });
-
-        // Send wire response (length-prefixed CBOR)
-        let wire_response = ZhtpResponseWire::success(wire_request.request_id, response);
-        write_response(&mut send, &wire_response).await
-            .context("Failed to write ZHTP wire response")?;
-
-        // Properly close the stream so client can read the response
-        // Without this, the stream is abruptly terminated when the function returns,
-        // causing "Socket is not connected" errors on the client side
-        send.finish()
-            .context("Failed to finish QUIC stream")?;
-
-        Ok(())
-    }
+    // REMOVED: handle_control_plane_streams() and handle_authenticated_stream()
+    // These functions were using ControlPlaneSession (16-byte session_id) and old v1 auth.
+    // Replaced by handle_control_plane_v2_streams() which uses V2Session (32-byte session_id)
+    // with HMAC-SHA3-256 request MAC verification and monotonic counter replay protection.
+    // See PR #816 for UHP v2 session authentication protocol upgrade.
 
     /// Handle mesh peer connection (node-to-node)
     async fn handle_mesh_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
