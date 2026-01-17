@@ -11,7 +11,7 @@ pub mod network_isolation;
 
 use anyhow::Result;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Re-export configuration types
 pub use aggregation::NodeConfig;
@@ -19,6 +19,36 @@ pub use mesh_modes::MeshMode;
 pub use security::SecurityLevel;
 pub use environment::Environment;
 pub use network_isolation::NetworkIsolationConfig;
+
+/// Configuration for identity seed storage.
+#[derive(Debug, Clone)]
+pub struct SeedStorageConfig {
+    pub storage_dir: PathBuf,
+    pub file_name: String,
+}
+
+impl SeedStorageConfig {
+    pub fn default_for_keystore(keystore_path: &Path) -> Self {
+        Self {
+            storage_dir: keystore_path.to_path_buf(),
+            file_name: "seed_storage.json".to_string(),
+        }
+    }
+
+    pub fn storage_path(&self) -> PathBuf {
+        self.storage_dir.join(&self.file_name)
+    }
+}
+
+impl Default for SeedStorageConfig {
+    fn default() -> Self {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        Self {
+            storage_dir: home.join(".zhtp").join("keystore"),
+            file_name: "seed_storage.json".to_string(),
+        }
+    }
+}
 
 /// Command line arguments structure
 #[derive(Debug, Clone)]
