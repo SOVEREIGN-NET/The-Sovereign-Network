@@ -202,7 +202,9 @@ fn decrypt_seed_with_password(record: &EncryptedSeedRecord, password: &str) -> R
 fn derive_key(password: &[u8], salt: &[u8]) -> Result<[u8; 32]> {
     let mut key = [0u8; 32];
     let argon2 = argon2::Argon2::default();
-    argon2.hash_password_into(password, salt, &mut key)?;
+    argon2
+        .hash_password_into(password, salt, &mut key)
+        .map_err(|e| anyhow!("Failed to derive seed encryption key: {}", e))?;
     Ok(key)
 }
 
@@ -228,14 +230,24 @@ fn write_seed_file(path: PathBuf, storage: &SeedStorageFile) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use std::sync::{Mutex, OnceLock};
 
     fn setup_env(password: &str) {
         env::set_var("ZHTP_SEED_PASSWORD", password);
         env::set_var("ZHTP_DISABLE_KEYCHAIN", "1");
     }
 
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned")
+    }
+
     #[test]
     fn stores_and_loads_seed_from_file() -> Result<()> {
+        let _guard = lock_env();
         setup_env("test-password");
         let temp = TempDir::new()?;
         let storage = SeedStorage::new(temp.path());
@@ -249,6 +261,7 @@ mod tests {
 
     #[test]
     fn refuses_to_decrypt_with_wrong_password() -> Result<()> {
+        let _guard = lock_env();
         setup_env("correct-password");
         let temp = TempDir::new()?;
         let storage = SeedStorage::new(temp.path());
@@ -264,6 +277,7 @@ mod tests {
 
     #[test]
     fn seed_file_never_contains_plaintext_seed() -> Result<()> {
+        let _guard = lock_env();
         setup_env("plain-check");
         let temp = TempDir::new()?;
         let storage = SeedStorage::new(temp.path());
@@ -278,6 +292,7 @@ mod tests {
 
     #[test]
     fn exports_and_imports_seed_backup() -> Result<()> {
+        let _guard = lock_env();
         setup_env("backup-password");
         let source_dir = TempDir::new()?;
         let target_dir = TempDir::new()?;
