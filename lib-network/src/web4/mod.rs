@@ -13,6 +13,7 @@
 //! - MIME type resolution
 //! - Cache header generation
 
+#[cfg(feature = "quic")]
 pub mod trust;
 
 // Web4 system - always compiled with protocol-only design
@@ -22,6 +23,7 @@ pub mod name_resolver;
 pub mod content_publisher;
 pub mod content_service;
 pub mod types;
+#[cfg(feature = "quic")]
 pub mod client;
 
 pub use domain_registry::*;
@@ -29,7 +31,9 @@ pub use name_resolver::NameResolver;
 pub use content_publisher::*;
 pub use content_service::*;
 pub use types::*;
+#[cfg(feature = "quic")]
 pub use client::Web4Client;
+#[cfg(feature = "quic")]
 pub use trust::{TrustConfig, TrustDb, TrustAnchor, TrustPolicy, TrustAuditEntry, ZhtpTrustVerifier};
 
 // NOTE: initialization helpers removed - zhtp is the composition root

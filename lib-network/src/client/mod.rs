@@ -25,6 +25,8 @@
 //!
 //! HTTP is NOT allowed for control-plane operations.
 
+#[cfg(feature = "quic")]
 mod zhtp_client;
 
+#[cfg(feature = "quic")]
 pub use zhtp_client::{ZhtpClient, ZhtpClientConfig};

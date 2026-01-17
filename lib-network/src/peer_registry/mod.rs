@@ -68,7 +68,7 @@ use anyhow::{Result, anyhow};
 use tracing::{info, warn, debug};
 
 use crate::identity::unified_peer::UnifiedPeerId;
-use crate::protocols::NetworkProtocol;
+use crate::types::NetworkProtocol;
 use crate::types::node_address::{NodeAddress, AddressEndpoint, AddressResolver};
 use lib_crypto::PublicKey;
 use lib_identity::NodeId;

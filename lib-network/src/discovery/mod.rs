@@ -2,22 +2,28 @@ pub mod lorawan;
 pub mod satellite;
 pub mod wifi;
 pub mod hardware;
+#[cfg(feature = "lorawan")]
 pub mod lorawan_hardware;
 pub mod geo_location;
 pub mod local_network;
 pub mod smart_routing;
 pub mod unified;
+#[cfg(feature = "quic")]
 pub mod pin_cache;
+#[cfg(feature = "quic")]
 pub mod pinned_verifier;
 
 pub use lorawan::*;
 pub use satellite::*;
 pub use wifi::*;
 pub use hardware::*;
+#[cfg(feature = "lorawan")]
 pub use lorawan_hardware::*;
 pub use geo_location::GeographicLocation;
 pub use local_network::*;
+#[cfg(feature = "quic")]
 pub use pin_cache::{TlsPinCache, PinCacheEntry, NodeIdKey, global_pin_cache};
+#[cfg(feature = "quic")]
 #[allow(deprecated)]
 pub use pinned_verifier::{
     PinnedCertVerifier, PinnedVerifierConfig, SyncPinStore, VerificationResult,
