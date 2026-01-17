@@ -710,12 +710,6 @@ impl QuicHandler {
         write_response(&mut send, &wire_response).await
             .context("Failed to write ZHTP wire response")?;
 
-        // Properly close the stream so client can read the response
-        // Without this, the stream is abruptly terminated when the function returns,
-        // causing "Socket is not connected" errors on the client side
-        send.finish()
-            .context("Failed to finish QUIC stream")?;
-
         Ok(())
     }
 

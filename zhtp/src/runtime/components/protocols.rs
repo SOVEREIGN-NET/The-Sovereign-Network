@@ -268,8 +268,7 @@ impl Component for ProtocolsComponent {
             let blockchain_read = blockchain.read().await;
             if !blockchain_read.blocks.is_empty() {
                 let genesis_hash = blockchain_read.blocks[0].header.block_hash.as_array();
-                // Use try_ version to avoid panic if already set (e.g., on restart)
-                let _ = lib_identity::types::node_id::try_set_network_genesis(genesis_hash);
+                lib_identity::types::node_id::set_network_genesis(genesis_hash);
                 info!(" ✓ Network genesis initialized for QUIC protocol");
             } else {
                 return Err(anyhow::anyhow!("Blockchain has no genesis block"));

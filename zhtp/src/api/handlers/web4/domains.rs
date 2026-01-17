@@ -263,28 +263,22 @@ impl Web4Handler {
 
             let wallet_id_hex = hex::encode(&primary_wallet.id.0);
             let wallet_id_short = hex::encode(&primary_wallet.id.0[..8]);
-            let inmem_balance = primary_wallet.balance;
+            let current_balance = primary_wallet.balance;
 
-            // Check blockchain wallet registry for this wallet
-            // Use blockchain registry balance as source of truth (has welcome bonus etc)
+            // DEBUG: Check blockchain wallet registry for this wallet
             let blockchain = self.blockchain.read().await;
             let in_registry = blockchain.wallet_registry.contains_key(&wallet_id_hex);
             let registry_balance = blockchain.wallet_registry.get(&wallet_id_hex)
                 .map(|w| w.initial_balance)
                 .unwrap_or(0);
-
-            // Use the MAX of in-memory and registry balance
-            // Registry has welcome bonus, in-memory might have other funds
-            let current_balance = std::cmp::max(inmem_balance, registry_balance);
-
             info!(" DEBUG WALLET STATE:");
             info!("   Wallet ID (full): {}", wallet_id_hex);
             info!("   Wallet ID (short): {}", wallet_id_short);
-            info!("   In-memory balance: {} ZHTP", inmem_balance);
+            info!("   In-memory balance: {} ZHTP", current_balance);
             info!("   In blockchain registry: {}", in_registry);
             info!("   Registry initial_balance: {} ZHTP", registry_balance);
-            info!("   Effective balance (max): {} ZHTP", current_balance);
             info!("   Total wallet_registry entries: {}", blockchain.wallet_registry.len());
+            info!("   Wallet registry keys: {:?}", blockchain.wallet_registry.keys().map(|k| &k[..16]).collect::<Vec<_>>());
             drop(blockchain);
 
             info!("💳 Checking wallet {} balance: {} ZHTP (need {} ZHTP)",

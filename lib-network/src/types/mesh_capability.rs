@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use crate::protocols::NetworkProtocol;
+use crate::types::NetworkProtocol;
 
 /// Mesh node capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]

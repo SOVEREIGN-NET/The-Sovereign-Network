@@ -1019,7 +1019,7 @@ impl RuntimeOrchestrator {
                         display_name: format!("User {}", hex::encode(&identity.id.0[..4])),
                         public_key: identity.public_key.as_bytes(),
                         ownership_proof: vec![], // Convert ZK proof to bytes if needed
-                        identity_type: format!("{:?}", identity.identity_type).to_lowercase(),
+                        identity_type: format!("{:?}", identity.identity_type),
                         did_document_hash: identity.did_document_hash
                             .map(|h| lib_blockchain::Hash::from_slice(&h.0))
                             .unwrap_or(lib_blockchain::Hash::zero()),
@@ -1056,68 +1056,20 @@ impl RuntimeOrchestrator {
                             registration_fee: 0,
                             initial_balance: wallet.balance,
                             seed_commitment: wallet.seed_commitment.as_ref()
-                                .map(|s| {
-                                    // Hash the seed commitment string to create blockchain hash
-                                    lib_blockchain::types::hash::blake3_hash(s.as_bytes())
-                                })
-                                .unwrap_or_else(|| {
-                                    // Generate deterministic commitment from wallet ID + pubkey if no seed commitment
-                                    // This ensures a valid non-zero commitment for blockchain validation
-                                    let commitment_data = format!("wallet_commitment:{}:{}",
-                                        hex::encode(&wallet_id.0),
-                                        hex::encode(&wallet.public_key));
-                                    lib_blockchain::types::hash::blake3_hash(commitment_data.as_bytes())
-                                }),
+                                .map(|s| lib_blockchain::Hash::from_slice(s.as_bytes()))
+                                .unwrap_or(lib_blockchain::Hash::zero()),
                         };
                         
                         match blockchain_ref.register_wallet(wallet_data) {
                             Ok(tx_hash) => {
-                                info!("✅ Wallet registered: {} ({})",
+                                info!("✅ Wallet registered: {} ({})", 
                                     hex::encode(&wallet_id.0[..8]),
                                     hex::encode(&tx_hash.as_bytes()[..8]));
-
-                                // Add welcome bonus for Primary wallets (new identity registration)
-                                if format!("{:?}", wallet.wallet_type) == "Primary" {
-                                    let wallet_id_hex = hex::encode(&wallet_id.0);
-                                    let welcome_bonus = 5000u64;
-
-                                    // Update wallet registry balance
-                                    if let Some(wallet_entry) = blockchain_ref.wallet_registry.get_mut(&wallet_id_hex) {
-                                        wallet_entry.initial_balance = welcome_bonus;
-                                    }
-
-                                    // Create spendable UTXO for the welcome bonus
-                                    let utxo_output = lib_blockchain::transaction::TransactionOutput {
-                                        commitment: lib_blockchain::types::hash::blake3_hash(
-                                            format!("welcome_bonus_commitment_{}_{}", wallet_id_hex, welcome_bonus).as_bytes()
-                                        ),
-                                        note: lib_blockchain::types::hash::blake3_hash(
-                                            format!("welcome_bonus_note_{}", wallet_id_hex).as_bytes()
-                                        ),
-                                        recipient: lib_crypto::PublicKey::new(identity.id.0.to_vec()),
-                                    };
-                                    let utxo_hash = lib_blockchain::types::hash::blake3_hash(
-                                        format!("welcome_bonus_utxo:{}", wallet_id_hex).as_bytes()
-                                    );
-                                    blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
-
-                                    info!("🎁 Welcome bonus: {} ZHTP credited to wallet {} (UTXO created)",
-                                        welcome_bonus, &wallet_id_hex[..16]);
-                                }
                             }
                             Err(e) => {
                                 warn!("⚠️  Failed to register wallet: {}", e);
                             }
                         }
-                    }
-
-                    // Save blockchain to disk after all registrations complete
-                    let persist_path_str = self.config.environment.blockchain_data_path();
-                    let persist_path = std::path::Path::new(&persist_path_str);
-                    if let Err(e) = blockchain_ref.save_to_file(persist_path) {
-                        warn!("⚠️  Failed to save blockchain after identity registration: {}", e);
-                    } else {
-                        info!("💾 Blockchain saved after new identity registration");
                     }
                 }
                 Err(e) => {
@@ -1125,236 +1077,9 @@ impl RuntimeOrchestrator {
                 }
             }
         } else {
-            // Check if existing identity needs to be registered on blockchain
-            // This handles the case where identity was created but blockchain wasn't available
-            info!("ℹ️  Checking if existing identity needs blockchain registration...");
-
-            let user_wallet_guard = self.user_wallet.read().await;
-            if let Some(wallet_result) = user_wallet_guard.as_ref() {
-                let user_identity = &wallet_result.user_identity;
-                let user_did = format!("did:zhtp:{}", hex::encode(&user_identity.id.0));
-
-                match crate::runtime::blockchain_provider::get_global_blockchain().await {
-                    Ok(blockchain_arc) => {
-                        let mut blockchain = blockchain_arc.write().await;
-                        let blockchain_ref = &mut *blockchain;
-
-                        // Check if identity already exists on blockchain
-                        if !blockchain_ref.identity_exists(&user_did) {
-                            info!("📝 Registering existing identity on blockchain (not found in registry)...");
-
-                            let identity_data = lib_blockchain::transaction::IdentityTransactionData {
-                                did: user_did.clone(),
-                                display_name: format!("User {}", hex::encode(&user_identity.id.0[..4])),
-                                public_key: user_identity.public_key.as_bytes(),
-                                ownership_proof: vec![],
-                                identity_type: format!("{:?}", user_identity.identity_type).to_lowercase(),
-                                did_document_hash: user_identity.did_document_hash.as_ref()
-                                    .map(|h| lib_blockchain::Hash::from_slice(&h.0))
-                                    .unwrap_or(lib_blockchain::Hash::zero()),
-                                created_at: user_identity.created_at,
-                                registration_fee: 0,
-                                dao_fee: 0,
-                                controlled_nodes: vec![],
-                                owned_wallets: user_identity.wallet_manager.wallets.keys()
-                                    .map(|id| hex::encode(&id.0))
-                                    .collect(),
-                            };
-
-                            match blockchain_ref.register_identity(identity_data) {
-                                Ok(tx_hash) => {
-                                    info!("✅ Existing identity registered on blockchain: {}", hex::encode(&tx_hash.as_bytes()[..8]));
-                                }
-                                Err(e) => {
-                                    warn!("⚠️  Failed to register existing identity: {}", e);
-                                }
-                            }
-
-                            // Register wallets too
-                            for (wallet_id, wallet) in &user_identity.wallet_manager.wallets {
-                                let wallet_id_hex = hex::encode(&wallet_id.0);
-                                if !blockchain_ref.wallet_exists(&wallet_id_hex) {
-                                    let wallet_data = lib_blockchain::transaction::WalletTransactionData {
-                                        wallet_id: lib_blockchain::Hash::from_slice(&wallet_id.0),
-                                        owner_identity_id: Some(lib_blockchain::Hash::from_slice(&user_identity.id.0)),
-                                        alias: wallet.alias.clone(),
-                                        wallet_name: wallet.name.clone(),
-                                        wallet_type: format!("{:?}", wallet.wallet_type),
-                                        public_key: wallet.public_key.clone(),
-                                        capabilities: 0,
-                                        created_at: wallet.created_at,
-                                        registration_fee: 0,
-                                        initial_balance: wallet.balance,
-                                        seed_commitment: wallet.seed_commitment.as_ref()
-                                            .map(|s| lib_blockchain::types::hash::blake3_hash(s.as_bytes()))
-                                            .unwrap_or_else(|| {
-                                                let commitment_data = format!("wallet_commitment:{}:{}",
-                                                    hex::encode(&wallet_id.0),
-                                                    hex::encode(&wallet.public_key));
-                                                lib_blockchain::types::hash::blake3_hash(commitment_data.as_bytes())
-                                            }),
-                                    };
-
-                                    match blockchain_ref.register_wallet(wallet_data.clone()) {
-                                        Ok(tx_hash) => {
-                                            info!("✅ Existing wallet registered: {} ({})",
-                                                hex::encode(&wallet_id.0[..8]),
-                                                hex::encode(&tx_hash.as_bytes()[..8]));
-
-                                            // Give welcome bonus to newly registered Primary wallets (like genesis)
-                                            // Create actual UTXO so funds are spendable
-                                            if format!("{:?}", wallet.wallet_type) == "Primary" {
-                                                let wallet_id_hex = hex::encode(&wallet_id.0);
-                                                let welcome_bonus = 5000u64;
-
-                                                // Update wallet registry balance
-                                                if let Some(wallet_entry) = blockchain_ref.wallet_registry.get_mut(&wallet_id_hex) {
-                                                    wallet_entry.initial_balance = welcome_bonus;
-                                                }
-
-                                                // Create spendable UTXO for the welcome bonus
-                                                let utxo_output = lib_blockchain::transaction::TransactionOutput {
-                                                    commitment: lib_blockchain::types::hash::blake3_hash(
-                                                        format!("welcome_bonus_commitment_{}_{}", wallet_id_hex, welcome_bonus).as_bytes()
-                                                    ),
-                                                    note: lib_blockchain::types::hash::blake3_hash(
-                                                        format!("welcome_bonus_note_{}", wallet_id_hex).as_bytes()
-                                                    ),
-                                                    recipient: lib_crypto::PublicKey::new(user_identity.id.0.to_vec()),
-                                                };
-                                                let utxo_hash = lib_blockchain::types::hash::blake3_hash(
-                                                    format!("welcome_bonus_utxo:{}", wallet_id_hex).as_bytes()
-                                                );
-                                                blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
-                                                info!("🎁 Welcome bonus: {} ZHTP credited to wallet {} (UTXO created)", welcome_bonus, &wallet_id_hex[..16]);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!("⚠️  Failed to register existing wallet: {}", e);
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            info!("✅ Identity already registered on blockchain: {}", user_did);
-
-                            // Check if any wallets need registration or welcome bonus funding
-                            for (wallet_id, wallet) in &user_identity.wallet_manager.wallets {
-                                let wallet_id_hex = hex::encode(&wallet_id.0);
-
-                                // Check if wallet exists in registry
-                                if let Some(wallet_entry) = blockchain_ref.wallet_registry.get(&wallet_id_hex) {
-                                    // Wallet exists - check if it needs funding
-                                    if wallet_entry.initial_balance == 0 && format!("{:?}", wallet.wallet_type) == "Primary" {
-                                        info!("📝 Funding existing zero-balance Primary wallet: {}", &wallet_id_hex[..16]);
-
-                                        let welcome_bonus = 5000u64;
-
-                                        // Update wallet registry
-                                        if let Some(wallet_mut) = blockchain_ref.wallet_registry.get_mut(&wallet_id_hex) {
-                                            wallet_mut.initial_balance = welcome_bonus;
-                                        }
-
-                                        // Create spendable UTXO
-                                        let utxo_output = lib_blockchain::transaction::TransactionOutput {
-                                            commitment: lib_blockchain::types::hash::blake3_hash(
-                                                format!("welcome_bonus_commitment_{}_{}", wallet_id_hex, welcome_bonus).as_bytes()
-                                            ),
-                                            note: lib_blockchain::types::hash::blake3_hash(
-                                                format!("welcome_bonus_note_{}", wallet_id_hex).as_bytes()
-                                            ),
-                                            recipient: lib_crypto::PublicKey::new(user_identity.id.0.to_vec()),
-                                        };
-                                        let utxo_hash = lib_blockchain::types::hash::blake3_hash(
-                                            format!("welcome_bonus_utxo:{}", wallet_id_hex).as_bytes()
-                                        );
-                                        blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
-
-                                        info!("🎁 Welcome bonus: {} ZHTP credited to wallet {} (UTXO created)", welcome_bonus, &wallet_id_hex[..16]);
-                                    }
-                                } else {
-                                    // Wallet NOT in registry - register it now
-                                    info!("📝 Registering missing wallet for existing identity: {}", &wallet_id_hex[..16]);
-
-                                    let wallet_data = lib_blockchain::transaction::WalletTransactionData {
-                                        wallet_id: lib_blockchain::Hash::from_slice(&wallet_id.0),
-                                        owner_identity_id: Some(lib_blockchain::Hash::from_slice(&user_identity.id.0)),
-                                        alias: wallet.alias.clone(),
-                                        wallet_name: wallet.name.clone(),
-                                        wallet_type: format!("{:?}", wallet.wallet_type),
-                                        public_key: wallet.public_key.clone(),
-                                        capabilities: 0,
-                                        created_at: wallet.created_at,
-                                        registration_fee: 0,
-                                        initial_balance: wallet.balance,
-                                        seed_commitment: wallet.seed_commitment.as_ref()
-                                            .map(|s| lib_blockchain::types::hash::blake3_hash(s.as_bytes()))
-                                            .unwrap_or_else(|| {
-                                                let commitment_data = format!("wallet_commitment:{}:{}",
-                                                    hex::encode(&wallet_id.0),
-                                                    hex::encode(&wallet.public_key));
-                                                lib_blockchain::types::hash::blake3_hash(commitment_data.as_bytes())
-                                            }),
-                                    };
-
-                                    match blockchain_ref.register_wallet(wallet_data.clone()) {
-                                        Ok(tx_hash) => {
-                                            info!("✅ Missing wallet registered: {} ({})",
-                                                &wallet_id_hex[..16],
-                                                hex::encode(&tx_hash.as_bytes()[..8]));
-
-                                            // Give welcome bonus to Primary wallets
-                                            if format!("{:?}", wallet.wallet_type) == "Primary" {
-                                                let welcome_bonus = 5000u64;
-
-                                                // Update wallet registry balance
-                                                if let Some(wallet_entry) = blockchain_ref.wallet_registry.get_mut(&wallet_id_hex) {
-                                                    wallet_entry.initial_balance = welcome_bonus;
-                                                }
-
-                                                // Create spendable UTXO for the welcome bonus
-                                                let utxo_output = lib_blockchain::transaction::TransactionOutput {
-                                                    commitment: lib_blockchain::types::hash::blake3_hash(
-                                                        format!("welcome_bonus_commitment_{}_{}", wallet_id_hex, welcome_bonus).as_bytes()
-                                                    ),
-                                                    note: lib_blockchain::types::hash::blake3_hash(
-                                                        format!("welcome_bonus_note_{}", wallet_id_hex).as_bytes()
-                                                    ),
-                                                    recipient: lib_crypto::PublicKey::new(user_identity.id.0.to_vec()),
-                                                };
-                                                let utxo_hash = lib_blockchain::types::hash::blake3_hash(
-                                                    format!("welcome_bonus_utxo:{}", wallet_id_hex).as_bytes()
-                                                );
-                                                blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
-
-                                                info!("🎁 Welcome bonus: {} ZHTP credited to wallet {} (UTXO created)",
-                                                    welcome_bonus, &wallet_id_hex[..16]);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!("⚠️  Failed to register missing wallet: {}", e);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Save blockchain after any modifications in existing identity path
-                        let persist_path_str = self.config.environment.blockchain_data_path();
-                        let persist_path = std::path::Path::new(&persist_path_str);
-                        if let Err(e) = blockchain_ref.save_to_file(persist_path) {
-                            warn!("⚠️  Failed to save blockchain after existing identity check: {}", e);
-                        } else {
-                            info!("💾 Blockchain saved after existing identity check/registration");
-                        }
-                    }
-                    Err(e) => {
-                        warn!("⚠️  Blockchain not available to check identity registration: {}", e);
-                    }
-                }
-            }
+            info!("ℹ️  No pending identity registration (existing identity loaded)");
         }
-
+        
         info!("✅ ZHTP node started successfully");
         info!("🌐 ZHTP server active on port {}", self.config.protocols_config.api_port);
         

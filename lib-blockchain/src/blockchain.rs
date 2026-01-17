@@ -31,14 +31,8 @@ pub enum BlockchainBroadcastMessage {
 // Import lib-proofs for recursive proof aggregation
 use lib_proofs::verifiers::transaction_verifier::{BatchedPrivateTransaction, BatchMetadata};
 
-/// Default finality depth (6 blocks like Bitcoin)
-fn default_finality_depth() -> u64 {
-    6
-}
-
 /// Blockchain state with identity registry and UTXO management
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
 pub struct Blockchain {
     /// All blocks in the chain
     pub blocks: Vec<Block>,
@@ -47,7 +41,6 @@ pub struct Blockchain {
     /// Current mining difficulty
     pub difficulty: Difficulty,
     /// Difficulty adjustment configuration (governance-controlled)
-    #[serde(default)]
     pub difficulty_config: DifficultyConfig,
     /// Total work done (cumulative difficulty)
     pub total_work: u128,
@@ -66,40 +59,28 @@ pub struct Blockchain {
     /// Wallet ID to block height mapping for verification
     pub wallet_blocks: HashMap<String, u64>,
     /// Economics transaction storage (handled by lib-economy)
-    #[serde(default)]
     pub economics_transactions: Vec<EconomicsTransaction>,
     /// Smart contract registry - Token contracts (contract_id -> TokenContract)
-    #[serde(default)]
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
     /// Smart contract registry - Web4 Website contracts (contract_id -> Web4Contract)
-    #[serde(default)]
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     /// Contract deployment block heights (contract_id -> block_height)
-    #[serde(default)]
     pub contract_blocks: HashMap<[u8; 32], u64>,
     /// On-chain validator registry (identity_id -> Validator info)
-    #[serde(default)]
     pub validator_registry: HashMap<String, ValidatorInfo>,
     /// Validator registration block heights (identity_id -> block_height)
-    #[serde(default)]
     pub validator_blocks: HashMap<String, u64>,
     /// DAO treasury wallet ID (stores collected fees for governance)
-    #[serde(default)]
     pub dao_treasury_wallet_id: Option<String>,
     /// Welfare service registry (service_id -> WelfareService)
-    #[serde(default)]
     pub welfare_services: HashMap<String, lib_consensus::WelfareService>,
     /// Welfare service registration block heights (service_id -> block_height)
-    #[serde(default)]
     pub welfare_service_blocks: HashMap<String, u64>,
     /// Welfare audit trail (audit_id -> WelfareAuditEntry)
-    #[serde(default)]
     pub welfare_audit_trail: HashMap<lib_crypto::Hash, lib_consensus::WelfareAuditEntry>,
     /// Service performance metrics (service_id -> ServicePerformanceMetrics)
-    #[serde(default)]
     pub service_performance: HashMap<String, lib_consensus::ServicePerformanceMetrics>,
     /// Outcome reports (report_id -> OutcomeReport)
-    #[serde(default)]
     pub outcome_reports: HashMap<lib_crypto::Hash, lib_consensus::OutcomeReport>,
     /// Economic transaction processor for lib-economy integration
     #[serde(skip)]
@@ -114,43 +95,31 @@ pub struct Blockchain {
     #[serde(skip)]
     pub proof_aggregator: Option<std::sync::Arc<tokio::sync::RwLock<lib_proofs::RecursiveProofAggregator>>>,
     /// Auto-persistence configuration
-    #[serde(default)]
     pub auto_persist_enabled: bool,
     /// Block counter for auto-persistence
-    #[serde(default)]
     pub blocks_since_last_persist: u64,
     /// Broadcast channel for real-time block/transaction propagation
     #[serde(skip)]
     pub broadcast_sender: Option<tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>>,
     /// Track executed DAO proposals to prevent double-execution
-    #[serde(default)]
     pub executed_dao_proposals: HashSet<Hash>,
     /// Transaction receipts for confirmation tracking (tx_hash -> receipt)
-    #[serde(default)]
     pub receipts: HashMap<Hash, crate::receipts::TransactionReceipt>,
     /// Finality depth (number of confirmations required for finality)
-    #[serde(default = "default_finality_depth")]
     pub finality_depth: u64,
     /// Track finalized block heights to avoid reprocessing
-    #[serde(default)]
     pub finalized_blocks: HashSet<u64>,
     /// Per-contract state storage (contract_id -> state bytes)
-    #[serde(default)]
     pub contract_states: HashMap<[u8; 32], Vec<u8>>,
     /// Contract state snapshots per block height for historical queries
-    #[serde(default)]
     pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
     /// UTXO set snapshots per block height for state recovery and reorg support
-    #[serde(default)]
     pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
     /// Fork history for audit trail (height -> ForkPoint)
-    #[serde(default)]
     pub fork_points: HashMap<u64, crate::fork_recovery::ForkPoint>,
     /// Count of reorganizations for monitoring
-    #[serde(default)]
     pub reorg_count: u64,
     /// Fork recovery configuration
-    #[serde(default)]
     pub fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig,
     /// Event publisher for blockchain state changes (Issue #11).
     ///
@@ -200,160 +169,6 @@ pub struct EconomicsTransaction {
     pub tx_type: String,
     pub timestamp: u64,
     pub block_height: u64,
-}
-
-// =============================================================================
-// V1 Migration Types (Dec 2025 format - before UBI/Profit transaction types)
-// =============================================================================
-
-/// Transaction V1 format - without ubi_claim_data and profit_declaration_data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TransactionV1 {
-    pub version: u32,
-    pub chain_id: u8,
-    pub transaction_type: TransactionType,
-    pub inputs: Vec<TransactionInput>,
-    pub outputs: Vec<TransactionOutput>,
-    pub fee: u64,
-    pub signature: Signature,
-    pub memo: Vec<u8>,
-    pub identity_data: Option<IdentityTransactionData>,
-    pub wallet_data: Option<crate::transaction::WalletTransactionData>,
-    pub validator_data: Option<crate::transaction::ValidatorTransactionData>,
-    pub dao_proposal_data: Option<crate::transaction::DaoProposalData>,
-    pub dao_vote_data: Option<crate::transaction::DaoVoteData>,
-    pub dao_execution_data: Option<crate::transaction::DaoExecutionData>,
-}
-
-impl TransactionV1 {
-    fn migrate_to_current(self) -> Transaction {
-        Transaction {
-            version: self.version,
-            chain_id: self.chain_id,
-            transaction_type: self.transaction_type,
-            inputs: self.inputs,
-            outputs: self.outputs,
-            fee: self.fee,
-            signature: self.signature,
-            memo: self.memo,
-            identity_data: self.identity_data,
-            wallet_data: self.wallet_data,
-            validator_data: self.validator_data,
-            dao_proposal_data: self.dao_proposal_data,
-            dao_vote_data: self.dao_vote_data,
-            dao_execution_data: self.dao_execution_data,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-        }
-    }
-}
-
-/// Block V1 format - uses TransactionV1
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BlockV1 {
-    pub header: crate::block::BlockHeader,
-    pub transactions: Vec<TransactionV1>,
-}
-
-impl BlockV1 {
-    fn migrate_to_current(self) -> Block {
-        Block {
-            header: self.header,
-            transactions: self.transactions.into_iter().map(|tx| tx.migrate_to_current()).collect(),
-        }
-    }
-}
-
-/// Blockchain V1 format (Dec 2025) - for backward compatibility migration
-/// This struct matches the format used by production nodes before the Phase 2 updates.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BlockchainV1 {
-    pub blocks: Vec<BlockV1>,
-    pub height: u64,
-    pub difficulty: Difficulty,
-    pub total_work: u128,
-    pub utxo_set: HashMap<Hash, TransactionOutput>,
-    pub nullifier_set: HashSet<Hash>,
-    pub pending_transactions: Vec<TransactionV1>,
-    pub identity_registry: HashMap<String, IdentityTransactionData>,
-    pub identity_blocks: HashMap<String, u64>,
-    pub wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
-    pub wallet_blocks: HashMap<String, u64>,
-    pub economics_transactions: Vec<EconomicsTransaction>,
-    pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
-    pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
-    pub contract_blocks: HashMap<[u8; 32], u64>,
-    pub validator_registry: HashMap<String, ValidatorInfo>,
-    pub validator_blocks: HashMap<String, u64>,
-    pub dao_treasury_wallet_id: Option<String>,
-    pub welfare_services: HashMap<String, lib_consensus::WelfareService>,
-    pub welfare_service_blocks: HashMap<String, u64>,
-    pub welfare_audit_trail: HashMap<lib_crypto::Hash, lib_consensus::WelfareAuditEntry>,
-    pub service_performance: HashMap<String, lib_consensus::ServicePerformanceMetrics>,
-    pub outcome_reports: HashMap<lib_crypto::Hash, lib_consensus::OutcomeReport>,
-    pub auto_persist_enabled: bool,
-    pub blocks_since_last_persist: u64,
-}
-
-impl BlockchainV1 {
-    /// Migrate V1 blockchain to current format
-    fn migrate_to_current(self) -> Blockchain {
-        info!("🔄 Migrating blockchain from V1 format to current format");
-        info!("   V1 data: height={}, identities={}, wallets={}, utxos={}",
-              self.height, self.identity_registry.len(),
-              self.wallet_registry.len(), self.utxo_set.len());
-
-        let blocks: Vec<Block> = self.blocks.into_iter().map(|b| b.migrate_to_current()).collect();
-        let pending_transactions: Vec<Transaction> = self.pending_transactions.into_iter()
-            .map(|tx| tx.migrate_to_current()).collect();
-
-        info!("   Migrated {} blocks, {} pending transactions", blocks.len(), pending_transactions.len());
-
-        Blockchain {
-            blocks,
-            height: self.height,
-            difficulty: self.difficulty,
-            difficulty_config: DifficultyConfig::default(),
-            total_work: self.total_work,
-            utxo_set: self.utxo_set,
-            nullifier_set: self.nullifier_set,
-            pending_transactions,
-            identity_registry: self.identity_registry,
-            identity_blocks: self.identity_blocks,
-            wallet_registry: self.wallet_registry,
-            wallet_blocks: self.wallet_blocks,
-            economics_transactions: self.economics_transactions,
-            token_contracts: self.token_contracts,
-            web4_contracts: self.web4_contracts,
-            contract_blocks: self.contract_blocks,
-            validator_registry: self.validator_registry,
-            validator_blocks: self.validator_blocks,
-            dao_treasury_wallet_id: self.dao_treasury_wallet_id,
-            welfare_services: self.welfare_services,
-            welfare_service_blocks: self.welfare_service_blocks,
-            welfare_audit_trail: self.welfare_audit_trail,
-            service_performance: self.service_performance,
-            outcome_reports: self.outcome_reports,
-            economic_processor: Some(EconomicTransactionProcessor::new()),
-            consensus_coordinator: None,
-            storage_manager: None,
-            proof_aggregator: None,
-            auto_persist_enabled: self.auto_persist_enabled,
-            blocks_since_last_persist: self.blocks_since_last_persist,
-            broadcast_sender: None,
-            executed_dao_proposals: HashSet::new(),
-            receipts: HashMap::new(),
-            finality_depth: default_finality_depth(),
-            finalized_blocks: HashSet::new(),
-            contract_states: HashMap::new(),
-            contract_state_history: std::collections::BTreeMap::new(),
-            utxo_snapshots: std::collections::BTreeMap::new(),
-            fork_points: HashMap::new(),
-            reorg_count: 0,
-            fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
-            event_publisher: crate::events::BlockchainEventPublisher::new(),
-        }
-    }
 }
 
 /// Blockchain import structure for deserializing received chains
@@ -1748,9 +1563,7 @@ impl Blockchain {
         );
 
         // Add to pending transactions for inclusion in next block
-        // Wallet registration from node startup is a system operation - bypass signature validation
-        // This is consistent with how genesis funding directly inserts into wallet_registry
-        self.add_system_transaction(registration_tx.clone())?;
+        self.add_pending_transaction(registration_tx.clone())?;
 
         // Store in wallet registry immediately for queries
         self.wallet_registry.insert(wallet_id_str.clone(), wallet_data.clone());
@@ -5341,36 +5154,14 @@ impl Blockchain {
         let serialized = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("Failed to read blockchain file: {}", e))?;
 
-        // Try to deserialize as current format first
-        let mut blockchain: Blockchain = match bincode::deserialize(&serialized) {
-            Ok(bc) => {
-                info!("📂 Blockchain loaded as current format");
-                bc
-            }
-            Err(current_err) => {
-                // Try V1 format (backward compatibility for production nodes)
-                info!("📂 Current format failed, trying V1 migration format...");
-                match bincode::deserialize::<BlockchainV1>(&serialized) {
-                    Ok(v1_blockchain) => {
-                        info!("📂 Blockchain loaded as V1 format, migrating...");
-                        v1_blockchain.migrate_to_current()
-                    }
-                    Err(v1_err) => {
-                        error!("❌ Failed to deserialize blockchain as either format:");
-                        error!("   Current format error: {}", current_err);
-                        error!("   V1 format error: {}", v1_err);
-                        return Err(anyhow::anyhow!("Failed to deserialize blockchain: {}", current_err));
-                    }
-                }
-            }
-        };
+        // Deserialize
+        let mut blockchain: Blockchain = bincode::deserialize(&serialized)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain: {}", e))?;
 
         // Re-initialize non-serialized fields
         blockchain.economic_processor = Some(EconomicTransactionProcessor::new());
         // Note: consensus_coordinator, storage_manager, proof_aggregator, and broadcast_sender
         // need to be initialized separately after loading
-        // Also initialize event_publisher for migrated blockchains
-        blockchain.event_publisher = crate::events::BlockchainEventPublisher::new();
 
         let elapsed = start.elapsed();
         info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, UTXOs: {}, {:?})",
