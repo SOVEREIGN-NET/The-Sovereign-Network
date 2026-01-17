@@ -292,9 +292,23 @@ impl ZhtpUnifiedServer {
         storage: Arc<RwLock<PersistentStorageSystem>>,
         identity_manager: Arc<RwLock<IdentityManager>>,
         economic_model: Arc<RwLock<EconomicModel>>,
+        node_runtime: Arc<dyn crate::runtime::NodeRuntime>,
         port: u16, // Port from configuration
     ) -> Result<Self> {
-        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None, None, None, None, None).await
+        Self::new_with_peer_notification(
+            blockchain,
+            storage,
+            identity_manager,
+            economic_model,
+            node_runtime,
+            port,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
     }
     
     /// Create new unified server with peer discovery notification channel
@@ -303,6 +317,7 @@ impl ZhtpUnifiedServer {
         storage: Arc<RwLock<PersistentStorageSystem>>,
         identity_manager: Arc<RwLock<IdentityManager>>,
         economic_model: Arc<RwLock<EconomicModel>>,
+        node_runtime: Arc<dyn crate::runtime::NodeRuntime>,
         port: u16,
         peer_discovery_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
         discovery_port: Option<u16>,
@@ -461,26 +476,24 @@ impl ZhtpUnifiedServer {
 
         // Initialize NodeRuntime - Policy Authority (NR-1: Policy Ownership)
         // Delegates all "should we?" decisions to runtime, server only executes "can we?" operations
-        let runtime: Arc<dyn crate::runtime::NodeRuntime> = Arc::new(
-            crate::runtime::DefaultNodeRuntime::full_validator()
-        );
-        info!("✓ NodeRuntime initialized - Policy authority ready");
+        let runtime = node_runtime;
+        info!("NodeRuntime initialized - Policy authority ready");
 
         // Initialize NodeRuntimeOrchestrator - Periodic policy driver
         let runtime_orchestrator = Arc::new(
             crate::runtime::NodeRuntimeOrchestrator::new(runtime.clone())
         );
-        info!("✓ NodeRuntimeOrchestrator initialized - Periodic decisions ready");
+        info!("NodeRuntimeOrchestrator initialized - Periodic decisions ready");
 
         // SECURITY FIX: Start orchestrator BEFORE registering with discovery (prevents race condition)
         // This ensures action queue processing is active before peers are discovered
         let _orchestrator_handle = runtime_orchestrator.start().await;
-        info!("✓ NodeRuntimeOrchestrator started - ready to process actions");
+        info!("NodeRuntimeOrchestrator started - ready to process actions");
 
         // THEN register runtime and action queue with discovery coordinator
         let action_queue = runtime_orchestrator.action_queue().clone();
         discovery_coordinator.set_runtime(runtime.clone(), action_queue).await;
-        info!("✓ Discovery coordinator integrated with NodeRuntime");
+        info!("Discovery coordinator integrated with NodeRuntime");
 
         Ok(Self {
             quic_mesh: quic_arc,

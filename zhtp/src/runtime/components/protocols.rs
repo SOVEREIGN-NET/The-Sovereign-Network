@@ -30,7 +30,7 @@ pub struct ProtocolsComponent {
     /// Legacy/unicast discovery port for peer announcements (default: 9333).
     /// Note: multicast peer discovery uses fixed port 37775/UDP (see NETWORK_RULES.md).
     discovery_port: u16,
-    is_edge_node: bool,
+    node_runtime: Arc<dyn crate::runtime::NodeRuntime>,
     /// Enable ZDNS transport server (UDP/TCP DNS on port 53)
     enable_zdns_transport: bool,
     /// Gateway IP for ZDNS transport responses
@@ -78,7 +78,7 @@ impl ProtocolsComponent {
             api_port,
             quic_port,
             discovery_port,
-            is_edge_node: false,
+            node_runtime: Arc::new(crate::runtime::DefaultNodeRuntime::full_validator()),
             enable_zdns_transport: false, // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -88,8 +88,8 @@ impl ProtocolsComponent {
         }
     }
 
-    pub fn new_with_node_type(environment: crate::config::environment::Environment, api_port: u16, is_edge_node: bool) -> Self {
-        Self::new_with_node_type_and_ports(environment, api_port, 9334, 9333, is_edge_node)
+    pub fn new_with_node_type(environment: crate::config::environment::Environment, api_port: u16, _is_edge_node: bool) -> Self {
+        Self::new_with_ports(environment, api_port, 9334, 9333)
     }
 
     pub fn new_with_node_type_and_ports(
@@ -97,7 +97,7 @@ impl ProtocolsComponent {
         api_port: u16,
         quic_port: u16,
         discovery_port: u16,
-        is_edge_node: bool,
+        _is_edge_node: bool,
     ) -> Self {
         Self {
             status: Arc::new(RwLock::new(ComponentStatus::Stopped)),
@@ -111,7 +111,7 @@ impl ProtocolsComponent {
             api_port,
             quic_port,
             discovery_port,
-            is_edge_node,
+            node_runtime: Arc::new(crate::runtime::DefaultNodeRuntime::full_validator()),
             enable_zdns_transport: false, // Disabled by default
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -140,7 +140,7 @@ impl ProtocolsComponent {
             api_port,
             quic_port: 9334,
             discovery_port: 9333,
-            is_edge_node: false,
+            node_runtime: Arc::new(crate::runtime::DefaultNodeRuntime::full_validator()),
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
             // SECURITY: Default to localhost even when enabled
@@ -170,7 +170,7 @@ impl ProtocolsComponent {
             api_port,
             quic_port: 9334,
             discovery_port: 9333,
-            is_edge_node: false,
+            node_runtime: Arc::new(crate::runtime::DefaultNodeRuntime::full_validator()),
             enable_zdns_transport: false,
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -199,7 +199,7 @@ impl ProtocolsComponent {
             api_port,
             quic_port: 9334,
             discovery_port: 9333,
-            is_edge_node: false,
+            node_runtime: Arc::new(crate::runtime::DefaultNodeRuntime::full_validator()),
             enable_zdns_transport: true,
             zdns_gateway_ip: gateway_ip,
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -207,6 +207,11 @@ impl ProtocolsComponent {
             https_gateway_config: Some(https_config),
             https_gateway: Arc::new(RwLock::new(None)),
         }
+    }
+
+    pub fn with_node_runtime(mut self, node_runtime: Arc<dyn crate::runtime::NodeRuntime>) -> Self {
+        self.node_runtime = node_runtime;
+        self
     }
 
     /// Set ZDNS transport bind address (use with caution for 0.0.0.0)
@@ -218,6 +223,15 @@ impl ProtocolsComponent {
     /// Get reference to the ZDNS resolver (if initialized)
     pub async fn get_zdns_resolver(&self) -> Option<Arc<ZdnsResolver>> {
         self.zdns_resolver.read().await.clone()
+    }
+
+    pub async fn configure_edge_sync_mode(&self, max_headers: usize) -> Result<()> {
+        let mut guard = self.unified_server.write().await;
+        let unified_server = guard
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Unified server not initialized"))?;
+        unified_server.set_edge_sync_mode(max_headers).await;
+        Ok(())
     }
 }
 
@@ -335,6 +349,7 @@ impl Component for ProtocolsComponent {
             storage.clone(),
             identity_manager.clone(),
             economic_model.clone(),
+            self.node_runtime.clone(),
             self.api_port,
             Some(peer_discovery_tx),
             Some(self.discovery_port),  // discovery_port from config
@@ -350,10 +365,6 @@ impl Component for ProtocolsComponent {
         unified_server.set_blockchain_provider(blockchain_provider).await;
         
         // Configure sync mode based on node type
-        if self.is_edge_node {
-            info!("📱 Configuring Edge Node sync mode (headers + ZK proofs only)...");
-            unified_server.set_edge_sync_mode(500).await;
-        }
         
         // Initialize auth manager
         let mgr = identity_manager.read().await;

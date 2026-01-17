@@ -244,37 +244,12 @@ impl RuntimeOrchestrator {
         
         // Store shutdown monitor handle for cleanup
         let _shutdown_handle = shutdown_monitor;
-        // Detect node type from config
-        // Edge nodes are constrained devices that:
-        // 1. Don't validate blocks (validator_enabled = false)
-        // 2. Don't run smart contracts (resource constrained)
-        // 3. Don't host storage for others (hosted_storage_gb = 0 or very small)
-        //
-        // Note: blockchain_storage_gb is NOT counted - it grows dynamically
-        // Note: personal_storage_gb is NOT counted - user's own data
-        //
-        // hosted_storage_gb=0 is a valid value meaning "no hosted storage" (edge node)
-        // Only use storage_capacity_gb fallback if hosted_storage_gb was NOT explicitly configured
-        // The default hosted_storage_gb is 100, so if it equals default AND storage_capacity_gb differs,
-        // use storage_capacity_gb for backward compatibility
-        let hosted_storage = config.storage_config.hosted_storage_gb;
-        
-        let is_edge_node = !config.consensus_config.validator_enabled 
-            && !config.blockchain_config.smart_contracts
-            && hosted_storage < 100;  // Less than 100 GB hosted storage = edge node
-        
-        // Debug output for node role derivation
-        tracing::debug!("   validator_enabled (config): {}", config.consensus_config.validator_enabled);
-        tracing::debug!("   smart_contracts (config): {}", config.blockchain_config.smart_contracts);
-        tracing::debug!("   hosted_storage: {} GB", hosted_storage);
+        let node_role = config.node_role.clone();
+        let is_edge_node = node_role.is_edge_node();
+        let edge_max_headers = config.blockchain_config.edge_max_headers;
+
+        tracing::debug!("   node_role: {:?}", node_role);
         tracing::debug!("   is_edge_node: {}", is_edge_node);
-        
-        // Derive NodeRole from configuration
-        // This determines what services (mining, validation) the node can run
-        let node_role = Self::derive_node_role_from_config(&config, is_edge_node);
-        info!("🎭 Node role determined: {:?}", node_role);
-        info!("   can_mine: {}, can_validate: {}, can_verify_blocks: {}", 
-              node_role.can_mine(), node_role.can_validate(), node_role.can_verify_blocks());
         
         let orchestrator = Self {
             config,
@@ -289,7 +264,7 @@ impl RuntimeOrchestrator {
             joined_existing_network: Arc::new(RwLock::new(false)),
             reward_orchestrator: Arc::new(RwLock::new(None)),
             is_edge_node: Arc::new(RwLock::new(is_edge_node)),
-            edge_max_headers: Arc::new(RwLock::new(500)),  // Default 500 headers (~100 KB)
+            edge_max_headers: Arc::new(RwLock::new(edge_max_headers)),
             pending_identity: Arc::new(RwLock::new(None)),
             node_role: Arc::new(RwLock::new(node_role)),
             startup_order: vec![
@@ -357,42 +332,20 @@ impl RuntimeOrchestrator {
         Ok(orchestrator)
     }
     
-    /// Derive the NodeRole from configuration settings
-    /// 
-    /// This is the single source of truth for node role determination.
-    /// The role determines what services (mining, validation) the node can run.
-    /// 
-    /// # Role Determination Logic
-    /// - FullValidator: validator_enabled=true (can mine and validate)
-    /// - Observer: stores full blockchain but validator_enabled=false
-    /// - LightNode: edge node with header-only sync
-    /// - MobileNode: edge node optimized for BLE
-    fn derive_node_role_from_config(config: &NodeConfig, is_edge_node: bool) -> node_runtime::NodeRole {
-        use node_runtime::NodeRole;
-        
-        // Edge nodes are either LightNode or MobileNode
-        if is_edge_node {
-            // Check if this is a mobile/BLE-optimized node
-            // For now, we determine this by checking if BLE is the primary transport
-            // TODO: Add explicit mobile_mode config flag
-            return NodeRole::LightNode;
-        }
-        
-        // Full nodes: check if they're validators
-        if config.consensus_config.validator_enabled {
-            // This node participates in consensus and can mine blocks
-            return NodeRole::FullValidator;
-        }
-        
-        // Non-validator full nodes are Observers
-        // They store the full blockchain and verify blocks for themselves
-        // but don't participate in consensus voting
-        NodeRole::Observer
-    }
-    
     /// Get the current node role
     pub async fn get_node_role(&self) -> node_runtime::NodeRole {
         self.node_role.read().await.clone()
+    }
+
+    fn build_node_runtime(node_role: node_runtime::NodeRole) -> Arc<dyn NodeRuntime> {
+        match node_role {
+            node_runtime::NodeRole::FullValidator => Arc::new(DefaultNodeRuntime::full_validator()),
+            node_runtime::NodeRole::Observer => Arc::new(DefaultNodeRuntime::observer()),
+            node_runtime::NodeRole::LightNode => Arc::new(DefaultNodeRuntime::light_node()),
+            node_runtime::NodeRole::MobileNode => Arc::new(DefaultNodeRuntime::mobile_node()),
+            node_runtime::NodeRole::BootstrapNode => Arc::new(DefaultNodeRuntime::bootstrap_node()),
+            node_runtime::NodeRole::ArchivalNode => Arc::new(DefaultNodeRuntime::archival_node()),
+        }
     }
 
     /// Get configuration for runtime operations
@@ -503,10 +456,13 @@ impl RuntimeOrchestrator {
             let api_port = self.config.protocols_config.api_port;
             let quic_port = self.config.protocols_config.quic_port;
             let discovery_port = self.config.protocols_config.discovery_port;
-            let is_edge_node = *self.is_edge_node.read().await;
-            self.register_component(Arc::new(ProtocolsComponent::new_with_node_type_and_ports(
-                environment, api_port, quic_port, discovery_port, is_edge_node
-            ))).await?;
+            let node_role = self.node_role.read().await.clone();
+            let node_runtime = Self::build_node_runtime(node_role);
+            self.register_component(Arc::new(
+                ProtocolsComponent::new_with_ports(environment, api_port, quic_port, discovery_port)
+                    .with_node_runtime(node_runtime),
+            ))
+            .await?;
         }
         
         if !is_registered(ComponentId::Api).await {
@@ -805,6 +761,54 @@ impl RuntimeOrchestrator {
         *self.edge_max_headers.read().await
     }
 
+    pub async fn start_full_node(config: NodeConfig) -> Result<Self> {
+        let node_role = config.node_role.clone();
+        if node_role.is_edge_node() {
+            return Err(anyhow::anyhow!(
+                "start_full_node called for edge node role: {:?}",
+                node_role
+            ));
+        }
+        if node_role.can_mine() {
+            return Err(anyhow::anyhow!(
+                "start_full_node called for validator role: {:?}",
+                node_role
+            ));
+        }
+
+        let orchestrator = Self::new(config).await?;
+        orchestrator.start_node().await?;
+        Ok(orchestrator)
+    }
+
+    pub async fn start_edge_node(config: NodeConfig) -> Result<Self> {
+        let node_role = config.node_role.clone();
+        if !node_role.is_edge_node() {
+            return Err(anyhow::anyhow!(
+                "start_edge_node called for non-edge role: {:?}",
+                node_role
+            ));
+        }
+
+        let orchestrator = Self::new(config).await?;
+        orchestrator.start_node().await?;
+        Ok(orchestrator)
+    }
+
+    pub async fn start_validator(config: NodeConfig) -> Result<Self> {
+        let node_role = config.node_role.clone();
+        if !node_role.can_mine() {
+            return Err(anyhow::anyhow!(
+                "start_validator called for non-validator role: {:?}",
+                node_role
+            ));
+        }
+
+        let orchestrator = Self::new(config).await?;
+        orchestrator.start_node().await?;
+        Ok(orchestrator)
+    }
+
     /// Start the node with full startup sequence
     /// 
     /// This is the main entry point called by CLI after configuration is loaded.
@@ -977,13 +981,18 @@ impl RuntimeOrchestrator {
         );
         self.register_component(Arc::new(blockchain_component)).await?;
 
-        self.register_component(Arc::new(ConsensusComponent::new(environment, node_role))).await?;
-        self.register_component(Arc::new(ProtocolsComponent::new_with_ports(
-            environment,
-            self.config.protocols_config.api_port,
-            self.config.protocols_config.quic_port,
-            self.config.protocols_config.discovery_port,
-        ))).await?;
+        self.register_component(Arc::new(ConsensusComponent::new(environment, node_role.clone()))).await?;
+        let node_runtime = Self::build_node_runtime(node_role.clone());
+        self.register_component(Arc::new(
+            ProtocolsComponent::new_with_ports(
+                environment,
+                self.config.protocols_config.api_port,
+                self.config.protocols_config.quic_port,
+                self.config.protocols_config.discovery_port,
+            )
+            .with_node_runtime(node_runtime),
+        ))
+        .await?;
         self.register_component(Arc::new(EconomicsComponent::new())).await?;
         self.register_component(Arc::new(ApiComponent::new())).await?;
         
@@ -999,6 +1008,17 @@ impl RuntimeOrchestrator {
         self.start_component(ComponentId::Protocols).await?;
         self.start_component(ComponentId::Economics).await?;
         self.start_component(ComponentId::Api).await?;
+
+        if node_role.is_edge_node() {
+            let components = self.components.read().await;
+            if let Some(component) = components.get(&ComponentId::Protocols) {
+                if let Some(protocols_comp) = component.as_any().downcast_ref::<ProtocolsComponent>() {
+                    protocols_comp
+                        .configure_edge_sync_mode(self.config.blockchain_config.edge_max_headers)
+                        .await?;
+                }
+            }
+        }
         
         // ========================================================================
         // PHASE 6: Post-Startup Blockchain Registration
@@ -2456,69 +2476,6 @@ impl RuntimeOrchestrator {
     /// 3. Identity/wallet setup
     /// 4. Blockchain initialization or sync
     /// 5. Starting remaining components
-    pub async fn startup_sequence(
-        config: NodeConfig,
-        is_edge_node: bool,
-        edge_max_headers: usize,
-    ) -> Result<Self> {
-        info!("🚀 Starting ZHTP node startup sequence...");
-        
-        // Create orchestrator
-        let mut orchestrator = Self::new(config.clone()).await?;
-        
-        // Configure edge node settings
-        if is_edge_node {
-            orchestrator.set_edge_node(true).await;
-            orchestrator.set_edge_max_headers(edge_max_headers).await;
-            info!("⚡ Edge mode: max_headers={}", edge_max_headers);
-        }
-        
-        // PHASE 1: Start minimal components for peer discovery (Crypto + Network)
-        info!("🔌 Phase 1: Starting network components for peer discovery...");
-        orchestrator.start_network_components_for_discovery().await?;
-        
-        // Wait for network stack initialization
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        
-        // PHASE 2: Discover existing network
-        info!("🔍 Phase 2: Discovering ZHTP network...");
-        let network_info = orchestrator.discover_network_with_retry(is_edge_node).await?;
-        
-        // PHASE 3: Setup identity and blockchain
-        info!("🔑 Phase 3: Setting up identity and blockchain...");
-        if let Some(ref net_info) = network_info {
-            // Joining existing network
-            orchestrator.set_joined_existing_network(true).await?;
-            orchestrator.start_blockchain_sync(net_info).await?;
-            
-            // Wait for initial sync
-            info!("⏳ Waiting for initial blockchain sync...");
-            match orchestrator.wait_for_initial_sync(Duration::from_secs(30)).await {
-                Ok(()) => {
-                    let height = orchestrator.get_blockchain_height().await?;
-                    info!("✓ Sync started: height {}", height);
-                }
-                Err(e) => {
-                    warn!("⚠ Initial sync timeout: {} - will continue in background", e);
-                }
-            }
-        } else {
-            // Creating genesis network
-            if is_edge_node {
-                return Err(anyhow::anyhow!("Edge nodes must find an existing network"));
-            }
-            orchestrator.set_joined_existing_network(false).await?;
-            info!("🌱 Creating genesis network");
-        }
-        
-        // PHASE 4: Register and start all remaining components
-        info!("⚙️ Phase 4: Starting all components...");
-        orchestrator.register_all_components().await?;
-        orchestrator.start_all_components().await?;
-        
-        info!("✅ ZHTP node startup sequence complete");
-        Ok(orchestrator)
-    }
     
     /// Start only Crypto and Network components for initial peer discovery
     pub async fn start_network_components_for_discovery(&mut self) -> Result<()> {
