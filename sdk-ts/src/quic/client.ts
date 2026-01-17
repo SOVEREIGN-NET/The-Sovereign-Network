@@ -361,17 +361,35 @@ export class ZhtpQuicClient {
       }
 
       // Create QUIC client using factory method
-      // @ts-ignore - @matrixai/quic types
+      // Try to use Node.js crypto module first
+      let cryptoModule: any;
+      try {
+        // @ts-ignore
+        cryptoModule = await import('crypto');
+      } catch {
+        // Fallback for browser environment
+        cryptoModule = {
+          randomBytes: (size: number) => {
+            const arr = new Uint8Array(size);
+            if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.getRandomValues) {
+              globalThis.crypto.getRandomValues(arr);
+            }
+            return arr;
+          },
+          getRandomValues: (arr: Uint8Array) => {
+            if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.getRandomValues) {
+              globalThis.crypto.getRandomValues(arr);
+            }
+            return arr;
+          },
+        };
+      }
+
       const quicClient = await QuicModule.QUICClient.createQUICClient(
         {
           host,
           port: portNum,
-          crypto: {
-            getRandomValues: (arr: Uint8Array) => {
-              globalThis.crypto.getRandomValues(arr);
-              return arr;
-            },
-          },
+          crypto: cryptoModule,
         },
         { timer: this.config.timeout },
       );
