@@ -560,6 +560,13 @@ impl WalletStartupManager {
                     path, e
                 ));
             }
+            Err(KeystoreError::SeedStorage(path, reason)) => {
+                return Err(anyhow!(
+                    "FATAL: Seed storage error for keystore at {:?}: {}\n\
+                    Check keychain access or seed storage file permissions.",
+                    path, reason
+                ));
+            }
         }
 
         // ════════════════════════════════════════════════════════════════════
