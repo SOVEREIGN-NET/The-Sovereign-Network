@@ -9,6 +9,7 @@ import { Output, ConsoleOutput } from './output.js';
 import { ZhtpQuicClient, connectClient } from './quic/client.js';
 import { DomainManager } from './managers/domain.js';
 import { WalletManager } from './managers/wallet.js';
+import { DeployManager } from './managers/deploy.js';
 
 /**
  * Main ZHTP Client with all managers
@@ -27,6 +28,11 @@ export class ZhtpClient {
    */
   wallet: WalletManager;
 
+  /**
+   * Site deployment manager
+   */
+  deploy: DeployManager;
+
   constructor(
     identity: ZhtpIdentity,
     quicClient: ZhtpQuicClient,
@@ -38,6 +44,7 @@ export class ZhtpClient {
     // Initialize managers
     this.domains = new DomainManager(this.quicClient, this.output);
     this.wallet = new WalletManager(this.quicClient, this.output);
+    this.deploy = new DeployManager(this.domains, this.quicClient, this.output);
   }
 
   /**

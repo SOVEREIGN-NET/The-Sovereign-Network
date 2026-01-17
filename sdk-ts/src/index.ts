@@ -66,6 +66,10 @@ export { ZhtpClient, loadIdentity, buildTrustConfig, initializeClient, connect }
 export { DomainManager } from './managers/domain.js';
 export type { RegisterOptions, TransferProof } from './managers/domain.js';
 export { WalletManager } from './managers/wallet.js';
+export { ContentManager } from './managers/content.js';
+export type { FileUploadResult, ManifestOptions } from './managers/content.js';
+export { DeployManager } from './managers/deploy.js';
+export type { DeployOptions, DeployResult } from './managers/deploy.js';
 
 // Export version and name
 export const VERSION = '1.0.0';
