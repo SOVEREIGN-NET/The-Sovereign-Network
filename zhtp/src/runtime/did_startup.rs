@@ -16,6 +16,7 @@ use lib_storage::{UnifiedStorageSystem, UnifiedStorageConfig};
 use lib_crypto::{PrivateKey, Hash};
 use serde::{Serialize, Deserialize};
 use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME, WALLET_DATA_FILENAME};
+use crate::runtime::seed_storage::{SeedSlot, SeedStorage};
 use tracing::info;
 // Core wallet functionality with mesh network integration
 
@@ -34,6 +35,8 @@ pub enum KeystoreError {
     PermissionDenied(PathBuf),
     /// IO error during keystore operation (FATAL - do not proceed)
     IoError(PathBuf, std::io::Error),
+    /// Seed storage error (FATAL - do not proceed)
+    SeedStorage(PathBuf, String),
 }
 
 impl std::fmt::Display for KeystoreError {
@@ -43,6 +46,7 @@ impl std::fmt::Display for KeystoreError {
             KeystoreError::Corrupt(path, reason) => write!(f, "Keystore corrupt at {:?}: {}", path, reason),
             KeystoreError::PermissionDenied(path) => write!(f, "Permission denied accessing keystore at {:?}", path),
             KeystoreError::IoError(path, e) => write!(f, "IO error at {:?}: {}", path, e),
+            KeystoreError::SeedStorage(path, reason) => write!(f, "Seed storage error at {:?}: {}", path, reason),
         }
     }
 }
@@ -54,7 +58,8 @@ impl std::error::Error for KeystoreError {}
 struct KeystorePrivateKey {
     dilithium_sk: Vec<u8>,
     kyber_sk: Vec<u8>,
-    master_seed: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    master_seed: Option<Vec<u8>>,
 }
 
 /// Serializable format for WalletStartupResult persistence
@@ -120,10 +125,18 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
     let user_keystore_key: KeystorePrivateKey = serde_json::from_str(&user_private_key_data)
         .map_err(|e| KeystoreError::Corrupt(user_private_key_file.clone(), e.to_string()))?;
 
+    let seed_storage = SeedStorage::new(keystore_path);
+    let user_master_seed = resolve_master_seed(
+        &seed_storage,
+        SeedSlot::User,
+        &user_private_key_file,
+        &user_keystore_key,
+    )?;
+
     let user_private_key = PrivateKey {
         dilithium_sk: user_keystore_key.dilithium_sk.clone(),
         kyber_sk: user_keystore_key.kyber_sk.clone(),
-        master_seed: user_keystore_key.master_seed.clone(),
+        master_seed: user_master_seed,
     };
 
     let mut user_identity = ZhtpIdentity::from_serialized(&user_identity_data, &user_private_key)
@@ -139,10 +152,17 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
     let node_keystore_key: KeystorePrivateKey = serde_json::from_str(&node_private_key_data)
         .map_err(|e| KeystoreError::Corrupt(node_private_key_file.clone(), e.to_string()))?;
 
+    let node_master_seed = resolve_master_seed(
+        &seed_storage,
+        SeedSlot::Node,
+        &node_private_key_file,
+        &node_keystore_key,
+    )?;
+
     let node_private_key = PrivateKey {
         dilithium_sk: node_keystore_key.dilithium_sk.clone(),
         kyber_sk: node_keystore_key.kyber_sk.clone(),
-        master_seed: node_keystore_key.master_seed.clone(),
+        master_seed: node_master_seed,
     };
 
     let node_identity = ZhtpIdentity::from_serialized(&node_identity_data, &node_private_key)
@@ -251,16 +271,18 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
     let user_private_key = result.user_identity.private_key.as_ref()
         .ok_or_else(|| KeystoreError::Corrupt(user_identity_file.clone(), "User identity missing private key".to_string()))?;
 
+    let seed_storage = SeedStorage::new(keystore_path);
+    seed_storage
+        .store_seed(SeedSlot::User, &user_private_key.master_seed)
+        .map_err(|e| KeystoreError::SeedStorage(user_private_key_file.clone(), e.to_string()))?;
+
     let user_keystore_key = KeystorePrivateKey {
         dilithium_sk: user_private_key.dilithium_sk.clone(),
         kyber_sk: user_private_key.kyber_sk.clone(),
-        master_seed: user_private_key.master_seed.clone(),
+        master_seed: None,
     };
 
-    let user_private_key_json = serde_json::to_string_pretty(&user_keystore_key)
-        .map_err(|e| KeystoreError::Corrupt(user_private_key_file.clone(), e.to_string()))?;
-
-    write_file_with_permissions(&user_private_key_file, &user_private_key_json)?;
+    write_private_key_file(&user_private_key_file, &user_keystore_key)?;
 
     // Save user identity (public data)
     let user_identity_json = serde_json::to_string_pretty(&result.user_identity)
@@ -272,16 +294,17 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
     let node_private_key = result.node_identity.private_key.as_ref()
         .ok_or_else(|| KeystoreError::Corrupt(node_identity_file.clone(), "Node identity missing private key".to_string()))?;
 
+    seed_storage
+        .store_seed(SeedSlot::Node, &node_private_key.master_seed)
+        .map_err(|e| KeystoreError::SeedStorage(node_private_key_file.clone(), e.to_string()))?;
+
     let node_keystore_key = KeystorePrivateKey {
         dilithium_sk: node_private_key.dilithium_sk.clone(),
         kyber_sk: node_private_key.kyber_sk.clone(),
-        master_seed: node_private_key.master_seed.clone(),
+        master_seed: None,
     };
 
-    let node_private_key_json = serde_json::to_string_pretty(&node_keystore_key)
-        .map_err(|e| KeystoreError::Corrupt(node_private_key_file.clone(), e.to_string()))?;
-
-    write_file_with_permissions(&node_private_key_file, &node_private_key_json)?;
+    write_private_key_file(&node_private_key_file, &node_keystore_key)?;
 
     // Save node identity (public data)
     let node_identity_json = serde_json::to_string_pretty(&result.node_identity)
@@ -334,6 +357,37 @@ fn write_file_with_permissions(path: &Path, content: &str) -> std::result::Resul
     Ok(())
 }
 
+fn write_private_key_file(path: &Path, key: &KeystorePrivateKey) -> std::result::Result<(), KeystoreError> {
+    let key_json = serde_json::to_string_pretty(key)
+        .map_err(|e| KeystoreError::Corrupt(path.to_path_buf(), e.to_string()))?;
+    write_file_with_permissions(path, &key_json)
+}
+
+fn resolve_master_seed(
+    seed_storage: &SeedStorage,
+    slot: SeedSlot,
+    key_path: &Path,
+    keystore_key: &KeystorePrivateKey,
+) -> std::result::Result<Vec<u8>, KeystoreError> {
+    if let Some(seed) = keystore_key.master_seed.clone() {
+        seed_storage
+            .store_seed(slot, &seed)
+            .map_err(|e| KeystoreError::SeedStorage(key_path.to_path_buf(), e.to_string()))?;
+
+        let scrubbed = KeystorePrivateKey {
+            dilithium_sk: keystore_key.dilithium_sk.clone(),
+            kyber_sk: keystore_key.kyber_sk.clone(),
+            master_seed: None,
+        };
+        write_private_key_file(key_path, &scrubbed)?;
+        return Ok(seed);
+    }
+
+    seed_storage
+        .load_seed(slot)
+        .map_err(|e| KeystoreError::SeedStorage(key_path.to_path_buf(), e.to_string()))
+}
+
 /// Load only the node identity from keystore (non-interactive).
 ///
 /// Returns Ok(None) when the node identity and private key files are absent.
@@ -365,10 +419,14 @@ pub async fn load_node_identity_from_keystore(keystore_path: &Path) -> Result<Op
     let keystore_key: KeystorePrivateKey = serde_json::from_str(&key_data)
         .map_err(|e| anyhow!("Failed to parse node private key: {}", e))?;
 
+    let seed_storage = SeedStorage::new(keystore_path);
+    let master_seed = resolve_master_seed(&seed_storage, SeedSlot::Node, &key_file, &keystore_key)
+        .map_err(|e| anyhow!("Failed to load node master seed: {}", e))?;
+
     let private_key = PrivateKey {
         dilithium_sk: keystore_key.dilithium_sk,
         kyber_sk: keystore_key.kyber_sk,
-        master_seed: keystore_key.master_seed,
+        master_seed,
     };
 
     let identity = ZhtpIdentity::from_serialized(&identity_data, &private_key)
@@ -394,20 +452,22 @@ pub async fn persist_node_identity_to_keystore(
         .as_ref()
         .ok_or_else(|| anyhow!("Node identity missing private key (cannot persist)"))?;
 
+    let seed_storage = SeedStorage::new(keystore_path);
+    seed_storage
+        .store_seed(SeedSlot::Node, &private_key.master_seed)
+        .map_err(|e| anyhow!("Failed to store node master seed: {}", e))?;
+
     let key_payload = KeystorePrivateKey {
         dilithium_sk: private_key.dilithium_sk.clone(),
         kyber_sk: private_key.kyber_sk.clone(),
-        master_seed: private_key.master_seed.clone(),
+        master_seed: None,
     };
 
     let identity_json = serde_json::to_string_pretty(identity)
         .map_err(|e| anyhow!("Failed to serialize node identity: {}", e))?;
-    let key_json = serde_json::to_string_pretty(&key_payload)
-        .map_err(|e| anyhow!("Failed to serialize node private key: {}", e))?;
-
     write_file_with_permissions(&identity_file, &identity_json)
         .map_err(|e| anyhow!("Failed to write node identity {:?}: {}", identity_file, e))?;
-    write_file_with_permissions(&key_file, &key_json)
+    write_private_key_file(&key_file, &key_payload)
         .map_err(|e| anyhow!("Failed to write node private key {:?}: {}", key_file, e))?;
 
     Ok(())
