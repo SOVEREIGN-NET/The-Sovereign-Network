@@ -128,7 +128,7 @@ pub fn derive_session_key_hkdf(
     context: &SessionContext,
 ) -> Result<[u8; 32]> {
     // Salt: Protocol-specific constant for domain separation
-    let salt = b"ZHTP-UHP-v1-SESSION-KEY-DERIVATION-2025";
+    let salt = b"ZHTP-UHP-v2-SESSION-KEY-DERIVATION-2025";
 
     // Input Key Material: Combine nonces
     let mut ikm = Vec::new();
@@ -152,7 +152,7 @@ fn build_context_info(context: &SessionContext) -> Vec<u8> {
     let mut info = Vec::new();
     // CRITICAL: Domain separation to prevent key reuse across protocols
     // Network session keys MUST NEVER be used for blockchain transaction signing
-    info.extend_from_slice(b"ZHTP-NETWORK-SESSION-ONLY-v1");  // Domain tag
+    info.extend_from_slice(b"ZHTP-NETWORK-SESSION-ONLY-v2");  // Domain tag
     info.push(0x00); // Separator
     info.extend_from_slice(&context.protocol_version.to_le_bytes());
     info.extend_from_slice(context.client_did.as_bytes());
@@ -428,7 +428,7 @@ mod tests {
         let client_nonce = [1u8; 32];
         let server_nonce = [2u8; 32];
         let context = SessionContext {
-            protocol_version: 1,
+            protocol_version: 2,
             client_did: "did:zhtp:test".into(),
             server_did: "did:zhtp:server".into(),
             timestamp: 1234567890,
@@ -452,7 +452,7 @@ mod tests {
         let server_nonce = [2u8; 32];
 
         let context1 = SessionContext {
-            protocol_version: 1,
+            protocol_version: 2,
             client_did: "did:zhtp:client1".into(),
             server_did: "did:zhtp:server".into(),
             timestamp: 1234567890,
@@ -465,7 +465,7 @@ mod tests {
         };
 
         let context2 = SessionContext {
-            protocol_version: 1,
+            protocol_version: 2,
             client_did: "did:zhtp:client2".into(),
             server_did: "did:zhtp:server".into(),
             timestamp: 1234567890,

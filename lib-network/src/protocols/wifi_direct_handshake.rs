@@ -85,7 +85,7 @@ use lib_crypto::KeyPair;
 use crate::handshake::{
     ClientHello, ServerHello, ClientFinish, HandshakeContext, HandshakeResult,
     HandshakeCapabilities, HandshakeRole, HandshakeSessionInfo,
-    derive_channel_binding_from_addrs,
+    derive_channel_binding_from_addrs, compute_transcript_hash,
 };
 use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -179,7 +179,7 @@ pub async fn handshake_as_initiator(
         let client_hello = ClientHello::new(identity, capabilities, &ctx)
             .context("Failed to create ClientHello")?;
         
-        send_message(stream, &client_hello).await
+        let client_hello_bytes = send_message_with_bytes(stream, &client_hello).await
             .context("Failed to send ClientHello")?;
         
         tracing::debug!(
@@ -188,7 +188,7 @@ pub async fn handshake_as_initiator(
         );
         
         // Step 2: Receive and verify ServerHello
-        let server_hello: ServerHello = receive_message(stream).await
+        let (server_hello, server_hello_bytes): (ServerHello, Vec<u8>) = receive_message_with_bytes(stream).await
             .context("Failed to receive ServerHello from group owner")?;
         
         tracing::debug!(
@@ -196,16 +196,15 @@ pub async fn handshake_as_initiator(
             "WiFi Direct: ServerHello received from group owner"
         );
         
-        // CRITICAL: Verify server's signature (mutual authentication)
-        server_hello.verify_signature(&client_hello.challenge_nonce, &ctx)
-            .context("Server signature verification failed - potential MitM attack")?;
-        
+        let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
+        let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
+
         tracing::info!(
             peer_did = %server_hello.identity.did,
             peer_device = %server_hello.identity.device_id,
-            "WiFi Direct: Group owner verified successfully"
+            "WiFi Direct: Group owner received"
         );
-        
+
         // Step 3: Create and send ClientFinish
         let keypair = KeyPair {
             public_key: identity.public_key.clone(),
@@ -213,17 +212,30 @@ pub async fn handshake_as_initiator(
                 .ok_or_else(|| anyhow::anyhow!("Identity missing private key"))?,
         };
         
-        let client_finish = ClientFinish::new(&server_hello, &client_hello, &keypair, &ctx)
-            .context("Failed to create ClientFinish")?;
+        let (client_finish, pqc_shared_secret) = ClientFinish::new_with_pqc(
+            &server_hello,
+            &client_hello,
+            &client_hello_hash,
+            &pre_finish_hash,
+            &keypair,
+            &ctx,
+        )
+        .context("Failed to create ClientFinish")?;
         
-        send_message(stream, &client_finish).await
+        let client_finish_bytes = send_message_with_bytes(stream, &client_finish).await
             .context("Failed to send ClientFinish")?;
         
         tracing::debug!("WiFi Direct: ClientFinish sent, handshake complete");
         
+        let transcript_hash = compute_transcript_hash(&[
+            &client_hello_bytes,
+            &server_hello_bytes,
+            &client_finish_bytes,
+        ]);
+
         // Step 4: Derive session key (deterministic using ClientHello timestamp)
         let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)?;
-        let result = HandshakeResult::new(
+        let result = HandshakeResult::new_with_pqc(
             server_hello.identity.clone(),
             server_hello.negotiated.clone(),
             &client_hello.challenge_nonce,
@@ -232,6 +244,8 @@ pub async fn handshake_as_initiator(
             &server_hello.identity.did,
             client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
             &session_info,
+            pqc_shared_secret.as_ref(),
+            transcript_hash,
         ).context("Failed to derive session key")?;
         
         tracing::info!(
@@ -312,7 +326,7 @@ pub async fn handshake_as_responder(
             .with_channel_binding_required(true);
 
         // Step 1: Receive and verify ClientHello
-        let client_hello: ClientHello = receive_message(stream).await
+        let (client_hello, client_hello_bytes): (ClientHello, Vec<u8>) = receive_message_with_bytes(stream).await
             .context("Failed to receive ClientHello from WiFi Direct client")?;
         
         tracing::debug!(
@@ -331,11 +345,19 @@ pub async fn handshake_as_responder(
         );
         
         // Step 2: Create and send ServerHello
+        let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
+
         let capabilities = create_wifi_direct_capabilities();
-        let server_hello = ServerHello::new(identity, capabilities, &client_hello, &ctx)
-            .context("Failed to create ServerHello")?;
+        let (server_hello, pqc_state) = ServerHello::new_with_pqc(
+            identity,
+            capabilities,
+            &client_hello,
+            &client_hello_hash,
+            &ctx,
+        )
+        .context("Failed to create ServerHello")?;
         
-        send_message(stream, &server_hello).await
+        let server_hello_bytes = send_message_with_bytes(stream, &server_hello).await
             .context("Failed to send ServerHello")?;
         
         tracing::debug!(
@@ -344,14 +366,17 @@ pub async fn handshake_as_responder(
         );
         
         // Step 3: Receive and verify ClientFinish
-        let client_finish: ClientFinish = receive_message(stream).await
+        let (client_finish, client_finish_bytes): (ClientFinish, Vec<u8>) = receive_message_with_bytes(stream).await
             .context("Failed to receive ClientFinish from client")?;
         
         tracing::debug!("WiFi Direct: ClientFinish received");
         
         // CRITICAL: Verify client's signature on server nonce
+        let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
+
         client_finish.verify_signature_with_context(
             &server_hello.response_nonce,
+            &pre_finish_hash,
             &client_hello.identity.public_key,
             &ctx,
         )
@@ -359,9 +384,24 @@ pub async fn handshake_as_responder(
         
         tracing::debug!("WiFi Direct: ClientFinish verified, handshake complete");
         
+        let pqc_shared_secret = match (&client_finish.pqc_ciphertext, &pqc_state) {
+            (Some(ciphertext), Some(state)) => {
+                let secret = crate::handshake::decapsulate_pqc(ciphertext, state)
+                    .context("PQC decapsulation failed")?;
+                Some(secret)
+            }
+            _ => None,
+        };
+
+        let transcript_hash = compute_transcript_hash(&[
+            &client_hello_bytes,
+            &server_hello_bytes,
+            &client_finish_bytes,
+        ]);
+
         // Step 4: Derive session key (same as client - deterministic)
         let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)?;
-        let result = HandshakeResult::new(
+        let result = HandshakeResult::new_with_pqc(
             client_hello.identity.clone(),
             server_hello.negotiated.clone(),
             &client_hello.challenge_nonce,
@@ -370,6 +410,8 @@ pub async fn handshake_as_responder(
             &server_hello.identity.did,
             client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp (same as client)
             &session_info,
+            pqc_shared_secret.as_ref(),
+            transcript_hash,
         ).context("Failed to derive session key")?;
         
         tracing::info!(
@@ -435,6 +477,33 @@ async fn send_message<T: serde::Serialize>(stream: &mut TcpStream, message: &T) 
     Ok(())
 }
 
+async fn send_message_with_bytes<T: serde::Serialize>(stream: &mut TcpStream, message: &T) -> Result<Vec<u8>> {
+    let bytes = bincode::serialize(message)
+        .context("Failed to serialize handshake message")?;
+
+    if bytes.len() > MAX_HANDSHAKE_MESSAGE_SIZE {
+        return Err(anyhow::anyhow!(
+            "Message too large: {} bytes (max: {})",
+            bytes.len(),
+            MAX_HANDSHAKE_MESSAGE_SIZE
+        ));
+    }
+
+    stream.write_u32(bytes.len() as u32).await
+        .context("Failed to write message length")?;
+    stream.write_all(&bytes).await
+        .context("Failed to write message payload")?;
+    stream.flush().await
+        .context("Failed to flush stream")?;
+
+    tracing::trace!(
+        message_size = bytes.len(),
+        "WiFi Direct: Handshake message sent"
+    );
+
+    Ok(bytes)
+}
+
 /// Receive a handshake message with length-prefix framing
 ///
 /// Wire format: [4-byte length (u32 big-endian)][serialized message bytes]
@@ -486,6 +555,39 @@ async fn receive_message<T: serde::de::DeserializeOwned>(stream: &mut TcpStream)
     Ok(message)
 }
 
+async fn receive_message_with_bytes<T: serde::de::DeserializeOwned>(
+    stream: &mut TcpStream,
+) -> Result<(T, Vec<u8>)> {
+    let len = stream.read_u32().await
+        .context("Failed to read message length - peer disconnected or network error")? as usize;
+
+    if len > MAX_HANDSHAKE_MESSAGE_SIZE {
+        return Err(anyhow::anyhow!(
+            "Message too large: {} bytes (max: {}) - potential DoS attack",
+            len,
+            MAX_HANDSHAKE_MESSAGE_SIZE
+        ));
+    }
+
+    if len == 0 {
+        return Err(anyhow::anyhow!("Empty message received"));
+    }
+
+    let mut buffer = vec![0u8; len];
+    stream.read_exact(&mut buffer).await
+        .context("Failed to read message payload - incomplete transmission")?;
+
+    let message = bincode::deserialize(&buffer)
+        .context("Failed to deserialize handshake message - protocol mismatch")?;
+
+    tracing::trace!(
+        message_size = len,
+        "WiFi Direct: Handshake message received"
+    );
+
+    Ok((message, buffer))
+}
+
 // ============================================================================
 // WiFi Direct Capability Configuration
 // ============================================================================
@@ -509,7 +611,7 @@ fn create_wifi_direct_capabilities() -> HandshakeCapabilities {
         max_throughput: 100_000_000, // 100 Mbps (practical WiFi Direct throughput)
         max_message_size: 1_048_576,  // 1 MB (WiFi Direct can handle large messages)
         encryption_methods: vec!["chacha20-poly1305".to_string()],
-        pqc_capability: PqcCapability::None, // Post-quantum crypto adds overhead for mobile
+        pqc_capability: PqcCapability::Kyber1024Dilithium5,
         dht_capable: true,  // WiFi Direct nodes can participate in DHT
         relay_capable: true, // WiFi Direct group owners can relay traffic
         storage_capacity: 0, // No storage guarantee over WiFi Direct
