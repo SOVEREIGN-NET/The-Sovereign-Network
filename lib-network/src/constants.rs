@@ -17,9 +17,16 @@
 // Security: ALPN selection determines the initial protocol flow, but actual
 // security comes from UHP authentication for control plane operations.
 
-/// ALPN for control plane connections (CLI, Web4 deploy, admin APIs)
+/// ALPN for control plane connections v1 (CLI, Web4 deploy, admin APIs)
 /// These connections perform UHP handshake FIRST, then send authenticated requests.
 pub const ALPN_CONTROL_PLANE: &[u8] = b"zhtp-uhp/1";
+
+/// ALPN for control plane connections v2 (CLI, mobile apps with v2 key schedule)
+/// These connections perform UHP v2 handshake with:
+/// - Explicit handshake_hash for key derivation
+/// - HKDF labels: zhtp/v2/app_key_c2s, zhtp/v2/mac_key, etc.
+/// - MAC format: HMAC-SHA3-256(mac_key, canonical_request || counter || session_id)
+pub const ALPN_CONTROL_PLANE_V2: &[u8] = b"zhtp-uhp/2";
 
 /// ALPN for public read-only connections (mobile apps, browsers reading public content)
 /// These connections do NOT perform UHP handshake.
@@ -46,19 +53,27 @@ pub const ALPN_H3: &[u8] = b"h3";
 /// All supported server ALPNs (ordered by preference)
 pub fn server_alpns() -> Vec<Vec<u8>> {
     vec![
-        ALPN_PUBLIC.to_vec(),          // Public read-only (mobile apps, browsers)
-        ALPN_CONTROL_PLANE.to_vec(),   // Control plane with UHP (CLI, deploy)
-        ALPN_MESH.to_vec(),            // Mesh protocol
-        ALPN_HTTP_COMPAT.to_vec(),     // HTTP-compat mode (legacy)
-        ALPN_LEGACY.to_vec(),          // Legacy (treated as HTTP-compat)
-        ALPN_H3.to_vec(),              // HTTP/3 browsers
+        ALPN_CONTROL_PLANE_V2.to_vec(), // Control plane v2 (preferred for new clients)
+        ALPN_PUBLIC.to_vec(),           // Public read-only (mobile apps, browsers)
+        ALPN_CONTROL_PLANE.to_vec(),    // Control plane v1 (CLI, deploy)
+        ALPN_MESH.to_vec(),             // Mesh protocol
+        ALPN_HTTP_COMPAT.to_vec(),      // HTTP-compat mode (legacy)
+        ALPN_LEGACY.to_vec(),           // Legacy (treated as HTTP-compat)
+        ALPN_H3.to_vec(),               // HTTP/3 browsers
     ]
 }
 
 /// Client ALPNs for control plane operations (CLI, Web4 deploy)
 pub fn client_control_plane_alpns() -> Vec<Vec<u8>> {
     vec![
-        ALPN_CONTROL_PLANE.to_vec(),   // Primary: control plane with UHP
+        ALPN_CONTROL_PLANE.to_vec(),   // Primary: control plane with UHP v1
+    ]
+}
+
+/// Client ALPNs for control plane v2 operations (mobile apps with v2 key schedule)
+pub fn client_control_plane_v2_alpns() -> Vec<Vec<u8>> {
+    vec![
+        ALPN_CONTROL_PLANE_V2.to_vec(), // Control plane v2 with HKDF-SHA3-256
     ]
 }
 

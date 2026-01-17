@@ -116,9 +116,16 @@ pub enum ConnectionMode {
     /// Allows: domain resolution, manifest fetch, content/blob retrieval
     /// Rejects: deploy, domain registration, admin operations, any mutations
     Public,
-    /// Control plane: UHP handshake required, then authenticated API requests
+    /// Control plane v1: UHP handshake required, then authenticated API requests
     /// ALPN: zhtp-uhp/1
     ControlPlane,
+    /// Control plane v2: UHP v2 handshake with transcript hash, HKDF-SHA3-256 key derivation
+    /// ALPN: zhtp-uhp/2
+    /// Features:
+    /// - 32-byte session_id
+    /// - HMAC-SHA3-256 request MAC
+    /// - Canonical request format: method(1) + path_len(u16BE) + path + body_len(u32BE) + body + counter(u64BE) + session_id(32)
+    ControlPlaneV2,
     /// Mesh peer-to-peer: UHP handshake, then encrypted mesh messages
     /// ALPN: zhtp-mesh/1
     Mesh,
@@ -130,6 +137,7 @@ impl ConnectionMode {
         match alpn {
             Some(b"zhtp-public/1") => ConnectionMode::Public,
             Some(b"zhtp-uhp/1") => ConnectionMode::ControlPlane,
+            Some(b"zhtp-uhp/2") => ConnectionMode::ControlPlaneV2,
             Some(b"zhtp-mesh/1") => ConnectionMode::Mesh,
             _ => ConnectionMode::Public, // Default to public read-only for unknown (safe default)
         }
@@ -409,8 +417,12 @@ impl QuicHandler {
                 self.handle_public_connection(connection, peer_addr).await
             }
             ConnectionMode::ControlPlane => {
-                // Control plane: Perform UHP handshake, then handle authenticated API requests
+                // Control plane v1: Perform UHP handshake, then handle authenticated API requests
                 self.handle_control_plane_connection(connection, peer_addr).await
+            }
+            ConnectionMode::ControlPlaneV2 => {
+                // Control plane v2: UHP v2 handshake with HKDF-SHA3-256 key derivation
+                self.handle_control_plane_v2_connection(connection, peer_addr).await
             }
             ConnectionMode::Mesh => {
                 // Mesh: Perform UHP handshake, then handle mesh messages
@@ -465,7 +477,7 @@ impl QuicHandler {
         self.handle_control_plane_streams(connection, session, peer_addr).await
     }
 
-    /// Derive application-layer MAC key from master key
+    /// Derive application-layer MAC key from master key (v1)
     /// MUST match client-side derivation in Web4Client/ZhtpClient
     fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], server_did: &str, client_did: &str) -> [u8; 32] {
         let mut input = Vec::new();
@@ -475,6 +487,269 @@ impl QuicHandler {
         input.extend_from_slice(server_did.as_bytes());  // Server DID
         input.extend_from_slice(client_did.as_bytes());  // Client DID
         lib_crypto::hash_blake3(&input)
+    }
+
+    /// Handle control plane v2 connection (mobile apps with v2 key schedule)
+    ///
+    /// Protocol flow:
+    /// 1. Perform UHP v2 handshake to authenticate client
+    /// 2. Derive v2 session keys using HKDF-SHA3-256 with transcript hash
+    /// 3. Create V2Session with 32-byte session_id and monotonic counter
+    /// 4. Accept streams with v2 MAC verification (HMAC-SHA3-256)
+    ///
+    /// Key differences from v1:
+    /// - 32-byte session_id (vs 16-byte in v1)
+    /// - HKDF-SHA3-256 with transcript hash salt (vs Blake3 in v1)
+    /// - HMAC-SHA3-256 request MAC (vs Blake3 in v1)
+    /// - Canonical request format with counter and session_id binding
+    async fn handle_control_plane_v2_connection(&self, connection: Connection, peer_addr: SocketAddr) -> Result<()> {
+        info!("🔐 Control plane v2 connection from {} - starting UHP v2 handshake", peer_addr);
+
+        // Perform UHP+Kyber handshake (same as v1, but we'll derive keys differently)
+        let (identity, handshake_result) = self.perform_uhp_handshake(
+            &connection,
+            &peer_addr,
+        ).await?;
+
+        let peer_did = handshake_result.verified_peer.identity.did.clone();
+        let master_key = handshake_result.master_key;
+
+        // For v2, we need the transcript hash for HKDF derivation
+        // The transcript hash should be available from the handshake result
+        // For now, we compute it from available data (this will be improved when
+        // the handshake module fully supports v2)
+        let transcript_hash = lib_crypto::hash_blake3(&[
+            &master_key[..],
+            &handshake_result.session_id[..],
+            identity.did.as_bytes(),
+            peer_did.as_bytes(),
+        ].concat());
+
+        // Derive v2 session keys using HKDF-SHA3-256
+        let v2_keys = lib_network::handshake::security::derive_v2_session_keys(
+            &master_key,
+            &transcript_hash,
+        ).context("Failed to derive v2 session keys")?;
+
+        // Generate 32-byte session_id for v2
+        let mut session_id_v2 = [0u8; 32];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut session_id_v2);
+
+        info!(
+            peer_did = %peer_did,
+            session_id = ?hex::encode(&session_id_v2[..8]),
+            "✅ Control plane v2 authenticated from {} (v2 key schedule active)",
+            peer_addr
+        );
+
+        // Auto-register the authenticated peer identity
+        self.auto_register_peer_identity(&handshake_result.verified_peer.identity).await;
+
+        // Create V2Session for request authentication
+        let v2_session = lib_network::protocols::types::session::V2Session::new(
+            session_id_v2,
+            v2_keys.mac_key,
+            peer_did.clone(),
+            None, // Default TTL (24 hours)
+        );
+
+        // Store session in global v2 session store
+        // TODO: Add global V2SessionStore to QuicHandler
+        // For now, we'll pass session info directly to stream handler
+
+        // Handle streams with v2 authentication
+        self.handle_control_plane_v2_streams(connection, v2_session, peer_addr).await
+    }
+
+    /// Handle authenticated control plane v2 streams
+    async fn handle_control_plane_v2_streams(
+        &self,
+        connection: Connection,
+        session: lib_network::protocols::types::session::V2Session,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        let session = Arc::new(session);
+
+        loop {
+            let stream_result = tokio::time::timeout(
+                CLIENT_IDLE_TIMEOUT,
+                connection.accept_bi()
+            ).await;
+
+            match stream_result {
+                Ok(Ok((send, recv))) => {
+                    let handler = self.clone();
+                    let session = session.clone();
+
+                    tokio::spawn(async move {
+                        if let Err(e) = handler.handle_authenticated_v2_stream(recv, send, &session).await {
+                            warn!("⚠️ Control plane v2 stream error from {}: {}", peer_addr, e);
+                        }
+                    });
+                }
+                Ok(Err(quinn::ConnectionError::ApplicationClosed(_))) => {
+                    debug!("🔒 Control plane v2 connection closed from {}", peer_addr);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    warn!("⚠️ Control plane v2 stream error from {}: {}", peer_addr, e);
+                    break;
+                }
+                Err(_) => {
+                    debug!("⏱️ Control plane v2 connection idle timeout from {}", peer_addr);
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle a single authenticated v2 stream (ZHTP wire protocol with v2 MAC)
+    ///
+    /// SECURITY: V2 requests MUST include auth_context with:
+    /// - Client DID matching handshake identity
+    /// - Strictly increasing counter (replay protection)
+    /// - Valid HMAC-SHA3-256 MAC over canonical request
+    async fn handle_authenticated_v2_stream(
+        &self,
+        mut recv: RecvStream,
+        mut send: SendStream,
+        session: &lib_network::protocols::types::session::V2Session,
+    ) -> Result<()> {
+        use lib_protocols::wire::{read_request, write_response, ZhtpResponseWire};
+        use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
+        use lib_network::handshake::security::{CanonicalRequest, verify_v2_mac};
+
+        // Read ZHTP wire request (length-prefixed CBOR)
+        let wire_request = read_request(&mut recv).await
+            .context("Failed to read ZHTP wire request")?;
+
+        debug!(
+            request_id = %wire_request.request_id_hex(),
+            uri = %wire_request.request.uri,
+            method = ?wire_request.request.method,
+            has_auth = wire_request.auth_context.is_some(),
+            peer_did = %session.peer_did(),
+            "Received v2 authenticated ZHTP request"
+        );
+
+        // V2 REQUIRES auth_context - reject if missing
+        let auth_ctx = match &wire_request.auth_context {
+            Some(ctx) => ctx,
+            None => {
+                warn!("V2 request missing auth_context - rejecting");
+                let error_response = ZhtpResponseWire::error(
+                    wire_request.request_id,
+                    ZhtpStatus::Unauthorized,
+                    "V2 requires authentication context".to_string(),
+                );
+                write_response(&mut send, &error_response).await?;
+                return Ok(());
+            }
+        };
+
+        // 1. Verify client DID matches handshake identity
+        if auth_ctx.client_did != session.peer_did() {
+            warn!(
+                expected_did = %session.peer_did(),
+                received_did = %auth_ctx.client_did,
+                "Client DID mismatch in v2 auth context"
+            );
+            let error_response = ZhtpResponseWire::error(
+                wire_request.request_id,
+                ZhtpStatus::Unauthorized,
+                "Invalid client identity".to_string(),
+            );
+            write_response(&mut send, &error_response).await?;
+            return Ok(());
+        }
+
+        // 2. Validate counter (strictly increasing - prevents replay attacks)
+        let counter = auth_ctx.sequence;
+        if let Err(e) = session.validate_counter(counter) {
+            warn!(
+                counter = counter,
+                error = %e,
+                "Counter validation failed - possible replay attack"
+            );
+            let error_response = ZhtpResponseWire::error(
+                wire_request.request_id,
+                ZhtpStatus::Unauthorized,
+                "Invalid counter - possible replay".to_string(),
+            );
+            write_response(&mut send, &error_response).await?;
+            return Ok(());
+        }
+
+        // 3. Build canonical request for MAC verification
+        // Method mapping: Get=0, Post=1, Put=2, Delete=3, etc.
+        let method_byte = match wire_request.request.method {
+            lib_protocols::types::ZhtpMethod::Get => 0u8,
+            lib_protocols::types::ZhtpMethod::Post => 1u8,
+            lib_protocols::types::ZhtpMethod::Put => 2u8,
+            lib_protocols::types::ZhtpMethod::Delete => 3u8,
+            lib_protocols::types::ZhtpMethod::Patch => 4u8,
+            lib_protocols::types::ZhtpMethod::Head => 5u8,
+            lib_protocols::types::ZhtpMethod::Options => 6u8,
+            _ => 255u8, // Unknown method
+        };
+
+        let canonical = CanonicalRequest {
+            method: method_byte,
+            path: wire_request.request.uri.clone(),
+            body: wire_request.request.body.clone(),
+        };
+
+        // 4. Verify MAC using HMAC-SHA3-256
+        // The MAC proves request integrity and binds to session + counter
+        if !verify_v2_mac(
+            session.mac_key(),
+            &canonical,
+            counter,
+            session.session_id(),
+            &auth_ctx.request_mac,
+        ) {
+            warn!(
+                request_id = %wire_request.request_id_hex(),
+                "V2 MAC verification failed - request may have been tampered"
+            );
+            let error_response = ZhtpResponseWire::error(
+                wire_request.request_id,
+                ZhtpStatus::Unauthorized,
+                "MAC verification failed".to_string(),
+            );
+            write_response(&mut send, &error_response).await?;
+            return Ok(());
+        }
+
+        debug!(
+            request_id = %wire_request.request_id_hex(),
+            counter = counter,
+            "V2 request authenticated successfully"
+        );
+
+        // Route request through ZHTP router
+        let mut request = wire_request.request;
+        request.requester = Some(lib_crypto::Hash(lib_crypto::hash_blake3(session.peer_did().as_bytes())));
+
+        let router = self.zhtp_router.read().await;
+        let response = router.route_request(request).await
+            .unwrap_or_else(|e| {
+                warn!("Handler error: {}", e);
+                ZhtpResponse::error(ZhtpStatus::InternalServerError, e.to_string())
+            });
+
+        // Send wire response (length-prefixed CBOR)
+        let wire_response = ZhtpResponseWire::success(wire_request.request_id, response);
+        write_response(&mut send, &wire_response).await
+            .context("Failed to write ZHTP wire response")?;
+
+        send.finish()
+            .context("Failed to finish QUIC stream")?;
+
+        Ok(())
     }
 
     /// Common handshake setup for authenticated connections (control plane and mesh)

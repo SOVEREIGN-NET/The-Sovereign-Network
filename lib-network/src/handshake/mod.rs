@@ -60,7 +60,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rand::RngCore;
 
 // Security modules
-mod security;
+pub mod security;
 mod nonce_cache;
 mod observability;
 mod rate_limiter;
@@ -83,6 +83,9 @@ pub use security::{
     TimestampConfig, SessionContext,
     validate_timestamp, current_timestamp,
     derive_session_key_hkdf, ct_eq_bytes, ct_verify_eq,
+    // UHP v2 key schedule and MAC
+    v2_labels, V2SessionKeys, derive_v2_session_keys, derive_v2_key,
+    CanonicalRequest, compute_v2_mac, verify_v2_mac,
 };
 pub use nonce_cache::{
     NonceCache, start_nonce_cleanup_task, NetworkEpoch,
@@ -1693,28 +1696,35 @@ impl HandshakeSessionInfo {
 pub struct HandshakeResult {
     /// Peer's verified node identity (public fields only)
     pub peer_identity: NodeIdentity,
-    
+
     /// Negotiated session capabilities
     pub capabilities: NegotiatedCapabilities,
-    
+
     /// Session key for symmetric encryption (derived from handshake)
     pub session_key: [u8; 32],
-    
-    /// Session identifier
-    pub session_id: [u8; 16],
-    
+
+    /// Session identifier (32 bytes for v2, first 16 used for v1 compat)
+    pub session_id: [u8; 32],
+
+    /// Handshake transcript hash (SHA3-256 of all handshake messages)
+    /// Used as salt for v2 key derivation: HKDF(session_key, handshake_hash, label)
+    pub handshake_hash: [u8; 32],
+
     /// Timestamp when handshake completed
     pub completed_at: u64,
-    
+
     /// Whether PQC hybrid mode was used
     pub pqc_hybrid_enabled: bool,
 
     /// Verified session metadata
     pub session_info: HandshakeSessionInfo,
+
+    /// Protocol version used (1 or 2)
+    pub protocol_version: u8,
 }
 
 impl HandshakeResult {
-    /// Create a new handshake result
+    /// Create a new handshake result (v1 compatibility)
     ///
     /// **VULN-003 FIX:** Uses ClientHello timestamp for deterministic session key derivation.
     /// Both client and server MUST use the same timestamp (from ClientHello) to derive
@@ -1743,9 +1753,10 @@ impl HandshakeResult {
             client_hello_timestamp,
             session_info,
             None,
+            None, // No transcript hash for v1
         )
     }
-    
+
     /// Create a new handshake result with optional PQC hybrid key derivation
     ///
     /// When `pqc_shared_secret` is provided, the session key is derived using
@@ -1755,6 +1766,7 @@ impl HandshakeResult {
     /// # Arguments
     /// * `client_hello_timestamp` - Timestamp from ClientHello message (MUST be same on both sides)
     /// * `pqc_shared_secret` - Optional PQC shared secret for hybrid key derivation
+    /// * `transcript_hash` - Optional handshake transcript hash for v2 key derivation
     pub fn new_with_pqc(
         peer_identity: NodeIdentity,
         capabilities: NegotiatedCapabilities,
@@ -1765,6 +1777,7 @@ impl HandshakeResult {
         client_hello_timestamp: u64,
         session_info: &HandshakeSessionInfo,
         pqc_shared_secret: Option<&[u8; 32]>,
+        transcript_hash: Option<[u8; 32]>,
     ) -> Result<Self> {
         // Build session context for HKDF domain separation
         // CRITICAL: Use ClientHello timestamp (deterministic, agreed by both parties)
@@ -1783,7 +1796,7 @@ impl HandshakeResult {
 
         // Derive session key using HKDF (NIST SP 800-108 compliant)
         let classical_key = derive_session_key_hkdf(client_nonce, server_nonce, &context)?;
-        
+
         // If PQC shared secret is provided, derive hybrid key
         let (session_key, pqc_hybrid_enabled) = if let Some(pqc_secret) = pqc_shared_secret {
             let hybrid_key = derive_hybrid_session_key(pqc_secret, &classical_key)?;
@@ -1792,19 +1805,87 @@ impl HandshakeResult {
             (classical_key, false)
         };
 
-        // Generate session ID from first 16 bytes of session key
-        let mut session_id = [0u8; 16];
-        session_id.copy_from_slice(&session_key[..16]);
+        // Generate 32-byte session ID (v2 uses full 32 bytes, v1 uses first 16)
+        let session_id = Self::derive_session_id(&session_key, client_nonce, server_nonce);
+
+        // Handshake hash: use provided transcript or derive from nonces
+        let handshake_hash = transcript_hash.unwrap_or_else(|| {
+            use sha3::{Sha3_256, Digest};
+            let mut hasher = Sha3_256::new();
+            hasher.update(client_nonce);
+            hasher.update(server_nonce);
+            hasher.update(&session_key);
+            let result = hasher.finalize();
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&result);
+            hash
+        });
+
+        // Determine protocol version based on whether transcript hash was provided
+        let protocol_version = if transcript_hash.is_some() { 2 } else { 1 };
 
         Ok(Self {
             peer_identity,
             capabilities,
             session_key,
             session_id,
+            handshake_hash,
             completed_at: current_timestamp()?, // Completion time (for logging only)
             pqc_hybrid_enabled,
             session_info: session_info.clone(),
+            protocol_version,
         })
+    }
+
+    /// Create v2 handshake result with explicit transcript hash
+    ///
+    /// UHP v2 requires the transcript hash for proper key derivation.
+    /// The transcript hash is SHA3-256(client_hello || server_hello || client_finish).
+    pub fn new_v2(
+        peer_identity: NodeIdentity,
+        capabilities: NegotiatedCapabilities,
+        client_nonce: &[u8; 32],
+        server_nonce: &[u8; 32],
+        client_did: &str,
+        server_did: &str,
+        client_hello_timestamp: u64,
+        session_info: &HandshakeSessionInfo,
+        pqc_shared_secret: Option<&[u8; 32]>,
+        transcript_hash: [u8; 32],
+    ) -> Result<Self> {
+        Self::new_with_pqc(
+            peer_identity,
+            capabilities,
+            client_nonce,
+            server_nonce,
+            client_did,
+            server_did,
+            client_hello_timestamp,
+            session_info,
+            pqc_shared_secret,
+            Some(transcript_hash),
+        )
+    }
+
+    /// Derive 32-byte session ID from session key and nonces
+    fn derive_session_id(session_key: &[u8; 32], client_nonce: &[u8; 32], server_nonce: &[u8; 32]) -> [u8; 32] {
+        use sha3::{Sha3_256, Digest};
+        let mut hasher = Sha3_256::new();
+        hasher.update(b"zhtp/v2/session_id");
+        hasher.update(session_key);
+        hasher.update(client_nonce);
+        hasher.update(server_nonce);
+        let result = hasher.finalize();
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&result);
+        id
+    }
+
+    /// Get session ID as 16 bytes (v1 compatibility)
+    pub fn session_id_v1(&self) -> [u8; 16] {
+        let mut id = [0u8; 16];
+        id.copy_from_slice(&self.session_id[..16]);
+        id
     }
 
     pub fn verified_peer(&self) -> VerifiedPeer {

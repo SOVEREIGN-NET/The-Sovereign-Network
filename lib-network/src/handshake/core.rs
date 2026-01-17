@@ -275,6 +275,7 @@ where
         client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
         &session_info,
         pqc_shared_secret.as_ref(),
+        None, // v1 handshake - no transcript hash
     )
     .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
@@ -400,6 +401,7 @@ where
         client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
         &session_info,
         pqc_shared_secret.as_ref(),
+        None, // v1 handshake - no transcript hash
     )
     .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
