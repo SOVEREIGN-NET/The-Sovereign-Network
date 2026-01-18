@@ -132,7 +132,7 @@ pub fn encapsulate_pqc(offer: &PqcHandshakeOffer) -> Result<(Vec<u8>, [u8; 32])>
     if !offer.suite.is_enabled() {
         return Err(anyhow!("PQC not enabled for encapsulation"));
     }
-    let kdf_info = b"ZHTP-KEM-v1.0";
+        let kdf_info = b"ZHTP-KEM-v2.0";
     kyber1024_encapsulate(&offer.kyber_public_key, kdf_info)
 }
 
@@ -141,7 +141,7 @@ pub fn decapsulate_pqc(ciphertext: &[u8], state: &PqcHandshakeState) -> Result<[
     if !state.suite.is_enabled() {
         return Err(anyhow!("PQC not enabled for decapsulation"));
     }
-    let kdf_info = b"ZHTP-KEM-v1.0";
+        let kdf_info = b"ZHTP-KEM-v2.0";
     kyber1024_decapsulate(ciphertext, &state.kyber_secret_key, kdf_info)
 }
 

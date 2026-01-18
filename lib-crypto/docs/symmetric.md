@@ -65,7 +65,7 @@ fn hybrid_encryption() -> Result<()> {
     let plaintext = b"Large amount of data to encrypt securely";
     let metadata = b"file version info";
     
-    // Hybrid: Kyber512 + ChaCha20-Poly1305
+    // Hybrid: Kyber1024 + ChaCha20-Poly1305
     let ciphertext = keypair.encrypt(plaintext, metadata)?;
     
     // Structure: [Kyber Ciphertext][Nonce][Encrypted Data]

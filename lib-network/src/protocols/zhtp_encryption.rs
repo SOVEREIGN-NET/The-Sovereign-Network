@@ -1,11 +1,11 @@
 //! ZHTP Post-Quantum Encryption for Mesh Connections
 //!
-//! Implements Kyber512 key exchange and AES-GCM encryption for secure mesh communication.
+//! Implements Kyber1024 key exchange and AES-GCM encryption for secure mesh communication.
 //! Uses lib-crypto's post-quantum cryptography and symmetric encryption.
 
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
-use lib_crypto::post_quantum::kyber::{kyber512_keypair, kyber512_encapsulate, kyber512_decapsulate};
+use lib_crypto::post_quantum::kyber::{kyber1024_keypair, kyber1024_encapsulate, kyber1024_decapsulate};
 use lib_crypto::symmetric::chacha20::{encrypt_data, decrypt_data};
 use tracing::{info, debug};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,9 +13,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// ZHTP encryption session for a mesh connection
 #[derive(Debug, Clone)]
 pub struct ZhtpEncryptionSession {
-    /// Kyber512 public key (for this node)
+    /// Kyber1024 public key (for this node)
     pub local_kyber_public: Vec<u8>,
-    /// Kyber512 secret key (for this node)
+    /// Kyber1024 secret key (for this node)
     local_kyber_secret: Vec<u8>,
     /// Shared secret derived from Kyber KEM
     shared_secret: Option<[u8; 32]>,
@@ -30,7 +30,7 @@ pub struct ZhtpEncryptionSession {
 /// Kyber key exchange initiation message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZhtpKeyExchangeInit {
-    /// Sender's Kyber512 public key
+    /// Sender's Kyber1024 public key
     pub kyber_public_key: Vec<u8>,
     /// Timestamp
     pub timestamp: u64,
@@ -43,7 +43,7 @@ pub struct ZhtpKeyExchangeInit {
 pub struct ZhtpKeyExchangeResponse {
     /// Session ID being responded to
     pub session_id: String,
-    /// Kyber512 ciphertext (encapsulated shared secret)
+    /// Kyber1024 ciphertext (encapsulated shared secret)
     pub kyber_ciphertext: Vec<u8>,
     /// Timestamp
     pub timestamp: u64,
@@ -67,12 +67,12 @@ pub struct ZhtpEncryptedMessage {
 impl ZhtpEncryptionSession {
     /// Create new encryption session with fresh Kyber keypair
     pub fn new() -> Result<Self> {
-        info!(" Creating new ZHTP encryption session with Kyber512");
+        info!(" Creating new ZHTP encryption session with Kyber1024");
         
-        // Generate Kyber512 keypair
-        let (kyber_public, kyber_secret) = kyber512_keypair();
+        // Generate Kyber1024 keypair
+        let (kyber_public, kyber_secret) = kyber1024_keypair();
         
-        debug!("Generated Kyber512 keypair (public: {} bytes, secret: {} bytes)", 
+        debug!("Generated Kyber1024 keypair (public: {} bytes, secret: {} bytes)", 
                kyber_public.len(), kyber_secret.len());
         
         Ok(Self {
@@ -111,8 +111,8 @@ impl ZhtpEncryptionSession {
         
         // Encapsulate shared secret with peer's public key
         // NOTE: kdf_info must match the one used in complete_key_exchange by the initiator
-        let kdf_info = b"ZHTP-KEM-v1.0";
-        let (ciphertext, shared_secret) = kyber512_encapsulate(&init.kyber_public_key, kdf_info)?;
+        let kdf_info = b"ZHTP-KEM-v2.0";
+        let (ciphertext, shared_secret) = kyber1024_encapsulate(&init.kyber_public_key, kdf_info)?;
         
         debug!("Encapsulated shared secret (ciphertext: {} bytes)", ciphertext.len());
         
@@ -139,8 +139,8 @@ impl ZhtpEncryptionSession {
         info!("🔓 Completing Kyber key exchange for session: {}", &response.session_id[..8]);
         
         // Decapsulate shared secret with our secret key
-        let kdf_info = b"ZHTP-KEM-v1.0";
-        let shared_secret = kyber512_decapsulate(
+        let kdf_info = b"ZHTP-KEM-v2.0";
+        let shared_secret = kyber1024_decapsulate(
             &response.kyber_ciphertext,
             &self.local_kyber_secret,
             kdf_info,
@@ -227,7 +227,7 @@ impl ZhtpEncryptionSession {
         info!(" Rotating ZHTP encryption session");
         
         // Generate new Kyber keypair
-        let (kyber_public, kyber_secret) = kyber512_keypair();
+        let (kyber_public, kyber_secret) = kyber1024_keypair();
         
         self.local_kyber_public = kyber_public;
         self.local_kyber_secret = kyber_secret;

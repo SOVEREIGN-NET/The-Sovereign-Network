@@ -3,14 +3,14 @@
 //! Modern transport layer combining:
 //! - QUIC (reliability, multiplexing, built-in TLS 1.3)
 //! - UHP (Unified Handshake Protocol with Dilithium signatures)
-//! - Kyber512 KEM (Post-quantum key encapsulation)
+//! - Kyber1024 KEM (Post-quantum key encapsulation via UHP v2)
 //!
 //! # Architecture
 //!
 //! ```text
 //! ZHTP Message
 //!     ↓
-//! PQC Encryption (master_key from UHP+Kyber + ChaCha20-Poly1305)  ← Post-quantum security
+//! PQC Encryption (session_key from UHP v2 + ChaCha20-Poly1305)  ← Post-quantum security
 //!     ↓
 //! QUIC Connection (TLS 1.3 encryption + reliability)              ← Transport security
 //!     ↓
@@ -19,7 +19,7 @@
 //!
 //! **Note on Double Encryption**: This is defense-in-depth, NOT wasteful redundancy.
 //! - TLS 1.3: Protects against network-level attacks (MitM, passive eavesdropping)
-//! - App-layer ChaCha20+Kyber: Provides post-quantum security + cryptographic binding
+//! - App-layer ChaCha20 using UHP v2 session key for post-quantum security
 //! - Both layers serve different purposes and cannot be removed without losing security
 //!
 //! # Security Properties
@@ -27,14 +27,14 @@
 //! - **Mutual Authentication**: UHP verifies Dilithium signatures from both peers
 //! - **NodeId Verification**: Validates NodeId = Blake3(DID || device_name)
 //! - **Replay Protection**: Nonce cache prevents replay attacks
-//! - **Post-Quantum Security**: Kyber512 KEM provides quantum-resistant key exchange
-//! - **Cryptographic Binding**: Kyber is bound to UHP transcript + peer NodeId
+//! - **Post-Quantum Security**: Kyber1024 KEM provides quantum-resistant key exchange
+//! - **Cryptographic Binding**: UHP v2 transcript binds identity to session key
 //!
 //! # Protocol Flow
 //!
 //! 1. QUIC connection establishment (TLS 1.3)
 //! 2. UHP authentication over dedicated bidirectional stream
-//! 3. Kyber key exchange (bound to UHP transcript)
+//! 3. UHP v2 handshake (includes Kyber1024 + Dilithium5)
 //! 4. Master key derivation: HKDF(uhp_session_key || kyber_secret || transcript_hash || peer_node_id)
 //! 5. Application messaging using master key
 
@@ -61,7 +61,7 @@ use lib_identity::ZhtpIdentity;
 // Import UHP handshake framework
 use crate::handshake::{HandshakeContext, NonceCache, NodeIdentity, NegotiatedCapabilities};
 
-// Import new QUIC+UHP+Kyber handshake adapter
+// Import QUIC transport adapter for UHP v2
 use super::quic_handshake;
 
 use crate::types::mesh_message::ZhtpMeshMessage;
@@ -138,21 +138,20 @@ pub struct QuicMeshProtocol {
 ///
 /// After successful handshake, this connection has:
 /// - **Verified peer identity**: Dilithium signatures verified via UHP
-/// - **Master key**: Derived from UHP session key + Kyber shared secret
+/// - **Session key**: Derived from UHP v2 handshake
 /// - **Replay protection**: Nonces checked against shared cache
 pub struct PqcQuicConnection {
     /// Underlying QUIC connection
     quic_conn: Connection,
 
-    /// Master key for symmetric encryption (derived from UHP + Kyber)
-    /// This is the ONLY encryption key - intermediate keys are zeroized
-    master_key: Option<[u8; 32]>,
+    /// Session key for symmetric encryption (derived from UHP v2)
+    session_key: Option<[u8; 32]>,
 
     /// Verified peer identity and negotiated capabilities
     verified_peer: crate::handshake::VerifiedPeer,
 
-    /// Session ID for logging/tracking
-    session_id: Option<[u8; 16]>,
+    /// Session ID for logging/tracking (UHP v2, 32 bytes)
+    session_id: Option<[u8; 32]>,
 
     /// Peer address
     peer_addr: SocketAddr,
@@ -164,8 +163,7 @@ pub struct PqcQuicConnection {
 }
 
 // NOTE: PqcHandshakeMessage has been REMOVED - authentication bypass vulnerability
-// All QUIC connections now use UHP + Kyber via quic_handshake module
-// See: quic_handshake::handshake_as_initiator / handshake_as_responder
+// All QUIC connections use UHP v2 over QUIC streams (transport only).
 
 impl QuicMeshProtocol {
     /// Create a new QUIC mesh protocol instance with default certificate paths
@@ -223,7 +221,7 @@ impl QuicMeshProtocol {
         cert_path: &Path,
         key_path: &Path,
     ) -> Result<Self> {
-        info!("🔐 Initializing QUIC mesh protocol on {} with UHP+Kyber authentication", bind_addr);
+        info!("🔐 Initializing QUIC mesh protocol on {} with UHP v2 authentication", bind_addr);
 
         // Install the ring crypto provider for rustls 0.23+
         // This must be done before any rustls ServerConfig/ClientConfig creation
@@ -381,19 +379,19 @@ impl QuicMeshProtocol {
         Arc::new(self.endpoint.clone())
     }
     
-    /// Connect to a peer using QUIC with UHP+Kyber handshake
+    /// Connect to a peer using QUIC with UHP v2 handshake
     ///
     /// # Security
     ///
     /// This performs full mutual authentication via UHP:
     /// 1. QUIC connection establishment (TLS 1.3)
     /// 2. UHP authentication (Dilithium signatures verified)
-    /// 3. Kyber key exchange (bound to UHP transcript)
+    /// 3. UHP v2 handshake (includes Kyber1024 + Dilithium5)
     /// 4. Master key derivation for symmetric encryption
     ///
     /// The peer's identity is cryptographically verified before any data exchange.
     pub async fn connect_to_peer(&self, peer_addr: SocketAddr) -> Result<()> {
-        info!("🔐 Connecting to peer at {} via QUIC+UHP+Kyber", peer_addr);
+        info!("🔐 Connecting to peer at {} via QUIC+UHP v2", peer_addr);
 
         // Configure client with PinnedCertVerifier
         let client_config = Self::configure_client(&self.trust_mode, peer_addr, &self.verifier)?;
@@ -406,18 +404,18 @@ impl QuicMeshProtocol {
 
         info!("🔐 QUIC connection established to {}", peer_addr);
 
-        // Perform UHP+Kyber handshake (mutual authentication + PQC key exchange)
+        // Perform UHP v2 handshake (mutual authentication + PQC key exchange)
         let handshake_result = quic_handshake::handshake_as_initiator(
             &connection,
             &self.identity,
             &self.handshake_ctx,
-        ).await.context("UHP+Kyber handshake failed")?;
+        ).await.context("UHP v2 handshake failed")?;
 
         info!(
             peer_did = %handshake_result.verified_peer.identity.did,
             peer_device = %handshake_result.verified_peer.identity.device_id,
             session_id = ?handshake_result.session_id,
-            "🔐 UHP+Kyber handshake complete with {} (quantum-safe encryption active)",
+            "🔐 UHP v2 handshake complete with {} (quantum-safe encryption active)",
             peer_addr
         );
 
@@ -472,7 +470,7 @@ impl QuicMeshProtocol {
             connection,
             peer_addr,
             handshake_result.verified_peer.clone(),
-            handshake_result.master_key,
+            handshake_result.session_key,
             handshake_result.session_id,
             false, // Not bootstrap mode
         );
@@ -517,12 +515,12 @@ impl QuicMeshProtocol {
 
         info!("🔐 QUIC connection established to bootstrap peer {}", peer_addr);
 
-        // Perform UHP+Kyber handshake (authentication required even for bootstrap)
+        // Perform UHP v2 handshake (authentication required even for bootstrap)
         let handshake_result = quic_handshake::handshake_as_initiator(
             &connection,
             &self.identity,
             &self.handshake_ctx,
-        ).await.context("UHP+Kyber handshake with bootstrap peer failed")?;
+        ).await.context("UHP v2 handshake with bootstrap peer failed")?;
 
         info!(
             peer_did = %handshake_result.verified_peer.identity.did,
@@ -591,7 +589,7 @@ impl QuicMeshProtocol {
             connection,
             peer_addr,
             handshake_result.verified_peer.clone(),
-            handshake_result.master_key,
+            handshake_result.session_key,
             handshake_result.session_id,
             true, // Bootstrap mode
         );
@@ -632,7 +630,7 @@ impl QuicMeshProtocol {
     ///
     /// Spawns background tasks to:
     /// 1. Accept incoming QUIC connections
-    /// 2. Perform UHP+Kyber handshake for each connection
+    /// 2. Perform UHP v2 handshake for each connection
     /// 3. Receive encrypted messages on established connections
     ///
     /// # Security
@@ -665,7 +663,7 @@ impl QuicMeshProtocol {
                                     let peer_addr = connection.remote_address();
                                     info!("🔐 New QUIC connection from {}", peer_addr);
 
-                                    // Perform UHP+Kyber handshake as server
+                                    // Perform UHP v2 handshake as server
                                     let handshake_result = match quic_handshake::handshake_as_responder(
                                         &connection,
                                         &identity,
@@ -676,7 +674,7 @@ impl QuicMeshProtocol {
                                             error!(
                                                 peer_addr = %peer_addr,
                                                 error = %e,
-                                                "UHP+Kyber handshake failed - rejecting connection"
+                                                "UHP v2 handshake failed - rejecting connection"
                                             );
                                             // Close connection on handshake failure
                                             connection.close(1u32.into(), b"handshake_failed");
@@ -688,7 +686,7 @@ impl QuicMeshProtocol {
                                         peer_did = %handshake_result.verified_peer.identity.did,
                                         peer_device = %handshake_result.verified_peer.identity.device_id,
                                         session_id = ?handshake_result.session_id,
-                                        "🔐 UHP+Kyber handshake complete (server side)"
+                                        "🔐 UHP v2 handshake complete (server side)"
                                     );
 
                                     // === TLS Certificate Pinning Verification (Issue #739) ===
@@ -762,7 +760,7 @@ impl QuicMeshProtocol {
                                         connection.clone(),
                                         peer_addr,
                                         handshake_result.verified_peer.clone(),
-                                        handshake_result.master_key,
+                                        handshake_result.session_key,
                                         handshake_result.session_id,
                                         false, // Determine bootstrap mode based on peer capabilities
                                     );
@@ -869,7 +867,7 @@ impl QuicMeshProtocol {
     /// Mobile apps can pin the certificate hash since it remains constant across restarts.
     ///
     /// Node-to-node connections are unaffected - they use SkipServerVerification
-    /// and rely on PQC (Kyber + Dilithium) for security.
+    /// and rely on UHP v2 (Kyber1024 + Dilithium5) for security.
     fn load_or_generate_cert(cert_path: &Path, key_path: &Path) -> Result<SelfSignedCert> {
         // Try to load existing certificate from disk
         if cert_path.exists() && key_path.exists() {
@@ -1084,7 +1082,7 @@ impl QuicMeshProtocol {
         };
 
         // Configure ALPN protocols to match server (required for iOS Network.framework, Android Cronet)
-        // Security note: ALPN is metadata only - actual security comes from PQC layer (Kyber + Dilithium)
+        // Security note: ALPN is metadata only - actual security comes from UHP v2 (Kyber1024 + Dilithium5)
         crypto.alpn_protocols = vec![
             b"zhtp-mesh/1".to_vec(),  // Mesh peer-to-peer with UHP handshake
         ];
@@ -1143,13 +1141,13 @@ impl PqcQuicConnection {
         quic_conn: Connection,
         peer_addr: SocketAddr,
         verified_peer: crate::handshake::VerifiedPeer,
-        master_key: [u8; 32],
-        session_id: [u8; 16],
+        session_key: [u8; 32],
+        session_id: [u8; 32],
         bootstrap_mode: bool,
     ) -> Self {
         Self {
             quic_conn,
-            master_key: Some(master_key),
+            session_key: Some(session_key),
             verified_peer,
             session_id: Some(session_id),
             peer_addr,
@@ -1187,7 +1185,7 @@ impl PqcQuicConnection {
     }
 
     /// Get session ID for logging/tracking
-    pub fn session_id(&self) -> Option<[u8; 16]> {
+    pub fn session_id(&self) -> Option<[u8; 32]> {
         self.session_id
     }
 
@@ -1196,61 +1194,61 @@ impl PqcQuicConnection {
         Some(&self.verified_peer.capabilities)
     }
 
-    /// Check if connection has valid master key (for message encryption)
+    /// Check if connection has valid session key (for message encryption)
     /// Does NOT expose the key itself - only validates it exists
-    pub fn has_master_key(&self) -> bool {
-        self.master_key.is_some()
+    pub fn has_session_key(&self) -> bool {
+        self.session_key.is_some()
     }
 
-    /// Get master key reference for encryption (internal use only)
+    /// Get session key reference for encryption (internal use only)
     /// Returns reference to prevent cloning/exposing the key
-    pub fn get_master_key_ref(&self) -> Option<&[u8; 32]> {
-        self.master_key.as_ref()
+    pub fn get_session_key_ref(&self) -> Option<&[u8; 32]> {
+        self.session_key.as_ref()
     }
 
-    /// Send encrypted message using master key (UHP+Kyber derived)
+    /// Send encrypted message using session key (UHP v2 derived)
     ///
     /// # Security
     ///
-    /// Message is encrypted with ChaCha20-Poly1305 using the master key
-    /// derived from UHP session key + Kyber shared secret.
+    /// Message is encrypted with ChaCha20-Poly1305 using the session key
+    /// derived from UHP v2 handshake.
     /// QUIC provides additional TLS 1.3 encryption underneath.
     pub async fn send_encrypted_message(&mut self, message: &[u8]) -> Result<()> {
-        let master_key = self.master_key
-            .ok_or_else(|| anyhow!("UHP+Kyber handshake not complete"))?;
+        let session_key = self.session_key
+            .ok_or_else(|| anyhow!("UHP v2 handshake not complete"))?;
 
-        // Encrypt with master key (ChaCha20-Poly1305)
+        // Encrypt with session key (ChaCha20-Poly1305)
         // Note: lib-crypto's encrypt_data includes nonce internally
-        let encrypted = encrypt_data(message, &master_key)?;
+        let encrypted = encrypt_data(message, &session_key)?;
 
         // Send over QUIC (which adds TLS 1.3 encryption on top)
         let mut stream = self.quic_conn.open_uni().await?;
         stream.write_all(&encrypted).await?;
         stream.finish()?;
 
-        debug!("📤 Sent {} bytes (double-encrypted: UHP+Kyber + TLS 1.3)", message.len());
+        debug!("📤 Sent {} bytes (double-encrypted: UHP v2 + TLS 1.3)", message.len());
         Ok(())
     }
 
-    /// Receive encrypted message using master key
+    /// Receive encrypted message using session key
     ///
     /// # Security
     ///
     /// Message is decrypted with ChaCha20-Poly1305 using the master key
-    /// derived from UHP session key + Kyber shared secret.
+    /// derived from UHP v2 session key.
     /// QUIC handles TLS 1.3 decryption underneath.
     pub async fn recv_encrypted_message(&mut self) -> Result<Vec<u8>> {
-        let master_key = self.master_key
-            .ok_or_else(|| anyhow!("UHP+Kyber handshake not complete"))?;
+        let session_key = self.session_key
+            .ok_or_else(|| anyhow!("UHP v2 handshake not complete"))?;
 
         // Receive from QUIC (TLS 1.3 decryption automatic)
         let mut stream = self.quic_conn.accept_uni().await?;
         let encrypted = stream.read_to_end(1024 * 1024).await?; // 1MB max message size
 
         // Decrypt using master key (nonce is embedded in encrypted data by lib-crypto)
-        let decrypted = decrypt_data(&encrypted, &master_key)?;
+        let decrypted = decrypt_data(&encrypted, &session_key)?;
 
-        debug!("📥 Received {} bytes (double-decrypted: TLS 1.3 + UHP+Kyber)", decrypted.len());
+        debug!("📥 Received {} bytes (double-decrypted: TLS 1.3 + UHP v2)", decrypted.len());
         Ok(decrypted)
     }
 
@@ -1490,7 +1488,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Ignore DNS-dependent test - requires full UHP+Kyber handshake
+    #[ignore] // Ignore DNS-dependent test - requires full UHP v2 handshake
     async fn test_quic_uhp_kyber_connection() -> Result<()> {
         // Create identities for both server and client
         let server_identity = create_test_identity("test-server");
@@ -1510,7 +1508,7 @@ mod tests {
         let client_addr = "127.0.0.1:0".parse().unwrap();
         let client = QuicMeshProtocol::new(client_identity.clone(), client_addr)?;
 
-        // Connect client to server (performs UHP+Kyber handshake)
+        // Connect client to server (performs UHP v2 handshake)
         let server_connect_addr = format!("127.0.0.1:{}", server_port).parse().unwrap();
         client.connect_to_peer(server_connect_addr).await?;
 
@@ -1521,7 +1519,7 @@ mod tests {
         info!(
             client_did = %client_identity.did,
             server_did = %server_identity.did,
-            "🔐 Test: UHP+Kyber handshake successful"
+            "🔐 Test: UHP v2 handshake successful"
         );
 
         // Cleanup
@@ -1532,7 +1530,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Ignore DNS-dependent test - requires full UHP+Kyber handshake
+    #[ignore] // Ignore DNS-dependent test - requires full UHP v2 handshake
     async fn test_encrypted_message_exchange() -> Result<()> {
         // Create identities
         let server_identity = create_test_identity("msg-server");
@@ -1550,7 +1548,7 @@ mod tests {
         let client_addr = "127.0.0.1:0".parse().unwrap();
         let client = Arc::new(QuicMeshProtocol::new(client_identity, client_addr)?);
 
-        // Connect (performs UHP+Kyber handshake)
+        // Connect (performs UHP v2 handshake)
         let server_connect_addr = format!("127.0.0.1:{}", server_port).parse().unwrap();
         client.connect_to_peer(server_connect_addr).await?;
 

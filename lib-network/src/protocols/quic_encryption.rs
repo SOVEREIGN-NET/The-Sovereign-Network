@@ -71,25 +71,25 @@ mod shell {
     pub struct QuicApplicationEncryption {
         /// Core encryption (ChaCha20Poly1305)
         enc: ChaCha20Poly1305Encryption,
-        /// Session identifier for domain separation
-        session_id: [u8; 16],
+        /// Session identifier for domain separation (UHP v2, 32 bytes)
+        session_id: [u8; 32],
     }
 
     impl QuicApplicationEncryption {
         /// Create new QUIC application encryption instance
         ///
         /// # Arguments
-        /// - `master_key`: 32-byte ChaCha20 master key
-        /// - `session_id`: 16-byte session identifier for domain separation
-        pub fn new(master_key: &[u8; 32], session_id: [u8; 16]) -> Result<Self> {
+        /// - `session_key`: 32-byte ChaCha20 session key
+        /// - `session_id`: 32-byte session identifier for domain separation
+        pub fn new(session_key: &[u8; 32], session_id: [u8; 32]) -> Result<Self> {
             Ok(Self {
-                enc: ChaCha20Poly1305Encryption::new("quic", master_key)?,
+                enc: ChaCha20Poly1305Encryption::new("quic", session_key)?,
                 session_id,
             })
         }
 
         /// Get the session ID for context tracking
-        pub fn session_id(&self) -> [u8; 16] {
+        pub fn session_id(&self) -> [u8; 32] {
             self.session_id
         }
 
@@ -192,15 +192,15 @@ mod tests {
         [0x55u8; 32]
     }
 
-    fn create_test_session_id() -> [u8; 16] {
-        [0x77u8; 16]
+    fn create_test_session_id() -> [u8; 32] {
+        [0x77u8; 32]
     }
 
     // ========== CORE TESTS ==========
 
     #[test]
     fn test_aad_construction() {
-        let session_id = [0xAAu8; 16];
+        let session_id = [0xAAu8; 32];
         let aad = core::build_aad("handshake", &session_id);
 
         assert!(aad.starts_with(b"quic"));
@@ -265,8 +265,8 @@ mod tests {
     #[test]
     fn test_quic_session_separation() {
         let key = create_test_key();
-        let session_id1 = [0x11u8; 16];
-        let session_id2 = [0x22u8; 16];
+        let session_id1 = [0x11u8; 32];
+        let session_id2 = [0x22u8; 32];
 
         let enc1 = QuicApplicationEncryption::new(&key, session_id1).unwrap();
         let enc2 = QuicApplicationEncryption::new(&key, session_id2).unwrap();
@@ -389,7 +389,7 @@ mod tests {
         // Create 5 sessions
         let sessions: Vec<_> = (0..5)
             .map(|i| {
-                let mut sid = [0u8; 16];
+                let mut sid = [0u8; 32];
                 sid[0] = i as u8;
                 QuicApplicationEncryption::new(&key, sid).unwrap()
             })
@@ -473,7 +473,7 @@ mod tests {
     #[test]
     fn test_quic_session_context_preserved() {
         let key = create_test_key();
-        let session_id = [0xFFu8; 16];
+        let session_id = [0xFFu8; 32];
 
         let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
 

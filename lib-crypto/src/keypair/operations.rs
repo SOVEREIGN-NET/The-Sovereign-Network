@@ -6,7 +6,7 @@ use anyhow::Result;
 use sha3::Sha3_256;
 use hkdf::Hkdf;
 use pqcrypto_dilithium::{dilithium2, dilithium5};
-use pqcrypto_kyber::kyber512;
+use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::{
     sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey, SignedMessage},
     kem::{PublicKey as KemPublicKey, SecretKey as KemSecretKey, Ciphertext, SharedSecret},
@@ -22,7 +22,7 @@ use crate::advanced::ring_signature::{verify_ring_signature, RingSignature};
 use super::KeyPair;
 
 // Constants for CRYSTALS key sizes
-const KYBER512_CIPHERTEXT_BYTES: usize = 768;
+const KYBER1024_CIPHERTEXT_BYTES: usize = 1568;
 
 impl KeyPair {
     /// Sign a message with CRYSTALS-Dilithium post-quantum signature
@@ -128,15 +128,15 @@ impl KeyPair {
 
     /// Encapsulate a shared secret using CRYSTALS-Kyber
     pub fn encapsulate(&self) -> Result<Encapsulation> {
-        let kyber_pk = kyber512::PublicKey::from_bytes(&self.public_key.kyber_pk)
+        let kyber_pk = kyber1024::PublicKey::from_bytes(&self.public_key.kyber_pk)
             .map_err(|_| anyhow::anyhow!("Invalid Kyber public key"))?;
-        
-        let (shared_secret_bytes, ciphertext) = kyber512::encapsulate(&kyber_pk);
+
+        let (shared_secret_bytes, ciphertext) = kyber1024::encapsulate(&kyber_pk);
         
         // Derive a 32-byte key using HKDF-SHA3
         let hk = Hkdf::<Sha3_256>::new(None, shared_secret_bytes.as_bytes());
         let mut shared_secret = [0u8; 32];
-        let kdf_info = b"ZHTP-KEM-v1.0";
+        let kdf_info = b"ZHTP-KEM-v2.0";
         hk.expand(kdf_info, &mut shared_secret)
             .map_err(|_| anyhow::anyhow!("HKDF expansion failed"))?;
         
@@ -149,12 +149,12 @@ impl KeyPair {
 
     /// Decapsulate a shared secret using CRYSTALS-Kyber
     pub fn decapsulate(&self, encapsulation: &Encapsulation) -> Result<[u8; 32]> {
-        let kyber_sk = kyber512::SecretKey::from_bytes(&self.private_key.kyber_sk)
+        let kyber_sk = kyber1024::SecretKey::from_bytes(&self.private_key.kyber_sk)
             .map_err(|_| anyhow::anyhow!("Invalid Kyber secret key"))?;
-        let kyber_ct = kyber512::Ciphertext::from_bytes(&encapsulation.ciphertext)
+        let kyber_ct = kyber1024::Ciphertext::from_bytes(&encapsulation.ciphertext)
             .map_err(|_| anyhow::anyhow!("Invalid Kyber ciphertext"))?;
-        
-        let shared_secret_bytes = kyber512::decapsulate(&kyber_ct, &kyber_sk);
+
+        let shared_secret_bytes = kyber1024::decapsulate(&kyber_ct, &kyber_sk);
         
         // Derive the same 32-byte key using HKDF-SHA3
         let hk = Hkdf::<Sha3_256>::new(None, shared_secret_bytes.as_bytes());
@@ -199,19 +199,19 @@ impl KeyPair {
 
     /// Decrypt data using hybrid post-quantum + symmetric cryptography
     pub fn decrypt(&self, ciphertext: &[u8], associated_data: &[u8]) -> Result<Vec<u8>> {
-        if ciphertext.len() < KYBER512_CIPHERTEXT_BYTES + 12 {
+        if ciphertext.len() < KYBER1024_CIPHERTEXT_BYTES + 12 {
             return Err(anyhow::anyhow!("Ciphertext too short"));
         }
 
         // Extract components
-        let kyber_ct = &ciphertext[..KYBER512_CIPHERTEXT_BYTES];
-        let nonce = &ciphertext[KYBER512_CIPHERTEXT_BYTES..KYBER512_CIPHERTEXT_BYTES + 12];
-        let symmetric_ct = &ciphertext[KYBER512_CIPHERTEXT_BYTES + 12..];
+        let kyber_ct = &ciphertext[..KYBER1024_CIPHERTEXT_BYTES];
+        let nonce = &ciphertext[KYBER1024_CIPHERTEXT_BYTES..KYBER1024_CIPHERTEXT_BYTES + 12];
+        let symmetric_ct = &ciphertext[KYBER1024_CIPHERTEXT_BYTES + 12..];
 
         let encapsulation = Encapsulation {
             ciphertext: kyber_ct.to_vec(),
             shared_secret: [0u8; 32], // Will be overwritten
-            kdf_info: b"ZHTP-KEM-v1.0".to_vec(),
+            kdf_info: b"ZHTP-KEM-v2.0".to_vec(),
         };
 
         let shared_secret = self.decapsulate(&encapsulation)?;

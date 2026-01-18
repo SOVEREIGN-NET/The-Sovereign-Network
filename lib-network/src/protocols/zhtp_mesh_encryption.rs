@@ -32,7 +32,7 @@
 //!
 //! Example for node discovery:
 //! ```text
-//! "zhtp-mesh\0v1\0node_discovery\0<16-byte session_id>"
+//! "zhtp-mesh\0v1\0node_discovery\0<32-byte session_id>"
 //! ```
 
 use crate::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption, EncryptionStats};
@@ -74,12 +74,12 @@ mod shell {
         /// Core encryption (ChaCha20Poly1305)
         enc: ChaCha20Poly1305Encryption,
         /// Session identifier for domain separation
-        session_id: [u8; 16],
+        session_id: [u8; 32],
     }
 
     impl ZhtpMeshEncryption {
         /// Create new ZHTP mesh encryption instance
-        pub fn new(app_key: &[u8; 32], session_id: [u8; 16]) -> Result<Self> {
+        pub fn new(app_key: &[u8; 32], session_id: [u8; 32]) -> Result<Self> {
             Ok(Self {
                 enc: ChaCha20Poly1305Encryption::new("zhtp-mesh", app_key)?,
                 session_id,
@@ -142,7 +142,7 @@ mod shell {
             Ok(plaintext)
         }
 
-        pub fn session_id(&self) -> [u8; 16] {
+        pub fn session_id(&self) -> [u8; 32] {
             self.session_id
         }
     }
@@ -189,15 +189,15 @@ mod tests {
         [0x77u8; 32]
     }
 
-    fn create_test_session_id() -> [u8; 16] {
-        [0x88u8; 16]
+    fn create_test_session_id() -> [u8; 32] {
+        [0x88u8; 32]
     }
 
     // ========== CORE TESTS ==========
 
     #[test]
     fn test_aad_construction() {
-        let session_id = [0xAAu8; 16];
+        let session_id = [0xAAu8; 32];
         let aad = core::build_aad("node_discovery", &session_id);
 
         // Verify structure
@@ -212,8 +212,8 @@ mod tests {
 
     #[test]
     fn test_aad_session_separation() {
-        let session_id1 = [0x11u8; 16];
-        let session_id2 = [0x22u8; 16];
+        let session_id1 = [0x11u8; 32];
+        let session_id2 = [0x22u8; 32];
 
         let aad1 = core::build_aad("node_discovery", &session_id1);
         let aad2 = core::build_aad("node_discovery", &session_id2);
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_aad_determinism() {
-        let session_id = [0x99u8; 16];
+        let session_id = [0x99u8; 32];
         let aad1 = core::build_aad("node_discovery", &session_id);
         let aad2 = core::build_aad("node_discovery", &session_id);
 
@@ -266,8 +266,8 @@ mod tests {
     #[test]
     fn test_zhtp_session_separation() {
         let key = create_test_key();
-        let session_id1 = [0x11u8; 16];
-        let session_id2 = [0x22u8; 16];
+        let session_id1 = [0x11u8; 32];
+        let session_id2 = [0x22u8; 32];
 
         let enc1 = ZhtpMeshEncryption::new(&key, session_id1).unwrap();
         let enc2 = ZhtpMeshEncryption::new(&key, session_id2).unwrap();

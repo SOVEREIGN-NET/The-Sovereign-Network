@@ -9,7 +9,7 @@ use hkdf::Hkdf;
 use rand::{RngCore};
 use rand::rngs::OsRng;
 use pqcrypto_dilithium::dilithium2;
-use pqcrypto_kyber::kyber512;
+use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::{
     sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey},
     kem::{PublicKey as KemPublicKey, SecretKey as KemSecretKey},
@@ -37,7 +37,7 @@ impl KeyPair {
         
         // Generate actual random keys (crypto for security)
         let (dilithium_pk, dilithium_sk) = dilithium2::keypair();
-        let (kyber_pk, kyber_sk) = kyber512::keypair();
+        let (kyber_pk, kyber_sk) = kyber1024::keypair();
         let mut sk_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut sk_bytes);
         // Ed25519 key generation removed - pure post-quantum only

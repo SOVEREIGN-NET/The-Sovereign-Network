@@ -16,14 +16,14 @@ pub fn hybrid_encrypt(data: &[u8], public_key: &PublicKey) -> Result<Vec<u8>> {
     // This is a simplified approach - KEM would encapsulate properly.
     
     // Create a deterministic "encapsulation" using the public key
-    let key_data = [&public_key.key_id[..], b"ZHTP-hybrid-v1"].concat();
+    let key_data = [&public_key.key_id[..], b"ZHTP-hybrid-v2"].concat();
     let encapsulated_key = hash_blake3(&key_data);
     
     // Derive symmetric key from the encapsulated key (this will be reproducible in decrypt)
     let key_material = [
         &public_key.dilithium_pk[0..32], // Use public key material (decrypt will use private key)
         &encapsulated_key[..],
-        b"ZHTP-hybrid-v1",
+        b"ZHTP-hybrid-v2",
     ].concat();
     
     let symmetric_key = hash_blake3(&key_material);
@@ -49,12 +49,12 @@ pub fn hybrid_decrypt(encrypted_data: &[u8], keypair: &KeyPair) -> Result<Vec<u8
     let (encapsulated_key, ciphertext) = encrypted_data.split_at(32);
     
     // Derive the same symmetric key that was used in encryption
-    // The encrypt function uses: hash_blake3([public_key.dilithium_pk[0..32], encapsulated_key, "ZHTP-hybrid-v1"])
+    // The encrypt function uses: hash_blake3([public_key.dilithium_pk[0..32], encapsulated_key, "ZHTP-hybrid-v2"])
     // We derive it using the corresponding private key material
     let key_material = [
         &keypair.private_key.dilithium_sk[0..32], // Use private key material (corresponds to public key used in encrypt)
         &encapsulated_key[..],
-        b"ZHTP-hybrid-v1", // Same domain separation
+        b"ZHTP-hybrid-v2", // Same domain separation
     ].concat();
     
     let symmetric_key = hash_blake3(&key_material);
@@ -102,26 +102,27 @@ pub fn encrypt_with_encapsulation(plaintext: &[u8], associated_data: &[u8], enca
 }
 
 /// Decrypt with keypair (for KeyPair decrypt method)
+/// Uses Kyber1024 (NIST Level 5) with v2 KDF labels
 pub fn decrypt_with_keypair(ciphertext: &[u8], associated_data: &[u8], keypair: &KeyPair) -> Result<Vec<u8>> {
     use chacha20poly1305::{
         aead::{Aead, KeyInit},
         ChaCha20Poly1305, Nonce, Key,
     };
-    use crate::post_quantum::constants::KYBER512_CIPHERTEXT_BYTES;
-    
-    if ciphertext.len() < KYBER512_CIPHERTEXT_BYTES + 12 {
-        return Err(anyhow::anyhow!("Ciphertext too short"));
+    use crate::post_quantum::constants::KYBER1024_CIPHERTEXT_BYTES;
+
+    if ciphertext.len() < KYBER1024_CIPHERTEXT_BYTES + 12 {
+        return Err(anyhow::anyhow!("Ciphertext too short for Kyber1024"));
     }
 
-    // Extract components
-    let kyber_ct = &ciphertext[..KYBER512_CIPHERTEXT_BYTES];
-    let nonce = &ciphertext[KYBER512_CIPHERTEXT_BYTES..KYBER512_CIPHERTEXT_BYTES + 12];
-    let symmetric_ct = &ciphertext[KYBER512_CIPHERTEXT_BYTES + 12..];
+    // Extract components (Kyber1024 ciphertext is 1568 bytes)
+    let kyber_ct = &ciphertext[..KYBER1024_CIPHERTEXT_BYTES];
+    let nonce = &ciphertext[KYBER1024_CIPHERTEXT_BYTES..KYBER1024_CIPHERTEXT_BYTES + 12];
+    let symmetric_ct = &ciphertext[KYBER1024_CIPHERTEXT_BYTES + 12..];
 
     let encapsulation = Encapsulation {
         ciphertext: kyber_ct.to_vec(),
-        shared_secret: [0u8; 32], // Will be overwritten
-        kdf_info: b"ZHTP-KEM-v1.0".to_vec(),
+        shared_secret: [0u8; 32], // Will be overwritten by decapsulate
+        kdf_info: b"ZHTP-KEM-v2.0".to_vec(),
     };
 
     let shared_secret = keypair.decapsulate(&encapsulation)?;

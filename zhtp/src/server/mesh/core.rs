@@ -374,7 +374,7 @@ impl MeshRouter {
         
         *self.relay_protocol.write().await = Some(relay);
         
-        info!("✅ ZHTP relay protocol initialized (Dilithium2 + Kyber512 + ChaCha20)");
+        info!("✅ ZHTP relay protocol initialized (Dilithium2 + Kyber1024 + ChaCha20)");
         Ok(())
     }
     

@@ -235,9 +235,9 @@ impl ZhtpRouter {
         &self,
         buffered: &mut crate::server::quic_handler::BufferedStream,
         mut send: SendStream,
-        session: &crate::server::quic_handler::ControlPlaneSession,
+        session: &lib_network::protocols::types::session::V2Session,
     ) -> Result<()> {
-        debug!("📨 Processing authenticated ZHTP request from {}", session.peer_did);
+        debug!("📨 Processing authenticated ZHTP request from {}", session.peer_did());
 
         // Read request data from buffered stream
         let request_data = buffered.read_to_end(super::serialization::MAX_MESSAGE_SIZE)
@@ -255,7 +255,7 @@ impl ZhtpRouter {
         let mut request = match deserialize_request(&request_data) {
             Ok(req) => req,
             Err(e) => {
-                warn!("❌ Failed to deserialize ZHTP request from {}: {}", session.peer_did, e);
+                warn!("❌ Failed to deserialize ZHTP request from {}: {}", session.peer_did(), e);
                 let error_response = ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
                     format!("Invalid ZHTP request: {}", e),
@@ -271,9 +271,9 @@ impl ZhtpRouter {
 
         // Add authenticated requester identity to request context
         // IdentityId is a Hash of the DID
-        request.requester = Some(lib_crypto::Hash(lib_crypto::hash_blake3(session.peer_did.as_bytes())));
+        request.requester = Some(lib_crypto::Hash(lib_crypto::hash_blake3(session.peer_did().as_bytes())));
 
-        info!("✅ Authenticated ZHTP {} {} from {}", request.method, request.uri, session.peer_did);
+        info!("✅ Authenticated ZHTP {} {} from {}", request.method, request.uri, session.peer_did());
 
         // Process middleware
         let (processed_request, middleware_response) = self.process_middleware(request).await?;
@@ -308,7 +308,7 @@ impl ZhtpRouter {
         send.finish()
             .map_err(|e| anyhow::anyhow!("Failed to finish QUIC stream: {}", e))?;
 
-        info!("✅ Authenticated ZHTP response sent to {}", session.peer_did);
+        info!("✅ Authenticated ZHTP response sent to {}", session.peer_did());
         Ok(())
     }
 
