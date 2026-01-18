@@ -669,4 +669,12 @@ export {
   NONCE_SIZE,
   SESSION_ID_SIZE,
   concat,
+  // Serialization helpers (bincode-compatible)
+  serializePublicKeyBundle,
+  serializeNodeIdentity,
+  serializeCapabilities,
+  writeLengthPrefixedString,
+  writeLengthPrefixedBytes,
+  writeU64LE,
+  writeU32LE,
 };

@@ -10,7 +10,6 @@
  */
 
 import { sha3_256 } from '@noble/hashes/sha3';
-import { encode as cborEncode, decode as cborDecode } from 'cbor';
 import {
   UHP_VERSION,
   HandshakeRole,
@@ -39,6 +38,10 @@ import {
   frameMessage,
   unframeMessage,
   concat,
+  // Manual bincode-compatible serialization helpers
+  serializePublicKeyBundle,
+  serializeNodeIdentity,
+  serializeCapabilities,
 } from './uhp_v2.js';
 
 // Re-export HandshakeResult for external use
@@ -99,37 +102,281 @@ async function dilithiumVerify(
 }
 
 // ============================================================================
-// Wire Protocol
+// Wire Protocol (Manual Bincode-compatible serialization)
 // ============================================================================
 
+// Bincode format helpers
+function writeU8(value: number): Uint8Array {
+  return new Uint8Array([value]);
+}
+
+function writeU32LE(value: number): Uint8Array {
+  const buf = new Uint8Array(4);
+  new DataView(buf.buffer).setUint32(0, value, true);
+  return buf;
+}
+
+function writeU64LE(value: bigint | number): Uint8Array {
+  const buf = new Uint8Array(8);
+  new DataView(buf.buffer).setBigUint64(0, BigInt(value), true);
+  return buf;
+}
+
+function writeBool(value: boolean): Uint8Array {
+  return new Uint8Array([value ? 1 : 0]);
+}
+
+function writeLengthPrefixedString(str: string): Uint8Array {
+  const bytes = new TextEncoder().encode(str);
+  return concat(writeU64LE(bytes.length), bytes);
+}
+
+function writeLengthPrefixedBytes(data: Uint8Array | number[]): Uint8Array {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  return concat(writeU64LE(bytes.length), bytes);
+}
+
+function writeOption<T>(value: T | null | undefined, serializer: (v: T) => Uint8Array): Uint8Array {
+  if (value === null || value === undefined) {
+    return writeU8(0);  // None
+  }
+  return concat(writeU8(1), serializer(value));  // Some(value)
+}
+
+// HandshakePayload enum variants (bincode uses u32 variant index)
+const PAYLOAD_CLIENT_HELLO = 0;
+const PAYLOAD_SERVER_HELLO = 1;
+const PAYLOAD_CLIENT_FINISH = 2;
+
 /**
- * Serialize handshake message to wire format (CBOR)
+ * Serialize PublicKeyBundle in bincode format
  */
-function serializeHandshakeMessage(
-  version: number,
-  messageType: 'ClientHello' | 'ServerHello' | 'ClientFinish',
-  payload: any,
-  timestamp: number,
-): Uint8Array {
-  const message = {
-    version,
-    type: messageType,
-    payload,
-    timestamp,
-  };
-  return cborEncode(message);
+function serializePublicKeyBundleBincode(pk: {
+  dilithiumPk: Uint8Array | number[];
+  kyberPk: Uint8Array | number[];
+  keyId: Uint8Array;
+}): Uint8Array {
+  return concat(
+    writeLengthPrefixedBytes(pk.dilithiumPk),
+    writeLengthPrefixedBytes(pk.kyberPk),
+    pk.keyId instanceof Uint8Array ? pk.keyId : new Uint8Array(pk.keyId),  // Fixed 32 bytes
+  );
 }
 
 /**
- * Deserialize handshake message from wire format
+ * Serialize NodeIdentity in bincode format
  */
-function deserializeHandshakeMessage(data: Uint8Array): {
+function serializeNodeIdentityBincode(identity: {
+  did: string;
+  publicKey: { dilithiumPk: Uint8Array | number[]; kyberPk: Uint8Array | number[]; keyId: Uint8Array };
+  nodeId: Uint8Array;
+  deviceId: string;
+  displayName: string | null | undefined;
+  createdAt: bigint | number;
+}): Uint8Array {
+  return concat(
+    writeLengthPrefixedString(identity.did),
+    serializePublicKeyBundleBincode(identity.publicKey),
+    identity.nodeId,  // Fixed 32 bytes
+    writeLengthPrefixedString(identity.deviceId),
+    writeOption(identity.displayName, writeLengthPrefixedString),
+    writeU64LE(identity.createdAt),
+  );
+}
+
+/**
+ * Serialize HandshakeCapabilities in bincode format
+ */
+function serializeCapabilitiesBincode(caps: {
+  protocols: string[];
+  maxThroughput: bigint;
+  maxMessageSize: bigint | number;
+  encryptionMethods: string[];
+  pqcCapability: number;
+  dhtCapable: boolean;
+  relayCapable: boolean;
+  storageCapacity: bigint;
+  web4Capable: boolean;
+  customFeatures: string[];
+}): Uint8Array {
+  const parts: Uint8Array[] = [];
+
+  // Vec<String> protocols
+  parts.push(writeU64LE(caps.protocols.length));
+  for (const p of caps.protocols) {
+    parts.push(writeLengthPrefixedString(p));
+  }
+
+  parts.push(writeU64LE(caps.maxThroughput));
+  parts.push(writeU64LE(caps.maxMessageSize));
+
+  // Vec<String> encryptionMethods
+  parts.push(writeU64LE(caps.encryptionMethods.length));
+  for (const e of caps.encryptionMethods) {
+    parts.push(writeLengthPrefixedString(e));
+  }
+
+  parts.push(writeU32LE(caps.pqcCapability));
+  parts.push(writeBool(caps.dhtCapable));
+  parts.push(writeBool(caps.relayCapable));
+  parts.push(writeU64LE(caps.storageCapacity));
+  parts.push(writeBool(caps.web4Capable));
+
+  // Vec<String> customFeatures
+  parts.push(writeU64LE(caps.customFeatures.length));
+  for (const f of caps.customFeatures) {
+    parts.push(writeLengthPrefixedString(f));
+  }
+
+  return concat(...parts);
+}
+
+/**
+ * Serialize Signature in bincode format
+ */
+function serializeSignatureBincode(sig: {
+  signature: Uint8Array | number[];
+  publicKey: { dilithiumPk: Uint8Array | number[]; kyberPk: Uint8Array | number[]; keyId: Uint8Array };
+  algorithm: number;
+  timestamp: bigint | number;
+}): Uint8Array {
+  return concat(
+    writeLengthPrefixedBytes(sig.signature),
+    serializePublicKeyBundleBincode(sig.publicKey),
+    writeU8(sig.algorithm),
+    writeU64LE(sig.timestamp),
+  );
+}
+
+/**
+ * Serialize PqcHandshakeOffer in bincode format
+ */
+function serializePqcOfferBincode(offer: {
+  suite: number;
+  kyberPublicKey: Uint8Array | number[];
+  dilithiumPublicKey: Uint8Array | number[];
+  signature: Uint8Array | number[];
+}): Uint8Array {
+  return concat(
+    writeU32LE(offer.suite),
+    writeLengthPrefixedBytes(offer.kyberPublicKey),
+    writeLengthPrefixedBytes(offer.dilithiumPublicKey),
+    writeLengthPrefixedBytes(offer.signature),
+  );
+}
+
+/**
+ * Serialize ClientHello to bincode wire format
+ */
+function serializeClientHello(payload: any, timestamp: number): Uint8Array {
+  // HandshakeMessage header: version (u8) + payload_variant (u32) + timestamp (u64)
+  const header = concat(
+    writeU8(UHP_VERSION),
+    writeU32LE(PAYLOAD_CLIENT_HELLO),
+    writeU64LE(timestamp),
+  );
+
+  // ClientHello payload
+  const payloadBytes = concat(
+    serializeNodeIdentityBincode(payload.identity),
+    serializeCapabilitiesBincode(payload.capabilities),
+    writeLengthPrefixedString(payload.networkId),
+    writeLengthPrefixedString(payload.protocolId),
+    writeLengthPrefixedString(payload.purpose),
+    writeU8(payload.role),
+    writeLengthPrefixedBytes(payload.channelBinding),
+    payload.challengeNonce,  // Fixed 32 bytes
+    serializeSignatureBincode(payload.signature),
+    writeU64LE(payload.timestamp),
+    writeU8(payload.protocolVersion),
+    writeOption(payload.pqcOffer, serializePqcOfferBincode),
+  );
+
+  return concat(header, payloadBytes);
+}
+
+/**
+ * Serialize ClientFinish to bincode wire format
+ */
+function serializeClientFinish(payload: any, timestamp: number): Uint8Array {
+  // HandshakeMessage header
+  const header = concat(
+    writeU8(UHP_VERSION),
+    writeU32LE(PAYLOAD_CLIENT_FINISH),
+    writeU64LE(timestamp),
+  );
+
+  // ClientFinish payload
+  const payloadBytes = concat(
+    serializeSignatureBincode(payload.signature),
+    writeLengthPrefixedString(payload.networkId),
+    writeLengthPrefixedString(payload.protocolId),
+    writeLengthPrefixedString(payload.purpose),
+    writeU8(payload.role),
+    writeLengthPrefixedBytes(payload.channelBinding),
+    writeU64LE(payload.timestamp),
+    writeU8(payload.protocolVersion),
+    writeOption(payload.sessionParams, writeLengthPrefixedBytes),
+    writeOption(payload.pqcCiphertext, writeLengthPrefixedBytes),
+  );
+
+  return concat(header, payloadBytes);
+}
+
+/**
+ * Deserialize ServerHello from bincode wire format
+ * Note: For now, returns a simplified structure since full deserialization
+ * is complex. The key fields we need are extracted.
+ */
+function deserializeServerHello(data: Uint8Array): {
   version: number;
-  type: string;
-  payload: any;
   timestamp: number;
+  payload: any;
 } {
-  return cborDecode(data) as any;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let offset = 0;
+
+  // Read header
+  const version = data[offset++];
+  const payloadType = view.getUint32(offset, true);
+  offset += 4;
+  const headerTimestamp = view.getBigUint64(offset, true);
+  offset += 8;
+
+  if (payloadType !== PAYLOAD_SERVER_HELLO) {
+    throw new Error(`Expected ServerHello (${PAYLOAD_SERVER_HELLO}), got ${payloadType}`);
+  }
+
+  // For now, we'll parse the critical fields we need
+  // This is a simplified parser - full bincode parsing would need more work
+  // The Rust server sends this in bincode format, so we need to match exactly
+
+  // TODO: Implement full bincode deserialization
+  // For initial testing, we can use a simplified approach or fall back to CBOR
+
+  return {
+    version,
+    timestamp: Number(headerTimestamp),
+    payload: {
+      // Placeholder - needs full implementation
+      // For integration testing, the server response parsing needs to match exactly
+      identity: {
+        did: 'placeholder',
+        publicKey: {
+          dilithiumPk: new Uint8Array(0),
+          kyberPk: new Uint8Array(0),
+          keyId: new Uint8Array(32),
+        },
+        nodeId: new Uint8Array(32),
+        deviceId: 'server',
+        displayName: undefined,
+        createdAt: 0,
+      },
+      responseNonce: data.subarray(offset, offset + 32),  // Approximate location
+      pqcOffer: null,
+      negotiated: null,
+    },
+  };
 }
 
 // ============================================================================
@@ -213,29 +460,29 @@ export async function performHandshakeAsInitiator(
     signature: pqcOfferSig,
   };
 
-  // Build ClientHello message
+  // Build ClientHello message (bincode compatible)
   const clientHelloPayload = {
     identity: {
       did: nodeIdentity.did,
       publicKey: {
         dilithiumPk: Array.from(nodeIdentity.publicKey.dilithiumPk),
         kyberPk: Array.from(nodeIdentity.publicKey.kyberPk),
-        keyId: Array.from(nodeIdentity.publicKey.keyId),
+        keyId: nodeIdentity.publicKey.keyId,  // Fixed 32 bytes
       },
-      nodeId: Array.from(nodeIdentity.nodeId),
+      nodeId: nodeIdentity.nodeId,  // Fixed 32 bytes
       deviceId: nodeIdentity.deviceId,
-      displayName: nodeIdentity.displayName,
-      createdAt: nodeIdentity.createdAt,
+      displayName: nodeIdentity.displayName || null,
+      createdAt: BigInt(nodeIdentity.createdAt),
     },
     capabilities: {
       protocols: capabilities.protocols,
-      maxThroughput: Number(capabilities.maxThroughput),
-      maxMessageSize: capabilities.maxMessageSize,
+      maxThroughput: capabilities.maxThroughput,
+      maxMessageSize: BigInt(capabilities.maxMessageSize),
       encryptionMethods: capabilities.encryptionMethods,
       pqcCapability: capabilities.pqcCapability,
       dhtCapable: capabilities.dhtCapable,
       relayCapable: capabilities.relayCapable,
-      storageCapacity: Number(capabilities.storageCapacity),
+      storageCapacity: capabilities.storageCapacity,
       web4Capable: capabilities.web4Capable,
       customFeatures: capabilities.customFeatures,
     },
@@ -244,18 +491,18 @@ export async function performHandshakeAsInitiator(
     purpose: PURPOSE,
     role: HandshakeRole.Client,
     channelBinding: Array.from(channelBinding),
-    challengeNonce: Array.from(clientNonce),
+    challengeNonce: clientNonce,  // Fixed 32 bytes
     signature: {
       signature: Array.from(clientHelloSig),
       publicKey: {
         dilithiumPk: Array.from(nodeIdentity.publicKey.dilithiumPk),
         kyberPk: Array.from(nodeIdentity.publicKey.kyberPk),
-        keyId: Array.from(nodeIdentity.publicKey.keyId),
+        keyId: nodeIdentity.publicKey.keyId,
       },
-      algorithm: 'Dilithium5',
-      timestamp,
+      algorithm: 0,  // Dilithium5 = 0
+      timestamp: BigInt(timestamp),
     },
-    timestamp,
+    timestamp: BigInt(timestamp),
     protocolVersion: UHP_VERSION,
     pqcOffer: {
       suite: pqcOffer.suite,
@@ -265,12 +512,8 @@ export async function performHandshakeAsInitiator(
     },
   };
 
-  const clientHelloBytes = serializeHandshakeMessage(
-    UHP_VERSION,
-    'ClientHello',
-    clientHelloPayload,
-    timestamp,
-  );
+  // Serialize with bincode
+  const clientHelloBytes = serializeClientHello(clientHelloPayload, timestamp);
 
   log(`Sending ClientHello (${clientHelloBytes.length} bytes)...`);
   await stream.write(frameMessage(clientHelloBytes));
@@ -282,44 +525,59 @@ export async function performHandshakeAsInitiator(
   log('Waiting for ServerHello...');
   const serverHelloFrame = await stream.read();
   const serverHelloBytes = unframeMessage(serverHelloFrame);
-  const serverHelloMsg = deserializeHandshakeMessage(serverHelloBytes);
 
-  if (serverHelloMsg.type !== 'ServerHello') {
-    throw new Error(`Expected ServerHello, got ${serverHelloMsg.type}`);
-  }
+  // Deserialize with bincode
+  const serverHelloMsg = deserializeServerHello(serverHelloBytes);
 
   log('Received ServerHello, verifying...');
 
   const serverPayload = serverHelloMsg.payload;
 
-  // Extract server identity
+  // Extract server identity (bincode returns Uint8Array for Bytes, BigInt for u64)
   const serverIdentity: NodeIdentity = {
     did: serverPayload.identity.did,
     publicKey: {
-      dilithiumPk: new Uint8Array(serverPayload.identity.publicKey.dilithiumPk),
-      kyberPk: new Uint8Array(serverPayload.identity.publicKey.kyberPk),
-      keyId: new Uint8Array(serverPayload.identity.publicKey.keyId),
+      dilithiumPk: serverPayload.identity.publicKey.dilithiumPk instanceof Uint8Array
+        ? serverPayload.identity.publicKey.dilithiumPk
+        : new Uint8Array(serverPayload.identity.publicKey.dilithiumPk),
+      kyberPk: serverPayload.identity.publicKey.kyberPk instanceof Uint8Array
+        ? serverPayload.identity.publicKey.kyberPk
+        : new Uint8Array(serverPayload.identity.publicKey.kyberPk),
+      keyId: serverPayload.identity.publicKey.keyId instanceof Uint8Array
+        ? serverPayload.identity.publicKey.keyId
+        : new Uint8Array(serverPayload.identity.publicKey.keyId),
     },
-    nodeId: new Uint8Array(serverPayload.identity.nodeId),
+    nodeId: serverPayload.identity.nodeId instanceof Uint8Array
+      ? serverPayload.identity.nodeId
+      : new Uint8Array(serverPayload.identity.nodeId),
     deviceId: serverPayload.identity.deviceId,
-    displayName: serverPayload.identity.displayName,
-    createdAt: serverPayload.identity.createdAt,
+    displayName: serverPayload.identity.displayName || undefined,
+    createdAt: typeof serverPayload.identity.createdAt === 'bigint'
+      ? Number(serverPayload.identity.createdAt)
+      : serverPayload.identity.createdAt,
   };
 
-  const serverNonce = new Uint8Array(serverPayload.responseNonce);
+  const serverNonce = serverPayload.responseNonce instanceof Uint8Array
+    ? serverPayload.responseNonce
+    : new Uint8Array(serverPayload.responseNonce);
+
   const serverKyberPk = serverPayload.pqcOffer
-    ? new Uint8Array(serverPayload.pqcOffer.kyberPublicKey)
+    ? (serverPayload.pqcOffer.kyberPublicKey instanceof Uint8Array
+        ? serverPayload.pqcOffer.kyberPublicKey
+        : new Uint8Array(serverPayload.pqcOffer.kyberPublicKey))
     : null;
 
   if (!serverKyberPk) {
     throw new Error('Server did not provide Kyber public key');
   }
 
-  // Extract negotiated capabilities
+  // Extract negotiated capabilities (bincode uses BigInt for u64)
   const negotiated: NegotiatedCapabilities = {
     pqcCapability: serverPayload.negotiated?.pqcCapability ?? PqcCapability.Kyber1024Dilithium5,
     protocol: serverPayload.negotiated?.protocol ?? 'quic',
-    maxMessageSize: serverPayload.negotiated?.maxMessageSize ?? 16 * 1024 * 1024,
+    maxMessageSize: typeof serverPayload.negotiated?.maxMessageSize === 'bigint'
+      ? Number(serverPayload.negotiated.maxMessageSize)
+      : (serverPayload.negotiated?.maxMessageSize ?? 16 * 1024 * 1024),
     encryptionMethod: serverPayload.negotiated?.encryptionMethod ?? 'chacha20-poly1305',
   };
 
@@ -354,34 +612,31 @@ export async function performHandshakeAsInitiator(
 
   const clientFinishSig = await dilithiumSign(clientFinishSignData, dilithiumSk);
 
+  // Build ClientFinish message (bincode compatible)
   const clientFinishPayload = {
     signature: {
       signature: Array.from(clientFinishSig),
       publicKey: {
         dilithiumPk: Array.from(nodeIdentity.publicKey.dilithiumPk),
         kyberPk: Array.from(nodeIdentity.publicKey.kyberPk),
-        keyId: Array.from(nodeIdentity.publicKey.keyId),
+        keyId: nodeIdentity.publicKey.keyId,
       },
-      algorithm: 'Dilithium5',
-      timestamp: finishTimestamp,
+      algorithm: 0,  // Dilithium5 = 0
+      timestamp: BigInt(finishTimestamp),
     },
     networkId: NETWORK_ID,
     protocolId: PROTOCOL_ID,
     purpose: PURPOSE,
     role: HandshakeRole.Client,
     channelBinding: Array.from(channelBinding),
-    timestamp: finishTimestamp,
+    timestamp: BigInt(finishTimestamp),
     protocolVersion: UHP_VERSION,
     sessionParams: null,
     pqcCiphertext: Array.from(ciphertext),
   };
 
-  const clientFinishBytes = serializeHandshakeMessage(
-    UHP_VERSION,
-    'ClientFinish',
-    clientFinishPayload,
-    finishTimestamp,
-  );
+  // Serialize with bincode
+  const clientFinishBytes = serializeClientFinish(clientFinishPayload, finishTimestamp);
 
   log(`Sending ClientFinish (${clientFinishBytes.length} bytes)...`);
   await stream.write(frameMessage(clientFinishBytes));
