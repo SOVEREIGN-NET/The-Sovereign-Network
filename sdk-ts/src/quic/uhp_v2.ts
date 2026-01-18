@@ -470,7 +470,6 @@ export function buildClientHelloSignData(
   timestamp: number,
   protocolVersion: number,
 ): Uint8Array {
-  const encoder = new TextEncoder();
   return concat(
     new Uint8Array([0x01]),  // MessageType::ClientHello
     identity.nodeId,
@@ -607,11 +606,13 @@ export function createNodeIdentity(
   keypair: KeyPair,
   deviceId: string = 'sdk-ts',
 ): NodeIdentity {
-  // Decode keys from base64
+  // Decode Dilithium public key from hex
   const dilithiumPk = Uint8Array.from(Buffer.from(keypair.publicKey, 'hex'));
-  const kyberPk = keypair.privateKey.kyberSk
-    ? Uint8Array.from(Buffer.from(keypair.privateKey.kyberSk, 'base64'))
-    : new Uint8Array(1568);  // Placeholder if no Kyber key
+  // Use Kyber public key if available, otherwise placeholder
+  // Note: kyberPk should be from a dedicated public key field, not secret key
+  const kyberPk = (keypair.privateKey as any).kyberPk
+    ? Uint8Array.from(Buffer.from((keypair.privateKey as any).kyberPk, 'base64'))
+    : new Uint8Array(1568);  // Placeholder if no Kyber public key
 
   const keyId = deriveKeyId(dilithiumPk, kyberPk);
   const nodeId = deriveNodeId(identity.did, deviceId);

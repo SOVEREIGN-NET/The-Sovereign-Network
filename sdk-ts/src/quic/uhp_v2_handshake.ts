@@ -15,14 +15,8 @@ import {
   HandshakeRole,
   PqcCapability,
   NodeIdentity,
-  HandshakeCapabilities,
   NegotiatedCapabilities,
   PqcHandshakeOffer,
-  Signature,
-  ClientHello,
-  ServerHello,
-  ClientFinish,
-  EphemeralKeys,
   generateNonce,
   generateKyberKeypair,
   kyberEncapsulate,
@@ -38,21 +32,27 @@ import {
   frameMessage,
   unframeMessage,
   concat,
-  // Manual bincode-compatible serialization helpers
-  serializePublicKeyBundle,
-  serializeNodeIdentity,
-  serializeCapabilities,
+  HandshakeResult,
 } from './uhp_v2.js';
 
 // Re-export HandshakeResult for external use
-export type { HandshakeResult } from './uhp_v2.js';
+export type { HandshakeResult };
 import { ZhtpIdentity, KeyPair } from '../identity.js';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const NETWORK_ID = 'zhtp-mainnet';
+// Network ID can be configured via environment variable
+const DEFAULT_NETWORK_ID = 'zhtp-mainnet';
+function getNetworkId(): string {
+  const globalProcess = (globalThis as any).process;
+  const envNetworkId = globalProcess?.env?.ZHTP_NETWORK_ID;
+  return typeof envNetworkId === 'string' && envNetworkId.length > 0
+    ? envNetworkId
+    : DEFAULT_NETWORK_ID;
+}
+const NETWORK_ID = getNetworkId();
 const PROTOCOL_ID = 'uhp';
 const PURPOSE = 'zhtp-node-handshake';
 
@@ -90,8 +90,9 @@ async function dilithiumSign(
 
 /**
  * Verify Dilithium5 signature
+ * Exported for server signature verification (TODO: wire up in handshake)
  */
-async function dilithiumVerify(
+export async function dilithiumVerify(
   signature: Uint8Array,
   message: Uint8Array,
   publicKey: Uint8Array,
