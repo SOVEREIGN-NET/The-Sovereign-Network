@@ -57,14 +57,17 @@ export class ZhtpQuicClient {
       // Generate session identifier for this connection
       const sessionId = this.generateSessionId();
 
-      // For now, derive a placeholder app key from identity
-      // TODO: Implement full UHP v2 handshake with proper key exchange
-      const appKey = new Uint8Array(32);
+      // WARNING: Placeholder key derivation - NOT SECURE FOR PRODUCTION
+      // TODO: Implement full UHP v2 handshake with proper Kyber+Dilithium key exchange
+      // This uses HKDF-SHA256 as a placeholder until real handshake is implemented
+      const { hkdf } = await import('@noble/hashes/hkdf');
+      const { sha256 } = await import('@noble/hashes/sha256');
       const encoder = new TextEncoder();
-      const identityBytes = encoder.encode(this.identity.id);
-      for (let i = 0; i < 32; i++) {
-        appKey[i] = identityBytes[i % identityBytes.length] ^ (i * 17);
-      }
+      const identityBytes = encoder.encode(this.identity.id + this.identity.did);
+      const salt = encoder.encode('zhtp-sdk-placeholder-v0');
+      const appKey = hkdf(sha256, identityBytes, salt, encoder.encode('app-key'), 32);
+
+      await this.output.warn('Using placeholder key derivation - implement UHP v2 handshake for production');
 
       // Create authenticated connection state
       this.connection = {
