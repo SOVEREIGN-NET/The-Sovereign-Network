@@ -15,6 +15,7 @@ import {
   HandshakeRole,
   PqcCapability,
   NodeIdentity,
+  HandshakeCapabilities,
   NegotiatedCapabilities,
   PqcHandshakeOffer,
   generateNonce,
@@ -25,6 +26,7 @@ import {
   deriveSessionId,
   deriveMacKey,
   buildClientHelloSignData,
+  buildServerHelloSignData,
   buildClientFinishSignData,
   buildPqcOfferBinder,
   createDefaultCapabilities,
@@ -593,8 +595,60 @@ export async function performHandshakeAsInitiator(
     encryptionMethod: serverPayload.negotiated?.encryptionMethod ?? 'chacha20-poly1305',
   };
 
-  // TODO: Verify server's Dilithium signature
-  // For now, we trust the server (this should be implemented for production)
+  // Verify server's Dilithium signature
+  log('Verifying server Dilithium5 signature...');
+
+  // Extract server signature
+  const serverSignature = serverPayload.signature?.signature instanceof Uint8Array
+    ? serverPayload.signature.signature
+    : new Uint8Array(serverPayload.signature?.signature || []);
+
+  if (serverSignature.length === 0) {
+    throw new Error('Server did not provide signature');
+  }
+
+  // Extract server capabilities for sign data reconstruction
+  const serverCapabilities: HandshakeCapabilities = {
+    protocols: serverPayload.capabilities?.protocols || ['quic'],
+    maxThroughput: BigInt(serverPayload.capabilities?.maxThroughput || 10_000_000),
+    maxMessageSize: Number(serverPayload.capabilities?.maxMessageSize || 16 * 1024 * 1024),
+    encryptionMethods: serverPayload.capabilities?.encryptionMethods || ['chacha20-poly1305'],
+    pqcCapability: serverPayload.capabilities?.pqcCapability ?? PqcCapability.Kyber1024Dilithium5,
+    dhtCapable: serverPayload.capabilities?.dhtCapable ?? true,
+    relayCapable: serverPayload.capabilities?.relayCapable ?? false,
+    storageCapacity: BigInt(serverPayload.capabilities?.storageCapacity || 0),
+    web4Capable: serverPayload.capabilities?.web4Capable ?? true,
+    customFeatures: serverPayload.capabilities?.customFeatures || [],
+  };
+
+  // Build the data that the server should have signed
+  const clientHelloHash = sha3_256(clientHelloBytes);
+  const serverSignData = buildServerHelloSignData(
+    clientNonce,
+    clientHelloHash,
+    serverIdentity,
+    serverCapabilities,
+    NETWORK_ID,
+    PROTOCOL_ID,
+    PURPOSE,
+    HandshakeRole.Server,
+    channelBinding,
+    serverTimestamp,
+    UHP_VERSION,
+  );
+
+  // Verify the signature using server's Dilithium public key
+  const signatureValid = await dilithiumVerify(
+    serverSignature,
+    serverSignData,
+    serverIdentity.publicKey.dilithiumPk,
+  );
+
+  if (!signatureValid) {
+    throw new Error('Server signature verification failed - potential MITM attack');
+  }
+
+  log('Server signature verified successfully');
 
   // ========================================================================
   // Phase 3: Send ClientFinish with Kyber encapsulation
