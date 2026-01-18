@@ -168,7 +168,7 @@ export function createAuthenticatedConnection(
   return {
     sessionId,
     appKey,
-    sequence: 0n,
+    sequence: 1n,  // Start at 1 (server's last_counter starts at 0)
     peerId: serverDid,
     establishedAt: Date.now(),
   };
