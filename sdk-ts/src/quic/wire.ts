@@ -2,10 +2,13 @@
  * ZHTP wire protocol encoding/decoding
  * 4-byte big-endian length prefix + CBOR payload
  * Max message size: 16MB
+ *
+ * V2 MAC uses HMAC-SHA3-256 with canonical request format matching Rust server.
  */
 
 import { encode, decode } from 'cbor';
-import { blake3 } from '@noble/hashes/blake3';
+import { sha3_256 } from '@noble/hashes/sha3';
+import { hmac } from '@noble/hashes/hmac';
 import { ZhtpRequest, ZhtpResponse } from './types.js';
 
 const MAX_MESSAGE_SIZE = 16 * 1024 * 1024; // 16MB
@@ -69,49 +72,128 @@ export function decodeResponse(frame: Uint8Array): ZhtpResponse {
 }
 
 /**
- * Compute request MAC using BLAKE3-HMAC
- * MAC = BLAKE3-HMAC(appKey, sessionId || sequence || bodyHash)
+ * Method byte constants (must match Rust CanonicalRequest)
  */
-export function computeRequestMac(
-  appKey: Uint8Array,
-  sessionId: string,
-  sequence: bigint,
+const METHOD_GET = 0;
+const METHOD_POST = 1;
+const METHOD_PUT = 2;
+const METHOD_DELETE = 3;
+
+/**
+ * Convert method string to byte
+ */
+function methodToByte(method: string): number {
+  switch (method.toUpperCase()) {
+    case 'GET': return METHOD_GET;
+    case 'POST': return METHOD_POST;
+    case 'PUT': return METHOD_PUT;
+    case 'DELETE': return METHOD_DELETE;
+    default: return METHOD_GET;
+  }
+}
+
+/**
+ * Build canonical request bytes (must match Rust CanonicalRequest::to_bytes)
+ *
+ * Wire format:
+ * - method: 1 byte (0=GET, 1=POST, 2=PUT, 3=DELETE)
+ * - path_len: u16 BE
+ * - path: UTF-8 bytes
+ * - body_len: u32 BE
+ * - body: raw bytes
+ */
+export function buildCanonicalRequest(
+  method: string,
+  path: string,
   body?: Uint8Array,
 ): Uint8Array {
-  // Hash body if present
-  let bodyHash: Uint8Array;
-  if (body && body.length > 0) {
-    bodyHash = blake3(body);
-  } else {
-    bodyHash = new Uint8Array(32); // Zero hash for empty body
-  }
+  const methodByte = methodToByte(method);
+  const pathBytes = new TextEncoder().encode(path);
+  const bodyBytes = body || new Uint8Array(0);
 
-  // Combine: sessionId || sequence || bodyHash
-  const sessionIdBytes = new TextEncoder().encode(sessionId);
-  const sequenceBytes = new Uint8Array(8);
-  const view = new DataView(sequenceBytes.buffer);
-  view.setBigInt64(0, sequence, false); // false = big-endian
+  // Calculate total size: 1 + 2 + path.len + 4 + body.len
+  const totalSize = 1 + 2 + pathBytes.length + 4 + bodyBytes.length;
+  const canonical = new Uint8Array(totalSize);
+  const view = new DataView(canonical.buffer);
 
-  const combined = new Uint8Array(sessionIdBytes.length + 8 + 32);
-  combined.set(sessionIdBytes, 0);
-  combined.set(sequenceBytes, sessionIdBytes.length);
-  combined.set(bodyHash, sessionIdBytes.length + 8);
+  let offset = 0;
 
-  // BLAKE3-HMAC (key is first 32 bytes of appKey, or full appKey if longer)
-  return blake3.create(appKey).update(combined).digest();
+  // Method (1 byte)
+  canonical[offset++] = methodByte;
+
+  // Path length (u16 BE) + path bytes
+  view.setUint16(offset, pathBytes.length, false); // big-endian
+  offset += 2;
+  canonical.set(pathBytes, offset);
+  offset += pathBytes.length;
+
+  // Body length (u32 BE) + body bytes
+  view.setUint32(offset, bodyBytes.length, false); // big-endian
+  offset += 4;
+  canonical.set(bodyBytes, offset);
+
+  return canonical;
+}
+
+/**
+ * Compute V2 request MAC using HMAC-SHA3-256
+ *
+ * MAC = HMAC-SHA3-256(mac_key, canonical_bytes(request) || counter || session_id)
+ *
+ * Must match Rust compute_v2_mac in lib-network/src/handshake/security.rs
+ *
+ * @param macKey - 32-byte MAC key derived from session
+ * @param method - HTTP method (GET, POST, PUT, DELETE)
+ * @param path - Request path
+ * @param sessionId - 32-byte session ID (as Uint8Array, not string)
+ * @param counter - Request counter (u64)
+ * @param body - Optional request body
+ */
+export function computeRequestMac(
+  macKey: Uint8Array,
+  sessionId: Uint8Array,
+  method: string,
+  path: string,
+  counter: bigint,
+  body?: Uint8Array,
+): Uint8Array {
+  // Build canonical request bytes
+  const canonicalBytes = buildCanonicalRequest(method, path, body);
+
+  // Counter as u64 big-endian
+  const counterBytes = new Uint8Array(8);
+  const counterView = new DataView(counterBytes.buffer);
+  counterView.setBigUint64(0, counter, false); // big-endian
+
+  // Combine: canonical_bytes || counter || session_id
+  const combined = new Uint8Array(canonicalBytes.length + 8 + 32);
+  let offset = 0;
+
+  combined.set(canonicalBytes, offset);
+  offset += canonicalBytes.length;
+
+  combined.set(counterBytes, offset);
+  offset += 8;
+
+  combined.set(sessionId, offset);
+
+  // HMAC-SHA3-256
+  return hmac(sha3_256, macKey, combined);
 }
 
 /**
  * Verify request MAC
  */
 export function verifyRequestMac(
-  appKey: Uint8Array,
-  sessionId: string,
-  sequence: bigint,
+  macKey: Uint8Array,
+  sessionId: Uint8Array,
+  method: string,
+  path: string,
+  counter: bigint,
   body: Uint8Array | undefined,
   providedMac: Uint8Array,
 ): boolean {
-  const computed = computeRequestMac(appKey, sessionId, sequence, body);
+  const computed = computeRequestMac(macKey, sessionId, method, path, counter, body);
   return constantTimeEquals(computed, providedMac);
 }
 
