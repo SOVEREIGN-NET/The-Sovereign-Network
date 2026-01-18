@@ -6,7 +6,7 @@
 //!
 //! The client uses a two-layer security model:
 //! 1. **TLS layer**: SPKI pinning or TOFU for transport security
-//! 2. **UHP layer**: Mutual authentication with Dilithium signatures + Kyber KEM
+//! 2. **UHP v2 layer**: Mutual authentication with Dilithium5 signatures + Kyber1024 KEM
 //!
 //! Both layers must succeed before any API requests are sent.
 //!
@@ -99,22 +99,22 @@ pub struct Web4Client {
     config: Web4ClientConfig,
 }
 
-/// Connection with completed UHP+Kyber handshake
+/// Connection with completed UHP v2 handshake
 struct AuthenticatedConnection {
     /// QUIC connection
     quic_conn: Connection,
 
-    /// Master key for symmetric encryption (from UHP handshake)
-    master_key: [u8; 32],
+    /// Session key for symmetric encryption (from UHP v2 handshake)
+    session_key: [u8; 32],
 
-    /// Application-layer MAC key (derived from master_key)
+    /// Application-layer MAC key (derived from session_key)
     app_key: [u8; 32],
 
     /// Peer's verified DID (from UHP handshake)
     peer_did: String,
 
-    /// Session ID
-    session_id: [u8; 16],
+    /// Session ID (UHP v2, 32 bytes)
+    session_id: [u8; 32],
 
     /// Request sequence counter (for replay protection)
     sequence: AtomicU64,
@@ -126,12 +126,12 @@ impl AuthenticatedConnection {
         self.sequence.fetch_add(1, Ordering::SeqCst)
     }
 
-    /// Derive application-layer MAC key from master key
-    fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], peer_did: &str, client_did: &str) -> [u8; 32] {
+    /// Derive application-layer MAC key from session key
+    fn derive_app_key(session_key: &[u8; 32], session_id: &[u8; 32], peer_did: &str, client_did: &str) -> [u8; 32] {
         // HKDF-style derivation using BLAKE3
         let mut input = Vec::new();
         input.extend_from_slice(b"zhtp-web4-app-mac");
-        input.extend_from_slice(master_key);
+        input.extend_from_slice(session_key);
         input.extend_from_slice(session_id);
         input.extend_from_slice(peer_did.as_bytes());
         input.extend_from_slice(client_did.as_bytes());
@@ -332,12 +332,12 @@ impl Web4Client {
 
         info!("QUIC/TLS connection established");
 
-        // Perform UHP+Kyber handshake
+        // Perform UHP v2 handshake
         let handshake_result = quic_handshake::handshake_as_initiator(
             &connection,
             &self.identity,
             &self.handshake_ctx,
-        ).await.context("UHP+Kyber handshake failed")?;
+        ).await.context("UHP v2 handshake failed")?;
 
         let peer_did = handshake_result.verified_peer.identity.did.clone();
 
@@ -352,7 +352,7 @@ impl Web4Client {
 
         // Derive application-layer MAC key
         let app_key = AuthenticatedConnection::derive_app_key(
-            &handshake_result.master_key,
+            &handshake_result.session_key,
             &handshake_result.session_id,
             &peer_did,
             &self.identity.did,
@@ -366,7 +366,7 @@ impl Web4Client {
 
         self.connection = Some(AuthenticatedConnection {
             quic_conn: connection,
-            master_key: handshake_result.master_key,
+            session_key: handshake_result.session_key,
             app_key,
             peer_did,
             session_id: handshake_result.session_id,
