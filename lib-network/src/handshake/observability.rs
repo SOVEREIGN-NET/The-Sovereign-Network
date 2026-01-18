@@ -201,7 +201,7 @@ mod tests {
             duration_micros: 1000,
             nonce_cache_size: 100,
             nonce_cache_utilization: 0.5,
-            protocol_version: 1,
+            protocol_version: 2,
         };
 
         // Should not panic

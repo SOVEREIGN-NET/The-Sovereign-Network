@@ -68,9 +68,9 @@
 //! All protocols use **ChaCha20Poly1305 AEAD** for symmetric encryption:
 //! - **LoRaWAN**: ChaCha20Poly1305 (replaces insecure XOR)
 //! - **WiFi Direct**: WPA2/3 + ChaCha20Poly1305 app-layer
-//! - **QUIC**: TLS 1.3 + UHP + Kyber512 + ChaCha20Poly1305
+//! - **QUIC**: TLS 1.3 + UHP v2 + ChaCha20Poly1305
 //! - **Bluetooth**: ChaCha20Poly1305 over BLE
-//! - **ZHTP Mesh**: Kyber512 + ChaCha20Poly1305
+//! - **ZHTP Mesh**: Kyber1024 + ChaCha20Poly1305
 //!
 //! # Security Properties
 //!
@@ -118,7 +118,7 @@
 //! ## QUIC
 //! - **Transport**: TLS 1.3 (built into Quinn QUIC implementation)
 //! - **Authentication**: UHP (Unified Handshake Protocol) with Dilithium signatures
-//! - **PQC Key Exchange**: Kyber512 KEM bound to UHP transcript
+//! - **PQC Key Exchange**: Kyber1024 KEM bound to UHP v2 transcript
 //! - **Master Key Derivation**: HKDF(uhp_session_key || kyber_shared_secret || transcript_hash || peer_node_id)
 //! - NOT triple encryption - layered security with single derived master key
 //!

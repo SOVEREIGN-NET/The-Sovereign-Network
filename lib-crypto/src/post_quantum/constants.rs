@@ -1,13 +1,10 @@
-//! Post-quantum cryptography constants - preserving CRYSTALS key sizes
-//! 
-//! constants from crypto.rs, lines 69-75
-
-/// CRYSTALS-Kyber512 constants (NIST post-quantum standard - Level 1)
-pub const KYBER512_CIPHERTEXT_BYTES: usize = 768;
-pub const KYBER512_PUBLICKEY_BYTES: usize = 800;
-pub const KYBER512_SECRETKEY_BYTES: usize = 1632;
+//! Post-quantum cryptography constants - CRYSTALS key sizes
+//!
+//! ZHTP uses only Kyber1024 (NIST Level 5) and Dilithium5 (highest security).
+//! Kyber512 is NOT supported - do not add it.
 
 /// CRYSTALS-Kyber1024 constants (NIST post-quantum standard - Level 5, highest security)
+/// This is the ONLY Kyber variant supported by ZHTP.
 pub const KYBER1024_CIPHERTEXT_BYTES: usize = 1568;
 pub const KYBER1024_PUBLICKEY_BYTES: usize = 1568;
 pub const KYBER1024_SECRETKEY_BYTES: usize = 3168;
@@ -23,5 +20,5 @@ pub const DILITHIUM5_SECRETKEY_BYTES: usize = 4864;
 // Re-export for backward compatibility
 pub use DILITHIUM2_PUBLICKEY_BYTES as DILITHIUM_PUBLIC_KEY_SIZE;
 pub use DILITHIUM2_SECRETKEY_BYTES as DILITHIUM_PRIVATE_KEY_SIZE;
-pub use KYBER512_PUBLICKEY_BYTES as KYBER_PUBLIC_KEY_SIZE;
-pub use KYBER512_SECRETKEY_BYTES as KYBER_PRIVATE_KEY_SIZE;
+pub use KYBER1024_PUBLICKEY_BYTES as KYBER_PUBLIC_KEY_SIZE;
+pub use KYBER1024_SECRETKEY_BYTES as KYBER_PRIVATE_KEY_SIZE;

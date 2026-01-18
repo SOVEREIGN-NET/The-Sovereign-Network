@@ -69,19 +69,19 @@ pub struct ZhtpClient {
     config: ZhtpClientConfig,
 }
 
-/// Connection with completed UHP+Kyber handshake
+/// Connection with completed UHP v2 handshake
 struct AuthenticatedConnection {
     /// QUIC connection
     quic_conn: Connection,
 
-    /// Application-layer MAC key (derived from master_key)
+    /// Application-layer MAC key (derived from session_key)
     app_key: [u8; 32],
 
     /// Peer's verified DID (from UHP handshake)
     peer_did: String,
 
-    /// Session ID
-    session_id: [u8; 16],
+    /// Session ID (UHP v2, 32 bytes)
+    session_id: [u8; 32],
 
     /// Request sequence counter (for replay protection)
     sequence: AtomicU64,
@@ -92,15 +92,15 @@ impl AuthenticatedConnection {
         self.sequence.fetch_add(1, Ordering::SeqCst)
     }
 
-    /// Derive application-layer MAC key from master key
+    /// Derive application-layer MAC key from session key
     ///
     /// MUST match server-side derivation in quic_api_dispatcher.rs.
     /// Label: "zhtp-web4-app-mac"
     /// Order: server_did (peer from client's view) then client_did
-    fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], peer_did: &str, client_did: &str) -> [u8; 32] {
+    fn derive_app_key(session_key: &[u8; 32], session_id: &[u8; 32], peer_did: &str, client_did: &str) -> [u8; 32] {
         let mut input = Vec::new();
         input.extend_from_slice(b"zhtp-web4-app-mac"); // Must match server
-        input.extend_from_slice(master_key);
+        input.extend_from_slice(session_key);
         input.extend_from_slice(session_id);
         input.extend_from_slice(peer_did.as_bytes());  // Server's DID
         input.extend_from_slice(client_did.as_bytes()); // Client's DID
@@ -256,12 +256,12 @@ impl ZhtpClient {
 
         info!("QUIC/TLS connection established");
 
-        // Perform UHP+Kyber handshake
+        // Perform UHP v2 handshake
         let handshake_result = quic_handshake::handshake_as_initiator(
             &connection,
             &self.identity,
             &self.handshake_ctx,
-        ).await.context("UHP+Kyber handshake failed")?;
+        ).await.context("UHP v2 handshake failed")?;
 
         let peer_did = handshake_result.verified_peer.identity.did.clone();
 
@@ -275,7 +275,7 @@ impl ZhtpClient {
 
         // Derive application-layer MAC key
         let app_key = AuthenticatedConnection::derive_app_key(
-            &handshake_result.master_key,
+            &handshake_result.session_key,
             &handshake_result.session_id,
             &peer_did,
             &self.identity.did,

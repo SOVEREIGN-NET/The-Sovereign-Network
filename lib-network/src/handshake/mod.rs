@@ -49,8 +49,8 @@
 //!
 //! # Protocol Versioning
 //!
-//! UHP version 1.0 is the initial release. Future versions maintain backwards compatibility
-//! through negotiation in the ClientHello message.
+//! UHP v2 is the only supported handshake in alpha. There are no legacy fallbacks,
+//! downgrade paths, or dual-version code paths in the critical path.
 
 use anyhow::{Result, anyhow};
 use lib_crypto::{PublicKey, Signature, KeyPair};
@@ -60,7 +60,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rand::RngCore;
 
 // Security modules
-mod security;
+pub mod security;
 mod nonce_cache;
 mod observability;
 mod rate_limiter;
@@ -83,6 +83,9 @@ pub use security::{
     TimestampConfig, SessionContext,
     validate_timestamp, current_timestamp,
     derive_session_key_hkdf, ct_eq_bytes, ct_verify_eq,
+    // UHP v2 key schedule and MAC
+    v2_labels, V2SessionKeys, derive_v2_session_keys, derive_v2_key,
+    CanonicalRequest, compute_v2_mac, verify_v2_mac,
 };
 pub use nonce_cache::{
     NonceCache, start_nonce_cleanup_task, NetworkEpoch,
@@ -215,6 +218,22 @@ pub fn derive_channel_binding_from_addrs(local: std::net::SocketAddr, peer: std:
     append_len_prefixed(&mut material, addrs[0].as_bytes());
     append_len_prefixed(&mut material, addrs[1].as_bytes());
     hash_blake3(&material).to_vec()
+}
+
+/// Compute UHP v2 transcript hash over raw handshake message bytes
+///
+/// Transcript order is protocol-defined and transport-agnostic.
+pub fn compute_transcript_hash(parts: &[&[u8]]) -> [u8; 32] {
+    use sha3::{Digest, Sha3_256};
+
+    let mut hasher = Sha3_256::new();
+    for part in parts {
+        hasher.update(part);
+    }
+    let result = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    hash
 }
 
 // ============================================================================
@@ -598,7 +617,7 @@ impl Default for HandshakeCapabilities {
             max_throughput: 1_000_000, // 1 MB/s default
             max_message_size: 65536,   // 64 KB default
             encryption_methods: vec!["chacha20-poly1305".to_string()],
-            pqc_capability: PqcCapability::None,
+            pqc_capability: PqcCapability::Kyber1024Dilithium5,
             dht_capable: false,
             relay_capable: false,
             storage_capacity: 0,
@@ -616,7 +635,7 @@ impl HandshakeCapabilities {
             max_throughput: 10_000,    // 10 KB/s
             max_message_size: 512,     // 512 bytes
             encryption_methods: vec!["chacha20-poly1305".to_string()],
-            pqc_capability: PqcCapability::None,
+            pqc_capability: PqcCapability::Kyber1024Dilithium5,
             dht_capable: false,
             relay_capable: false,
             storage_capacity: 0,
@@ -811,7 +830,7 @@ pub struct ClientHello {
     /// Used for replay attack prevention
     pub timestamp: u64,
 
-    /// Protocol version (UHP_VERSION = 1)
+    /// Protocol version (UHP_VERSION = 2)
     /// Used for version negotiation and preventing downgrade attacks
     pub protocol_version: u8,
 
@@ -1011,6 +1030,27 @@ impl ClientHello {
             }
         }
 
+        // 7b. CRITICAL: Enforce PQC capability (UHP v2 only)
+        if self.capabilities.pqc_capability != PqcCapability::Kyber1024Dilithium5 {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_failure(
+                HandshakeEvent::ClientHelloVerificationFailed,
+                FailureReason::Other("PQC capability required (Kyber1024+Dilithium5)".to_string()),
+                Some(metrics),
+            );
+            return Err(anyhow!("PQC capability required (Kyber1024+Dilithium5)"));
+        }
+
+        if self.pqc_offer.is_none() {
+            let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
+            ctx.observer.on_failure(
+                HandshakeEvent::ClientHelloVerificationFailed,
+                FailureReason::Other("Missing PQC offer in ClientHello".to_string()),
+                Some(metrics),
+            );
+            return Err(anyhow!("Missing PQC offer in ClientHello"));
+        }
+
         // 8. Verify signature includes all critical fields
         let data = Self::data_to_sign(
             &self.identity,
@@ -1120,7 +1160,7 @@ pub struct ServerHello {
     /// Used for replay attack prevention
     pub timestamp: u64,
 
-    /// Protocol version (UHP_VERSION = 1)
+    /// Protocol version (UHP_VERSION = 2)
     /// Used for version negotiation
     pub protocol_version: u8,
 
@@ -1138,9 +1178,16 @@ impl ServerHello {
         zhtp_identity: &ZhtpIdentity,
         capabilities: HandshakeCapabilities,
         client_hello: &ClientHello,
+        client_hello_hash: &[u8; 32],
         ctx: &HandshakeContext,
     ) -> Result<Self> {
-        let (hello, _pqc_state) = Self::new_with_pqc(zhtp_identity, capabilities, client_hello, ctx)?;
+        let (hello, _pqc_state) = Self::new_with_pqc(
+            zhtp_identity,
+            capabilities,
+            client_hello,
+            client_hello_hash,
+            ctx,
+        )?;
         Ok(hello)
     }
 
@@ -1152,6 +1199,7 @@ impl ServerHello {
         zhtp_identity: &ZhtpIdentity,
         capabilities: HandshakeCapabilities,
         client_hello: &ClientHello,
+        client_hello_hash: &[u8; 32],
         ctx: &HandshakeContext,
     ) -> Result<(Self, Option<PqcHandshakeState>)> {
         ctx.require_channel_binding()?;
@@ -1163,6 +1211,10 @@ impl ServerHello {
         let negotiated = capabilities.negotiate(&client_hello.capabilities);
         let identity = NodeIdentity::from_zhtp_identity(zhtp_identity);
 
+        if negotiated.pqc_capability != PqcCapability::Kyber1024Dilithium5 {
+            return Err(anyhow!("UHP v2 requires Kyber1024+Dilithium5"));
+        }
+
         let keypair = KeyPair {
             public_key: zhtp_identity.public_key.clone(),
             private_key: zhtp_identity.private_key.clone().ok_or_else(|| anyhow!("Identity missing private key"))?,
@@ -1170,6 +1222,7 @@ impl ServerHello {
 
         let data = Self::data_to_sign(
             &client_hello.challenge_nonce,
+            client_hello_hash,
             &identity,
             &capabilities,
             &ctx.domain,
@@ -1212,7 +1265,12 @@ impl ServerHello {
     ///
     /// **VULN-001 FIX:** Uses nonce_cache for replay attack prevention.
     /// **FINDING 2 FIX:** Uses HandshakeContext to eliminate parameter threading.
-    pub fn verify_signature(&self, client_nonce: &[u8; 32], ctx: &HandshakeContext) -> Result<()> {
+    pub fn verify_signature(
+        &self,
+        client_nonce: &[u8; 32],
+        client_hello_hash: &[u8; 32],
+        ctx: &HandshakeContext,
+    ) -> Result<()> {
         ctx.require_channel_binding()?;
 
         // 0. CRITICAL: Validate protocol version (VULN-004 FIX)
@@ -1257,9 +1315,19 @@ impl ServerHello {
             }
         }
 
+        // 7b. CRITICAL: Enforce PQC capability (UHP v2 only)
+        if self.negotiated.pqc_capability != PqcCapability::Kyber1024Dilithium5 {
+            return Err(anyhow!("PQC capability required (Kyber1024+Dilithium5)"));
+        }
+
+        if self.pqc_offer.is_none() {
+            return Err(anyhow!("Missing PQC offer in ServerHello"));
+        }
+
         // 8. Verify signature includes all critical fields
         let data = Self::data_to_sign(
             client_nonce,
+            client_hello_hash,
             &self.identity,
             &self.capabilities,
             &ctx.domain,
@@ -1278,9 +1346,10 @@ impl ServerHello {
 
     /// Data to sign for ServerHello
     ///
-    /// SECURITY: Includes client nonce, timestamp, and version
+    /// SECURITY: Includes client nonce, client transcript hash, timestamp, and version
     fn data_to_sign(
         client_nonce: &[u8; 32],
+        client_hello_hash: &[u8; 32],
         identity: &NodeIdentity,
         capabilities: &HandshakeCapabilities,
         domain: &HandshakeDomain,
@@ -1295,7 +1364,9 @@ impl ServerHello {
         data.push(0x02); // MessageType::ServerHello
 
         // Client's challenge nonce (proves we received ClientHello)
+        // and transcript hash for binding to prior messages
         data.extend_from_slice(client_nonce);
+        data.extend_from_slice(client_hello_hash);
 
         // Server identity and capabilities
         data.extend_from_slice(identity.node_id.as_bytes());
@@ -1373,10 +1444,19 @@ impl ClientFinish {
     pub fn new(
         server_hello: &ServerHello,
         client_hello: &ClientHello,
+        client_hello_hash: &[u8; 32],
+        transcript_hash: &[u8; 32],
         keypair: &KeyPair,
         ctx: &HandshakeContext,
     ) -> Result<Self> {
-        let (finish, _pqc_secret) = Self::new_with_pqc(server_hello, client_hello, keypair, ctx)?;
+        let (finish, _pqc_secret) = Self::new_with_pqc(
+            server_hello,
+            client_hello,
+            client_hello_hash,
+            transcript_hash,
+            keypair,
+            ctx,
+        )?;
         Ok(finish)
     }
 
@@ -1387,10 +1467,20 @@ impl ClientFinish {
     pub fn new_with_pqc(
         server_hello: &ServerHello,
         client_hello: &ClientHello,
+        client_hello_hash: &[u8; 32],
+        transcript_hash: &[u8; 32],
         keypair: &KeyPair,
         ctx: &HandshakeContext,
     ) -> Result<(Self, Option<[u8; 32]>)> {
         ctx.require_channel_binding()?;
+        if server_hello.negotiated.pqc_capability != PqcCapability::Kyber1024Dilithium5 {
+            return Err(anyhow!("UHP v2 requires Kyber1024+Dilithium5"));
+        }
+
+        if server_hello.pqc_offer.is_none() {
+            return Err(anyhow!("Missing PQC offer in ServerHello"));
+        }
+
         // === MUTUAL AUTHENTICATION: Verify server before completing handshake ===
         server_hello.identity.verify_node_id()
             .map_err(|e| anyhow!("Server NodeId verification failed: {}", e))?;
@@ -1398,7 +1488,7 @@ impl ClientFinish {
         validate_timestamp(server_hello.timestamp, &ctx.timestamp_config)
             .map_err(|e| anyhow!("Server timestamp validation failed: {}", e))?;
 
-        server_hello.verify_signature(&client_hello.challenge_nonce, ctx)
+        server_hello.verify_signature(&client_hello.challenge_nonce, client_hello_hash, ctx)
             .map_err(|e| anyhow!("Server signature verification failed: {}", e))?;
 
         // === Server verified! Now complete handshake ===
@@ -1407,6 +1497,7 @@ impl ClientFinish {
 
         let data = Self::data_to_sign(
             &server_hello.response_nonce,
+            transcript_hash,
             &ctx.domain,
             ctx.local_role,
             &ctx.channel_binding,
@@ -1439,7 +1530,12 @@ impl ClientFinish {
     }
 
     /// Verify client's signature on server nonce
-    pub fn verify_signature(&self, server_nonce: &[u8; 32], client_pubkey: &PublicKey) -> Result<()> {
+    pub fn verify_signature(
+        &self,
+        server_nonce: &[u8; 32],
+        transcript_hash: &[u8; 32],
+        client_pubkey: &PublicKey,
+    ) -> Result<()> {
         // 0. CRITICAL: Validate protocol version (VULN-004 FIX)
         validate_protocol_version(self.protocol_version)?;
 
@@ -1454,6 +1550,7 @@ impl ClientFinish {
         };
         let data = Self::data_to_sign(
             server_nonce,
+            transcript_hash,
             &domain,
             self.role,
             &self.channel_binding,
@@ -1472,6 +1569,7 @@ impl ClientFinish {
     pub fn verify_signature_with_context(
         &self,
         server_nonce: &[u8; 32],
+        transcript_hash: &[u8; 32],
         client_pubkey: &PublicKey,
         ctx: &HandshakeContext,
     ) -> Result<()> {
@@ -1500,6 +1598,7 @@ impl ClientFinish {
         // 2. Verify signature
         let data = Self::data_to_sign(
             server_nonce,
+            transcript_hash,
             &ctx.domain,
             self.role,
             &self.channel_binding,
@@ -1517,6 +1616,7 @@ impl ClientFinish {
     /// Build data to sign for ClientFinish
     fn data_to_sign(
         server_nonce: &[u8; 32],
+        transcript_hash: &[u8; 32],
         domain: &HandshakeDomain,
         role: HandshakeRole,
         channel_binding: &[u8],
@@ -1526,6 +1626,7 @@ impl ClientFinish {
         let mut data = Vec::new();
         data.push(0x03); // MessageType::ClientFinish for context binding
         data.extend_from_slice(server_nonce);
+        data.extend_from_slice(transcript_hash); // binds transcript so far
         append_len_prefixed(&mut data, domain.network_id.as_bytes());
         append_len_prefixed(&mut data, domain.protocol_id.as_bytes());
         append_len_prefixed(&mut data, domain.purpose.as_bytes());
@@ -1693,60 +1794,35 @@ impl HandshakeSessionInfo {
 pub struct HandshakeResult {
     /// Peer's verified node identity (public fields only)
     pub peer_identity: NodeIdentity,
-    
+
     /// Negotiated session capabilities
     pub capabilities: NegotiatedCapabilities,
-    
+
     /// Session key for symmetric encryption (derived from handshake)
     pub session_key: [u8; 32],
-    
-    /// Session identifier
-    pub session_id: [u8; 16],
-    
+
+    /// Session identifier (32 bytes, UHP v2)
+    pub session_id: [u8; 32],
+
+    /// Handshake transcript hash (SHA3-256 of all handshake messages)
+    /// Used as salt for v2 key derivation: HKDF(session_key, handshake_hash, label)
+    pub handshake_hash: [u8; 32],
+
     /// Timestamp when handshake completed
     pub completed_at: u64,
-    
+
     /// Whether PQC hybrid mode was used
     pub pqc_hybrid_enabled: bool,
 
     /// Verified session metadata
     pub session_info: HandshakeSessionInfo,
+
+    /// Protocol version used (1 or 2)
+    pub protocol_version: u8,
 }
 
 impl HandshakeResult {
-    /// Create a new handshake result
-    ///
-    /// **VULN-003 FIX:** Uses ClientHello timestamp for deterministic session key derivation.
-    /// Both client and server MUST use the same timestamp (from ClientHello) to derive
-    /// identical session keys.
-    ///
-    /// # Arguments
-    /// * `client_hello_timestamp` - Timestamp from ClientHello message (MUST be same on both sides)
-    /// * `pqc_shared_secret` - Optional PQC shared secret for hybrid key derivation
-    pub fn new(
-        peer_identity: NodeIdentity,
-        capabilities: NegotiatedCapabilities,
-        client_nonce: &[u8; 32],
-        server_nonce: &[u8; 32],
-        client_did: &str,
-        server_did: &str,
-        client_hello_timestamp: u64,
-        session_info: &HandshakeSessionInfo,
-    ) -> Result<Self> {
-        Self::new_with_pqc(
-            peer_identity,
-            capabilities,
-            client_nonce,
-            server_nonce,
-            client_did,
-            server_did,
-            client_hello_timestamp,
-            session_info,
-            None,
-        )
-    }
-    
-    /// Create a new handshake result with optional PQC hybrid key derivation
+    /// Create a new handshake result with PQC hybrid key derivation
     ///
     /// When `pqc_shared_secret` is provided, the session key is derived using
     /// HKDF with both the classical nonces and the PQC shared secret, providing
@@ -1755,6 +1831,7 @@ impl HandshakeResult {
     /// # Arguments
     /// * `client_hello_timestamp` - Timestamp from ClientHello message (MUST be same on both sides)
     /// * `pqc_shared_secret` - Optional PQC shared secret for hybrid key derivation
+    /// * `transcript_hash` - Handshake transcript hash for v2 key derivation
     pub fn new_with_pqc(
         peer_identity: NodeIdentity,
         capabilities: NegotiatedCapabilities,
@@ -1765,6 +1842,7 @@ impl HandshakeResult {
         client_hello_timestamp: u64,
         session_info: &HandshakeSessionInfo,
         pqc_shared_secret: Option<&[u8; 32]>,
+        transcript_hash: [u8; 32],
     ) -> Result<Self> {
         // Build session context for HKDF domain separation
         // CRITICAL: Use ClientHello timestamp (deterministic, agreed by both parties)
@@ -1783,28 +1861,74 @@ impl HandshakeResult {
 
         // Derive session key using HKDF (NIST SP 800-108 compliant)
         let classical_key = derive_session_key_hkdf(client_nonce, server_nonce, &context)?;
-        
-        // If PQC shared secret is provided, derive hybrid key
-        let (session_key, pqc_hybrid_enabled) = if let Some(pqc_secret) = pqc_shared_secret {
-            let hybrid_key = derive_hybrid_session_key(pqc_secret, &classical_key)?;
-            (hybrid_key, true)
-        } else {
-            (classical_key, false)
-        };
 
-        // Generate session ID from first 16 bytes of session key
-        let mut session_id = [0u8; 16];
-        session_id.copy_from_slice(&session_key[..16]);
+        // If PQC shared secret is provided, derive hybrid key
+        let pqc_secret = pqc_shared_secret
+            .ok_or_else(|| anyhow!("Missing PQC shared secret for UHP v2"))?;
+        let hybrid_key = derive_hybrid_session_key(pqc_secret, &classical_key)?;
+        let (session_key, pqc_hybrid_enabled) = (hybrid_key, true);
+
+        // Generate 32-byte session ID (UHP v2)
+        let session_id = Self::derive_session_id(&session_key, client_nonce, server_nonce);
+
+        let handshake_hash = transcript_hash;
+        let protocol_version = 2;
 
         Ok(Self {
             peer_identity,
             capabilities,
             session_key,
             session_id,
+            handshake_hash,
             completed_at: current_timestamp()?, // Completion time (for logging only)
             pqc_hybrid_enabled,
             session_info: session_info.clone(),
+            protocol_version,
         })
+    }
+
+    /// Create v2 handshake result with explicit transcript hash
+    ///
+    /// UHP v2 requires the transcript hash for proper key derivation.
+    /// The transcript hash is SHA3-256(client_hello || server_hello || client_finish).
+    pub fn new_v2(
+        peer_identity: NodeIdentity,
+        capabilities: NegotiatedCapabilities,
+        client_nonce: &[u8; 32],
+        server_nonce: &[u8; 32],
+        client_did: &str,
+        server_did: &str,
+        client_hello_timestamp: u64,
+        session_info: &HandshakeSessionInfo,
+        pqc_shared_secret: Option<&[u8; 32]>,
+        transcript_hash: [u8; 32],
+    ) -> Result<Self> {
+        Self::new_with_pqc(
+            peer_identity,
+            capabilities,
+            client_nonce,
+            server_nonce,
+            client_did,
+            server_did,
+            client_hello_timestamp,
+            session_info,
+            pqc_shared_secret,
+            transcript_hash,
+        )
+    }
+
+    /// Derive 32-byte session ID from session key and nonces
+    fn derive_session_id(session_key: &[u8; 32], client_nonce: &[u8; 32], server_nonce: &[u8; 32]) -> [u8; 32] {
+        use sha3::{Sha3_256, Digest};
+        let mut hasher = Sha3_256::new();
+        hasher.update(b"zhtp/v2/session_id");
+        hasher.update(session_key);
+        hasher.update(client_nonce);
+        hasher.update(server_nonce);
+        let result = hasher.finalize();
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&result);
+        id
     }
 
     pub fn verified_peer(&self) -> VerifiedPeer {
@@ -2213,7 +2337,7 @@ mod tests {
         assert_eq!(minimal.protocols, vec!["ble".to_string()]);
         assert_eq!(minimal.max_throughput, 10_000);
         assert_eq!(minimal.max_message_size, 512);
-        assert_eq!(minimal.pqc_capability, PqcCapability::None);
+        assert_eq!(minimal.pqc_capability, PqcCapability::Kyber1024Dilithium5);
         assert!(!minimal.dht_capable);
     }
     
@@ -2254,7 +2378,10 @@ mod tests {
         assert_eq!(neg.pqc_capability, HybridEd25519Dilithium5);
         
         // Hybrid + None -> None (no common support)
-        let none = HandshakeCapabilities::default();
+        let none = HandshakeCapabilities {
+            pqc_capability: None,
+            ..HandshakeCapabilities::default()
+        };
         let neg = hybrid.negotiate(&none);
         assert_eq!(neg.pqc_capability, None);
     }
@@ -2293,13 +2420,25 @@ mod tests {
         // Step 1: Client sends ClientHello
         let client_capabilities = HandshakeCapabilities::default();
         let client_hello = ClientHello::new(&client_identity, client_capabilities, &client_ctx)?;
+        let client_hello_msg = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
+        let client_hello_bytes = client_hello_msg.to_bytes()?;
+        let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
 
         // Server verifies ClientHello
         client_hello.verify_signature(&server_ctx)?;
 
         // Step 2: Server sends ServerHello
         let server_capabilities = HandshakeCapabilities::default();
-        let server_hello = ServerHello::new(&server_identity, server_capabilities, &client_hello, &server_ctx)?;
+        let (server_hello, server_pqc_state) = ServerHello::new_with_pqc(
+            &server_identity,
+            server_capabilities,
+            &client_hello,
+            &client_hello_hash,
+            &server_ctx,
+        )?;
+        let server_hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
+        let server_hello_bytes = server_hello_msg.to_bytes()?;
+        let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
 
         // Step 3: Client sends ClientFinish (includes mutual authentication of server)
         let client_keypair = KeyPair {
@@ -2307,19 +2446,39 @@ mod tests {
             private_key: client_identity.private_key.clone().unwrap(),
         };
 
-        let client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &client_ctx)?;
+        let (client_finish, client_pqc_secret) = ClientFinish::new_with_pqc(
+            &server_hello,
+            &client_hello,
+            &client_hello_hash,
+            &pre_finish_hash,
+            &client_keypair,
+            &client_ctx,
+        )?;
+        let client_finish_msg = HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish.clone()));
+        let client_finish_bytes = client_finish_msg.to_bytes()?;
 
         // Server verifies ClientFinish
         client_finish.verify_signature_with_context(
             &server_hello.response_nonce,
+            &pre_finish_hash,
             &client_hello.identity.public_key,
             &server_ctx,
         )?;
 
         // Step 4: Both sides derive session key
         let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)?;
+        let transcript_hash = compute_transcript_hash(&[
+            &client_hello_bytes,
+            &server_hello_bytes,
+            &client_finish_bytes,
+        ]);
 
-        let client_session = HandshakeResult::new(
+        let server_pqc_secret = match (&client_finish.pqc_ciphertext, &server_pqc_state) {
+            (Some(ciphertext), Some(state)) => Some(decapsulate_pqc(ciphertext, state)?),
+            _ => None,
+        };
+
+        let client_session = HandshakeResult::new_with_pqc(
             server_hello.identity.clone(),
             server_hello.negotiated.clone(),
             &client_hello.challenge_nonce,
@@ -2328,9 +2487,11 @@ mod tests {
             &server_identity.did,
             client_hello.timestamp,
             &session_info,
+            client_pqc_secret.as_ref(),
+            transcript_hash,
         )?;
 
-        let server_session = HandshakeResult::new(
+        let server_session = HandshakeResult::new_with_pqc(
             client_hello.identity.clone(),
             server_hello.negotiated.clone(),
             &client_hello.challenge_nonce,
@@ -2339,6 +2500,8 @@ mod tests {
             &server_identity.did,
             client_hello.timestamp,
             &session_info,
+            server_pqc_secret.as_ref(),
+            transcript_hash,
         )?;
 
         // Verify both parties derived the same session key
@@ -2386,16 +2549,36 @@ mod tests {
                     let server_ctx = ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
 
                     let client_hello = ClientHello::new(&client_identity, HandshakeCapabilities::default(), &client_ctx)?;
+                    let client_hello_msg = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
+                    let client_hello_bytes = client_hello_msg.to_bytes()?;
+                    let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
+
                     client_hello.verify_signature(&server_ctx)?;
 
-                    let server_hello = ServerHello::new(&server_identity, HandshakeCapabilities::default(), &client_hello, &server_ctx)?;
+                    let (server_hello, _pqc_state) = ServerHello::new_with_pqc(
+                        &server_identity,
+                        HandshakeCapabilities::default(),
+                        &client_hello,
+                        &client_hello_hash,
+                        &server_ctx,
+                    )?;
+                    let server_hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
+                    let server_hello_bytes = server_hello_msg.to_bytes()?;
+                    let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
 
                     let client_keypair = KeyPair {
                         public_key: client_identity.public_key.clone(),
                         private_key: client_identity.private_key.clone().unwrap(),
                     };
 
-                    let _client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &client_ctx)?;
+                    let _client_finish = ClientFinish::new_with_pqc(
+                        &server_hello,
+                        &client_hello,
+                        &client_hello_hash,
+                        &pre_finish_hash,
+                        &client_keypair,
+                        &client_ctx,
+                    )?;
 
                     Ok(())
                 })

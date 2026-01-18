@@ -277,7 +277,9 @@ fn test_creates_real_pqc_keypair() {
         "Dilithium2 public key should be 1312 bytes");
     // Note: private_key not stored in ZhtpIdentity after construction
 
-    // Verify Kyber512 keypair present
+    // Verify Kyber1024 keypair present
     assert!(!identity.public_key.kyber_pk.is_empty(),
         "Kyber public key should be present");
+    assert_eq!(identity.public_key.kyber_pk.len(), 1568,
+        "Kyber1024 public key should be 1568 bytes");
 }

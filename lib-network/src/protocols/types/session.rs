@@ -649,3 +649,300 @@ impl std::fmt::Debug for ProtocolSession {
             .finish()
     }
 }
+
+// =============================================================================
+// UHP v2 Session Management
+// =============================================================================
+
+/// UHP v2 Session - tracks authenticated sessions with monotonic counter
+///
+/// Used for request authentication after UHP v2 handshake completes.
+/// Each session has:
+/// - 32-byte session ID (from handshake)
+/// - MAC key for request authentication
+/// - Monotonic counter for replay protection
+/// - TTL for session expiry
+pub struct V2Session {
+    /// Session ID (32 bytes, from handshake)
+    session_id: [u8; 32],
+    /// MAC key for request authentication (zeroized on drop)
+    mac_key: [u8; 32],
+    /// Peer DID (identity that completed handshake)
+    peer_did: String,
+    /// Last seen counter (monotonically increasing)
+    last_counter: AtomicU64,
+    /// Session creation timestamp
+    created_at: u64,
+    /// Session TTL in seconds (default 24 hours)
+    ttl_seconds: u64,
+}
+
+impl Drop for V2Session {
+    fn drop(&mut self) {
+        self.mac_key.zeroize();
+        self.session_id.zeroize();
+    }
+}
+
+impl V2Session {
+    /// Create a new v2 session from handshake result
+    pub fn new(
+        session_id: [u8; 32],
+        mac_key: [u8; 32],
+        peer_did: String,
+        ttl_seconds: Option<u64>,
+    ) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Self {
+            session_id,
+            mac_key,
+            peer_did,
+            last_counter: AtomicU64::new(0),
+            created_at: now,
+            ttl_seconds: ttl_seconds.unwrap_or(DEFAULT_SESSION_LIFETIME_SECS),
+        }
+    }
+
+    /// Get session ID
+    pub fn session_id(&self) -> &[u8; 32] {
+        &self.session_id
+    }
+
+    /// Get MAC key (for request authentication)
+    pub fn mac_key(&self) -> &[u8; 32] {
+        &self.mac_key
+    }
+
+    /// Get peer DID
+    pub fn peer_did(&self) -> &str {
+        &self.peer_did
+    }
+
+    /// Check if session is expired
+    pub fn is_expired(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        now.saturating_sub(self.created_at) > self.ttl_seconds
+    }
+
+    /// Validate and update counter (returns error if counter is not strictly greater)
+    ///
+    /// SECURITY: Uses loop-based compare_exchange to prevent TOCTOU race conditions.
+    /// The counter MUST be strictly greater than the last seen value to prevent replay attacks.
+    pub fn validate_counter(&self, counter: u64) -> Result<()> {
+        // Loop until we either successfully update or detect a replay
+        loop {
+            let last = self.last_counter.load(Ordering::SeqCst);
+
+            // Check if counter is valid (strictly greater than last)
+            if counter <= last {
+                return Err(anyhow!(
+                    "Counter replay detected: received {} but last was {} - possible replay attack",
+                    counter,
+                    last
+                ));
+            }
+
+            // Try to atomically update the counter
+            // If another thread updated it, loop and re-check
+            match self.last_counter.compare_exchange(
+                last,
+                counter,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(_) => {
+                    // Another thread updated the counter - loop and re-validate
+                    // This ensures we always check against the latest value
+                    continue;
+                }
+            }
+        }
+    }
+
+    /// Get last counter value (for diagnostics)
+    pub fn last_counter(&self) -> u64 {
+        self.last_counter.load(Ordering::SeqCst)
+    }
+
+    /// Get session age in seconds
+    pub fn age_seconds(&self) -> u64 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        now.saturating_sub(self.created_at)
+    }
+}
+
+impl std::fmt::Debug for V2Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("V2Session")
+            .field("session_id", &hex::encode(&self.session_id[..8]))
+            .field("peer_did", &self.peer_did)
+            .field("last_counter", &self.last_counter.load(Ordering::SeqCst))
+            .field("age_seconds", &self.age_seconds())
+            .field("is_expired", &self.is_expired())
+            .finish()
+    }
+}
+
+/// Thread-safe V2 Session Store
+///
+/// Manages active UHP v2 sessions with automatic expiry cleanup.
+pub struct V2SessionStore {
+    /// Active sessions indexed by session_id
+    sessions: RwLock<std::collections::HashMap<[u8; 32], V2Session>>,
+    /// Maximum number of sessions to store
+    max_sessions: usize,
+}
+
+impl V2SessionStore {
+    /// Create new session store
+    pub fn new(max_sessions: usize) -> Self {
+        Self {
+            sessions: RwLock::new(std::collections::HashMap::new()),
+            max_sessions,
+        }
+    }
+
+    /// Insert a new session (removes expired sessions first)
+    pub fn insert(&self, session: V2Session) -> Result<()> {
+        let mut sessions = self.sessions.write();
+
+        // Clean up expired sessions first
+        sessions.retain(|_, s| !s.is_expired());
+
+        // Check capacity
+        if sessions.len() >= self.max_sessions {
+            // Remove oldest session
+            if let Some(oldest_id) = sessions
+                .iter()
+                .min_by_key(|(_, s)| s.created_at)
+                .map(|(id, _)| *id)
+            {
+                sessions.remove(&oldest_id);
+            }
+        }
+
+        let session_id = session.session_id;
+        sessions.insert(session_id, session);
+        Ok(())
+    }
+
+    /// Get session by ID (returns None if expired or not found)
+    pub fn get(&self, session_id: &[u8; 32]) -> Option<V2SessionRef<'_>> {
+        let sessions = self.sessions.read();
+
+        if let Some(session) = sessions.get(session_id) {
+            if !session.is_expired() {
+                return Some(V2SessionRef {
+                    _guard: sessions,
+                    session_id: *session_id,
+                });
+            }
+        }
+        None
+    }
+
+    /// Validate request MAC and counter for a session
+    ///
+    /// Returns peer DID if validation succeeds
+    pub fn validate_request(
+        &self,
+        session_id: &[u8; 32],
+        expected_mac: &[u8; 32],
+        actual_mac: &[u8; 32],
+        counter: u64,
+    ) -> Result<String> {
+        let sessions = self.sessions.read();
+
+        let session = sessions.get(session_id)
+            .ok_or_else(|| anyhow!("Session not found"))?;
+
+        if session.is_expired() {
+            return Err(anyhow!("Session expired"));
+        }
+
+        // Constant-time MAC comparison
+        if !bool::from(expected_mac.ct_eq(actual_mac)) {
+            return Err(anyhow!("MAC verification failed"));
+        }
+
+        // Validate and update counter
+        session.validate_counter(counter)?;
+
+        Ok(session.peer_did.clone())
+    }
+
+    /// Remove a session
+    pub fn remove(&self, session_id: &[u8; 32]) {
+        let mut sessions = self.sessions.write();
+        sessions.remove(session_id);
+    }
+
+    /// Get number of active (non-expired) sessions
+    pub fn active_count(&self) -> usize {
+        let sessions = self.sessions.read();
+        sessions.values().filter(|s| !s.is_expired()).count()
+    }
+
+    /// Clean up expired sessions
+    pub fn cleanup_expired(&self) -> usize {
+        let mut sessions = self.sessions.write();
+        let before = sessions.len();
+        sessions.retain(|_, s| !s.is_expired());
+        before - sessions.len()
+    }
+
+    /// Get session for MAC key lookup (returns mac_key if session valid)
+    pub fn get_mac_key(&self, session_id: &[u8; 32]) -> Option<[u8; 32]> {
+        let sessions = self.sessions.read();
+        sessions.get(session_id)
+            .filter(|s| !s.is_expired())
+            .map(|s| *s.mac_key())
+    }
+
+    /// Get session peer DID
+    pub fn get_peer_did(&self, session_id: &[u8; 32]) -> Option<String> {
+        let sessions = self.sessions.read();
+        sessions.get(session_id)
+            .filter(|s| !s.is_expired())
+            .map(|s| s.peer_did().to_string())
+    }
+}
+
+impl Default for V2SessionStore {
+    fn default() -> Self {
+        Self::new(10_000) // Default 10k max sessions
+    }
+}
+
+impl std::fmt::Debug for V2SessionStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("V2SessionStore")
+            .field("active_sessions", &self.active_count())
+            .field("max_sessions", &self.max_sessions)
+            .finish()
+    }
+}
+
+/// Reference to a V2 session (holds read lock)
+pub struct V2SessionRef<'a> {
+    _guard: parking_lot::RwLockReadGuard<'a, std::collections::HashMap<[u8; 32], V2Session>>,
+    session_id: [u8; 32],
+}
+
+impl<'a> V2SessionRef<'a> {
+    /// Get session ID
+    pub fn session_id(&self) -> &[u8; 32] {
+        &self.session_id
+    }
+}

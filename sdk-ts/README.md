@@ -14,7 +14,7 @@ Layer 2: Build Trust Configuration
    buildTrustConfig() → TrustConfig
 
 Layer 3: Create Authenticated Client
-   connectClient() → ZhtpClient (with UHP + Kyber authentication)
+   connectClient() → ZhtpClient (with UHP v2 authentication)
 
 Use Client:
    client.domains.register()
@@ -24,7 +24,7 @@ Use Client:
 
 ### Design Principles
 
-1. **QUIC-First** - No HTTP. All communication over QUIC with UHP handshake
+1. **QUIC-First** - No HTTP. All communication over QUIC with UHP v2 handshake
 2. **Pure Functions** - Validation functions return results without side effects
 3. **Operation Enums** - Polymorphic routing via enum → config lookup
 4. **Dependency Injection** - Output trait pattern for testability
@@ -73,8 +73,7 @@ examples/
 
 ### 🔄 Phase 2: QUIC Transport (Next)
 - [ ] QUIC client wrapper
-- [ ] UHP handshake orchestration
-- [ ] Kyber512 key encapsulation
+- [ ] UHP v2 handshake orchestration (transport-only QUIC)
 - [ ] Dilithium5 signature verification
 - [ ] CBOR wire protocol encoding
 - [ ] Request MAC computation
@@ -201,7 +200,7 @@ await client.domains.register('myapp.zhtp', {
 |--------|----------|-----|
 | **Language** | Rust | TypeScript |
 | **Transport** | QUIC + UHP | QUIC + UHP |
-| **Auth** | Dilithium5 + Kyber512 | Dilithium5 + Kyber512 |
+| **Auth** | UHP v2 (Dilithium5 + Kyber1024) | UHP v2 (Dilithium5 + Kyber1024) |
 | **Wire Format** | CBOR (4-byte framed) | CBOR (4-byte framed) |
 | **Validation** | Pure functions in logic/ | Pure functions in validation.ts |
 | **Output** | Output trait | Output interface |
@@ -214,7 +213,7 @@ await client.domains.register('myapp.zhtp', {
 From zhtp-cli that this SDK mirrors:
 
 - `lib-network/src/client/zhtp_client.rs` - QUIC client pattern
-- `lib-network/src/protocols/quic_handshake.rs` - UHP + Kyber handshake
+- `lib-network/src/protocols/quic_handshake.rs` - QUIC transport adapter for UHP v2
 - `lib-protocols/src/wire/mod.rs` - CBOR wire protocol (4-byte framing)
 - `zhtp-cli/src/commands/web4_utils.rs` - Client initialization pattern
 - `zhtp-cli/src/logic/*.rs` - Pure validation functions
@@ -311,7 +310,7 @@ it('should register domain', async () => {
 
 ## Security Considerations
 
-- ✅ **Post-Quantum Ready**: Kyber512 KEM + Dilithium5 signatures
+- ✅ **Post-Quantum Ready**: UHP v2 (Kyber1024 + Dilithium5)
 - ✅ **Signed Requests**: All mutations require Dilithium5 signature
 - ✅ **Session MAC**: Every request includes BLAKE3-HMAC with session key
 - ✅ **Replay Protection**: Sequence numbers prevent replay attacks

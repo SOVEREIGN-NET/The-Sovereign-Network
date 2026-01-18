@@ -87,7 +87,7 @@ impl Drop for PublicKey {
 /// # Rationale for Public Key Zeroization
 ///
 /// While public keys are not secret, they are wiped on drop for defense-in-depth:
-/// - **Post-Quantum Keys are Large**: Dilithium (1312B) + Kyber (1184B) = 2.5KB per key
+/// - **Post-Quantum Keys are Large**: Dilithium (1312B) + Kyber (1568B) = 2.8KB per key
 /// - **Metadata Protection**: Public keys may reveal network topology or identity patterns
 /// - **Memory Analysis Resistance**: Prevents key fingerprinting in memory dumps
 /// - **Compliance**: Meets audit-grade cryptographic hygiene standards
@@ -177,13 +177,13 @@ mod tests {
     fn test_constant_time_equality_same_keys() {
         let key1 = PublicKey {
             dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
         let key2 = PublicKey {
             dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
@@ -194,13 +194,13 @@ mod tests {
     fn test_constant_time_equality_different_keys() {
         let key1 = PublicKey {
             dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
         let key2 = PublicKey {
             dilithium_pk: vec![0xDDu8; 1952],  // Different
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
@@ -217,13 +217,13 @@ mod tests {
 
         let key1 = PublicKey {
             dilithium_pk: dilithium1,
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
         let key2 = PublicKey {
             dilithium_pk: dilithium2,
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
@@ -240,13 +240,13 @@ mod tests {
 
         let key1 = PublicKey {
             dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: key_id1,
         };
 
         let key2 = PublicKey {
             dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: key_id2,
         };
 
@@ -280,7 +280,7 @@ mod tests {
 
         let key1 = PublicKey {
             dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
@@ -296,13 +296,13 @@ mod tests {
         // Create keys that differ in the first field
         let key1 = PublicKey {
             dilithium_pk: vec![0x00u8; 1952],  // First byte is 0x00
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
         let key2 = PublicKey {
             dilithium_pk: vec![0xFFu8; 1952],  // First byte is 0xFF
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 

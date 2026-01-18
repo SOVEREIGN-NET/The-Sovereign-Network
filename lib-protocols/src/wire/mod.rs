@@ -41,8 +41,8 @@ pub const MAX_MESSAGE_SIZE: u32 = 16 * 1024 * 1024;
 /// and cannot be replayed or forged.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthContext {
-    /// Session ID from UHP handshake (16 bytes)
-    pub session_id: [u8; 16],
+    /// Session ID from UHP handshake (32 bytes, v2)
+    pub session_id: [u8; 32],
 
     /// Client DID (from handshake identity verification)
     pub client_did: String,
@@ -60,14 +60,14 @@ impl AuthContext {
     ///
     /// The MAC is computed over: session_id || sequence || request_hash
     pub fn new(
-        session_id: [u8; 16],
+        session_id: [u8; 32],
         client_did: String,
         sequence: u64,
         session_key: &[u8; 32],
         request_hash: &[u8; 32],
     ) -> Self {
         // Compute MAC binding session, sequence, and request content
-        let mut mac_input = Vec::with_capacity(16 + 8 + 32);
+        let mut mac_input = Vec::with_capacity(32 + 8 + 32);
         mac_input.extend_from_slice(&session_id);
         mac_input.extend_from_slice(&sequence.to_le_bytes());
         mac_input.extend_from_slice(request_hash);
@@ -85,7 +85,7 @@ impl AuthContext {
 
     /// Verify the auth context MAC
     pub fn verify(&self, session_key: &[u8; 32], request_hash: &[u8; 32]) -> bool {
-        let mut mac_input = Vec::with_capacity(16 + 8 + 32);
+        let mut mac_input = Vec::with_capacity(32 + 8 + 32);
         mac_input.extend_from_slice(&self.session_id);
         mac_input.extend_from_slice(&self.sequence.to_le_bytes());
         mac_input.extend_from_slice(request_hash);
@@ -161,7 +161,7 @@ impl ZhtpRequestWire {
     /// to ensure deterministic verification across implementations.
     pub fn new_authenticated(
         request: ZhtpRequest,
-        session_id: [u8; 16],
+        session_id: [u8; 32],
         client_did: String,
         sequence: u64,
         session_key: &[u8; 32],
