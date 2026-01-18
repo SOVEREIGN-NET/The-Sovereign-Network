@@ -1403,12 +1403,94 @@ impl RuntimeOrchestrator {
         for component_id in &self.startup_order {
             self.start_component(component_id.clone()).await
                 .with_context(|| format!("Failed to start component {}", component_id))?;
-            
+
             // Wait between component starts for proper initialization
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        
-        info!(" All components started successfully");
+
+        // CRITICAL: Verify all critical components are healthy before declaring operational
+        self.verify_critical_components().await?;
+
+        info!(" All components started and verified successfully");
+        Ok(())
+    }
+
+    /// Verify critical components are actually healthy after startup
+    ///
+    /// This prevents declaring the node "operational" when critical subsystems
+    /// have failed silently. Each component must report Running status and
+    /// pass a health check.
+    async fn verify_critical_components(&self) -> Result<()> {
+        info!("Verifying critical components are healthy...");
+
+        // List of components that MUST be healthy for node to be operational
+        let critical_components = [
+            ComponentId::Storage,
+            ComponentId::Blockchain,
+            ComponentId::Protocols,
+        ];
+
+        let mut failures = Vec::new();
+
+        for component_id in &critical_components {
+            // Check component status
+            let health = self.component_health.read().await;
+            if let Some(health_info) = health.get(component_id) {
+                if !matches!(health_info.status, ComponentStatus::Running) {
+                    failures.push(format!(
+                        "{}: status is {:?} (expected Running)",
+                        component_id, health_info.status
+                    ));
+                    continue;
+                }
+            } else {
+                failures.push(format!("{}: no health info available", component_id));
+                continue;
+            }
+            drop(health);
+
+            // Perform actual health check
+            let components = self.components.read().await;
+            if let Some(component) = components.get(component_id) {
+                match component.health_check().await {
+                    Ok(health) if matches!(health.status, ComponentStatus::Running) => {
+                        info!("  {} is healthy", component_id);
+                    }
+                    Ok(health) => {
+                        failures.push(format!(
+                            "{}: health check returned {:?}",
+                            component_id, health.status
+                        ));
+                    }
+                    Err(e) => {
+                        failures.push(format!("{}: health check failed: {}", component_id, e));
+                    }
+                }
+            } else {
+                failures.push(format!("{}: component not found", component_id));
+            }
+        }
+
+        // Verify global providers are available
+        if !crate::runtime::storage_provider::is_global_storage_available().await {
+            failures.push("Global storage provider not available".to_string());
+        }
+
+        if !is_global_blockchain_available().await {
+            failures.push("Global blockchain provider not available".to_string());
+        }
+
+        if !failures.is_empty() {
+            let msg = format!(
+                "CRITICAL: Node startup verification failed. {} critical component(s) unhealthy:\n{}",
+                failures.len(),
+                failures.iter().map(|f| format!("  - {}", f)).collect::<Vec<_>>().join("\n")
+            );
+            error!("{}", msg);
+            return Err(anyhow::anyhow!(msg));
+        }
+
+        info!("All critical components verified healthy");
         Ok(())
     }
 

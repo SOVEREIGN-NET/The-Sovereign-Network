@@ -132,8 +132,12 @@ pub struct ZhtpUnifiedServer {
     is_running: Arc<RwLock<bool>>,
     server_id: Uuid,
     port: u16,
-    discovery_port: u16,  // Port for discovery announcements
-    quic_port: u16,       // Port for QUIC connections
+    /// DEPRECATED: Legacy port mapping reference (default: 9333)
+    /// NOT actively listened on. See ProtocolsComponent for documentation.
+    discovery_port: u16,
+    /// Primary QUIC mesh port (default: 9334/UDP)
+    /// All QUIC-based mesh communication uses this port.
+    quic_port: u16,
 }
 
 impl ZhtpUnifiedServer {

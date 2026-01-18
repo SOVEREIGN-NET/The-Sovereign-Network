@@ -138,6 +138,24 @@ pub fn derive_session_key_hkdf(
     // Context Info: Bind to session context for additional security
     let info = build_context_info(context);
 
+    tracing::debug!(
+        client_nonce_prefix = ?hex::encode(&client_nonce[..8]),
+        server_nonce_prefix = ?hex::encode(&server_nonce[..8]),
+        context_info_len = info.len(),
+        context_info_hash = ?hex::encode(&blake3::hash(&info).as_bytes()[..8]),
+        channel_binding_hash = ?hex::encode(&blake3::hash(&context.channel_binding).as_bytes()[..8]),
+        timestamp = context.timestamp,
+        protocol_version = context.protocol_version,
+        client_did = %context.client_did,
+        server_did = %context.server_did,
+        network_id = %context.network_id,
+        protocol_id = %context.protocol_id,
+        purpose = %context.purpose,
+        client_role = context.client_role,
+        server_role = context.server_role,
+        "derive_session_key_hkdf inputs"
+    );
+
     // HKDF-Expand
     let hkdf = Hkdf::<Sha3_256>::new(Some(salt), &ikm);
     let mut session_key = [0u8; 32];
