@@ -67,14 +67,14 @@ export class ZhtpQuicClient {
       const salt = encoder.encode('zhtp-sdk-placeholder-v0');
       const appKey = hkdf(sha256, identityBytes, salt, encoder.encode('app-key'), 32);
 
-      await this.output.warn('Using placeholder key derivation - implement UHP v2 handshake for production');
+      await this.output.warning('Using placeholder key derivation - implement UHP v2 handshake for production');
 
       // Create authenticated connection state
       this.connection = {
         sessionId,
         peerId: this.config.quicEndpoint,
         appKey,
-        sequence: 0n,
+        sequence: 1n,  // Start at 1 (server's last_counter starts at 0, validation requires counter > last)
         establishedAt: Date.now(),
       };
 
@@ -118,9 +118,14 @@ export class ZhtpQuicClient {
       const sequence = this.connection.sequence;
       this.connection.sequence = incrementSequence(sequence);
 
+      // Convert session ID from hex string to Uint8Array for MAC computation
+      const sessionIdBytes = this.hexToBytes(this.connection.sessionId);
+
       const requestMac = computeRequestMac(
         this.connection.appKey,
-        this.connection.sessionId,
+        sessionIdBytes,
+        method,
+        path,
         sequence,
         options?.body,
       );
@@ -437,6 +442,17 @@ export class ZhtpQuicClient {
   private generateSessionId(): string {
     const bytes = this.generateNonce();
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  /**
+   * Convert hex string to Uint8Array
+   */
+  private hexToBytes(hex: string): Uint8Array {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    return bytes;
   }
 }
 
