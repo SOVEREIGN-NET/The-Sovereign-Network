@@ -21,7 +21,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, info, warn, error};
 
 // ============================================================================
 // Error Types
@@ -369,13 +369,71 @@ impl SledBackend {
     ///
     /// * `path` - Directory path for the database files
     /// * `cache_capacity` - Page cache size in bytes
+    ///
+    /// # Auto-Recovery
+    ///
+    /// If sled database is corrupted, automatically clears and recreates it.
+    /// Data will be lost, but the node can restart. DHT data will be
+    /// re-synchronized from peers.
     pub fn open_with_config<P: AsRef<Path>>(path: P, cache_capacity: u64) -> Result<Self> {
-        let db = sled::Config::default()
+        let db = match sled::Config::default()
             .path(path.as_ref())
             .cache_capacity(cache_capacity)
             .mode(sled::Mode::HighThroughput)
             .open()
-            .map_err(|e| StorageError::OpenFailed(e.to_string()))?;
+        {
+            Ok(db) => db,
+            Err(e) => {
+                let err_str = e.to_string().to_lowercase();
+                // Detect corruption indicators in error message
+                if err_str.contains("corrupt") || err_str.contains("crc")
+                   || err_str.contains("checksum") || err_str.contains("invalid") {
+                    warn!(
+                        "SLED CORRUPTION DETECTED at {:?}: {}. \
+                         Auto-recovering by clearing corrupted database.",
+                        path.as_ref(), e
+                    );
+
+                    // Clear the corrupted database
+                    if let Err(rm_err) = std::fs::remove_dir_all(path.as_ref()) {
+                        error!(
+                            "Failed to remove corrupted sled database at {:?}: {}. \
+                             Manual intervention required.",
+                            path.as_ref(), rm_err
+                        );
+                        return Err(StorageError::OpenFailed(format!(
+                            "Sled database corrupted and auto-recovery failed: {}. \
+                             Original error: {}. Please manually delete {:?}",
+                            rm_err, e, path.as_ref()
+                        )));
+                    }
+
+                    info!(
+                        "Cleared corrupted sled database at {:?}. Recreating fresh database.",
+                        path.as_ref()
+                    );
+
+                    // Ensure parent directory exists for recreation
+                    if let Some(parent) = path.as_ref().parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+
+                    // Retry opening
+                    sled::Config::default()
+                        .path(path.as_ref())
+                        .cache_capacity(cache_capacity)
+                        .mode(sled::Mode::HighThroughput)
+                        .open()
+                        .map_err(|e2| StorageError::OpenFailed(format!(
+                            "Failed to recreate sled database after corruption recovery: {}",
+                            e2
+                        )))?
+                } else {
+                    // Non-corruption error - fail immediately
+                    return Err(StorageError::OpenFailed(e.to_string()));
+                }
+            }
+        };
 
         info!(
             "Opened sled database at {:?} with {}MB cache",

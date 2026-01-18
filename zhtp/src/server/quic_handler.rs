@@ -444,11 +444,22 @@ impl QuicHandler {
         // For v2, we use the handshake_hash from the result (UHP transcript hash)
         let transcript_hash = handshake_result.handshake_hash;
 
+        debug!(
+            session_key_prefix = ?hex::encode(&session_key[..8]),
+            handshake_hash_prefix = ?hex::encode(&transcript_hash[..8]),
+            "V2 key derivation inputs (server)"
+        );
+
         // Derive v2 session keys using HKDF-SHA3-256
         let v2_keys = lib_network::handshake::security::derive_v2_session_keys(
             &session_key,
             &transcript_hash,
         ).context("Failed to derive v2 session keys")?;
+
+        debug!(
+            mac_key_prefix = ?hex::encode(&v2_keys.mac_key[..8]),
+            "V2 mac_key derived (server)"
+        );
 
         // Use the 32-byte session_id from the handshake result
         let session_id_v2 = handshake_result.session_id;
@@ -612,8 +623,21 @@ impl QuicHandler {
             session.session_id(),
             &auth_ctx.request_mac,
         ) {
+            // Debug: compute expected MAC and log comparison
+            let expected_mac = lib_network::handshake::security::compute_v2_mac(
+                session.mac_key(),
+                &canonical,
+                counter,
+                session.session_id(),
+            );
             warn!(
                 request_id = %wire_request.request_id_hex(),
+                mac_key_prefix = ?hex::encode(&session.mac_key()[..8]),
+                session_id_prefix = ?hex::encode(&session.session_id()[..8]),
+                counter = counter,
+                received_mac_prefix = ?hex::encode(&auth_ctx.request_mac[..8]),
+                expected_mac_prefix = ?hex::encode(&expected_mac[..8]),
+                canonical_len = canonical.to_bytes().len(),
                 "V2 MAC verification failed - request may have been tampered"
             );
             let error_response = ZhtpResponseWire::error(

@@ -2843,6 +2843,7 @@ dependencies = [
  "futures",
  "getrandom 0.2.17",
  "hex",
+ "hmac",
  "lib-consensus",
  "lib-crypto",
  "lib-economy",
