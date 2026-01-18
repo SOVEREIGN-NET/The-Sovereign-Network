@@ -37,12 +37,12 @@ pub async fn discover_lorawan_gateways() -> Result<Vec<LoRaWANGatewayInfo>> {
 pub async fn discover_lorawan_gateways_with_capabilities(capabilities: &HardwareCapabilities) -> Result<Vec<LoRaWANGatewayInfo>> {
     // Check if LoRaWAN hardware is available first
     if !capabilities.lorawan_available() {
-        println!("LoRaWAN hardware not detected - skipping gateway discovery");
+        tracing::debug!("LoRaWAN hardware not detected - skipping gateway discovery");
         return Ok(Vec::new());
     }
-    
+
     // LoRaWAN gateway discovery using actual radio scanning
-    println!("Scanning for LoRaWAN gateways...");
+    tracing::debug!("Scanning for LoRaWAN gateways...");
     
     let mut discovered_gateways = Vec::new();
     

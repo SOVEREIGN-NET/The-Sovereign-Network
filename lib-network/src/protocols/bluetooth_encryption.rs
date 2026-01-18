@@ -114,7 +114,7 @@ mod core {
     ///
     /// Uses HKDF-SHA256 to derive a unique nonce per message.
     /// Same (session_id, sequence, direction) always produces same nonce.
-    pub fn derive_nonce(session_id: &[u8; 16], sequence: u64, direction: u8) -> Result<[u8; NONCE_SIZE]> {
+    pub fn derive_nonce(session_id: &[u8; 32], sequence: u64, direction: u8) -> Result<[u8; NONCE_SIZE]> {
         let mut hasher = Sha256::new();
         hasher.update(b"bluetooth-nonce-v1");
         hasher.update(session_id);
@@ -128,7 +128,7 @@ mod core {
     }
 
     /// Build AAD (Associated Authenticated Data) for domain separation
-    pub fn build_aad(session_id: &[u8; 16], sequence: u64) -> Vec<u8> {
+    pub fn build_aad(session_id: &[u8; 32], sequence: u64) -> Vec<u8> {
         let mut aad = Vec::new();
         aad.extend_from_slice(b"bluetooth");       // protocol_id
         aad.push(0x00);                            // separator
@@ -144,7 +144,7 @@ mod core {
     pub fn encrypt_core(
         plaintext: &[u8],
         enc: &ChaCha20Poly1305Encryption,
-        session_id: &[u8; 16],
+        session_id: &[u8; 32],
         sequence: u64,
     ) -> Result<Vec<u8>> {
         let nonce = derive_nonce(session_id, sequence, 0x00)?; // direction = send
@@ -158,7 +158,7 @@ mod core {
     pub fn decrypt_core(
         ciphertext: &[u8],
         enc: &ChaCha20Poly1305Encryption,
-        session_id: &[u8; 16],
+        session_id: &[u8; 32],
         sequence: u64,
     ) -> Result<Vec<u8>> {
         let nonce = derive_nonce(session_id, sequence, 0x01)?; // direction = recv
@@ -182,7 +182,7 @@ mod shell {
         /// Core encryption (ChaCha20Poly1305)
         enc: ChaCha20Poly1305Encryption,
         /// Session identifier
-        session_id: [u8; 16],
+        session_id: [u8; 32],
         /// Monotonic send sequence number
         send_sequence: AtomicU64,
         /// Received sequence numbers per peer (for replay protection)
@@ -192,7 +192,7 @@ mod shell {
 
     impl BluetoothEncryption {
         /// Create new Bluetooth encryption instance
-        pub fn new(session_key: &[u8; 32], session_id: [u8; 16]) -> Result<Self> {
+        pub fn new(session_key: &[u8; 32], session_id: [u8; 32]) -> Result<Self> {
             Ok(Self {
                 enc: ChaCha20Poly1305Encryption::new("bluetooth", session_key)?,
                 session_id,
@@ -281,7 +281,7 @@ mod shell {
             Ok(plaintext)
         }
 
-        pub fn session_id(&self) -> [u8; 16] {
+        pub fn session_id(&self) -> [u8; 32] {
             self.session_id
         }
     }
@@ -328,8 +328,8 @@ mod tests {
         [0x88u8; 32]
     }
 
-    fn create_test_session_id() -> [u8; 16] {
-        [0xBBu8; 16]
+    fn create_test_session_id() -> [u8; 32] {
+        [0xBBu8; 32]
     }
 
     fn create_test_peer_id() -> [u8; 16] {

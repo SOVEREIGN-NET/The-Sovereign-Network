@@ -239,6 +239,11 @@ jobs:
           ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
             cd /opt/zhtp &&
             systemctl stop zhtp 2>/dev/null || true &&
+            sleep 2 &&
+            # Clear nonce caches to prevent sled DB corruption on restart
+            rm -rf /opt/zhtp/data/tls/quic_nonce_cache/* 2>/dev/null || true &&
+            rm -rf /opt/zhtp/nonce_cache_wifi/* 2>/dev/null || true &&
+            rm -rf /root/.zhtp/client_nonce_cache/* 2>/dev/null || true &&
             if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
             mv zhtp.new zhtp &&
             chmod +x zhtp &&
@@ -246,7 +251,8 @@ jobs:
             systemctl daemon-reload &&
             systemctl enable zhtp &&
             systemctl start zhtp &&
-            echo "Deployed to DEV SERVER 1 at $(date)"
+            sleep 5 &&
+            systemctl is-active zhtp && echo "Deployed to DEV SERVER 1 at $(date)" || echo "WARNING: Service not active!"
           '
 
       - name: Deploy to Dev Server 2 (zhtp-dev-2)
@@ -259,6 +265,11 @@ jobs:
           ssh -i ~/.ssh/deploy_key "${DEV_USER}@${DEV_HOST}" '
             cd /opt/zhtp &&
             systemctl stop zhtp 2>/dev/null || true &&
+            sleep 2 &&
+            # Clear nonce caches to prevent sled DB corruption on restart
+            rm -rf /opt/zhtp/data/tls/quic_nonce_cache/* 2>/dev/null || true &&
+            rm -rf /opt/zhtp/nonce_cache_wifi/* 2>/dev/null || true &&
+            rm -rf /root/.zhtp/client_nonce_cache/* 2>/dev/null || true &&
             if [ -f zhtp ]; then mv zhtp zhtp.old; fi &&
             mv zhtp.new zhtp &&
             chmod +x zhtp &&
@@ -266,5 +277,6 @@ jobs:
             systemctl daemon-reload &&
             systemctl enable zhtp &&
             systemctl start zhtp &&
-            echo "Deployed to DEV SERVER 2 at $(date)"
+            sleep 5 &&
+            systemctl is-active zhtp && echo "Deployed to DEV SERVER 2 at $(date)" || echo "WARNING: Service not active!"
           '

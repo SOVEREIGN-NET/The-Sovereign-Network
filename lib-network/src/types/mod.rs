@@ -8,6 +8,7 @@ pub use crate::types::geographic::*;
 pub use crate::types::connection_details::*;
 pub use crate::types::network_statistics::*;
 pub use crate::types::node_address::*;
+pub use crate::types::network_protocol::*;
 
 pub mod relay_type;
 pub mod wifi_security;
@@ -18,3 +19,4 @@ pub mod geographic;
 pub mod connection_details;
 pub mod network_statistics;
 pub mod node_address;
+pub mod network_protocol;

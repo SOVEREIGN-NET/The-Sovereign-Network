@@ -57,8 +57,6 @@ pub enum DilithiumLevel {
 /// CRYSTALS-Kyber security levels
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KyberLevel {
-    Kyber512,  // 128-bit security
-    Kyber768,  // 192-bit security
     Kyber1024, // 256-bit security
 }
 
@@ -98,21 +96,21 @@ impl SecurityLevel {
             SecurityLevel::Basic => PostQuantumConfig {
                 enabled: false, // Classical crypto only for development
                 dilithium_level: DilithiumLevel::Level2,
-                kyber_level: KyberLevel::Kyber512,
+                kyber_level: KyberLevel::Kyber1024,
                 hybrid_mode: true,
                 migration_strategy: MigrationStrategy::Classical,
             },
             SecurityLevel::Medium => PostQuantumConfig {
                 enabled: true,
                 dilithium_level: DilithiumLevel::Level2,
-                kyber_level: KyberLevel::Kyber512,
+                kyber_level: KyberLevel::Kyber1024,
                 hybrid_mode: true,
                 migration_strategy: MigrationStrategy::Gradual,
             },
             SecurityLevel::High => PostQuantumConfig {
                 enabled: true,
                 dilithium_level: DilithiumLevel::Level3,
-                kyber_level: KyberLevel::Kyber768,
+                kyber_level: KyberLevel::Kyber1024,
                 hybrid_mode: true,
                 migration_strategy: MigrationStrategy::Gradual,
             },
@@ -238,7 +236,7 @@ impl Default for PostQuantumConfig {
         Self {
             enabled: true,
             dilithium_level: DilithiumLevel::Level3,
-            kyber_level: KyberLevel::Kyber768,
+            kyber_level: KyberLevel::Kyber1024,
             hybrid_mode: true,
             migration_strategy: MigrationStrategy::Gradual,
         }

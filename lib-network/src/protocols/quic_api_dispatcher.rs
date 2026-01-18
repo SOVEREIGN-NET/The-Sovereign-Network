@@ -9,7 +9,7 @@
 //! # Protocol Flow
 //!
 //! 1. Accept QUIC connection
-//! 2. Perform UHP+Kyber handshake (verify client identity)
+//! 2. Perform UHP v2 handshake (verify client identity)
 //! 3. For each bidirectional stream:
 //!    - Read ZhtpRequestWire (length-prefixed CBOR)
 //!    - Dispatch to appropriate handler
@@ -43,8 +43,8 @@ pub struct VerifiedPrincipal {
     pub client_did: String,
     /// Node's DID (our identity)
     pub node_did: String,
-    /// Session ID
-    pub session_id: [u8; 16],
+    /// Session ID (UHP v2, 32 bytes)
+    pub session_id: [u8; 32],
     /// Request sequence number (for audit)
     pub sequence: Option<u64>,
 }
@@ -242,7 +242,7 @@ async fn handle_connection(
     let peer_addr = connection.remote_address();
     info!("New API connection from {}", peer_addr);
 
-    // Perform UHP+Kyber handshake
+    // Perform UHP v2 handshake
     let handshake_result = quic_handshake::handshake_as_responder(
         &connection,
         &identity,
@@ -269,11 +269,11 @@ async fn handle_connection(
 
     // Extract session info for auth verification
     let session_id = handshake_result.session_id;
-    let master_key = handshake_result.master_key;
+    let session_key = handshake_result.session_key;
     let node_did = identity.did.clone();
 
     // Derive application-layer MAC key (same derivation as client)
-    let app_key = derive_app_key(&master_key, &session_id, &peer_did, &node_did);
+    let app_key = derive_app_key(&session_key, &session_id, &peer_did, &node_did);
 
     // Handle streams
     loop {
@@ -318,7 +318,7 @@ async fn handle_stream(
     handler: RequestHandler,
     client_did: String,
     node_did: String,
-    session_id: [u8; 16],
+    session_id: [u8; 32],
     app_key: [u8; 32],
 ) -> Result<()> {
     // Read request
@@ -463,13 +463,13 @@ async fn handle_stream(
     Ok(())
 }
 
-/// Derive application-layer MAC key from master key
+/// Derive application-layer MAC key from session key
 ///
 /// This must match the derivation in Web4Client.
-fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], peer_did: &str, node_did: &str) -> [u8; 32] {
+fn derive_app_key(session_key: &[u8; 32], session_id: &[u8; 32], peer_did: &str, node_did: &str) -> [u8; 32] {
     let mut input = Vec::new();
     input.extend_from_slice(b"zhtp-web4-app-mac");
-    input.extend_from_slice(master_key);
+    input.extend_from_slice(session_key);
     input.extend_from_slice(session_id);
     // Note: peer_did is client_did from server's perspective, node_did is server's DID
     // The order must match the client: peer_did (server from client's view) then client_did
