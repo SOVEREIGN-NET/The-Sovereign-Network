@@ -130,19 +130,11 @@ impl MonitoringSystem {
         // This ensures restarts use a new instance, not a stale stopped one
         set_global_alert_manager(self.alert_manager.clone());
 
-        // Start dashboard server if enabled
-        if let Ok(mut dashboard) = DashboardServer::new(8081).await {
-            dashboard.set_monitors(
-                self.metrics_collector.clone(),
-                self.health_monitor.clone(),
-                self.alert_manager.clone(),
-            );
-            let dashboard_arc = Arc::new(dashboard);
-            dashboard_arc.start().await?;
-            self.dashboard_server = Some(dashboard_arc);
-        }
+        // NOTE: TCP HTTP dashboard removed - ZHTP uses QUIC-only architecture
+        // All monitoring data is available via QUIC protocol endpoints
+        // See: zhtp/src/server/quic_handler.rs for monitoring QUIC handlers
 
-        info!("Monitoring system started successfully");
+        info!("Monitoring system started successfully (QUIC-only, no TCP dashboard)");
         Ok(())
     }
 
@@ -153,12 +145,7 @@ impl MonitoringSystem {
     pub async fn stop(&self) -> Result<()> {
         info!("Stopping monitoring system...");
 
-        // Stop dashboard server
-        if let Some(dashboard) = &self.dashboard_server {
-            dashboard.stop().await?;
-        }
-
-        // Stop other components
+        // Stop other components (no TCP dashboard to stop - QUIC-only)
         self.alert_manager.stop().await?;
         self.health_monitor.stop().await?;
         self.metrics_collector.stop().await?;
@@ -211,8 +198,8 @@ impl Default for MonitoringConfig {
             metrics_enabled: true,
             health_check_interval: std::time::Duration::from_secs(30),
             alert_thresholds: AlertThresholds::default(),
-            dashboard_enabled: true,
-            dashboard_port: 8081,
+            dashboard_enabled: false, // TCP dashboard removed - QUIC-only architecture
+            dashboard_port: 0,        // Not used - monitoring via QUIC endpoints
             log_level: "info".to_string(),
             export_prometheus: false,
             prometheus_port: 9090,

@@ -19,6 +19,7 @@ use lib_protocols::wire::{
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod};
 
 use crate::handshake::{HandshakeContext, NonceCache};
+use crate::handshake::security::derive_v2_session_keys;
 use crate::protocols::quic_handshake;
 use crate::web4::trust::{TrustConfig, ZhtpTrustVerifier};
 
@@ -74,8 +75,8 @@ struct AuthenticatedConnection {
     /// QUIC connection
     quic_conn: Connection,
 
-    /// Application-layer MAC key (derived from session_key)
-    app_key: [u8; 32],
+    /// V2 MAC key (derived via HKDF-SHA3-256 from session_key + handshake_hash)
+    mac_key: [u8; 32],
 
     /// Peer's verified DID (from UHP handshake)
     peer_did: String,
@@ -90,21 +91,6 @@ struct AuthenticatedConnection {
 impl AuthenticatedConnection {
     fn next_sequence(&self) -> u64 {
         self.sequence.fetch_add(1, Ordering::SeqCst)
-    }
-
-    /// Derive application-layer MAC key from session key
-    ///
-    /// MUST match server-side derivation in quic_api_dispatcher.rs.
-    /// Label: "zhtp-web4-app-mac"
-    /// Order: server_did (peer from client's view) then client_did
-    fn derive_app_key(session_key: &[u8; 32], session_id: &[u8; 32], peer_did: &str, client_did: &str) -> [u8; 32] {
-        let mut input = Vec::new();
-        input.extend_from_slice(b"zhtp-web4-app-mac"); // Must match server
-        input.extend_from_slice(session_key);
-        input.extend_from_slice(session_id);
-        input.extend_from_slice(peer_did.as_bytes());  // Server's DID
-        input.extend_from_slice(client_did.as_bytes()); // Client's DID
-        *blake3::hash(&input).as_bytes()
     }
 }
 
@@ -273,12 +259,21 @@ impl ZhtpClient {
             }
         }
 
-        // Derive application-layer MAC key
-        let app_key = AuthenticatedConnection::derive_app_key(
+        // Derive V2 session keys using HKDF-SHA3-256 (MUST match server)
+        // Key schedule: HKDF(session_key, handshake_hash, label)
+        debug!(
+            session_key_prefix = ?hex::encode(&handshake_result.session_key[..8]),
+            handshake_hash_prefix = ?hex::encode(&handshake_result.handshake_hash[..8]),
+            "V2 key derivation inputs"
+        );
+        let v2_keys = derive_v2_session_keys(
             &handshake_result.session_key,
-            &handshake_result.session_id,
-            &peer_did,
-            &self.identity.did,
+            &handshake_result.handshake_hash,
+        ).context("Failed to derive V2 session keys")?;
+
+        debug!(
+            mac_key_prefix = ?hex::encode(&v2_keys.mac_key[..8]),
+            "V2 mac_key derived"
         );
 
         info!(
@@ -289,10 +284,10 @@ impl ZhtpClient {
 
         self.connection = Some(AuthenticatedConnection {
             quic_conn: connection,
-            app_key,
+            mac_key: v2_keys.mac_key,
             peer_did,
             session_id: handshake_result.session_id,
-            sequence: AtomicU64::new(0),
+            sequence: AtomicU64::new(1),  // Start at 1 (server's last_counter starts at 0)
         });
 
         Ok(())
@@ -327,21 +322,15 @@ impl ZhtpClient {
         let conn = self.connection.as_ref()
             .ok_or_else(|| anyhow!("Not connected to node"))?;
 
-        // Mutations always require auth
-        let is_mutation = matches!(request.method, ZhtpMethod::Post | ZhtpMethod::Put | ZhtpMethod::Delete);
-
-        let wire_request = if is_mutation {
-            let seq = conn.next_sequence();
-            ZhtpRequestWire::new_authenticated(
-                request,
-                conn.session_id,
-                self.identity.did.clone(),
-                seq,
-                &conn.app_key,
-            )
-        } else {
-            ZhtpRequestWire::new(request)
-        };
+        // V2 protocol requires auth on ALL requests (not just mutations)
+        let seq = conn.next_sequence();
+        let wire_request = ZhtpRequestWire::new_authenticated(
+            request,
+            conn.session_id,
+            self.identity.did.clone(),
+            seq,
+            &conn.mac_key,
+        );
 
         let request_id = wire_request.request_id;
 

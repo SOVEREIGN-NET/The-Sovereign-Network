@@ -70,11 +70,16 @@ impl Component for StorageComponent {
                         let storage_arc = Arc::new(RwLock::new(storage));
 
                         // Set as global storage provider for other components
+                        // FAIL HARD if this fails - other components depend on global storage
                         if let Err(e) = crate::runtime::storage_provider::set_global_storage(storage_arc.clone()).await {
-                            warn!("Failed to set global storage provider: {}", e);
-                        } else {
-                            info!("Global storage provider initialized for component sharing");
+                            *self.status.write().await = ComponentStatus::Failed;
+                            return Err(anyhow::anyhow!(
+                                "CRITICAL: Failed to set global storage provider: {}. \
+                                Other components will timeout waiting for storage.",
+                                e
+                            ));
                         }
+                        info!("Global storage provider initialized for component sharing");
 
                         // Keep a local reference (extract from Arc for component state)
                         // Note: We can't easily store Arc<RwLock<Storage>> in Option<Storage>
@@ -82,14 +87,26 @@ impl Component for StorageComponent {
                         info!("Storage system available via global provider");
                     }
                     Err(e) => {
-                        warn!("Failed to initialize persistent storage system: {}", e);
-                        info!("Continuing with basic storage component");
+                        // FAIL HARD: Storage is critical infrastructure
+                        // Graceful degradation here causes downstream timeouts in ProtocolsComponent
+                        // which waits for global storage provider that was never set
+                        *self.status.write().await = ComponentStatus::Failed;
+                        return Err(anyhow::anyhow!(
+                            "CRITICAL: Failed to initialize persistent storage at {:?}: {}. \
+                            This may indicate database corruption - try clearing {:?}",
+                            db_path, e, db_path
+                        ));
                     }
                 }
             }
             Err(e) => {
-                warn!("Failed to create storage config: {}", e);
-                info!("Continuing with basic storage component");
+                // FAIL HARD: Cannot proceed without storage configuration
+                *self.status.write().await = ComponentStatus::Failed;
+                return Err(anyhow::anyhow!(
+                    "CRITICAL: Failed to create storage config: {}. \
+                    Check ZHTP configuration and permissions.",
+                    e
+                ));
             }
         }
         

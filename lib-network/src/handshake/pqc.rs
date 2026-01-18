@@ -133,7 +133,13 @@ pub fn encapsulate_pqc(offer: &PqcHandshakeOffer) -> Result<(Vec<u8>, [u8; 32])>
         return Err(anyhow!("PQC not enabled for encapsulation"));
     }
         let kdf_info = b"ZHTP-KEM-v2.0";
-    kyber1024_encapsulate(&offer.kyber_public_key, kdf_info)
+    let result = kyber1024_encapsulate(&offer.kyber_public_key, kdf_info)?;
+    tracing::debug!(
+        pqc_shared_prefix = ?hex::encode(&result.1[..8]),
+        ciphertext_len = result.0.len(),
+        "PQC encapsulate (initiator)"
+    );
+    Ok(result)
 }
 
 /// Decapsulate a Kyber shared secret using local state
@@ -142,7 +148,13 @@ pub fn decapsulate_pqc(ciphertext: &[u8], state: &PqcHandshakeState) -> Result<[
         return Err(anyhow!("PQC not enabled for decapsulation"));
     }
         let kdf_info = b"ZHTP-KEM-v2.0";
-    kyber1024_decapsulate(ciphertext, &state.kyber_secret_key, kdf_info)
+    let shared = kyber1024_decapsulate(ciphertext, &state.kyber_secret_key, kdf_info)?;
+    tracing::debug!(
+        pqc_shared_prefix = ?hex::encode(&shared[..8]),
+        ciphertext_len = ciphertext.len(),
+        "PQC decapsulate (responder)"
+    );
+    Ok(shared)
 }
 
 /// Derive a hybrid session key that mixes PQC and classical secrets
@@ -151,6 +163,12 @@ pub fn derive_hybrid_session_key(pqc_shared: &[u8; 32], classical_session_key: &
     let mut out = [0u8; 32];
     hk.expand(b"ZHTP-HYBRID-SESSION", &mut out)
         .map_err(|_| anyhow!("HKDF expansion failed"))?;
+    tracing::debug!(
+        pqc_shared_prefix = ?hex::encode(&pqc_shared[..8]),
+        classical_key_prefix = ?hex::encode(&classical_session_key[..8]),
+        hybrid_key_prefix = ?hex::encode(&out[..8]),
+        "derive_hybrid_session_key"
+    );
     Ok(out)
 }
 

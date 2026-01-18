@@ -480,15 +480,68 @@ impl NonceCache {
     /// - Verifies network epoch matches stored value (prevents DB cross-use)
     /// - Creates tables if missing (migration-safe)
     /// - Loads existing nonces into memory cache
+    ///
+    /// # Auto-Recovery
+    ///
+    /// If sled database is corrupted, automatically clears and recreates it.
+    /// This is safe because nonce cache data can be regenerated (it's replay
+    /// protection, not persistent state).
     pub fn open<P: AsRef<Path>>(
         db_path: P,
         ttl_secs: u64,
         max_memory_size: usize,
         network_epoch: NetworkEpoch,
     ) -> Result<Self> {
-        // Open sled database
-        let db = sled::open(db_path.as_ref())
-            .map_err(|e| anyhow!("Failed to open nonce cache DB: {}", e))?;
+        // Open sled database with auto-recovery for corruption
+        let db = match sled::open(db_path.as_ref()) {
+            Ok(db) => db,
+            Err(e) => {
+                let err_str = e.to_string().to_lowercase();
+                // Detect corruption indicators in error message
+                if err_str.contains("corrupt") || err_str.contains("crc")
+                   || err_str.contains("checksum") || err_str.contains("invalid") {
+                    warn!(
+                        "SLED CORRUPTION DETECTED at {:?}: {}. \
+                         Auto-recovering by clearing corrupted database.",
+                        db_path.as_ref(), e
+                    );
+
+                    // Clear the corrupted database
+                    if let Err(rm_err) = std::fs::remove_dir_all(db_path.as_ref()) {
+                        error!(
+                            "Failed to remove corrupted sled database at {:?}: {}. \
+                             Manual intervention required.",
+                            db_path.as_ref(), rm_err
+                        );
+                        return Err(anyhow!(
+                            "Sled database corrupted and auto-recovery failed: {}. \
+                             Original error: {}. Please manually delete {:?}",
+                            rm_err, e, db_path.as_ref()
+                        ));
+                    }
+
+                    info!(
+                        "Cleared corrupted sled database at {:?}. Recreating fresh database.",
+                        db_path.as_ref()
+                    );
+
+                    // Ensure parent directory exists for recreation
+                    if let Some(parent) = db_path.as_ref().parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+
+                    // Retry opening
+                    sled::open(db_path.as_ref())
+                        .map_err(|e2| anyhow!(
+                            "Failed to recreate sled database after corruption recovery: {}",
+                            e2
+                        ))?
+                } else {
+                    // Non-corruption error - fail immediately
+                    return Err(anyhow!("Failed to open nonce cache DB: {}", e));
+                }
+            }
+        };
 
         let db = Arc::new(db);
 
