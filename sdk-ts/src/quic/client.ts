@@ -1,6 +1,8 @@
 /**
  * QUIC client wrapper for ZHTP protocol
  * Manages authenticated connection and request/response cycle
+ *
+ * Uses UHP v2 handshake with Kyber1024 + Dilithium5 for post-quantum security.
  */
 
 import { TrustConfig, ZhtpIdentity } from '../index.js';
@@ -9,6 +11,7 @@ import { NetworkError } from '../error.js';
 import { KeyPair } from '../identity.js';
 import { QuicClientConfig, AuthenticatedConnection, ConnectionResult } from './types.js';
 import { encodeRequest, decodeResponse, computeRequestMac, incrementSequence } from './wire.js';
+import { performHandshakeAsInitiator, HandshakeStream, HandshakeResult } from './uhp_v2_handshake.js';
 
 /**
  * QUIC client for ZHTP protocol
@@ -44,8 +47,9 @@ export class ZhtpQuicClient {
   }
 
   /**
-   * Connect and perform UHP handshake over real QUIC transport
+   * Connect and perform UHP v2 handshake over real QUIC transport
    * Establishes QUIC connection then performs cryptographic authentication
+   * with Kyber1024 + Dilithium5 post-quantum security
    */
   async connect(): Promise<ConnectionResult> {
     try {
@@ -54,36 +58,70 @@ export class ZhtpQuicClient {
       // Establish real QUIC connection to remote node
       await this.establishQUICConnection();
 
-      // Generate session identifier for this connection
-      const sessionId = this.generateSessionId();
+      // Check if we have full keypair for UHP v2 handshake
+      const hasFullKeypair = this.keypair.privateKey.dilithiumSk &&
+                            this.keypair.privateKey.kyberSk;
 
-      // WARNING: Placeholder key derivation - NOT SECURE FOR PRODUCTION
-      // TODO: Implement full UHP v2 handshake with proper Kyber+Dilithium key exchange
-      // This uses HKDF-SHA256 as a placeholder until real handshake is implemented
-      const { hkdf } = await import('@noble/hashes/hkdf');
-      const { sha256 } = await import('@noble/hashes/sha256');
-      const encoder = new TextEncoder();
-      const identityBytes = encoder.encode(this.identity.id + this.identity.did);
-      const salt = encoder.encode('zhtp-sdk-placeholder-v0');
-      const appKey = hkdf(sha256, identityBytes, salt, encoder.encode('app-key'), 32);
+      if (hasFullKeypair) {
+        // Perform full UHP v2 handshake with PQC
+        await this.output.info('Performing UHP v2 handshake (Kyber1024 + Dilithium5)...');
 
-      await this.output.warning('Using placeholder key derivation - implement UHP v2 handshake for production');
+        // Create handshake stream adapter for QUIC
+        const handshakeStream = this.createHandshakeStream();
 
-      // Create authenticated connection state
-      this.connection = {
-        sessionId,
-        peerId: this.config.quicEndpoint,
-        appKey,
-        sequence: 1n,  // Start at 1 (server's last_counter starts at 0, validation requires counter > last)
-        establishedAt: Date.now(),
-      };
+        const handshakeResult = await performHandshakeAsInitiator(handshakeStream, {
+          identity: this.identity,
+          keypair: this.keypair,
+          serverEndpoint: this.config.quicEndpoint,
+          debug: this.config.debug,
+        });
 
+        // Convert session_id bytes to hex string
+        const sessionIdHex = Buffer.from(handshakeResult.sessionId).toString('hex');
+
+        // Create authenticated connection state
+        this.connection = {
+          sessionId: sessionIdHex,
+          peerId: handshakeResult.peerIdentity.did,
+          appKey: handshakeResult.macKey,  // Use MAC key for request authentication
+          sequence: 1n,  // Start at 1 (server's last_counter starts at 0)
+          establishedAt: handshakeResult.completedAt,
+        };
+
+        // Store full handshake result for advanced use
+        this.handshakeResult = handshakeResult;
+
+        await this.output.info(
+          `UHP v2 handshake complete (PQC enabled, peer: ${handshakeResult.peerIdentity.did.slice(0, 24)}...)`
+        );
+      } else {
+        // Fallback: placeholder key derivation (for development/testing only)
+        await this.output.warning('No full keypair - using placeholder key derivation (NOT SECURE)');
+
+        const sessionId = this.generateSessionId();
+        const { hkdf } = await import('@noble/hashes/hkdf');
+        const { sha256 } = await import('@noble/hashes/sha256');
+        const encoder = new TextEncoder();
+        const identityBytes = encoder.encode(this.identity.id + this.identity.did);
+        const salt = encoder.encode('zhtp-sdk-placeholder-v0');
+        const appKey = hkdf(sha256, identityBytes, salt, encoder.encode('app-key'), 32);
+
+        this.connection = {
+          sessionId,
+          peerId: this.config.quicEndpoint,
+          appKey,
+          sequence: 1n,
+          establishedAt: Date.now(),
+        };
+      }
+
+      const sessionId = this.connection.sessionId;
       await this.output.info(`Connected to ${this.config.quicEndpoint} (session: ${sessionId.slice(0, 16)}...)`);
 
       return {
         connected: true,
         sessionId,
-        peerId: this.config.quicEndpoint,
+        peerId: this.connection.peerId,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error';
@@ -94,6 +132,98 @@ export class ZhtpQuicClient {
       };
     }
   }
+
+  /**
+   * Create a stream adapter for the UHP v2 handshake
+   * Opens a dedicated bidirectional QUIC stream for the handshake messages
+   */
+  private createHandshakeStream(): HandshakeStream {
+    if (!this.quicConnection) {
+      throw new NetworkError('QUIC connection not established', {});
+    }
+
+    let handshakeStreamObj: any = null;
+    let writer: any = null;
+    let reader: any = null;
+
+    return {
+      write: async (data: Uint8Array): Promise<void> => {
+        if (!handshakeStreamObj) {
+          // Open a new bidirectional stream for handshake
+          handshakeStreamObj = this.quicConnection!.newStream('bidi');
+          writer = handshakeStreamObj.writable.getWriter();
+          reader = handshakeStreamObj.readable.getReader();
+        }
+        await writer.write(data);
+      },
+
+      read: async (): Promise<Uint8Array> => {
+        if (!reader) {
+          throw new Error('Handshake stream not initialized');
+        }
+
+        const chunks: Uint8Array[] = [];
+        let totalLength = 0;
+        let expectedLength = -1;
+
+        // Read until we have a complete framed message
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            throw new Error('Handshake stream closed unexpectedly');
+          }
+
+          chunks.push(value);
+          totalLength += value.length;
+
+          // Check if we have enough for length prefix
+          if (expectedLength < 0 && totalLength >= 4) {
+            const combined = this.combineChunks(chunks, totalLength);
+            const view = new DataView(combined.buffer, combined.byteOffset, combined.byteLength);
+            expectedLength = view.getUint32(0, false);  // big-endian
+          }
+
+          // Check if we have complete message
+          if (expectedLength >= 0 && totalLength >= 4 + expectedLength) {
+            return this.combineChunks(chunks, totalLength);
+          }
+        }
+      },
+
+      close: async (): Promise<void> => {
+        if (writer) {
+          try {
+            await writer.close();
+          } catch {
+            // Ignore close errors
+          }
+        }
+        if (reader) {
+          try {
+            await reader.cancel();
+          } catch {
+            // Ignore cancel errors
+          }
+        }
+      },
+    };
+  }
+
+  /**
+   * Combine multiple chunks into a single Uint8Array
+   */
+  private combineChunks(chunks: Uint8Array[], totalLength: number): Uint8Array {
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return result;
+  }
+
+  /** Stored handshake result for advanced operations */
+  private handshakeResult?: HandshakeResult;
 
   /**
    * Send authenticated request and return response
