@@ -39,7 +39,7 @@ seed (root of trust)
  ├─ NodeIds = f(DID, device)
  └─ PQC keypairs (random, attached, rotatable)
       ├─ Dilithium2 (for signatures)
-      └─ Kyber512 (for KEM)
+      └─ Kyber1024 (for KEM)
 ```
 
 ### Key Principles
@@ -103,7 +103,7 @@ fn derive_wallet_seed(seed: &[u8; 64]) -> [u8; 64] {
 ```rust
 // Generate random PQC keypairs (not from seed)
 let (dilithium_pk, dilithium_sk) = dilithium2::keypair();
-let (kyber_pk, kyber_sk) = kyber512::keypair();
+let (kyber_pk, kyber_sk) = kyber1024::keypair();
 
 // Store as belonging to DID (not defining DID)
 identity.public_key = PublicKey {

@@ -64,7 +64,7 @@ pub mod zhtp_encryption;
 #[cfg(feature = "quic")]
 pub mod quic_mesh;           // QUIC transport with PQC encryption
 #[cfg(feature = "quic")]
-pub mod quic_handshake;      // UHP handshake adapter for QUIC with Kyber binding
+pub mod quic_handshake;      // UHP v2 transport adapter for QUIC (no QUIC crypto)
 #[cfg(feature = "quic")]
 pub mod quic_api_dispatcher; // QUIC API request dispatcher for Web4 client
 

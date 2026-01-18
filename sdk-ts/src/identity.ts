@@ -30,7 +30,7 @@ export interface ZhtpIdentity {
  */
 export interface PrivateKeyMaterial {
   dilithiumSk: string; // Dilithium5 secret key (base64)
-  kyberSk: string; // Kyber512 secret key (base64)
+  kyberSk: string; // Kyber1024 secret key (base64)
   masterSeed: string; // Master seed (base64)
 }
 

@@ -124,27 +124,21 @@ fn dilithium_benchmarks() -> Result<()> {
 - **Standardization**: NIST PQC Round 3 winner, FIPS 203 draft
 - **Purpose**: Establish shared secrets for symmetric encryption
 
-### Security Levels
+### Security Level (Alpha)
+
+Only Kyber1024 is supported in alpha.
 
 ```rust
 use lib_crypto::post_quantum::{KyberLevel, kyber_keypair};
-
-// Level 512 (default) - equivalent to AES-128
-let (pk512, sk512) = kyber_keypair(KyberLevel::Kyber512)?;
-
-// Level 768 - equivalent to AES-192
-let (pk768, sk768) = kyber_keypair(KyberLevel::Kyber768)?;
 
 // Level 1024 - equivalent to AES-256
 let (pk1024, sk1024) = kyber_keypair(KyberLevel::Kyber1024)?;
 ```
 
-**Parameter Comparison:**
-| Level | Security | Public Key | Secret Key | Ciphertext | Performance |
-|-------|----------|------------|------------|------------|-------------|
-| 512   | AES-128  | 800 B      | 1,632 B    | 768 B      | Fastest     |
-| 768   | AES-192  | 1,184 B    | 2,400 B    | 1,088 B    | Medium      |
-| 1024  | AES-256  | 1,568 B    | 3,168 B    | 1,568 B    | Slowest     |
+**Kyber1024 Parameters:**
+| Level | Security | Public Key | Secret Key | Ciphertext |
+|-------|----------|------------|------------|------------|
+| 1024  | AES-256  | 1,568 B    | 3,168 B    | 1,568 B    |
 
 ### Usage Examples
 
@@ -157,7 +151,7 @@ use lib_crypto::post_quantum::{
 
 fn kyber_example() -> Result<()> {
     // Generate Kyber keypair
-    let (public_key, secret_key) = kyber_keypair(KyberLevel::Kyber512)?;
+    let (public_key, secret_key) = kyber_keypair(KyberLevel::Kyber1024)?;
     
     // Encapsulate: Generate shared secret + ciphertext
     let (shared_secret, ciphertext) = kyber_encapsulate(&public_key)?;
@@ -210,7 +204,7 @@ use std::time::Instant;
 use lib_crypto::post_quantum::*;
 
 fn kyber_benchmarks() -> Result<()> {
-    let (pk, sk) = kyber_keypair(KyberLevel::Kyber512)?;
+    let (pk, sk) = kyber_keypair(KyberLevel::Kyber1024)?;
     
     // Encapsulation benchmark
     let start = Instant::now();
@@ -448,7 +442,7 @@ use lib_crypto::{KeyPair, SignatureAlgorithm::Ed25519};
 ```
 
 ### 2. Performance Optimization
-- Use Kyber512 for most applications (good security/performance balance)
+- Use Kyber1024 for all applications (single security level in alpha)
 - Use Dilithium2 for typical signature needs
 - Consider caching keypairs for batch operations
 - Profile your specific use case

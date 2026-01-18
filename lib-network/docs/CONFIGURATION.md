@@ -189,7 +189,7 @@ use lib_network::crypto::CryptoConfig;
 
 let crypto_config = CryptoConfig {
     signature_algorithm: SignatureAlgorithm::Dilithium2,  // Post-quantum
-    encryption_algorithm: EncryptionAlgorithm::Kyber512,  // Post-quantum KEM
+    encryption_algorithm: EncryptionAlgorithm::Kyber1024,  // Post-quantum KEM
     hash_algorithm: HashAlgorithm::Blake3,                // High-performance
     key_rotation_interval_hours: 24,                      // Rotate keys daily
     require_perfect_forward_secrecy: true,                // PFS for all sessions

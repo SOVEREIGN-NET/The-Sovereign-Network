@@ -29,7 +29,7 @@ use super::{
     ClientHello, ServerHello, ClientFinish, HandshakeMessage, HandshakePayload,
     HandshakeContext, HandshakeResult, HandshakeSessionInfo, HandshakeRole,
     HandshakeCapabilities,
-    decapsulate_pqc, verify_pqc_offer,
+    decapsulate_pqc, verify_pqc_offer, compute_transcript_hash,
 };
 use anyhow::{Result, anyhow};
 use lib_identity::ZhtpIdentity;
@@ -173,6 +173,40 @@ where
         .map_err(|e| HandshakeIoError::Serialization(e.to_string()))
 }
 
+async fn send_message_with_bytes<S>(
+    stream: &mut S,
+    message: &HandshakeMessage,
+) -> Result<Vec<u8>, HandshakeIoError>
+where
+    S: AsyncWrite + Unpin,
+{
+    let bytes = message
+        .to_bytes()
+        .map_err(|e| HandshakeIoError::Serialization(e.to_string()))?;
+
+    crate::handshake::framing::send_framed(stream, &bytes)
+        .await
+        .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
+
+    Ok(bytes)
+}
+
+async fn recv_message_with_bytes<S>(
+    stream: &mut S,
+) -> Result<(HandshakeMessage, Vec<u8>), HandshakeIoError>
+where
+    S: AsyncRead + Unpin,
+{
+    let bytes = crate::handshake::framing::recv_framed(stream)
+        .await
+        .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
+
+    let message = HandshakeMessage::from_bytes(&bytes)
+        .map_err(|e| HandshakeIoError::Serialization(e.to_string()))?;
+
+    Ok((message, bytes))
+}
+
 // ============================================================================
 // Handshake as Initiator (Client)
 // ============================================================================
@@ -214,19 +248,16 @@ where
 {
     let ctx = ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
 
-    // Create nonce tracker for replay protection
-    let nonce_tracker = NonceTracker::new(&ctx.nonce_cache);
-
     // 1. Create ClientHello with fresh nonce
     let client_hello = ClientHello::new(local_identity, capabilities, &ctx)
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
     // 2. Send ClientHello
     let hello_msg = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
-    send_message(stream, &hello_msg).await?;
+    let client_hello_bytes = send_message_with_bytes(stream, &hello_msg).await?;
 
     // 3. Receive ServerHello
-    let server_msg = recv_message(stream).await?;
+    let (server_msg, server_hello_bytes) = recv_message_with_bytes(stream).await?;
     check_for_error(&server_msg)?;
     let server_hello = extract_payload(&server_msg, "ServerHello", |payload| {
         if let HandshakePayload::ServerHello(sh) = payload {
@@ -236,15 +267,10 @@ where
         }
     })?;
 
-    // 4. Verify server signature
-    server_hello
-        .verify_signature(&client_hello.challenge_nonce, &ctx)
-        .map_err(|_| HandshakeIoError::InvalidSignature)?;
+    let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
+    let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
 
-    // 5. Check for replay attack (server nonce must be fresh)
-    nonce_tracker.register(&server_hello.response_nonce, server_hello.timestamp)?;
-
-    // 6. Create ClientFinish with mutual authentication and PQC encapsulation
+    // 4. Create ClientFinish with mutual authentication and PQC encapsulation
     let keypair = KeyPair {
         public_key: local_identity.public_key.clone(),
         private_key: local_identity
@@ -254,12 +280,25 @@ where
     };
 
     // Use new_with_pqc to get the shared secret for hybrid key derivation
-    let (client_finish, pqc_shared_secret) = ClientFinish::new_with_pqc(&server_hello, &client_hello, &keypair, &ctx)
+    let (client_finish, pqc_shared_secret) = ClientFinish::new_with_pqc(
+        &server_hello,
+        &client_hello,
+        &client_hello_hash,
+        &pre_finish_hash,
+        &keypair,
+        &ctx,
+    )
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
     // 7. Send ClientFinish
     let finish_msg = HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish));
-    send_message(stream, &finish_msg).await?;
+    let client_finish_bytes = send_message_with_bytes(stream, &finish_msg).await?;
+
+    let transcript_hash = compute_transcript_hash(&[
+        &client_hello_bytes,
+        &server_hello_bytes,
+        &client_finish_bytes,
+    ]);
 
     // 8. Derive session key (with PQC hybrid if available)
     let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
@@ -275,7 +314,7 @@ where
         client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
         &session_info,
         pqc_shared_secret.as_ref(),
-        None, // v1 handshake - no transcript hash
+        transcript_hash,
     )
     .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
@@ -326,11 +365,8 @@ where
 {
     let ctx = ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
 
-    // Create nonce tracker for replay protection
-    let nonce_tracker = NonceTracker::new(&ctx.nonce_cache);
-
     // 1. Receive ClientHello
-    let client_msg = recv_message(stream).await?;
+    let (client_msg, client_hello_bytes) = recv_message_with_bytes(stream).await?;
     let client_hello = extract_payload(&client_msg, "ClientHello", |payload| {
         if let HandshakePayload::ClientHello(ch) = payload {
             Some(ch.clone())
@@ -344,25 +380,30 @@ where
         .verify_signature(&ctx)
         .map_err(|_| HandshakeIoError::InvalidSignature)?;
 
-    // 3. Check for replay attack (client nonce must be fresh)
-    nonce_tracker.register(&client_hello.challenge_nonce, client_hello.timestamp)?;
-
-    // 4. Optionally verify client's PQC offer if present
+    // 3. Optionally verify client's PQC offer if present
     if let Some(ref pqc_offer) = client_hello.pqc_offer {
         verify_pqc_offer(pqc_offer)
             .map_err(|e| HandshakeIoError::Protocol(format!("Invalid client PQC offer: {}", e)))?;
     }
 
-    // 5. Create ServerHello with PQC state for later decapsulation
-    let (server_hello, pqc_state) = ServerHello::new_with_pqc(local_identity, capabilities, &client_hello, &ctx)
+    let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
+
+    // 4. Create ServerHello with PQC state for later decapsulation
+    let (server_hello, pqc_state) = ServerHello::new_with_pqc(
+        local_identity,
+        capabilities,
+        &client_hello,
+        &client_hello_hash,
+        &ctx,
+    )
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
-    // 6. Send ServerHello
+    // 5. Send ServerHello
     let hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
-    send_message(stream, &hello_msg).await?;
+    let server_hello_bytes = send_message_with_bytes(stream, &hello_msg).await?;
 
-    // 7. Receive ClientFinish
-    let finish_msg = recv_message(stream).await?;
+    // 6. Receive ClientFinish
+    let (finish_msg, client_finish_bytes) = recv_message_with_bytes(stream).await?;
     check_for_error(&finish_msg)?;
     let client_finish = extract_payload(&finish_msg, "ClientFinish", |payload| {
         if let HandshakePayload::ClientFinish(cf) = payload {
@@ -372,12 +413,19 @@ where
         }
     })?;
 
-    // 8. Verify client signature on finish
+    let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
+
+    // 7. Verify client signature on finish
     client_finish
-        .verify_signature_with_context(&server_hello.response_nonce, &client_hello.identity.public_key, &ctx)
+        .verify_signature_with_context(
+            &server_hello.response_nonce,
+            &pre_finish_hash,
+            &client_hello.identity.public_key,
+            &ctx,
+        )
         .map_err(|_| HandshakeIoError::InvalidSignature)?;
 
-    // 9. Decapsulate PQC shared secret if client sent ciphertext
+    // 8. Decapsulate PQC shared secret if client sent ciphertext
     let pqc_shared_secret = match (&client_finish.pqc_ciphertext, &pqc_state) {
         (Some(ciphertext), Some(state)) => {
             let secret = decapsulate_pqc(ciphertext, state)
@@ -387,7 +435,13 @@ where
         _ => None,
     };
 
-    // 10. Derive session key (with PQC hybrid if available)
+    let transcript_hash = compute_transcript_hash(&[
+        &client_hello_bytes,
+        &server_hello_bytes,
+        &client_finish_bytes,
+    ]);
+
+    // 9. Derive session key (with PQC hybrid if available)
     let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
@@ -401,7 +455,7 @@ where
         client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
         &session_info,
         pqc_shared_secret.as_ref(),
-        None, // v1 handshake - no transcript hash
+        transcript_hash,
     )
     .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
