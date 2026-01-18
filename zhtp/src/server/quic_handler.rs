@@ -112,7 +112,8 @@ pub enum ConnectionMode {
     /// Features:
     /// - 32-byte session_id
     /// - HMAC-SHA3-256 request MAC
-    /// - Canonical request format: method(1) + path_len(u16BE) + path + body_len(u32BE) + body + counter(u64BE) + session_id(32)
+    /// - Canonical request format: method(1) + path_len(u16BE) + path + body_len(u32BE) + body
+    /// - MAC inputs: canonical_request_bytes || counter(u64BE) || session_id(32)
     ControlPlane,
     /// Mesh peer-to-peer: UHP handshake, then encrypted mesh messages
     /// ALPN: zhtp-mesh/1
@@ -582,25 +583,9 @@ impl QuicHandler {
             return Ok(());
         }
 
-        // 2. Validate counter (strictly increasing - prevents replay attacks)
-        let counter = auth_ctx.sequence;
-        if let Err(e) = session.validate_counter(counter) {
-            warn!(
-                counter = counter,
-                error = %e,
-                "Counter validation failed - possible replay attack"
-            );
-            let error_response = ZhtpResponseWire::error(
-                wire_request.request_id,
-                ZhtpStatus::Unauthorized,
-                "Invalid counter - possible replay".to_string(),
-            );
-            write_response(&mut send, &error_response).await?;
-            return Ok(());
-        }
-
-        // 3. Build canonical request for MAC verification
+        // 2. Build canonical request for MAC verification
         // Method mapping: Get=0, Post=1, Put=2, Delete=3, etc.
+        let counter = auth_ctx.sequence;
         let method_byte = match wire_request.request.method {
             lib_protocols::types::ZhtpMethod::Get => 0u8,
             lib_protocols::types::ZhtpMethod::Post => 1u8,
@@ -618,8 +603,8 @@ impl QuicHandler {
             body: wire_request.request.body.clone(),
         };
 
-        // 4. Verify MAC using HMAC-SHA3-256
-        // The MAC proves request integrity and binds to session + counter
+        // 3. Verify MAC FIRST using HMAC-SHA3-256 (before counter validation)
+        // This prevents DoS attacks where invalid MACs advance the counter
         if !verify_v2_mac(
             session.mac_key(),
             &canonical,
@@ -635,6 +620,23 @@ impl QuicHandler {
                 wire_request.request_id,
                 ZhtpStatus::Unauthorized,
                 "MAC verification failed".to_string(),
+            );
+            write_response(&mut send, &error_response).await?;
+            return Ok(());
+        }
+
+        // 4. Validate counter AFTER MAC verification (strictly increasing - prevents replay)
+        // Counter is only updated after MAC proves request authenticity
+        if let Err(e) = session.validate_counter(counter) {
+            warn!(
+                counter = counter,
+                error = %e,
+                "Counter validation failed - possible replay attack"
+            );
+            let error_response = ZhtpResponseWire::error(
+                wire_request.request_id,
+                ZhtpStatus::Unauthorized,
+                "Invalid counter - possible replay".to_string(),
             );
             write_response(&mut send, &error_response).await?;
             return Ok(());

@@ -305,11 +305,15 @@ impl CanonicalRequest {
 
         // Path length (u16 BE) + path bytes
         let path_bytes = self.path.as_bytes();
-        bytes.extend_from_slice(&(path_bytes.len() as u16).to_be_bytes());
+        let path_len_u16 = u16::try_from(path_bytes.len())
+            .expect("CanonicalRequest path length exceeds u16::MAX");
+        bytes.extend_from_slice(&path_len_u16.to_be_bytes());
         bytes.extend_from_slice(path_bytes);
 
         // Body length (u32 BE) + body bytes
-        bytes.extend_from_slice(&(self.body.len() as u32).to_be_bytes());
+        let body_len_u32 = u32::try_from(self.body.len())
+            .expect("CanonicalRequest body length exceeds u32::MAX");
+        bytes.extend_from_slice(&body_len_u32.to_be_bytes());
         bytes.extend_from_slice(&self.body);
 
         bytes

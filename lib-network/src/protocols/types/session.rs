@@ -680,6 +680,7 @@ pub struct V2Session {
 impl Drop for V2Session {
     fn drop(&mut self) {
         self.mac_key.zeroize();
+        self.session_id.zeroize();
     }
 }
 
