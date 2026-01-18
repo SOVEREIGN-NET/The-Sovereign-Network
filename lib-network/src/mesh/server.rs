@@ -757,7 +757,7 @@ impl ZhtpMeshServer {
     
     /// Start QUIC mesh protocol with persistent instance
     ///
-    /// Uses UHP+Kyber handshake for all connections (mutual authentication + PQC key exchange)
+    /// Uses UHP v2 handshake for all connections (mutual authentication + PQC key exchange)
     async fn start_quic_discovery(&mut self) -> Result<()> {
         use crate::protocols::quic_mesh::QuicMeshProtocol;
 
@@ -768,7 +768,7 @@ impl ZhtpMeshServer {
         // Bind to configured QUIC mesh port (PQC encrypted)
         let bind_addr = format!("0.0.0.0:{}", self.config.mesh_port).parse().unwrap();
 
-        // Initialize QUIC mesh protocol with UHP+Kyber authentication
+        // Initialize QUIC mesh protocol with UHP v2 authentication
         let mut quic_protocol = QuicMeshProtocol::new(identity, bind_addr)?;
         
         // If message handler is already initialized, set it

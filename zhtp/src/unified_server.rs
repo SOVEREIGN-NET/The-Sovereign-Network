@@ -1161,7 +1161,7 @@ impl ZhtpUnifiedServer {
         info!("🔒 ZHTP Unified Server ONLINE (QUIC-ONLY architecture)");
         info!("   Entry point: QUIC (required and primary)");
         info!("   Discovery: BLE, BT Classic, WiFi Direct, LoRaWAN");
-        info!("   Relay: Encrypted DHT with Dilithium2 + Kyber512 + ChaCha20");
+        info!("   Relay: Encrypted DHT with Dilithium2 + Kyber1024 + ChaCha20");
         
         // Verify network isolation is working
         info!(" Verifying network isolation...");

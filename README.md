@@ -22,7 +22,7 @@ This is a **monorepo** - all libraries are in this repository as regular directo
 - **DID**: `did:zhtp:{Blake3(seed || "ZHTP_DID_V1")}`
 - **NodeId**: `Blake3("ZHTP_NODE_V2:" + DID + ":" + device)` → 32 bytes
 - **Secrets**: Derived deterministically from seed
-- **PQC Keypairs**: Random attachments (Dilithium2, Kyber512) - can be rotated
+- **PQC Keypairs**: Random attachments (Dilithium2, Kyber1024) - can be rotated
 
 **Constructors:**
 ```rust

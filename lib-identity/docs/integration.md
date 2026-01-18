@@ -309,7 +309,7 @@ use lib_identity::integration::cryptography::{CryptoBridge, QuantumSafeCrypto};
 use lib_crypto::{
     signatures::{dilithium2, dilithium5},
     key_generation::{KeyPair, PrivateKey, PublicKey},
-    encryption::{kyber512, kyber768, kyber1024}
+    encryption::kyber1024
 };
 
 let crypto_bridge = CryptoBridge::new();
