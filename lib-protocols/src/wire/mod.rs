@@ -157,8 +157,8 @@ impl ZhtpRequestWire {
     /// The auth_context binds the request to the UHP session and includes
     /// a MAC that proves request integrity.
     ///
-    /// The MAC is computed over canonical CBOR-serialized request bytes
-    /// to ensure deterministic verification across implementations.
+    /// V2 MAC is computed as: HMAC-SHA3-256(mac_key, canonical_bytes || counter_BE || session_id)
+    /// where canonical_bytes = method(1) + path_len(u16BE) + path + body_len(u32BE) + body
     pub fn new_authenticated(
         request: ZhtpRequest,
         session_id: [u8; 32],
@@ -166,6 +166,9 @@ impl ZhtpRequestWire {
         sequence: u64,
         session_key: &[u8; 32],
     ) -> Self {
+        use hmac::{Hmac, Mac};
+        use sha3::Sha3_256;
+
         let mut request_id = [0u8; 16];
         getrandom::getrandom(&mut request_id)
             .expect("Failed to generate secure request_id");
@@ -175,16 +178,47 @@ impl ZhtpRequestWire {
             .unwrap_or_default()
             .as_millis() as u64;
 
-        // Compute canonical request hash using CBOR (deterministic serialization)
-        let request_hash = Self::compute_canonical_request_hash(&request, &request_id, timestamp_ms);
+        // Build canonical request bytes matching V2 server expectations
+        // Format: method(1) + path_len(u16BE) + path + body_len(u32BE) + body
+        let method_byte = match request.method {
+            crate::types::ZhtpMethod::Get => 0u8,
+            crate::types::ZhtpMethod::Post => 1u8,
+            crate::types::ZhtpMethod::Put => 2u8,
+            crate::types::ZhtpMethod::Delete => 3u8,
+            crate::types::ZhtpMethod::Patch => 4u8,
+            crate::types::ZhtpMethod::Head => 5u8,
+            crate::types::ZhtpMethod::Options => 6u8,
+            _ => 255u8,
+        };
 
-        let auth_context = AuthContext::new(
+        let path_len = request.uri.len() as u16;
+        let body_len = request.body.len() as u32;
+
+        let mut canonical_bytes = Vec::with_capacity(1 + 2 + request.uri.len() + 4 + body_len as usize);
+        canonical_bytes.push(method_byte);
+        canonical_bytes.extend_from_slice(&path_len.to_be_bytes());
+        canonical_bytes.extend_from_slice(request.uri.as_bytes());
+        canonical_bytes.extend_from_slice(&body_len.to_be_bytes());
+        canonical_bytes.extend_from_slice(&request.body);
+
+        // Compute V2 MAC: HMAC-SHA3-256(mac_key, canonical_bytes || counter_BE || session_id)
+        type HmacSha3 = Hmac<Sha3_256>;
+        let mut mac = HmacSha3::new_from_slice(session_key)
+            .expect("HMAC can take key of any size");
+        mac.update(&canonical_bytes);
+        mac.update(&sequence.to_be_bytes());
+        mac.update(&session_id);
+
+        let result = mac.finalize();
+        let mut request_mac = [0u8; 32];
+        request_mac.copy_from_slice(&result.into_bytes());
+
+        let auth_context = AuthContext {
             session_id,
             client_did,
             sequence,
-            session_key,
-            &request_hash,
-        );
+            request_mac,
+        };
 
         Self {
             version: WIRE_VERSION,

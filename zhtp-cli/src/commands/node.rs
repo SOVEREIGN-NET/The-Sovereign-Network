@@ -152,8 +152,28 @@ async fn handle_node_command_impl(
         }
         NodeAction::Status => {
             output.header("Node Status")?;
-            output.print(&format!("Server: {}", cli.server))?;
-            output.success("Status: Information available at /api/v1/health")?;
+            output.print(&format!("Connecting to: {}", cli.server))?;
+
+            // Actually connect to running node and get status
+            match crate::commands::web4_utils::connect_default(&cli.server).await {
+                Ok(client) => {
+                    match client.get("/api/v1/node/status").await {
+                        Ok(response) => {
+                            let status: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+                                .unwrap_or_else(|_| serde_json::json!({"raw": response}));
+                            output.success("Node is running")?;
+                            output.print(&serde_json::to_string_pretty(&status).unwrap_or_default())?;
+                        }
+                        Err(e) => {
+                            output.warning(&format!("Failed to get status: {}", e))?;
+                        }
+                    }
+                }
+                Err(e) => {
+                    output.warning(&format!("Cannot connect to node at {}: {}", cli.server, e))?;
+                    output.print("Is the node running? Start it with: zhtp node start")?;
+                }
+            }
             Ok(())
         }
         NodeAction::Restart => {

@@ -26,9 +26,20 @@ pub struct ProtocolsComponent {
     environment: crate::config::environment::Environment,
     api_port: u16,
     /// QUIC port for mesh connections (default: 9334)
+    /// This is the PRIMARY port for all QUIC-based communication.
     quic_port: u16,
-    /// Legacy/unicast discovery port for peer announcements (default: 9333).
-    /// Note: multicast peer discovery uses fixed port 37775/UDP (see NETWORK_RULES.md).
+    /// DEPRECATED: Legacy port mapping reference (default: 9333).
+    ///
+    /// This port is NOT actively listened on for discovery (multicast uses 37775/UDP).
+    /// It exists only for:
+    /// 1. Port mapping when bootstrap peers are specified with 9333
+    /// 2. WiFi Direct P2P TCP server (opt-in, requires group_owner=true)
+    ///
+    /// The node listens on:
+    /// - 37775/UDP for multicast peer discovery
+    /// - 9334/UDP for QUIC mesh connections
+    ///
+    /// See NETWORK_RULES.md for authoritative port documentation.
     discovery_port: u16,
     is_edge_node: bool,
     /// Enable ZDNS transport server (UDP/TCP DNS on port 53)

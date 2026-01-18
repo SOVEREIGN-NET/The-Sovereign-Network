@@ -450,8 +450,8 @@ where
         server_hello.negotiated.clone(),
         &client_hello.challenge_nonce,
         &server_hello.response_nonce,
-        &local_identity.did,
-        &client_hello.identity.did,
+        &client_hello.identity.did,  // FIX: client_did is the CLIENT's DID
+        &local_identity.did,          // FIX: server_did is the SERVER's (local) DID
         client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
         &session_info,
         pqc_shared_secret.as_ref(),
