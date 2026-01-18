@@ -261,20 +261,10 @@ impl ZhtpClient {
 
         // Derive V2 session keys using HKDF-SHA3-256 (MUST match server)
         // Key schedule: HKDF(session_key, handshake_hash, label)
-        debug!(
-            session_key_prefix = ?hex::encode(&handshake_result.session_key[..8]),
-            handshake_hash_prefix = ?hex::encode(&handshake_result.handshake_hash[..8]),
-            "V2 key derivation inputs"
-        );
         let v2_keys = derive_v2_session_keys(
             &handshake_result.session_key,
             &handshake_result.handshake_hash,
         ).context("Failed to derive V2 session keys")?;
-
-        debug!(
-            mac_key_prefix = ?hex::encode(&v2_keys.mac_key[..8]),
-            "V2 mac_key derived"
-        );
 
         info!(
             peer_did = %peer_did,

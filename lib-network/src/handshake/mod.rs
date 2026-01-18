@@ -1865,7 +1865,9 @@ impl HandshakeResult {
         // If PQC shared secret is provided, derive hybrid key
         let pqc_secret = pqc_shared_secret
             .ok_or_else(|| anyhow!("Missing PQC shared secret for UHP v2"))?;
+
         let hybrid_key = derive_hybrid_session_key(pqc_secret, &classical_key)?;
+
         let (session_key, pqc_hybrid_enabled) = (hybrid_key, true);
 
         // Generate 32-byte session ID (UHP v2)
