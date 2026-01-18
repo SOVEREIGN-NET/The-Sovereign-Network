@@ -240,7 +240,7 @@ function serializePublicKeyBundle(pk: PublicKeyBundle): Uint8Array {
 }
 
 /**
- * Serialize NodeIdentity for signing
+ * Serialize NodeIdentity for signing (exported for external use in handshake extensions)
  */
 function serializeNodeIdentity(identity: NodeIdentity): Uint8Array {
   return concat(

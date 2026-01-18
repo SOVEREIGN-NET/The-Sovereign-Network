@@ -59,8 +59,11 @@ export class ZhtpQuicClient {
       await this.establishQUICConnection();
 
       // Check if we have full keypair for UHP v2 handshake
-      const hasFullKeypair = this.keypair.privateKey.dilithiumSk &&
-                            this.keypair.privateKey.kyberSk;
+      // Validate keys are non-empty strings (empty strings would fail base64 decoding)
+      const hasFullKeypair = typeof this.keypair.privateKey.dilithiumSk === 'string' &&
+                            this.keypair.privateKey.dilithiumSk.length > 0 &&
+                            typeof this.keypair.privateKey.kyberSk === 'string' &&
+                            this.keypair.privateKey.kyberSk.length > 0;
 
       if (hasFullKeypair) {
         // Perform full UHP v2 handshake with PQC
@@ -181,6 +184,12 @@ export class ZhtpQuicClient {
             const combined = this.combineChunks(chunks, totalLength);
             const view = new DataView(combined.buffer, combined.byteOffset, combined.byteLength);
             expectedLength = view.getUint32(0, false);  // big-endian
+
+            // Protect against memory exhaustion: max 100MB for handshake messages
+            const MAX_HANDSHAKE_SIZE = 100 * 1024 * 1024;
+            if (expectedLength > MAX_HANDSHAKE_SIZE) {
+              throw new Error(`Handshake message too large: ${expectedLength} bytes (max ${MAX_HANDSHAKE_SIZE})`);
+            }
           }
 
           // Check if we have complete message
@@ -195,14 +204,14 @@ export class ZhtpQuicClient {
           try {
             await writer.close();
           } catch {
-            // Ignore close errors
+            // Intentionally ignored: stream may already be closed by peer or error
           }
         }
         if (reader) {
           try {
             await reader.cancel();
           } catch {
-            // Ignore cancel errors
+            // Intentionally ignored: reader may already be released or stream closed
           }
         }
       },

@@ -187,6 +187,9 @@ function serializeNodeIdentityBincode(identity: {
 
 /**
  * Serialize HandshakeCapabilities in bincode format
+ *
+ * Note: maxThroughput and storageCapacity use BigInt to avoid precision loss
+ * for values > Number.MAX_SAFE_INTEGER (2^53 - 1). The wire format uses u64.
  */
 function serializeCapabilitiesBincode(caps: {
   protocols: string[];
@@ -352,8 +355,7 @@ function deserializeServerHello(data: Uint8Array): {
   // This is a simplified parser - full bincode parsing would need more work
   // The Rust server sends this in bincode format, so we need to match exactly
 
-  // TODO: Implement full bincode deserialization
-  // For initial testing, we can use a simplified approach or fall back to CBOR
+  // TODO: Implement full bincode deserialization for ServerHello payload
 
   return {
     version,
@@ -531,6 +533,15 @@ export async function performHandshakeAsInitiator(
   const serverHelloMsg = deserializeServerHello(serverHelloBytes);
 
   log('Received ServerHello, verifying...');
+
+  // Validate server timestamp (5-minute skew tolerance for replay protection)
+  const MAX_TIMESTAMP_SKEW_SECONDS = 300;  // 5 minutes
+  const serverTimestamp = serverHelloMsg.timestamp;
+  const currentTime = Math.floor(Date.now() / 1000);
+  const timeDiff = Math.abs(currentTime - serverTimestamp);
+  if (timeDiff > MAX_TIMESTAMP_SKEW_SECONDS) {
+    throw new Error(`Server timestamp too far from current time: ${timeDiff}s skew (max ${MAX_TIMESTAMP_SKEW_SECONDS}s)`);
+  }
 
   const serverPayload = serverHelloMsg.payload;
 
