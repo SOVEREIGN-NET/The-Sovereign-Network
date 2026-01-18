@@ -64,7 +64,7 @@ pub use crate::handshake::{
     ClientHello, ServerHello, ClientFinish,
     HandshakeMessage, HandshakePayload,
     NonceCache, NegotiatedCapabilities, HandshakeSessionInfo,
-    derive_channel_binding_from_addrs,
+    derive_channel_binding_from_addrs, compute_transcript_hash,
 };
 use lib_crypto::KeyPair;
 
@@ -148,21 +148,14 @@ pub async fn handshake_as_initiator(
             .map_err(|e| anyhow!("Failed to create ClientHello: {}", e))?;
         
         let client_hello_msg = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
-        let client_hello_bytes = client_hello_msg.to_bytes()
-            .map_err(|e| anyhow!("Failed to serialize ClientHello: {}", e))?;
-        
-        // Send ClientHello with length prefix
-        send_message(stream, &client_hello_bytes).await
+        let client_hello_bytes = send_message_with_bytes(stream, &client_hello_msg).await
             .map_err(|e| anyhow!("Failed to send ClientHello: {}", e))?;
         
         tracing::debug!("Sent ClientHello to server ({} bytes)", client_hello_bytes.len());
         
         // Step 2: Receive and verify ServerHello
-        let server_hello_bytes = receive_message(stream).await
+        let (server_hello_msg, server_hello_bytes) = receive_message_with_bytes(stream).await
             .map_err(|e| anyhow!("Failed to receive ServerHello: {}", e))?;
-
-        let server_hello_msg = HandshakeMessage::from_bytes(&server_hello_bytes)
-            .map_err(|e| anyhow!("Failed to deserialize ServerHello: {}", e))?;
 
         check_for_error(&server_hello_msg)?;
         let server_hello = extract_payload(&server_hello_msg, "ServerHello", |payload| {
@@ -177,38 +170,44 @@ pub async fn handshake_as_initiator(
         tracing::debug!("Received ServerHello from {} ({} bytes)", 
             server_hello.identity.did, server_hello_bytes.len());
         
-        // Verify ServerHello signature (includes mutual authentication of server)
-        // This also validates NodeId, timestamp, nonce, and protocol version
-        server_hello.verify_signature(&client_hello.challenge_nonce, &ctx)
-            .map_err(|e| anyhow!("ServerHello verification failed: {}", e))?;
-        
-        tracing::debug!("ServerHello signature verified successfully");
-        
+        let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
+        let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
+
         // Step 3: Create and send ClientFinish
-        // ClientFinish::new() performs full mutual authentication of server before signing
+        // ClientFinish::new_with_pqc() performs full mutual authentication of server before signing
         let client_keypair = KeyPair {
             public_key: identity.public_key.clone(),
             private_key: identity.private_key.clone()
                 .ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
         
-        let client_finish = ClientFinish::new(&server_hello, &client_hello, &client_keypair, &ctx)
-            .map_err(|e| anyhow!("Failed to create ClientFinish: {}", e))?;
+        let (client_finish, pqc_shared_secret) = ClientFinish::new_with_pqc(
+            &server_hello,
+            &client_hello,
+            &client_hello_hash,
+            &pre_finish_hash,
+            &client_keypair,
+            &ctx,
+        )
+        .map_err(|e| anyhow!("Failed to create ClientFinish: {}", e))?;
         
         let client_finish_msg = HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish));
-        let client_finish_bytes = client_finish_msg.to_bytes()
-            .map_err(|e| anyhow!("Failed to serialize ClientFinish: {}", e))?;
-        
-        send_message(stream, &client_finish_bytes).await
+        let client_finish_bytes = send_message_with_bytes(stream, &client_finish_msg).await
             .map_err(|e| anyhow!("Failed to send ClientFinish: {}", e))?;
         
         tracing::debug!("Sent ClientFinish to server ({} bytes)", client_finish_bytes.len());
         
+        let transcript_hash = compute_transcript_hash(&[
+            &client_hello_bytes,
+            &server_hello_bytes,
+            &client_finish_bytes,
+        ]);
+
         // Step 4: Derive session key and build result
         let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
             .map_err(|e| anyhow!("Handshake session info mismatch: {}", e))?;
 
-        let result = HandshakeResult::new(
+        let result = HandshakeResult::new_with_pqc(
             server_hello.identity.clone(),
             server_hello.negotiated.clone(),
             &client_hello.challenge_nonce,
@@ -217,6 +216,8 @@ pub async fn handshake_as_initiator(
             &server_hello.identity.did,
             client_hello.timestamp, // Use ClientHello timestamp for deterministic session key
             &session_info,
+            pqc_shared_secret.as_ref(),
+            transcript_hash,
         ).map_err(|e| anyhow!("Failed to derive session key: {}", e))?;
         
         tracing::info!("✅ Client handshake completed successfully with {}", server_hello.identity.did);
@@ -286,11 +287,8 @@ pub async fn handshake_as_responder(
         let ctx = ctx.for_server_with_transport(binding, "tcp");
 
         // Step 1: Receive and verify ClientHello
-        let client_hello_bytes = receive_message(stream).await
+        let (client_hello_msg, client_hello_bytes) = receive_message_with_bytes(stream).await
             .map_err(|e| anyhow!("Failed to receive ClientHello: {}", e))?;
-
-        let client_hello_msg = HandshakeMessage::from_bytes(&client_hello_bytes)
-            .map_err(|e| anyhow!("Failed to deserialize ClientHello: {}", e))?;
 
         let client_hello = extract_payload(&client_hello_msg, "ClientHello", |payload| {
             if let HandshakePayload::ClientHello(ch) = payload {
@@ -312,25 +310,27 @@ pub async fn handshake_as_responder(
         tracing::debug!("ClientHello signature verified successfully");
         
         // Step 2: Create and send ServerHello
+        let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
+
         let capabilities = HandshakeCapabilities::default();
-        let server_hello = ServerHello::new(identity, capabilities, &client_hello, &ctx)
-            .map_err(|e| anyhow!("Failed to create ServerHello: {}", e))?;
+        let (server_hello, pqc_state) = ServerHello::new_with_pqc(
+            identity,
+            capabilities,
+            &client_hello,
+            &client_hello_hash,
+            &ctx,
+        )
+        .map_err(|e| anyhow!("Failed to create ServerHello: {}", e))?;
         
         let server_hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
-        let server_hello_bytes = server_hello_msg.to_bytes()
-            .map_err(|e| anyhow!("Failed to serialize ServerHello: {}", e))?;
-        
-        send_message(stream, &server_hello_bytes).await
+        let server_hello_bytes = send_message_with_bytes(stream, &server_hello_msg).await
             .map_err(|e| anyhow!("Failed to send ServerHello: {}", e))?;
         
         tracing::debug!("Sent ServerHello to client ({} bytes)", server_hello_bytes.len());
         
         // Step 3: Receive and verify ClientFinish
-        let client_finish_bytes = receive_message(stream).await
+        let (client_finish_msg, client_finish_bytes) = receive_message_with_bytes(stream).await
             .map_err(|e| anyhow!("Failed to receive ClientFinish: {}", e))?;
-
-        let client_finish_msg = HandshakeMessage::from_bytes(&client_finish_bytes)
-            .map_err(|e| anyhow!("Failed to deserialize ClientFinish: {}", e))?;
 
         check_for_error(&client_finish_msg)?;
         let client_finish = extract_payload(&client_finish_msg, "ClientFinish", |payload| {
@@ -344,9 +344,12 @@ pub async fn handshake_as_responder(
         
         tracing::debug!("Received ClientFinish from client ({} bytes)", client_finish_bytes.len());
         
+        let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
+
         // Verify ClientFinish signature
         client_finish.verify_signature_with_context(
             &server_hello.response_nonce,
+            &pre_finish_hash,
             &client_hello.identity.public_key,
             &ctx,
         )
@@ -354,11 +357,26 @@ pub async fn handshake_as_responder(
         
         tracing::debug!("ClientFinish signature verified successfully");
         
+        let transcript_hash = compute_transcript_hash(&[
+            &client_hello_bytes,
+            &server_hello_bytes,
+            &client_finish_bytes,
+        ]);
+
         // Step 4: Derive session key and build result
         let session_info = HandshakeSessionInfo::from_messages(&client_hello, &server_hello)
             .map_err(|e| anyhow!("Handshake session info mismatch: {}", e))?;
 
-        let result = HandshakeResult::new(
+        let pqc_shared_secret = match (&client_finish.pqc_ciphertext, &pqc_state) {
+            (Some(ciphertext), Some(state)) => {
+                let secret = crate::handshake::decapsulate_pqc(ciphertext, state)
+                    .map_err(|e| anyhow!("PQC decapsulation failed: {}", e))?;
+                Some(secret)
+            }
+            _ => None,
+        };
+
+        let result = HandshakeResult::new_with_pqc(
             client_hello.identity.clone(),
             server_hello.negotiated.clone(),
             &client_hello.challenge_nonce,
@@ -367,6 +385,8 @@ pub async fn handshake_as_responder(
             &identity.did,
             client_hello.timestamp, // Use ClientHello timestamp for deterministic session key
             &session_info,
+            pqc_shared_secret.as_ref(),
+            transcript_hash,
         ).map_err(|e| anyhow!("Failed to derive session key: {}", e))?;
         
         tracing::info!("✅ Server handshake completed successfully with {}", client_hello.identity.did);
@@ -402,6 +422,17 @@ async fn send_message(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
     crate::handshake::framing::send_framed(stream, data).await
 }
 
+async fn send_message_with_bytes(
+    stream: &mut TcpStream,
+    message: &HandshakeMessage,
+) -> Result<Vec<u8>> {
+    let bytes = message
+        .to_bytes()
+        .map_err(|e| anyhow!("Failed to serialize handshake message: {}", e))?;
+    send_message(stream, &bytes).await?;
+    Ok(bytes)
+}
+
 /// Receive a message from TCP with length-prefix framing
 ///
 /// Frame format:
@@ -421,6 +452,15 @@ async fn send_message(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
 async fn receive_message(stream: &mut TcpStream) -> Result<Vec<u8>> {
     // Use unified framing module for consistent message deserialization
     crate::handshake::framing::recv_framed(stream).await
+}
+
+async fn receive_message_with_bytes(
+    stream: &mut TcpStream,
+) -> Result<(HandshakeMessage, Vec<u8>)> {
+    let bytes = receive_message(stream).await?;
+    let message = HandshakeMessage::from_bytes(&bytes)
+        .map_err(|e| anyhow!("Failed to deserialize handshake message: {}", e))?;
+    Ok((message, bytes))
 }
 
 // ============================================================================

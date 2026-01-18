@@ -79,8 +79,8 @@ const MAX_PORT: u16 = 65535;
 /// Expected Dilithium public key size (Dilithium2)
 const DILITHIUM_PK_SIZE: usize = 1312;
 
-/// Expected Kyber public key size (Kyber768)
-const KYBER_PK_SIZE: usize = 1184;
+/// Expected Kyber public key size (Kyber1024)
+const KYBER_PK_SIZE: usize = 1568;
 
 // === Zero-Copy Optimization Note ===
 // For large payloads (>4KB), consider using:
@@ -464,7 +464,7 @@ impl Default for ReputationTracker {
 /// # Security
 /// Validates that public keys have correct sizes for post-quantum algorithms:
 /// - Dilithium2: 1312 bytes
-/// - Kyber768: 1184 bytes
+/// - Kyber1024: 1568 bytes
 ///
 /// This prevents malformed keys from being accepted before cryptographic verification.
 pub fn validate_public_key(public_key: &PublicKey) -> Result<()> {
@@ -941,7 +941,7 @@ mod tests {
     fn test_validate_public_key_valid() {
         let valid_key = PublicKey {
             dilithium_pk: (0..1312).map(|i| (i % 256) as u8).collect(),
-            kyber_pk: (0..1184).map(|i| (i % 256) as u8).collect(),
+            kyber_pk: (0..1568).map(|i| (i % 256) as u8).collect(), // Kyber1024
             key_id: [42u8; 32],
         };
 
@@ -952,7 +952,7 @@ mod tests {
     fn test_validate_public_key_invalid_dilithium_size() {
         let invalid_key = PublicKey {
             dilithium_pk: vec![1u8; 1000], // Wrong size
-            kyber_pk: vec![2u8; 1184],
+            kyber_pk: vec![2u8; 1568],     // Kyber1024
             key_id: [3u8; 32],
         };
 
@@ -965,7 +965,7 @@ mod tests {
     fn test_validate_public_key_invalid_kyber_size() {
         let invalid_key = PublicKey {
             dilithium_pk: vec![1u8; 1312],
-            kyber_pk: vec![2u8; 800], // Wrong size
+            kyber_pk: vec![2u8; 800], // Wrong size (not 1568)
             key_id: [3u8; 32],
         };
 
@@ -978,7 +978,7 @@ mod tests {
     fn test_validate_public_key_zero_key_id() {
         let invalid_key = PublicKey {
             dilithium_pk: vec![1u8; 1312],
-            kyber_pk: vec![2u8; 1184],
+            kyber_pk: vec![2u8; 1568],     // Kyber1024
             key_id: [0u8; 32], // All zeros
         };
 
@@ -991,7 +991,7 @@ mod tests {
     fn test_validate_public_key_no_entropy() {
         let invalid_key = PublicKey {
             dilithium_pk: vec![42u8; 1312], // All same value
-            kyber_pk: vec![2u8; 1184],
+            kyber_pk: vec![2u8; 1568],      // Kyber1024
             key_id: [3u8; 32],
         };
 

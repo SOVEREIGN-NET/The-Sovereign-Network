@@ -838,7 +838,7 @@ impl ZhtpUnifiedServer {
         
         info!("ZHTP Unified Server online");
         info!("Protocols: BLE + BT Classic + WiFi Direct + LoRaWAN + ZHTP Relay");
-        info!(" ZHTP relay: Encrypted DHT queries with Dilithium2 + Kyber512 + ChaCha20");
+        info!(" ZHTP relay: Encrypted DHT queries with Dilithium2 + Kyber1024 + ChaCha20");
         
         // Verify network isolation is working
         info!(" Verifying network isolation...");

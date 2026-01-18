@@ -360,7 +360,7 @@ fn parse_airport_output(output: &str, target_channel: u8) -> Result<Vec<WiFiNetw
 
 /// Discover WiFi Direct peers for mesh networking
 pub async fn discover_wifi_direct_peers() -> Result<Vec<WiFiNetworkInfo>> {
-    println!(" Scanning for WiFi Direct peers...");
+    tracing::debug!(" Scanning for WiFi Direct peers...");
     
     #[cfg(target_os = "linux")]
     {

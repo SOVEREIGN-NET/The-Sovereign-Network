@@ -7,7 +7,7 @@ use blake3::Hasher as Blake3Hasher;
 use rand::{RngCore};
 use rand::rngs::OsRng;
 use pqcrypto_dilithium::dilithium2;
-use pqcrypto_kyber::kyber512;
+use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::{
     sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey},
     kem::{PublicKey as KemPublicKey, SecretKey as KemSecretKey},
@@ -35,7 +35,7 @@ impl KeyPair {
         let (dilithium_pk, dilithium_sk) = dilithium2::keypair();
         
         // Generate CRYSTALS-Kyber key pair (NIST post-quantum standard)
-        let (kyber_pk, kyber_sk) = kyber512::keypair();
+        let (kyber_pk, kyber_sk) = kyber1024::keypair();
         
         // Calculate unique key ID from post-quantum public keys only
         let mut hasher = Blake3Hasher::new();

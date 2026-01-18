@@ -169,7 +169,7 @@ Standard derivation paths for ZHTP identity:
 ### CRYSTALS-Kyber (Key Encapsulation)
 
 Used in hybrid mode for complete post-quantum security:
-- **Kyber512**: 128-bit security level
+- **Kyber1024**: 256-bit security level
 - **Key encapsulation**: Secure key exchange
 - **Integration**: Automatic in lib-crypto KeyPair
 

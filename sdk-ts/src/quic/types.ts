@@ -12,6 +12,7 @@ export interface AuthenticatedConnection {
   appKey: Uint8Array; // Derived app key from UHP Phase 3 (32 bytes)
   sequence: bigint; // Atomic counter for replay protection
   peerId: string; // Remote peer DID for verification
+  establishedAt: number; // Unix timestamp when connection was established
 }
 
 /**
@@ -21,14 +22,12 @@ export interface UhpClientHello {
   clientDid: string; // Requesting client's DID
   timestamp: bigint; // Unix timestamp in nanoseconds
   nonce: Uint8Array; // 32-byte random nonce
-  kyberPublicKey: Uint8Array; // Client's Kyber512 public key (1184 bytes)
 }
 
 export interface UhpServerHello {
   sessionId: string; // Unique session from server
   serverDid: string; // Server's DID
   serverEphemeralPk: Uint8Array; // Server's ephemeral public key (32 bytes)
-  kyberCiphertext: Uint8Array; // Encapsulated key from Kyber512 KEM (768 bytes)
   timestamp: bigint; // Server's timestamp
 }
 
@@ -39,14 +38,6 @@ export interface UhpClientFinish {
 
 export interface UhpServerFinish {
   serverSignature: Uint8Array; // Dilithium5 signature over (ClientHello || ServerHello || ClientFinish)
-}
-
-/**
- * Kyber KEM encapsulation
- */
-export interface KyberEncapsulation {
-  ciphertext: Uint8Array; // Encrypted shared secret (encapsulated key)
-  sharedSecret: Uint8Array; // 32-byte shared secret (only known to client)
 }
 
 /**
@@ -87,5 +78,7 @@ export interface QuicClientConfig {
 export interface ConnectionResult {
   connected: boolean;
   error?: string;
+  sessionId?: string;
+  peerId?: string;
   connection?: AuthenticatedConnection;
 }
