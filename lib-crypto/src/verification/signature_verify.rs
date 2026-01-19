@@ -3,11 +3,12 @@
 //! implementation from crypto.rs, lines 960-1087 including browser compatibility
 
 use anyhow::Result;
-use pqcrypto_dilithium::dilithium2;
-use pqcrypto_traits::sign::{PublicKey as SignPublicKey, SignedMessage};
+use pqcrypto_dilithium::{dilithium2, dilithium5};
+use pqcrypto_traits::sign::{DetachedSignature, PublicKey as SignPublicKey, SignedMessage};
 
 // Constants for CRYSTALS key sizes
 const DILITHIUM2_PUBLICKEY_BYTES: usize = 1312;
+const DILITHIUM5_PUBLICKEY_BYTES: usize = 2592;
 
 /// Verify a signature against a message and public key
 pub fn verify_signature(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
@@ -82,13 +83,30 @@ pub fn verify_signature(message: &[u8], signature: &[u8], public_key: &[u8]) -> 
                 Err(_) => Ok(false)
             }
         }
-        // Fallback to signature length validation for other Dilithium variants
-        else if signature.len() >= 2000 && public_key.len() >= 1000 {
-            // Dilithium3/5 have larger signatures
-            // SECURITY: Removed weak hash comparison fallback
-            // Only proper cryptographic verification is acceptable
-            println!("Dilithium3/5 not yet supported - proper verification required");
-            Ok(false)
+        // Try Dilithium5 verification (NIST Level 5 - highest security)
+        else if public_key.len() == DILITHIUM5_PUBLICKEY_BYTES {
+            match dilithium5::PublicKey::from_bytes(public_key) {
+                Ok(pk) => {
+                    // Try detached signature first (what lib-client produces)
+                    if let Ok(detached_sig) = dilithium5::DetachedSignature::from_bytes(signature) {
+                        match dilithium5::verify_detached_signature(&detached_sig, message, &pk) {
+                            Ok(()) => return Ok(true),
+                            Err(_) => {}
+                        }
+                    }
+                    // Fall back to SignedMessage format
+                    match dilithium5::SignedMessage::from_bytes(signature) {
+                        Ok(signed_msg) => {
+                            match dilithium5::open(&signed_msg, &pk) {
+                                Ok(verified_message) => Ok(verified_message == message),
+                                Err(_) => Ok(false)
+                            }
+                        },
+                        Err(_) => Ok(false)
+                    }
+                },
+                Err(_) => Ok(false)
+            }
         }
         else {
             // Invalid key/signature sizes for Dilithium

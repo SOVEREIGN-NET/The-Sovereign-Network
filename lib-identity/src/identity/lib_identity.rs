@@ -675,6 +675,92 @@ impl ZhtpIdentity {
         })
     }
 
+    /// Create an identity for external registration (client-side key generation)
+    ///
+    /// This constructor is used when the identity was created on a client device
+    /// (e.g., iOS/mobile) where the private key was generated and stored locally.
+    /// The server only has access to public information.
+    ///
+    /// # Security
+    /// - No private key stored (client keeps it)
+    /// - No derived secrets (client computes these locally)
+    /// - Used for identity registry/lookup purposes only
+    pub fn new_external(
+        did: String,
+        public_key: PublicKey,
+        identity_type: IdentityType,
+        device_id: String,
+        display_name: Option<String>,
+        created_at: u64,
+    ) -> Result<Self> {
+        // Derive ID from DID
+        let id = Hash::from_bytes(&lib_crypto::hash_blake3(did.as_bytes()).to_vec());
+
+        // Generate NodeId from DID + device
+        let node_id = NodeId::from_did_device(&did, &device_id)?;
+
+        // Initialize device mapping
+        let mut device_node_ids = HashMap::new();
+        device_node_ids.insert(device_id.clone(), node_id);
+
+        // Derive DAO member ID from DID
+        let dao_member_id = Self::derive_dao_member_id(&did)?;
+
+        // Create minimal wallet manager (client manages actual wallets)
+        let wallet_manager = crate::wallets::WalletManager::new(id.clone());
+
+        // Initialize metadata
+        let mut metadata = HashMap::new();
+        if let Some(name) = display_name {
+            metadata.insert("display_name".to_string(), name);
+        }
+        metadata.insert("registration_type".to_string(), "external".to_string());
+
+        // Create placeholder ownership proof (actual proof was verified during registration)
+        let ownership_proof = ZeroKnowledgeProof::placeholder();
+
+        Ok(ZhtpIdentity {
+            id: id.clone(),
+            identity_type: identity_type.clone(),
+            did,
+            public_key,
+            private_key: None, // Client keeps private key!
+            node_id,
+            device_node_ids,
+            primary_device: device_id,
+            ownership_proof,
+            credentials: HashMap::new(),
+            reputation: if identity_type == IdentityType::Human { 500 } else { 100 },
+            age: None,
+            access_level: if identity_type == IdentityType::Human {
+                AccessLevel::FullCitizen
+            } else {
+                AccessLevel::Visitor
+            },
+            metadata,
+            private_data_id: None, // No private data stored on server
+            wallet_manager,
+            attestations: Vec::new(),
+            created_at,
+            last_active: created_at,
+            recovery_keys: Vec::new(),
+            did_document_hash: None,
+            owner_identity_id: None,
+            reward_wallet_id: None,
+            encrypted_master_seed: None,
+            next_wallet_index: 0,
+            password_hash: None,
+            master_seed_phrase: None,
+            zk_identity_secret: [0u8; 32],  // Client computes this locally
+            zk_credential_hash: [0u8; 32],  // Client computes this locally
+            wallet_master_seed: [0u8; 64],  // Client manages wallets locally
+            dao_member_id,
+            dao_voting_power: if identity_type == IdentityType::Human { 10 } else { 0 },
+            citizenship_verified: identity_type == IdentityType::Human,
+            jurisdiction: None,
+        })
+    }
+
     /// Check if cryptographic secrets have been properly derived (not zero-valued)
     ///
     /// SECURITY: This should be called after deserialization to ensure secrets were re-derived.

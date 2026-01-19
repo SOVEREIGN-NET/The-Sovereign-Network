@@ -212,6 +212,56 @@ impl IdentityManager {
         self.identities.insert(identity_id, identity);
     }
 
+    /// Register an externally-created identity (client-side key generation)
+    ///
+    /// This method registers an identity where the keys were generated on the client
+    /// device (e.g., iOS/mobile). The server only stores public information; private
+    /// keys remain on the client device and are NEVER transmitted.
+    ///
+    /// # Security
+    /// - Only public key is stored
+    /// - Private key stays on client device
+    /// - Client proves key ownership via registration_proof signature
+    pub fn register_external_identity(
+        &mut self,
+        identity_id: IdentityId,
+        did: String,
+        public_key: lib_crypto::PublicKey,
+        identity_type: IdentityType,
+        device_id: String,
+        display_name: Option<String>,
+        created_at: u64,
+    ) -> Result<()> {
+        // Check for duplicate
+        if self.identities.contains_key(&identity_id) {
+            return Err(anyhow!("Identity already registered: {}", identity_id));
+        }
+
+        // Use the new_external constructor which handles all the proper initialization
+        let identity = ZhtpIdentity::new_external(
+            did,
+            public_key,
+            identity_type.clone(),
+            device_id,
+            display_name,
+            created_at,
+        )?;
+
+        // Get the actual identity ID from the created identity (derived from DID)
+        let actual_id = identity.id.clone();
+
+        // Store identity
+        self.identities.insert(actual_id.clone(), identity);
+
+        tracing::info!(
+            "📱 External identity registered: {} (type: {:?})",
+            &actual_id.to_string()[..16.min(actual_id.to_string().len())],
+            identity_type
+        );
+
+        Ok(())
+    }
+
     /// List all identities
     pub fn list_identities(&self) -> Vec<&ZhtpIdentity> {
         self.identities.values().collect()

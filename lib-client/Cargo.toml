@@ -1,0 +1,62 @@
+[package]
+name = "lib-client"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform ZHTP client library for iOS, Android, Web, and CLI"
+license = "MIT"
+authors = ["The Sovereign Network"]
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+name = "zhtp_client"
+
+[features]
+default = []
+uniffi = ["dep:uniffi"]
+wasm = ["dep:wasm-bindgen", "dep:js-sys", "dep:console_error_panic_hook", "getrandom/js"]
+
+[dependencies]
+# Core
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_bytes = "0.11"
+ciborium = "0.2"
+hex = "0.4"
+base64 = "0.21"
+tracing = "0.1"
+
+# Post-quantum crypto (native builds use C-based implementations)
+blake3 = "1.5"
+sha3 = "0.10"
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
+rand = "0.8"
+getrandom = "0.2"
+
+# Native: C-based PQC (faster but not WASM-compatible)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pqcrypto-dilithium = "0.5"
+pqcrypto-kyber = "0.8"
+pqcrypto-traits = "0.3"
+
+# WASM: Pure Rust PQC implementations
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+crystals-dilithium = "1.0"
+pqc_kyber = "0.7"
+
+# UniFFI (optional, for mobile bindings)
+uniffi = { version = "0.25", optional = true }
+
+# WASM (optional, for web)
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[build-dependencies]
+uniffi = { version = "0.25", features = ["build"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+wasm-bindgen-test = "0.3"

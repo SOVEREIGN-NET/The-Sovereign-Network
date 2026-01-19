@@ -100,6 +100,21 @@ impl ZkProof {
         }
     }
 
+    /// Create a placeholder proof for cases where actual proof is not needed
+    ///
+    /// Used for externally registered identities where the registration proof
+    /// was already verified during the API call, so no ongoing proof is stored.
+    pub fn placeholder() -> Self {
+        Self {
+            proof_system: "placeholder".to_string(),
+            proof_data: vec![],
+            public_inputs: vec![],
+            verification_key: vec![],
+            plonky2_proof: None,
+            proof: vec![],
+        }
+    }
+
     /// Create from Plonky2 proof directly (preferred method)
     pub fn from_plonky2(plonky2_proof: Plonky2Proof) -> Self {
         Self {
