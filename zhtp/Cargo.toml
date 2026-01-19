@@ -54,6 +54,7 @@ lru = "0.12"
 base64 = "0.22"
 md5 = "0.7"
 bincode = "1.3"
+ciborium = "0.2"  # CBOR serialization for mobile/web clients
 blake3 = "1.5"
 rpassword = "7.3"  # Secure password input
 dirs = "5.0"  # Home directory detection for keystore
