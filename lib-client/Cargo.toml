@@ -30,6 +30,7 @@ tracing = "0.1"
 # Post-quantum crypto (native builds use C-based implementations)
 blake3 = "1.5"
 sha3 = "0.10"
+sha2 = "0.10"
 hkdf = "0.12"
 chacha20poly1305 = "0.10"
 rand = "0.8"

@@ -45,6 +45,7 @@ pub mod handshake;
 pub mod identity;
 pub mod request;
 pub mod session;
+mod bip39_wordlist;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;
@@ -53,7 +54,7 @@ pub mod wasm;
 pub use crypto::{Blake3, Dilithium5, Kyber1024};
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};
-pub use identity::{generate_identity, get_public_identity, sign_registration_proof, Identity, PublicIdentity};
+pub use identity::{generate_identity, get_public_identity, get_seed_phrase, sign_registration_proof, Identity, PublicIdentity};
 pub use request::{
     create_zhtp_frame, deserialize_response, parse_zhtp_frame, serialize_request, ZhtpHeaders,
     ZhtpRequest, ZhtpResponse,
@@ -137,6 +138,22 @@ pub extern "C" fn zhtp_client_identity_get_device_id(handle: *const IdentityHand
     let identity = unsafe { &(*handle).inner };
     match std::ffi::CString::new(identity.device_id.clone()) {
         Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Get the 24-word seed phrase from an identity. Caller must free with `zhtp_client_string_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_seed_phrase(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let identity = unsafe { &(*handle).inner };
+    match identity::get_seed_phrase(identity) {
+        Ok(phrase) => match std::ffi::CString::new(phrase) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
         Err(_) => std::ptr::null_mut(),
     }
 }
