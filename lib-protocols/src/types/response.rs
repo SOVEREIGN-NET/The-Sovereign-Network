@@ -26,8 +26,10 @@ pub struct ZhtpResponse {
     /// Response timestamp
     pub timestamp: u64,
     /// Server identity
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<IdentityId>,
     /// Zero-knowledge proof of response validity
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validity_proof: Option<ZeroKnowledgeProof>,
 }
 

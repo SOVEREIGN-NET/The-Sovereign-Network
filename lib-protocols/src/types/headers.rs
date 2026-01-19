@@ -13,6 +13,7 @@ use crate::types::ZHTP_VERSION;
 
 /// ZHTP headers with Web4 extensions
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ZhtpHeaders {
     // Standard HTTP-compatible headers
     /// Content type (MIME type)
