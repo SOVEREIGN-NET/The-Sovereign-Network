@@ -12,8 +12,8 @@ name = "zhtp_client"
 
 [features]
 default = []
-uniffi = ["dep:uniffi"]
 wasm = ["dep:wasm-bindgen", "dep:js-sys", "dep:console_error_panic_hook", "getrandom/js"]
+uniffi = ["dep:uniffi"]
 
 [dependencies]
 # Core
@@ -35,6 +35,9 @@ chacha20poly1305 = "0.10"
 rand = "0.8"
 getrandom = "0.2"
 
+# UniFFI (for mobile bindings)
+uniffi = { version = "0.25", optional = true }
+
 # Native: C-based PQC (faster but not WASM-compatible)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pqcrypto-dilithium = "0.5"
@@ -46,16 +49,13 @@ pqcrypto-traits = "0.3"
 crystals-dilithium = "1.0"
 pqc_kyber = "0.7"
 
-# UniFFI (optional, for mobile bindings)
-uniffi = { version = "0.25", optional = true }
-
 # WASM (optional, for web)
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 
 [build-dependencies]
-uniffi = { version = "0.25", features = ["build"], optional = true }
+uniffi = { version = "0.25", features = ["build"], default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

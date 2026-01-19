@@ -72,6 +72,10 @@ pub const ZHTP_WIRE_VERSION: u8 = 1;
 #[cfg(feature = "uniffi")]
 uniffi::setup_scaffolding!();
 
+// iOS compatibility: provide stub for ___chkstk_darwin (PQC assembly references this)
+#[no_mangle]
+pub extern "C" fn ___chkstk_darwin() {}
+
 // =============================================================================
 // C FFI Exports for iOS (manual FFI without uniffi-bindgen)
 // =============================================================================
@@ -162,6 +166,18 @@ pub extern "C" fn zhtp_client_buffer_free(buf: ByteBuffer) {
     }
 }
 
+/// Alias for zhtp_client_string_free (alternative naming convention)
+#[no_mangle]
+pub extern "C" fn zhtp_client_free_string(s: *mut std::ffi::c_char) {
+    zhtp_client_string_free(s);
+}
+
+/// Alias for zhtp_client_buffer_free (alternative naming convention)
+#[no_mangle]
+pub extern "C" fn zhtp_client_free_bytes(buf: ByteBuffer) {
+    zhtp_client_buffer_free(buf);
+}
+
 /// Get public key from identity
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_get_public_key(handle: *const IdentityHandle) -> ByteBuffer {
@@ -192,6 +208,32 @@ pub extern "C" fn zhtp_client_identity_get_node_id(handle: *const IdentityHandle
     };
     std::mem::forget(bytes);
     buf
+}
+
+/// Get Kyber public key from identity
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_kyber_public_key(handle: *const IdentityHandle) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let identity = unsafe { &(*handle).inner };
+    let mut bytes = identity.kyber_public_key.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
+}
+
+/// Get created_at timestamp from identity
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_created_at(handle: *const IdentityHandle) -> u64 {
+    if handle.is_null() {
+        return 0;
+    }
+    let identity = unsafe { &(*handle).inner };
+    identity.created_at
 }
 
 /// Sign registration proof. Returns signature bytes.
