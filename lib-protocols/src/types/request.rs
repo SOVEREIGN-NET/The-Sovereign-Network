@@ -27,8 +27,10 @@ pub struct ZhtpRequest {
     /// Request timestamp
     pub timestamp: u64,
     /// Requester identity
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requester: Option<IdentityId>,
     /// Zero-knowledge proof of authorization
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_proof: Option<ZeroKnowledgeProof>,
 }
 

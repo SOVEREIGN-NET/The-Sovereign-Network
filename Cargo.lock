@@ -7260,6 +7260,7 @@ dependencies = [
  "bincode",
  "blake3",
  "chrono",
+ "ciborium",
  "config",
  "criterion",
  "dirs",

@@ -12,7 +12,10 @@ use quinn::{RecvStream, SendStream};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 
-use super::serialization::{deserialize_request, serialize_response};
+use super::serialization::{
+    deserialize_request_with_format, serialize_response_with_format,
+    PayloadFormat,
+};
 use super::super::http::middleware::Middleware;
 
 /// Native ZHTP router for QUIC streams
@@ -94,17 +97,21 @@ impl ZhtpRouter {
         }
 
         debug!("📦 Received {} bytes of ZHTP request data", request_data.len());
-        
-        // Deserialize ZHTP request
-        let request = match deserialize_request(&request_data) {
-            Ok(req) => req,
+
+        // Deserialize ZHTP request with format detection
+        let (request, request_format) = match deserialize_request_with_format(&request_data) {
+            Ok((req, fmt)) => {
+                debug!("📦 Request format detected: {:?}", fmt);
+                (req, fmt)
+            }
             Err(e) => {
                 warn!("❌ Failed to deserialize ZHTP request: {}", e);
                 let error_response = ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
                     format!("Invalid ZHTP request: {}", e),
                 );
-                let response_data = serialize_response(&error_response)?;
+                // Default to CBOR for error responses when we can't detect format
+                let response_data = serialize_response_with_format(&error_response, PayloadFormat::Cbor)?;
                 send.write_all(&response_data).await
                     .map_err(|e| anyhow::anyhow!("Write error: {}", e))?;
                 send.finish()
@@ -112,12 +119,12 @@ impl ZhtpRouter {
                 return Ok(());
             }
         };
-        
-        info!("✅ ZHTP {} {}", request.method, request.uri);
-        
+
+        info!("✅ ZHTP {} {} (format: {:?})", request.method, request.uri, request_format);
+
         // Process middleware
         let (processed_request, middleware_response) = self.process_middleware(request).await?;
-        
+
         // If middleware returned a response, use it
         let response = if let Some(middleware_resp) = middleware_response {
             middleware_resp
@@ -134,21 +141,21 @@ impl ZhtpRouter {
                 }
             }
         };
-        
-        debug!("📤 Sending ZHTP response: {:?}", response.status);
-        
-        // Serialize response
-        let response_data = serialize_response(&response)
+
+        debug!("📤 Sending ZHTP response: {:?} (format: {:?})", response.status, request_format);
+
+        // Serialize response in the same format as the request
+        let response_data = serialize_response_with_format(&response, request_format)
             .map_err(|e| anyhow::anyhow!("Failed to serialize ZHTP response: {}", e))?;
-        
+
         // Send response over QUIC stream
         send.write_all(&response_data).await
             .map_err(|e| anyhow::anyhow!("Failed to write ZHTP response to QUIC stream: {}", e))?;
-        
+
         send.finish()
             .map_err(|e| anyhow::anyhow!("Failed to finish QUIC stream: {}", e))?;
-        
-        info!("✅ ZHTP response sent successfully");
+
+        info!("✅ ZHTP response sent successfully (format: {:?})", request_format);
         Ok(())
     }
 
@@ -172,16 +179,19 @@ impl ZhtpRouter {
 
         debug!("📦 Received {} bytes of ZHTP request data", request_data.len());
 
-        // Deserialize ZHTP request
-        let request = match deserialize_request(&request_data) {
-            Ok(req) => req,
+        // Deserialize ZHTP request with format detection
+        let (request, request_format) = match deserialize_request_with_format(&request_data) {
+            Ok((req, fmt)) => {
+                debug!("📦 Request format detected: {:?}", fmt);
+                (req, fmt)
+            }
             Err(e) => {
                 warn!("❌ Failed to deserialize ZHTP request: {}", e);
                 let error_response = ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
                     format!("Invalid ZHTP request: {}", e),
                 );
-                let response_data = serialize_response(&error_response)?;
+                let response_data = serialize_response_with_format(&error_response, PayloadFormat::Cbor)?;
                 send.write_all(&response_data).await
                     .map_err(|e| anyhow::anyhow!("Write error: {}", e))?;
                 send.finish()
@@ -190,7 +200,7 @@ impl ZhtpRouter {
             }
         };
 
-        info!("✅ ZHTP {} {}", request.method, request.uri);
+        info!("✅ ZHTP {} {} (format: {:?})", request.method, request.uri, request_format);
 
         // Process middleware
         let (processed_request, middleware_response) = self.process_middleware(request).await?;
@@ -212,10 +222,10 @@ impl ZhtpRouter {
             }
         };
 
-        debug!("📤 Sending ZHTP response: {:?}", response.status);
+        debug!("📤 Sending ZHTP response: {:?} (format: {:?})", response.status, request_format);
 
-        // Serialize response
-        let response_data = serialize_response(&response)
+        // Serialize response in the same format as the request
+        let response_data = serialize_response_with_format(&response, request_format)
             .map_err(|e| anyhow::anyhow!("Failed to serialize ZHTP response: {}", e))?;
 
         // Send response over QUIC stream
@@ -225,7 +235,7 @@ impl ZhtpRouter {
         send.finish()
             .map_err(|e| anyhow::anyhow!("Failed to finish QUIC stream: {}", e))?;
 
-        info!("✅ ZHTP response sent successfully (buffered)");
+        info!("✅ ZHTP response sent successfully (format: {:?})", request_format);
         Ok(())
     }
 
@@ -251,16 +261,19 @@ impl ZhtpRouter {
 
         debug!("📦 Received {} bytes of authenticated ZHTP request data", request_data.len());
 
-        // Deserialize ZHTP request
-        let mut request = match deserialize_request(&request_data) {
-            Ok(req) => req,
+        // Deserialize ZHTP request with format detection
+        let (mut request, request_format) = match deserialize_request_with_format(&request_data) {
+            Ok((req, fmt)) => {
+                debug!("📦 Request format detected: {:?}", fmt);
+                (req, fmt)
+            }
             Err(e) => {
                 warn!("❌ Failed to deserialize ZHTP request from {}: {}", session.peer_did(), e);
                 let error_response = ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
                     format!("Invalid ZHTP request: {}", e),
                 );
-                let response_data = serialize_response(&error_response)?;
+                let response_data = serialize_response_with_format(&error_response, PayloadFormat::Cbor)?;
                 send.write_all(&response_data).await
                     .map_err(|e| anyhow::anyhow!("Write error: {}", e))?;
                 send.finish()
@@ -273,7 +286,7 @@ impl ZhtpRouter {
         // IdentityId is a Hash of the DID
         request.requester = Some(lib_crypto::Hash(lib_crypto::hash_blake3(session.peer_did().as_bytes())));
 
-        info!("✅ Authenticated ZHTP {} {} from {}", request.method, request.uri, session.peer_did());
+        info!("✅ Authenticated ZHTP {} {} from {} (format: {:?})", request.method, request.uri, session.peer_did(), request_format);
 
         // Process middleware
         let (processed_request, middleware_response) = self.process_middleware(request).await?;
@@ -295,10 +308,10 @@ impl ZhtpRouter {
             }
         };
 
-        debug!("📤 Sending authenticated ZHTP response: {:?}", response.status);
+        debug!("📤 Sending authenticated ZHTP response: {:?} (format: {:?})", response.status, request_format);
 
-        // Serialize response
-        let response_data = serialize_response(&response)
+        // Serialize response in the same format as the request
+        let response_data = serialize_response_with_format(&response, request_format)
             .map_err(|e| anyhow::anyhow!("Failed to serialize ZHTP response: {}", e))?;
 
         // Send response over QUIC stream
@@ -308,7 +321,7 @@ impl ZhtpRouter {
         send.finish()
             .map_err(|e| anyhow::anyhow!("Failed to finish QUIC stream: {}", e))?;
 
-        info!("✅ Authenticated ZHTP response sent to {}", session.peer_did());
+        info!("✅ Authenticated ZHTP response sent to {} (format: {:?})", session.peer_did(), request_format);
         Ok(())
     }
 
