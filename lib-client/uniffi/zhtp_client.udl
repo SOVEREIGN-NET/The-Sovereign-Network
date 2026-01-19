@@ -1,0 +1,233 @@
+// UniFFI Interface Definition for ZHTP Client Library
+//
+// This generates Swift (iOS/macOS) and Kotlin (Android) bindings
+// from the Rust implementation.
+//
+// Build commands:
+//   iOS:     cargo build -p lib-client --features uniffi --target aarch64-apple-ios
+//   Android: cargo build -p lib-client --features uniffi --target aarch64-linux-android
+
+namespace zhtp_client {
+    // ============================================================================
+    // Identity Functions
+    // ============================================================================
+
+    /// Generate a new ZHTP identity with post-quantum keys
+    /// Keys are generated locally and private keys NEVER leave the device
+    [Throws=ClientError]
+    Identity generate_identity(string device_id);
+
+    /// Restore identity from master seed (for recovery)
+    [Throws=ClientError]
+    Identity restore_identity_from_seed(sequence<u8> master_seed, string device_id);
+
+    /// Extract public portion of identity (safe to send to server)
+    PublicIdentity get_public_identity([ByRef] Identity identity);
+
+    /// Sign a registration proof for server registration
+    /// Signs: "ZHTP_REGISTER:{did}:{timestamp}"
+    [Throws=ClientError]
+    sequence<u8> sign_registration_proof([ByRef] Identity identity, u64 timestamp);
+
+    /// Sign an arbitrary message
+    [Throws=ClientError]
+    sequence<u8> sign_message([ByRef] Identity identity, sequence<u8> message);
+
+    /// Verify a signature
+    [Throws=ClientError]
+    boolean verify_signature(sequence<u8> public_key, sequence<u8> message, sequence<u8> signature);
+
+    /// Serialize identity to JSON for storage
+    [Throws=ClientError]
+    string serialize_identity([ByRef] Identity identity);
+
+    /// Deserialize identity from JSON
+    [Throws=ClientError]
+    Identity deserialize_identity(string json);
+
+    // ============================================================================
+    // Request/Response Functions
+    // ============================================================================
+
+    /// Serialize a ZHTP request to CBOR bytes
+    [Throws=ClientError]
+    sequence<u8> serialize_request([ByRef] ZhtpRequest request);
+
+    /// Deserialize a ZHTP response from CBOR bytes
+    [Throws=ClientError]
+    ZhtpResponse deserialize_response(sequence<u8> data);
+
+    /// Create ZHTP wire frame from payload
+    /// Format: [ZHTP (4)] [version (1)] [length BE (4)] [payload]
+    sequence<u8> create_zhtp_frame(sequence<u8> payload);
+
+    /// Parse ZHTP wire frame and extract payload
+    [Throws=ClientError]
+    sequence<u8> parse_zhtp_frame(sequence<u8> data);
+
+    /// Compute channel binding from socket addresses
+    sequence<u8> compute_channel_binding(string local_addr, string peer_addr);
+
+    // ============================================================================
+    // Crypto Functions (low-level)
+    // ============================================================================
+
+    /// Generate random bytes
+    sequence<u8> random_bytes(u32 len);
+
+    /// Compute Blake3 hash
+    sequence<u8> blake3_hash(sequence<u8> data);
+
+    /// One-shot encryption (for data at rest)
+    [Throws=ClientError]
+    sequence<u8> encrypt_oneshot(sequence<u8> key, sequence<u8> plaintext);
+
+    /// One-shot decryption
+    [Throws=ClientError]
+    sequence<u8> decrypt_oneshot(sequence<u8> key, sequence<u8> ciphertext);
+};
+
+// ============================================================================
+// Error Type
+// ============================================================================
+
+[Error]
+enum ClientError {
+    "CryptoError",
+    "HandshakeError",
+    "SerializationError",
+    "InvalidSignature",
+    "SessionExpired",
+    "InvalidFormat",
+    "IdentityError",
+    "KeyDerivationError",
+};
+
+// ============================================================================
+// Data Types
+// ============================================================================
+
+/// Complete ZHTP identity (contains private keys - store securely!)
+dictionary Identity {
+    string did;
+    sequence<u8> public_key;
+    sequence<u8> private_key;
+    sequence<u8> kyber_public_key;
+    sequence<u8> kyber_secret_key;
+    sequence<u8> node_id;
+    string device_id;
+    sequence<u8> master_seed;
+    u64 created_at;
+};
+
+/// Public portion of identity (safe to transmit)
+dictionary PublicIdentity {
+    string did;
+    sequence<u8> public_key;
+    sequence<u8> kyber_public_key;
+    sequence<u8> node_id;
+    string device_id;
+    u64 created_at;
+};
+
+/// Node identity for handshake
+dictionary NodeIdentity {
+    string did;
+    sequence<u8> public_key;
+    sequence<u8> node_id;
+    string device_id;
+    string? display_name;
+    u64 created_at;
+};
+
+/// ZHTP request message
+dictionary ZhtpRequest {
+    string method;
+    string uri;
+    string version;
+    ZhtpHeaders headers;
+    sequence<u8> body;
+    u64 timestamp;
+    string? requester;
+};
+
+/// ZHTP response message
+dictionary ZhtpResponse {
+    u16 status;
+    string status_text;
+    string version;
+    ZhtpHeaders headers;
+    sequence<u8> body;
+    u64 timestamp;
+};
+
+/// ZHTP headers
+dictionary ZhtpHeaders {
+    string? content_type;
+    u64 content_length;
+    u8 privacy_level;
+    string encryption;
+    u64 dao_fee;
+    u64 network_fee;
+    string? cache_control;
+};
+
+/// Result of successful handshake
+dictionary HandshakeResult {
+    sequence<u8> session_key;
+    sequence<u8> session_id;
+    string peer_did;
+    sequence<u8> peer_public_key;
+};
+
+// ============================================================================
+// Objects (stateful)
+// ============================================================================
+
+/// UHP v2 Handshake state machine
+interface HandshakeState {
+    /// Create new handshake state
+    constructor(Identity identity, sequence<u8> channel_binding);
+
+    /// Step 1: Create ClientHello message
+    /// Returns wire-format bytes to send
+    [Throws=ClientError]
+    sequence<u8> create_client_hello();
+
+    /// Step 2: Process ServerHello and create ClientFinish
+    /// Returns ClientFinish bytes to send
+    [Throws=ClientError]
+    sequence<u8> process_server_hello(sequence<u8> data);
+
+    /// Step 3: Finalize and get session key
+    [Throws=ClientError]
+    HandshakeResult finalize();
+
+    /// Get the challenge nonce (for debugging)
+    sequence<u8> challenge_nonce();
+};
+
+/// Encrypted session for authenticated communication
+interface Session {
+    /// Create new session from handshake result
+    [Throws=ClientError]
+    constructor(sequence<u8> session_key, sequence<u8> session_id, string peer_did);
+
+    /// Encrypt a message
+    /// Returns: [nonce (12)] [ciphertext + tag]
+    [Throws=ClientError]
+    sequence<u8> encrypt(sequence<u8> plaintext);
+
+    /// Decrypt a message
+    [Throws=ClientError]
+    sequence<u8> decrypt(sequence<u8> ciphertext);
+
+    /// Get peer's DID
+    string peer_did();
+
+    /// Get session ID
+    sequence<u8> session_id();
+
+    /// Check if session is valid
+    boolean is_valid();
+};
