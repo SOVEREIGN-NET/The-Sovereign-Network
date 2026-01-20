@@ -297,10 +297,17 @@ impl WalletHandler {
 
     /// Get specific wallet balance
     async fn handle_get_balance(&self, wallet_type_str: &str, identity_id: &str) -> Result<ZhtpResponse> {
-        // Parse wallet type
-        let wallet_type = match self.parse_wallet_type(wallet_type_str) {
-            Some(wt) => wt,
-            None => {
+        // Parse wallet type to lib_identity::wallets::WalletType
+        let wallet_type = match wallet_type_str.to_lowercase().as_str() {
+            "primary" => lib_identity::wallets::WalletType::Primary,
+            "standard" => lib_identity::wallets::WalletType::Standard,
+            "ubi" | "ubidistribution" | "ubi_distribution" => lib_identity::wallets::WalletType::UBI,
+            "savings" => lib_identity::wallets::WalletType::Savings,
+            "business" => lib_identity::wallets::WalletType::Business,
+            "stealth" | "privacy" => lib_identity::wallets::WalletType::Stealth,
+            "nonprofitdao" | "nonprofit" => lib_identity::wallets::WalletType::NonProfitDAO,
+            "forprofitdao" | "forprofit" => lib_identity::wallets::WalletType::ForProfitDAO,
+            _ => {
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
                     format!("Invalid wallet type: {}", wallet_type_str),
@@ -311,18 +318,18 @@ impl WalletHandler {
         // Parse identity ID
         let identity_hash = hex::decode(identity_id)
             .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
-        
+
         if identity_hash.len() != 32 {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
                 "Identity ID must be 32 bytes".to_string(),
             ));
         }
-        
+
         let mut identity_id_bytes = [0u8; 32];
         identity_id_bytes.copy_from_slice(&identity_hash);
-        
-        // Get the identity
+
+        // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
             Some(identity) => identity,
             None => {
@@ -341,34 +348,66 @@ impl WalletHandler {
             }
         };
 
-        // Create multi-wallet manager
-        let wallet_manager = match MultiWalletManager::new(identity.clone()).await {
-            Ok(manager) => manager,
-            Err(e) => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("Failed to create wallet manager: {}", e),
-                ));
-            }
-        };
+        // Get wallet summaries from identity's wallet_manager
+        let wallet_summaries = identity.wallet_manager.list_wallets();
 
-        // Get specific wallet balance
-        match wallet_manager.wallets.get(&wallet_type) {
-            Some(wallet) => {
+        // Find the specific wallet type
+        match wallet_summaries.iter().find(|w| w.wallet_type == wallet_type) {
+            Some(summary) => {
+                // Get full wallet details from identity's wallet_manager
+                let (mut available_balance, mut staked_balance, mut pending_rewards, created_at) =
+                    if let Some(wallet) = identity.wallet_manager.get_wallet(&summary.id) {
+                        (
+                            wallet.balance.saturating_sub(wallet.staked_balance),
+                            wallet.staked_balance,
+                            wallet.pending_rewards,
+                            wallet.created_at,
+                        )
+                    } else {
+                        (summary.balance, 0, 0, summary.created_at)
+                    };
+
+                // Check blockchain's wallet_registry for the authoritative balance
+                let blockchain = self.blockchain.read().await;
+
+                // Try finding wallet by iterating through registry and matching owner identity
+                for (wallet_id, wallet_data) in blockchain.get_all_wallets() {
+                    if let Some(owner_id) = &wallet_data.owner_identity_id {
+                        if hex::encode(owner_id.as_bytes()).starts_with(&identity_id[..16.min(identity_id.len())]) {
+                            if wallet_data.wallet_type.to_lowercase() == wallet_type_str.to_lowercase() {
+                                available_balance = wallet_data.initial_balance;
+                                tracing::debug!(
+                                    "Found wallet {} in blockchain registry with balance {}",
+                                    wallet_id, available_balance
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+                drop(blockchain);
+
+                let total_balance = available_balance + staked_balance + pending_rewards;
+
                 let response_data = json!({
                     "status": "success",
                     "wallet_type": wallet_type_str,
                     "identity_id": identity_id,
                     "balance": {
-                        "available_balance": wallet.available_balance,
-                        "staked_balance": wallet.staked_balance,
-                        "pending_rewards": wallet.pending_rewards,
-                        "total_balance": wallet.total_balance()
+                        "available_balance": available_balance,
+                        "staked_balance": staked_balance,
+                        "pending_rewards": pending_rewards,
+                        "total_balance": total_balance
                     },
-                    "permissions": self.convert_permissions(
-                        wallet_manager.wallet_permissions.get(&wallet_type).unwrap()
-                    ),
-                    "created_at": wallet_manager.wallet_created_at.get(&wallet_type).unwrap_or(&0)
+                    "permissions": {
+                        "can_transfer_external": true,
+                        "can_vote": wallet_type == lib_identity::wallets::WalletType::Primary,
+                        "can_stake": true,
+                        "can_receive_rewards": true,
+                        "daily_transaction_limit": 1_000_000,
+                        "requires_multisig_threshold": null
+                    },
+                    "created_at": created_at
                 });
                 let json_response = serde_json::to_vec(&response_data)?;
                 Ok(ZhtpResponse::success_with_content_type(
@@ -393,18 +432,18 @@ impl WalletHandler {
         // Parse identity ID
         let identity_hash = hex::decode(identity_id)
             .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
-        
+
         if identity_hash.len() != 32 {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
                 "Identity ID must be 32 bytes".to_string(),
             ));
         }
-        
+
         let mut identity_id_bytes = [0u8; 32];
         identity_id_bytes.copy_from_slice(&identity_hash);
-        
-        // Get the identity
+
+        // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
             Some(identity) => identity,
             None => {
@@ -416,27 +455,49 @@ impl WalletHandler {
             }
         };
 
-        // Create multi-wallet manager
-        let wallet_manager = match MultiWalletManager::new(identity.clone()).await {
-            Ok(manager) => manager,
-            Err(e) => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("Failed to create wallet manager: {}", e),
-                ));
-            }
-        };
+        // Use the identity's existing wallet_manager (populated during registration)
+        // Do NOT create a new MultiWalletManager which would lose stored balances
+        let wallet_summaries = identity.wallet_manager.list_wallets();
+        let total_balance = identity.get_total_balance();
 
-        // Get comprehensive statistics using the actual function
-        let statistics = match wallet_manager.get_multi_wallet_statistics().await {
-            Ok(stats) => serde_json::to_value(stats)?,
-            Err(e) => {
-                return Ok(ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("Failed to get wallet statistics: {}", e),
-                ));
+        // Build wallet statistics from stored wallet_manager
+        let mut wallet_stats = serde_json::Map::new();
+        for summary in wallet_summaries.iter() {
+            let (staked_balance, pending_rewards) =
+                if let Some(wallet) = identity.wallet_manager.get_wallet(&summary.id) {
+                    (wallet.staked_balance, wallet.pending_rewards)
+                } else {
+                    (0, 0)
+                };
+
+            let wallet_stat = json!({
+                "available_balance": summary.balance.saturating_sub(staked_balance),
+                "staked_balance": staked_balance,
+                "pending_rewards": pending_rewards,
+                "total_balance": summary.balance + pending_rewards,
+                "transaction_count": 0,
+                "description": format!("{:?} wallet", summary.wallet_type),
+                "created_at": summary.created_at
+            });
+            wallet_stats.insert(format!("{:?}", summary.wallet_type), wallet_stat);
+        }
+
+        let statistics = json!({
+            "identity": {
+                "node_id": hex::encode(identity.id.clone()),
+                "public_key": hex::encode(&identity.public_key.dilithium_pk),
+                "identity_type": format!("{:?}", identity.identity_type)
+            },
+            "total_balance": total_balance,
+            "wallet_count": wallet_summaries.len(),
+            "wallet_statistics": wallet_stats,
+            "cross_wallet_transactions": 0,
+            "blockchain_context": {
+                "current_height": 0,
+                "is_synced": true,
+                "peer_count": 0
             }
-        };
+        });
 
         create_json_response(json!({
             "status": "success",

@@ -6,7 +6,7 @@
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
 use lib_crypto::{PublicKey, generate_nonce, hash_blake3};
-use lib_crypto::post_quantum::dilithium::{dilithium2_sign, dilithium2_verify, dilithium2_keypair};
+use lib_crypto::post_quantum::dilithium::{dilithium_sign, dilithium_verify, dilithium2_keypair};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{info, debug, warn};
 
@@ -130,7 +130,7 @@ impl ZhtpAuthManager {
     
     /// Sign arbitrary message with Dilithium2 (for PeerAnnouncement, etc.)
     pub fn sign_message(&self, message: &[u8]) -> Result<Vec<u8>> {
-        dilithium2_sign(message, &self.node_dilithium_keypair.1)
+        dilithium_sign(message, &self.node_dilithium_keypair.1)
     }
     
     /// Get this node's Dilithium2 public key
@@ -154,7 +154,7 @@ impl ZhtpAuthManager {
         ].concat();
         
         // Sign with Dilithium2
-        let signature = dilithium2_sign(&message, &self.node_dilithium_keypair.1)?;
+        let signature = dilithium_sign(&message, &self.node_dilithium_keypair.1)?;
         
         debug!(" Signed challenge with Dilithium2 (signature: {} bytes)", signature.len());
         
@@ -211,7 +211,7 @@ impl ZhtpAuthManager {
         ].concat();
         
         // Verify Dilithium2 signature
-        let signature_valid = dilithium2_verify(
+        let signature_valid = dilithium_verify(
             &message,
             &response.signature,
             &response.responder_pubkey,

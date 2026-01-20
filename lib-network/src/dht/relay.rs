@@ -4,7 +4,7 @@
 //! Combines Dilithium2 signatures with Kyber-encrypted channels.
 
 use anyhow::{Result, anyhow};
-use lib_crypto::post_quantum::dilithium::{dilithium2_sign, dilithium2_verify};
+use lib_crypto::post_quantum::dilithium::{dilithium_sign, dilithium_verify};
 use lib_crypto::hashing::hash_blake3;
 use lib_crypto::Hash;
 use tracing::{info, debug, warn};
@@ -87,7 +87,7 @@ impl ZhtpRelayProtocol {
         ].concat();
         
         // Sign with Dilithium2
-        let signature = dilithium2_sign(&signature_message, &self.dilithium_secret_key)?;
+        let signature = dilithium_sign(&signature_message, &self.dilithium_secret_key)?;
         
         debug!(" Relay query created and signed (request_id: {})", &request_id[..16]);
         
@@ -118,7 +118,7 @@ impl ZhtpRelayProtocol {
             &query.timestamp.to_le_bytes(),
         ].concat();
         
-        let signature_valid = dilithium2_verify(
+        let signature_valid = dilithium_verify(
             &signature_message,
             &query.signature,
             &query.requester_pubkey,
@@ -172,7 +172,7 @@ impl ZhtpRelayProtocol {
         signature_message.extend_from_slice(&timestamp.to_le_bytes());
         
         // Sign with Dilithium2
-        let signature = dilithium2_sign(&signature_message, &self.dilithium_secret_key)?;
+        let signature = dilithium_sign(&signature_message, &self.dilithium_secret_key)?;
         
         debug!(" Relay response created and signed");
         
@@ -205,7 +205,7 @@ impl ZhtpRelayProtocol {
         }
         signature_message.extend_from_slice(&response.timestamp.to_le_bytes());
         
-        let signature_valid = dilithium2_verify(
+        let signature_valid = dilithium_verify(
             &signature_message,
             &response.signature,
             &response.responder_pubkey,

@@ -2785,6 +2785,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
+ "bincode",
  "blake3",
  "chacha20poly1305",
  "ciborium",
@@ -2802,6 +2803,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_json",
+ "sha2",
  "sha3",
  "thiserror 1.0.69",
  "tokio",

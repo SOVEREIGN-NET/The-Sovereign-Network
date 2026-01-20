@@ -201,8 +201,9 @@ impl ZhtpIdentity {
         // 1. Derive DID from public key (canonical)
         let did = Self::generate_did(&public_key)?;
 
-        // 2. Derive ID from DID
-        let id = Hash::from_bytes(&lib_crypto::hash_blake3(did.as_bytes()).to_vec());
+        // 2. ID is directly from public_key.key_id (same value embedded in DID)
+        // DID format: "did:zhtp:{key_id_hex}" where key_id = Blake3(dilithium_pk)
+        let id = Hash::from_bytes(&public_key.key_id.to_vec());
 
         // 3. Generate primary NodeId from DID + device
         let node_id = NodeId::from_did_device(&did, &primary_device)?;
@@ -314,15 +315,51 @@ impl ZhtpIdentity {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
-        // Derive identity ID from DID (same derivation as new())
-        let id = Hash::from_bytes(&lib_crypto::hash_blake3(did.as_bytes()).to_vec());
+        // Extract identity ID from DID (DID format: "did:zhtp:{id_hex}")
+        let id_hex = did.strip_prefix("did:zhtp:")
+            .ok_or_else(|| anyhow!("Invalid DID format: must start with 'did:zhtp:'"))?;
+        let id = Hash::from_hex(id_hex)
+            .map_err(|e| anyhow!("Invalid DID hex in new_observed: {}", e))?;
 
         // Initialize device mapping with the observed device
         let mut device_node_ids = HashMap::new();
         device_node_ids.insert(device_id.clone(), node_id.clone());
 
-        // Create minimal wallet manager (no wallets - this is an observed identity)
-        let wallet_manager = crate::wallets::WalletManager::new(id.clone());
+        // Create wallet manager with a Primary wallet for observed identities
+        // This ensures they can participate in domain registration and other Web4 operations
+        let mut wallet_manager = crate::wallets::WalletManager::new(id.clone());
+
+        // Create Primary wallet using identity's ID as wallet ID
+        let primary_wallet = crate::wallets::QuantumWallet {
+            id: id.clone(), // WalletId = Hash, same as identity ID
+            wallet_type: crate::wallets::WalletType::Primary,
+            name: "Primary Wallet".to_string(),
+            alias: None,
+            balance: 5000, // Welcome bonus
+            staked_balance: 0,
+            pending_rewards: 0,
+            owner_id: Some(id.clone()),
+            public_key: public_key.dilithium_pk.clone(),
+            seed_phrase: None,
+            encrypted_seed: None,
+            seed_commitment: None,
+            created_at: current_time,
+            last_transaction: None,
+            recent_transactions: Vec::new(),
+            is_active: true,
+            dao_properties: None,
+            derivation_index: None,
+            password_hash: None,
+            owned_content: Vec::new(),
+            total_storage_used: 0,
+            total_content_value: 0,
+        };
+        wallet_manager.wallets.insert(primary_wallet.id.clone(), primary_wallet);
+
+        tracing::info!(
+            "🎁 Created Primary wallet with 5000 ZHTP welcome bonus for observed identity {}",
+            &id_hex[..16.min(id_hex.len())]
+        );
 
         Ok(ZhtpIdentity {
             id: id.clone(),
@@ -415,8 +452,11 @@ impl ZhtpIdentity {
         // Step 2: Derive DID from seed (seed-anchored, not from PQC key_id)
         let did = Self::derive_did_from_seed(&seed)?;
 
-        // Step 3: Derive IdentityId by hashing the DID
-        let id = Hash::from_bytes(&lib_crypto::hash_blake3(did.as_bytes()).to_vec());
+        // Step 3: Extract IdentityId from DID (DID format: "did:zhtp:{id_hex}")
+        let id_hex = did.strip_prefix("did:zhtp:")
+            .ok_or_else(|| anyhow!("Invalid DID format from derive_did_from_seed"))?;
+        let id = Hash::from_hex(id_hex)
+            .map_err(|e| anyhow!("Invalid DID hex in new_from_seed: {}", e))?;
 
         // Step 4: Generate primary NodeId from DID + device
         let node_id = NodeId::from_did_device(&did, primary_device)?;
@@ -693,8 +733,11 @@ impl ZhtpIdentity {
         display_name: Option<String>,
         created_at: u64,
     ) -> Result<Self> {
-        // Derive ID from DID
-        let id = Hash::from_bytes(&lib_crypto::hash_blake3(did.as_bytes()).to_vec());
+        // Extract ID from DID (DID format: "did:zhtp:{id_hex}")
+        let id_hex = did.strip_prefix("did:zhtp:")
+            .ok_or_else(|| anyhow!("Invalid DID format: must start with 'did:zhtp:'"))?;
+        let id = Hash::from_hex(id_hex)
+            .map_err(|e| anyhow!("Invalid DID hex in new_external: {}", e))?;
 
         // Generate NodeId from DID + device
         let node_id = NodeId::from_did_device(&did, &device_id)?;
@@ -846,14 +889,16 @@ impl ZhtpIdentity {
             .ok_or_else(|| anyhow!("Missing did"))?
             .to_string();
 
-        // CRITICAL: Validate that ID matches Blake3(DID) to prevent identity corruption
-        // Note: For seed-anchored identities, DID is derived from seed first,
-        // then ID = Blake3(DID). So we validate ID = Blake3(DID), not DID = did:zhtp:{ID}.
-        let expected_id_bytes = lib_crypto::hash_blake3(did.as_bytes());
-        let expected_id = Hash::from_bytes(&expected_id_bytes.to_vec());
+        // CRITICAL: Validate that ID matches the hex portion of DID
+        // DID format: "did:zhtp:{identity_id_hex}" where identity_id = Blake3(public_key)
+        // The ID is embedded IN the DID, not derived FROM the DID
+        let expected_id_hex = did.strip_prefix("did:zhtp:")
+            .ok_or_else(|| anyhow!("Invalid DID format: must start with 'did:zhtp:'"))?;
+        let expected_id = Hash::from_hex(expected_id_hex)
+            .map_err(|e| anyhow!("Invalid DID hex: {}", e))?;
         if id != expected_id {
             return Err(anyhow!(
-                "Identity corruption detected: ID '{}' does not match Blake3(DID). \
+                "Identity corruption detected: ID '{}' does not match DID. \
                 DID: '{}', Expected ID: '{}'. The keystore file may be corrupted.",
                 hex::encode(id.as_bytes()), did, hex::encode(expected_id.as_bytes())
             ));

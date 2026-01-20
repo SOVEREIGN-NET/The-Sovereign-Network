@@ -377,14 +377,14 @@ async fn create_test_identity() -> identity::ZhtpIdentity {
     use lib_proofs::ZeroKnowledgeProof;
 
     // Use realistic Dilithium2 key sizes for testing
-    // Dilithium2: PK = 1312 bytes, SK = 2528 bytes
+    // Dilithium2: PK = 1312 bytes, SK = 2560 bytes
     let public_key = lib_crypto::PublicKey {
         dilithium_pk: vec![42u8; 1312],  // Real Dilithium2 public key size
         kyber_pk: vec![],
         key_id: [42u8; 32],
     };
     let private_key = lib_crypto::PrivateKey {
-        dilithium_sk: vec![1u8; 2528],   // Real Dilithium2 secret key size
+        dilithium_sk: vec![1u8; 2560],   // Real Dilithium2 secret key size
         kyber_sk: vec![],
         master_seed: vec![],
     };

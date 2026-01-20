@@ -45,6 +45,7 @@ pub mod handshake;
 pub mod identity;
 pub mod request;
 pub mod session;
+mod bip39_wordlist;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;
@@ -53,7 +54,7 @@ pub mod wasm;
 pub use crypto::{Blake3, Dilithium5, Kyber1024};
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};
-pub use identity::{generate_identity, get_public_identity, sign_registration_proof, Identity, PublicIdentity};
+pub use identity::{generate_identity, get_public_identity, get_seed_phrase, sign_registration_proof, Identity, PublicIdentity};
 pub use request::{
     create_zhtp_frame, deserialize_response, parse_zhtp_frame, serialize_request, ZhtpHeaders,
     ZhtpRequest, ZhtpResponse,
@@ -71,6 +72,10 @@ pub const ZHTP_WIRE_VERSION: u8 = 1;
 
 #[cfg(feature = "uniffi")]
 uniffi::setup_scaffolding!();
+
+// iOS compatibility: provide stub for ___chkstk_darwin (PQC assembly references this)
+#[no_mangle]
+pub extern "C" fn ___chkstk_darwin() {}
 
 // =============================================================================
 // C FFI Exports for iOS (manual FFI without uniffi-bindgen)
@@ -137,6 +142,22 @@ pub extern "C" fn zhtp_client_identity_get_device_id(handle: *const IdentityHand
     }
 }
 
+/// Get the 24-word seed phrase from an identity. Caller must free with `zhtp_client_string_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_seed_phrase(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let identity = unsafe { &(*handle).inner };
+    match identity::get_seed_phrase(identity) {
+        Ok(phrase) => match std::ffi::CString::new(phrase) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Free a string returned by the library
 #[no_mangle]
 pub extern "C" fn zhtp_client_string_free(s: *mut std::ffi::c_char) {
@@ -160,6 +181,18 @@ pub extern "C" fn zhtp_client_buffer_free(buf: ByteBuffer) {
             drop(Vec::from_raw_parts(buf.data, buf.len, buf.len));
         }
     }
+}
+
+/// Alias for zhtp_client_string_free (alternative naming convention)
+#[no_mangle]
+pub extern "C" fn zhtp_client_free_string(s: *mut std::ffi::c_char) {
+    zhtp_client_string_free(s);
+}
+
+/// Alias for zhtp_client_buffer_free (alternative naming convention)
+#[no_mangle]
+pub extern "C" fn zhtp_client_free_bytes(buf: ByteBuffer) {
+    zhtp_client_buffer_free(buf);
 }
 
 /// Get public key from identity
@@ -194,6 +227,86 @@ pub extern "C" fn zhtp_client_identity_get_node_id(handle: *const IdentityHandle
     buf
 }
 
+/// Get Kyber public key from identity
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_kyber_public_key(handle: *const IdentityHandle) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let identity = unsafe { &(*handle).inner };
+    let mut bytes = identity.kyber_public_key.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
+}
+
+/// Get created_at timestamp from identity
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_created_at(handle: *const IdentityHandle) -> u64 {
+    if handle.is_null() {
+        return 0;
+    }
+    let identity = unsafe { &(*handle).inner };
+    identity.created_at
+}
+
+/// Get Dilithium secret key from identity (for UHP handshake)
+/// SECURITY: This key should only be used for signing operations on-device.
+/// It should NEVER be transmitted over any network.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_dilithium_secret_key(handle: *const IdentityHandle) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let identity = unsafe { &(*handle).inner };
+    let mut bytes = identity.private_key.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
+}
+
+/// Get Kyber secret key from identity (for UHP handshake key exchange)
+/// SECURITY: This key should only be used for decapsulation on-device.
+/// It should NEVER be transmitted over any network.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_kyber_secret_key(handle: *const IdentityHandle) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let identity = unsafe { &(*handle).inner };
+    let mut bytes = identity.kyber_secret_key.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
+}
+
+/// Get master seed from identity (for key derivation)
+/// SECURITY: This seed should only be used for local key derivation.
+/// It should NEVER be transmitted over any network.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_master_seed(handle: *const IdentityHandle) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let identity = unsafe { &(*handle).inner };
+    let mut bytes = identity.master_seed.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
+}
+
 /// Sign registration proof. Returns signature bytes.
 #[no_mangle]
 pub extern "C" fn zhtp_client_sign_registration_proof(
@@ -205,6 +318,36 @@ pub extern "C" fn zhtp_client_sign_registration_proof(
     }
     let identity = unsafe { &(*handle).inner };
     match sign_registration_proof(identity, timestamp) {
+        Ok(mut sig) => {
+            let buf = ByteBuffer {
+                data: sig.as_mut_ptr(),
+                len: sig.len(),
+            };
+            std::mem::forget(sig);
+            buf
+        }
+        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+    }
+}
+
+/// Sign UHP handshake challenge. Returns signature bytes.
+/// Private keys stay in Rust - never exposed to caller.
+#[no_mangle]
+pub extern "C" fn zhtp_client_sign_uhp_challenge(
+    handle: *const IdentityHandle,
+    challenge: *const u8,
+    challenge_len: usize,
+) -> ByteBuffer {
+    if handle.is_null() || challenge.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let challenge_bytes = unsafe { std::slice::from_raw_parts(challenge, challenge_len) };
+
+    // Use generic message signing to sign the UHP challenge
+    // The private_key stays in Rust and is never exposed
+    match identity::sign_message(identity, challenge_bytes) {
         Ok(mut sig) => {
             let buf = ByteBuffer {
                 data: sig.as_mut_ptr(),
@@ -248,6 +391,114 @@ pub extern "C" fn zhtp_client_identity_deserialize(json: *const std::ffi::c_char
 
     match identity::deserialize_identity(json) {
         Ok(identity) => Box::into_raw(Box::new(IdentityHandle { inner: identity })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Serialize identity to JSON format compatible with ZhtpIdentity::from_serialized().
+///
+/// This creates the FULL format expected by lib-identity for UHP handshakes.
+/// The uhp-ffi crate calls ZhtpIdentity::from_serialized() which requires all these fields.
+///
+/// Caller must free with `zhtp_client_string_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let identity = unsafe { &(*handle).inner };
+
+    // Compute key_id = Blake3(dilithium_public_key)
+    let key_id = crypto::Blake3::hash(&identity.public_key);
+
+    // Extract identity ID from DID (format: "did:zhtp:{id_hex}")
+    let id_hex = identity.did.strip_prefix("did:zhtp:").unwrap_or(&identity.did);
+    let id_bytes: Vec<u8> = hex::decode(id_hex).unwrap_or_else(|_| key_id.to_vec());
+
+    // Generate dao_member_id from DID (deterministic)
+    let dao_member_id = format!("dao:{}", id_hex);
+
+    // NodeId in lib-identity has 3 fields: bytes, creation_nonce, network_genesis
+    // We need to pad the raw node_id bytes into the proper NodeId struct format
+    let node_id_bytes: [u8; 32] = if identity.node_id.len() >= 32 {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&identity.node_id[..32]);
+        arr
+    } else {
+        let mut arr = [0u8; 32];
+        arr[..identity.node_id.len()].copy_from_slice(&identity.node_id);
+        arr
+    };
+
+    // Create proper NodeId struct format for serialization
+    let zero_bytes: [u8; 32] = [0u8; 32];
+    let node_id_struct = serde_json::json!({
+        "bytes": node_id_bytes,
+        "creation_nonce": zero_bytes,
+        "network_genesis": zero_bytes
+    });
+
+    // Convert key_id to [u8; 32] array format
+    let key_id_arr: [u8; 32] = {
+        let mut arr = [0u8; 32];
+        let src = key_id.as_slice();
+        let len = std::cmp::min(src.len(), 32);
+        arr[..len].copy_from_slice(&src[..len]);
+        arr
+    };
+
+    // Build the FULL ZhtpIdentity format for from_serialized()
+    // IMPORTANT: Using "Device" identity_type because "Human" requires age and jurisdiction
+    // which mobile clients don't have. Device type avoids this requirement.
+    let zhtp_identity = serde_json::json!({
+        // Required fields
+        "id": id_bytes,
+        "did": identity.did,
+        "identity_type": "Device",  // NOT "Human" - Human requires age/jurisdiction
+        "public_key": {
+            "dilithium_pk": identity.public_key,
+            "kyber_pk": identity.kyber_public_key,
+            "key_id": key_id_arr
+        },
+        "node_id": node_id_struct,
+        "device_node_ids": {
+            identity.device_id.clone(): node_id_struct
+        },
+        "primary_device": identity.device_id,
+        "dao_member_id": dao_member_id,
+        "ownership_proof": {
+            "proof_system": "dilithium-pop-placeholder-v0",
+            "proof_data": [],
+            "public_inputs": id_bytes.clone(),
+            "verification_key": identity.public_key.clone(),
+            "plonky2_proof": null,
+            "proof": []
+        },
+
+        // Optional fields with defaults
+        "credentials": {},
+        "metadata": {},
+        "attestations": [],
+        "reputation": 100,  // Device default reputation
+        "access_level": "Standard",
+        "age": null,
+        "jurisdiction": null,
+        "citizenship_verified": false,
+        "dao_voting_power": 0,
+        "private_data_id": null,
+        "created_at": identity.created_at,
+        "last_active": identity.created_at,
+        "recovery_keys": [],
+        "did_document_hash": null,
+        "owner_identity_id": null,
+        "reward_wallet_id": null
+    });
+
+    match serde_json::to_string(&zhtp_identity) {
+        Ok(json) => match std::ffi::CString::new(json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
         Err(_) => std::ptr::null_mut(),
     }
 }

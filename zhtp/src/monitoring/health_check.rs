@@ -733,64 +733,46 @@ impl HealthMonitor {
 
     /// Check storage health using lib-storage
     async fn check_storage_health() -> Result<StorageHealth> {
-        // Try to get storage stats from lib-storage package with proper config
-        let storage_stats = match create_default_storage_config() {
-            Ok(config) => {
-                let db_path = config.storage_config.dht_persist_path.clone()
-                    .unwrap_or_else(|| {
-                        dirs::home_dir()
-                            .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join(".zhtp")
-                            .join("storage")
-                            .join("dht_db")
-                    });
+        // IMPORTANT: Use global storage - never open sled database here
+        // This prevents lock conflicts from multiple components opening the same DB
+        let storage_stats = match crate::runtime::storage_provider::get_global_storage().await {
+            Ok(storage_lock) => {
+                let mut storage = storage_lock.write().await;
+                // Try to get storage metrics
+                let (total_storage, used_storage) = match storage.get_statistics().await {
+                    Ok(stats) => (
+                        1024 * 1024 * 1024 * 100, // 100GB system capacity
+                        stats.storage_stats.total_storage_used
+                    ),
+                    Err(_) => (
+                        1024 * 1024 * 1024 * 100, // 100GB system capacity
+                        std::fs::metadata("./")
+                            .map(|m| m.len())
+                            .unwrap_or(1024 * 1024 * 500) // 500MB fallback
+                    )
+                };
 
-                if let Some(parent) = db_path.parent() {
-                    if let Err(e) = std::fs::create_dir_all(parent) {
-                        warn!("Failed to create storage directory {:?}: {}", parent, e);
-                    }
-                }
+                Some(StorageStats {
+                    total_storage,
+                    used_storage,
+                    dht_nodes: 10, // Estimate DHT node count from storage system
+                })
+            }
+            Err(_) => {
+                // Global storage not initialized - fallback to system disk usage
+                use sysinfo::Disks;
+                let disks = Disks::new_with_refreshed_list();
 
-                match lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path).await {
-                    Ok(mut storage) => {
-                        // Try to get storage metrics
-                        let (total_storage, used_storage) = match storage.get_statistics().await {
-                            Ok(stats) => (
-                                1024 * 1024 * 1024 * 100, // 100GB system capacity
-                                stats.storage_stats.total_storage_used
-                            ),
-                            Err(_) => (
-                                1024 * 1024 * 1024 * 100, // 100GB system capacity
-                                std::fs::metadata("./")
-                                    .map(|m| m.len())
-                                    .unwrap_or(1024 * 1024 * 500) // 500MB fallback
-                            )
-                        };
-                        
-                        Some(StorageStats {
-                            total_storage,
-                            used_storage,
-                            dht_nodes: 10, // Estimate DHT node count from storage system
-                        })
-                    }
-                    Err(_) => {
-                        // Fallback to system disk usage
-                        use sysinfo::Disks;
-                        let disks = Disks::new_with_refreshed_list();
-                        
-                        if let Some(disk) = disks.iter().next() {
-                            Some(StorageStats {
-                                total_storage: disk.total_space(),
-                                used_storage: disk.total_space() - disk.available_space(),
-                                dht_nodes: 1,
-                            })
-                        } else {
-                            None
-                        }
-                    }
+                if let Some(disk) = disks.iter().next() {
+                    Some(StorageStats {
+                        total_storage: disk.total_space(),
+                        used_storage: disk.total_space() - disk.available_space(),
+                        dht_nodes: 1,
+                    })
+                } else {
+                    None
                 }
-            },
-            Err(_) => None
+            }
         };
         
         match storage_stats {
