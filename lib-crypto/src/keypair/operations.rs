@@ -23,43 +23,58 @@ use super::KeyPair;
 
 // Constants for CRYSTALS key sizes
 const KYBER1024_CIPHERTEXT_BYTES: usize = 1568;
+const DILITHIUM2_SECRETKEY_BYTES: usize = 2528;
+const DILITHIUM5_SECRETKEY_BYTES: usize = 4896;
 
 impl KeyPair {
-    /// Sign a message with CRYSTALS-Dilithium5 post-quantum signature
+    /// Sign a message with CRYSTALS-Dilithium post-quantum signature
+    /// Auto-detects Dilithium2 vs Dilithium5 based on secret key size
     pub fn sign(&self, message: &[u8]) -> Result<Signature> {
-        let dilithium_sk = dilithium5::SecretKey::from_bytes(&self.private_key.dilithium_sk)
-            .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 secret key (expected 4896 bytes)"))?;
+        let sk_len = self.private_key.dilithium_sk.len();
 
-        let signature = dilithium5::sign(message, &dilithium_sk);
+        if sk_len == DILITHIUM5_SECRETKEY_BYTES {
+            // Dilithium5 (NIST Level 5 - highest security)
+            let dilithium_sk = dilithium5::SecretKey::from_bytes(&self.private_key.dilithium_sk)
+                .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 secret key"))?;
+            let signature = dilithium5::sign(message, &dilithium_sk);
 
-        Ok(Signature {
-            signature: signature.as_bytes().to_vec(),
-            public_key: self.public_key.clone(),
-            algorithm: SignatureAlgorithm::Dilithium5,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        })
+            Ok(Signature {
+                signature: signature.as_bytes().to_vec(),
+                public_key: self.public_key.clone(),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            })
+        } else if sk_len == DILITHIUM2_SECRETKEY_BYTES {
+            // Dilithium2 (NIST Level 2 - legacy support)
+            let dilithium_sk = dilithium2::SecretKey::from_bytes(&self.private_key.dilithium_sk)
+                .map_err(|_| anyhow::anyhow!("Invalid Dilithium2 secret key"))?;
+            let signature = dilithium2::sign(message, &dilithium_sk);
+
+            Ok(Signature {
+                signature: signature.as_bytes().to_vec(),
+                public_key: self.public_key.clone(),
+                algorithm: SignatureAlgorithm::Dilithium2,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            })
+        } else {
+            Err(anyhow::anyhow!(
+                "Invalid Dilithium secret key size: {} bytes (expected {} for Dilithium5 or {} for Dilithium2)",
+                sk_len, DILITHIUM5_SECRETKEY_BYTES, DILITHIUM2_SECRETKEY_BYTES
+            ))
+        }
     }
 
-    /// Sign with pure post-quantum Dilithium5 (no fallbacks)
+    /// Sign with pure post-quantum Dilithium (no fallbacks)
+    /// Auto-detects Dilithium2 vs Dilithium5 based on secret key size
     pub fn sign_dilithium(&self, message: &[u8]) -> Result<Signature> {
-        // Use pure post-quantum CRYSTALS-Dilithium5 signing
-        let dilithium_sk = dilithium5::SecretKey::from_bytes(&self.private_key.dilithium_sk)
-            .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 secret key (expected 4896 bytes)"))?;
-
-        let signature = dilithium5::sign(message, &dilithium_sk);
-
-        Ok(Signature {
-            signature: signature.as_bytes().to_vec(),
-            public_key: self.public_key.clone(),
-            algorithm: SignatureAlgorithm::Dilithium5,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        })
+        // Delegate to sign() which handles auto-detection
+        self.sign(message)
     }
 
     /// Verify a signature
