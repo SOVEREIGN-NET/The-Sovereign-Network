@@ -51,7 +51,7 @@ pub struct Identity {
     /// Dilithium5 public key for signature verification (~2592 bytes)
     pub public_key: Vec<u8>,
 
-    /// Dilithium5 private key for signing (~4864 bytes)
+    /// Dilithium5 private key for signing (~4896 bytes)
     /// SECURITY: Never transmit this!
     pub private_key: Vec<u8>,
 

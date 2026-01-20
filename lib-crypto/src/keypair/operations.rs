@@ -21,9 +21,9 @@ use crate::random::generate_nonce;
 use crate::advanced::ring_signature::{verify_ring_signature, RingSignature};
 use super::KeyPair;
 
-// Constants for CRYSTALS key sizes
+// Constants for CRYSTALS key sizes (from pqcrypto_dilithium)
 const KYBER1024_CIPHERTEXT_BYTES: usize = 1568;
-const DILITHIUM2_SECRETKEY_BYTES: usize = 2528;
+const DILITHIUM2_SECRETKEY_BYTES: usize = 2560; // Actual pqcrypto_dilithium size
 const DILITHIUM5_SECRETKEY_BYTES: usize = 4896;
 
 impl KeyPair {

@@ -325,8 +325,41 @@ impl ZhtpIdentity {
         let mut device_node_ids = HashMap::new();
         device_node_ids.insert(device_id.clone(), node_id.clone());
 
-        // Create minimal wallet manager (no wallets - this is an observed identity)
-        let wallet_manager = crate::wallets::WalletManager::new(id.clone());
+        // Create wallet manager with a Primary wallet for observed identities
+        // This ensures they can participate in domain registration and other Web4 operations
+        let mut wallet_manager = crate::wallets::WalletManager::new(id.clone());
+
+        // Create Primary wallet using identity's ID as wallet ID
+        let primary_wallet = crate::wallets::QuantumWallet {
+            id: id.clone(), // WalletId = Hash, same as identity ID
+            wallet_type: crate::wallets::WalletType::Primary,
+            name: "Primary Wallet".to_string(),
+            alias: None,
+            balance: 5000, // Welcome bonus
+            staked_balance: 0,
+            pending_rewards: 0,
+            owner_id: Some(id.clone()),
+            public_key: public_key.dilithium_pk.clone(),
+            seed_phrase: None,
+            encrypted_seed: None,
+            seed_commitment: None,
+            created_at: current_time,
+            last_transaction: None,
+            recent_transactions: Vec::new(),
+            is_active: true,
+            dao_properties: None,
+            derivation_index: None,
+            password_hash: None,
+            owned_content: Vec::new(),
+            total_storage_used: 0,
+            total_content_value: 0,
+        };
+        wallet_manager.wallets.insert(primary_wallet.id.clone(), primary_wallet);
+
+        tracing::info!(
+            "🎁 Created Primary wallet with 5000 ZHTP welcome bonus for observed identity {}",
+            &id_hex[..16.min(id_hex.len())]
+        );
 
         Ok(ZhtpIdentity {
             id: id.clone(),

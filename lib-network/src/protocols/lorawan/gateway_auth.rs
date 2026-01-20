@@ -8,7 +8,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 use lib_crypto::hash_sha3_256;
-use lib_crypto::post_quantum::dilithium::{dilithium5_sign, dilithium5_verify};
+use lib_crypto::post_quantum::dilithium::{dilithium_sign, dilithium_verify};
 
 /// 49-byte device message (fits DR0=51 bytes).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,7 +215,7 @@ impl LoRaWANGatewayAuth {
         attestation_msg.extend_from_slice(&device_msg.nonce);
 
         // Sign attestation with Dilithium5
-        let signature = dilithium5_sign(&attestation_msg, &self.secret_key)?;
+        let signature = dilithium_sign(&attestation_msg, &self.secret_key)?;
 
         Ok(GatewayAttestation {
             gateway_id,
@@ -259,7 +259,7 @@ impl LoRaWANGatewayAuth {
         // In production, nonce should be stored in attestation or retrieved separately
 
         // Verify Dilithium5 signature
-        match dilithium5_verify(&attestation_msg, &binding.attestation.signature, gateway_public_key) {
+        match dilithium_verify(&attestation_msg, &binding.attestation.signature, gateway_public_key) {
             Ok(valid) => {
                 info!(
                     device = %hex::encode(binding.device_eui),

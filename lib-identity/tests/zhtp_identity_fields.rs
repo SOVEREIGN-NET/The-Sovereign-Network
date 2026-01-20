@@ -191,7 +191,7 @@ fn test_citizenship_fields() {
 // This ensures all cryptographic fields are derived correctly per spec
 fn create_test_identity() -> ZhtpIdentity {
     // Use realistic Dilithium2 key sizes for testing
-    // Dilithium2: PK = 1312 bytes, SK = 2528 bytes
+    // Dilithium2: PK = 1312 bytes, SK = 2560 bytes
     // Using deterministic values for repeatability in tests
     let public_key = PublicKey {
         dilithium_pk: vec![42u8; 1312],  // Real Dilithium2 public key size
@@ -199,7 +199,7 @@ fn create_test_identity() -> ZhtpIdentity {
         key_id: [42u8; 32],
     };
     let private_key = PrivateKey {
-        dilithium_sk: vec![1u8; 2528],   // Real Dilithium2 secret key size
+        dilithium_sk: vec![1u8; 2560],   // Real Dilithium2 secret key size
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -261,7 +261,7 @@ fn test_deserialization_requires_rederive() {
 
     // SAFE PATH: Using from_serialized helper (enforces re-derivation)
     let private_key = PrivateKey {
-        dilithium_sk: vec![1u8; 2528],
+        dilithium_sk: vec![1u8; 2560],
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -299,7 +299,7 @@ fn test_deterministic_derivation_golden_vector() {
         key_id: [0u8; 32],
     };
     let private_key_zeros = PrivateKey {
-        dilithium_sk: vec![0u8; 2528],  // Real Dilithium2 SK size
+        dilithium_sk: vec![0u8; 2560],  // Real Dilithium2 SK size
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -383,7 +383,7 @@ fn test_deterministic_derivation_golden_vector() {
         key_id: [0xCD; 32],
     };
     let private_key_pattern = PrivateKey {
-        dilithium_sk: vec![0xEF; 2528],  // Pattern: 0xEF repeated
+        dilithium_sk: vec![0xEF; 2560],  // Pattern: 0xEF repeated
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -446,7 +446,7 @@ fn test_dao_voting_power_rules() {
         key_id: [42u8; 32],
     };
     let private_key = PrivateKey {
-        dilithium_sk: vec![1u8; 2528],
+        dilithium_sk: vec![1u8; 2560],
         kyber_sk: vec![],
         master_seed: vec![],
     };

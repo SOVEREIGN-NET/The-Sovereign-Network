@@ -93,7 +93,7 @@ use thiserror::Error;
 /// Rationale:
 /// - Matches QUIC max datagram size for efficient transport
 /// - Matches WiFi Direct limit (lib-network fragmentation_v2.rs)
-/// - Accommodates post-quantum signatures (Dilithium3: ~3KB) + justifications
+/// - Accommodates post-quantum signatures (Dilithium5: ~4.6KB) + justifications
 /// - ProposeMessage with 500 votes × (64B hash + 3KB sig) ≈ 1.5 MB
 pub const MAX_CONSENSUS_MESSAGE_SIZE: usize = 8 * 1024 * 1024; // 8 MB
 

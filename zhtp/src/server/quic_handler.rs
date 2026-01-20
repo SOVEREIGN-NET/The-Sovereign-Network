@@ -753,9 +753,13 @@ impl QuicHandler {
         let peer_did = &peer_identity.did;
 
         // Check if identity already exists
-        let identity_id = lib_crypto::Hash::from_bytes(
-            &lib_crypto::hash_blake3(peer_did.as_bytes()).to_vec()
-        );
+        let identity_id = match lib_identity::did::parse_did_to_identity_id(peer_did) {
+            Ok(id) => id,
+            Err(e) => {
+                warn!(peer_did = %peer_did, error = %e, "Invalid DID format, cannot check identity");
+                return;
+            }
+        };
 
         {
             let identity_mgr = self.identity_manager.read().await;

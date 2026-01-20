@@ -545,7 +545,7 @@ mod tests {
     async fn test_case5_dilithium_pk_match() {
         let cache = TlsPinCache::new();
         let node_id_key: NodeIdKey = [50u8; 32];
-        let valid_dilithium_pk = vec![55u8; 1312]; // Dilithium3 public key size
+        let valid_dilithium_pk = vec![55u8; 1312]; // Dilithium2 public key size
 
         // Cache entry with Dilithium PK
         let entry = PinCacheEntry {

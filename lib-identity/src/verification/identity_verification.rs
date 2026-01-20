@@ -405,7 +405,7 @@ impl IdentityVerifier {
     /// Trust anchors must have valid cryptographic signatures and be within their validity period.
     /// Only anchors with non-zero public keys are considered valid (all-zero keys are rejected).
     async fn verify_against_trust_anchors(&self, _identity: &ZhtpIdentity) -> Result<TrustAnchorVerificationResult, Box<dyn std::error::Error>> {
-        use lib_crypto::post_quantum::dilithium::dilithium5_verify;
+        use lib_crypto::post_quantum::dilithium::dilithium_verify;
 
         let mut verified_anchors = Vec::new();
         let mut max_trust_level = TrustLevel::Minimal;
@@ -441,7 +441,7 @@ impl IdentityVerifier {
                 false  // Empty signature is invalid
             } else {
                 // Attempt to verify with Dilithium5
-                match dilithium5_verify(&anchor_data, &anchor.issuer_signature, &anchor.public_key) {
+                match dilithium_verify(&anchor_data, &anchor.issuer_signature, &anchor.public_key) {
                     Ok(valid) => valid,
                     Err(_) => false,  // Signature verification failed
                 }
@@ -676,14 +676,14 @@ mod tests {
 
     fn create_test_identity() -> ZhtpIdentity {
         // Use realistic Dilithium2 key sizes for testing
-        // Dilithium2: PK = 1312 bytes, SK = 2528 bytes
+        // Dilithium2: PK = 1312 bytes, SK = 2560 bytes
         let public_key = lib_crypto::PublicKey {
             dilithium_pk: vec![42u8; 1312],  // Real Dilithium2 public key size
             kyber_pk: vec![],
             key_id: [42u8; 32],
         };
         let private_key = lib_crypto::PrivateKey {
-            dilithium_sk: vec![1u8; 2528],   // Real Dilithium2 secret key size
+            dilithium_sk: vec![1u8; 2560],   // Real Dilithium2 secret key size
             kyber_sk: vec![],
             master_seed: vec![],
         };

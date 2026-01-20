@@ -12,7 +12,7 @@ use serde::{Serialize, Deserialize};
 use lib_crypto::{
     post_quantum::{
         kyber1024_keypair, kyber1024_encapsulate, kyber1024_decapsulate,
-        dilithium5_keypair, dilithium5_sign, dilithium5_verify,
+        dilithium5_keypair, dilithium_sign, dilithium_verify,
     },
 };
 
@@ -93,7 +93,7 @@ pub fn create_pqc_offer(suite: PqcCapability) -> Result<(PqcHandshakeOffer, PqcH
 
     let kyber_pk_vec = kyber_pk.to_vec();
     let binder = binder_bytes(suite.as_str(), &kyber_pk_vec);
-    let signature = dilithium5_sign(&binder, &dilithium_sk)?;
+    let signature = dilithium_sign(&binder, &dilithium_sk)?;
 
     let offer = PqcHandshakeOffer {
         suite: suite.clone(),
@@ -111,17 +111,26 @@ pub fn create_pqc_offer(suite: PqcCapability) -> Result<(PqcHandshakeOffer, PqcH
     Ok((offer, state))
 }
 
-/// Verify a PQC offer (Dilithium5 signature over binder)
+/// Verify a PQC offer (Dilithium signature over binder)
 pub fn verify_pqc_offer(offer: &PqcHandshakeOffer) -> Result<()> {
+    println!("verify_pqc_offer: pk_len={}, sig_len={}, kyber_pk_len={}",
+        offer.dilithium_public_key.len(),
+        offer.signature.len(),
+        offer.kyber_public_key.len()
+    );
     if !offer.suite.is_enabled() {
+        println!("verify_pqc_offer: FAILED - suite disabled");
         return Err(anyhow!("Peer PQC suite disabled"));
     }
 
     let binder = binder_bytes(offer.suite.as_str(), &offer.kyber_public_key);
-    let valid = dilithium5_verify(&binder, &offer.signature, &offer.dilithium_public_key)?;
+    println!("verify_pqc_offer: binder_len={}, calling dilithium_verify", binder.len());
+    let valid = dilithium_verify(&binder, &offer.signature, &offer.dilithium_public_key)?;
     if !valid {
-        return Err(anyhow!("Invalid Dilithium5 signature on PQC offer"));
+        println!("verify_pqc_offer: FAILED - dilithium_verify returned false");
+        return Err(anyhow!("Invalid Dilithium signature on PQC offer (pk_len={})", offer.dilithium_public_key.len()));
     }
+    println!("verify_pqc_offer: SUCCESS");
     Ok(())
 }
 

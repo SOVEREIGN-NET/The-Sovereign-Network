@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn, debug};
 
 use lib_crypto::{PublicKey, hash_blake3};
-use lib_crypto::post_quantum::dilithium::{dilithium2_verify};
+use lib_crypto::post_quantum::dilithium::{dilithium_verify, dilithium_sign};
 use lib_identity::ZhtpIdentity;
 
 use crate::protocols::zhtp_auth::NodeCapabilities;
@@ -77,7 +77,7 @@ impl ZhtpPeerInfo {
         let data_hash = hash_blake3(&serialized);
         
         // Verify Dilithium2 signature
-        match dilithium2_verify(&data_hash, &self.signature, &self.dilithium_pubkey) {
+        match dilithium_verify(&data_hash, &self.signature, &self.dilithium_pubkey) {
             Ok(valid) => Ok(valid),
             Err(e) => {
                 warn!("Signature verification failed: {}", e);
@@ -484,7 +484,7 @@ mod tests {
         // Sign the peer info
         let serialized = bincode::serialize(&peer_info).unwrap();
         let data_hash = hash_blake3(&serialized);
-        let signature = lib_crypto::post_quantum::dilithium::dilithium2_sign(&data_hash, &dilithium_privkey).unwrap();
+        let signature = dilithium_sign(&data_hash, &dilithium_privkey).unwrap();
         
         peer_info.signature = signature;
         peer_info

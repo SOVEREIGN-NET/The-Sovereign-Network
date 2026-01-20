@@ -1361,9 +1361,8 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid update signature hex encoding: {}", e))?;
 
         let identity_mgr = self.identity_manager.read().await;
-        let owner_id = lib_crypto::Hash::from_bytes(
-            &lib_crypto::hash_blake3(owner_did.as_bytes()).to_vec(),
-        );
+        let owner_id = lib_identity::did::parse_did_to_identity_id(owner_did)
+            .map_err(|e| anyhow!("Invalid owner DID format: {}", e))?;
         let owner_identity = identity_mgr
             .get_identity(&owner_id)
             .ok_or_else(|| anyhow!("Owner identity not found: {}", owner_did))?;
@@ -1453,9 +1452,8 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid manifest signature encoding: {}", e))?;
 
         let identity_mgr = self.identity_manager.read().await;
-        let author_id = lib_crypto::Hash::from_bytes(
-            &lib_crypto::hash_blake3(manifest.author_did.as_bytes()).to_vec(),
-        );
+        let author_id = lib_identity::did::parse_did_to_identity_id(&manifest.author_did)
+            .map_err(|e| anyhow!("Invalid author DID format: {}", e))?;
         let author_identity = identity_mgr.get_identity(&author_id)
             .ok_or_else(|| anyhow!("Author identity not found: {}", manifest.author_did))?;
 
