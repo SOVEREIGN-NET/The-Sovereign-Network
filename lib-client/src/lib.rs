@@ -276,6 +276,36 @@ pub extern "C" fn zhtp_client_sign_registration_proof(
     }
 }
 
+/// Sign UHP handshake challenge. Returns signature bytes.
+/// Private keys stay in Rust - never exposed to caller.
+#[no_mangle]
+pub extern "C" fn zhtp_client_sign_uhp_challenge(
+    handle: *const IdentityHandle,
+    challenge: *const u8,
+    challenge_len: usize,
+) -> ByteBuffer {
+    if handle.is_null() || challenge.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let challenge_bytes = unsafe { std::slice::from_raw_parts(challenge, challenge_len) };
+
+    // Use generic message signing to sign the UHP challenge
+    // The private_key stays in Rust and is never exposed
+    match identity::sign_message(identity, challenge_bytes) {
+        Ok(mut sig) => {
+            let buf = ByteBuffer {
+                data: sig.as_mut_ptr(),
+                len: sig.len(),
+            };
+            std::mem::forget(sig);
+            buf
+        }
+        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+    }
+}
+
 /// Serialize identity to JSON. Caller must free with `zhtp_client_string_free`.
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_serialize(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
