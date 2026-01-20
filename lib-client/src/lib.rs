@@ -384,16 +384,27 @@ pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const Identity
         "network_genesis": zero_bytes
     });
 
+    // Convert key_id to [u8; 32] array format
+    let key_id_arr: [u8; 32] = {
+        let mut arr = [0u8; 32];
+        let src = key_id.as_slice();
+        let len = std::cmp::min(src.len(), 32);
+        arr[..len].copy_from_slice(&src[..len]);
+        arr
+    };
+
     // Build the FULL ZhtpIdentity format for from_serialized()
+    // IMPORTANT: Using "Device" identity_type because "Human" requires age and jurisdiction
+    // which mobile clients don't have. Device type avoids this requirement.
     let zhtp_identity = serde_json::json!({
         // Required fields
         "id": id_bytes,
         "did": identity.did,
-        "identity_type": "Human",
+        "identity_type": "Device",  // NOT "Human" - Human requires age/jurisdiction
         "public_key": {
             "dilithium_pk": identity.public_key,
             "kyber_pk": identity.kyber_public_key,
-            "key_id": key_id
+            "key_id": key_id_arr
         },
         "node_id": node_id_struct,
         "device_node_ids": {
@@ -402,17 +413,19 @@ pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const Identity
         "primary_device": identity.device_id,
         "dao_member_id": dao_member_id,
         "ownership_proof": {
+            "proof_system": "dilithium-pop-placeholder-v0",
             "proof_data": [],
-            "proof_type": "ownership",
-            "verified": false,
-            "timestamp": identity.created_at
+            "public_inputs": id_bytes.clone(),
+            "verification_key": identity.public_key.clone(),
+            "plonky2_proof": null,
+            "proof": []
         },
 
         // Optional fields with defaults
         "credentials": {},
         "metadata": {},
         "attestations": [],
-        "reputation": 0,
+        "reputation": 100,  // Device default reputation
         "access_level": "Standard",
         "age": null,
         "jurisdiction": null,
