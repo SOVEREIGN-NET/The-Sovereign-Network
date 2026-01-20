@@ -1467,22 +1467,27 @@ impl IdentityHandler {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
-        // Register identity in manager (public info only)
-        {
+        // Register identity with full citizenship (creates 3 wallets)
+        let citizenship_result = {
             let mut identity_manager = self.identity_manager.write().await;
+            let mut economic_model = lib_identity::economics::EconomicModel::new();
 
-            // Create a minimal identity for registration
-            // The full ZhtpIdentity with private keys stays on the client
-            identity_manager.register_external_identity(
-                identity_id.clone(),
+            // Register as citizen with 3 wallets
+            identity_manager.register_external_citizen_identity(
                 req_data.did.clone(),
                 public_key.clone(),
-                identity_type.clone(),
+                kyber_public_key.clone().unwrap_or_default(),
                 req_data.device_id.clone(),
                 req_data.display_name.clone(),
                 created_at,
-            )?;
-        }
+                &mut economic_model,
+            ).await?
+        };
+
+        // Extract wallet info from citizenship result
+        let primary_wallet_id = hex::encode(&citizenship_result.primary_wallet_id.0);
+        let ubi_wallet_id = hex::encode(&citizenship_result.ubi_wallet_id.0);
+        let savings_wallet_id = hex::encode(&citizenship_result.savings_wallet_id.0);
 
         // Create blockchain transaction for identity registration
         let did_string = req_data.did.clone();
@@ -1493,43 +1498,36 @@ impl IdentityHandler {
         let identity_transaction_data = IdentityTransactionData::new(
             did_string.clone(),
             identity_id.to_string(),
-            public_key_bytes.clone(), // Public key only
+            public_key_bytes.clone(),
             ownership_proof,
             req_data.identity_type.clone(),
-            Hash::default(), // DID document hash
-            0, // registration fee - system transactions are fee-free
-            0, // DAO fee - system transactions are fee-free
+            Hash::default(),
+            0,
+            0,
         );
 
-        // Create blockchain transaction with client's public key
         use lib_blockchain::transaction::TransactionOutput;
 
-        // Welcome bonus for new citizens (if human type)
-        let welcome_bonus_amount = if identity_type == IdentityType::Human { 5000u64 } else { 0u64 };
+        let welcome_bonus_amount = 5000u64; // Citizens always get welcome bonus
 
-        let outputs = if welcome_bonus_amount > 0 {
-            vec![TransactionOutput {
-                commitment: lib_blockchain::types::hash::blake3_hash(
-                    format!("welcome_bonus_commitment_{}_{}", identity_id, welcome_bonus_amount).as_bytes()
-                ),
-                note: lib_blockchain::types::hash::blake3_hash(
-                    format!("welcome_bonus_note_{}", identity_id).as_bytes()
-                ),
-                recipient: PublicKey::new(public_key_bytes.clone()),
-            }]
-        } else {
-            vec![]
-        };
+        let outputs = vec![TransactionOutput {
+            commitment: lib_blockchain::types::hash::blake3_hash(
+                format!("welcome_bonus_commitment_{}_{}", identity_id, welcome_bonus_amount).as_bytes()
+            ),
+            note: lib_blockchain::types::hash::blake3_hash(
+                format!("welcome_bonus_note_{}", identity_id).as_bytes()
+            ),
+            recipient: PublicKey::new(public_key_bytes.clone()),
+        }];
 
-        // Sign transaction with server key (registration authority)
         let server_keypair = lib_crypto::generate_keypair()
             .map_err(|e| anyhow::anyhow!("Failed to generate server keypair: {}", e))?;
 
         let transaction = Transaction::new_identity_registration(
             identity_transaction_data,
-            outputs,
+            outputs.clone(),
             Signature {
-                signature: vec![0; 2420], // Placeholder, will be updated
+                signature: vec![0; 2420],
                 public_key: PublicKey::new(server_keypair.public_key.dilithium_pk.to_vec()),
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: created_at,
@@ -1537,7 +1535,6 @@ impl IdentityHandler {
             Vec::new(),
         );
 
-        // Get transaction hash and sign properly
         let tx_hash = transaction.hash();
         let crypto_signature = lib_crypto::sign_message(&server_keypair, tx_hash.as_bytes())
             .map_err(|e| anyhow::anyhow!("Failed to sign transaction: {}", e))?;
@@ -1553,19 +1550,7 @@ impl IdentityHandler {
                 0,
                 0,
             ),
-            if welcome_bonus_amount > 0 {
-                vec![TransactionOutput {
-                    commitment: lib_blockchain::types::hash::blake3_hash(
-                        format!("welcome_bonus_commitment_{}_{}", identity_id, welcome_bonus_amount).as_bytes()
-                    ),
-                    note: lib_blockchain::types::hash::blake3_hash(
-                        format!("welcome_bonus_note_{}", identity_id).as_bytes()
-                    ),
-                    recipient: PublicKey::new(public_key_bytes.clone()),
-                }]
-            } else {
-                vec![]
-            },
+            outputs,
             Signature {
                 signature: crypto_signature.signature,
                 public_key: PublicKey::new(server_keypair.public_key.dilithium_pk.to_vec()),
@@ -1575,7 +1560,6 @@ impl IdentityHandler {
             Vec::new(),
         );
 
-        // Submit to blockchain
         let blockchain_tx_hash = match self.submit_transaction_to_blockchain(final_transaction).await {
             Ok(hash) => {
                 tracing::info!("⛓️ Identity registered on blockchain: {}", &hash[..16]);
@@ -1596,6 +1580,9 @@ impl IdentityHandler {
             "device_id": req_data.device_id,
             "display_name": req_data.display_name,
             "identity_type": req_data.identity_type,
+            "primary_wallet_id": primary_wallet_id,
+            "ubi_wallet_id": ubi_wallet_id,
+            "savings_wallet_id": savings_wallet_id,
             "created_at": created_at,
             "registered_at": now,
         });
@@ -1610,11 +1597,10 @@ impl IdentityHandler {
             }
         }
 
-        tracing::info!("✅ Client identity registered: {} ({})",
-            &req_data.did[..32.min(req_data.did.len())],
-            req_data.identity_type);
+        tracing::info!("✅ Client citizen registered: {} with 3 wallets",
+            &req_data.did[..32.min(req_data.did.len())]);
 
-        // Return success response
+        // Return success response with wallet IDs and seed phrases
         let response_body = json!({
             "status": "registered",
             "identity_id": identity_id.to_string(),
@@ -1625,6 +1611,14 @@ impl IdentityHandler {
             "welcome_bonus": welcome_bonus_amount,
             "registered_at": now,
             "pqc_enabled": req_data.kyber_public_key.is_some(),
+            "primary_wallet_id": primary_wallet_id,
+            "ubi_wallet_id": ubi_wallet_id,
+            "savings_wallet_id": savings_wallet_id,
+            "wallet_seed_phrases": {
+                "primary": citizenship_result.wallet_seed_phrases.primary_wallet_seeds.words.join(" "),
+                "ubi": citizenship_result.wallet_seed_phrases.ubi_wallet_seeds.words.join(" "),
+                "savings": citizenship_result.wallet_seed_phrases.savings_wallet_seeds.words.join(" ")
+            }
         });
 
         Ok(ZhtpResponse::json(&response_body, None)?)

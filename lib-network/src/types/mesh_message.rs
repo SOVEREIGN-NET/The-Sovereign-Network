@@ -1111,8 +1111,8 @@ mod tests {
             auth_proof: Some(auth_proof),
         };
 
-        let sender = PublicKey::new(vec![10u8; 1952]); // Dilithium3 public key size
-        let receiver = PublicKey::new(vec![20u8; 1952]);
+        let sender = PublicKey::new(vec![10u8; 2592]); // Dilithium5 public key size
+        let receiver = PublicKey::new(vec![20u8; 2592]);
 
         let mut envelope = MeshMessageEnvelope::from_zhtp_request(
             99,
@@ -1185,8 +1185,8 @@ mod tests {
             auth_proof: Some(auth_proof),
         };
 
-        let sender = PublicKey::new(vec![1u8; 1952]);
-        let receiver = PublicKey::new(vec![2u8; 1952]);
+        let sender = PublicKey::new(vec![1u8; 2592]);
+        let receiver = PublicKey::new(vec![2u8; 2592]);
 
         // OLD APPROACH: Double serialization - serialize full request into payload
         let full_request_serialized = bincode::serialize(&request).unwrap();

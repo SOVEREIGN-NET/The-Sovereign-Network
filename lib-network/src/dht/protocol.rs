@@ -6,7 +6,7 @@
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
 use lib_crypto::{Hash, PostQuantumSignature, PublicKey, SignatureAlgorithm};
-use lib_crypto::post_quantum::dilithium::{dilithium2_sign, dilithium2_verify, dilithium2_keypair};
+use lib_crypto::post_quantum::dilithium::{dilithium_sign, dilithium_verify, dilithium2_keypair};
 use lib_identity::ZhtpIdentity;
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -672,7 +672,7 @@ impl DhtProtocolHandler {
         signing_data.extend_from_slice(&bincode::serialize(payload)?);
         
         // Generate Dilithium2 signature
-        let signature_bytes = dilithium2_sign(&signing_data, private_key)
+        let signature_bytes = dilithium_sign(&signing_data, private_key)
             .map_err(|e| anyhow!("Failed to sign DHT packet: {}", e))?;
         
         let timestamp = SystemTime::now()
@@ -714,7 +714,7 @@ impl DhtProtocolHandler {
                     // All signatures must be cryptographically valid - no placeholders allowed
                     Err(anyhow!("Empty public key not allowed"))
                 } else {
-                    dilithium2_verify(&signing_data, &signature.signature, &signature.public_key.dilithium_pk)
+                    dilithium_verify(&signing_data, &signature.signature, &signature.public_key.dilithium_pk)
                 }
                     .map_err(|e| anyhow!("Failed to verify DHT packet signature: {}", e))
             }

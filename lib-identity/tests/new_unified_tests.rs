@@ -272,7 +272,7 @@ fn test_creates_real_pqc_keypair() {
         None,
     ).expect("new_unified should succeed");
 
-    // Verify Dilithium2 keypair sizes (expected: PK=1312, SK=2528)
+    // Verify Dilithium2 keypair sizes (expected: PK=1312, SK=2560)
     assert_eq!(identity.public_key.dilithium_pk.len(), 1312,
         "Dilithium2 public key should be 1312 bytes");
     // Note: private_key not stored in ZhtpIdentity after construction

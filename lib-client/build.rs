@@ -6,8 +6,9 @@
 // - Kotlin bindings for Android
 
 fn main() {
-    #[cfg(feature = "uniffi")]
-    {
+    println!("cargo:rerun-if-changed=uniffi/zhtp_client.udl");
+
+    if std::env::var_os("CARGO_FEATURE_UNIFFI").is_some() {
         uniffi::generate_scaffolding("uniffi/zhtp_client.udl")
             .expect("Failed to generate UniFFI scaffolding");
     }

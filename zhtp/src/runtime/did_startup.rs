@@ -507,18 +507,27 @@ impl WalletStartupManager {
         // ════════════════════════════════════════════════════════════════════
 
         // Check for auto-wallet mode via environment variable (for automated testing/deployment)
-        if let Ok(auto_mode) = std::env::var("ZHTP_AUTO_WALLET") {
-            if auto_mode == "1" || auto_mode.to_lowercase() == "true" {
+        // OR if stdin is not a TTY (running as systemd service)
+        let auto_wallet = std::env::var("ZHTP_AUTO_WALLET")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        let is_interactive = atty::is(atty::Stream::Stdin);
+
+        if auto_wallet || !is_interactive {
+            if !is_interactive {
+                println!("🤖 Non-interactive mode detected (no TTY) - generating wallet automatically");
+            } else {
                 println!("🤖 Auto-wallet mode enabled - generating wallet automatically");
-                let result = Self::quick_start_wallet().await?;
-
-                // Save auto-generated wallet to keystore
-                save_to_keystore(&keystore_path, &result)
-                    .map_err(|e| anyhow!("Failed to save identity to keystore: {}", e))?;
-                println!("✓ Identity saved to {:?}", keystore_path);
-
-                return Ok(result);
             }
+            let result = Self::quick_start_wallet().await?;
+
+            // Save auto-generated wallet to keystore
+            save_to_keystore(&keystore_path, &result)
+                .map_err(|e| anyhow!("Failed to save identity to keystore: {}", e))?;
+            println!("✓ Identity saved to {:?}", keystore_path);
+
+            return Ok(result);
         }
 
         println!("\n═══════════════════════════════════════════");

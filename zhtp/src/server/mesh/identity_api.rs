@@ -1171,15 +1171,14 @@ fn register_wallet_on_blockchain(
             })
             .unwrap_or_else(|| lib_blockchain::Hash::from_slice(&[0u8; 32]));
         
-        let initial_balance = if wallet_type == "Savings" {
+        // Welcome bonus (5000 ZHTP) goes to Primary wallet
+        let initial_balance = if wallet_type == "Primary" {
             citizenship_result.get("welcome_bonus")
                 .and_then(|wb| wb.get("bonus_amount"))
                 .and_then(|v| v.as_u64())
-                .unwrap_or(4000)
-        } else if wallet_type == "Primary" {
-            1000
+                .unwrap_or(5000) // Default welcome bonus amount
         } else {
-            0
+            0 // Other wallets start with 0 balance
         };
         
         let wallet_data = lib_blockchain::WalletTransactionData {

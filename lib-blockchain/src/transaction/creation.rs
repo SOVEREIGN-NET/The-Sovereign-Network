@@ -271,8 +271,8 @@ impl TransactionBuilder {
 
     /// Sign a transaction with the given private key using lib-crypto
     fn sign_transaction(transaction: &Transaction, private_key: &PrivateKey) -> Result<Signature, String> {
-        use lib_crypto::post_quantum::dilithium::{dilithium2_sign, dilithium5_sign};
-        
+        use lib_crypto::post_quantum::dilithium::dilithium_sign;
+
         // Create transaction hash for signing (without signature)
         let mut tx_for_signing = transaction.clone();
         tx_for_signing.signature = Signature {
@@ -281,25 +281,24 @@ impl TransactionBuilder {
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         };
-        
+
         let tx_hash = crate::transaction::hashing::hash_transaction(&tx_for_signing);
-        
-        // Use the provided private key for signing
-        let signature_result = if private_key.dilithium_sk.len() == 2528 { // Dilithium2 size
-            dilithium2_sign(tx_hash.as_bytes(), &private_key.dilithium_sk)
-        } else { // Assume Dilithium5
-            dilithium5_sign(tx_hash.as_bytes(), &private_key.dilithium_sk)
-        };
-        
+
+        // Key size constants (from pqcrypto_dilithium)
+        const DILITHIUM2_SECRETKEY_BYTES: usize = 2560;
+
+        // Use auto-detecting sign function
+        let signature_result = dilithium_sign(tx_hash.as_bytes(), &private_key.dilithium_sk);
+
         match signature_result {
             Ok(signature_bytes) => {
                 let signature = Signature {
                     signature: signature_bytes,
                     public_key: PublicKey::new(private_key.dilithium_sk[..32].to_vec()), // Derive public key
-                    algorithm: if private_key.dilithium_sk.len() == 2528 { 
-                        SignatureAlgorithm::Dilithium2 
-                    } else { 
-                        SignatureAlgorithm::Dilithium5 
+                    algorithm: if private_key.dilithium_sk.len() == DILITHIUM2_SECRETKEY_BYTES {
+                        SignatureAlgorithm::Dilithium2
+                    } else {
+                        SignatureAlgorithm::Dilithium5
                     },
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)

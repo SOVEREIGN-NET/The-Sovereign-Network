@@ -161,6 +161,13 @@ pub struct Blockchain {
     /// listeners after loading a blockchain from storage.
     #[serde(skip)]
     pub event_publisher: crate::events::BlockchainEventPublisher,
+    /// UBI (Universal Basic Income) registry - tracks eligible citizens and their payout status
+    /// Key: identity_id (hex string), Value: UBI registration data
+    #[serde(default)]
+    pub ubi_registry: HashMap<String, UbiRegistryEntry>,
+    /// UBI registration block heights (identity_id -> block_height)
+    #[serde(default)]
+    pub ubi_blocks: HashMap<String, u64>,
 }
 
 /// Validator information stored on-chain
@@ -188,6 +195,30 @@ pub struct ValidatorInfo {
     pub blocks_validated: u64,
     /// Slash count
     pub slash_count: u32,
+}
+
+/// UBI (Universal Basic Income) registry entry
+/// Tracks a citizen's UBI eligibility and payout status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UbiRegistryEntry {
+    /// Citizen's identity ID (hex string)
+    pub identity_id: String,
+    /// UBI wallet ID where payments are sent
+    pub ubi_wallet_id: String,
+    /// Daily UBI amount (~33 ZHTP)
+    pub daily_amount: u64,
+    /// Monthly UBI amount (1000 ZHTP)
+    pub monthly_amount: u64,
+    /// Block height when registered for UBI
+    pub registered_at_block: u64,
+    /// Block height of last UBI payout (None if never received)
+    pub last_payout_block: Option<u64>,
+    /// Total UBI received to date
+    pub total_received: u64,
+    /// Accumulated remainder from integer division (1000/30 = 33 remainder 10)
+    pub remainder_balance: u64,
+    /// Whether UBI is currently active for this citizen
+    pub is_active: bool,
 }
 
 /// Economics transaction record (simplified for blockchain package)
@@ -352,6 +383,8 @@ impl BlockchainV1 {
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
+            ubi_registry: HashMap::new(),
+            ubi_blocks: HashMap::new(),
         }
     }
 }
@@ -417,6 +450,8 @@ impl Blockchain {
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
+            ubi_registry: HashMap::new(),
+            ubi_blocks: HashMap::new(),
         };
 
         blockchain.update_utxo_set(&genesis_block)?;
@@ -784,6 +819,12 @@ impl Blockchain {
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
             warn!("Error processing UBI claims at height {}: {}", self.height, e);
             // Don't fail block processing for UBI errors
+        }
+
+        // Process automatic UBI distribution to all eligible citizens
+        if let Err(e) = self.process_automatic_ubi_distribution(self.height) {
+            warn!("Error processing automatic UBI distribution at height {}: {}", self.height, e);
+            // Don't fail block processing for UBI distribution errors
         }
 
         if let Err(e) = self.process_profit_declarations(&block) {
@@ -1590,15 +1631,41 @@ impl Blockchain {
                                 // Preserve controlled_nodes from existing identity
                                 new_identity_data.controlled_nodes = existing_identity.controlled_nodes.clone();
                             }
-                            
+
                             self.identity_registry.insert(
                                 identity_data.did.clone(),
-                                new_identity_data
+                                new_identity_data.clone()
                             );
                             self.identity_blocks.insert(
                                 identity_data.did.clone(),
                                 block.height()
                             );
+
+                            // Register for UBI if this is a citizen identity
+                            if identity_data.identity_type == "verified_citizen"
+                                || identity_data.identity_type == "citizen"
+                                || identity_data.identity_type == "external_citizen" {
+                                // Find the UBI wallet from owned_wallets
+                                let ubi_wallet_id = new_identity_data.owned_wallets.iter()
+                                    .find(|wallet_id| {
+                                        self.wallet_registry.get(*wallet_id)
+                                            .map(|w| w.wallet_type == "UBI")
+                                            .unwrap_or(false)
+                                    })
+                                    .cloned();
+
+                                if let Some(ubi_wallet) = ubi_wallet_id {
+                                    if let Err(e) = self.register_for_ubi(
+                                        identity_data.did.clone(),
+                                        ubi_wallet,
+                                        block.height()
+                                    ) {
+                                        warn!("Failed to register {} for UBI: {}", identity_data.did, e);
+                                    }
+                                } else {
+                                    warn!("No UBI wallet found for citizen {}", identity_data.did);
+                                }
+                            }
                         }
                         TransactionType::IdentityUpdate => {
                             // CRITICAL: Preserve controlled_nodes on update
@@ -5965,6 +6032,122 @@ impl Blockchain {
                 );
             }
         }
+        Ok(())
+    }
+
+    /// Blocks per day (assuming ~10 second block time)
+    /// At 10s/block: 24 hours = 86,400 seconds ÷ 10 = 8,640 blocks
+    const BLOCKS_PER_DAY: u64 = 8_640;
+
+    /// Process automatic UBI distribution for all eligible citizens
+    ///
+    /// This runs every block and distributes daily UBI (~33 ZHTP) to citizens
+    /// who are due for their payout (last_payout_block + BLOCKS_PER_DAY <= current_block).
+    ///
+    /// This is the "best" approach - fully automatic, deterministic, no user action required.
+    pub fn process_automatic_ubi_distribution(&mut self, current_block: u64) -> Result<u64> {
+        let mut total_distributed = 0u64;
+        let mut recipients_paid = 0u64;
+
+        // Collect updates to avoid borrowing issues
+        let mut updates: Vec<(String, u64, Option<u64>, u64)> = Vec::new();
+
+        for (identity_id, entry) in self.ubi_registry.iter() {
+            if !entry.is_active {
+                continue;
+            }
+
+            // Check if due for payout
+            let is_due = match entry.last_payout_block {
+                Some(last_block) => current_block.saturating_sub(last_block) >= Self::BLOCKS_PER_DAY,
+                None => true, // Never received payout, eligible immediately
+            };
+
+            if is_due {
+                // Calculate payout amount with remainder handling
+                let mut payout = entry.daily_amount;
+                let mut new_remainder = entry.remainder_balance + (entry.monthly_amount % 30);
+
+                // Distribute accumulated remainder when it exceeds a day's worth
+                if new_remainder >= 30 {
+                    payout += new_remainder / 30;
+                    new_remainder %= 30;
+                }
+
+                updates.push((
+                    identity_id.clone(),
+                    payout,
+                    Some(current_block),
+                    new_remainder,
+                ));
+
+                total_distributed += payout;
+                recipients_paid += 1;
+            }
+        }
+
+        // Apply updates
+        for (identity_id, payout, last_block, remainder) in updates {
+            if let Some(entry) = self.ubi_registry.get_mut(&identity_id) {
+                entry.last_payout_block = last_block;
+                entry.total_received += payout;
+                entry.remainder_balance = remainder;
+
+                // Credit the UBI wallet in wallet_registry
+                let wallet_id = entry.ubi_wallet_id.clone();
+                if let Some(wallet) = self.wallet_registry.get_mut(&wallet_id) {
+                    wallet.initial_balance += payout;
+                    debug!(
+                        "💰 UBI distributed: {} ZHTP to wallet {} (identity {})",
+                        payout, wallet_id, identity_id
+                    );
+                }
+            }
+        }
+
+        if recipients_paid > 0 {
+            info!(
+                "🌍 UBI DISTRIBUTION: {} ZHTP to {} citizens at block {}",
+                total_distributed, recipients_paid, current_block
+            );
+        }
+
+        Ok(total_distributed)
+    }
+
+    /// Register a citizen for automatic UBI distribution
+    ///
+    /// Called when a new citizen identity is registered. Adds them to the UBI registry
+    /// for automatic daily payouts.
+    pub fn register_for_ubi(&mut self, identity_id: String, ubi_wallet_id: String, current_block: u64) -> Result<()> {
+        // Check if already registered
+        if self.ubi_registry.contains_key(&identity_id) {
+            return Err(anyhow::anyhow!("Identity {} already registered for UBI", identity_id));
+        }
+
+        let monthly_amount = 1000u64; // 1000 ZHTP per month
+        let daily_amount = monthly_amount / 30; // ~33 ZHTP per day
+
+        let entry = UbiRegistryEntry {
+            identity_id: identity_id.clone(),
+            ubi_wallet_id: ubi_wallet_id.clone(),
+            daily_amount,
+            monthly_amount,
+            registered_at_block: current_block,
+            last_payout_block: None, // Will receive first payout on next block processing
+            total_received: 0,
+            remainder_balance: monthly_amount % 30, // 10 remainder from 1000/30
+            is_active: true,
+        };
+
+        self.ubi_registry.insert(identity_id.clone(), entry);
+        self.ubi_blocks.insert(identity_id.clone(), current_block);
+
+        info!(
+            "🎉 UBI REGISTERED: Citizen {} eligible for {} ZHTP daily ({} monthly) at block {}",
+            identity_id, daily_amount, monthly_amount, current_block
+        );
+
         Ok(())
     }
 

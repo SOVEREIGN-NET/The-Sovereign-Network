@@ -143,7 +143,7 @@ impl NodeAnnouncement {
         dilithium_pk: Vec<u8>,
         tls_spki_sha256: [u8; 32],
     ) -> anyhow::Result<()> {
-        use lib_crypto::post_quantum::dilithium::dilithium2_sign;
+        use lib_crypto::post_quantum::dilithium::dilithium_sign;
 
         // Set the fields that will be signed
         self.dilithium_pk = Some(dilithium_pk);
@@ -158,7 +158,7 @@ impl NodeAnnouncement {
 
         // Compute canonical bytes and sign
         let canonical = self.canonical_bytes_for_signing();
-        let signature = dilithium2_sign(&canonical, dilithium_sk)?;
+        let signature = dilithium_sign(&canonical, dilithium_sk)?;
         self.record_sig = Some(signature);
 
         Ok(())
@@ -168,7 +168,7 @@ impl NodeAnnouncement {
     ///
     /// Returns Ok(true) if signature is valid, Ok(false) if invalid, Err if missing fields.
     pub fn verify_signature(&self) -> anyhow::Result<bool> {
-        use lib_crypto::post_quantum::dilithium::dilithium2_verify;
+        use lib_crypto::post_quantum::dilithium::dilithium_verify;
 
         let dilithium_pk = self
             .dilithium_pk
@@ -180,7 +180,7 @@ impl NodeAnnouncement {
             .ok_or_else(|| anyhow::anyhow!("Missing record_sig in announcement"))?;
 
         let canonical = self.canonical_bytes_for_signing();
-        dilithium2_verify(&canonical, record_sig, dilithium_pk)
+        dilithium_verify(&canonical, record_sig, dilithium_pk)
     }
 
     /// Check if this announcement is still valid (not expired)

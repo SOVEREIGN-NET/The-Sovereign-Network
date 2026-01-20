@@ -159,9 +159,14 @@ impl IdentityManager {
             ],
         );
         
-        // Give welcome bonus (1000 ZHTP tokens)
+        // Give welcome bonus (5000 ZHTP tokens)
         let welcome_bonus = crate::citizenship::WelcomeBonus::provide_welcome_bonus(&id, &primary_wallet_id, economic_model).await?;
-        
+
+        // Actually credit the welcome bonus to the Primary wallet
+        if let Some(primary_wallet) = identity.wallet_manager.get_wallet_mut(&primary_wallet_id) {
+            primary_wallet.balance = welcome_bonus.bonus_amount;
+        }
+
         // Store identity and private data
         self.identities.insert(id.clone(), identity);
         self.private_data.insert(id.clone(), private_data);
@@ -260,6 +265,141 @@ impl IdentityManager {
         );
 
         Ok(())
+    }
+
+    /// Register an externally-created identity WITH full citizenship benefits (3 wallets)
+    ///
+    /// This method registers an identity where the keys were generated on the client
+    /// device (e.g., iOS/mobile), but still creates the 3 wallets server-side for
+    /// DAO participation. The server only stores the public key; private keys remain
+    /// on the client device and are NEVER transmitted.
+    ///
+    /// # Returns
+    /// CitizenshipResult with wallet IDs and seed phrases
+    pub async fn register_external_citizen_identity(
+        &mut self,
+        did: String,
+        public_key: lib_crypto::PublicKey,
+        kyber_public_key: Vec<u8>,
+        device_id: String,
+        display_name: Option<String>,
+        created_at: u64,
+        economic_model: &mut crate::economics::EconomicModel,
+    ) -> Result<CitizenshipResult> {
+        // Create base identity using new_external (handles all the boilerplate)
+        let mut identity = ZhtpIdentity::new_external(
+            did.clone(),
+            public_key.clone(),
+            IdentityType::Human,
+            device_id.clone(),
+            display_name.clone(),
+            created_at,
+        )?;
+
+        let id = identity.id.clone();
+
+        // Check for duplicate
+        if self.identities.contains_key(&id) {
+            return Err(anyhow!("Identity already registered: {}", id));
+        }
+
+        // Upgrade to citizen status
+        identity.reputation = 500;
+        identity.access_level = AccessLevel::FullCitizen;
+
+        // Store kyber public key in metadata
+        identity.metadata.insert("kyber_public_key".to_string(), hex::encode(&kyber_public_key));
+        identity.metadata.insert("registration_type".to_string(), "external_citizen".to_string());
+
+        // Create 3 wallets WITH seed phrases
+        let (primary_wallet_id, primary_seed_phrase) = identity.wallet_manager.create_wallet_with_seed_phrase(
+            WalletType::Primary,
+            "Primary Wallet".to_string(),
+            None
+        ).await?;
+
+        let (ubi_wallet_id, ubi_seed_phrase) = identity.wallet_manager.create_wallet_with_seed_phrase(
+            WalletType::UBI,
+            "UBI Wallet".to_string(),
+            None
+        ).await?;
+
+        let (savings_wallet_id, savings_seed_phrase) = identity.wallet_manager.create_wallet_with_seed_phrase(
+            WalletType::Savings,
+            "Savings Wallet".to_string(),
+            None
+        ).await?;
+
+        // Register for DAO governance
+        let dao_registration = crate::citizenship::DaoRegistration::register_for_dao_governance(&id, economic_model).await?;
+
+        // Register for UBI payouts
+        let ubi_registration = crate::citizenship::UbiRegistration::register_for_ubi_payouts(&id, &ubi_wallet_id, economic_model).await?;
+
+        // Grant Web4 access
+        let web4_access = crate::citizenship::Web4Access::grant_web4_access(&id).await?;
+
+        // Create privacy credentials
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let privacy_credentials = PrivacyCredentials::new(
+            id.clone(),
+            vec![
+                self.create_zk_credential(
+                    &id,
+                    CredentialType::AgeVerification,
+                    "age_gte_18".to_string(),
+                    current_time + (365 * 24 * 3600),
+                ).await?,
+                self.create_zk_credential(
+                    &id,
+                    CredentialType::Reputation,
+                    format!("reputation_{}", 500),
+                    current_time + (30 * 24 * 3600),
+                ).await?,
+            ],
+        );
+
+        // Give welcome bonus (5000 ZHTP tokens)
+        let welcome_bonus = crate::citizenship::WelcomeBonus::provide_welcome_bonus(&id, &primary_wallet_id, economic_model).await?;
+
+        // Actually credit the welcome bonus to the Primary wallet
+        if let Some(primary_wallet) = identity.wallet_manager.get_wallet_mut(&primary_wallet_id) {
+            primary_wallet.balance = welcome_bonus.bonus_amount;
+        }
+
+        // Store identity
+        self.identities.insert(id.clone(), identity);
+
+        // Mark identity as imported (enables password functionality)
+        self.password_manager.mark_identity_imported(&id);
+
+        tracing::info!(
+            "📱 EXTERNAL CITIZEN REGISTERED: {} - Full Web4 access granted with 3 wallets",
+            hex::encode(&id.0[..8])
+        );
+
+        // Compile seed phrases
+        let wallet_seed_phrases = crate::citizenship::onboarding::WalletSeedPhrases {
+            primary_wallet_seeds: primary_seed_phrase,
+            ubi_wallet_seeds: ubi_seed_phrase,
+            savings_wallet_seeds: savings_seed_phrase,
+            generated_at: current_time,
+        };
+
+        Ok(CitizenshipResult::new(
+            id,
+            primary_wallet_id,
+            ubi_wallet_id,
+            savings_wallet_id,
+            wallet_seed_phrases,
+            dao_registration,
+            ubi_registration,
+            web4_access,
+            privacy_credentials,
+            welcome_bonus,
+        ))
     }
 
     /// List all identities

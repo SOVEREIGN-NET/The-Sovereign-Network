@@ -10,12 +10,13 @@ pub const KYBER1024_PUBLICKEY_BYTES: usize = 1568;
 pub const KYBER1024_SECRETKEY_BYTES: usize = 3168;
 
 /// CRYSTALS-Dilithium2 constants (NIST post-quantum standard)
+/// NOTE: pqcrypto_dilithium uses 2560 bytes for D2 secret key
 pub const DILITHIUM2_PUBLICKEY_BYTES: usize = 1312;
-pub const DILITHIUM2_SECRETKEY_BYTES: usize = 2528;
+pub const DILITHIUM2_SECRETKEY_BYTES: usize = 2560;
 
 /// CRYSTALS-Dilithium5 constants (highest security level)
 pub const DILITHIUM5_PUBLICKEY_BYTES: usize = 2592;
-pub const DILITHIUM5_SECRETKEY_BYTES: usize = 4864;
+pub const DILITHIUM5_SECRETKEY_BYTES: usize = 4896;
 
 // Re-export for backward compatibility
 pub use DILITHIUM2_PUBLICKEY_BYTES as DILITHIUM_PUBLIC_KEY_SIZE;

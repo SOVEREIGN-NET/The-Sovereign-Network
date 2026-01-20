@@ -6,7 +6,7 @@ use crate::types::IdentityProofParams;
 use crate::identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};
 use lib_proofs::{ZeroKnowledgeProof};
-use lib_crypto::post_quantum::{dilithium2_verify, dilithium5_verify};
+use lib_crypto::post_quantum::{dilithium_verify};
 use anyhow::Result;
 
 
@@ -284,15 +284,9 @@ fn verify_quantum_signature(
     _challenge: &[u8],
 ) -> Result<bool, String> {
     // Verify CRYSTALS-Dilithium signature using lib-crypto
-    // Note: This is a simplified version - implementation would need message reconstruction
-    match dilithium2_verify(_challenge, signature, _public_key) {
-        Ok(valid) => Ok(valid),
-        Err(_) => {
-            // Try Dilithium5 if Dilithium2 fails
-            dilithium5_verify(_challenge, signature, _public_key)
-                .map_err(|e| format!("Quantum signature verification failed: {}", e))
-        }
-    }
+    // Auto-detects D2/D5 based on public key size
+    dilithium_verify(_challenge, signature, _public_key)
+        .map_err(|e| format!("Quantum signature verification failed: {}", e))
 }
 
 fn verify_zk_response(

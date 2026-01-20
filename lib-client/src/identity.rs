@@ -33,8 +33,10 @@
 //!     +-- node_id = Blake3(did || device_id)
 //! ```
 
+use crate::bip39_wordlist::BIP39_WORDLIST;
 use crate::crypto::{Blake3, Dilithium5, Kyber1024, random_bytes};
 use crate::error::{ClientError, Result};
+use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 
 /// Complete ZHTP identity with both public and private keys
@@ -49,7 +51,7 @@ pub struct Identity {
     /// Dilithium5 public key for signature verification (~2592 bytes)
     pub public_key: Vec<u8>,
 
-    /// Dilithium5 private key for signing (~4864 bytes)
+    /// Dilithium5 private key for signing (~4896 bytes)
     /// SECURITY: Never transmit this!
     pub private_key: Vec<u8>,
 
@@ -213,6 +215,55 @@ pub fn get_public_identity(identity: &Identity) -> PublicIdentity {
     }
 }
 
+/// Convert the master seed into a 24-word BIP39 mnemonic (English)
+pub fn get_seed_phrase(identity: &Identity) -> Result<String> {
+    mnemonic_from_entropy(&identity.master_seed).map(|words| words.join(" "))
+}
+
+fn mnemonic_from_entropy(entropy: &[u8]) -> Result<Vec<&'static str>> {
+    if entropy.len() != 32 {
+        return Err(ClientError::CryptoError(
+            "Master seed must be 32 bytes".into(),
+        ));
+    }
+
+    let entropy_bits = entropy.len() * 8;
+    let checksum_bits = entropy_bits / 32;
+    let hash = Sha256::digest(entropy);
+
+    let total_bits = entropy_bits + checksum_bits;
+    let word_count = total_bits / 11;
+
+    let mut words = Vec::with_capacity(word_count);
+    let mut bit_index = 0usize;
+
+    for _ in 0..word_count {
+        let mut index = 0u16;
+        for _ in 0..11 {
+            index <<= 1;
+            let bit = if bit_index < entropy_bits {
+                let byte = entropy[bit_index / 8];
+                (byte >> (7 - (bit_index % 8))) & 1
+            } else {
+                let checksum_bit_index = bit_index - entropy_bits;
+                if checksum_bit_index >= 8 {
+                    0
+                } else {
+                    (hash[0] >> (7 - checksum_bit_index)) & 1
+                }
+            };
+            index |= bit as u16;
+            bit_index += 1;
+        }
+        let word = BIP39_WORDLIST
+            .get(index as usize)
+            .ok_or_else(|| ClientError::CryptoError("Invalid BIP39 index".into()))?;
+        words.push(*word);
+    }
+
+    Ok(words)
+}
+
 /// Sign a registration proof for server registration
 ///
 /// Creates a signature over "ZHTP_REGISTER:{did}:{timestamp}" that
@@ -308,5 +359,14 @@ mod tests {
         assert_eq!(restored.did, identity.did);
         assert_eq!(restored.public_key, identity.public_key);
         assert_eq!(restored.private_key, identity.private_key);
+    }
+
+    #[test]
+    fn test_get_seed_phrase_word_count() {
+        let mut identity = generate_identity("test-device".into()).unwrap();
+        identity.master_seed = vec![0u8; 32];
+
+        let phrase = get_seed_phrase(&identity).unwrap();
+        assert_eq!(phrase.split_whitespace().count(), 24);
     }
 }

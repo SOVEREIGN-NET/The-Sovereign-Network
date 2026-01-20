@@ -8,7 +8,7 @@ use sha3::Sha3_512;
 use hkdf::Hkdf;
 use rand::{RngCore};
 use rand::rngs::OsRng;
-use pqcrypto_dilithium::dilithium2;
+use pqcrypto_dilithium::dilithium5;
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::{
     sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey},
@@ -36,7 +36,7 @@ impl KeyPair {
         let key_id: [u8; 32] = hasher.finalize().into();
         
         // Generate actual random keys (crypto for security)
-        let (dilithium_pk, dilithium_sk) = dilithium2::keypair();
+        let (dilithium_pk, dilithium_sk) = dilithium5::keypair();
         let (kyber_pk, kyber_sk) = kyber1024::keypair();
         let mut sk_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut sk_bytes);

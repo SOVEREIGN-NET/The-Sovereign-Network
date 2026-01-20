@@ -65,38 +65,13 @@ impl ZhtpServer {
             Blockchain::new()?
         ));
         
-        // For storage, we'll use persistent storage
-        let db_path = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".zhtp")
-            .join("storage")
-            .join("dht_db");
-
-        // Ensure the storage directory exists
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-
-        let storage_config = lib_storage::UnifiedStorageConfig {
-            node_id: lib_identity::NodeId::from_bytes([1u8; 32]),
-            addresses: vec!["127.0.0.1:8000".to_string()],
-            economic_config: lib_storage::EconomicManagerConfig::default(),
-            storage_config: lib_storage::StorageConfig {
-                max_storage_size: 1024 * 1024 * 1024, // 1GB
-                default_tier: lib_storage::StorageTier::Hot,
-                enable_compression: true,
-                enable_encryption: true,
-                dht_persist_path: Some(db_path.clone()),
-            },
-            erasure_config: lib_storage::ErasureConfig {
-                data_shards: 4,
-                parity_shards: 2,
-            },
-        };
-
-        let storage = Arc::new(RwLock::new(
-            lib_storage::UnifiedStorageSystem::new_persistent(storage_config, &db_path).await?
-        ));
+        // IMPORTANT: Use global storage - never open sled database directly here
+        // Storage is initialized once by StorageComponent during runtime bootstrap
+        let storage = crate::runtime::storage_provider::get_global_storage().await
+            .map_err(|e| anyhow::anyhow!(
+                "FATAL: Cannot create ApiServer - global storage not initialized. \
+                Storage must be initialized by StorageComponent before ApiServer. Error: {}", e
+            ))?;
         
         let economic_model = Arc::new(RwLock::new(
             EconomicModel::new()

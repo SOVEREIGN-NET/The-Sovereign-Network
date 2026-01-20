@@ -6,7 +6,7 @@ use anyhow::Result;
 use blake3::Hasher as Blake3Hasher;
 use rand::{RngCore};
 use rand::rngs::OsRng;
-use pqcrypto_dilithium::dilithium2;
+use pqcrypto_dilithium::dilithium5;
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::{
     sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey},
@@ -31,8 +31,8 @@ impl KeyPair {
         let mut master_seed = vec![0u8; 64];
         rng.fill_bytes(&mut master_seed);
 
-        // Generate CRYSTALS-Dilithium key pair (NIST post-quantum standard)
-        let (dilithium_pk, dilithium_sk) = dilithium2::keypair();
+        // Generate CRYSTALS-Dilithium5 key pair (NIST post-quantum standard, highest security)
+        let (dilithium_pk, dilithium_sk) = dilithium5::keypair();
         
         // Generate CRYSTALS-Kyber key pair (NIST post-quantum standard)
         let (kyber_pk, kyber_sk) = kyber1024::keypair();

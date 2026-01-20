@@ -397,24 +397,11 @@ impl MetricsCollector {
 
     /// Collect storage metrics using lib-storage
     async fn collect_storage_metrics(metrics: &mut SystemMetrics) -> Result<()> {
-        // Get storage metrics from lib-storage package with proper config
-        if let Ok(config) = create_default_storage_config() {
-            let db_path = config.storage_config.dht_persist_path.clone()
-                .unwrap_or_else(|| {
-                    dirs::home_dir()
-                        .unwrap_or_else(|| std::path::PathBuf::from("."))
-                        .join(".zhtp")
-                        .join("storage")
-                        .join("dht_db")
-                });
-
-            if let Some(parent) = db_path.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    warn!("Failed to create storage directory {:?}: {}", parent, e);
-                }
-            }
-
-            if let Ok(mut storage) = lib_storage::UnifiedStorageSystem::new_persistent(config, &db_path).await {
+        // IMPORTANT: Use global storage - never open sled database here
+        // This prevents lock conflicts from multiple components opening the same DB
+        match crate::runtime::storage_provider::get_global_storage().await {
+            Ok(storage_lock) => {
+                let mut storage = storage_lock.write().await;
                 // Try to get storage statistics
                 match storage.get_statistics().await {
                     Ok(stats) => {
@@ -429,19 +416,15 @@ impl MetricsCollector {
                         metrics.storage_available_bytes = 1024 * 1024 * 1024 * 10; // Default 10GB available
                     }
                 }
-            } else {
-                // Fallback when storage system unavailable
+            }
+            Err(_) => {
+                // Global storage not initialized - fallback
                 metrics.stored_files = 0;
                 metrics.storage_used_bytes = 0;
                 metrics.storage_available_bytes = 0; // Indicates unavailable
             }
-        } else {
-            // Fallback when config creation fails
-            metrics.stored_files = 0;
-            metrics.storage_used_bytes = 0;
-            metrics.storage_available_bytes = 0; // Indicates unavailable
         }
-        
+
         Ok(())
     }
 
