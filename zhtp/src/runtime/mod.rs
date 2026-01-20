@@ -2841,11 +2841,17 @@ pub async fn create_or_load_node_identity(
         .join("keystore");
 
     // Allow explicit device name override to keep NodeId deterministic across restarts
-    let device_name = std::env::var("ZHTP_DEVICE_NAME")
+    let requested_device_name = std::env::var("ZHTP_DEVICE_NAME")
         .unwrap_or_else(|_| "zhtp-node".to_string());
+    let device_name = resolve_device_name(Some(&requested_device_name))
+        .context("Failed to resolve node device name")?;
+    info!("Using node device name: {}", device_name);
 
     // Try to load an existing identity (with private key) from the keystore
-    if let Some(identity) = crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path).await? {
+    if let Some(identity) = crate::runtime::did_startup::load_node_identity_from_keystore(&keystore_path)
+        .await
+        .context("Failed to load node identity from keystore")?
+    {
         info!("Loaded existing node identity from keystore: {}", identity.did);
         return Ok(identity);
     }
@@ -2858,9 +2864,12 @@ pub async fn create_or_load_node_identity(
         None, // No jurisdiction for device
         &device_name,
         None, // Random seed
-    )?;
+    )
+    .context("Failed to create new unified node identity")?;
 
-    crate::runtime::did_startup::persist_node_identity_to_keystore(&keystore_path, &node_identity).await?;
+    crate::runtime::did_startup::persist_node_identity_to_keystore(&keystore_path, &node_identity)
+        .await
+        .context("Failed to persist node identity to keystore")?;
     info!("Created and saved node identity to keystore at {:?}", keystore_path);
     Ok(node_identity)
 }
