@@ -341,23 +341,10 @@ pub extern "C" fn zhtp_client_identity_deserialize(json: *const std::ffi::c_char
     }
 }
 
-/// Serialize identity to JSON format compatible with lib-network handshakes.
+/// Serialize identity to JSON format compatible with ZhtpIdentity::from_serialized().
 ///
-/// This creates the format expected by lib-network::NodeIdentity:
-/// ```json
-/// {
-///   "did": "did:zhtp:...",
-///   "public_key": {
-///     "dilithium_pk": [bytes...],
-///     "kyber_pk": [bytes...],
-///     "key_id": [32 bytes]
-///   },
-///   "node_id": [32 bytes],
-///   "device_id": "device-name",
-///   "display_name": null,
-///   "created_at": 1234567890
-/// }
-/// ```
+/// This creates the FULL format expected by lib-identity for UHP handshakes.
+/// The uhp-ffi crate calls ZhtpIdentity::from_serialized() which requires all these fields.
 ///
 /// Caller must free with `zhtp_client_string_free`.
 #[no_mangle]
@@ -370,22 +357,61 @@ pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const Identity
     // Compute key_id = Blake3(dilithium_public_key)
     let key_id = crypto::Blake3::hash(&identity.public_key);
 
-    // Build the lib-network compatible format
-    let display_name: Option<String> = None;
-    let handshake_identity = serde_json::json!({
+    // Extract identity ID from DID (format: "did:zhtp:{id_hex}")
+    let id_hex = identity.did.strip_prefix("did:zhtp:").unwrap_or(&identity.did);
+    let id_bytes: Vec<u8> = hex::decode(id_hex).unwrap_or_else(|_| key_id.to_vec());
+
+    // Build device_node_ids map
+    let mut device_node_ids = std::collections::HashMap::new();
+    device_node_ids.insert(identity.device_id.clone(), &identity.node_id);
+
+    // Generate dao_member_id from DID (deterministic)
+    let dao_member_id = format!("dao:{}", id_hex);
+
+    // Build the FULL ZhtpIdentity format for from_serialized()
+    let zhtp_identity = serde_json::json!({
+        // Required fields
+        "id": id_bytes,
         "did": identity.did,
+        "identity_type": "Human",
         "public_key": {
             "dilithium_pk": identity.public_key,
             "kyber_pk": identity.kyber_public_key,
             "key_id": key_id
         },
         "node_id": identity.node_id,
-        "device_id": identity.device_id,
-        "display_name": display_name,
-        "created_at": identity.created_at
+        "device_node_ids": {
+            identity.device_id.clone(): identity.node_id
+        },
+        "primary_device": identity.device_id,
+        "dao_member_id": dao_member_id,
+        "ownership_proof": {
+            "proof_data": [],
+            "proof_type": "ownership",
+            "verified": false,
+            "timestamp": identity.created_at
+        },
+
+        // Optional fields with defaults
+        "credentials": {},
+        "metadata": {},
+        "attestations": [],
+        "reputation": 0,
+        "access_level": "Standard",
+        "age": null,
+        "jurisdiction": null,
+        "citizenship_verified": false,
+        "dao_voting_power": 0,
+        "private_data_id": null,
+        "created_at": identity.created_at,
+        "last_active": identity.created_at,
+        "recovery_keys": [],
+        "did_document_hash": null,
+        "owner_identity_id": null,
+        "reward_wallet_id": null
     });
 
-    match serde_json::to_string(&handshake_identity) {
+    match serde_json::to_string(&zhtp_identity) {
         Ok(json) => match std::ffi::CString::new(json) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
