@@ -253,6 +253,60 @@ pub extern "C" fn zhtp_client_identity_get_created_at(handle: *const IdentityHan
     identity.created_at
 }
 
+/// Get Dilithium secret key from identity (for UHP handshake)
+/// SECURITY: This key should only be used for signing operations on-device.
+/// It should NEVER be transmitted over any network.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_dilithium_secret_key(handle: *const IdentityHandle) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let identity = unsafe { &(*handle).inner };
+    let mut bytes = identity.private_key.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
+}
+
+/// Get Kyber secret key from identity (for UHP handshake key exchange)
+/// SECURITY: This key should only be used for decapsulation on-device.
+/// It should NEVER be transmitted over any network.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_kyber_secret_key(handle: *const IdentityHandle) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let identity = unsafe { &(*handle).inner };
+    let mut bytes = identity.kyber_secret_key.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
+}
+
+/// Get master seed from identity (for key derivation)
+/// SECURITY: This seed should only be used for local key derivation.
+/// It should NEVER be transmitted over any network.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_get_master_seed(handle: *const IdentityHandle) -> ByteBuffer {
+    if handle.is_null() {
+        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+    }
+    let identity = unsafe { &(*handle).inner };
+    let mut bytes = identity.master_seed.clone();
+    let buf = ByteBuffer {
+        data: bytes.as_mut_ptr(),
+        len: bytes.len(),
+    };
+    std::mem::forget(bytes);
+    buf
+}
+
 /// Sign registration proof. Returns signature bytes.
 #[no_mangle]
 pub extern "C" fn zhtp_client_sign_registration_proof(
