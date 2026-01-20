@@ -340,3 +340,56 @@ pub extern "C" fn zhtp_client_identity_deserialize(json: *const std::ffi::c_char
         Err(_) => std::ptr::null_mut(),
     }
 }
+
+/// Serialize identity to JSON format compatible with lib-network handshakes.
+///
+/// This creates the format expected by lib-network::NodeIdentity:
+/// ```json
+/// {
+///   "did": "did:zhtp:...",
+///   "public_key": {
+///     "dilithium_pk": [bytes...],
+///     "kyber_pk": [bytes...],
+///     "key_id": [32 bytes]
+///   },
+///   "node_id": [32 bytes],
+///   "device_id": "device-name",
+///   "display_name": null,
+///   "created_at": 1234567890
+/// }
+/// ```
+///
+/// Caller must free with `zhtp_client_string_free`.
+#[no_mangle]
+pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const IdentityHandle) -> *mut std::ffi::c_char {
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let identity = unsafe { &(*handle).inner };
+
+    // Compute key_id = Blake3(dilithium_public_key)
+    let key_id = crypto::Blake3::hash(&identity.public_key);
+
+    // Build the lib-network compatible format
+    let display_name: Option<String> = None;
+    let handshake_identity = serde_json::json!({
+        "did": identity.did,
+        "public_key": {
+            "dilithium_pk": identity.public_key,
+            "kyber_pk": identity.kyber_public_key,
+            "key_id": key_id
+        },
+        "node_id": identity.node_id,
+        "device_id": identity.device_id,
+        "display_name": display_name,
+        "created_at": identity.created_at
+    });
+
+    match serde_json::to_string(&handshake_identity) {
+        Ok(json) => match std::ffi::CString::new(json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
