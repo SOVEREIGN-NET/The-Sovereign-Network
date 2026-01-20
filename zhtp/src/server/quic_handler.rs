@@ -778,12 +778,25 @@ impl QuicHandler {
             peer_identity.node_id.clone(),
         ) {
             Ok(observed_identity) => {
+                // Get the identity ID for wallet creation
+                let identity_id = observed_identity.id.clone();
+
                 let mut identity_mgr = self.identity_manager.write().await;
-                identity_mgr.add_identity(observed_identity);
+                identity_mgr.add_identity(observed_identity.clone());
+                drop(identity_mgr); // Release lock before blockchain access
+
                 info!(
                     peer_did = %peer_did,
                     "📝 Auto-registered authenticated peer identity (observed, unprivileged)"
                 );
+
+                // Fund new identity with welcome bonus (5000 ZHTP)
+                // This ensures all authenticated peers can participate in the network
+                self.fund_new_identity_wallet(
+                    &identity_id,
+                    peer_identity,
+                    peer_did,
+                ).await;
             }
             Err(e) => {
                 warn!(
@@ -793,6 +806,83 @@ impl QuicHandler {
                 );
             }
         }
+    }
+
+    /// Fund a new identity's primary wallet with the welcome bonus
+    ///
+    /// Called when a new peer identity is auto-registered from handshake.
+    /// Gives them 5000 ZHTP to participate in the network.
+    async fn fund_new_identity_wallet(
+        &self,
+        identity_id: &lib_crypto::Hash,
+        peer_identity: &lib_network::handshake::NodeIdentity,
+        peer_did: &str,
+    ) {
+        // Get global blockchain to register wallet
+        let blockchain = match crate::runtime::blockchain_provider::get_global_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                warn!(peer_did = %peer_did, error = %e, "Cannot fund wallet: blockchain not available");
+                return;
+            }
+        };
+
+        // Generate wallet ID from identity
+        let wallet_id_bytes = lib_crypto::hash_blake3(
+            &[
+                b"wallet:primary:",
+                identity_id.as_bytes(),
+            ].concat()
+        );
+        let wallet_id_hex = hex::encode(&wallet_id_bytes);
+
+        // Check if wallet already exists and has balance
+        {
+            let bc_read = blockchain.read().await;
+            if let Some(existing_wallet) = bc_read.wallet_registry.get(&wallet_id_hex) {
+                if existing_wallet.initial_balance > 0 {
+                    debug!(
+                        peer_did = %peer_did,
+                        wallet_id = %wallet_id_hex[..16],
+                        balance = existing_wallet.initial_balance,
+                        "Wallet already funded, skipping welcome bonus"
+                    );
+                    return;
+                }
+            }
+        }
+
+        // Register wallet with welcome bonus
+        let welcome_bonus = 5000u64;
+
+        let wallet_data = lib_blockchain::transaction::WalletTransactionData {
+            wallet_id: lib_blockchain::Hash::from_slice(&wallet_id_bytes),
+            wallet_type: "Primary".to_string(),
+            wallet_name: "Primary Wallet".to_string(),
+            alias: None,
+            public_key: peer_identity.public_key.dilithium_pk.clone(),
+            owner_identity_id: Some(lib_blockchain::Hash::from_slice(identity_id.as_bytes())),
+            seed_commitment: lib_blockchain::types::hash::blake3_hash(b"observed_wallet_seed"),
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            registration_fee: 0,
+            capabilities: 0xFFFFFFFF, // Full capabilities
+            initial_balance: welcome_bonus,
+        };
+
+        {
+            let mut bc_write = blockchain.write().await;
+            bc_write.wallet_registry.insert(wallet_id_hex.clone(), wallet_data);
+        }
+
+        info!(
+            peer_did = %peer_did,
+            wallet_id = %wallet_id_hex[..16],
+            bonus = welcome_bonus,
+            "🎁 Funded new peer wallet with welcome bonus"
+        );
     }
 
     // REMOVED: handle_control_plane_streams() and handle_authenticated_stream()
