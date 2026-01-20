@@ -297,6 +297,91 @@ async fn mesh_discovery_concurrent_duplicate_registration_is_consistent() -> Res
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn mesh_discovery_handles_join_leave_and_rejoin() -> Result<()> {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let local = identity_with_seed("alpha-mesh-local", [0x50u8; 64])?;
+        let service = UnifiedDiscoveryService::new(
+            peer_id_from_node_id(&local.node_id),
+            9443,
+            local.public_key.clone(),
+        );
+
+        let seeds = [
+            [0x51u8; 64],
+            [0x52u8; 64],
+            [0x53u8; 64],
+            [0x54u8; 64],
+            [0x55u8; 64],
+        ];
+        let devices = [
+            "alpha-mesh-a01",
+            "alpha-mesh-b02",
+            "alpha-mesh-c03",
+            "alpha-mesh-d04",
+            "alpha-mesh-e05",
+        ];
+
+        let identities: Vec<ZhtpIdentity> = seeds
+            .iter()
+            .zip(devices.iter())
+            .map(|(seed, device)| identity_with_seed(device, *seed))
+            .collect::<Result<_>>()?;
+
+        for (idx, identity) in identities.iter().enumerate() {
+            let peer_id = peer_id_from_node_id(&identity.node_id);
+            let addr: SocketAddr = format!("192.0.2.{}:9443", 30 + idx).parse().unwrap();
+
+            let mut result =
+                DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9443);
+            result.public_key = Some(identity.public_key.clone());
+            result.did = Some(identity.did.clone());
+            result.device_id = Some(identity.primary_device.clone());
+            service.register_peer(result).await;
+        }
+
+        assert_eq!(service.peer_count().await, identities.len());
+
+        let removed_id = peer_id_from_node_id(&identities[2].node_id);
+        let removed = service.remove_peer(&removed_id).await;
+        assert!(removed.is_some(), "expected peer to be removed");
+        assert_eq!(service.peer_count().await, identities.len() - 1);
+
+        let rejoin_addr: SocketAddr = "192.0.2.80:9443".parse().unwrap();
+        let mut rejoin =
+            DiscoveryResult::new(removed_id, rejoin_addr, DiscoveryProtocol::UdpMulticast, 9443);
+        rejoin.public_key = Some(identities[2].public_key.clone());
+        rejoin.did = Some(identities[2].did.clone());
+        rejoin.device_id = Some(identities[2].primary_device.clone());
+        service.register_peer(rejoin).await;
+
+        assert_eq!(service.peer_count().await, identities.len());
+        let peer = service
+            .get_peer(&removed_id)
+            .await
+            .expect("rejoined peer should be present");
+        assert!(peer.addresses.contains(&rejoin_addr));
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .map_err(|_| anyhow!("Test timed out after {TEST_TIMEOUT:?}"))??;
+
+    Ok(())
+}
+
+#[test]
+fn unified_peer_rejects_spoofed_node_id() -> Result<()> {
+    let mut identity = identity_with_seed("alpha-mesh-spoof", [0x56u8; 64])?;
+    identity.node_id = NodeId::from_bytes([0u8; 32]);
+
+    let err = UnifiedPeerId::from_zhtp_identity(&identity)
+        .expect_err("spoofed NodeId should be rejected");
+    assert!(err.to_string().contains("NodeId mismatch"));
+
+    Ok(())
+}
+
 #[test]
 fn quic_session_key_is_bound_to_node_id() -> Result<()> {
     // Use seed pattern 0x33 for the stable node, 0x34 for a different node
