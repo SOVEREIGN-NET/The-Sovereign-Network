@@ -159,9 +159,14 @@ impl IdentityManager {
             ],
         );
         
-        // Give welcome bonus (1000 ZHTP tokens)
+        // Give welcome bonus (5000 ZHTP tokens)
         let welcome_bonus = crate::citizenship::WelcomeBonus::provide_welcome_bonus(&id, &primary_wallet_id, economic_model).await?;
-        
+
+        // Actually credit the welcome bonus to the Primary wallet
+        if let Some(primary_wallet) = identity.wallet_manager.get_wallet_mut(&primary_wallet_id) {
+            primary_wallet.balance = welcome_bonus.bonus_amount;
+        }
+
         // Store identity and private data
         self.identities.insert(id.clone(), identity);
         self.private_data.insert(id.clone(), private_data);
@@ -356,8 +361,13 @@ impl IdentityManager {
             ],
         );
 
-        // Give welcome bonus (1000 ZHTP tokens)
+        // Give welcome bonus (5000 ZHTP tokens)
         let welcome_bonus = crate::citizenship::WelcomeBonus::provide_welcome_bonus(&id, &primary_wallet_id, economic_model).await?;
+
+        // Actually credit the welcome bonus to the Primary wallet
+        if let Some(primary_wallet) = identity.wallet_manager.get_wallet_mut(&primary_wallet_id) {
+            primary_wallet.balance = welcome_bonus.bonus_amount;
+        }
 
         // Store identity
         self.identities.insert(id.clone(), identity);

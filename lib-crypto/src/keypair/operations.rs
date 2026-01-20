@@ -25,17 +25,17 @@ use super::KeyPair;
 const KYBER1024_CIPHERTEXT_BYTES: usize = 1568;
 
 impl KeyPair {
-    /// Sign a message with CRYSTALS-Dilithium post-quantum signature
+    /// Sign a message with CRYSTALS-Dilithium5 post-quantum signature
     pub fn sign(&self, message: &[u8]) -> Result<Signature> {
-        let dilithium_sk = dilithium2::SecretKey::from_bytes(&self.private_key.dilithium_sk)
-            .map_err(|_| anyhow::anyhow!("Invalid Dilithium secret key"))?;
-        
-        let signature = dilithium2::sign(message, &dilithium_sk);
-        
+        let dilithium_sk = dilithium5::SecretKey::from_bytes(&self.private_key.dilithium_sk)
+            .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 secret key (expected 4896 bytes)"))?;
+
+        let signature = dilithium5::sign(message, &dilithium_sk);
+
         Ok(Signature {
             signature: signature.as_bytes().to_vec(),
             public_key: self.public_key.clone(),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -43,18 +43,18 @@ impl KeyPair {
         })
     }
 
-    /// Sign with pure post-quantum Dilithium (no fallbacks)
+    /// Sign with pure post-quantum Dilithium5 (no fallbacks)
     pub fn sign_dilithium(&self, message: &[u8]) -> Result<Signature> {
-        // Use pure post-quantum CRYSTALS-Dilithium signing
-        let dilithium_sk = dilithium2::SecretKey::from_bytes(&self.private_key.dilithium_sk)
-            .map_err(|_| anyhow::anyhow!("Invalid Dilithium secret key"))?;
-        
-        let signature = dilithium2::sign(message, &dilithium_sk);
-        
+        // Use pure post-quantum CRYSTALS-Dilithium5 signing
+        let dilithium_sk = dilithium5::SecretKey::from_bytes(&self.private_key.dilithium_sk)
+            .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 secret key (expected 4896 bytes)"))?;
+
+        let signature = dilithium5::sign(message, &dilithium_sk);
+
         Ok(Signature {
             signature: signature.as_bytes().to_vec(),
             public_key: self.public_key.clone(),
-            algorithm: SignatureAlgorithm::Dilithium2,
+            algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
