@@ -65,10 +65,15 @@ impl Node {
             return false;
         }
 
-        // Simulate KEM by deriving an ephemeral shared token using blake3 over both node ids
-        let shared = hash(format!("{}{}", self.node_id, remote.node_id).as_bytes());
+        // Simulate KEM by deriving a shared token using a deterministic ordering.
+        let (first, second) = if self.node_id <= remote.node_id {
+            (&self.node_id, &remote.node_id)
+        } else {
+            (&remote.node_id, &self.node_id)
+        };
+        let shared = hash(format!("{}{}", first, second).as_bytes());
         let shared_hex = hex::encode(shared.as_bytes());
-        let shared2_hash = hash(format!("{}{}", remote.node_id, self.node_id).as_bytes());
+        let shared2_hash = hash(format!("{}{}", first, second).as_bytes());
         let shared2 = hex::encode(shared2_hash.as_bytes());
         shared_hex == shared2
     }
