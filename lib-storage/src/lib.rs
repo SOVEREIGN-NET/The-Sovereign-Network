@@ -717,6 +717,147 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
     }
 
     // ========================================================================
+    // DHT Index Management - Enables "load all" operations for persistence
+    // ========================================================================
+    // Key formats:
+    // - idx/identities                      -> JSON array of identity_id strings
+    // - idx/wallets/by_identity/{id}        -> JSON array of wallet_id strings
+    // - wallet/{identity_id}/{wallet_id}    -> wallet metadata
+    // - wallet_private/{identity_id}/{wallet_id} -> encrypted private data (existing)
+
+    /// Add an identity ID to the global identity index
+    pub async fn add_to_identity_index(&mut self, identity_id: &str) -> Result<()> {
+        let index_key = "idx/identities";
+
+        // Load existing index or create empty
+        let mut ids: Vec<String> = match self.dht_storage.get(index_key).await? {
+            Some(data) => serde_json::from_slice(&data).unwrap_or_else(|_| Vec::new()),
+            None => Vec::new(),
+        };
+
+        // Add if not already present
+        if !ids.contains(&identity_id.to_string()) {
+            ids.push(identity_id.to_string());
+            let data = serde_json::to_vec(&ids)?;
+            self.dht_storage.store(index_key.to_string(), data, None).await?;
+            tracing::debug!("Added identity {} to index (total: {})", identity_id, ids.len());
+        }
+
+        Ok(())
+    }
+
+    /// Remove an identity ID from the global identity index
+    pub async fn remove_from_identity_index(&mut self, identity_id: &str) -> Result<()> {
+        let index_key = "idx/identities";
+
+        let mut ids: Vec<String> = match self.dht_storage.get(index_key).await? {
+            Some(data) => serde_json::from_slice(&data).unwrap_or_else(|_| Vec::new()),
+            None => return Ok(()), // Nothing to remove
+        };
+
+        ids.retain(|id| id != identity_id);
+        let data = serde_json::to_vec(&ids)?;
+        self.dht_storage.store(index_key.to_string(), data, None).await?;
+
+        Ok(())
+    }
+
+    /// List all identity IDs from the index
+    pub async fn list_identity_ids(&mut self) -> Result<Vec<String>> {
+        let index_key = "idx/identities";
+
+        match self.dht_storage.get(index_key).await? {
+            Some(data) => {
+                let ids: Vec<String> = serde_json::from_slice(&data).unwrap_or_else(|_| Vec::new());
+                Ok(ids)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Add a wallet ID to an identity's wallet index
+    pub async fn add_to_wallet_index(&mut self, identity_id: &str, wallet_id: &str) -> Result<()> {
+        let index_key = format!("idx/wallets/by_identity/{}", identity_id);
+
+        let mut wallet_ids: Vec<String> = match self.dht_storage.get(&index_key).await? {
+            Some(data) => serde_json::from_slice(&data).unwrap_or_else(|_| Vec::new()),
+            None => Vec::new(),
+        };
+
+        if !wallet_ids.contains(&wallet_id.to_string()) {
+            wallet_ids.push(wallet_id.to_string());
+            let data = serde_json::to_vec(&wallet_ids)?;
+            self.dht_storage.store(index_key, data, None).await?;
+            tracing::debug!("Added wallet {} to identity {} index", wallet_id, identity_id);
+        }
+
+        Ok(())
+    }
+
+    /// List all wallet IDs for a given identity
+    pub async fn list_wallet_ids_for_identity(&mut self, identity_id: &str) -> Result<Vec<String>> {
+        let index_key = format!("idx/wallets/by_identity/{}", identity_id);
+
+        match self.dht_storage.get(&index_key).await? {
+            Some(data) => {
+                let ids: Vec<String> = serde_json::from_slice(&data).unwrap_or_else(|_| Vec::new());
+                Ok(ids)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Store wallet metadata record (public info, not private data)
+    pub async fn store_wallet_record(&mut self, identity_id: &str, wallet_id: &str, data: &[u8]) -> Result<()> {
+        let key = format!("wallet/{}/{}", identity_id, wallet_id);
+
+        // Wrap in versioned envelope
+        let versioned = serde_json::json!({
+            "v": 1,
+            "data": serde_json::from_slice::<serde_json::Value>(data)
+                .unwrap_or_else(|_| serde_json::Value::String(hex::encode(data)))
+        });
+        let versioned_data = serde_json::to_vec(&versioned)?;
+
+        tracing::info!("Storing wallet record {}/{} ({} bytes, v1)", identity_id, wallet_id, versioned_data.len());
+        self.dht_storage.store(key, versioned_data, None).await
+    }
+
+    /// Retrieve wallet metadata record
+    pub async fn get_wallet_record(&mut self, identity_id: &str, wallet_id: &str) -> Result<Option<Vec<u8>>> {
+        let key = format!("wallet/{}/{}", identity_id, wallet_id);
+
+        match self.dht_storage.get(&key).await? {
+            Some(versioned_data) => {
+                // Parse versioned envelope
+                let envelope: serde_json::Value = serde_json::from_slice(&versioned_data)?;
+
+                if let Some(data) = envelope.get("data") {
+                    let data_bytes = serde_json::to_vec(data)?;
+                    Ok(Some(data_bytes))
+                } else {
+                    // Fallback: treat entire payload as data (legacy)
+                    Ok(Some(versioned_data))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Store wallet private data (encrypted) - convenience wrapper
+    pub async fn store_wallet_private_record(&mut self, identity_id: &str, wallet_id: &str, data: &[u8]) -> Result<()> {
+        let key = format!("wallet_private/{}/{}", identity_id, wallet_id);
+        tracing::info!("Storing wallet private data {}/{} ({} bytes)", identity_id, wallet_id, data.len());
+        self.dht_storage.store(key, data.to_vec(), None).await
+    }
+
+    /// Retrieve wallet private data (encrypted)
+    pub async fn get_wallet_private_record(&mut self, identity_id: &str, wallet_id: &str) -> Result<Option<Vec<u8>>> {
+        let key = format!("wallet_private/{}/{}", identity_id, wallet_id);
+        self.dht_storage.get(&key).await
+    }
+
+    // ========================================================================
     // Content Retrieval (Generic)
     // ========================================================================
 

@@ -999,65 +999,152 @@ async fn store_wallet_private_data_in_dht(
     wallet_id: &lib_identity::wallets::WalletId,
     private_data: &lib_blockchain::WalletPrivateData
 ) -> Result<()> {
+    let identity_id_hex = hex::encode(&identity_id.0);
+    let wallet_id_hex = hex::encode(&wallet_id.0);
+
     if let Ok(dht_client) = crate::runtime::shared_dht::get_dht_client().await {
         let mut dht = dht_client.write().await;
-        
+
         // Serialize and encrypt the private data
         let private_data_bytes = bincode::serialize(private_data)
             .map_err(|e| anyhow::anyhow!("Failed to serialize wallet private data: {}", e))?;
-        
-        let storage_path = format!("/wallet_private/{}/{}", 
-            hex::encode(&identity_id.0), 
-            hex::encode(&wallet_id.0));
-        
+
+        let storage_path = format!("/wallet_private/{}/{}",
+            &identity_id_hex,
+            &wallet_id_hex);
+
         dht.store_content(
-            "wallet.zhtp", 
-            &storage_path, 
+            "wallet.zhtp",
+            &storage_path,
             private_data_bytes
         ).await.map_err(|e| anyhow::anyhow!("Failed to store wallet private data in DHT: {}", e))?;
-            
+
         info!("✅ Stored wallet private data in DHT");
     }
+
+    // Update wallet index in unified storage
+    if let Ok(storage) = crate::runtime::storage_provider::get_global_storage().await {
+        let mut guard = storage.write().await;
+        if let Err(e) = guard.add_to_wallet_index(&identity_id_hex, &wallet_id_hex).await {
+            warn!("Failed to update wallet index (non-fatal): {}", e);
+        }
+    }
+
     Ok(())
+}
+
+/// Load wallet private data from DHT
+pub async fn load_wallet_private_data_from_dht(
+    identity_id: &lib_identity::IdentityId,
+    wallet_id: &lib_identity::wallets::WalletId,
+) -> Result<Option<lib_blockchain::WalletPrivateData>> {
+    let identity_id_hex = hex::encode(&identity_id.0);
+    let wallet_id_hex = hex::encode(&wallet_id.0);
+
+    // Load from persistent unified storage
+    if let Ok(storage) = crate::runtime::storage_provider::get_global_storage().await {
+        let mut guard = storage.write().await;
+        if let Ok(Some(data)) = guard.get_wallet_private_record(&identity_id_hex, &wallet_id_hex).await {
+            match bincode::deserialize::<lib_blockchain::WalletPrivateData>(&data) {
+                Ok(private_data) => {
+                    info!("✅ Loaded wallet private data from storage: {}", &wallet_id_hex[..16]);
+                    return Ok(Some(private_data));
+                }
+                Err(e) => {
+                    warn!("Failed to deserialize wallet private data: {}", e);
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Load wallet public info from DHT
+pub async fn load_wallet_info_from_dht(
+    identity_id: &lib_identity::IdentityId,
+    wallet_id: &lib_identity::wallets::WalletId,
+) -> Result<Option<serde_json::Value>> {
+    let identity_id_hex = hex::encode(&identity_id.0);
+    let wallet_id_hex = hex::encode(&wallet_id.0);
+
+    // Load from persistent unified storage
+    if let Ok(storage) = crate::runtime::storage_provider::get_global_storage().await {
+        let mut guard = storage.write().await;
+        if let Ok(Some(data)) = guard.get_wallet_record(&identity_id_hex, &wallet_id_hex).await {
+            match serde_json::from_slice::<serde_json::Value>(&data) {
+                Ok(wallet_info) => {
+                    info!("✅ Loaded wallet info from storage: {}", &wallet_id_hex[..16]);
+                    return Ok(Some(wallet_info));
+                }
+                Err(e) => {
+                    warn!("Failed to parse wallet info: {}", e);
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 /// Distribute identity-wallet pair to DHT
 async fn distribute_standalone_wallet_to_dht(
     identity_id: &lib_identity::IdentityId,
-    wallet_id: &lib_identity::wallets::WalletId, 
+    wallet_id: &lib_identity::wallets::WalletId,
     wallet_type: &str,
     wallet_name: &str
 ) -> Result<()> {
+    let identity_id_hex = hex::encode(&identity_id.0);
+    let wallet_id_hex = hex::encode(&wallet_id.0);
+
+    let wallet_info = serde_json::json!({
+        "identity_id": &identity_id_hex,
+        "wallet_id": &wallet_id_hex,
+        "wallet_type": wallet_type,
+        "wallet_name": wallet_name,
+        "identity_linked": true,
+        "public_endpoint": format!("zhtp://identity.{}.wallet.{}.zhtp/",
+            &identity_id_hex[..16.min(identity_id_hex.len())],
+            &wallet_id_hex[..16.min(wallet_id_hex.len())]),
+        "capabilities": ["receive"],
+        "created_at": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs()
+    });
+
+    // Store in unified storage (persistent)
+    if let Ok(storage) = crate::runtime::storage_provider::get_global_storage().await {
+        let mut guard = storage.write().await;
+        let wallet_info_bytes = serde_json::to_vec(&wallet_info)?;
+
+        // Store wallet record
+        if let Err(e) = guard.store_wallet_record(&identity_id_hex, &wallet_id_hex, &wallet_info_bytes).await {
+            warn!("Failed to store wallet record (non-fatal): {}", e);
+        }
+
+        // Update wallet index
+        if let Err(e) = guard.add_to_wallet_index(&identity_id_hex, &wallet_id_hex).await {
+            warn!("Failed to update wallet index (non-fatal): {}", e);
+        }
+    }
+
+    // Also store in shared DHT for backwards compatibility
     if let Ok(dht_client) = crate::runtime::shared_dht::get_dht_client().await {
         let mut dht = dht_client.write().await;
-        
-        let wallet_info = serde_json::json!({
-            "identity_id": hex::encode(&identity_id.0),
-            "wallet_id": hex::encode(&wallet_id.0),
-            "wallet_type": wallet_type,
-            "wallet_name": wallet_name,
-            "identity_linked": true,
-            "public_endpoint": format!("zhtp://identity.{}.wallet.{}.zhtp/", 
-                hex::encode(&identity_id.0[..8]),
-                hex::encode(&wallet_id.0[..8])),
-            "capabilities": ["receive"],
-            "created_at": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs()
-        });
-        
+
         let wallet_info_bytes = serde_json::to_vec(&wallet_info)?;
-        let path = format!("/identity/{}/wallet/{}", 
-            hex::encode(&identity_id.0[..8]),
-            hex::encode(&wallet_id.0[..8]));
+        let path = format!("/identity/{}/wallet/{}",
+            &identity_id_hex[..16.min(identity_id_hex.len())],
+            &wallet_id_hex[..16.min(wallet_id_hex.len())]);
         dht.store_content(
             "wallet.zhtp",
             &path,
             wallet_info_bytes
         ).await?;
-        
+
         info!("✅ Identity-wallet pair distributed to DHT");
     }
+
     Ok(())
 }
 

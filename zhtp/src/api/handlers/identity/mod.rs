@@ -405,16 +405,35 @@ impl IdentityHandler {
 
             // Persist identity to DHT for fast lookups (derived cache, not source of truth)
             // This enables stateless API restarts and horizontal scaling
+            let identity_id_str = citizenship_result.identity_id.to_string();
             match serde_json::to_vec(&citizenship_result) {
                 Ok(identity_data) => {
                     let mut storage = self.storage_system.write().await;
+
+                    // Store identity record
                     if let Err(e) = storage.store_identity_record(
-                        &citizenship_result.identity_id.to_string(),
+                        &identity_id_str,
                         &identity_data
                     ).await {
                         tracing::warn!("Failed to persist identity to DHT (non-fatal): {}", e);
                     } else {
                         tracing::info!(" Identity {} persisted to DHT cache", citizenship_result.identity_id);
+                    }
+
+                    // Add to identity index for bootstrap
+                    if let Err(e) = storage.add_to_identity_index(&identity_id_str).await {
+                        tracing::warn!("Failed to add identity to index (non-fatal): {}", e);
+                    }
+
+                    // Add wallet indexes for the 3 wallets
+                    let primary_wallet_id = citizenship_result.primary_wallet_id.to_string();
+                    let ubi_wallet_id = citizenship_result.ubi_wallet_id.to_string();
+                    let savings_wallet_id = citizenship_result.savings_wallet_id.to_string();
+
+                    for wallet_id in [&primary_wallet_id, &ubi_wallet_id, &savings_wallet_id] {
+                        if let Err(e) = storage.add_to_wallet_index(&identity_id_str, wallet_id).await {
+                            tracing::warn!("Failed to add wallet {} to index (non-fatal): {}", wallet_id, e);
+                        }
                     }
                 }
                 Err(e) => {
@@ -1572,6 +1591,7 @@ impl IdentityHandler {
         };
 
         // Persist to DHT for fast lookups
+        let identity_id_str = identity_id.to_string();
         let identity_record = json!({
             "did": req_data.did,
             "public_key": req_data.public_key,
@@ -1589,11 +1609,25 @@ impl IdentityHandler {
 
         {
             let mut storage = self.storage_system.write().await;
+
+            // Store identity record
             if let Err(e) = storage.store_identity_record(
-                &identity_id.to_string(),
+                &identity_id_str,
                 &serde_json::to_vec(&identity_record)?
             ).await {
                 tracing::warn!("Failed to persist identity to DHT (non-fatal): {}", e);
+            }
+
+            // Add to identity index for bootstrap
+            if let Err(e) = storage.add_to_identity_index(&identity_id_str).await {
+                tracing::warn!("Failed to add identity to index (non-fatal): {}", e);
+            }
+
+            // Add wallet indexes for the 3 wallets
+            for wallet_id in [&primary_wallet_id, &ubi_wallet_id, &savings_wallet_id] {
+                if let Err(e) = storage.add_to_wallet_index(&identity_id_str, wallet_id).await {
+                    tracing::warn!("Failed to add wallet {} to index (non-fatal): {}", wallet_id, e);
+                }
             }
         }
 
