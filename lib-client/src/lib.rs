@@ -361,12 +361,28 @@ pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const Identity
     let id_hex = identity.did.strip_prefix("did:zhtp:").unwrap_or(&identity.did);
     let id_bytes: Vec<u8> = hex::decode(id_hex).unwrap_or_else(|_| key_id.to_vec());
 
-    // Build device_node_ids map
-    let mut device_node_ids = std::collections::HashMap::new();
-    device_node_ids.insert(identity.device_id.clone(), &identity.node_id);
-
     // Generate dao_member_id from DID (deterministic)
     let dao_member_id = format!("dao:{}", id_hex);
+
+    // NodeId in lib-identity has 3 fields: bytes, creation_nonce, network_genesis
+    // We need to pad the raw node_id bytes into the proper NodeId struct format
+    let node_id_bytes: [u8; 32] = if identity.node_id.len() >= 32 {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&identity.node_id[..32]);
+        arr
+    } else {
+        let mut arr = [0u8; 32];
+        arr[..identity.node_id.len()].copy_from_slice(&identity.node_id);
+        arr
+    };
+
+    // Create proper NodeId struct format for serialization
+    let zero_bytes: [u8; 32] = [0u8; 32];
+    let node_id_struct = serde_json::json!({
+        "bytes": node_id_bytes,
+        "creation_nonce": zero_bytes,
+        "network_genesis": zero_bytes
+    });
 
     // Build the FULL ZhtpIdentity format for from_serialized()
     let zhtp_identity = serde_json::json!({
@@ -379,9 +395,9 @@ pub extern "C" fn zhtp_client_identity_to_handshake_json(handle: *const Identity
             "kyber_pk": identity.kyber_public_key,
             "key_id": key_id
         },
-        "node_id": identity.node_id,
+        "node_id": node_id_struct,
         "device_node_ids": {
-            identity.device_id.clone(): identity.node_id
+            identity.device_id.clone(): node_id_struct
         },
         "primary_device": identity.device_id,
         "dao_member_id": dao_member_id,
