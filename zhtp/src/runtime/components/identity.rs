@@ -421,10 +421,19 @@ async fn bootstrap_identities_from_dht(
         let created_at = identity_json.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
 
         // Try to register identity into IdentityManager
-        if let (Some(did_str), Some(pk_hex), Some(dev_id)) = (did, public_key_hex, device_id) {
-            // Parse public key from hex
-            match hex::decode(pk_hex) {
-                Ok(bytes) => {
+        if let (Some(did_str), Some(pk_data), Some(dev_id)) = (did, public_key_hex, device_id) {
+            // Parse public key - try base64 first (iOS format), then hex
+            let pk_bytes = if pk_data.contains('+') || pk_data.contains('/') || pk_data.ends_with('=') {
+                // Base64 encoded (iOS client format)
+                use base64::{Engine, engine::general_purpose::STANDARD};
+                STANDARD.decode(pk_data).ok()
+            } else {
+                // Hex encoded
+                hex::decode(pk_data).ok()
+            };
+
+            match pk_bytes {
+                Some(bytes) => {
                     let public_key = lib_crypto::PublicKey::new(bytes);
                     // Parse identity type
                     let identity_type = match identity_type_str {
@@ -454,8 +463,8 @@ async fn bootstrap_identities_from_dht(
                         identities_loaded += 1;
                     }
                 }
-                Err(e) => {
-                    debug!("Failed to parse public key for {}: {:?}", id_preview, e);
+                None => {
+                    debug!("Failed to parse public key for {}", id_preview);
                     // Still count as verified even if we can't register
                     identities_loaded += 1;
                 }
