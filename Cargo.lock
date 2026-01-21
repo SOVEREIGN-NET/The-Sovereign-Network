@@ -2583,9 +2583,12 @@ name = "integration-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "argon2",
+ "base64 0.22.1",
  "lib-crypto",
  "lib-identity",
  "lib-network",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "tempfile",
