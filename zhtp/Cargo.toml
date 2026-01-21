@@ -63,6 +63,8 @@ lz4_flex = "0.11"  # LZ4 compression for DHT content decompression
 once_cell = "1.19"  # Global singleton for bootstrap peers
 zeroize = "1.7"  # Secure memory zeroization for passwords
 rand = "0.8"  # Cryptographically secure random number generation
+argon2 = "0.5"
+keyring = "2.3"
 
 # System integration
 sysinfo = "0.31"
