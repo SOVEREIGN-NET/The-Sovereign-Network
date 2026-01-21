@@ -872,6 +872,51 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
         }
     }
 
+    /// Rebuild the identity index from existing DHT keys
+    ///
+    /// This is a migration function that scans all `identity/` prefixed keys
+    /// in the DHT storage and rebuilds the index. Used when the index is empty
+    /// but identities exist in storage (e.g., identities created before indexing).
+    ///
+    /// Returns the number of identities indexed.
+    pub async fn rebuild_identity_index_from_dht(&mut self) -> Result<u32> {
+        use std::collections::HashSet;
+
+        // Get all keys with "identity/" prefix
+        let identity_keys = self.dht_storage.keys_with_prefix("identity/")?;
+
+        if identity_keys.is_empty() {
+            tracing::debug!("No identity keys found in DHT storage");
+            return Ok(0);
+        }
+
+        // Extract identity IDs from keys (format: "identity/{identity_id}")
+        let mut identity_ids = HashSet::new();
+        for key in &identity_keys {
+            if let Some(id) = key.strip_prefix("identity/") {
+                if !id.is_empty() {
+                    identity_ids.insert(id.to_string());
+                }
+            }
+        }
+
+        if identity_ids.is_empty() {
+            tracing::debug!("No valid identity IDs found in DHT keys");
+            return Ok(0);
+        }
+
+        let count = identity_ids.len() as u32;
+        tracing::info!("🔄 Migration: Found {} identities in DHT storage, rebuilding index...", count);
+
+        // Store as JSON array
+        let ids_vec: Vec<String> = identity_ids.into_iter().collect();
+        let data = serde_json::to_vec(&ids_vec)?;
+        self.dht_storage.store("idx/identities".to_string(), data, None).await?;
+
+        tracing::info!("✅ Migration complete: Indexed {} identities from DHT storage", count);
+        Ok(count)
+    }
+
     /// Add a wallet ID to an identity's wallet index
     pub async fn add_to_wallet_index(&mut self, identity_id: &str, wallet_id: &str) -> Result<()> {
         use std::collections::HashSet;

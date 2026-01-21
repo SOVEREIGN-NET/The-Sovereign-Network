@@ -509,6 +509,21 @@ impl<B: StorageBackend> DhtStorage<B> {
         self.zk_verification_metrics = ZkVerificationMetrics::new();
     }
 
+    /// Get all keys with a given prefix
+    ///
+    /// Returns keys as UTF-8 strings (skips non-UTF-8 keys).
+    /// Used for migration/scanning operations.
+    pub fn keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
+        let key_bytes = self.backend.keys_with_prefix(prefix.as_bytes())?;
+        let mut keys = Vec::with_capacity(key_bytes.len());
+        for k in key_bytes {
+            if let Ok(s) = String::from_utf8(k) {
+                keys.push(s);
+            }
+        }
+        Ok(keys)
+    }
+
     /// Store data with content hash as key and replicate across DHT
     #[instrument(skip(self, data), fields(key = %hex::encode(content_hash.as_bytes())[..16], data_size = data.len()))]
     pub async fn store_data(&mut self, content_hash: Hash, data: Vec<u8>) -> Result<()> {

@@ -325,20 +325,34 @@ async fn bootstrap_identities_from_dht(
     }
 
     // 1. Load identity index
-    let identity_ids = match guard.list_identity_ids().await {
+    let mut identity_ids = match guard.list_identity_ids().await {
         Ok(ids) => ids,
         Err(e) => {
             info!("No identity index found (first run): {}", e);
-            return Ok(DhtBootstrapResult {
-                identities_loaded: 0,
-                wallets_loaded: 0,
-                errors: vec![],
-            });
+            Vec::new()
         }
     };
 
+    // 2. If index is empty, try migration from existing DHT keys
     if identity_ids.is_empty() {
-        info!("📋 No identities in DHT index (fresh start)");
+        info!("📋 Index empty, attempting migration from existing DHT keys...");
+        match guard.rebuild_identity_index_from_dht().await {
+            Ok(count) if count > 0 => {
+                info!("✅ Migrated {} identities from DHT storage", count);
+                // Reload the index after migration
+                identity_ids = guard.list_identity_ids().await.unwrap_or_default();
+            }
+            Ok(_) => {
+                info!("📋 No identities in DHT storage (fresh start)");
+            }
+            Err(e) => {
+                debug!("DHT migration failed: {}", e);
+            }
+        }
+    }
+
+    if identity_ids.is_empty() {
+        info!("📋 No identities found after migration attempts");
         return Ok(DhtBootstrapResult {
             identities_loaded: 0,
             wallets_loaded: 0,
