@@ -95,6 +95,59 @@ impl WalletManager {
         manager.master_seed = Some(master_seed);
         manager
     }
+
+    /// Add a restored wallet shell for DHT bootstrap
+    ///
+    /// Creates a minimal wallet entry with known ID for API lookups.
+    /// Balance will be synced from blockchain registry.
+    pub fn add_restored_wallet(
+        &mut self,
+        wallet_id_hex: &str,
+        wallet_type: WalletType,
+        created_at: u64,
+    ) -> Result<WalletId> {
+        let wallet_bytes = hex::decode(wallet_id_hex)
+            .map_err(|e| anyhow!("Invalid wallet ID hex: {}", e))?;
+        if wallet_bytes.len() != 32 {
+            return Err(anyhow!("Wallet ID must be 32 bytes"));
+        }
+        let mut id_array = [0u8; 32];
+        id_array.copy_from_slice(&wallet_bytes);
+        let wallet_id: WalletId = Hash(id_array);
+
+        // Skip if already exists
+        if self.wallets.contains_key(&wallet_id) {
+            return Ok(wallet_id);
+        }
+
+        let wallet = QuantumWallet {
+            id: wallet_id.clone(),
+            wallet_type: wallet_type.clone(),
+            name: format!("{:?} Wallet", wallet_type),
+            alias: None,
+            balance: 0, // Will be synced from blockchain
+            staked_balance: 0,
+            pending_rewards: 0,
+            owner_id: self.owner_id.clone(),
+            public_key: Vec::new(), // Not needed for restored wallets
+            seed_phrase: None,
+            encrypted_seed: None,
+            seed_commitment: None,
+            created_at,
+            last_transaction: None,
+            recent_transactions: Vec::new(),
+            is_active: true,
+            dao_properties: None,
+            derivation_index: None,
+            password_hash: None,
+            owned_content: Vec::new(),
+            total_storage_used: 0,
+            total_content_value: 0,
+        };
+
+        self.wallets.insert(wallet_id.clone(), wallet);
+        Ok(wallet_id)
+    }
     
     /// DEPRECATED: Standalone wallets are no longer allowed
     /// All wallets must be attached to an identity

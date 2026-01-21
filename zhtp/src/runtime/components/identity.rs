@@ -455,6 +455,35 @@ async fn bootstrap_identities_from_dht(
                     ) {
                         debug!("Failed to register identity {} (may already exist): {}", id_preview, e);
                     } else {
+                        // Restore wallets from stored data
+                        let primary_wallet_id = identity_json.get("primary_wallet_id").and_then(|v| v.as_str());
+                        let ubi_wallet_id = identity_json.get("ubi_wallet_id").and_then(|v| v.as_str());
+                        let savings_wallet_id = identity_json.get("savings_wallet_id").and_then(|v| v.as_str());
+
+                        if let Some(identity) = mgr.get_identity_mut(&identity_hash) {
+                            if let Some(wid) = primary_wallet_id {
+                                let _ = identity.wallet_manager.add_restored_wallet(
+                                    wid,
+                                    lib_identity::wallets::WalletType::Primary,
+                                    created_at,
+                                );
+                            }
+                            if let Some(wid) = ubi_wallet_id {
+                                let _ = identity.wallet_manager.add_restored_wallet(
+                                    wid,
+                                    lib_identity::wallets::WalletType::UBI,
+                                    created_at,
+                                );
+                            }
+                            if let Some(wid) = savings_wallet_id {
+                                let _ = identity.wallet_manager.add_restored_wallet(
+                                    wid,
+                                    lib_identity::wallets::WalletType::Savings,
+                                    created_at,
+                                );
+                            }
+                        }
+
                         info!("🔄 Loaded identity: {} (DID: {}{})",
                             id_preview,
                             truncate_for_display(did_str, 32),
