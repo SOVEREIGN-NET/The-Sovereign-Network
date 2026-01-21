@@ -412,23 +412,57 @@ async fn bootstrap_identities_from_dht(
             }
         };
 
-        // Extract DID and other metadata for logging
+        // Extract fields needed to register identity
         let did = identity_json.get("did").and_then(|v| v.as_str());
+        let public_key_hex = identity_json.get("public_key").and_then(|v| v.as_str());
+        let device_id = identity_json.get("device_id").and_then(|v| v.as_str());
         let display_name = identity_json.get("display_name").and_then(|v| v.as_str());
+        let identity_type_str = identity_json.get("identity_type").and_then(|v| v.as_str());
+        let created_at = identity_json.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
 
-        // Note: Full ZhtpIdentity reconstruction requires private keys that only
-        // exist on the client device. We verify the record exists and is valid.
-        // The identity data remains available in DHT storage for API queries.
-        if let Some(did_str) = did {
-            info!("🔄 Verified identity: {} (DID: {}{})",
-                id_preview,
-                truncate_for_display(did_str, 32),
-                display_name.map(|n| format!(", name: {}", n)).unwrap_or_default()
-            );
-            identities_loaded += 1;
+        // Try to register identity into IdentityManager
+        if let (Some(did_str), Some(pk_hex), Some(dev_id)) = (did, public_key_hex, device_id) {
+            // Parse public key from hex
+            match hex::decode(pk_hex) {
+                Ok(bytes) => {
+                    let public_key = lib_crypto::PublicKey::new(bytes);
+                    // Parse identity type
+                    let identity_type = match identity_type_str {
+                        Some("Device") => lib_identity::IdentityType::Device,
+                        Some("Organization") => lib_identity::IdentityType::Organization,
+                        _ => lib_identity::IdentityType::Human,
+                    };
+
+                    // Register into IdentityManager
+                    let mut mgr = identity_manager.write().await;
+                    if let Err(e) = mgr.register_external_identity(
+                        identity_hash.clone(),
+                        did_str.to_string(),
+                        public_key,
+                        identity_type,
+                        dev_id.to_string(),
+                        display_name.map(|s| s.to_string()),
+                        created_at,
+                    ) {
+                        debug!("Failed to register identity {} (may already exist): {}", id_preview, e);
+                    } else {
+                        info!("🔄 Loaded identity: {} (DID: {}{})",
+                            id_preview,
+                            truncate_for_display(did_str, 32),
+                            display_name.map(|n| format!(", name: {}", n)).unwrap_or_default()
+                        );
+                        identities_loaded += 1;
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to parse public key for {}: {:?}", id_preview, e);
+                    // Still count as verified even if we can't register
+                    identities_loaded += 1;
+                }
+            }
         } else {
-            // Fallback: identity without DID (legacy format)
-            info!("🔄 Verified identity record: {}", id_preview);
+            // Fallback: identity without required fields (legacy format)
+            info!("🔄 Verified identity record: {} (missing registration data)", id_preview);
             identities_loaded += 1;
         }
 
