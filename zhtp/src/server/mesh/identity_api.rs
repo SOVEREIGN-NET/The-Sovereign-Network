@@ -21,6 +21,12 @@ use serde::{Deserialize, Serialize};
 use lib_identity::IdentityManager;
 use crate::session_manager::SessionManager;
 
+/// Safe string truncation for display (avoids panic on short strings)
+#[inline]
+fn truncate_id(s: &str, max_len: usize) -> &str {
+    &s[..max_len.min(s.len())]
+}
+
 /// Simplified ZHTP mesh request format (as sent by browser)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MeshZhtpRequest {
@@ -856,7 +862,7 @@ async fn signout_identity_direct(
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing session token"))?;
     
-    info!("🚪 Signing out session: {}...", &session_token[..16]);
+    info!("🚪 Signing out session: {}...", truncate_id(&session_token, 16));
     
     session_manager.remove_session(session_token).await?;
     
@@ -1047,7 +1053,7 @@ pub async fn load_wallet_private_data_from_dht(
         if let Ok(Some(data)) = guard.get_wallet_private_record(&identity_id_hex, &wallet_id_hex).await {
             match bincode::deserialize::<lib_blockchain::WalletPrivateData>(&data) {
                 Ok(private_data) => {
-                    info!("✅ Loaded wallet private data from storage: {}", &wallet_id_hex[..16]);
+                    info!("✅ Loaded wallet private data from storage: {}", truncate_id(&wallet_id_hex, 16));
                     return Ok(Some(private_data));
                 }
                 Err(e) => {
@@ -1074,7 +1080,7 @@ pub async fn load_wallet_info_from_dht(
         if let Ok(Some(data)) = guard.get_wallet_record(&identity_id_hex, &wallet_id_hex).await {
             match serde_json::from_slice::<serde_json::Value>(&data) {
                 Ok(wallet_info) => {
-                    info!("✅ Loaded wallet info from storage: {}", &wallet_id_hex[..16]);
+                    info!("✅ Loaded wallet info from storage: {}", truncate_id(&wallet_id_hex, 16));
                     return Ok(Some(wallet_info));
                 }
                 Err(e) => {
@@ -1104,8 +1110,8 @@ async fn distribute_standalone_wallet_to_dht(
         "wallet_name": wallet_name,
         "identity_linked": true,
         "public_endpoint": format!("zhtp://identity.{}.wallet.{}.zhtp/",
-            &identity_id_hex[..16.min(identity_id_hex.len())],
-            &wallet_id_hex[..16.min(wallet_id_hex.len())]),
+            truncate_id(&identity_id_hex, 16),
+            truncate_id(&wallet_id_hex, 16)),
         "capabilities": ["receive"],
         "created_at": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -1134,8 +1140,8 @@ async fn distribute_standalone_wallet_to_dht(
 
         let wallet_info_bytes = serde_json::to_vec(&wallet_info)?;
         let path = format!("/identity/{}/wallet/{}",
-            &identity_id_hex[..16.min(identity_id_hex.len())],
-            &wallet_id_hex[..16.min(wallet_id_hex.len())]);
+            truncate_id(&identity_id_hex, 16),
+            truncate_id(&wallet_id_hex, 16));
         dht.store_content(
             "wallet.zhtp",
             &path,
@@ -1162,6 +1168,9 @@ async fn record_identity_on_blockchain(identity_result: &serde_json::Value) -> R
         .ok_or_else(|| anyhow::anyhow!("Missing identity_id string"))?;
     
     let identity_id_bytes = hex::decode(identity_id_str)?;
+    if identity_id_bytes.len() < 32 {
+        return Err(anyhow::anyhow!("identity_id too short: expected 32 bytes, got {}", identity_id_bytes.len()));
+    }
     let identity_hash = lib_crypto::Hash::from_bytes(&identity_id_bytes[..32]);
     let did = format!("did:zhtp:{}", identity_id_str);
     
@@ -1242,6 +1251,9 @@ fn register_wallet_on_blockchain(
             .ok_or_else(|| anyhow::anyhow!("{} is not a string", wallet_id_key))?;
         
         let wallet_id_bytes = hex::decode(wallet_id_str)?;
+        if wallet_id_bytes.len() < 32 {
+            return Err(anyhow::anyhow!("wallet_id too short: expected 32 bytes, got {}", wallet_id_bytes.len()));
+        }
         let wallet_hash = lib_blockchain::Hash::from_slice(&wallet_id_bytes[..32]);
         
         let wallet_pubkey = citizenship_result.get(pubkey_key)

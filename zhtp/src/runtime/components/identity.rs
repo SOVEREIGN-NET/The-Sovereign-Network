@@ -249,10 +249,58 @@ pub struct DhtBootstrapResult {
     pub errors: Vec<String>,
 }
 
+/// Safe string truncation for display (avoids panic on short strings)
+fn truncate_for_display(s: &str, max_len: usize) -> &str {
+    let len = max_len.min(s.len());
+    &s[..len]
+}
+
+/// Rebuild identity index from backup file (~/.zhtp/backup/identities.json)
+/// This ensures identities created before indexing was implemented get indexed
+async fn rebuild_index_from_backup(
+    storage: &mut lib_storage::PersistentStorageSystem,
+) -> Result<u32> {
+    use std::io::BufReader;
+
+    let backup_path = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".zhtp")
+        .join("backup")
+        .join("identities.json");
+
+    if !backup_path.exists() {
+        debug!("No backup file found at {:?}", backup_path);
+        return Ok(0);
+    }
+
+    info!("📂 Reading identity backup from {:?}", backup_path);
+
+    let file = std::fs::File::open(&backup_path)
+        .map_err(|e| anyhow::anyhow!("Failed to open backup: {}", e))?;
+    let reader = BufReader::new(file);
+    let backup: serde_json::Map<String, serde_json::Value> = serde_json::from_reader(reader)
+        .map_err(|e| anyhow::anyhow!("Failed to parse backup: {}", e))?;
+
+    let mut indexed = 0u32;
+    for identity_id in backup.keys() {
+        if let Err(e) = storage.add_to_identity_index(identity_id).await {
+            debug!("Failed to index {}: {}", truncate_for_display(identity_id, 16), e);
+        } else {
+            indexed += 1;
+        }
+    }
+
+    info!("📋 Indexed {} identities from backup file", indexed);
+    Ok(indexed)
+}
+
 /// Bootstrap identities and wallets from DHT storage
 ///
 /// This function loads all identities and their wallets from the persistent
-/// DHT storage index and adds them to the provided IdentityManager.
+/// DHT storage index. Since identities contain private keys that only exist
+/// on the client device, we cannot fully reconstruct ZhtpIdentity objects.
+/// Instead, we verify the stored records exist and are valid, making them
+/// available for API queries and peer discovery.
 async fn bootstrap_identities_from_dht(
     identity_manager: &Arc<RwLock<IdentityManager>>,
 ) -> Result<DhtBootstrapResult> {
@@ -268,13 +316,25 @@ async fn bootstrap_identities_from_dht(
     let mut wallets_loaded = 0u32;
     let mut errors = Vec::new();
 
+    // Hold write lock for entire bootstrap to avoid repeated lock acquisition
+    let mut guard = storage.write().await;
+
+    // First: rebuild index from backup file (catches pre-indexing identities)
+    if let Err(e) = rebuild_index_from_backup(&mut *guard).await {
+        debug!("Backup index rebuild skipped: {}", e);
+    }
+
     // 1. Load identity index
-    let identity_ids = {
-        let mut guard = storage.write().await;
-        guard.list_identity_ids().await.unwrap_or_else(|e| {
+    let identity_ids = match guard.list_identity_ids().await {
+        Ok(ids) => ids,
+        Err(e) => {
             info!("No identity index found (first run): {}", e);
-            Vec::new()
-        })
+            return Ok(DhtBootstrapResult {
+                identities_loaded: 0,
+                wallets_loaded: 0,
+                errors: vec![],
+            });
+        }
     };
 
     if identity_ids.is_empty() {
@@ -288,106 +348,106 @@ async fn bootstrap_identities_from_dht(
 
     info!("📋 Found {} identities in DHT index", identity_ids.len());
 
-    // 2. For each identity, load record and check if already present
+    // 2. For each identity, load record and verify
     for identity_id in &identity_ids {
-        // Load identity record
-        let identity_data = {
-            let mut guard = storage.write().await;
-            match guard.get_identity_record(identity_id).await {
-                Ok(Some(data)) => data,
-                Ok(None) => {
-                    debug!("Identity {} in index but no record found", identity_id);
-                    continue;
-                }
-                Err(e) => {
-                    errors.push(format!("Failed to load identity {}: {}", identity_id, e));
-                    continue;
-                }
-            }
-        };
+        let id_preview = truncate_for_display(identity_id, 16);
 
-        // Parse identity ID hash
-        let identity_hash = match lib_crypto::Hash::from_hex(identity_id) {
-            Ok(h) => h,
+        // Load identity record
+        let identity_data = match guard.get_identity_record(identity_id).await {
+            Ok(Some(data)) => data,
+            Ok(None) => {
+                debug!("Identity {} in index but no record found", id_preview);
+                continue;
+            }
             Err(e) => {
-                debug!("Invalid identity ID format {}: {}", identity_id, e);
+                errors.push(format!("Failed to load identity {}: {}", id_preview, e));
                 continue;
             }
         };
 
-        // Check if already loaded
+        // Validate data is not corrupted
+        if identity_data.is_empty() {
+            errors.push(format!("Empty identity record for {}", id_preview));
+            continue;
+        }
+
+        // Parse identity ID hash for manager lookup
+        let identity_hash = match lib_crypto::Hash::from_hex(identity_id) {
+            Ok(h) => h,
+            Err(e) => {
+                debug!("Invalid identity ID format {}: {}", id_preview, e);
+                continue;
+            }
+        };
+
+        // Check if already in manager (from genesis or prior load)
         {
             let mgr = identity_manager.read().await;
             if mgr.get_identity(&identity_hash).is_some() {
-                debug!("Identity {} already in manager, skipping", &identity_id[..16.min(identity_id.len())]);
+                debug!("Identity {} already in manager, skipping", id_preview);
                 continue;
             }
         }
 
         // Parse the stored data to extract identity info
-        if let Ok(identity_json) = serde_json::from_slice::<serde_json::Value>(&identity_data) {
-            // Try to reconstruct ZhtpIdentity from CitizenshipResult
-            if let Ok(citizenship_result) = serde_json::from_slice::<lib_identity::CitizenshipResult>(&identity_data) {
-                info!("🔄 Reconstructing identity from CitizenshipResult: {}", &identity_id[..16.min(identity_id.len())]);
-
-                // Create a minimal identity from citizenship result
-                // Note: This creates a "shell" identity - full reconstruction would need private keys
-                let mut mgr = identity_manager.write().await;
-
-                // The identity should already exist from the citizenship flow
-                // We just need to verify it's registered
-                if let Some(did) = identity_json.get("did").and_then(|v| v.as_str()) {
-                    if let Some(existing) = mgr.get_identity_by_did(did) {
-                        debug!("Identity {} found by DID", did);
-                    } else {
-                        info!("  DID not found in manager: {}", did);
-                    }
-                }
-
-                identities_loaded += 1;
-            } else {
-                // Log what we found for debugging
-                if let Some(did) = identity_json.get("did").and_then(|v| v.as_str()) {
-                    info!("🔄 Found identity record: {} (DID: {})",
-                        &identity_id[..16.min(identity_id.len())], did);
-                    identities_loaded += 1;
-                }
+        let identity_json: serde_json::Value = match serde_json::from_slice(&identity_data) {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("Corrupted identity JSON for {}: {}", id_preview, e));
+                continue;
             }
+        };
+
+        // Extract DID and other metadata for logging
+        let did = identity_json.get("did").and_then(|v| v.as_str());
+        let display_name = identity_json.get("display_name").and_then(|v| v.as_str());
+
+        // Note: Full ZhtpIdentity reconstruction requires private keys that only
+        // exist on the client device. We verify the record exists and is valid.
+        // The identity data remains available in DHT storage for API queries.
+        if let Some(did_str) = did {
+            info!("🔄 Verified identity: {} (DID: {}{})",
+                id_preview,
+                truncate_for_display(did_str, 32),
+                display_name.map(|n| format!(", name: {}", n)).unwrap_or_default()
+            );
+            identities_loaded += 1;
+        } else {
+            // Fallback: identity without DID (legacy format)
+            info!("🔄 Verified identity record: {}", id_preview);
+            identities_loaded += 1;
         }
 
         // Load wallet indexes for this identity
-        let wallet_ids = {
-            let mut guard = storage.write().await;
-            guard.list_wallet_ids_for_identity(identity_id).await.unwrap_or_default()
-        };
+        let wallet_ids = guard.list_wallet_ids_for_identity(identity_id).await.unwrap_or_default();
 
         for wallet_id in &wallet_ids {
-            let wallet_data = {
-                let mut guard = storage.write().await;
-                guard.get_wallet_record(identity_id, wallet_id).await
-            };
+            let wallet_preview = truncate_for_display(wallet_id, 16);
 
-            match wallet_data {
+            match guard.get_wallet_record(identity_id, wallet_id).await {
                 Ok(Some(data)) => {
                     if let Ok(wallet_json) = serde_json::from_slice::<serde_json::Value>(&data) {
                         let wallet_type = wallet_json.get("wallet_type")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown");
-                        debug!("  Found wallet {} ({})", &wallet_id[..16.min(wallet_id.len())], wallet_type);
+                        debug!("  Verified wallet {} ({})", wallet_preview, wallet_type);
                         wallets_loaded += 1;
                     }
                 }
                 Ok(None) => {
-                    debug!("  Wallet {} in index but no record", wallet_id);
+                    debug!("  Wallet {} in index but no record", wallet_preview);
                 }
                 Err(e) => {
-                    errors.push(format!("Failed to load wallet {}: {}", wallet_id, e));
+                    errors.push(format!("Failed to load wallet {}: {}", wallet_preview, e));
                 }
             }
         }
     }
 
-    info!("✅ DHT bootstrap: {} identities, {} wallets indexed ({} errors)",
+    // Release lock
+    drop(guard);
+
+    info!("✅ DHT bootstrap: {} identities, {} wallets verified ({} errors)",
         identities_loaded, wallets_loaded, errors.len());
 
     Ok(DhtBootstrapResult {
