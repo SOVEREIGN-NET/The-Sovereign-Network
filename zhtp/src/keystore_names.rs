@@ -24,6 +24,9 @@ pub const USER_PRIVATE_KEY_FILENAME: &str = "user_private_key.json";
 /// Wallet data file (wallet state and transaction history)
 pub const WALLET_DATA_FILENAME: &str = "wallet_data.json";
 
+/// Directory for encrypted seed storage (master seed)
+pub const SEED_STORAGE_DIRNAME: &str = "seed_store";
+
 // Legacy naming - for backward compatibility during migration
 /// Deprecated: Use NODE_IDENTITY_FILENAME instead
 #[deprecated(since = "0.2.0", note = "Use NODE_IDENTITY_FILENAME instead")]
@@ -50,6 +53,7 @@ mod tests {
             USER_IDENTITY_FILENAME,
             USER_PRIVATE_KEY_FILENAME,
             WALLET_DATA_FILENAME,
+            SEED_STORAGE_DIRNAME,
         ];
 
         for i in 0..filenames.len() {

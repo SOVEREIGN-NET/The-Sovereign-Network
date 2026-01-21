@@ -10,6 +10,8 @@ use lib_network::web4::TrustConfig;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use zhtp::config::SeedStorageConfig;
+use zhtp::runtime::seed_storage::{KeystoreSeedlessKey, SeedKind, SeedStorage};
 
 #[derive(Debug, Clone)]
 pub struct LoadedIdentity {
@@ -21,7 +23,8 @@ pub struct LoadedIdentity {
 struct KeystorePrivateKey {
     dilithium_sk: Vec<u8>,
     kyber_sk: Vec<u8>,
-    master_seed: Vec<u8>,
+    #[serde(default)]
+    master_seed: Option<Vec<u8>>,
 }
 
 pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIdentity> {
@@ -29,6 +32,7 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
     // NODE identity is for mesh networking operations only
     let mut identity_file = keystore_path.join(zhtp::keystore_names::USER_IDENTITY_FILENAME);
     let mut private_key_file = keystore_path.join(zhtp::keystore_names::USER_PRIVATE_KEY_FILENAME);
+    let mut seed_kind = SeedKind::User;
 
     // Fallback to NODE identity files for backwards compatibility with old keystores
     // that were created before USER/NODE identity separation
@@ -44,6 +48,7 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
             );
             identity_file = node_identity_file;
             private_key_file = node_private_key_file;
+            seed_kind = SeedKind::Node;
         }
     }
 
@@ -65,13 +70,35 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
     let private_key_json = std::fs::read_to_string(&private_key_file)
         .map_err(|e| CliError::IdentityError(format!("Failed to read private key: {}", e)))?;
 
-    let keystore_key: KeystorePrivateKey = serde_json::from_str(&private_key_json)
+    let identity_id = SeedStorage::identity_id_from_json(&identity_json)
+        .map_err(|e| CliError::IdentityError(format!("Failed to parse identity id: {}", e)))?;
+    let seed_storage = SeedStorage::new(SeedStorageConfig::for_keystore(keystore_path));
+
+    let mut keystore_key: KeystorePrivateKey = serde_json::from_str(&private_key_json)
         .map_err(|e| CliError::IdentityError(format!("Failed to parse private key: {}", e)))?;
+
+    let master_seed = if let Some(seed) = keystore_key.master_seed.take() {
+        seed_storage
+            .store_seed(&identity_id, seed_kind, &seed)
+            .map_err(|e| CliError::IdentityError(format!("Failed to store encrypted seed: {}", e)))?;
+        let scrubbed = KeystoreSeedlessKey {
+            dilithium_sk: keystore_key.dilithium_sk.clone(),
+            kyber_sk: keystore_key.kyber_sk.clone(),
+        };
+        SeedStorage::scrub_seed_from_key_file(&private_key_file, &scrubbed)
+            .map_err(|e| CliError::IdentityError(format!("Failed to scrub private key file: {}", e)))?;
+        seed
+    } else {
+        seed_storage
+            .load_seed(&identity_id, seed_kind)
+            .map_err(|e| CliError::IdentityError(format!("Failed to load encrypted seed: {}", e)))?
+            .ok_or_else(|| CliError::IdentityError("Missing encrypted master seed".to_string()))?
+    };
 
     let private_key = PrivateKey {
         dilithium_sk: keystore_key.dilithium_sk,
         kyber_sk: keystore_key.kyber_sk,
-        master_seed: keystore_key.master_seed,
+        master_seed,
     };
 
     let identity = ZhtpIdentity::from_serialized(&identity_json, &private_key)

@@ -47,6 +47,8 @@ use crate::monitoring::MonitoringSystem;
 
 // Import keystore filename constants
 use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
+use crate::config::SeedStorageConfig;
+use crate::runtime::seed_storage::{KeystoreSeedlessKey, SeedKind, SeedStorage};
 
 /// Default QUIC port for mesh networking (UDP)
 const QUIC_PORT: u16 = 9334;
@@ -209,35 +211,68 @@ impl ZhtpUnifiedServer {
         let keystore_path = keystore_dir.join(NODE_IDENTITY_FILENAME);
 
         if keystore_path.exists() {
-            if let Ok(data) = std::fs::read_to_string(&keystore_path) {
-                // We need the private key to deserialize properly
-                let private_key_path = keystore_dir.join(NODE_PRIVATE_KEY_FILENAME);
-                if let Ok(key_data) = std::fs::read_to_string(&private_key_path) {
-                    if let Ok(key_store) = serde_json::from_str::<serde_json::Value>(&key_data) {
-                        // Extract private key components
-                        if let (Some(dilithium), Some(kyber), Some(seed)) = (
-                            key_store.get("dilithium_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                            key_store.get("kyber_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                            key_store.get("master_seed").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                        ) {
-                            let private_key = lib_crypto::PrivateKey {
-                                dilithium_sk: dilithium,
-                                kyber_sk: kyber,
-                                master_seed: seed,
-                            };
+            #[derive(serde::Deserialize)]
+            struct KeystorePrivateKey {
+                dilithium_sk: Vec<u8>,
+                kyber_sk: Vec<u8>,
+                #[serde(default)]
+                master_seed: Option<Vec<u8>>,
+            }
 
-                            if let Ok(identity) = ZhtpIdentity::from_serialized(&data, &private_key) {
-                                tracing::info!(
-                                    did = %identity.did,
-                                    "Loaded server identity from keystore"
-                                );
-                                return Ok(Arc::new(identity));
-                            }
-                        }
-                    }
+            let private_key_path = keystore_dir.join(NODE_PRIVATE_KEY_FILENAME);
+            let seed_storage = SeedStorage::new(SeedStorageConfig::for_keystore(&keystore_dir));
+
+            let identity_result = (|| -> Result<Arc<ZhtpIdentity>> {
+                let data = std::fs::read_to_string(&keystore_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to read keystore identity {:?}: {}", keystore_path, e))?;
+                let key_data = std::fs::read_to_string(&private_key_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to read keystore private key {:?}: {}", private_key_path, e))?;
+                let identity_id = SeedStorage::identity_id_from_json(&data)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse identity id: {}", e))?;
+                let mut key_store: KeystorePrivateKey = serde_json::from_str(&key_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse private key: {}", e))?;
+
+                let master_seed = if let Some(seed) = key_store.master_seed.take() {
+                    seed_storage
+                        .store_seed(&identity_id, SeedKind::Node, &seed)
+                        .map_err(|e| anyhow::anyhow!("Failed to store encrypted node seed: {}", e))?;
+                    let scrubbed = KeystoreSeedlessKey {
+                        dilithium_sk: key_store.dilithium_sk.clone(),
+                        kyber_sk: key_store.kyber_sk.clone(),
+                    };
+                    SeedStorage::scrub_seed_from_key_file(&private_key_path, &scrubbed)
+                        .map_err(|e| anyhow::anyhow!("Failed to scrub private key file: {}", e))?;
+                    seed
+                } else {
+                    seed_storage
+                        .load_seed(&identity_id, SeedKind::Node)
+                        .map_err(|e| anyhow::anyhow!("Failed to load encrypted node seed: {}", e))?
+                        .ok_or_else(|| anyhow::anyhow!("Encrypted node seed missing"))?
+                };
+
+                let private_key = lib_crypto::PrivateKey {
+                    dilithium_sk: key_store.dilithium_sk,
+                    kyber_sk: key_store.kyber_sk,
+                    master_seed,
+                };
+
+                let identity = ZhtpIdentity::from_serialized(&data, &private_key)
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize identity: {}", e))?;
+                Ok(Arc::new(identity))
+            })();
+
+            match identity_result {
+                Ok(identity) => {
+                    tracing::info!(
+                        did = %identity.did,
+                        "Loaded server identity from keystore"
+                    );
+                    return Ok(identity);
+                }
+                Err(err) => {
+                    tracing::warn!("Keystore exists but failed to load identity: {}", err);
                 }
             }
-            tracing::warn!("Keystore exists but failed to load identity, creating fallback");
         }
 
         // CRITICAL: Gate deterministic fallback to dev-only or explicit opt-in
