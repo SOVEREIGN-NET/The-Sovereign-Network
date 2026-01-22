@@ -405,16 +405,35 @@ impl IdentityHandler {
 
             // Persist identity to DHT for fast lookups (derived cache, not source of truth)
             // This enables stateless API restarts and horizontal scaling
+            let identity_id_str = citizenship_result.identity_id.to_string();
             match serde_json::to_vec(&citizenship_result) {
                 Ok(identity_data) => {
                     let mut storage = self.storage_system.write().await;
+
+                    // Store identity record
                     if let Err(e) = storage.store_identity_record(
-                        &citizenship_result.identity_id.to_string(),
+                        &identity_id_str,
                         &identity_data
                     ).await {
                         tracing::warn!("Failed to persist identity to DHT (non-fatal): {}", e);
                     } else {
                         tracing::info!(" Identity {} persisted to DHT cache", citizenship_result.identity_id);
+                    }
+
+                    // Add to identity index for bootstrap
+                    if let Err(e) = storage.add_to_identity_index(&identity_id_str).await {
+                        tracing::warn!("Failed to add identity to index (non-fatal): {}", e);
+                    }
+
+                    // Add wallet indexes for the 3 wallets
+                    let primary_wallet_id = citizenship_result.primary_wallet_id.to_string();
+                    let ubi_wallet_id = citizenship_result.ubi_wallet_id.to_string();
+                    let savings_wallet_id = citizenship_result.savings_wallet_id.to_string();
+
+                    for wallet_id in [&primary_wallet_id, &ubi_wallet_id, &savings_wallet_id] {
+                        if let Err(e) = storage.add_to_wallet_index(&identity_id_str, wallet_id).await {
+                            tracing::warn!("Failed to add wallet {} to index (non-fatal): {}", wallet_id, e);
+                        }
                     }
                 }
                 Err(e) => {
@@ -1571,7 +1590,71 @@ impl IdentityHandler {
             }
         };
 
+        // Register wallets in blockchain's wallet_registry (source of truth for balances)
+        if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+            let mut blockchain = blockchain_arc.write().await;
+
+            // Primary wallet gets welcome bonus
+            let primary_wallet_data = lib_blockchain::transaction::WalletTransactionData {
+                wallet_id: lib_blockchain::Hash::from_slice(&citizenship_result.primary_wallet_id.0),
+                wallet_type: "Primary".to_string(),
+                wallet_name: "Primary Wallet".to_string(),
+                alias: Some("primary".to_string()),
+                public_key: public_key_bytes.clone(),
+                owner_identity_id: Some(lib_blockchain::Hash::from_slice(&identity_id.0)),
+                seed_commitment: lib_blockchain::types::hash::blake3_hash(b"client_wallet_seed"),
+                created_at,
+                registration_fee: 50,
+                capabilities: 0xFF,
+                initial_balance: welcome_bonus_amount, // 5000 ZHTP welcome bonus
+            };
+            if let Err(e) = blockchain.register_wallet(primary_wallet_data) {
+                tracing::warn!("Failed to register primary wallet: {}", e);
+            } else {
+                tracing::info!("💰 Primary wallet registered with {} ZHTP welcome bonus", welcome_bonus_amount);
+            }
+
+            // UBI wallet - no initial balance
+            let ubi_wallet_data = lib_blockchain::transaction::WalletTransactionData {
+                wallet_id: lib_blockchain::Hash::from_slice(&citizenship_result.ubi_wallet_id.0),
+                wallet_type: "UBI".to_string(),
+                wallet_name: "UBI Wallet".to_string(),
+                alias: Some("ubi".to_string()),
+                public_key: public_key_bytes.clone(),
+                owner_identity_id: Some(lib_blockchain::Hash::from_slice(&identity_id.0)),
+                seed_commitment: lib_blockchain::types::hash::blake3_hash(b"client_wallet_seed"),
+                created_at,
+                registration_fee: 50,
+                capabilities: 0x01,
+                initial_balance: 0,
+            };
+            if let Err(e) = blockchain.register_wallet(ubi_wallet_data) {
+                tracing::warn!("Failed to register UBI wallet: {}", e);
+            }
+
+            // Savings wallet - no initial balance
+            let savings_wallet_data = lib_blockchain::transaction::WalletTransactionData {
+                wallet_id: lib_blockchain::Hash::from_slice(&citizenship_result.savings_wallet_id.0),
+                wallet_type: "Savings".to_string(),
+                wallet_name: "Savings Wallet".to_string(),
+                alias: Some("savings".to_string()),
+                public_key: public_key_bytes.clone(),
+                owner_identity_id: Some(lib_blockchain::Hash::from_slice(&identity_id.0)),
+                seed_commitment: lib_blockchain::types::hash::blake3_hash(b"client_wallet_seed"),
+                created_at,
+                registration_fee: 50,
+                capabilities: 0x02,
+                initial_balance: 0,
+            };
+            if let Err(e) = blockchain.register_wallet(savings_wallet_data) {
+                tracing::warn!("Failed to register savings wallet: {}", e);
+            }
+
+            tracing::info!("✅ All 3 wallets registered in blockchain wallet_registry");
+        }
+
         // Persist to DHT for fast lookups
+        let identity_id_str = identity_id.to_string();
         let identity_record = json!({
             "did": req_data.did,
             "public_key": req_data.public_key,
@@ -1589,11 +1672,25 @@ impl IdentityHandler {
 
         {
             let mut storage = self.storage_system.write().await;
+
+            // Store identity record
             if let Err(e) = storage.store_identity_record(
-                &identity_id.to_string(),
+                &identity_id_str,
                 &serde_json::to_vec(&identity_record)?
             ).await {
                 tracing::warn!("Failed to persist identity to DHT (non-fatal): {}", e);
+            }
+
+            // Add to identity index for bootstrap
+            if let Err(e) = storage.add_to_identity_index(&identity_id_str).await {
+                tracing::warn!("Failed to add identity to index (non-fatal): {}", e);
+            }
+
+            // Add wallet indexes for the 3 wallets
+            for wallet_id in [&primary_wallet_id, &ubi_wallet_id, &savings_wallet_id] {
+                if let Err(e) = storage.add_to_wallet_index(&identity_id_str, wallet_id).await {
+                    tracing::warn!("Failed to add wallet {} to index (non-fatal): {}", wallet_id, e);
+                }
             }
         }
 
