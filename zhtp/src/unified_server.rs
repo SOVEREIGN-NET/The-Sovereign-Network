@@ -220,8 +220,13 @@ impl ZhtpUnifiedServer {
                             key_store.get("kyber_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
                             key_store.get("master_seed").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
                         ) {
+                            // Get dilithium_pk if present, otherwise use empty (backward compat)
+                            let dilithium_pk = key_store.get("dilithium_pk")
+                                .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok())
+                                .unwrap_or_default();
                             let private_key = lib_crypto::PrivateKey {
                                 dilithium_sk: dilithium,
+                                dilithium_pk,
                                 kyber_sk: kyber,
                                 master_seed: seed,
                             };

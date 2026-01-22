@@ -20,6 +20,8 @@ pub struct LoadedIdentity {
 #[derive(Deserialize)]
 struct KeystorePrivateKey {
     dilithium_sk: Vec<u8>,
+    #[serde(default)]
+    dilithium_pk: Vec<u8>,  // Optional for backward compatibility with old keystores
     kyber_sk: Vec<u8>,
     master_seed: Vec<u8>,
 }
@@ -70,6 +72,7 @@ pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIden
 
     let private_key = PrivateKey {
         dilithium_sk: keystore_key.dilithium_sk,
+        dilithium_pk: keystore_key.dilithium_pk,
         kyber_sk: keystore_key.kyber_sk,
         master_seed: keystore_key.master_seed,
     };

@@ -68,6 +68,7 @@ impl IdentityManager {
         // Wrap in PrivateKey struct
         let private_key = lib_crypto::PrivateKey {
             dilithium_sk: private_key_bytes.clone(),
+            dilithium_pk: public_key.clone(),
             kyber_sk: vec![],  // Not used in current implementation
             master_seed: vec![],  // Derived separately
         };
@@ -765,6 +766,7 @@ impl IdentityManager {
         // Wrap in PrivateKey struct
         let private_key = lib_crypto::PrivateKey {
             dilithium_sk: private_key_bytes.clone(),
+            dilithium_pk: public_key.clone(),
             kyber_sk: vec![],  // Not used in current implementation
             master_seed: vec![],  // Derived separately
         };

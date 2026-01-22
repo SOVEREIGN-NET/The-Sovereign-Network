@@ -73,6 +73,7 @@ impl MultiSig {
                 public_key: participant_key.clone(),
                 private_key: PrivateKey {
                     dilithium_sk: vec![],
+                    dilithium_pk: participant_key.dilithium_pk.clone(),
                     kyber_sk: vec![],
                     // ed25519_sk removed - pure PQC only
                     master_seed: vec![0u8; 64],

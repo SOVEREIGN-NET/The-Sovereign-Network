@@ -43,14 +43,16 @@ impl KeyPair {
         hasher.update(kyber_pk.as_bytes());
         let key_id: [u8; 32] = hasher.finalize().into();
 
+        let dilithium_pk_bytes = dilithium_pk.as_bytes().to_vec();
         let keypair = KeyPair {
             public_key: PublicKey {
-                dilithium_pk: dilithium_pk.as_bytes().to_vec(),
+                dilithium_pk: dilithium_pk_bytes.clone(),
                 kyber_pk: kyber_pk.as_bytes().to_vec(),
                 key_id,
             },
             private_key: PrivateKey {
                 dilithium_sk: dilithium_sk.as_bytes().to_vec(),
+                dilithium_pk: dilithium_pk_bytes,
                 kyber_sk: kyber_sk.as_bytes().to_vec(),
                 master_seed,
             },

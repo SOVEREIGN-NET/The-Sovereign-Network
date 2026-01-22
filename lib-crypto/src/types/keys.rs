@@ -140,6 +140,9 @@ impl PublicKey {
 pub struct PrivateKey {
     /// CRYSTALS-Dilithium secret key
     pub dilithium_sk: Vec<u8>,
+    /// CRYSTALS-Dilithium public key (stored with private key for signing convenience)
+    /// This allows the public key to be retrieved when only PrivateKey is available
+    pub dilithium_pk: Vec<u8>,
     /// CRYSTALS-Kyber secret key
     pub kyber_sk: Vec<u8>,
     /// Master seed for key derivation
@@ -315,12 +318,14 @@ mod tests {
     fn test_private_key_zeroization() {
         let private_key = PrivateKey {
             dilithium_sk: vec![0xAAu8; 100],
+            dilithium_pk: vec![0xDDu8; 100],
             kyber_sk: vec![0xBBu8; 100],
             master_seed: vec![0xCCu8; 64],
         };
 
         // Verify initial state
         assert_eq!(private_key.dilithium_sk[0], 0xAA);
+        assert_eq!(private_key.dilithium_pk[0], 0xDD);
         assert_eq!(private_key.kyber_sk[0], 0xBB);
         assert_eq!(private_key.master_seed[0], 0xCC);
 

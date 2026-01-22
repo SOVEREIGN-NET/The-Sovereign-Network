@@ -155,8 +155,11 @@ impl TransactionValidator {
                 self.validate_profit_declaration_transaction(transaction)?;
             }}
 
-        // Signature validation (always required)
-        self.validate_signature(transaction)?;
+        // Signature validation (skip for system transactions - they don't have real signatures)
+        // System transactions include: genesis, UBI distribution, identity/wallet registration from node
+        if !is_system_transaction {
+            self.validate_signature(transaction)?;
+        }
 
         // Zero-knowledge proof validation (skip for system transactions)
         if !is_system_transaction {
@@ -239,8 +242,11 @@ impl TransactionValidator {
                 self.validate_profit_declaration_transaction(transaction)?;
             }}
 
-        // Signature validation (always required)
-        self.validate_signature(transaction)?;
+        // Signature validation (skip for system transactions - they don't have real signatures)
+        // System transactions include: genesis, UBI distribution, identity/wallet registration from node
+        if !is_system_transaction {
+            self.validate_signature(transaction)?;
+        }
 
         // Zero-knowledge proof validation (skip for system transactions)
         if !is_system_transaction {
