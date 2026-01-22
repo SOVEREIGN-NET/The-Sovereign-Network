@@ -536,6 +536,7 @@ impl MarketplaceHandler {
         
         let private_key = PrivateKey {
             dilithium_sk: identity_private_key_bytes,
+            dilithium_pk: wallet_pubkey.clone(),
             kyber_sk: Vec::new(),
             master_seed: identity_seed.to_vec(),
         };

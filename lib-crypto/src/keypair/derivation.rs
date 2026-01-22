@@ -42,15 +42,17 @@ impl KeyPair {
         OsRng.fill_bytes(&mut sk_bytes);
         // Ed25519 key generation removed - pure post-quantum only
 
+        let dilithium_pk_bytes = dilithium_pk.as_bytes().to_vec();
         Ok(KeyPair {
             public_key: PublicKey {
-                dilithium_pk: dilithium_pk.as_bytes().to_vec(),
+                dilithium_pk: dilithium_pk_bytes.clone(),
                 kyber_pk: kyber_pk.as_bytes().to_vec(),
                 // ed25519_pk removed - pure PQC only
                 key_id, // This is deterministic based on seed
             },
             private_key: PrivateKey {
                 dilithium_sk: dilithium_sk.as_bytes().to_vec(),
+                dilithium_pk: dilithium_pk_bytes,
                 kyber_sk: kyber_sk.as_bytes().to_vec(),
                 // ed25519_sk removed - pure PQC only
                 master_seed: expanded_seed,

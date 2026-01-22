@@ -387,4 +387,5 @@ mod tests {
         assert_eq!(signature.len(), expected_size,
             "D5 signature size should be message_len + 4627 = {}", expected_size);
     }
+
 }

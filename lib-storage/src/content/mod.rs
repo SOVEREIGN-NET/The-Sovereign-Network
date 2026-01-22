@@ -882,6 +882,7 @@ impl ContentManager {
         #[derive(serde::Serialize)]
         struct PrivateKeyBlob {
             dilithium_sk: Vec<u8>,
+            dilithium_pk: Vec<u8>,
             kyber_sk: Vec<u8>,
             master_seed: Vec<u8>,
         }
@@ -924,6 +925,7 @@ impl ContentManager {
         let private_key = credentials.private_key.clone().ok_or_else(|| anyhow::anyhow!("Identity missing private key for storage"))?;
         let private_key_blob = PrivateKeyBlob {
             dilithium_sk: private_key.dilithium_sk.clone(),
+            dilithium_pk: private_key.dilithium_pk.clone(),
             kyber_sk: private_key.kyber_sk.clone(),
             master_seed: private_key.master_seed.clone(),
         };
@@ -995,6 +997,8 @@ impl ContentManager {
             #[derive(serde::Deserialize)]
             struct PrivateKeyBlob {
                 dilithium_sk: Vec<u8>,
+                #[serde(default)]
+                dilithium_pk: Vec<u8>,  // Optional for backward compatibility with old backups
                 kyber_sk: Vec<u8>,
                 master_seed: Vec<u8>,
             }
@@ -1007,6 +1011,7 @@ impl ContentManager {
             let identity = if let Ok(blob) = bincode::deserialize::<IdentityBlob>(&decrypted_data) {
                 let private_key = lib_crypto::PrivateKey {
                     dilithium_sk: blob.private_key.dilithium_sk,
+                    dilithium_pk: blob.private_key.dilithium_pk,
                     kyber_sk: blob.private_key.kyber_sk,
                     master_seed: blob.private_key.master_seed,
                 };
