@@ -655,6 +655,7 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
     /// Store an identity record in DHT storage for fast lookups (works with any backend)
     /// Uses key format: `identity/{identity_id}`
     /// Payload is versioned: { "v": 1, "data": {...} }
+    /// Also writes to backup file ~/.zhtp/backup/identities.json
     pub async fn store_identity_record(&mut self, identity_id: &str, record_data: &[u8]) -> Result<()> {
         let key = format!("identity/{}", identity_id);
 
@@ -668,7 +669,74 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
             .map_err(|e| anyhow::anyhow!("Failed to serialize versioned identity: {}", e))?;
 
         tracing::info!("Storing identity record {} ({} bytes, v1)", identity_id, versioned_data.len());
+
+        // Write to backup file (shadow copy for safety)
+        if let Err(e) = self.append_to_identity_backup(identity_id, &versioned).await {
+            tracing::warn!("Failed to write identity backup (non-fatal): {}", e);
+        }
+
         self.dht_storage.store(key, versioned_data, None).await
+    }
+
+    /// Append identity to backup JSON file (~/.zhtp/backup/identities.json)
+    /// This is a shadow copy for safety - not referenced by application code
+    /// Uses spawn_blocking to avoid blocking the async executor during file I/O
+    async fn append_to_identity_backup(&self, identity_id: &str, data: &serde_json::Value) -> Result<()> {
+        let identity_id = identity_id.to_string();
+        let data = data.clone();
+
+        tokio::task::spawn_blocking(move || {
+            use std::io::{BufReader, BufWriter};
+
+            let backup_dir = dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".zhtp")
+                .join("backup");
+
+            // Create backup directory if needed
+            std::fs::create_dir_all(&backup_dir)
+                .map_err(|e| anyhow::anyhow!("Failed to create backup dir: {}", e))?;
+
+            let backup_path = backup_dir.join("identities.json");
+
+            // Load existing backup or create new
+            let mut backup: serde_json::Map<String, serde_json::Value> = if backup_path.exists() {
+                let file = std::fs::File::open(&backup_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to open backup: {}", e))?;
+                let reader = BufReader::new(file);
+                serde_json::from_reader(reader).unwrap_or_default()
+            } else {
+                serde_json::Map::new()
+            };
+
+            // Add/update identity with timestamp
+            let entry = serde_json::json!({
+                "data": data,
+                "backed_up_at": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            });
+            backup.insert(identity_id.clone(), entry);
+
+            // Write back atomically (write to temp, then rename)
+            let temp_path = backup_dir.join("identities.json.tmp");
+            let file = std::fs::File::create(&temp_path)
+                .map_err(|e| anyhow::anyhow!("Failed to create temp backup: {}", e))?;
+            let writer = BufWriter::new(file);
+            serde_json::to_writer_pretty(writer, &backup)
+                .map_err(|e| anyhow::anyhow!("Failed to write backup: {}", e))?;
+
+            std::fs::rename(&temp_path, &backup_path)
+                .map_err(|e| anyhow::anyhow!("Failed to finalize backup: {}", e))?;
+
+            tracing::debug!("Identity {} backed up to {:?}", identity_id, backup_path);
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Backup task panicked: {}", e))??;
+
+        Ok(())
     }
 
     /// Retrieve an identity record from DHT storage (works with any backend)
@@ -714,6 +782,242 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
 
         // Storage stats are updated in real-time during operations
         Ok(self.stats.clone())
+    }
+
+    // ========================================================================
+    // DHT Index Management - Enables "load all" operations for persistence
+    // ========================================================================
+    // Key formats:
+    // - idx/identities                      -> JSON array of identity_id strings
+    // - idx/wallets/by_identity/{id}        -> JSON array of wallet_id strings
+    // - wallet/{identity_id}/{wallet_id}    -> wallet metadata
+    // - wallet_private/{identity_id}/{wallet_id} -> encrypted private data (existing)
+
+    /// Add an identity ID to the global identity index
+    ///
+    /// Uses a HashSet internally for O(1) duplicate detection.
+    /// Returns true if the identity was newly added, false if already present.
+    pub async fn add_to_identity_index(&mut self, identity_id: &str) -> Result<()> {
+        use std::collections::HashSet;
+
+        if identity_id.is_empty() {
+            return Err(anyhow::anyhow!("identity_id cannot be empty"));
+        }
+
+        let index_key = "idx/identities";
+
+        // Load existing index or create empty set
+        let mut ids: HashSet<String> = match self.dht_storage.get(index_key).await? {
+            Some(data) => {
+                // Parse as array, convert to HashSet
+                let vec: Vec<String> = serde_json::from_slice(&data)
+                    .map_err(|e| anyhow::anyhow!("Corrupted identity index: {}", e))?;
+                vec.into_iter().collect()
+            }
+            None => HashSet::new(),
+        };
+
+        // Add if not already present (HashSet.insert returns true if new)
+        if ids.insert(identity_id.to_string()) {
+            // Convert back to Vec for JSON serialization (HashSet order is arbitrary but that's fine)
+            let vec: Vec<String> = ids.into_iter().collect();
+            let data = serde_json::to_vec(&vec)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize identity index: {}", e))?;
+            self.dht_storage.store(index_key.to_string(), data, None).await?;
+            tracing::debug!("Added identity {} to index (total: {})", identity_id, vec.len());
+        }
+
+        Ok(())
+    }
+
+    /// Remove an identity ID from the global identity index
+    pub async fn remove_from_identity_index(&mut self, identity_id: &str) -> Result<()> {
+        use std::collections::HashSet;
+
+        if identity_id.is_empty() {
+            return Err(anyhow::anyhow!("identity_id cannot be empty"));
+        }
+
+        let index_key = "idx/identities";
+
+        let mut ids: HashSet<String> = match self.dht_storage.get(index_key).await? {
+            Some(data) => {
+                let vec: Vec<String> = serde_json::from_slice(&data)
+                    .map_err(|e| anyhow::anyhow!("Corrupted identity index: {}", e))?;
+                vec.into_iter().collect()
+            }
+            None => {
+                tracing::debug!("Identity index not found, nothing to remove");
+                return Ok(());
+            }
+        };
+
+        if ids.remove(identity_id) {
+            if ids.is_empty() {
+                // Delete empty index instead of storing []
+                self.dht_storage.remove(index_key).await?;
+                tracing::debug!("Removed last identity from index, deleted key");
+            } else {
+                let vec: Vec<String> = ids.into_iter().collect();
+                let data = serde_json::to_vec(&vec)?;
+                self.dht_storage.store(index_key.to_string(), data, None).await?;
+                tracing::debug!("Removed identity {} from index", identity_id);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// List all identity IDs from the index
+    pub async fn list_identity_ids(&mut self) -> Result<Vec<String>> {
+        let index_key = "idx/identities";
+
+        match self.dht_storage.get(index_key).await? {
+            Some(data) => {
+                let ids: Vec<String> = serde_json::from_slice(&data)
+                    .map_err(|e| anyhow::anyhow!("Corrupted identity index: {}", e))?;
+                Ok(ids)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Rebuild the identity index from existing DHT keys
+    ///
+    /// This is a migration function that scans all `identity/` prefixed keys
+    /// in the DHT storage and rebuilds the index. Used when the index is empty
+    /// but identities exist in storage (e.g., identities created before indexing).
+    ///
+    /// Returns the number of identities indexed.
+    pub async fn rebuild_identity_index_from_dht(&mut self) -> Result<u32> {
+        use std::collections::HashSet;
+
+        // Get all keys with "identity/" prefix
+        let identity_keys = self.dht_storage.keys_with_prefix("identity/")?;
+
+        if identity_keys.is_empty() {
+            tracing::debug!("No identity keys found in DHT storage");
+            return Ok(0);
+        }
+
+        // Extract identity IDs from keys (format: "identity/{identity_id}")
+        let mut identity_ids = HashSet::new();
+        for key in &identity_keys {
+            if let Some(id) = key.strip_prefix("identity/") {
+                if !id.is_empty() {
+                    identity_ids.insert(id.to_string());
+                }
+            }
+        }
+
+        if identity_ids.is_empty() {
+            tracing::debug!("No valid identity IDs found in DHT keys");
+            return Ok(0);
+        }
+
+        let count = identity_ids.len() as u32;
+        tracing::info!("🔄 Migration: Found {} identities in DHT storage, rebuilding index...", count);
+
+        // Store as JSON array
+        let ids_vec: Vec<String> = identity_ids.into_iter().collect();
+        let data = serde_json::to_vec(&ids_vec)?;
+        self.dht_storage.store("idx/identities".to_string(), data, None).await?;
+
+        tracing::info!("✅ Migration complete: Indexed {} identities from DHT storage", count);
+        Ok(count)
+    }
+
+    /// Add a wallet ID to an identity's wallet index
+    pub async fn add_to_wallet_index(&mut self, identity_id: &str, wallet_id: &str) -> Result<()> {
+        use std::collections::HashSet;
+
+        if identity_id.is_empty() || wallet_id.is_empty() {
+            return Err(anyhow::anyhow!("identity_id and wallet_id cannot be empty"));
+        }
+
+        let index_key = format!("idx/wallets/by_identity/{}", identity_id);
+
+        let mut wallet_ids: HashSet<String> = match self.dht_storage.get(&index_key).await? {
+            Some(data) => {
+                let vec: Vec<String> = serde_json::from_slice(&data)
+                    .map_err(|e| anyhow::anyhow!("Corrupted wallet index for {}: {}", identity_id, e))?;
+                vec.into_iter().collect()
+            }
+            None => HashSet::new(),
+        };
+
+        if wallet_ids.insert(wallet_id.to_string()) {
+            let vec: Vec<String> = wallet_ids.into_iter().collect();
+            let data = serde_json::to_vec(&vec)?;
+            self.dht_storage.store(index_key, data, None).await?;
+            tracing::debug!("Added wallet {} to identity {} index", wallet_id, identity_id);
+        }
+
+        Ok(())
+    }
+
+    /// List all wallet IDs for a given identity
+    pub async fn list_wallet_ids_for_identity(&mut self, identity_id: &str) -> Result<Vec<String>> {
+        let index_key = format!("idx/wallets/by_identity/{}", identity_id);
+
+        match self.dht_storage.get(&index_key).await? {
+            Some(data) => {
+                let ids: Vec<String> = serde_json::from_slice(&data)
+                    .map_err(|e| anyhow::anyhow!("Corrupted wallet index for {}: {}", identity_id, e))?;
+                Ok(ids)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Store wallet metadata record (public info, not private data)
+    pub async fn store_wallet_record(&mut self, identity_id: &str, wallet_id: &str, data: &[u8]) -> Result<()> {
+        let key = format!("wallet/{}/{}", identity_id, wallet_id);
+
+        // Wrap in versioned envelope
+        let versioned = serde_json::json!({
+            "v": 1,
+            "data": serde_json::from_slice::<serde_json::Value>(data)
+                .unwrap_or_else(|_| serde_json::Value::String(hex::encode(data)))
+        });
+        let versioned_data = serde_json::to_vec(&versioned)?;
+
+        tracing::info!("Storing wallet record {}/{} ({} bytes, v1)", identity_id, wallet_id, versioned_data.len());
+        self.dht_storage.store(key, versioned_data, None).await
+    }
+
+    /// Retrieve wallet metadata record
+    pub async fn get_wallet_record(&mut self, identity_id: &str, wallet_id: &str) -> Result<Option<Vec<u8>>> {
+        let key = format!("wallet/{}/{}", identity_id, wallet_id);
+
+        match self.dht_storage.get(&key).await? {
+            Some(versioned_data) => {
+                // Parse versioned envelope
+                let envelope: serde_json::Value = serde_json::from_slice(&versioned_data)?;
+
+                if let Some(data) = envelope.get("data") {
+                    let data_bytes = serde_json::to_vec(data)?;
+                    Ok(Some(data_bytes))
+                } else {
+                    // Fallback: treat entire payload as data (legacy)
+                    Ok(Some(versioned_data))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Store wallet private data (encrypted) - convenience wrapper
+    pub async fn store_wallet_private_record(&mut self, identity_id: &str, wallet_id: &str, data: &[u8]) -> Result<()> {
+        let key = format!("wallet_private/{}/{}", identity_id, wallet_id);
+        tracing::info!("Storing wallet private data {}/{} ({} bytes)", identity_id, wallet_id, data.len());
+        self.dht_storage.store(key, data.to_vec(), None).await
+    }
+
+    /// Retrieve wallet private data (encrypted)
+    pub async fn get_wallet_private_record(&mut self, identity_id: &str, wallet_id: &str) -> Result<Option<Vec<u8>>> {
+        let key = format!("wallet_private/{}/{}", identity_id, wallet_id);
+        self.dht_storage.get(&key).await
     }
 
     // ========================================================================

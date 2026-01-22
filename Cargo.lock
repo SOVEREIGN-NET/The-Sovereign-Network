@@ -3047,6 +3047,7 @@ dependencies = [
  "bincode",
  "blake3",
  "chrono",
+ "dirs",
  "hex",
  "humantime-serde",
  "lib-crypto",

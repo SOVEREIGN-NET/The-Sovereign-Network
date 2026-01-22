@@ -82,11 +82,13 @@ impl ConsensusComponent {
     /// CRITICAL: node_role must be derived from configuration before calling this
     pub fn new(environment: crate::config::Environment, node_role: NodeRole) -> Self {
         let development_mode = matches!(environment, crate::config::Environment::Development);
+        let is_testnet = matches!(environment, crate::config::Environment::Testnet);
 
-        let min_stake = if development_mode {
-            1_000
+        // Low stake for development and testnet, high stake for production
+        let min_stake = if development_mode || is_testnet {
+            1_000  // 1000 micro-ZHTP for dev/testnet
         } else {
-            100_000_000
+            100_000_000  // 100M micro-ZHTP for production
         };
 
         let validator_manager = ValidatorManager::new_with_development_mode(

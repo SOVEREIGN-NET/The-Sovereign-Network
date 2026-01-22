@@ -211,6 +211,11 @@ impl IdentityManager {
         self.identities.get(identity_id)
     }
 
+    /// Get mutable identity by ID (for wallet restoration during bootstrap)
+    pub fn get_identity_mut(&mut self, identity_id: &IdentityId) -> Option<&mut ZhtpIdentity> {
+        self.identities.get_mut(identity_id)
+    }
+
     /// Add an existing identity to the manager
     pub fn add_identity(&mut self, identity: ZhtpIdentity) {
         let identity_id = identity.id.clone();
@@ -405,6 +410,11 @@ impl IdentityManager {
     /// List all identities
     pub fn list_identities(&self) -> Vec<&ZhtpIdentity> {
         self.identities.values().collect()
+    }
+
+    /// List all identities (mutable)
+    pub fn list_identities_mut(&mut self) -> Vec<&mut ZhtpIdentity> {
+        self.identities.values_mut().collect()
     }
 
     /// Add trusted credential issuer

@@ -563,11 +563,46 @@ pub async fn handle_import_backup(
 
     // Get identity_id from the identity
     let identity_id = identity.id.clone();
+    let identity_id_str = identity_id.to_string();
 
-    // Store the restored identity
+    // Store the restored identity in IdentityManager
     let mut manager = identity_manager.write().await;
     manager.add_identity(identity.clone());
     drop(manager);
+
+    // Index the imported identity in DHT storage for bootstrap persistence
+    if let Ok(storage) = crate::runtime::storage_provider::get_global_storage().await {
+        let mut guard = storage.write().await;
+
+        // Store identity record
+        let identity_record = serde_json::json!({
+            "did": identity.did,
+            "identity_type": format!("{:?}", identity.identity_type),
+            "imported_at": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        });
+
+        if let Ok(identity_data) = serde_json::to_vec(&identity_record) {
+            if let Err(e) = guard.store_identity_record(&identity_id_str, &identity_data).await {
+                tracing::warn!("Failed to persist imported identity to DHT (non-fatal): {}", e);
+            }
+        }
+
+        // Add to identity index
+        if let Err(e) = guard.add_to_identity_index(&identity_id_str).await {
+            tracing::warn!("Failed to add imported identity to index (non-fatal): {}", e);
+        }
+
+        // Index wallets from the imported identity
+        for wallet_summary in identity.wallet_manager.list_wallets() {
+            let wallet_id_str = wallet_summary.id.to_string();
+            if let Err(e) = guard.add_to_wallet_index(&identity_id_str, &wallet_id_str).await {
+                tracing::warn!("Failed to add wallet {} to index (non-fatal): {}", wallet_id_str, e);
+            }
+        }
+    }
 
     // Create new session for imported identity
     let session_token = session_manager

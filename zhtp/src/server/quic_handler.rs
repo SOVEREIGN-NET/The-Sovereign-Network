@@ -509,10 +509,12 @@ impl QuicHandler {
                 Ok(Ok((send, recv))) => {
                     let handler = self.clone();
                     let session = session.clone();
+                    let stream_id = recv.id();
+                    debug!("Accepted new stream {} for v2 request", stream_id.index());
 
                     tokio::spawn(async move {
                         if let Err(e) = handler.handle_authenticated_v2_stream(recv, send, &session).await {
-                            warn!("⚠️ Control plane v2 stream error from {}: {}", peer_addr, e);
+                            warn!("⚠️ Control plane v2 stream {} error from {}: {:?}", stream_id.index(), peer_addr, e);
                         }
                     });
                 }
@@ -551,8 +553,9 @@ impl QuicHandler {
         use lib_network::handshake::security::{CanonicalRequest, verify_v2_mac};
 
         // Read ZHTP wire request (length-prefixed CBOR)
+        // SECURITY: read_request enforces MAX_MESSAGE_SIZE before allocating
         let wire_request = read_request(&mut recv).await
-            .context("Failed to read ZHTP wire request")?;
+            .context("Failed to read v2 request")?;
 
         debug!(
             request_id = %wire_request.request_id_hex(),
