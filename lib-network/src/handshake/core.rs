@@ -35,6 +35,7 @@ use anyhow::{Result, anyhow};
 use lib_identity::ZhtpIdentity;
 use lib_crypto::KeyPair;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use tracing::{trace, debug, error};
 
 // Use orchestrator helpers to reduce duplication
 use crate::handshake::orchestrator::{extract_payload, check_for_error};
@@ -363,10 +364,13 @@ pub async fn handshake_as_responder<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    trace!("core::handshake_as_responder: starting server-side handshake");
     let ctx = ctx.with_roles(HandshakeRole::Server, HandshakeRole::Client);
 
     // 1. Receive ClientHello
+    trace!("core::handshake_as_responder: step 1 - receiving ClientHello...");
     let (client_msg, client_hello_bytes) = recv_message_with_bytes(stream).await?;
+    debug!("core::handshake_as_responder: received ClientHello ({} bytes)", client_hello_bytes.len());
     let client_hello = extract_payload(&client_msg, "ClientHello", |payload| {
         if let HandshakePayload::ClientHello(ch) = payload {
             Some(ch.clone())
@@ -374,21 +378,39 @@ where
             None
         }
     })?;
+    trace!("core::handshake_as_responder: ClientHello parsed, client_did={}", client_hello.identity.did);
 
     // 2. Verify client signature
-    client_hello
-        .verify_signature(&ctx)
-        .map_err(|_| HandshakeIoError::InvalidSignature)?;
+    trace!("core::handshake_as_responder: step 2 - verifying client signature...");
+    if let Err(e) = client_hello.verify_signature(&ctx) {
+        error!(
+            "core::handshake_as_responder: signature verification FAILED: {}",
+            e
+        );
+        error!(
+            "  client_did: {}",
+            client_hello.identity.did
+        );
+        error!(
+            "  client_device_id: {}",
+            client_hello.identity.device_id
+        );
+        return Err(HandshakeIoError::InvalidSignature);
+    }
+    trace!("core::handshake_as_responder: client signature verified");
 
     // 3. Optionally verify client's PQC offer if present
     if let Some(ref pqc_offer) = client_hello.pqc_offer {
+        trace!("core::handshake_as_responder: step 3 - verifying client PQC offer...");
         verify_pqc_offer(pqc_offer)
             .map_err(|e| HandshakeIoError::Protocol(format!("Invalid client PQC offer: {}", e)))?;
+        trace!("core::handshake_as_responder: client PQC offer verified");
     }
 
     let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
 
     // 4. Create ServerHello with PQC state for later decapsulation
+    trace!("core::handshake_as_responder: step 4 - creating ServerHello...");
     let (server_hello, pqc_state) = ServerHello::new_with_pqc(
         local_identity,
         capabilities,
@@ -397,13 +419,18 @@ where
         &ctx,
     )
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
+    trace!("core::handshake_as_responder: ServerHello created");
 
     // 5. Send ServerHello
+    trace!("core::handshake_as_responder: step 5 - sending ServerHello...");
     let hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
     let server_hello_bytes = send_message_with_bytes(stream, &hello_msg).await?;
+    debug!("core::handshake_as_responder: sent ServerHello ({} bytes)", server_hello_bytes.len());
 
     // 6. Receive ClientFinish
+    trace!("core::handshake_as_responder: step 6 - receiving ClientFinish...");
     let (finish_msg, client_finish_bytes) = recv_message_with_bytes(stream).await?;
+    debug!("core::handshake_as_responder: received ClientFinish ({} bytes)", client_finish_bytes.len());
     check_for_error(&finish_msg)?;
     let client_finish = extract_payload(&finish_msg, "ClientFinish", |payload| {
         if let HandshakePayload::ClientFinish(cf) = payload {

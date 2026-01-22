@@ -246,9 +246,18 @@ impl WalletHandler {
 
         // Get wallets from the identity's wallet manager (created during identity registration)
         let wallet_summaries = identity.list_wallets();
-        
-        // Convert wallet summaries to API response format
+
+        // Get blockchain wallet registry balances (UBI distributions go here)
+        let blockchain_balances: std::collections::HashMap<String, u64> = {
+            let blockchain = self.blockchain.read().await;
+            blockchain.wallet_registry.iter()
+                .map(|(id, data)| (id.clone(), data.initial_balance))
+                .collect()
+        };
+
+        // Convert wallet summaries to API response format, merging blockchain balances
         let mut wallets = Vec::new();
+        let mut total_balance_adjusted = 0u64;
         for summary in wallet_summaries.iter() {
             // Get full wallet details to access staked_balance and pending_rewards
             let (staked_balance, pending_rewards) = if let Some(wallet) = identity.wallet_manager.get_wallet(&summary.id) {
@@ -257,13 +266,18 @@ impl WalletHandler {
                 (0, 0)
             };
 
+            // Check blockchain registry for potentially higher balance (UBI accumulates there)
+            let wallet_id_hex = hex::encode(summary.id.0);
+            let blockchain_balance = blockchain_balances.get(&wallet_id_hex).copied().unwrap_or(0);
+            let effective_balance = std::cmp::max(summary.balance, blockchain_balance);
+
             let wallet_info = WalletInfo {
                 wallet_type: format!("{:?}", summary.wallet_type),
                 wallet_id: self.generate_wallet_id(&summary.wallet_type, identity_id),
-                available_balance: summary.balance.saturating_sub(staked_balance),
+                available_balance: effective_balance.saturating_sub(staked_balance),
                 staked_balance,
                 pending_rewards,
-                total_balance: summary.balance + pending_rewards,
+                total_balance: effective_balance + pending_rewards,
                 permissions: WalletPermissionsInfo {
                     can_transfer_external: true,
                     can_vote: summary.wallet_type == lib_identity::wallets::WalletType::Primary,
@@ -275,10 +289,11 @@ impl WalletHandler {
                 created_at: summary.created_at,
                 description: format!("{:?} wallet for identity", summary.wallet_type),
             };
+            total_balance_adjusted += effective_balance + pending_rewards;
             wallets.push(wallet_info);
         }
 
-        let total_balance = identity.get_total_balance();
+        let total_balance = total_balance_adjusted;
 
         let response_data = json!({
             "status": "success",
@@ -367,22 +382,18 @@ impl WalletHandler {
                         (summary.balance, 0, 0, summary.created_at)
                     };
 
-                // Check blockchain's wallet_registry for the authoritative balance
+                // Check blockchain's wallet_registry for the authoritative balance using direct wallet_id lookup
                 let blockchain = self.blockchain.read().await;
-
-                // Try finding wallet by iterating through registry and matching owner identity
-                for (wallet_id, wallet_data) in blockchain.get_all_wallets() {
-                    if let Some(owner_id) = &wallet_data.owner_identity_id {
-                        if hex::encode(owner_id.as_bytes()).starts_with(&identity_id[..16.min(identity_id.len())]) {
-                            if wallet_data.wallet_type.to_lowercase() == wallet_type_str.to_lowercase() {
-                                available_balance = wallet_data.initial_balance;
-                                tracing::debug!(
-                                    "Found wallet {} in blockchain registry with balance {}",
-                                    wallet_id, available_balance
-                                );
-                                break;
-                            }
-                        }
+                let wallet_id_hex = hex::encode(summary.id.0);
+                if let Some(wallet_data) = blockchain.wallet_registry.get(&wallet_id_hex) {
+                    // Use max of identity balance and blockchain balance (UBI accumulates in blockchain)
+                    let blockchain_balance = wallet_data.initial_balance;
+                    if blockchain_balance > available_balance {
+                        tracing::debug!(
+                            "Using blockchain balance for wallet {}: {} > {} (identity)",
+                            &wallet_id_hex[..16], blockchain_balance, available_balance
+                        );
+                        available_balance = blockchain_balance;
                     }
                 }
                 drop(blockchain);

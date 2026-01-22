@@ -509,10 +509,12 @@ impl QuicHandler {
                 Ok(Ok((send, recv))) => {
                     let handler = self.clone();
                     let session = session.clone();
+                    let stream_id = recv.id();
+                    debug!("Accepted new stream {} for v2 request", stream_id.index());
 
                     tokio::spawn(async move {
                         if let Err(e) = handler.handle_authenticated_v2_stream(recv, send, &session).await {
-                            warn!("⚠️ Control plane v2 stream error from {}: {}", peer_addr, e);
+                            warn!("⚠️ Control plane v2 stream {} error from {}: {:?}", stream_id.index(), peer_addr, e);
                         }
                     });
                 }
@@ -551,8 +553,40 @@ impl QuicHandler {
         use lib_network::handshake::security::{CanonicalRequest, verify_v2_mac};
 
         // Read ZHTP wire request (length-prefixed CBOR)
-        let wire_request = read_request(&mut recv).await
-            .context("Failed to read ZHTP wire request")?;
+        // First read raw bytes to debug CBOR structure
+        let mut len_buf = [0u8; 4];
+        recv.read_exact(&mut len_buf).await.context("Failed to read length prefix")?;
+        let msg_len = u32::from_be_bytes(len_buf) as usize;
+        warn!("DEBUG: msg_len={}", msg_len);
+
+        let mut payload = vec![0u8; msg_len];
+        recv.read_exact(&mut payload).await.context("Failed to read payload")?;
+
+        // Full CBOR debug - log everything
+        warn!("DEBUG: msg_len={}, full payload hex:", msg_len);
+        // Log in chunks of 100 bytes for readability
+        for (i, chunk) in payload.chunks(100).enumerate() {
+            warn!("DEBUG[{}]: {:02x?}", i * 100, chunk);
+        }
+
+        // Try to decode as generic CBOR Value first to see structure
+        match ciborium::from_reader::<ciborium::Value, _>(&payload[..]) {
+            Ok(val) => {
+                warn!("DEBUG: CBOR as generic Value: {:?}", val);
+            }
+            Err(e) => {
+                warn!("DEBUG: Even generic CBOR parse failed: {:?}", e);
+            }
+        }
+
+        // Now try to deserialize to actual type
+        let wire_request: lib_protocols::wire::ZhtpRequestWire = match ciborium::from_reader(&payload[..]) {
+            Ok(req) => req,
+            Err(e) => {
+                warn!("CBOR deserialize to ZhtpRequestWire failed: {:?}", e);
+                return Err(anyhow::anyhow!("CBOR deserialization failed: {}", e));
+            }
+        };
 
         debug!(
             request_id = %wire_request.request_id_hex(),

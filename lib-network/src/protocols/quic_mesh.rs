@@ -891,6 +891,11 @@ impl QuicMeshProtocol {
 
             info!("🔐 TLS certificate loaded successfully");
 
+            // Print SPKI pin for mobile app pinning
+            if let Ok(spki_hash) = Self::compute_spki_sha256(cert_der.as_ref()) {
+                info!("📌 SPKI SHA-256 pin (hex): {}", hex::encode(spki_hash));
+            }
+
             return Ok(SelfSignedCert {
                 cert: cert_der,
                 key: key_der,
@@ -938,10 +943,15 @@ impl QuicMeshProtocol {
         info!("🔐 TLS certificate generated and saved to disk");
         info!("   Certificate: {}", cert_path.display());
         info!("   Private key: {}", key_path.display());
-        info!("   To extract hash for Android pinning:");
+        info!("   To extract hash for Android/iOS pinning:");
         info!("   openssl x509 -in {} -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64", cert_path.display());
 
         let cert_der = CertificateDer::from(cert.der().to_vec());
+
+        // Print SPKI pin for mobile app pinning (iOS + Android)
+        if let Ok(spki_hash) = Self::compute_spki_sha256(cert_der.as_ref()) {
+            info!("📌 SPKI SHA-256 pin (hex): {}", hex::encode(&spki_hash));
+        }
 
         // Convert KeyPair to PrivateKeyDer by serializing to PKCS#8
         let key_der_bytes = signing_key.serialize_der();

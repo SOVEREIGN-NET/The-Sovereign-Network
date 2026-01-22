@@ -58,6 +58,7 @@ use lib_identity::{ZhtpIdentity, NodeId};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use rand::RngCore;
+use tracing::error;
 
 // Security modules
 pub mod security;
@@ -967,6 +968,11 @@ impl ClientHello {
 
         // 3. CRITICAL: Verify channel binding
         if self.channel_binding != ctx.channel_binding {
+            error!(
+                client_cb = %hex::encode(&self.channel_binding),
+                server_cb = %hex::encode(&ctx.channel_binding),
+                "Channel binding MISMATCH - client vs server"
+            );
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
             ctx.observer.on_failure(
                 HandshakeEvent::ClientHelloVerificationFailed,

@@ -2175,12 +2175,43 @@ impl RuntimeOrchestrator {
         };
         
         // Lock identity manager and perform sync
-        let _identity_manager = identity_manager_arc.write().await;
+        let mut identity_manager = identity_manager_arc.write().await;
 
-        // TODO: Wallet balance sync removed in P1-7 - wallets are now managed within identity
-        // The WalletManager within each ZhtpIdentity handles wallet state
+        // Sync balances from blockchain to identity wallets
+        let mut synced_count = 0;
+        let mut total_synced_amount = 0u64;
 
-        info!(" Wallet balance sync skipped (P1-7: wallets managed within identity)");
+        for identity in identity_manager.list_identities_mut() {
+            for (wallet_id, wallet) in identity.wallet_manager.wallets.iter_mut() {
+                // Convert wallet_id to hex string to match blockchain registry
+                let wallet_id_hex = hex::encode(wallet_id.0);
+
+                if let Some(&blockchain_balance) = wallet_balances.get(&wallet_id_hex) {
+                    // Only sync if blockchain has more than current balance (UBI accumulates)
+                    if blockchain_balance > wallet.balance {
+                        let diff = blockchain_balance - wallet.balance;
+                        info!(
+                            "   Syncing wallet {} ({}): {} → {} ZHTP (+{})",
+                            wallet.alias.as_deref().unwrap_or("unnamed"),
+                            &wallet_id_hex[..16],
+                            wallet.balance,
+                            blockchain_balance,
+                            diff
+                        );
+                        wallet.balance = blockchain_balance;
+                        synced_count += 1;
+                        total_synced_amount += diff;
+                    }
+                }
+            }
+            identity.wallet_manager.calculate_total_balance();
+        }
+
+        info!(
+            " Wallet balance sync complete: {} wallets updated, {} ZHTP synced",
+            synced_count,
+            total_synced_amount
+        );
         Ok(())
     }
 

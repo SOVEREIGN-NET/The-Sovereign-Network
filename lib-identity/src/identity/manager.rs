@@ -412,6 +412,11 @@ impl IdentityManager {
         self.identities.values().collect()
     }
 
+    /// List all identities (mutable)
+    pub fn list_identities_mut(&mut self) -> Vec<&mut ZhtpIdentity> {
+        self.identities.values_mut().collect()
+    }
+
     /// Add trusted credential issuer
     pub fn add_trusted_issuer(&mut self, issuer_id: IdentityId, credential_types: Vec<CredentialType>) {
         self.trusted_issuers.insert(issuer_id, credential_types);
