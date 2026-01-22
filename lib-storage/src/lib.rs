@@ -680,52 +680,62 @@ impl<B: dht::backend::StorageBackend + Send + Sync + 'static> UnifiedStorageSyst
 
     /// Append identity to backup JSON file (~/.zhtp/backup/identities.json)
     /// This is a shadow copy for safety - not referenced by application code
+    /// Uses spawn_blocking to avoid blocking the async executor during file I/O
     async fn append_to_identity_backup(&self, identity_id: &str, data: &serde_json::Value) -> Result<()> {
-        use std::io::{BufReader, BufWriter};
+        let identity_id = identity_id.to_string();
+        let data = data.clone();
 
-        let backup_dir = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".zhtp")
-            .join("backup");
+        tokio::task::spawn_blocking(move || {
+            use std::io::{BufReader, BufWriter};
 
-        // Create backup directory if needed
-        std::fs::create_dir_all(&backup_dir)
-            .map_err(|e| anyhow::anyhow!("Failed to create backup dir: {}", e))?;
+            let backup_dir = dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".zhtp")
+                .join("backup");
 
-        let backup_path = backup_dir.join("identities.json");
+            // Create backup directory if needed
+            std::fs::create_dir_all(&backup_dir)
+                .map_err(|e| anyhow::anyhow!("Failed to create backup dir: {}", e))?;
 
-        // Load existing backup or create new
-        let mut backup: serde_json::Map<String, serde_json::Value> = if backup_path.exists() {
-            let file = std::fs::File::open(&backup_path)
-                .map_err(|e| anyhow::anyhow!("Failed to open backup: {}", e))?;
-            let reader = BufReader::new(file);
-            serde_json::from_reader(reader).unwrap_or_default()
-        } else {
-            serde_json::Map::new()
-        };
+            let backup_path = backup_dir.join("identities.json");
 
-        // Add/update identity with timestamp
-        let entry = serde_json::json!({
-            "data": data,
-            "backed_up_at": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        });
-        backup.insert(identity_id.to_string(), entry);
+            // Load existing backup or create new
+            let mut backup: serde_json::Map<String, serde_json::Value> = if backup_path.exists() {
+                let file = std::fs::File::open(&backup_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to open backup: {}", e))?;
+                let reader = BufReader::new(file);
+                serde_json::from_reader(reader).unwrap_or_default()
+            } else {
+                serde_json::Map::new()
+            };
 
-        // Write back atomically (write to temp, then rename)
-        let temp_path = backup_dir.join("identities.json.tmp");
-        let file = std::fs::File::create(&temp_path)
-            .map_err(|e| anyhow::anyhow!("Failed to create temp backup: {}", e))?;
-        let writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, &backup)
-            .map_err(|e| anyhow::anyhow!("Failed to write backup: {}", e))?;
+            // Add/update identity with timestamp
+            let entry = serde_json::json!({
+                "data": data,
+                "backed_up_at": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            });
+            backup.insert(identity_id.clone(), entry);
 
-        std::fs::rename(&temp_path, &backup_path)
-            .map_err(|e| anyhow::anyhow!("Failed to finalize backup: {}", e))?;
+            // Write back atomically (write to temp, then rename)
+            let temp_path = backup_dir.join("identities.json.tmp");
+            let file = std::fs::File::create(&temp_path)
+                .map_err(|e| anyhow::anyhow!("Failed to create temp backup: {}", e))?;
+            let writer = BufWriter::new(file);
+            serde_json::to_writer_pretty(writer, &backup)
+                .map_err(|e| anyhow::anyhow!("Failed to write backup: {}", e))?;
 
-        tracing::debug!("Identity {} backed up to {:?}", identity_id, backup_path);
+            std::fs::rename(&temp_path, &backup_path)
+                .map_err(|e| anyhow::anyhow!("Failed to finalize backup: {}", e))?;
+
+            tracing::debug!("Identity {} backed up to {:?}", identity_id, backup_path);
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Backup task panicked: {}", e))??;
+
         Ok(())
     }
 
