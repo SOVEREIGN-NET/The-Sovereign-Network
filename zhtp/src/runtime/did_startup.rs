@@ -53,6 +53,8 @@ impl std::error::Error for KeystoreError {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KeystorePrivateKey {
     dilithium_sk: Vec<u8>,
+    #[serde(default)]
+    dilithium_pk: Vec<u8>,  // Optional for backward compatibility with old keystores
     kyber_sk: Vec<u8>,
     master_seed: Vec<u8>,
 }
@@ -122,6 +124,7 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
 
     let user_private_key = PrivateKey {
         dilithium_sk: user_keystore_key.dilithium_sk.clone(),
+        dilithium_pk: user_keystore_key.dilithium_pk.clone(),
         kyber_sk: user_keystore_key.kyber_sk.clone(),
         master_seed: user_keystore_key.master_seed.clone(),
     };
@@ -141,6 +144,7 @@ fn load_from_keystore(keystore_path: &Path) -> std::result::Result<WalletStartup
 
     let node_private_key = PrivateKey {
         dilithium_sk: node_keystore_key.dilithium_sk.clone(),
+        dilithium_pk: node_keystore_key.dilithium_pk.clone(),
         kyber_sk: node_keystore_key.kyber_sk.clone(),
         master_seed: node_keystore_key.master_seed.clone(),
     };
@@ -253,6 +257,7 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
 
     let user_keystore_key = KeystorePrivateKey {
         dilithium_sk: user_private_key.dilithium_sk.clone(),
+        dilithium_pk: user_private_key.dilithium_pk.clone(),
         kyber_sk: user_private_key.kyber_sk.clone(),
         master_seed: user_private_key.master_seed.clone(),
     };
@@ -274,6 +279,7 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
 
     let node_keystore_key = KeystorePrivateKey {
         dilithium_sk: node_private_key.dilithium_sk.clone(),
+        dilithium_pk: node_private_key.dilithium_pk.clone(),
         kyber_sk: node_private_key.kyber_sk.clone(),
         master_seed: node_private_key.master_seed.clone(),
     };
@@ -367,6 +373,7 @@ pub async fn load_node_identity_from_keystore(keystore_path: &Path) -> Result<Op
 
     let private_key = PrivateKey {
         dilithium_sk: keystore_key.dilithium_sk,
+        dilithium_pk: keystore_key.dilithium_pk,
         kyber_sk: keystore_key.kyber_sk,
         master_seed: keystore_key.master_seed,
     };
@@ -396,6 +403,7 @@ pub async fn persist_node_identity_to_keystore(
 
     let key_payload = KeystorePrivateKey {
         dilithium_sk: private_key.dilithium_sk.clone(),
+        dilithium_pk: private_key.dilithium_pk.clone(),
         kyber_sk: private_key.kyber_sk.clone(),
         master_seed: private_key.master_seed.clone(),
     };

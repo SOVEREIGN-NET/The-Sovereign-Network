@@ -287,6 +287,13 @@ impl TransactionBuilder {
         // Key size constants (from pqcrypto_dilithium)
         const DILITHIUM2_SECRETKEY_BYTES: usize = 2560;
 
+        // Use the public key stored alongside the private key
+        // The public key must be stored with the private key since Dilithium
+        // doesn't allow deriving pk from sk after generation
+        if private_key.dilithium_pk.is_empty() {
+            return Err("Private key missing dilithium_pk - keypair must store both keys".to_string());
+        }
+
         // Use auto-detecting sign function
         let signature_result = dilithium_sign(tx_hash.as_bytes(), &private_key.dilithium_sk);
 
@@ -294,7 +301,7 @@ impl TransactionBuilder {
             Ok(signature_bytes) => {
                 let signature = Signature {
                     signature: signature_bytes,
-                    public_key: PublicKey::new(private_key.dilithium_sk[..32].to_vec()), // Derive public key
+                    public_key: PublicKey::new(private_key.dilithium_pk.clone()),
                     algorithm: if private_key.dilithium_sk.len() == DILITHIUM2_SECRETKEY_BYTES {
                         SignatureAlgorithm::Dilithium2
                     } else {
@@ -307,7 +314,7 @@ impl TransactionBuilder {
                 };
                 Ok(signature)
             },
-            Err(e) => Err(format!("Failed to create keypair: {}", e))
+            Err(e) => Err(format!("Failed to sign transaction: {}", e))
         }
     }
 }
