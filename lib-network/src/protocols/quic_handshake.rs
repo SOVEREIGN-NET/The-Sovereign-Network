@@ -247,12 +247,11 @@ pub async fn handshake_as_responder(
         let conn_id = conn.stable_id();
         trace!(peer_addr = %conn.remote_address(), conn_id, "QUIC responder: exporting channel binding...");
         let channel_binding = export_quic_channel_binding(conn)?;
-        // Log full channel binding for debugging iOS compatibility
-        info!(
+        trace!(
             peer_addr = %conn.remote_address(),
             conn_id,
-            cb_hex = %hex::encode(&channel_binding),
-            "QUIC responder: exported channel binding (32 bytes)"
+            cb_len = channel_binding.len(),
+            "QUIC responder: exported channel binding"
         );
         let ctx = ctx.for_server_with_transport(channel_binding, "quic");
 
