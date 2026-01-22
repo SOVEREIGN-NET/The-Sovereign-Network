@@ -553,21 +553,9 @@ impl QuicHandler {
         use lib_network::handshake::security::{CanonicalRequest, verify_v2_mac};
 
         // Read ZHTP wire request (length-prefixed CBOR)
-        let mut len_buf = [0u8; 4];
-        recv.read_exact(&mut len_buf).await.context("Failed to read length prefix")?;
-        let msg_len = u32::from_be_bytes(len_buf) as usize;
-
-        let mut payload = vec![0u8; msg_len];
-        recv.read_exact(&mut payload).await.context("Failed to read payload")?;
-
-        // Deserialize CBOR to wire request
-        let wire_request: lib_protocols::wire::ZhtpRequestWire = match ciborium::from_reader(&payload[..]) {
-            Ok(req) => req,
-            Err(e) => {
-                warn!("CBOR deserialize failed for {} byte payload: {:?}", msg_len, e);
-                return Err(anyhow::anyhow!("CBOR deserialization failed: {}", e));
-            }
-        };
+        // SECURITY: read_request enforces MAX_MESSAGE_SIZE before allocating
+        let wire_request = read_request(&mut recv).await
+            .context("Failed to read v2 request")?;
 
         debug!(
             request_id = %wire_request.request_id_hex(),
