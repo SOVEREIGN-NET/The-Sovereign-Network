@@ -969,9 +969,11 @@ impl ClientHello {
         // 3. CRITICAL: Verify channel binding
         if self.channel_binding != ctx.channel_binding {
             error!(
-                client_cb = %hex::encode(&self.channel_binding),
-                server_cb = %hex::encode(&ctx.channel_binding),
-                "Channel binding MISMATCH - client vs server"
+                client_cb_prefix = %hex::encode(&self.channel_binding.get(..8).unwrap_or(&[])),
+                server_cb_prefix = %hex::encode(&ctx.channel_binding.get(..8).unwrap_or(&[])),
+                client_cb_len = self.channel_binding.len(),
+                server_cb_len = ctx.channel_binding.len(),
+                "Channel binding MISMATCH - possible MITM or transport mismatch"
             );
             let metrics = ctx.metrics_snapshot(timer.elapsed_micros(), self.protocol_version);
             ctx.observer.on_failure(
