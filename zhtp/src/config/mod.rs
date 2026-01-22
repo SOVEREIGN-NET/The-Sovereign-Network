@@ -42,9 +42,19 @@ impl SeedStorageConfig {
 
 impl Default for SeedStorageConfig {
     fn default() -> Self {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let storage_dir = if let Some(home) = dirs::home_dir() {
+            home.join(".zhtp").join("keystore")
+        } else {
+            let fallback = std::env::temp_dir().join("zhtp").join("keystore");
+            tracing::warn!(
+                "Home directory could not be determined; using temporary directory for seed storage: {}",
+                fallback.display()
+            );
+            fallback
+        };
+
         Self {
-            storage_dir: home.join(".zhtp").join("keystore"),
+            storage_dir,
             file_name: "seed_storage.json".to_string(),
         }
     }

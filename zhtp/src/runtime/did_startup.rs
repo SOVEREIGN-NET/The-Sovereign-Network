@@ -369,18 +369,31 @@ fn resolve_master_seed(
     key_path: &Path,
     keystore_key: &KeystorePrivateKey,
 ) -> std::result::Result<Vec<u8>, KeystoreError> {
-    if let Some(seed) = keystore_key.master_seed.clone() {
-        seed_storage
-            .store_seed(slot, &seed)
-            .map_err(|e| KeystoreError::SeedStorage(key_path.to_path_buf(), e.to_string()))?;
+    // If seed exists in keystore, migrate it atomically
+    if let Some(ref seed) = keystore_key.master_seed {
+        // Read the original keystore file so we can roll back if secure storage fails.
+        let original_content = std::fs::read_to_string(key_path)
+            .map_err(|e| KeystoreError::IoError(key_path.to_path_buf(), e))?;
 
+        // First, scrub the master seed from the keystore file.
         let scrubbed = KeystorePrivateKey {
             dilithium_sk: keystore_key.dilithium_sk.clone(),
             kyber_sk: keystore_key.kyber_sk.clone(),
             master_seed: None,
         };
         write_private_key_file(key_path, &scrubbed)?;
-        return Ok(seed);
+
+        // Then, store the seed in secure storage. If this fails, restore the original file.
+        if let Err(e) = seed_storage.store_seed(slot, seed) {
+            // Best-effort rollback: restore the original keystore contents, including the seed.
+            let _ = write_file_with_permissions(key_path, &original_content);
+            return Err(KeystoreError::SeedStorage(
+                key_path.to_path_buf(),
+                e.to_string(),
+            ));
+        }
+        
+        return Ok(seed.clone());
     }
 
     seed_storage
