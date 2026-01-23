@@ -266,10 +266,16 @@ export class ZhtpQuicClient {
           continue;
         }
         const hex = parts[2].trim();
-        if (!hex) {
+        // Validate that the exporter secret is non-empty, contains only hex characters,
+        // and has an even length before attempting to parse it.
+        if (!hex || !/^[0-9a-fA-F]+$/.test(hex) || (hex.length % 2 !== 0)) {
           continue;
         }
-        return new Uint8Array(Buffer.from(hex, 'hex'));
+        const buffer = Buffer.from(hex, 'hex');
+        if (buffer.length === 0) {
+          continue;
+        }
+        return new Uint8Array(buffer);
       }
       await new Promise((resolve) => setTimeout(resolve, CHANNEL_BINDING_POLL_INTERVAL_MS));
     }
