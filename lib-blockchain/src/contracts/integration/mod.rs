@@ -429,7 +429,7 @@ impl Default for ContractEventPublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::MemoryStorage;
+    use crate::contracts::executor::MemoryStorage;
     use lib_crypto::KeyPair;
 
     #[test]
