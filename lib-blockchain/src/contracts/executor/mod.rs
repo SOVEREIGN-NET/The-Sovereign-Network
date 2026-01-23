@@ -632,22 +632,27 @@ impl<S: ContractStorage> ContractExecutor<S> {
         self.storage.set(&wal_key, &[])?;
 
         // Compute state root for consensus validation
-        #[cfg(feature = "persistent-contracts")]
+        // State root is computed from the writes being finalized to enable deterministic
+        // block-level consensus. With persistent-contracts feature, the storage layer
+        // can compute more comprehensive state roots post-finalization via StateRootComputation.
         let state_root = {
-            use crate::contracts::executor::storage::StateRootComputation;
-            use std::sync::Arc;
-            // Compute actual state root from persistent storage for block consensus
-            let computer = StateRootComputation::new(Arc::new(self.storage.clone()));
-            let root_hash = computer.compute_state_root(block_height)?;
-            crate::types::Hash::new(root_hash)
-        };
+            // Compute hash over all writes being committed (deterministic ordering)
+            let mut hasher = blake3::Hasher::new();
 
-        #[cfg(not(feature = "persistent-contracts"))]
-        let state_root = {
-            // Without persistent-contracts feature, return a simple hash of pending changes
-            let hash = blake3::hash(&bincode::serialize(&writes).unwrap_or_default());
+            // Hash token changes
+            for (token_id, token) in &writes {
+                hasher.update(token_id);
+                if let Ok(serialized) = bincode::serialize(token) {
+                    hasher.update(&serialized);
+                }
+            }
+
+            // Hash block metadata
+            hasher.update(&block_height.to_be_bytes());
+
+            let hash_bytes = hasher.finalize();
             let mut root_bytes = [0u8; 32];
-            root_bytes.copy_from_slice(hash.as_bytes());
+            root_bytes.copy_from_slice(hash_bytes.as_bytes());
             crate::types::Hash::new(root_bytes)
         };
 

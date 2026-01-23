@@ -7,7 +7,11 @@
 
 #[cfg(all(test, feature = "persistent-contracts"))]
 mod benchmarks {
-    use super::*;
+    use super::super::{
+        CachedPersistentStorage, PersistentStorage, StateCache, StateRootComputation,
+        StateVersionManager, WalRecoveryManager,
+    };
+    use crate::contracts::executor::ContractStorage;
     use std::time::Instant;
     use tempfile::TempDir;
 
@@ -214,7 +218,7 @@ mod benchmarks {
                 storage.set(&key, &value).unwrap();
             }
 
-            let computer = StateRootComputation::new(std::sync::Arc::new(storage.clone()));
+            let computer = StateRootComputation::new(storage.clone());
 
             let start = Instant::now();
             let _root = computer.compute_state_root(100).unwrap();
@@ -247,8 +251,7 @@ mod benchmarks {
         println!("{:<20} | {:<15} | {:<15}", "WAL Entries", "Time (ms)", "Per entry (μs)");
 
         for size in test_sizes {
-            // Clear and recreate storage
-            drop(storage);
+            // Create fresh storage for each test
             let temp_dir = TempDir::new().unwrap();
             let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
 
@@ -259,7 +262,7 @@ mod benchmarks {
                 storage.set(&key, &value).unwrap();
             }
 
-            let recovery = WalRecoveryManager::new(std::sync::Arc::new(storage));
+            let recovery = WalRecoveryManager::new(storage.clone());
 
             let start = Instant::now();
             let stats = recovery.recover_from_crash().unwrap();
@@ -286,7 +289,7 @@ mod benchmarks {
     fn bench_versioning() {
         let temp_dir = TempDir::new().unwrap();
         let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
-        let version_mgr = StateVersionManager::new(std::sync::Arc::new(storage.clone()), Some(1000));
+        let version_mgr = StateVersionManager::new(storage.clone(), Some(1000));
 
         println!("\n=== Version Manager Benchmark ===");
 
@@ -385,15 +388,17 @@ mod benchmarks {
         let storage = Arc::new(
             PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap(),
         );
-        let cached = Arc::new(CachedPersistentStorage::new((*storage).clone()).unwrap());
+        let mut cached = CachedPersistentStorage::new((*storage).clone()).unwrap();
 
         // Pre-populate
         for i in 0..1_000 {
             let key = format!("key_{}", i).into_bytes();
             let value = format!("value_{}", i).into_bytes();
-            let mut cached_mut = cached.clone();
-            cached_mut.set(&key, &value).unwrap();
+            cached.set(&key, &value).unwrap();
         }
+
+        // Wrap in Arc for concurrent access
+        let cached = Arc::new(cached);
 
         println!("\n=== Concurrent Access Benchmark ===");
 

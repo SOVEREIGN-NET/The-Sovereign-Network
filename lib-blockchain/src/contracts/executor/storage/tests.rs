@@ -6,6 +6,7 @@ mod storage_integration_tests {
         CachedPersistentStorage, PersistentStorage, StateCache, StateRootComputation,
         StateVersionManager, WalRecoveryManager,
     };
+    use crate::contracts::executor::ContractStorage;
     use tempfile::TempDir;
     use std::sync::Arc;
 
@@ -116,8 +117,10 @@ mod storage_integration_tests {
         let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
         let manager = WalRecoveryManager::new(storage.clone());
 
-        // Simulate incomplete block
-        let wal_key = manager.make_wal_key(100);
+        // Simulate incomplete block with WAL entry
+        let mut wal_key = Vec::new();
+        wal_key.extend_from_slice(b"wal:");
+        wal_key.extend_from_slice(&100u64.to_be_bytes());
         storage.set(&wal_key, b"incomplete").unwrap();
 
         // Store some state for this block
