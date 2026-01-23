@@ -49,11 +49,17 @@ jobs:
 
       - name: Download zhtp-cli
         run: |
+          cd /tmp
+          # Download the CLI tarball and associated SHA256SUMS file from the release
           gh release download ${{ inputs.cli_version }} \
             --repo SOVEREIGN-NET/The-Sovereign-Network \
             --pattern 'zhtp-cli-linux-x86_64.tar.gz' \
-            --dir /tmp
-          tar -xzf /tmp/zhtp-cli-linux-x86_64.tar.gz -C /tmp
+            --pattern 'SHA256SUMS'
+          # Verify the integrity of the downloaded tarball
+          grep ' zhtp-cli-linux-x86_64.tar.gz' SHA256SUMS > SHA256SUMS.cli
+          sha256sum -c SHA256SUMS.cli
+          # Extract and prepare the verified binary
+          tar -xzf zhtp-cli-linux-x86_64.tar.gz -C /tmp
           chmod +x /tmp/zhtp-cli
         env:
           GH_TOKEN: ${{ github.token }}
