@@ -192,8 +192,6 @@ mod tests {
         for i in 0..5 {
             let key = format!("key_{}", i);
             let value = format!("value_{}", i);
-            let key = format!("key_{}", i);
-            let value = format!("value_{}", i);
             cached_storage.set(key.as_bytes(), value.as_bytes()).unwrap();
         }
 
