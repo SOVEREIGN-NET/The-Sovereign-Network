@@ -144,7 +144,9 @@ impl StateCache {
     /// enough space for the new entry. If the new entry alone exceeds max_size_bytes,
     /// it will not be cached.
     pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> StorageResult<()> {
-        let entry_size = key.len() + value.len() + std::mem::size_of::<CacheEntry>();
+        // Calculate entry size: heap data (key + value) + stack struct overhead
+        // CacheEntry stack size: 2 * 24 bytes (Vec metadata) + 8 (u64) + 8 (usize) = 64 bytes
+        let entry_size = key.len() + value.len() + 64;
         
         // Don't cache entries that exceed the max size by themselves
         if entry_size > self.config.max_size_bytes {
@@ -163,8 +165,7 @@ impl StateCache {
 
         // If key already exists, subtract its old size
         if let Some(old_entry) = cache.peek(&key) {
-            let old_size = old_entry.key.len() + old_entry.value.len() + std::mem::size_of::<CacheEntry>();
-            *current_size = current_size.saturating_sub(old_size);
+            *current_size = current_size.saturating_sub(old_entry.size);
         }
 
         // Evict LRU entries until we have enough space
@@ -174,9 +175,8 @@ impl StateCache {
             .map_err(|e| anyhow::anyhow!("Stats lock poisoned: {}", e))?;
         
         while *current_size + entry_size > self.config.max_size_bytes {
-            if let Some((evicted_key, evicted_entry)) = cache.pop_lru() {
-                let evicted_size = evicted_entry.key.len() + evicted_entry.value.len() + std::mem::size_of::<CacheEntry>();
-                *current_size = current_size.saturating_sub(evicted_size);
+            if let Some((_evicted_key, evicted_entry)) = cache.pop_lru() {
+                *current_size = current_size.saturating_sub(evicted_entry.size);
                 stats.evictions += 1;
             } else {
                 // Cache is empty but we still don't have space (shouldn't happen)
