@@ -5,6 +5,10 @@
  * Uses UHP v2 handshake with Kyber1024 + Dilithium5 for post-quantum security.
  */
 
+import { Buffer } from 'buffer';
+import { promises as fs } from 'fs';
+import os from 'os';
+import path from 'path';
 import { TrustConfig, ZhtpIdentity } from '../index.js';
 import { Output } from '../output.js';
 import { NetworkError } from '../error.js';
@@ -12,6 +16,10 @@ import { KeyPair } from '../identity.js';
 import { QuicClientConfig, AuthenticatedConnection, ConnectionResult } from './types.js';
 import { encodeRequest, decodeResponse, computeRequestMac, incrementSequence } from './wire.js';
 import { performHandshakeAsInitiator, HandshakeStream, HandshakeResult } from './uhp_v2_handshake.js';
+
+const CHANNEL_BINDING_LABEL = 'zhtp-uhp-channel-binding';
+const CHANNEL_BINDING_TIMEOUT_MS = 8000;
+const CHANNEL_BINDING_POLL_INTERVAL_MS = 150;
 
 /**
  * QUIC client for ZHTP protocol
@@ -25,6 +33,8 @@ export class ZhtpQuicClient {
   private keypair: KeyPair;
   private trustConfig: TrustConfig;
   private output: Output;
+  private keylogPath: string | null = null;
+  private channelBinding: Uint8Array | null = null;
 
   constructor(
     identity: ZhtpIdentity,
@@ -57,6 +67,7 @@ export class ZhtpQuicClient {
 
       // Establish real QUIC connection to remote node
       await this.establishQUICConnection();
+      await this.captureChannelBinding();
 
       // Check if we have full keypair for UHP v2 handshake
       // Validate keys are non-empty strings (empty strings would fail base64 decoding)
@@ -72,10 +83,16 @@ export class ZhtpQuicClient {
         // Create handshake stream adapter for QUIC
         const handshakeStream = this.createHandshakeStream();
 
+        const channelBinding = this.channelBinding;
+        if (!channelBinding) {
+          throw new Error('Failed to compute TLS channel binding for UHP handshake');
+        }
+
         const handshakeResult = await performHandshakeAsInitiator(handshakeStream, {
           identity: this.identity,
           keypair: this.keypair,
           serverEndpoint: this.config.quicEndpoint,
+          channelBinding,
           debug: this.config.debug,
         });
 
@@ -119,7 +136,12 @@ export class ZhtpQuicClient {
       }
 
       const sessionId = this.connection.sessionId;
-      await this.output.info(`Connected to ${this.config.quicEndpoint} (session: ${sessionId.slice(0, 16)}...)`);
+        if (this.keylogPath) {
+          await fs.unlink(this.keylogPath).catch(() => {});
+          this.keylogPath = null;
+        }
+
+        await this.output.info(`Connected to ${this.config.quicEndpoint} (session: ${sessionId.slice(0, 16)}...)`);
 
       return {
         connected: true,
@@ -127,6 +149,10 @@ export class ZhtpQuicClient {
         peerId: this.connection.peerId,
       };
     } catch (error) {
+      if (this.keylogPath) {
+        await fs.unlink(this.keylogPath).catch(() => {});
+        this.keylogPath = null;
+      }
       const message = error instanceof Error ? error.message : 'unknown error';
       await this.output.error(`Connection failed: ${message}`);
       return {
@@ -216,6 +242,38 @@ export class ZhtpQuicClient {
         }
       },
     };
+  }
+
+  private async captureChannelBinding(): Promise<void> {
+    if (!this.keylogPath) {
+      throw new Error('TLS keylog path was not initialized');
+    }
+    this.channelBinding = await this.waitForExporterSecret(this.keylogPath, CHANNEL_BINDING_LABEL);
+  }
+
+  private async waitForExporterSecret(keylogPath: string, label: string): Promise<Uint8Array> {
+    const deadline = Date.now() + CHANNEL_BINDING_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const contents = await fs.readFile(keylogPath, 'utf8').catch(() => '');
+      const lines = contents.split(/\r?\n/).map(line => line.trim());
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (!line.startsWith(`EXPORTER_SECRET ${label} `)) {
+          continue;
+        }
+        const parts = line.split(' ');
+        if (parts.length < 3) {
+          continue;
+        }
+        const hex = parts[2].trim();
+        if (!hex) {
+          continue;
+        }
+        return new Uint8Array(Buffer.from(hex, 'hex'));
+      }
+      await new Promise((resolve) => setTimeout(resolve, CHANNEL_BINDING_POLL_INTERVAL_MS));
+    }
+    throw new Error(`TLS exporter secret for '${label}' not available within ${CHANNEL_BINDING_TIMEOUT_MS}ms`);
   }
 
   /**
@@ -470,36 +528,36 @@ export class ZhtpQuicClient {
         throw new Error(`Invalid port number: ${portNum} is outside valid range (0-65535)`);
       }
 
+      const keylogPath = path.join(
+        os.tmpdir(),
+        `zhtp-sdk-keylog-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+      );
+      this.keylogPath = keylogPath;
+      await fs.writeFile(keylogPath, '', { flag: 'w' });
+
       // Create QUIC client using factory method
-      // Try to use Node.js crypto module first
-      let cryptoModule: any;
-      try {
-        // @ts-ignore
-        cryptoModule = await import('crypto');
-      } catch {
-        // Fallback for browser environment
-        cryptoModule = {
-          randomBytes: (size: number) => {
-            const arr = new Uint8Array(size);
-            if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.getRandomValues) {
-              globalThis.crypto.getRandomValues(arr);
-            }
-            return arr;
+      const nodeCrypto = await import('crypto');
+      const quicCrypto = {
+        ops: {
+          randomBytes: async (data: ArrayBuffer): Promise<void> => {
+            const bytes = nodeCrypto.randomBytes(data.byteLength);
+            new Uint8Array(data).set(bytes);
           },
-          getRandomValues: (arr: Uint8Array) => {
-            if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.getRandomValues) {
-              globalThis.crypto.getRandomValues(arr);
-            }
-            return arr;
-          },
-        };
-      }
+        },
+      };
 
       const quicClient = await QuicModule.QUICClient.createQUICClient(
         {
           host,
           port: portNum,
-          crypto: cryptoModule,
+          serverName: 'zhtp-node', // Align with server expectations
+          crypto: quicCrypto,
+          config: {
+            verifyPeer: false, // We use our own post-quantum authentication layer
+            applicationProtos: ['zhtp-uhp/1'], // Match CLI control-plane ALPN
+            maxIdleTimeout: 60000,
+            logKeys: this.keylogPath!,
+          },
         },
         { timer: this.config.timeout },
       );
