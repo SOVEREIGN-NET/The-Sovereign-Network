@@ -158,7 +158,7 @@ impl ContractStorage for PersistentStorage {
             .map(|opt| opt.map(|val| val.to_vec()))
     }
 
-    fn set(&mut self, key: &[u8], value: &[u8]) -> anyhow::Result<()> {
+    fn set(&self, key: &[u8], value: &[u8]) -> anyhow::Result<()> {
         let tree = self.get_tree()
             .map_err(|e| anyhow::anyhow!(e))?;
         tree.insert(key, value)
@@ -166,7 +166,7 @@ impl ContractStorage for PersistentStorage {
         Ok(())
     }
 
-    fn delete(&mut self, key: &[u8]) -> anyhow::Result<()> {
+    fn delete(&self, key: &[u8]) -> anyhow::Result<()> {
         let tree = self.get_tree()
             .map_err(|e| anyhow::anyhow!(e))?;
         tree.remove(key)
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn test_persistent_storage_multiple_keys() {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
 
         // Set multiple keys
         for i in 0..10 {

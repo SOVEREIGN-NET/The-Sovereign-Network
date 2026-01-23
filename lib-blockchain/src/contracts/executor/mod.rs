@@ -17,6 +17,7 @@ use crate::contracts::runtime::{RuntimeFactory, RuntimeConfig, RuntimeContext, C
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use crate::integration::crypto_integration::{PublicKey, Signature};
 
 // ============================================================================
@@ -242,44 +243,54 @@ impl ExecutionContext {
 }
 
 /// Contract storage interface
+///
+/// All methods take `&self` to allow concurrent access. Implementations use
+/// interior mutability (e.g., `Arc<Mutex<>>` for MemoryStorage, Sled's internal
+/// synchronization for PersistentStorage) to ensure thread-safety.
 pub trait ContractStorage {
     /// Get value from storage
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
     
     /// Set value in storage
-    fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()>;
+    fn set(&self, key: &[u8], value: &[u8]) -> Result<()>;
     
     /// Delete value from storage
-    fn delete(&mut self, key: &[u8]) -> Result<()>;
+    fn delete(&self, key: &[u8]) -> Result<()>;
     
     /// Check if key exists in storage
     fn exists(&self, key: &[u8]) -> Result<bool>;
 }
 
 /// Simple in-memory storage implementation for testing
-#[derive(Debug, Default)]
-#[derive(Clone)]
+///
+/// Uses interior mutability via `Arc<Mutex<>>` to allow `&self` methods
+/// while maintaining thread-safety for concurrent access.
+#[derive(Debug, Default, Clone)]
 pub struct MemoryStorage {
-    data: HashMap<Vec<u8>, Vec<u8>>,
+    data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
 impl ContractStorage for MemoryStorage {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        Ok(self.data.get(key).cloned())
+        let data = self.data.lock().map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        Ok(data.get(key).cloned())
     }
     
-    fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.data.insert(key.to_vec(), value.to_vec());
+    fn set(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let mut data = self.data.lock().map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        data.insert(key.to_vec(), value.to_vec());
         Ok(())
     }
     
-    fn delete(&mut self, key: &[u8]) -> Result<()> {
-        self.data.remove(key);
+    fn delete(&self, key: &[u8]) -> Result<()> {
+        let mut data = self.data.lock().map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        data.remove(key);
         Ok(())
     }
     
     fn exists(&self, key: &[u8]) -> Result<bool> {
-        Ok(self.data.contains_key(key))
+        let data = self.data.lock().map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        Ok(data.contains_key(key))
     }
 }
 
