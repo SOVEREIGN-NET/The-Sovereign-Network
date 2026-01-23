@@ -145,7 +145,11 @@ impl StateCache {
     /// it will not be cached.
     pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> StorageResult<()> {
         // Calculate entry size: heap data (key + value) + stack struct overhead
-        // CacheEntry stack size: 2 * 24 bytes (Vec metadata) + 8 (u64) + 8 (usize) = 64 bytes
+        // CacheEntry stack size on 64-bit systems:
+        //   - 2 * Vec<u8> metadata (24 bytes each: 8 ptr + 8 len + 8 cap) = 48 bytes
+        //   - access_count: u64 = 8 bytes
+        //   - size: usize = 8 bytes
+        //   Total = 64 bytes
         let entry_size = key.len() + value.len() + 64;
         
         // Don't cache entries that exceed the max size by themselves
@@ -153,6 +157,7 @@ impl StateCache {
             return Ok(());
         }
 
+        // Lock order: cache -> current_size -> stats (for consistent ordering across methods)
         let mut cache = self
             .cache
             .lock()
@@ -169,19 +174,24 @@ impl StateCache {
         }
 
         // Evict LRU entries until we have enough space
-        let mut stats = self
-            .stats
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Stats lock poisoned: {}", e))?;
-        
+        let mut eviction_count = 0;
         while *current_size + entry_size > self.config.max_size_bytes {
             if let Some((_evicted_key, evicted_entry)) = cache.pop_lru() {
                 *current_size = current_size.saturating_sub(evicted_entry.size);
-                stats.evictions += 1;
+                eviction_count += 1;
             } else {
                 // Cache is empty but we still don't have space (shouldn't happen)
                 break;
             }
+        }
+
+        // Update eviction stats after releasing other locks to minimize lock contention
+        if eviction_count > 0 {
+            let mut stats = self
+                .stats
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Stats lock poisoned: {}", e))?;
+            stats.evictions += eviction_count;
         }
 
         let entry = CacheEntry {
@@ -344,7 +354,7 @@ mod tests {
         let cache = StateCache::with_config(config).unwrap();
 
         // Add entries that will exceed the limit
-        // Each entry: key (4 bytes) + value (100 bytes) + CacheEntry overhead (~40 bytes) ≈ 144 bytes
+        // Each entry: key (4 bytes) + value (100 bytes) + CacheEntry overhead (64 bytes) ≈ 168 bytes
         for i in 0..10 {
             let key = format!("key{}", i).into_bytes();
             let value = vec![i as u8; 100];
