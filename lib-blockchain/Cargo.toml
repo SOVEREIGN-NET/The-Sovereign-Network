@@ -28,9 +28,9 @@ indexmap = "2.0"
 # WASM runtime dependencies (optional)
 wasmtime = { version = "37.0.1", optional = true }
 
-# Storage caching (for persistent contract storage)
-lru = "0.12"
-sled = "0.34"
+# Storage caching (for persistent contract storage - optional)
+lru = { version = "0.12", optional = true }
+sled = { version = "0.34", optional = true }
 
 # Internal ZHTP dependencies (Foundation Layer Only)
 lib-crypto = { path = "../lib-crypto" }
@@ -46,7 +46,7 @@ testing = []
 contracts = []
 wasm-runtime = ["wasmtime"]
 wasmtime = ["dep:wasmtime"]
-persistent-contracts = []
+persistent-contracts = ["lru", "sled"]
 
 [dev-dependencies]
 tokio-test = "0.4"

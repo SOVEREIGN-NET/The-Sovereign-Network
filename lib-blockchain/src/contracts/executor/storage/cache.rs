@@ -210,14 +210,9 @@ impl StateCache {
     }
 }
 
-impl Default for StateCache {
-    fn default() -> Self {
-        Self::new().unwrap_or_else(|_| {
-            // Fallback for initialization failure
-            panic!("Failed to create default StateCache")
-        })
-    }
-}
+// Note: Default is not implemented for StateCache because initialization
+// can fail and Default is expected to be infallible. Use StateCache::new()
+// or StateCache::with_config() explicitly instead.
 
 #[cfg(test)]
 mod tests {

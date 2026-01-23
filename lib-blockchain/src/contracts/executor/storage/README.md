@@ -26,7 +26,7 @@ ContractExecutor
     ├─> CachedPersistentStorage (high-performance layer)
     │   ├─> StateCache (16MB LRU, in-memory)
     │   └─> PersistentStorage (durable layer)
-    │       └─> SledBackend (embedded KV store)
+    │       └─> sled::Db (embedded KV store)
     ├─> StateVersionManager (block height versioning)
     ├─> StateRootComputation (Merkle root consensus)
     └─> WalRecoveryManager (crash recovery)

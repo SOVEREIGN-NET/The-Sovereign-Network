@@ -328,13 +328,20 @@ impl<S: ContractStorage> ContractExecutor<S> {
         // ZHTP will be lazy-loaded on first access via get_or_load_zhtp()
         // Genesis initialization happens in init_system()
 
-        // Attempt WAL recovery on startup (if persistent contracts feature enabled)
-        #[cfg(feature = "persistent-contracts")]
-        {
-            // Note: Recovery would be called here with proper error handling
-            // For now, we just note that recovery should be performed
-            log::debug!("WAL recovery would be performed here during startup");
-        }
+        // IMPORTANT: WAL recovery must be performed BEFORE executor initialization
+        //
+        // Callers using persistent storage must call WalRecoveryManager::recover_from_crash()
+        // on their storage before creating the executor:
+        //
+        //   #[cfg(feature = "persistent-contracts")]
+        //   {
+        //       let recovery = storage::WalRecoveryManager::new(storage.clone());
+        //       recovery.recover_from_crash()?;  // Must complete before executor processes transactions
+        //   }
+        //   let executor = ContractExecutor::new(storage);
+        //
+        // This ensures incomplete blocks from crashes are discarded before consensus
+        // proceeds with new transactions.
 
         executor
     }
@@ -603,7 +610,10 @@ impl<S: ContractStorage> ContractExecutor<S> {
         }
 
         // Derive a write-ahead log key specific to this block height
-        let wal_key = generate_storage_key("block_state_wal", &block_height.to_be_bytes());
+        // MUST match format used by WalRecoveryManager: wal:{height_bytes}
+        let mut wal_key = Vec::new();
+        wal_key.extend_from_slice(b"wal:");
+        wal_key.extend_from_slice(&block_height.to_be_bytes());
 
         // Persist the WAL record before applying any writes. This ensures that
         // if a failure occurs during the write loop, the full set of intended
@@ -625,11 +635,11 @@ impl<S: ContractStorage> ContractExecutor<S> {
         #[cfg(feature = "persistent-contracts")]
         let state_root = {
             use crate::contracts::executor::storage::StateRootComputation;
-            // For now, return a placeholder - this would need actual persistent storage implementation
-            let hash = blake3::hash(b"STATE_ROOT_PLACEHOLDER");
-            let mut root_bytes = [0u8; 32];
-            root_bytes.copy_from_slice(hash.as_bytes());
-            crate::types::Hash::new(root_bytes)
+            use std::sync::Arc;
+            // Compute actual state root from persistent storage for block consensus
+            let computer = StateRootComputation::new(Arc::new(self.storage.clone()));
+            let root_hash = computer.compute_state_root(block_height)?;
+            crate::types::Hash::new(root_hash)
         };
 
         #[cfg(not(feature = "persistent-contracts"))]

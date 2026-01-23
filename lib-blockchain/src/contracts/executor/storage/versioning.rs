@@ -62,10 +62,10 @@ impl StateVersionManager {
 
     /// Get the latest state value (highest block height)
     pub fn get_latest(&self, key: &[u8]) -> StorageResult<Option<Vec<u8>>> {
-        // For now, scan for the highest version
-        // TODO: Optimize with a manifest tracking latest versions
-        let prefix = format!("state:*:");
-        let entries = self.storage.scan_prefix(prefix.as_bytes())?;
+        // Scan for the highest version across all block heights
+        // TODO: Optimize with a manifest tracking latest versions per key
+        let prefix = b"state:";
+        let entries = self.storage.scan_prefix(prefix)?;
 
         let mut latest_value: Option<Vec<u8>> = None;
         let mut latest_height: u64 = 0;

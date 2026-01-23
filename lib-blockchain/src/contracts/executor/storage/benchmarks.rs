@@ -7,7 +7,7 @@
 
 #[cfg(all(test, feature = "persistent-contracts"))]
 mod benchmarks {
-    use super::super::*;
+    use super::*;
     use std::time::Instant;
     use tempfile::TempDir;
 

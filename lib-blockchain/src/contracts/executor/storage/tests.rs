@@ -2,7 +2,10 @@
 
 #[cfg(test)]
 mod storage_integration_tests {
-    use super::*;
+    use super::super::{
+        CachedPersistentStorage, PersistentStorage, StateCache, StateRootComputation,
+        StateVersionManager, WalRecoveryManager,
+    };
     use tempfile::TempDir;
     use std::sync::Arc;
 
