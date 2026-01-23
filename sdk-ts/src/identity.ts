@@ -40,6 +40,9 @@ export interface PrivateKeyMaterial {
 export interface KeyPair {
   publicKey: string; // Hex-encoded
   privateKey: PrivateKeyMaterial;
+  // Extended key material for post-quantum operations (optional)
+  dilithiumPk?: string; // Dilithium5 public key (base64)
+  kyberPk?: string; // Kyber1024 public key (base64)
 }
 
 /**
@@ -60,31 +63,136 @@ interface PrivateKeyFile {
 }
 
 /**
+ * Raw keystore identity file format (as stored on disk)
+ */
+interface RawKeystoreIdentity {
+  id: number[]; // byte array
+  did: string;
+  public_key: {
+    dilithium_pk: number[];
+    kyber_pk: number[];
+    key_id: number[];
+  };
+  created_at: number;
+  // Other fields we don't need for basic loading
+  [key: string]: unknown;
+}
+
+/**
+ * Raw keystore private key file format
+ */
+interface RawKeystorePrivateKey {
+  dilithium_sk: number[]; // byte array
+  kyber_sk: number[]; // byte array
+  master_seed: number[]; // byte array
+}
+
+/**
+ * Convert byte array to hex string
+ */
+function bytesToHex(bytes: number[]): string {
+  return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Convert byte array to base64 string
+ */
+function bytesToBase64(bytes: number[]): string {
+  // In Node.js environment
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes).toString('base64');
+  }
+  // In browser environment
+  const binary = String.fromCharCode(...bytes);
+  return btoa(binary);
+}
+
+/**
  * Load identity from keystore
  * Mirrors zhtp-cli pattern: load_identity_from_keystore
  * Files needed:
- * - ~/.zhtp/keystore/identity.json
- * - ~/.zhtp/keystore/private_key.json
+ * - {keystorePath}/user_identity.json
+ * - {keystorePath}/user_private_key.json
  */
 export async function loadIdentityFromKeystore(
   keystorePath: string,
 ): Promise<LoadedIdentity> {
-  try {
-    // This is a placeholder - actual implementation would:
-    // 1. Read identity.json from keystore_path/identity.json
-    // 2. Read private_key.json from keystore_path/private_key.json
-    // 3. Decrypt private keys with user password (if encrypted)
-    // 4. Validate DID format
-    // 5. Return LoadedIdentity
+  // Use dynamic import for fs to support both Node.js and potential browser bundling
+  const fs = await import('fs').then(m => m.promises);
+  const path = await import('path');
 
-    // For now, throw to indicate not yet implemented
-    throw new IdentityError('Keystore loading not yet implemented', {
-      keystorePath,
-    });
+  const identityPath = path.join(keystorePath, 'user_identity.json');
+  const privateKeyPath = path.join(keystorePath, 'user_private_key.json');
+
+  try {
+    // Read identity file
+    const identityData = await fs.readFile(identityPath, 'utf-8');
+    const rawIdentity: RawKeystoreIdentity = JSON.parse(identityData);
+
+    // Read private key file
+    const privateKeyData = await fs.readFile(privateKeyPath, 'utf-8');
+    const rawPrivateKey: RawKeystorePrivateKey = JSON.parse(privateKeyData);
+
+    // Convert identity ID bytes to hex string
+    const identityId = bytesToHex(rawIdentity.id);
+
+    // Extract DID - should already be in correct format
+    const did = rawIdentity.did;
+
+    // Validate DID format
+    const didValidation = validateDid(did);
+    if (!didValidation.valid) {
+      throw new IdentityError('Invalid DID format in keystore', {
+        did,
+        errors: didValidation.errors,
+      });
+    }
+
+    // Extract public key from DID (the hex part after did:zhtp:)
+    const publicKeyHex = did.split(':')[2];
+
+    // Convert private keys to base64 for storage
+    const privateKey: PrivateKeyMaterial = {
+      dilithiumSk: bytesToBase64(rawPrivateKey.dilithium_sk),
+      kyberSk: bytesToBase64(rawPrivateKey.kyber_sk),
+      masterSeed: bytesToBase64(rawPrivateKey.master_seed),
+    };
+
+    // Also store dilithium public key for signing operations
+    const dilithiumPkBase64 = bytesToBase64(rawIdentity.public_key.dilithium_pk);
+    const kyberPkBase64 = bytesToBase64(rawIdentity.public_key.kyber_pk);
+
+    const loadedIdentity: LoadedIdentity = {
+      identity: {
+        id: identityId,
+        did,
+        publicKey: publicKeyHex,
+        createdAt: rawIdentity.created_at || Math.floor(Date.now() / 1000),
+        isActive: true,
+      },
+      keypair: {
+        publicKey: publicKeyHex,
+        privateKey,
+        // Extended key material for post-quantum operations
+        dilithiumPk: dilithiumPkBase64,
+        kyberPk: kyberPkBase64,
+      },
+    };
+
+    // Validate the loaded identity
+    const validationError = validateIdentity(loadedIdentity);
+    if (validationError) {
+      throw validationError;
+    }
+
+    return loadedIdentity;
   } catch (e) {
+    if (e instanceof IdentityError || e instanceof ValidationError) {
+      throw e;
+    }
     throw new IdentityError(
       `Failed to load identity from keystore: ${e instanceof Error ? e.message : 'unknown error'}`,
-      { keystorePath },
+      { keystorePath, identityPath, privateKeyPath },
     );
   }
 }
