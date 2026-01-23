@@ -7,11 +7,11 @@ on:
         description: 'Web4 domain to deploy to (e.g., mysite.sov)'
         required: true
         type: string
-      build_dir:
-        description: 'Build output directory'
+      build_artifact:
+        description: 'Name of the uploaded build artifact'
         required: false
         type: string
-        default: 'out'
+        default: 'build-output'
       deployment_mode:
         description: 'Publish mode (static or spa)'
         required: false
@@ -38,6 +38,15 @@ jobs:
     name: Deploy to Web4
     runs-on: ubuntu-latest
     steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.build_artifact }}
+          path: out/
+
+      - name: Verify build output
+        run: ls -la out/
+
       - name: Download zhtp-cli
         run: |
           gh release download ${{ inputs.cli_version }} \
@@ -63,4 +72,4 @@ jobs:
             --mode "${{ inputs.deployment_mode }}" \
             --server "${{ secrets.ZHTP_SERVER }}" \
             --pin-spki "${{ secrets.ZHTP_SERVER_SPKI }}" \
-            "${{ inputs.build_dir }}"
+            out/
