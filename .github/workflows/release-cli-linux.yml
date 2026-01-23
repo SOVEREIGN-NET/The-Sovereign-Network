@@ -1,0 +1,58 @@
+name: Release zhtp-cli (Linux)
+
+on:
+  push:
+    tags:
+      - 'cli-v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., 0.2.0)'
+        required: true
+        default: '0.2.0'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    name: Build & Release (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libdbus-1-dev pkg-config
+
+      - name: Build Release
+        run: cargo build --release -p zhtp-cli --locked
+
+      - name: Strip binary
+        run: strip target/release/zhtp-cli
+
+      - name: Create archive
+        run: |
+          cd target/release
+          tar -czf zhtp-cli-linux-x86_64.tar.gz zhtp-cli
+          sha256sum zhtp-cli-linux-x86_64.tar.gz > SHA256SUMS
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('cli-v{0}', inputs.version) }}
+          name: zhtp-cli ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+          files: |
+            target/release/zhtp-cli-linux-x86_64.tar.gz
+            target/release/SHA256SUMS
+          draft: false
+          prerelease: false
+          generate_release_notes: true
