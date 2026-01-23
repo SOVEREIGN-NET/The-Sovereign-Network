@@ -1,6 +1,6 @@
 use blake3::hash;
 use hex;
-use rand::{rngs::StdRng, SeedableRng, RngCore};
+use rand::RngCore;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::str::FromStr;
@@ -19,7 +19,7 @@ pub struct Node {
 
 impl Node {
     pub fn new(did: &str, device: &str) -> Self {
-        let node_id = deterministic_node_id(did, device);
+        let node_id = compute_node_id(did, device);
         Node {
             did: did.to_string(),
             device: device.to_string(),
@@ -111,28 +111,19 @@ impl MulticastFabric {
     }
 }
 
-/// Deterministic NodeId derived using Blake3("ZHTP_NODE_V2:" + DID + ":" + device)
-pub fn deterministic_node_id(did: &str, device: &str) -> String {
-    let input = format!("ZHTP_NODE_V2:{}:{}", did, device);
-    hex::encode(hash(input.as_bytes()).as_bytes())
-}
-
-/// Utility: create a deterministic RNG seeded by a reproducible seed (for reproducible simulations)
-pub fn deterministic_rng_for_run(seed: u64) -> StdRng {
-    StdRng::seed_from_u64(seed)
-}
-
 pub const MULTICAST_ADDR: &str = "224.0.1.75";
 pub const MULTICAST_PORT: u16 = 37775;
 
-pub fn deterministic_rng(seed: u64) -> rand_chacha::ChaCha20Rng {
-    use rand_chacha::ChaCha20Rng;
-    ChaCha20Rng::seed_from_u64(seed)
-}
-
+/// Deterministic NodeId derived using Blake3("ZHTP_NODE_V2:" + DID + ":" + device)
 pub fn compute_node_id(did: &str, device: &str) -> String {
     let input = format!("ZHTP_NODE_V2:{}:{}", did, device);
     hex::encode(hash(input.as_bytes()).as_bytes())
+}
+
+/// Create a deterministic RNG seeded by a reproducible seed (for reproducible simulations)
+pub fn deterministic_rng(seed: u64) -> rand_chacha::ChaCha20Rng {
+    use rand_chacha::ChaCha20Rng;
+    ChaCha20Rng::seed_from_u64(seed)
 }
 
 pub fn make_multicast_socket(bind_ip: Ipv4Addr, bind_port: u16) -> std::net::UdpSocket {
