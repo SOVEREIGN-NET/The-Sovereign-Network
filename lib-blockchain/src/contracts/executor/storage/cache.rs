@@ -65,6 +65,12 @@ impl CacheStats {
 /// - Cold contracts are evicted to make room
 /// - Statistics track performance for optimization
 /// - Byte-based size limit enforcement prevents memory bloat
+///
+/// ## Lock Ordering
+/// To prevent deadlocks, always acquire locks in this order:
+/// 1. cache
+/// 2. current_size_bytes
+/// 3. stats
 pub struct StateCache {
     cache: Arc<Mutex<LruCache<Vec<u8>, CacheEntry>>>,
     stats: Arc<Mutex<CacheStats>>,
@@ -180,18 +186,27 @@ impl StateCache {
                 *current_size = current_size.saturating_sub(evicted_entry.size);
                 eviction_count += 1;
             } else {
-                // Cache is empty but we still don't have space (shouldn't happen)
+                // Cache is empty but we still don't have enough space.
+                // This indicates a bug in size tracking or the entry is too large.
+                // Log for debugging but continue - the entry won't be cached.
+                #[cfg(feature = "logging")]
+                log::warn!(
+                    "Cache eviction failed: cache empty but still need {} bytes (max: {})",
+                    entry_size,
+                    self.config.max_size_bytes
+                );
                 break;
             }
         }
 
-        // Update eviction stats after releasing other locks to minimize lock contention
+        // Update eviction stats. We do this after the eviction loop to minimize
+        // time holding multiple locks, accepting that the count may be slightly
+        // delayed in concurrent scenarios.
         if eviction_count > 0 {
-            let mut stats = self
-                .stats
-                .lock()
-                .map_err(|e| anyhow::anyhow!("Stats lock poisoned: {}", e))?;
-            stats.evictions += eviction_count;
+            if let Ok(mut stats) = self.stats.lock() {
+                stats.evictions += eviction_count;
+            }
+            // Ignore lock poisoning for stats - non-critical
         }
 
         let entry = CacheEntry {
