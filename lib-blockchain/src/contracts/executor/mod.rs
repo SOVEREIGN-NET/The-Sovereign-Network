@@ -642,9 +642,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
             // Hash token changes
             for (token_id, token) in &writes {
                 hasher.update(token_id);
-                if let Ok(serialized) = bincode::serialize(token) {
-                    hasher.update(&serialized);
-                }
+                hasher.update(token);
             }
 
             // Hash block metadata
