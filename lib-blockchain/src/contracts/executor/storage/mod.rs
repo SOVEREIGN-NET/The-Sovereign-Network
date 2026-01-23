@@ -20,6 +20,41 @@
 //!     └─> WalRecoveryManager (startup crash recovery)
 //! ```
 //!
+//! # Execution Boundary (CRITICAL ARCHITECTURAL CONSTRAINT)
+//!
+//! **RULE: This module is STORAGE ONLY. It does NOT execute economic transactions.**
+//!
+//! All value movement (mint, burn, transfer, lock, release) is executed EXCLUSIVELY
+//! by the Treasury Kernel, never by this storage layer.
+//!
+//! ## What This Module Does
+//! - ✅ Persist contract state durably
+//! - ✅ Cache hot state for performance
+//! - ✅ Record economic INTENT (e.g., "claim UBI", "vote", "propose")
+//! - ✅ Compute state roots for consensus
+//! - ✅ Provide audit trail via events
+//!
+//! ## What This Module Does NOT Do
+//! - ❌ Mutate token balances
+//! - ❌ Mint or burn tokens
+//! - ❌ Enforce caps, vesting, or allocation rules
+//! - ❌ Execute scheduled payouts
+//! - ❌ Make economic policy decisions
+//!
+//! ## Why This Matters
+//! Economic transactions are declarative intent. Execution is deferred to:
+//! - **Treasury Kernel**: Sole authority for value movement
+//! - **Compensation DAO**: Sole authority for compensation logic
+//! - **Role Registry**: Sole authority for identity classification
+//!
+//! This separation ensures:
+//! - No alternative economic execution paths
+//! - Clear audit trail
+//! - Governance-traceable decisions
+//! - Forward compatibility with ABI standardization (#843)
+//!
+//! **Related Issues:** #841 (this), #840 (mega-ticket), #842, #843, #844
+//!
 //! # Storage Format
 //!
 //! Keys are stored with versioning to enable schema evolution:
