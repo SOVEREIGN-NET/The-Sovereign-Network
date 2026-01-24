@@ -7,7 +7,7 @@
 mod abi_tests {
     use crate::contracts::abi::schema::*;
     use crate::contracts::abi::{
-        codec, registry, validation, privilege
+        codec, registry, validation, privilege, codegen
     };
 
     /// Test complete UBI contract ABI
@@ -160,5 +160,73 @@ mod abi_tests {
 
         // Verify kernel_only flag is set
         assert!(abi.methods[0].privilege.as_ref().unwrap().kernel_only);
+    }
+
+    /// Test Rust code generation
+    #[test]
+    fn test_rust_codegen() {
+        let abi = ContractAbi::new("UBI", "1.0.0").with_method(
+            MethodSchema::new("claim", ReturnType::Value {
+                r#type: Box::new(ParameterType::U64),
+            })
+        );
+
+        let rust_code = codegen::AbiCodegen::generate_rust(&abi)
+            .expect("Should generate Rust code");
+
+        assert!(rust_code.contains("struct CallClaim"));
+        assert!(rust_code.contains("pub fn new("));
+        assert!(rust_code.contains("Auto-generated Rust bindings"));
+    }
+
+    /// Test TypeScript code generation
+    #[test]
+    fn test_ts_codegen() {
+        let abi = ContractAbi::new("UBI", "1.0.0").with_method(
+            MethodSchema::new("claim", ReturnType::Value {
+                r#type: Box::new(ParameterType::U64),
+            })
+        );
+
+        let ts_code = codegen::AbiCodegen::generate_typescript(&abi)
+            .expect("Should generate TypeScript code");
+
+        assert!(ts_code.contains("interface CallClaim"));
+        assert!(ts_code.contains("interface IUBI"));
+        assert!(ts_code.contains("Auto-generated TypeScript bindings"));
+    }
+
+    /// Test that generated code respects type mapping
+    #[test]
+    fn test_codegen_type_mapping() {
+        let abi = ContractAbi::new("Types", "1.0.0").with_method(
+            MethodSchema::new("complex_call", ReturnType::Void)
+                .with_parameter(Parameter {
+                    name: "amount".to_string(),
+                    r#type: ParameterType::U64,
+                    description: None,
+                    optional: None,
+                })
+                .with_parameter(Parameter {
+                    name: "data".to_string(),
+                    r#type: ParameterType::Bytes32,
+                    description: None,
+                    optional: None,
+                })
+        );
+
+        let rust_code = codegen::AbiCodegen::generate_rust(&abi)
+            .expect("Should generate Rust");
+
+        // Verify Rust type mappings
+        assert!(rust_code.contains("amount: u64"));
+        assert!(rust_code.contains("data: [u8; 32]"));
+
+        let ts_code = codegen::AbiCodegen::generate_typescript(&abi)
+            .expect("Should generate TypeScript");
+
+        // Verify TypeScript type mappings
+        assert!(ts_code.contains("amount: bigint"));
+        assert!(ts_code.contains("data: Uint8Array"));
     }
 }

@@ -65,14 +65,17 @@ pub mod codec;
 pub mod validation;
 pub mod privilege;
 pub mod registry;
+pub mod codegen;
 
 #[cfg(test)]
 mod tests;
 
 pub use schema::{
     ContractAbi, MethodSchema, EventSchema, ParameterType, ReturnType, FieldType,
+    Parameter, EventField, ExecutionSemantics, TypeDefinition, PrivilegeRequirement,
 };
 pub use codec::{AbiCodec, AbiEncoder, AbiDecoder};
 pub use validation::AbiValidator;
 pub use privilege::{PrivilegeMarker, PrivilegeLevel};
 pub use registry::AbiRegistry;
+pub use codegen::AbiCodegen;
