@@ -761,52 +761,48 @@ impl RuntimeOrchestrator {
         *self.edge_max_headers.read().await
     }
 
-    pub async fn start_full_node(config: NodeConfig) -> Result<Self> {
-        let node_role = config.node_role.clone();
-        if node_role.is_edge_node() {
-            return Err(anyhow::anyhow!(
-                "start_full_node called for edge node role: {:?}",
-                node_role
-            ));
-        }
-        if node_role.can_mine() {
-            return Err(anyhow::anyhow!(
-                "start_full_node called for validator role: {:?}",
-                node_role
-            ));
-        }
-
+    async fn start_with_role_validation<F>(
+        config: NodeConfig,
+        method_name: &str,
+        validate: F,
+    ) -> Result<Self>
+    where
+        F: FnOnce(&node_runtime::NodeRole) -> Result<()>,
+    {
+        validate(&config.node_role)?;
         let orchestrator = Self::new(config).await?;
         orchestrator.start_node().await?;
         Ok(orchestrator)
+    }
+
+    pub async fn start_full_node(config: NodeConfig) -> Result<Self> {
+        Self::start_with_role_validation(config, "start_full_node", |role| {
+            if role.is_edge_node() {
+                return Err(anyhow::anyhow!("start_full_node called for edge node role: {:?}", role));
+            }
+            if role.can_mine() {
+                return Err(anyhow::anyhow!("start_full_node called for validator role: {:?}", role));
+            }
+            Ok(())
+        }).await
     }
 
     pub async fn start_edge_node(config: NodeConfig) -> Result<Self> {
-        let node_role = config.node_role.clone();
-        if !node_role.is_edge_node() {
-            return Err(anyhow::anyhow!(
-                "start_edge_node called for non-edge role: {:?}",
-                node_role
-            ));
-        }
-
-        let orchestrator = Self::new(config).await?;
-        orchestrator.start_node().await?;
-        Ok(orchestrator)
+        Self::start_with_role_validation(config, "start_edge_node", |role| {
+            if !role.is_edge_node() {
+                return Err(anyhow::anyhow!("start_edge_node called for non-edge role: {:?}", role));
+            }
+            Ok(())
+        }).await
     }
 
     pub async fn start_validator(config: NodeConfig) -> Result<Self> {
-        let node_role = config.node_role.clone();
-        if !node_role.can_mine() {
-            return Err(anyhow::anyhow!(
-                "start_validator called for non-validator role: {:?}",
-                node_role
-            ));
-        }
-
-        let orchestrator = Self::new(config).await?;
-        orchestrator.start_node().await?;
-        Ok(orchestrator)
+        Self::start_with_role_validation(config, "start_validator", |role| {
+            if !role.can_mine() {
+                return Err(anyhow::anyhow!("start_validator called for non-validator role: {:?}", role));
+            }
+            Ok(())
+        }).await
     }
 
     /// Start the node with full startup sequence
