@@ -1,5 +1,9 @@
 pub mod platform_isolation;
 
+// Persistent contract storage module (for #841)
+#[cfg(feature = "persistent-contracts")]
+pub mod storage;
+
 use crate::{
     types::*,
     contracts::tokens::*,
@@ -13,6 +17,7 @@ use crate::contracts::runtime::{RuntimeFactory, RuntimeConfig, RuntimeContext, C
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use crate::integration::crypto_integration::{PublicKey, Signature};
 
 // ============================================================================
@@ -238,44 +243,54 @@ impl ExecutionContext {
 }
 
 /// Contract storage interface
+///
+/// All methods take `&self` to allow concurrent access. Implementations use
+/// interior mutability (e.g., `Arc<Mutex<>>` for MemoryStorage, Sled's internal
+/// synchronization for PersistentStorage) to ensure thread-safety.
 pub trait ContractStorage {
     /// Get value from storage
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
     
     /// Set value in storage
-    fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()>;
+    fn set(&self, key: &[u8], value: &[u8]) -> Result<()>;
     
     /// Delete value from storage
-    fn delete(&mut self, key: &[u8]) -> Result<()>;
+    fn delete(&self, key: &[u8]) -> Result<()>;
     
     /// Check if key exists in storage
     fn exists(&self, key: &[u8]) -> Result<bool>;
 }
 
 /// Simple in-memory storage implementation for testing
-#[derive(Debug, Default)]
-#[derive(Clone)]
+///
+/// Uses interior mutability via `Arc<Mutex<>>` to allow `&self` methods
+/// while maintaining thread-safety for concurrent access.
+#[derive(Debug, Default, Clone)]
 pub struct MemoryStorage {
-    data: HashMap<Vec<u8>, Vec<u8>>,
+    data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
 impl ContractStorage for MemoryStorage {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        Ok(self.data.get(key).cloned())
+        let data = self.data.lock().map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        Ok(data.get(key).cloned())
     }
     
-    fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.data.insert(key.to_vec(), value.to_vec());
+    fn set(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let mut data = self.data.lock().map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        data.insert(key.to_vec(), value.to_vec());
         Ok(())
     }
     
-    fn delete(&mut self, key: &[u8]) -> Result<()> {
-        self.data.remove(key);
+    fn delete(&self, key: &[u8]) -> Result<()> {
+        let mut data = self.data.lock().map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        data.remove(key);
         Ok(())
     }
     
     fn exists(&self, key: &[u8]) -> Result<bool> {
-        Ok(self.data.contains_key(key))
+        let data = self.data.lock().map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        Ok(data.contains_key(key))
     }
 }
 
@@ -323,6 +338,21 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         // ZHTP will be lazy-loaded on first access via get_or_load_zhtp()
         // Genesis initialization happens in init_system()
+
+        // IMPORTANT: WAL recovery must be performed BEFORE executor initialization
+        //
+        // Callers using persistent storage must call WalRecoveryManager::recover_from_crash()
+        // on their storage before creating the executor:
+        //
+        //   #[cfg(feature = "persistent-contracts")]
+        //   {
+        //       let recovery = storage::WalRecoveryManager::new(storage.clone());
+        //       recovery.recover_from_crash()?;  // Must complete before executor processes transactions
+        //   }
+        //   let executor = ContractExecutor::new(storage);
+        //
+        // This ensures incomplete blocks from crashes are discarded before consensus
+        // proceeds with new transactions.
 
         executor
     }
@@ -546,7 +576,10 @@ impl<S: ContractStorage> ContractExecutor<S> {
     /// Uses write-ahead logging (WAL) to ensure true atomicity.
     /// If any write fails, the entire operation fails and storage remains unchanged.
     /// This prevents partial state commits that could create divergence.
-    pub fn finalize_block_state(&mut self, block_height: u64) -> Result<()> {
+    ///
+    /// Returns the state root hash for inclusion in block headers for cross-validator verification.
+    #[cfg_attr(not(feature = "persistent-contracts"), allow(unused_variables))]
+    pub fn finalize_block_state(&mut self, block_height: u64) -> Result<Hash> {
         // Validate that pending changes match the block being finalized
         let pending = match &self.pending_changes {
             Some(p) if p.block_height == block_height => p.clone(),
@@ -554,7 +587,13 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 "Pending changes are for block {} but attempting to finalize block {}",
                 p.block_height, block_height
             )),
-            None => return Ok(()), // No pending changes is OK
+            None => {
+                // No pending changes - return empty state root (blake3 hash of "EMPTY_STATE_ROOT")
+                let empty_hash = blake3::hash(b"EMPTY_STATE_ROOT");
+                let mut root_bytes = [0u8; 32];
+                root_bytes.copy_from_slice(empty_hash.as_bytes());
+                return Ok(crate::types::Hash::new(root_bytes));
+            }
         };
 
         // Prepare all writes in a vector (atomic commit point)
@@ -582,7 +621,10 @@ impl<S: ContractStorage> ContractExecutor<S> {
         }
 
         // Derive a write-ahead log key specific to this block height
-        let wal_key = generate_storage_key("block_state_wal", &block_height.to_be_bytes());
+        // MUST match format used by WalRecoveryManager: wal:{height_bytes}
+        let mut wal_key = Vec::new();
+        wal_key.extend_from_slice(b"wal:");
+        wal_key.extend_from_slice(&block_height.to_be_bytes());
 
         // Persist the WAL record before applying any writes. This ensures that
         // if a failure occurs during the write loop, the full set of intended
@@ -600,9 +642,32 @@ impl<S: ContractStorage> ContractExecutor<S> {
         // empty payload acts as a logical "no pending WAL" marker.
         self.storage.set(&wal_key, &[])?;
 
+        // Compute state root for consensus validation
+        // State root is computed from the writes being finalized to enable deterministic
+        // block-level consensus. With persistent-contracts feature, the storage layer
+        // can compute more comprehensive state roots post-finalization via StateRootComputation.
+        let state_root = {
+            // Compute hash over all writes being committed (deterministic ordering)
+            let mut hasher = blake3::Hasher::new();
+
+            // Hash token changes
+            for (token_id, token) in &writes {
+                hasher.update(token_id);
+                hasher.update(token);
+            }
+
+            // Hash block metadata
+            hasher.update(&block_height.to_be_bytes());
+
+            let hash_bytes = hasher.finalize();
+            let mut root_bytes = [0u8; 32];
+            root_bytes.copy_from_slice(hash_bytes.as_bytes());
+            crate::types::Hash::new(root_bytes)
+        };
+
         // Clear pending changes only after successful commit
         self.pending_changes = None;
-        Ok(())
+        Ok(state_root)
     }
 
     /// Rollback pending state changes (for chain reorganization)
