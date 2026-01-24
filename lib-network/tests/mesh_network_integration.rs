@@ -2,10 +2,11 @@ mod common;
 
 use anyhow::{anyhow, Result};
 use common::mesh_test_utils::{
-    create_discovery_result, create_discovery_service, derive_session_key_for_test,
-    identity_with_seed, peer_id_from_node_id,
+    build_session_key_ikm, create_discovery_result, create_discovery_service,
+    derive_session_key_for_test, derive_session_key_with_labels, identity_with_seed,
+    peer_id_from_node_id, HKDF_EXPAND_LABEL, HKDF_EXTRACT_LABEL,
 };
-use lib_crypto::{hash_blake3, kdf::hkdf::hkdf_sha3};
+use lib_crypto::hash_blake3;
 use lib_identity::{NodeId, ZhtpIdentity};
 use lib_network::{
     discovery::{DiscoveryProtocol, DiscoveryResult},
@@ -406,32 +407,25 @@ fn quic_session_key_is_bound_to_node_id() -> Result<()> {
         "Changing transcript hash must change the derived session key"
     );
 
-    let mut ikm = Vec::with_capacity(32 + 32 + 32 + identity.node_id.as_bytes().len());
-    ikm.extend_from_slice(&uhp_session_key);
-    ikm.extend_from_slice(&pqc_shared_secret);
-    ikm.extend_from_slice(&transcript_hash);
-    ikm.extend_from_slice(identity.node_id.as_bytes());
-
-    let extracted = hkdf_sha3(&ikm, b"zhtp-quic-mesh-v2", 32)?;
-    let expanded = hkdf_sha3(&extracted, b"zhtp-quic-session-v2", 32)?;
+    // Verify session key derivation uses the correct HKDF labels
+    let ikm = build_session_key_ikm(&uhp_session_key, &pqc_shared_secret, &transcript_hash, identity.node_id.as_bytes());
+    let session_via_helpers = derive_session_key_with_labels(&ikm, HKDF_EXTRACT_LABEL, HKDF_EXPAND_LABEL)?;
     assert_eq!(
-        session.to_vec(),
-        expanded,
+        session, session_via_helpers,
         "Session key derivation must use both HKDF labels"
     );
 
-    let wrong_expand = hkdf_sha3(&extracted, b"zhtp-quic-session-v2-wrong", 32)?;
+    // Verify changing HKDF expansion label changes the derived session key
+    let session_wrong_expand = derive_session_key_with_labels(&ikm, HKDF_EXTRACT_LABEL, b"zhtp-quic-session-v2-wrong")?;
     assert_ne!(
-        session.to_vec(),
-        wrong_expand,
+        session, session_wrong_expand,
         "Changing HKDF expansion label must change the derived session key"
     );
 
-    let extracted_wrong = hkdf_sha3(&ikm, b"zhtp-quic-mesh-v2-wrong", 32)?;
-    let expanded_wrong = hkdf_sha3(&extracted_wrong, b"zhtp-quic-session-v2", 32)?;
+    // Verify changing HKDF extraction label changes the derived session key
+    let session_wrong_extract = derive_session_key_with_labels(&ikm, b"zhtp-quic-mesh-v2-wrong", HKDF_EXPAND_LABEL)?;
     assert_ne!(
-        session.to_vec(),
-        expanded_wrong,
+        session, session_wrong_extract,
         "Changing HKDF extraction label must change the derived session key"
     );
 
