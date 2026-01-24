@@ -6,7 +6,6 @@ mod storage_integration_tests {
         CachedPersistentStorage, PersistentStorage, StateCache, StateRootComputation,
         StateVersionManager, WalRecoveryManager,
     };
-    use crate::contracts::executor::ContractStorage;
     use tempfile::TempDir;
     use std::sync::Arc;
 
