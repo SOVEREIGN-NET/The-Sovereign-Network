@@ -149,6 +149,9 @@ export class ZhtpQuicClient {
         peerId: this.connection.peerId,
       };
     } catch (error) {
+      // Clean up QUIC connection on failure to prevent resource leak
+      await this.disconnect();
+
       if (this.keylogPath) {
         await fs.unlink(this.keylogPath).catch(() => {});
         this.keylogPath = null;
