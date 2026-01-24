@@ -59,7 +59,7 @@ jobs:
           grep ' zhtp-cli-linux-x86_64.tar.gz' SHA256SUMS > SHA256SUMS.cli
           sha256sum -c SHA256SUMS.cli
           # Extract and prepare the verified binary
-          tar -xzf zhtp-cli-linux-x86_64.tar.gz -C /tmp
+          tar --no-absolute-names -xzf zhtp-cli-linux-x86_64.tar.gz -C /tmp
           chmod +x /tmp/zhtp-cli
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,7 +67,7 @@ jobs:
       - name: Restore keystore
         run: |
           mkdir -p ~/.zhtp
-          echo "${{ secrets.ZHTP_KEYSTORE_B64 }}" | base64 --decode | tar -xzf - -C ~/.zhtp
+          echo "${{ secrets.ZHTP_KEYSTORE_B64 }}" | base64 --decode | tar --no-absolute-names -xzf - -C ~/.zhtp
         shell: bash
 
       - name: Deploy site
