@@ -138,6 +138,7 @@ export class DeployManager {
 
   /**
    * Read all files from build directory recursively
+   * NOTE: Node.js-only implementation
    */
   private async readBuildDirectory(
     dir: string,
@@ -145,46 +146,38 @@ export class DeployManager {
   ): Promise<Array<{ path: string; data: Uint8Array; mimeType?: string }>> {
     const files: Array<{ path: string; data: Uint8Array; mimeType?: string }> = [];
 
-    // For Node.js environments
-    if (typeof require !== 'undefined') {
-      try {
-        const fs = require('fs');
-        const path = require('path');
+    try {
+      const fs = require('fs');
+      const path = require('path');
 
-        const readDir = (currentDir: string, basePath: string = '') => {
-          const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      const readDir = (currentDir: string, basePath: string = '') => {
+        const entries = fs.readdirSync(currentDir, { withFileTypes: true });
 
-          for (const entry of entries) {
-            const fullPath = path.join(currentDir, entry.name);
-            const relativePath = path.join(basePath, entry.name).replace(/\\/g, '/');
+        for (const entry of entries) {
+          const fullPath = path.join(currentDir, entry.name);
+          const relativePath = path.join(basePath, entry.name).replace(/\\/g, '/');
 
-            // Skip excluded patterns
-            if (exclude.some((pattern) => relativePath.includes(pattern))) {
-              continue;
-            }
-
-            if (entry.isDirectory()) {
-              readDir(fullPath, relativePath);
-            } else {
-              const data = fs.readFileSync(fullPath);
-              files.push({
-                path: relativePath,
-                data: new Uint8Array(data),
-                mimeType: this.getMimeType(relativePath),
-              });
-            }
+          // Skip excluded patterns
+          if (exclude.some((pattern) => relativePath.includes(pattern))) {
+            continue;
           }
-        };
 
-        readDir(dir);
-      } catch (error) {
-        throw new DomainError(`Cannot read directory: ${error instanceof Error ? error.message : 'unknown'}`, {
-          dir,
-        });
-      }
-    } else {
-      // Browser environment - not supported yet
-      throw new DomainError('Directory reading not supported in browser environment', {
+          if (entry.isDirectory()) {
+            readDir(fullPath, relativePath);
+          } else {
+            const data = fs.readFileSync(fullPath);
+            files.push({
+              path: relativePath,
+              data: new Uint8Array(data),
+              mimeType: this.getMimeType(relativePath),
+            });
+          }
+        }
+      };
+
+      readDir(dir);
+    } catch (error) {
+      throw new DomainError(`Cannot read directory: ${error instanceof Error ? error.message : 'unknown'}`, {
         dir,
       });
     }
