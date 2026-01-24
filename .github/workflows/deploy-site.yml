@@ -1,27 +1,6 @@
 name: Deploy Site to Web4
 
 on:
-  workflow_dispatch:
-    inputs:
-      domain:
-        description: 'Web4 domain to deploy to (e.g., mysite.sov)'
-        required: true
-        type: string
-      build_artifact:
-        description: 'Name of the uploaded build artifact'
-        required: false
-        type: string
-        default: 'build-output'
-      deployment_mode:
-        description: 'Publish mode (static or spa)'
-        required: false
-        type: string
-        default: 'static'
-      cli_version:
-        description: 'zhtp-cli release tag'
-        required: false
-        type: string
-        default: 'cli-v0.2.0'
   workflow_call:
     inputs:
       domain:
