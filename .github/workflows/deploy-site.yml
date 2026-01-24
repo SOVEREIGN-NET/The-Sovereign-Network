@@ -1,32 +1,35 @@
 name: Deploy Site to Web4
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       domain:
         description: 'Web4 domain (e.g., mysite.sov)'
         required: true
         type: string
+      build_artifact:
+        description: 'Name of the build artifact'
+        required: false
+        type: string
+        default: 'build-output'
+    secrets:
+      ZHTP_KEYSTORE_B64:
+        required: true
+      ZHTP_SERVER:
+        required: false
+      ZHTP_SERVER_SPKI:
+        required: false
 
 jobs:
-  build-and-deploy:
-    name: Build and Deploy
+  deploy:
+    name: Deploy to Web4
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
+          name: ${{ inputs.build_artifact }}
+          path: out/
 
       - name: Download zhtp-cli
         run: |
