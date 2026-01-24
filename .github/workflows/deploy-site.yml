@@ -4,82 +4,39 @@ on:
   workflow_dispatch:
     inputs:
       domain:
-        description: 'Web4 domain to deploy to (e.g., mysite.sov)'
+        description: 'Web4 domain (e.g., mysite.sov)'
         required: true
         type: string
-      build_artifact:
-        description: 'Name of the uploaded build artifact'
-        required: false
-        type: string
-        default: 'build-output'
-      deployment_mode:
-        description: 'Publish mode (static or spa)'
-        required: false
-        type: string
-        default: 'static'
-      cli_version:
-        description: 'zhtp-cli release tag'
-        required: false
-        type: string
-        default: 'cli-v0.2.0'
-  workflow_call:
-    inputs:
-      domain:
-        description: 'Web4 domain to deploy to (e.g., mysite.sov)'
-        required: true
-        type: string
-      build_artifact:
-        description: 'Name of the uploaded build artifact'
-        required: false
-        type: string
-        default: 'build-output'
-      deployment_mode:
-        description: 'Publish mode (static or spa)'
-        required: false
-        type: string
-        default: 'static'
-      cli_version:
-        description: 'zhtp-cli release tag'
-        required: false
-        type: string
-        default: 'cli-v0.2.0'
-    secrets:
-      ZHTP_KEYSTORE_B64:
-        description: 'Base64-encoded tarball of keystore directory'
-        required: true
-      ZHTP_SERVER:
-        description: 'QUIC server endpoint (reserved for future use)'
-        required: false
-      ZHTP_SERVER_SPKI:
-        description: 'Server SPKI pin (reserved for future use)'
-        required: false
 
 jobs:
-  deploy:
-    name: Deploy to Web4
+  build-and-deploy:
+    name: Build and Deploy
     runs-on: ubuntu-latest
     steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ inputs.build_artifact }}
-          path: out/
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Verify build output
-        run: ls -la out/
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
 
       - name: Download zhtp-cli
         run: |
           cd /tmp
-          # Download the CLI tarball and associated SHA256SUMS file from the release
-          gh release download ${{ inputs.cli_version }} \
+          gh release download cli-v0.2.0 \
             --repo SOVEREIGN-NET/The-Sovereign-Network \
             --pattern 'zhtp-cli-linux-x86_64.tar.gz' \
             --pattern 'SHA256SUMS'
-          # Verify the integrity of the downloaded tarball
           grep ' zhtp-cli-linux-x86_64.tar.gz' SHA256SUMS > SHA256SUMS.cli
           sha256sum -c SHA256SUMS.cli
-          # Extract and prepare the verified binary
           tar -xzf zhtp-cli-linux-x86_64.tar.gz -C /tmp
           chmod +x /tmp/zhtp-cli
         env:
@@ -89,12 +46,11 @@ jobs:
         run: |
           mkdir -p ~/.zhtp
           echo "${{ secrets.ZHTP_KEYSTORE_B64 }}" | base64 --decode | tar -xzf - -C ~/.zhtp
-        shell: bash
 
-      - name: Deploy site
+      - name: Deploy
         run: |
           /tmp/zhtp-cli deploy site \
             --domain "${{ inputs.domain }}" \
             --keystore ~/.zhtp/keystore \
-            --mode "${{ inputs.deployment_mode }}" \
+            --mode static \
             out/
