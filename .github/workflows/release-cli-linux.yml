@@ -30,6 +30,7 @@ jobs:
         with:
           toolchain: stable
           override: true
+          target: x86_64-unknown-linux-gnu
 
       - name: Install system dependencies
         run: |
@@ -37,14 +38,14 @@ jobs:
           sudo apt-get install -y libudev-dev libdbus-1-dev pkg-config
 
       - name: Build Release
-        run: cargo build --release -p zhtp-cli --locked
+        run: cargo build --release -p zhtp-cli --locked --target x86_64-unknown-linux-gnu
 
       - name: Strip binary
-        run: strip target/release/zhtp-cli
+        run: strip target/x86_64-unknown-linux-gnu/release/zhtp-cli
 
       - name: Create archive
         run: |
-          cd target/release
+          cd target/x86_64-unknown-linux-gnu/release
           tar -czf zhtp-cli-linux-x86_64.tar.gz zhtp-cli
           sha256sum zhtp-cli-linux-x86_64.tar.gz > SHA256SUMS
 
@@ -54,8 +55,8 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('cli-v{0}', inputs.version) }}
           name: zhtp-cli ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
           files: |
-            target/release/zhtp-cli-linux-x86_64.tar.gz
-            target/release/SHA256SUMS
+            target/x86_64-unknown-linux-gnu/release/zhtp-cli-linux-x86_64.tar.gz
+            target/x86_64-unknown-linux-gnu/release/SHA256SUMS
           draft: false
           prerelease: false
           generate_release_notes: true
