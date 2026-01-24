@@ -61,7 +61,7 @@ async function main() {
     // Step 4: Validate build directory
     console.log('Step 4: Validating build directory...');
     console.log('  Build directory:', BUILD_DIR);
-    
+
     // Check if build directory exists
     if (!fs.existsSync(BUILD_DIR)) {
       console.error('\n❌ ERROR: Build directory does not exist!');
@@ -73,7 +73,7 @@ async function main() {
       await client.disconnect();
       process.exit(1);
     }
-    
+
     // Check if build directory is actually a directory
     try {
       const stats = fs.statSync(BUILD_DIR);
@@ -91,7 +91,7 @@ async function main() {
       await client.disconnect();
       process.exit(1);
     }
-    
+
     // Check if build directory contains files
     try {
       const files = fs.readdirSync(BUILD_DIR);
@@ -102,7 +102,7 @@ async function main() {
         await client.disconnect();
         process.exit(1);
       }
-      
+
       console.log('  ✓ Build directory exists');
       console.log('  ✓ Contains', files.length, 'files/directories');
     } catch (error) {
@@ -114,7 +114,7 @@ async function main() {
       process.exit(1);
     }
     console.log('');
-    
+
     // Step 5: Deploy the site
     console.log('Step 5: Deploying site to', DOMAIN);
 

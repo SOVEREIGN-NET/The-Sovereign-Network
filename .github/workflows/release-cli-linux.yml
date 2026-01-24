@@ -25,12 +25,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
-        with:
-          toolchain: stable
-          override: true
-          target: x86_64-unknown-linux-gnu
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install system dependencies
         run: |
@@ -38,14 +34,14 @@ jobs:
           sudo apt-get install -y libudev-dev libdbus-1-dev pkg-config
 
       - name: Build Release
-        run: cargo build --release -p zhtp-cli --locked --target x86_64-unknown-linux-gnu
+        run: cargo build --release -p zhtp-cli --locked
 
       - name: Strip binary
-        run: strip target/x86_64-unknown-linux-gnu/release/zhtp-cli
+        run: strip target/release/zhtp-cli
 
       - name: Create archive
         run: |
-          cd target/x86_64-unknown-linux-gnu/release
+          cd target/release
           tar -czf zhtp-cli-linux-x86_64.tar.gz zhtp-cli
           sha256sum zhtp-cli-linux-x86_64.tar.gz > SHA256SUMS
 
@@ -55,8 +51,8 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('cli-v{0}', inputs.version) }}
           name: zhtp-cli ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
           files: |
-            target/x86_64-unknown-linux-gnu/release/zhtp-cli-linux-x86_64.tar.gz
-            target/x86_64-unknown-linux-gnu/release/SHA256SUMS
+            target/release/zhtp-cli-linux-x86_64.tar.gz
+            target/release/SHA256SUMS
           draft: false
           prerelease: false
           generate_release_notes: true
