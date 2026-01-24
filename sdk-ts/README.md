@@ -2,6 +2,8 @@
 
 **QUIC-native TypeScript SDK for the ZHTP network** - Built following [zhtp-cli](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/tree/development/zhtp-cli) architectural patterns.
 
+**Platform:** Node.js only (v18+). This SDK is designed for Node.js environments such as CI/CD pipelines and server-side applications. Browser support is not available due to filesystem and QUIC transport requirements.
+
 ## Architecture Overview
 
 This SDK follows zhtp-cli's **three-layer initialization pattern** and **operation enum** architecture:
