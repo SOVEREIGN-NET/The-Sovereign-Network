@@ -26,6 +26,12 @@ on:
       ZHTP_KEYSTORE_B64:
         description: 'Base64-encoded tarball of keystore directory'
         required: true
+      ZHTP_SERVER:
+        description: 'QUIC server endpoint (reserved for future use)'
+        required: false
+      ZHTP_SERVER_SPKI:
+        description: 'Server SPKI pin (reserved for future use)'
+        required: false
 
 jobs:
   deploy:
