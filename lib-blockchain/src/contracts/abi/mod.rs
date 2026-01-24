@@ -70,6 +70,9 @@ pub mod codegen;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod red_tests;
+
 pub use schema::{
     ContractAbi, MethodSchema, EventSchema, ParameterType, ReturnType, FieldType,
     Parameter, EventField, ExecutionSemantics, TypeDefinition, PrivilegeRequirement,
