@@ -1,50 +1,19 @@
+mod common;
+
 use anyhow::{anyhow, Result};
+use common::mesh_test_utils::{
+    create_discovery_result, create_discovery_service, derive_session_key_for_test,
+    identity_with_seed, peer_id_from_node_id,
+};
 use lib_crypto::{hash_blake3, kdf::hkdf::hkdf_sha3};
-use lib_identity::{IdentityType, NodeId, ZhtpIdentity};
+use lib_identity::{NodeId, ZhtpIdentity};
 use lib_network::{
-    discovery::{DiscoveryProtocol, DiscoveryResult, UnifiedDiscoveryService},
+    discovery::{DiscoveryProtocol, DiscoveryResult},
     identity::UnifiedPeerId,
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use uuid::Uuid;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
-
-fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Device,
-        None,
-        None,
-        device,
-        Some(seed),
-    )
-}
-
-fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
-    Uuid::from_slice(&node_id.as_bytes()[..16])
-        .expect("NodeId::as_bytes() must return at least 16 bytes for UUID conversion")
-}
-
-fn derive_session_key_for_test(
-    uhp_session_key: &[u8; 32],
-    pqc_shared_secret: &[u8; 32],
-    transcript_hash: &[u8; 32],
-    peer_node_id: &[u8],
-) -> Result<[u8; 32]> {
-    // v2 key derivation using HKDF-SHA3 with transcript hash
-    let mut ikm = Vec::with_capacity(32 + 32 + 32 + peer_node_id.len());
-    ikm.extend_from_slice(uhp_session_key);
-    ikm.extend_from_slice(pqc_shared_secret);
-    ikm.extend_from_slice(transcript_hash);
-    ikm.extend_from_slice(peer_node_id);
-
-    let extracted = hkdf_sha3(&ikm, b"zhtp-quic-mesh-v2", 32)?;
-    let expanded = hkdf_sha3(&extracted, b"zhtp-quic-session-v2", 32)?;
-
-    let mut session_key = [0u8; 32];
-    session_key.copy_from_slice(&expanded);
-    Ok(session_key)
-}
 
 #[test]
 fn node_id_remains_stable_across_restart() -> Result<()> {
@@ -111,11 +80,7 @@ fn node_id_changes_with_different_device_name() -> Result<()> {
 async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let local = identity_with_seed("alpha-mesh-local", [0x20u8; 64])?;
-        let service = UnifiedDiscoveryService::new(
-            peer_id_from_node_id(&local.node_id),
-            9443,
-            local.public_key.clone(),
-        );
+        let service = create_discovery_service(&local);
 
         let seeds = [[0x21u8; 64], [0x22u8; 64], [0x23u8; 64]];
         let devices = ["alpha-mesh-a01", "alpha-mesh-b02", "alpha-mesh-c03"];
@@ -127,14 +92,8 @@ async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()
             .collect::<Result<_>>()?;
 
         for (idx, identity) in identities.iter().enumerate() {
-            let peer_id = peer_id_from_node_id(&identity.node_id);
             let addr: SocketAddr = format!("192.0.2.{}:9443", 10 + idx).parse().unwrap(); // RFC 5737
-
-            let mut result =
-                DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9443);
-            result.public_key = Some(identity.public_key.clone());
-            result.did = Some(identity.did.clone());
-            result.device_id = Some(identity.primary_device.clone());
+            let result = create_discovery_result(identity, addr, DiscoveryProtocol::UdpMulticast);
             service.register_peer(result).await;
         }
 
@@ -174,11 +133,7 @@ async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()
 async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let local = identity_with_seed("alpha-mesh-local", [0x30u8; 64])?;
-        let service = UnifiedDiscoveryService::new(
-            peer_id_from_node_id(&local.node_id),
-            9443,
-            local.public_key.clone(),
-        );
+        let service = create_discovery_service(&local);
 
         let identity = identity_with_seed("alpha-mesh-peer", [0x31u8; 64])?;
         let peer_id = peer_id_from_node_id(&identity.node_id);
@@ -186,17 +141,11 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
         let addr_a: SocketAddr = "192.0.2.10:9443".parse().unwrap(); // RFC 5737
         let addr_b: SocketAddr = "192.0.2.11:9443".parse().unwrap(); // RFC 5737
 
-        let mut initial =
-            DiscoveryResult::new(peer_id, addr_a, DiscoveryProtocol::PortScan, 9443);
-        initial.did = Some(identity.did.clone());
-        initial.device_id = Some(identity.primary_device.clone());
+        let mut initial = create_discovery_result(&identity, addr_a, DiscoveryProtocol::PortScan);
+        initial.public_key = None; // Initial registration without public key
         service.register_peer(initial).await;
 
-        let mut upgraded =
-            DiscoveryResult::new(peer_id, addr_b, DiscoveryProtocol::UdpMulticast, 9443);
-        upgraded.public_key = Some(identity.public_key.clone());
-        upgraded.did = Some(identity.did.clone());
-        upgraded.device_id = Some(identity.primary_device.clone());
+        let upgraded = create_discovery_result(&identity, addr_b, DiscoveryProtocol::UdpMulticast);
         service.register_peer(upgraded).await;
 
         assert_eq!(service.peer_count().await, 1);
@@ -249,29 +198,17 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
 async fn mesh_discovery_concurrent_duplicate_registration_is_consistent() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let local = identity_with_seed("alpha-mesh-local", [0x40u8; 64])?;
-        let service = Arc::new(UnifiedDiscoveryService::new(
-            peer_id_from_node_id(&local.node_id),
-            9443,
-            local.public_key.clone(),
-        ));
+        let service = Arc::new(create_discovery_service(&local));
 
         let identity = identity_with_seed("alpha-mesh-peer", [0x41u8; 64])?;
-        let peer_id = peer_id_from_node_id(&identity.node_id);
 
         let addr_a: SocketAddr = "198.51.100.10:9443".parse().unwrap(); // RFC 5737
         let addr_b: SocketAddr = "198.51.100.11:9443".parse().unwrap(); // RFC 5737
 
-        let mut a =
-            DiscoveryResult::new(peer_id, addr_a, DiscoveryProtocol::UdpMulticast, 9443);
-        a.public_key = Some(identity.public_key.clone());
-        a.did = Some(identity.did.clone());
-        a.device_id = Some(identity.primary_device.clone());
+        let a = create_discovery_result(&identity, addr_a, DiscoveryProtocol::UdpMulticast);
+        let b = create_discovery_result(&identity, addr_b, DiscoveryProtocol::UdpMulticast);
 
-        let mut b =
-            DiscoveryResult::new(peer_id, addr_b, DiscoveryProtocol::UdpMulticast, 9443);
-        b.public_key = Some(identity.public_key.clone());
-        b.did = Some(identity.did.clone());
-        b.device_id = Some(identity.primary_device.clone());
+        let peer_id = peer_id_from_node_id(&identity.node_id);
 
         let s1 = Arc::clone(&service);
         let s2 = Arc::clone(&service);
@@ -301,11 +238,7 @@ async fn mesh_discovery_concurrent_duplicate_registration_is_consistent() -> Res
 async fn mesh_discovery_handles_join_leave_and_rejoin() -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let local = identity_with_seed("alpha-mesh-local", [0x50u8; 64])?;
-        let service = UnifiedDiscoveryService::new(
-            peer_id_from_node_id(&local.node_id),
-            9443,
-            local.public_key.clone(),
-        );
+        let service = create_discovery_service(&local);
 
         let seeds = [
             [0x51u8; 64],
@@ -329,14 +262,8 @@ async fn mesh_discovery_handles_join_leave_and_rejoin() -> Result<()> {
             .collect::<Result<_>>()?;
 
         for (idx, identity) in identities.iter().enumerate() {
-            let peer_id = peer_id_from_node_id(&identity.node_id);
             let addr: SocketAddr = format!("192.0.2.{}:9443", 30 + idx).parse().unwrap();
-
-            let mut result =
-                DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9443);
-            result.public_key = Some(identity.public_key.clone());
-            result.did = Some(identity.did.clone());
-            result.device_id = Some(identity.primary_device.clone());
+            let result = create_discovery_result(identity, addr, DiscoveryProtocol::UdpMulticast);
             service.register_peer(result).await;
         }
 
@@ -348,11 +275,7 @@ async fn mesh_discovery_handles_join_leave_and_rejoin() -> Result<()> {
         assert_eq!(service.peer_count().await, identities.len() - 1);
 
         let rejoin_addr: SocketAddr = "192.0.2.80:9443".parse().unwrap();
-        let mut rejoin =
-            DiscoveryResult::new(removed_id, rejoin_addr, DiscoveryProtocol::UdpMulticast, 9443);
-        rejoin.public_key = Some(identities[2].public_key.clone());
-        rejoin.did = Some(identities[2].did.clone());
-        rejoin.device_id = Some(identities[2].primary_device.clone());
+        let rejoin = create_discovery_result(&identities[2], rejoin_addr, DiscoveryProtocol::UdpMulticast);
         service.register_peer(rejoin).await;
 
         assert_eq!(service.peer_count().await, identities.len());
