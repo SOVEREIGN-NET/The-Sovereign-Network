@@ -111,13 +111,21 @@ fn validate_did(did: &str) -> Result<()> {
     Ok(())
 }
 
+/// Resolve device name with priority: env var > provided > hostname.
+///
+/// # Security Review
+/// ZHTP_DEVICE_NAME env var is intentionally read to allow operators to configure
+/// deterministic NodeId. The value is validated by normalize_device_name() which
+/// enforces strict character and length limits. See mod.rs for full security analysis.
 fn resolve_device_name_with_host(
     provided: Option<&str>,
     host_name: Option<&str>,
 ) -> Result<String> {
+    // Priority 1: Environment variable override (security reviewed - see docstring)
     if let Ok(env_name) = std::env::var("ZHTP_DEVICE_NAME") {
         let trimmed = env_name.trim();
         if !trimmed.is_empty() {
+            info!("AUDIT: ZHTP_DEVICE_NAME env var override: {}", trimmed);
             return normalize_device_name(trimmed);
         }
     }
