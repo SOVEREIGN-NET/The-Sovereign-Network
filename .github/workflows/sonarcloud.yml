@@ -15,6 +15,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libudev-dev \
+            pkg-config \
+            libssl-dev \
+            libdbus-1-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          components: clippy
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings || true
+        continue-on-error: true
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6
         env:
