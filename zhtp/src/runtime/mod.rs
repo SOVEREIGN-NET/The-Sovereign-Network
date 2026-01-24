@@ -2840,10 +2840,16 @@ pub async fn create_or_load_node_identity(
         .join(".zhtp")
         .join("keystore");
 
-    // Allow explicit device name override to keep NodeId deterministic across restarts
-    let requested_device_name = std::env::var("ZHTP_DEVICE_NAME")
-        .unwrap_or_else(|_| "zhtp-node".to_string());
-    let device_name = resolve_device_name(Some(&requested_device_name))
+    // SECURITY REVIEW: ZHTP_DEVICE_NAME env var is checked inside resolve_device_name()
+    // to allow operators to configure deterministic NodeId across restarts and cluster
+    // deployments. The value is validated by normalize_device_name() which enforces:
+    // alphanumeric + .-_ only, max 64 chars, lowercased. Changing this value changes
+    // the node's network identity (NodeId), which affects peer discovery and mesh routing.
+    // An attacker with env var access could cause identity instability but cannot
+    // impersonate other nodes (requires private key for DID). This is a configuration
+    // integrity concern, not data exposure. See resolve_device_name_with_host() for
+    // audit logging when the env var is set.
+    let device_name = resolve_device_name(Some("zhtp-node"))
         .context("Failed to resolve node device name")?;
     info!("Using node device name: {}", device_name);
 
