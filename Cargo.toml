@@ -18,7 +18,7 @@ members = [
     "zhtp",
     "zhtp-cli",
     "tests/lib-identity/test-lib-identity-imports",
-    "tests/integration",
+    "tests/integration", "tmp/quic-test",
 ]
 
 [workspace.package]

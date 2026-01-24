@@ -4,6 +4,7 @@
 import { initializeClient, buildTrustConfig, loadIdentityFromKeystore, ConsoleOutput } from './dist/index.js';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
 
 // Configuration
 const ZHTP_PROD_ENDPOINT = process.env.ZHTP_PROD_ENDPOINT ?? '77.42.37.161:9334';
@@ -57,10 +58,65 @@ async function main() {
     console.log('  Session ID:', client.getSessionId()?.slice(0, 16) + '...');
     console.log('');
 
-    // Step 4: Deploy the site
-    console.log('Step 4: Deploying site to', DOMAIN);
+    // Step 4: Validate build directory
+    console.log('Step 4: Validating build directory...');
     console.log('  Build directory:', BUILD_DIR);
+
+    // Check if build directory exists
+    if (!fs.existsSync(BUILD_DIR)) {
+      console.error('\n❌ ERROR: Build directory does not exist!');
+      console.error('  Path:', BUILD_DIR);
+      console.error('\nPlease ensure:');
+      console.error('  1. The build has completed successfully');
+      console.error('  2. BREAKROOM_BUILD_DIR environment variable is set correctly');
+      console.error('  3. Or the default path exists:', DEFAULT_BUILD_DIR);
+      await client.disconnect();
+      process.exit(1);
+    }
+
+    // Check if build directory is actually a directory
+    try {
+      const stats = fs.statSync(BUILD_DIR);
+      if (!stats.isDirectory()) {
+        console.error('\n❌ ERROR: Build path exists but is not a directory!');
+        console.error('  Path:', BUILD_DIR);
+        await client.disconnect();
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error('\n❌ ERROR: Unable to access build directory!');
+      console.error('  Path:', BUILD_DIR);
+      console.error('  Error:', (error as Error).message);
+      console.error('\nPlease check permissions and ensure the path is accessible.');
+      await client.disconnect();
+      process.exit(1);
+    }
+
+    // Check if build directory contains files
+    try {
+      const files = fs.readdirSync(BUILD_DIR);
+      if (files.length === 0) {
+        console.error('\n❌ ERROR: Build directory is empty!');
+        console.error('  Path:', BUILD_DIR);
+        console.error('\nPlease ensure the build has completed successfully and generated output files.');
+        await client.disconnect();
+        process.exit(1);
+      }
+
+      console.log('  ✓ Build directory exists');
+      console.log('  ✓ Contains', files.length, 'files/directories');
+    } catch (error) {
+      console.error('\n❌ ERROR: Unable to read build directory!');
+      console.error('  Path:', BUILD_DIR);
+      console.error('  Error:', (error as Error).message);
+      console.error('\nPlease check permissions and ensure the directory is readable.');
+      await client.disconnect();
+      process.exit(1);
+    }
     console.log('');
+
+    // Step 5: Deploy the site
+    console.log('Step 5: Deploying site to', DOMAIN);
 
     const result = await client.deploy.deploySite({
       domain: DOMAIN,
