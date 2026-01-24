@@ -69,7 +69,7 @@ impl ContractStorage for CachedPersistentStorage {
         }
     }
 
-    fn set(&mut self, key: &[u8], value: &[u8]) -> anyhow::Result<()> {
+    fn set(&self, key: &[u8], value: &[u8]) -> anyhow::Result<()> {
         // Write to persistent storage first (durability)
         self.storage.set(key, value)?;
 
@@ -79,7 +79,7 @@ impl ContractStorage for CachedPersistentStorage {
         Ok(())
     }
 
-    fn delete(&mut self, key: &[u8]) -> anyhow::Result<()> {
+    fn delete(&self, key: &[u8]) -> anyhow::Result<()> {
         // Remove from persistent storage
         self.storage.delete(key)?;
 
@@ -116,8 +116,7 @@ mod tests {
         let _ = cached_storage.get(key).unwrap();
 
         // Set value
-        let mut storage_mut = cached_storage.clone();
-        storage_mut.set(key, value).unwrap();
+        cached_storage.set(key, value).unwrap();
 
         // Subsequent accesses should be cache hits
         for _ in 0..10 {
@@ -141,16 +140,14 @@ mod tests {
         let value = b"value";
 
         // Set and cache
-        let mut storage_mut = cached_storage.clone();
-        storage_mut.set(key, value).unwrap();
+        cached_storage.set(key, value).unwrap();
         assert_eq!(
             cached_storage.get(key).unwrap(),
             Some(value.to_vec())
         );
 
         // Delete should invalidate cache
-        let mut storage_mut2 = cached_storage.clone();
-        storage_mut2.delete(key).unwrap();
+        cached_storage.delete(key).unwrap();
 
         // After deletion, should return None
         assert_eq!(cached_storage.get(key).unwrap(), None);
@@ -168,16 +165,14 @@ mod tests {
         let value2 = b"value2";
 
         // Set initial value
-        let mut storage_mut = cached_storage.clone();
-        storage_mut.set(key, value1).unwrap();
+        cached_storage.set(key, value1).unwrap();
         assert_eq!(
             cached_storage.get(key).unwrap(),
             Some(value1.to_vec())
         );
 
         // Update value
-        let mut storage_mut2 = cached_storage.clone();
-        storage_mut2.set(key, value2).unwrap();
+        cached_storage.set(key, value2).unwrap();
 
         // Should return updated value
         assert_eq!(
@@ -197,8 +192,7 @@ mod tests {
         for i in 0..5 {
             let key = format!("key_{}", i);
             let value = format!("value_{}", i);
-            let mut storage_mut = cached_storage.clone();
-            storage_mut.set(key.as_bytes(), value.as_bytes()).unwrap();
+            cached_storage.set(key.as_bytes(), value.as_bytes()).unwrap();
         }
 
         // Verify cache has entries
