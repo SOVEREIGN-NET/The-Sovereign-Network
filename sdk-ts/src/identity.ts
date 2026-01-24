@@ -96,15 +96,10 @@ function bytesToHex(bytes: number[]): string {
 
 /**
  * Convert byte array to base64 string
+ * NOTE: Node.js-only implementation
  */
 function bytesToBase64(bytes: number[]): string {
-  // In Node.js environment
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(bytes).toString('base64');
-  }
-  // In browser environment
-  const binary = String.fromCharCode(...bytes);
-  return btoa(binary);
+  return Buffer.from(bytes).toString('base64');
 }
 
 /**
@@ -117,7 +112,8 @@ function bytesToBase64(bytes: number[]): string {
 export async function loadIdentityFromKeystore(
   keystorePath: string,
 ): Promise<LoadedIdentity> {
-  // Use dynamic import for fs to support both Node.js and potential browser bundling
+  // NOTE: This function is Node.js-only as it relies on filesystem access.
+  // The SDK is designed to run in Node.js environments (e.g., CI/CD pipelines).
   const fs = await import('fs').then(m => m.promises);
   const path = await import('path');
 
