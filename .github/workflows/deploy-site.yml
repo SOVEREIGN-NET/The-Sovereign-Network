@@ -4,20 +4,33 @@ on:
   workflow_call:
     inputs:
       domain:
-        description: 'Web4 domain (e.g., mysite.sov)'
+        description: 'Web4 domain to deploy to (e.g., mysite.sov)'
         required: true
         type: string
       build_artifact:
-        description: 'Name of the build artifact'
+        description: 'Name of the uploaded build artifact'
         required: false
         type: string
         default: 'build-output'
+      deployment_mode:
+        description: 'Publish mode (static or spa)'
+        required: false
+        type: string
+        default: 'static'
+      cli_version:
+        description: 'zhtp-cli release tag'
+        required: false
+        type: string
+        default: 'cli-v0.2.0'
     secrets:
       ZHTP_KEYSTORE_B64:
+        description: 'Base64-encoded tarball of keystore directory'
         required: true
       ZHTP_SERVER:
+        description: 'QUIC server endpoint (ip:port)'
         required: false
       ZHTP_SERVER_SPKI:
+        description: 'Server SPKI pin for TLS verification'
         required: false
 
 jobs:
@@ -31,10 +44,13 @@ jobs:
           name: ${{ inputs.build_artifact }}
           path: out/
 
+      - name: Verify build output
+        run: ls -la out/
+
       - name: Download zhtp-cli
         run: |
           cd /tmp
-          gh release download cli-v0.2.0 \
+          gh release download ${{ inputs.cli_version }} \
             --repo SOVEREIGN-NET/The-Sovereign-Network \
             --pattern 'zhtp-cli-linux-x86_64.tar.gz' \
             --pattern 'SHA256SUMS'
@@ -49,11 +65,12 @@ jobs:
         run: |
           mkdir -p ~/.zhtp
           echo "${{ secrets.ZHTP_KEYSTORE_B64 }}" | base64 --decode | tar -xzf - -C ~/.zhtp
+        shell: bash
 
-      - name: Deploy
+      - name: Deploy site
         run: |
           /tmp/zhtp-cli deploy site \
             --domain "${{ inputs.domain }}" \
             --keystore ~/.zhtp/keystore \
-            --mode static \
+            --mode "${{ inputs.deployment_mode }}" \
             out/
