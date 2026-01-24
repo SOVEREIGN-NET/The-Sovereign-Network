@@ -29,6 +29,10 @@ jobs:
         with:
           components: clippy
 
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings || true
+        continue-on-error: true
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6
         env:
