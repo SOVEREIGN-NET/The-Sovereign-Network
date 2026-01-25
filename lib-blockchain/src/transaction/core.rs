@@ -469,7 +469,7 @@ impl Transaction {
             transaction_type: TransactionType::WalletRegistration,
             inputs: Vec::new(), // Wallet registration doesn't need inputs
             outputs,
-            fee: wallet_data.registration_fee,
+            fee: 0, // System transactions must have zero fee (registration_fee stored in wallet_data for records)
             signature,
             memo,
             identity_data: None,
