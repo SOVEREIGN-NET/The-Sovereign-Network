@@ -50,9 +50,13 @@ use tokio::sync::RwLock;
 
 use lib_network::protocols::quic_mesh::{QuicMeshProtocol, PqcQuicConnection};
 use lib_network::protocols::quic_handshake::{self};
+use lib_network::protocols::NetworkProtocol;
 use lib_network::handshake::{HandshakeContext, NonceCache, ClientHello};
 use lib_network::messaging::message_handler::MeshMessageHandler;
 use lib_network::types::mesh_message::ZhtpMeshMessage;
+use lib_network::peer_registry::{PeerRegistry, PeerEntry, PeerEndpoint, ConnectionMetrics, NodeCapabilities, DiscoveryMethod, PeerTier};
+use lib_network::identity::unified_peer::UnifiedPeerId;
+use lib_network::NodeAddress;
 use lib_crypto::PublicKey;
 
 use super::zhtp::ZhtpRouter;
@@ -217,6 +221,10 @@ pub struct QuicHandler {
 
     /// Identity manager for auto-registration of authenticated peers
     identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
+
+    /// MeshRouter's peer registry for block broadcasting (Issue #907)
+    /// QUIC mesh peers must be registered here for broadcast_to_peers() to find them
+    mesh_peer_registry: Option<Arc<RwLock<PeerRegistry>>>,
 }
 
 impl QuicHandler {
@@ -233,7 +241,17 @@ impl QuicHandler {
             pqc_connections: Arc::new(RwLock::new(HashMap::new())),
             handshake_rate_limits: Arc::new(RwLock::new(HashMap::new())),
             identity_manager,
+            mesh_peer_registry: None,
         }
+    }
+
+    /// Set the MeshRouter's peer registry for block broadcasting (Issue #907)
+    ///
+    /// This enables QUIC mesh peers to be registered for broadcast_to_peers().
+    /// Without this, authenticated mesh peers won't receive block broadcasts.
+    pub fn set_mesh_peer_registry(&mut self, registry: Arc<RwLock<PeerRegistry>>) {
+        self.mesh_peer_registry = Some(registry);
+        info!("📡 MeshRouter peer registry linked to QuicHandler for block broadcasting");
     }
 
     /// Check and update handshake rate limit for an IP address
@@ -933,6 +951,67 @@ impl QuicHandler {
         // Store connection
         self.add_pqc_connection(node_id_arr.to_vec(), pqc_conn).await?;
 
+        // Issue #907: Register peer in MeshRouter's PeerRegistry for block broadcasting
+        // Without this, broadcast_to_peers() won't find QUIC mesh peers
+        if let Some(ref registry) = self.mesh_peer_registry {
+            let peer_pubkey = PublicKey::new(node_id_arr.to_vec());
+            let unified_peer = UnifiedPeerId::from_public_key_legacy(peer_pubkey);
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            let peer_entry = PeerEntry::new(
+                unified_peer.clone(),
+                vec![PeerEndpoint {
+                    address: NodeAddress::Udp(peer_addr), // QUIC uses UDP underneath
+                    protocol: NetworkProtocol::QUIC,
+                    signal_strength: 0.9,
+                    latency_ms: 30,
+                }],
+                vec![NetworkProtocol::QUIC],
+                ConnectionMetrics {
+                    signal_strength: 0.9,
+                    bandwidth_capacity: 10_000_000, // 10 Mbps typical for QUIC
+                    latency_ms: 30,
+                    stability_score: 0.95,
+                    connected_at: now,
+                },
+                true,  // is_authenticated
+                true,  // is_verified
+                None,  // kyber_shared_secret
+                1,     // connection_count
+                0.9,   // trust_score
+                NodeCapabilities {
+                    protocols: vec![NetworkProtocol::QUIC],
+                    max_bandwidth: 10_000_000,
+                    available_bandwidth: 8_000_000,
+                    routing_capacity: 100,
+                    energy_level: None,
+                    availability_percent: 99.0,
+                },
+                None,  // identity_proof
+                0.95,  // reputation_score
+                None,  // geographic_region
+                DiscoveryMethod::Bootstrap, // QUIC mesh peers typically connect via bootstrap
+                now,   // first_seen
+                now,   // last_seen
+                PeerTier::Tier1, // High priority for mesh peers
+                0.9,   // routing_score
+            );
+
+            let mut registry_guard = registry.write().await;
+            if let Err(e) = registry_guard.upsert(peer_entry).await {
+                warn!("Failed to register QUIC mesh peer in MeshRouter registry: {}", e);
+            } else {
+                info!(
+                    "📡 QUIC mesh peer registered for broadcasting ({} total peers)",
+                    registry_guard.all_peers().count()
+                );
+            }
+        }
+
         // Continue accepting mesh streams
         self.accept_additional_streams(connection, Some(node_id_arr));
 
@@ -1372,6 +1451,7 @@ impl Clone for QuicHandler {
             pqc_connections: self.pqc_connections.clone(),
             handshake_rate_limits: self.handshake_rate_limits.clone(),
             identity_manager: self.identity_manager.clone(),
+            mesh_peer_registry: self.mesh_peer_registry.clone(),
         }
     }
 }
