@@ -38,13 +38,17 @@
 pub mod call;
 pub mod errors;
 pub mod executor;
+pub mod serialization_validator;
 pub mod stack;
+pub mod type_validator;
 pub mod validator;
 
 pub use call::CrossContractCall;
 pub use errors::{CalleeErrorCode, CrossContractError, ContractId};
 pub use executor::{CallExecutor, CrossContractCallIntent, CrossContractCallResult};
+pub use serialization_validator::{SerializationFormat, SerializationValidator};
 pub use stack::{CallStack, MAX_RECURSION_DEPTH};
+pub use type_validator::{TypeSpec, TypeValidator};
 pub use validator::{CallValidator, MethodSignature, ValidationResult};
 
 #[cfg(test)]
