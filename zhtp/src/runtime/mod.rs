@@ -48,6 +48,10 @@ pub mod reward_orchestrator;
 pub mod node_identity;
 pub mod node_runtime;
 pub mod node_runtime_orchestrator;
+pub mod encrypted_seed_storage;
+pub mod node_id_broadcaster;
+#[cfg(test)]
+pub mod nodeid_persistence_tests;
 #[cfg(test)]
 pub mod test_api_integration;
 
@@ -63,6 +67,15 @@ pub use blockchain_provider::{initialize_global_blockchain_provider, set_global_
 pub use identity_manager_provider::{initialize_global_identity_manager_provider, set_global_identity_manager, get_global_identity_manager};
 pub use network_blockchain_provider::ZhtpBlockchainProvider;
 pub use mesh_router_provider::{initialize_global_mesh_router_provider, set_global_mesh_router, get_broadcast_metrics};
+pub use encrypted_seed_storage::{
+    encrypt_seed, decrypt_seed, store_seed, load_seed,
+    EncryptedSeedRecord, FILE_FORMAT_VERSION, KDF_NAME,
+};
+pub use node_id_broadcaster::{
+    NodeIdBroadcaster, set_canonical_node_id, broadcast_to_dht,
+    broadcast_to_mesh, broadcast_to_discovery, verify_component_nodeid,
+    broadcast_to_all_components,
+};
 
 /// Component status information
 #[derive(Debug, Clone, PartialEq)]
@@ -936,6 +949,18 @@ impl RuntimeOrchestrator {
             node_id,
         }).context("Failed to cache runtime NodeId")?;
         log_runtime_node_identity();
+        
+        // ========================================================================
+        // ISSUE #66: Broadcast NodeId to all components for consistency
+        // ========================================================================
+        // Ensure DHT, Mesh, and Discovery all receive the same canonical NodeId
+        // This guarantees all components are initialized with identical NodeId values
+        use crate::runtime::node_id_broadcaster;
+        node_id_broadcaster::set_canonical_node_id(node_id)
+            .context("Failed to set canonical NodeId")?;
+        node_id_broadcaster::broadcast_to_all_components(node_id)
+            .context("Failed to broadcast NodeId to components")?;
+        info!("✅ NodeId broadcast to all components (DHT, Mesh, Discovery)");
         
         // Store user identity for blockchain registration in Phase 6
         self.set_pending_identity_registration(wallet_result.user_identity.clone()).await;
