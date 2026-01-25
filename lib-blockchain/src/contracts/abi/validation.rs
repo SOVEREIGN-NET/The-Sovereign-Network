@@ -44,6 +44,19 @@ impl AbiValidator {
     }
 
     fn validate_methods(methods: &[MethodSchema]) -> Result<()> {
+        // Rust and TypeScript reserved keywords that cannot be used as identifiers
+        let reserved_keywords = std::collections::HashSet::from([
+            "abstract", "arguments", "await", "boolean", "break", "byte", "case", "catch",
+            "char", "class", "const", "continue", "debugger", "default", "delete", "do",
+            "double", "else", "enum", "eval", "export", "extends", "false", "final",
+            "finally", "float", "for", "function", "goto", "if", "implements", "import",
+            "in", "instanceof", "int", "interface", "let", "long", "native", "new",
+            "null", "package", "private", "protected", "public", "return", "short",
+            "static", "super", "switch", "synchronized", "this", "throw", "throws",
+            "transient", "true", "try", "typeof", "var", "void", "volatile", "while",
+            "with", "yield",
+        ]);
+
         // Check for duplicate method names
         let mut names = std::collections::HashSet::new();
         for method in methods {
@@ -51,12 +64,10 @@ impl AbiValidator {
                 return Err(anyhow!("Duplicate method name: {}", method.name));
             }
 
-            // Validate method name format
-            if !method.name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                return Err(anyhow!("Invalid method name: {}", method.name));
-            }
+            // Validate method name format (must be valid identifier)
+            Self::validate_identifier(&method.name, "method")?;
 
-            // Validate parameter names are unique
+            // Validate parameter names are unique and valid identifiers
             let mut param_names = std::collections::HashSet::new();
             for param in &method.parameters {
                 if !param_names.insert(&param.name) {
@@ -66,8 +77,44 @@ impl AbiValidator {
                         method.name
                     ));
                 }
+
+                // Validate parameter name is a valid identifier and not a reserved keyword
+                Self::validate_identifier(&param.name, "parameter")?;
+                if reserved_keywords.contains(param.name.as_str()) {
+                    return Err(anyhow!(
+                        "Parameter name '{}' is a reserved keyword and cannot be used",
+                        param.name
+                    ));
+                }
             }
         }
+        Ok(())
+    }
+
+    /// Validate that a name is a valid Rust/TypeScript identifier
+    fn validate_identifier(name: &str, kind: &str) -> Result<()> {
+        if name.is_empty() {
+            return Err(anyhow!("{} name cannot be empty", kind));
+        }
+
+        // Must start with letter or underscore
+        if !name.chars().next().unwrap().is_alphabetic() && !name.starts_with('_') {
+            return Err(anyhow!(
+                "Invalid {} name '{}': must start with letter or underscore",
+                kind,
+                name
+            ));
+        }
+
+        // Must contain only alphanumeric and underscore
+        if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return Err(anyhow!(
+                "Invalid {} name '{}': must contain only alphanumeric and underscore characters",
+                kind,
+                name
+            ));
+        }
+
         Ok(())
     }
 
@@ -95,6 +142,7 @@ impl AbiValidator {
     }
 
     fn validate_types(types: &std::collections::HashMap<String, TypeDefinition>, abi: &ContractAbi) -> Result<()> {
+        // First validate the type definitions themselves
         for (name, typedef) in types {
             match typedef {
                 TypeDefinition::Enum { variants, .. } => {
@@ -106,13 +154,87 @@ impl AbiValidator {
                     if fields.is_empty() {
                         return Err(anyhow!("Struct '{}' has no fields", name));
                     }
+                    // Validate field types in struct
+                    for (_field_name, field_type) in fields {
+                        Self::validate_parameter_type_references(field_type, types, "struct field")?;
+                    }
                 }
             }
         }
 
-        // Check that custom type references are defined
-        // This would recursively check ParameterType and FieldType references
+        // Validate all custom type references in methods and events
+        for method in &abi.methods {
+            // Check method parameters
+            for param in &method.parameters {
+                Self::validate_parameter_type_references(&param.r#type, types, "method parameter")?;
+            }
 
+            // Check method return type
+            if let ReturnType::Value { r#type } = &method.returns {
+                Self::validate_parameter_type_references(r#type, types, "method return type")?;
+            }
+        }
+
+        // Check event field types
+        if let Some(events) = &abi.events {
+            for event in events {
+                for field in &event.fields {
+                    Self::validate_field_type_references(&field.r#type, types, "event field")?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Recursively validate that all custom type references exist in the types map
+    fn validate_parameter_type_references(
+        param_type: &ParameterType,
+        types: &std::collections::HashMap<String, TypeDefinition>,
+        context: &str,
+    ) -> Result<()> {
+        match param_type {
+            ParameterType::Custom { name } => {
+                if !types.contains_key(name) {
+                    return Err(anyhow!(
+                        "Undefined custom type '{}' referenced in {}",
+                        name,
+                        context
+                    ));
+                }
+            }
+            ParameterType::Array { item } => {
+                Self::validate_parameter_type_references(item, types, context)?;
+            }
+            ParameterType::Optional { inner } => {
+                Self::validate_parameter_type_references(inner, types, context)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Recursively validate that all custom type references exist for field types
+    fn validate_field_type_references(
+        field_type: &FieldType,
+        types: &std::collections::HashMap<String, TypeDefinition>,
+        context: &str,
+    ) -> Result<()> {
+        match field_type {
+            FieldType::Custom { name } => {
+                if !types.contains_key(name) {
+                    return Err(anyhow!(
+                        "Undefined custom type '{}' referenced in {}",
+                        name,
+                        context
+                    ));
+                }
+            }
+            FieldType::Array { item } => {
+                Self::validate_field_type_references(item, types, context)?;
+            }
+            _ => {}
+        }
         Ok(())
     }
 }

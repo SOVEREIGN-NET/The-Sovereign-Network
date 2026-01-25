@@ -27,25 +27,27 @@
 //!     {
 //!       "name": "claim",
 //!       "parameters": [
-//!         { "name": "citizen_id", "type": "Bytes32" },
-//!         { "name": "amount", "type": "U64" }
+//!         { "name": "citizen_id", "r#type": { "kind": "bytes32" } },
+//!         { "name": "amount", "r#type": { "kind": "u64" } }
 //!       ],
-//!       "returns": "ClaimResult",
+//!       "returns": { "kind": "void" },
 //!       "privilege": {
 //!         "kernel_only": true,
-//!         "governance_gated": true
+//!         "governance_gated": false,
+//!         "require_role": null,
+//!         "custom_check": null
 //!       },
-//!       "semantics": "intent"
+//!       "semantics": "Intent"
 //!     }
 //!   ],
 //!   "events": [
 //!     {
 //!       "name": "ClaimRecorded",
 //!       "fields": [
-//!         { "name": "citizen", "type": "Bytes32" },
-//!         { "name": "amount", "type": "U64" },
-//!         { "name": "epoch", "type": "U64" }
-//!       ]
+//!         { "name": "citizen", "r#type": { "kind": "bytes32" }, "indexed": true },
+//!         { "name": "amount", "r#type": { "kind": "u64" }, "indexed": false }
+//!       ],
+//!       "indexed": true
 //!     }
 //!   ]
 //! }

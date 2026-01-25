@@ -335,7 +335,8 @@ impl AbiCodegen {
             }
             ParameterType::Optional { inner } => {
                 let inner_type = Self::ts_type_from_param(inner)?;
-                Ok(format!("{}?", inner_type))
+                // Use "T | undefined" instead of "T?" which is not valid in type annotations
+                Ok(format!("{} | undefined", inner_type))
             }
             ParameterType::Custom { name } => Ok(name.clone()),
         }

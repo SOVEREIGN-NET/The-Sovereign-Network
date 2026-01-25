@@ -72,9 +72,10 @@ impl AbiEncoder {
         }
     }
 
-    /// Compute SHA256 hash of canonical ABI JSON
+    /// Compute Blake3 hash of canonical ABI JSON
     ///
-    /// Used for ABI versioning and consistency verification
+    /// Used for ABI versioning and consistency verification across validators.
+    /// Blake3 provides BLAKE3 cryptographic hashing for deterministic consensus.
     pub fn abi_hash(abi: &ContractAbi) -> Result<[u8; 32]> {
         let json = Self::encode_abi(abi)?;
         let hash = blake3::hash(json.as_bytes());
@@ -98,8 +99,9 @@ impl AbiDecoder {
     pub fn decode_bytes(bytes: &[u8]) -> Result<ContractAbi> {
         // For now, use JSON encoding in bytes
         // In production, could use a more compact format like bincode
-        let json = String::from_utf8(bytes.to_vec())?;
-        Self::decode_abi(&json)
+        // Use std::str::from_utf8 to avoid unnecessary Vec allocation
+        let json = std::str::from_utf8(bytes)?;
+        Self::decode_abi(json)
     }
 }
 
