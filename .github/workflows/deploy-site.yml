@@ -69,15 +69,15 @@ jobs:
 
       - name: Deploy site
         run: |
-          PIN_SPKI_ARG=""
+          TRUST_ARG="--trust-node"
           if [ -n "$ZHTP_SERVER_SPKI" ]; then
-            PIN_SPKI_ARG="--pin-spki $ZHTP_SERVER_SPKI"
+            TRUST_ARG="--pin-spki $ZHTP_SERVER_SPKI"
           fi
           /tmp/zhtp-cli deploy site \
             --domain "${{ inputs.domain }}" \
             --keystore ~/.zhtp/keystore \
             --mode "${{ inputs.deployment_mode }}" \
-            $PIN_SPKI_ARG \
+            $TRUST_ARG \
             out/
         env:
           ZHTP_SERVER: ${{ secrets.ZHTP_SERVER }}
