@@ -74,3 +74,6 @@ jobs:
             --keystore ~/.zhtp/keystore \
             --mode "${{ inputs.deployment_mode }}" \
             out/
+        env:
+          ZHTP_SERVER: ${{ secrets.ZHTP_SERVER }}
+          ZHTP_SERVER_SPKI: ${{ secrets.ZHTP_SERVER_SPKI }}
