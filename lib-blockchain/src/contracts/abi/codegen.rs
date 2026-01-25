@@ -10,6 +10,18 @@ use anyhow::Result;
 pub struct AbiCodegen;
 
 impl AbiCodegen {
+    /// Rust reserved keywords that require raw identifier syntax
+    const RUST_RESERVED_KEYWORDS: &'static [&'static str] = &[
+        "abstract", "as", "async", "await", "become", "box", "break", "const", "continue",
+        "crate", "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for",
+        "foreach", "from", "fun", "go", "goto", "if", "impl", "in", "inline", "into",
+        "is", "let", "loop", "macro", "match", "mod", "move", "mut", "new", "none",
+        "of", "once", "only", "pub", "pure", "ref", "return", "self", "Self", "sizeof",
+        "static", "struct", "super", "switch", "synchronized", "then", "trait", "true",
+        "try", "type", "typeof", "union", "unsafe", "use", "var", "virtual", "where",
+        "while", "with", "yield",
+    ];
+
     /// Generate Rust type-safe bindings from ABI
     ///
     /// Produces Rust module with:
@@ -77,9 +89,11 @@ impl AbiCodegen {
         output.push_str(&format!("pub struct Call{} {{\n", struct_name));
 
         // Add fields for each parameter
+        // Use escape_rust_identifier to handle reserved keywords
         for param in &method.parameters {
             let param_type = Self::rust_type_from_param(&param.r#type)?;
-            output.push_str(&format!("    pub {}: {},\n", param.name, param_type));
+            let safe_name = Self::escape_rust_identifier(&param.name);
+            output.push_str(&format!("    pub {}: {},\n", safe_name, param_type));
         }
 
         output.push_str("}\n\n");
@@ -91,16 +105,18 @@ impl AbiCodegen {
 
         for (i, param) in method.parameters.iter().enumerate() {
             let param_type = Self::rust_type_from_param(&param.r#type)?;
+            let safe_name = Self::escape_rust_identifier(&param.name);
             if i > 0 {
                 output.push_str(", ");
             }
-            output.push_str(&format!("{}: {}", param.name, param_type));
+            output.push_str(&format!("{}: {}", safe_name, param_type));
         }
 
         output.push_str(") -> Self {\n");
         output.push_str("        Self {\n");
         for param in &method.parameters {
-            output.push_str(&format!("            {},\n", param.name));
+            let safe_name = Self::escape_rust_identifier(&param.name);
+            output.push_str(&format!("            {},\n", safe_name));
         }
         output.push_str("        }\n");
         output.push_str("    }\n");
@@ -123,7 +139,9 @@ impl AbiCodegen {
 
         for field in &event.fields {
             let field_type = Self::rust_type_from_field(&field.r#type)?;
-            output.push_str(&format!("    pub {}: {},\n", field.name, field_type));
+            // Use escape_rust_identifier to handle reserved keywords
+            let safe_name = Self::escape_rust_identifier(&field.name);
+            output.push_str(&format!("    pub {}: {},\n", safe_name, field_type));
         }
 
         output.push_str("}\n");
@@ -157,7 +175,9 @@ impl AbiCodegen {
 
                 for (field_name, field_type) in fields {
                     let rust_type = Self::rust_type_from_param(field_type)?;
-                    output.push_str(&format!("    pub {}: {},\n", field_name, rust_type));
+                    // Use escape_rust_identifier to handle reserved keywords
+                    let safe_name = Self::escape_rust_identifier(field_name);
+                    output.push_str(&format!("    pub {}: {},\n", safe_name, rust_type));
                 }
 
                 output.push_str("}\n");
@@ -241,7 +261,9 @@ impl AbiCodegen {
         output.push_str(&format!("export interface {} {{\n", interface_name));
         for param in &method.parameters {
             let param_type = Self::ts_type_from_param(&param.r#type)?;
-            output.push_str(&format!("  {}: {};\n", param.name, param_type));
+            // Use sanitize_ts_identifier to handle TypeScript reserved keywords
+            let safe_name = Self::sanitize_ts_identifier(&param.name);
+            output.push_str(&format!("  {}: {};\n", safe_name, param_type));
         }
         output.push_str("}\n");
 
@@ -255,7 +277,9 @@ impl AbiCodegen {
         output.push_str(&format!("export interface {} {{\n", interface_name));
         for field in &event.fields {
             let field_type = Self::ts_type_from_field(&field.r#type)?;
-            output.push_str(&format!("  {}: {};\n", field.name, field_type));
+            // Use sanitize_ts_identifier to handle TypeScript reserved keywords
+            let safe_name = Self::sanitize_ts_identifier(&field.name);
+            output.push_str(&format!("  {}: {};\n", safe_name, field_type));
         }
         output.push_str("}\n");
 
@@ -278,7 +302,9 @@ impl AbiCodegen {
                 output.push_str(&format!("export interface {} {{\n", name));
                 for (field_name, field_type) in fields {
                     let ts_type = Self::ts_type_from_param(field_type)?;
-                    output.push_str(&format!("  {}: {};\n", field_name, ts_type));
+                    // Use sanitize_ts_identifier to handle TypeScript reserved keywords
+                    let safe_name = Self::sanitize_ts_identifier(field_name);
+                    output.push_str(&format!("  {}: {};\n", safe_name, ts_type));
                 }
                 output.push_str("}\n");
                 Ok(output)
@@ -370,6 +396,45 @@ impl AbiCodegen {
             })
             .collect()
     }
+
+    /// Escape a Rust identifier using raw identifier syntax if it's a reserved keyword
+    ///
+    /// Reserved keywords like `if`, `while`, etc. are escaped as `r#if`, `r#while`
+    /// Invalid identifiers (containing special chars, starting with digit) are NOT fixed
+    /// and will produce invalid Rust - callers should validate with AbiValidator first.
+    fn escape_rust_identifier(name: &str) -> String {
+        if Self::RUST_RESERVED_KEYWORDS.contains(&name) {
+            format!("r#{}", name)
+        } else {
+            name.to_string()
+        }
+    }
+
+    /// Sanitize a TypeScript identifier by prefixing with underscore if invalid
+    ///
+    /// TypeScript has similar rules to Rust but allows $ and _. If a name:
+    /// - Starts with a digit: prefix with underscore
+    /// - Is a TypeScript keyword: prefix with underscore
+    /// Otherwise return as-is. Invalid chars are NOT fixed - callers should validate with AbiValidator first.
+    fn sanitize_ts_identifier(name: &str) -> String {
+        let ts_keywords = [
+            "abstract", "arguments", "await", "boolean", "break", "byte", "case", "catch",
+            "char", "class", "const", "continue", "debugger", "default", "delete", "do",
+            "double", "else", "enum", "eval", "export", "extends", "false", "final",
+            "finally", "float", "for", "function", "goto", "if", "implements", "import",
+            "in", "instanceof", "int", "interface", "let", "long", "native", "new",
+            "null", "package", "private", "protected", "public", "return", "short",
+            "static", "super", "switch", "synchronized", "this", "throw", "throws",
+            "transient", "true", "try", "typeof", "var", "void", "volatile", "while",
+            "with", "yield",
+        ];
+
+        if ts_keywords.contains(&name) || name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+            format!("_{}", name)
+        } else {
+            name.to_string()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -401,5 +466,65 @@ mod tests {
         assert_eq!(AbiCodegen::to_pascal_case("claim_ubi"), "ClaimUbi");
         assert_eq!(AbiCodegen::to_pascal_case("test"), "Test");
         assert_eq!(AbiCodegen::to_pascal_case("multi_word_name"), "MultiWordName");
+    }
+
+    #[test]
+    fn test_rust_identifier_escaping() {
+        // Reserved keywords should be escaped with r# prefix
+        assert_eq!(AbiCodegen::escape_rust_identifier("if"), "r#if");
+        assert_eq!(AbiCodegen::escape_rust_identifier("while"), "r#while");
+        assert_eq!(AbiCodegen::escape_rust_identifier("let"), "r#let");
+
+        // Valid identifiers should pass through unchanged
+        assert_eq!(AbiCodegen::escape_rust_identifier("amount"), "amount");
+        assert_eq!(AbiCodegen::escape_rust_identifier("_private"), "_private");
+    }
+
+    #[test]
+    fn test_ts_identifier_sanitization() {
+        // TypeScript keywords should be prefixed with underscore
+        assert_eq!(AbiCodegen::sanitize_ts_identifier("if"), "_if");
+        assert_eq!(AbiCodegen::sanitize_ts_identifier("while"), "_while");
+        assert_eq!(AbiCodegen::sanitize_ts_identifier("const"), "_const");
+
+        // Names starting with digits should be prefixed
+        assert_eq!(AbiCodegen::sanitize_ts_identifier("1param"), "_1param");
+        assert_eq!(AbiCodegen::sanitize_ts_identifier("2field"), "_2field");
+
+        // Valid identifiers should pass through unchanged
+        assert_eq!(AbiCodegen::sanitize_ts_identifier("amount"), "amount");
+        assert_eq!(AbiCodegen::sanitize_ts_identifier("_field"), "_field");
+    }
+
+    #[test]
+    fn test_codegen_with_reserved_keyword_parameters() {
+        // Create an ABI with a method parameter named 'if' (a reserved keyword)
+        // This bypasses validation to test that codegen handles it defensively
+        let mut abi = ContractAbi::new("Test", "1.0.0");
+        abi.methods.push(MethodSchema {
+            name: "test_method".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "if".to_string(), // Reserved keyword!
+                    r#type: ParameterType::U64,
+                    description: None,
+                    optional: None,
+                }
+            ],
+            returns: ReturnType::Void,
+            privilege: None,
+            semantics: ExecutionSemantics::Intent,
+            description: None,
+            deprecated: None,
+        });
+
+        // Generate Rust code - should escape the 'if' parameter
+        let rust_code = AbiCodegen::generate_rust(&abi).expect("Should generate Rust");
+        assert!(rust_code.contains("pub r#if: u64")); // Escaped with r#
+        assert!(rust_code.contains("r#if: u64")); // In function signature
+
+        // Generate TypeScript code - should prefix the 'if' parameter
+        let ts_code = AbiCodegen::generate_typescript(&abi).expect("Should generate TypeScript");
+        assert!(ts_code.contains("_if: bigint")); // Prefixed with underscore
     }
 }
