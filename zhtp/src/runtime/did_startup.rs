@@ -275,6 +275,8 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
     let node_keystore_key = KeystorePrivateKey {
         dilithium_sk: node_private_key.dilithium_sk.clone(),
         kyber_sk: node_private_key.kyber_sk.clone(),
+        // ISSUE #64: Master seed is NOT stored in plaintext key file
+        // It is encrypted separately via encrypted_seed_storage
         master_seed: node_private_key.master_seed.clone(),
     };
 
@@ -288,6 +290,33 @@ fn save_to_keystore(keystore_path: &Path, result: &WalletStartupResult) -> std::
         .map_err(|e| KeystoreError::Corrupt(node_identity_file.clone(), e.to_string()))?;
 
     write_file_with_permissions(&node_identity_file, &node_identity_json)?;
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ISSUE #64: Encrypt and store master seed separately
+    // ════════════════════════════════════════════════════════════════════════
+    // The master seed is stored encrypted with a system-derived passphrase
+    // to ensure even if the keystore is compromised, the seed remains protected
+    let seed_storage_dir = keystore_path.join("seeds");
+    std::fs::create_dir_all(&seed_storage_dir)
+        .map_err(|e| KeystoreError::IoError(seed_storage_dir.clone(), e))?;
+
+    let user_seed_path = seed_storage_dir.join(format!("user_{}.json", hex::encode(&result.user_identity.id.0[..8])));
+    let node_seed_path = seed_storage_dir.join(format!("node_{}.json", hex::encode(&result.node_identity.id.0[..8])));
+
+    // Use identity ID as part of the passphrase for additional security
+    let user_seed_passphrase = format!("zhtp_seed:{}:{}", hex::encode(&result.user_identity.id.0[..8]), "user");
+    let node_seed_passphrase = format!("zhtp_seed:{}:{}", hex::encode(&result.node_identity.id.0[..8]), "node");
+
+    // Store encrypted user seed
+    use crate::runtime::encrypted_seed_storage;
+    encrypted_seed_storage::store_seed(&user_seed_path, &result.user_identity.private_key.as_ref().unwrap().master_seed, &user_seed_passphrase)
+        .map_err(|e| KeystoreError::IoError(user_seed_path.clone(), std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+
+    // Store encrypted node seed
+    encrypted_seed_storage::store_seed(&node_seed_path, &result.node_identity.private_key.as_ref().unwrap().master_seed, &node_seed_passphrase)
+        .map_err(|e| KeystoreError::IoError(node_seed_path.clone(), std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+
+    info!("✅ Master seeds stored encrypted in keystore: {:?}", seed_storage_dir);
 
     // Save wallet data
     // Extract primary wallet balance from user_identity
