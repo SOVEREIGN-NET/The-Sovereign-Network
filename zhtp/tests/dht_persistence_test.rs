@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::time::Duration;
 mod common;
-use common_network_test::{DhtEntry, DhtRoutingState, run_shared_dht_persistence_test};
+use common_network_test::{DhtEntry, DhtRoutingState, run_shared_dht_persistence_test, create_test_identities, build_dht_states, populate_dht_peers, assert_dht_peer_counts};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(20);
 const CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -9,30 +9,20 @@ const CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
 #[tokio::test]
 async fn test_dht_persistence_shared() -> Result<()> {
     run_shared_dht_persistence_test().await
-}//! DHT Persistence Test (Issue #70)
-//!
-//! Goal: Verify DHT routing tables rebuild correctly after network restart
-//! with deterministic NodeIds.
-//!
-//! Test Scenarios:
-//! - All nodes maintain same NodeIds after restart
-//! - DHT routing tables repopulate with same entries
-//! - Network converges within 30 seconds
-//! - All nodes can communicate after restart
+}
 
-use anyhow::Result;
-use std::time::Duration;
-mod common;
-use common_network_test::{DhtEntry, DhtRoutingState, run_shared_dht_persistence_test};
-
-const TEST_TIMEOUT: Duration = Duration::from_secs(20);
-const CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
-
-// ...existing code...
-
-#[tokio::test]
-async fn test_dht_persistence_shared() -> Result<()> {
-    run_shared_dht_persistence_test().await
+#[test]
+fn test_three_node_dht_bootstrap() -> Result<()> {
+    let nodes = [
+        ("alice-dht-001", [0xAA; 64]),
+        ("bob-dht-001", [0xBB; 64]),
+        ("charlie-dht-001", [0xCC; 64]),
+    ];
+    let identities = create_test_identities(&nodes, identity_with_seed);
+    let mut dht_states = build_dht_states(&identities, 0);
+    populate_dht_peers(&mut dht_states, &identities, 0);
+    assert_dht_peer_counts(&dht_states, 2);
+    Ok(())
 }
 #[test]
 fn test_three_node_dht_bootstrap() -> Result<()> {
@@ -339,16 +329,7 @@ fn test_dht_consistency_across_multiple_restart_cycles() -> Result<()> {
         }
 
         // Verify routing tables are consistent with first cycle
-        for i in 0..dht_states.len() {
-            for peer_node_id in &stored_routing_tables[i] {
-                assert!(
-                    dht_states[i].has_peer(peer_node_id),
-                    "Node {} should have consistent peer entry in cycle {}",
-                    i,
-                    cycle
-                );
-            }
-        }
+        common_network_test::assert_dht_consistency(&dht_states, &stored_routing_tables, cycle);
     }
 
     Ok(())
@@ -367,11 +348,7 @@ fn test_dht_network_convergence_simulation() -> Result<()> {
         ("node-dht-3", [0x40; 64]),
     ];
 
-    let mut identities = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
-        identities.push(identity);
-    }
+    let identities = common_network_test::create_test_identities(&nodes, identity_with_seed);
 
     let mut dht_states = identities
         .iter()
@@ -426,11 +403,7 @@ fn test_dht_persistence_metrics() -> Result<()> {
     ];
 
     // Cycle 1: Initial startup
-    let mut identities_c1 = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
-        identities_c1.push(identity);
-    }
+    let identities_c1 = common_network_test::create_test_identities(&nodes, identity_with_seed);
 
     let mut dht_c1 = vec![
         DhtRoutingState::new(identities_c1[0].node_id.clone()),
@@ -455,11 +428,7 @@ fn test_dht_persistence_metrics() -> Result<()> {
     let convergence_c1: Vec<u32> = dht_c1.iter().map(|d| d.get_convergence_cycle()).collect();
 
     // Cycle 2: Restart all nodes
-    let mut identities_c2 = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = identity_with_seed(device, *seed)?;
-        identities_c2.push(identity);
-    }
+    let identities_c2 = common_network_test::create_test_identities(&nodes, identity_with_seed);
 
     // Verify NodeIds unchanged
     for i in 0..identities_c1.len() {

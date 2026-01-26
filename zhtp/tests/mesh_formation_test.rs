@@ -1,7 +1,8 @@
+
 use anyhow::Result;
 use std::time::Duration;
 mod common;
-use common_network_test::{MeshNode, MeshTopology, run_shared_mesh_formation_test};
+use common_network_test::{MeshNode, MeshTopology, run_shared_mesh_formation_test, create_test_identities, build_mesh_topology, assert_fully_connected};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(25);
 const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -9,32 +10,7 @@ const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 #[tokio::test]
 async fn test_mesh_formation_shared() -> Result<()> {
     run_shared_mesh_formation_test().await
-}//! Mesh Network Formation Test (Issue #71)
-//!
-//! Goal: Verify mesh network topology forms and remains stable
-//! under various conditions including node restarts.
-//!
-//! Test Scenarios:
-//! - Mesh network forms via UDP multicast discovery
-//! - All nodes discover all other nodes
-//! - Network remains connected after node restarts
-//! - Message routing works correctly
-//! - Network topology remains stable
-
-use anyhow::Result;
-use std::time::Duration;
-mod common;
-use common_network_test::{MeshNode, MeshTopology, run_shared_mesh_formation_test};
-
-const TEST_TIMEOUT: Duration = Duration::from_secs(25);
-const MESH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
-
-// ...existing code...
-
-#[tokio::test]
-async fn test_mesh_formation_shared() -> Result<()> {
-    run_shared_mesh_formation_test().await
-    }
+}
 
     fn peer_count(&self, index: usize) -> usize {
         self.nodes[index].peer_count()
@@ -80,7 +56,6 @@ async fn test_mesh_formation_shared() -> Result<()> {
 /// Verify they all discover each other and form fully connected mesh.
 #[test]
 fn test_five_node_mesh_formation() -> Result<()> {
-    // Phase 1: Create five nodes
     let nodes = [
         ("mesh-node-a", [0x11; 64]),
         ("mesh-node-b", [0x22; 64]),
@@ -88,38 +63,9 @@ fn test_five_node_mesh_formation() -> Result<()> {
         ("mesh-node-d", [0x44; 64]),
         ("mesh-node-e", [0x55; 64]),
     ];
-
-    let mut identities = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
-        identities.push(identity);
-    }
-
-    // Phase 2: Build mesh topology
-    let mut topology = MeshTopology::new();
-    for identity in &identities {
-        topology.add_node(identity.node_id.clone());
-    }
-
-    // Phase 3: Simulate multicast discovery
-    topology.connect_all_peers();
-
-    // Phase 4: Verify mesh is fully connected
-    assert!(
-        topology.is_fully_connected(),
-        "5-node mesh should be fully connected"
-    );
-
-    // Verify each node has 4 peers (all others)
-    for i in 0..identities.len() {
-        assert_eq!(
-            topology.peer_count(i),
-            4,
-            "Node {} should have 4 peers",
-            i
-        );
-    }
-
+    let identities = create_test_identities(&nodes, create_test_identity);
+    let topology = build_mesh_topology(&identities);
+    assert_fully_connected(&topology, 4);
     Ok(())
 }
 
@@ -273,11 +219,7 @@ fn test_mesh_node_routing_paths() -> Result<()> {
         ("route-node-4", [0xF4; 64]),
     ];
 
-    let mut identities = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
-        identities.push(identity);
-    }
+    let identities = common_network_test::create_test_identities(&nodes, create_test_identity);
 
     // Phase 2: Build mesh
     let mut topology = MeshTopology::new();
@@ -287,19 +229,7 @@ fn test_mesh_node_routing_paths() -> Result<()> {
     topology.connect_all_peers();
 
     // Phase 3: Verify all routing paths exist
-    // In fully connected mesh, any node can directly route to any other
-    for i in 0..identities.len() {
-        for j in 0..identities.len() {
-            if i != j {
-                assert!(
-                    topology.nodes[i].has_peer(&topology.nodes[j].node_id),
-                    "Node {} should have direct route to Node {}",
-                    i,
-                    j
-                );
-            }
-        }
-    }
+    common_network_test::assert_mesh_routing_paths(&topology);
 
     Ok(())
 }
@@ -320,11 +250,7 @@ fn test_mesh_convergence_timeline() -> Result<()> {
         ("join-mesh-6", [0x66; 64]),
     ];
 
-    let mut identities = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
-        identities.push(identity);
-    }
+    let identities = common_network_test::create_test_identities(&nodes, create_test_identity);
 
     // Phase 2: Build network incrementally
     let mut topology = MeshTopology::new();
@@ -378,11 +304,7 @@ fn test_mesh_network_partition_recovery() -> Result<()> {
         ("partition-5", [0x75; 64]),
     ];
 
-    let mut identities = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
-        identities.push(identity);
-    }
+    let identities = common_network_test::create_test_identities(&nodes, create_test_identity);
 
     let mut topology = MeshTopology::new();
     for identity in &identities {
@@ -433,11 +355,7 @@ fn test_mesh_stability_metrics() -> Result<()> {
         ("metrics-d", [0x8D; 64]),
     ];
 
-    let mut identities = Vec::new();
-    for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
-        identities.push(identity);
-    }
+    let identities = common_network_test::create_test_identities(&nodes, create_test_identity);
 
     // Simulate 5 cycles of stable operation
     let mut topology = MeshTopology::new();
