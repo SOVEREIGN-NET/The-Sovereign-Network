@@ -7,6 +7,9 @@
 pub mod core;
 pub mod types;
 
+#[cfg(test)]
+pub mod red_tests;
+
 // Re-export key types
 pub use core::UbiDistributor;
 pub use types::{
