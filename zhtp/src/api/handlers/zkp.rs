@@ -37,6 +37,9 @@ use lib_proofs::ZkRangeProof;
 use crate::session_manager::SessionManager;
 use crate::api::middleware::RateLimiter;
 
+// Import shared helpers from common module
+use super::common::{extract_client_ip, extract_user_agent};
+
 /// Request to generate a zero-knowledge proof
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateProofRequest {
@@ -473,27 +476,6 @@ async fn handle_verify_proof(
         serde_json::to_vec(&response)?,
         None,
     ))
-}
-
-// Helper functions
-
-fn extract_client_ip(request: &ZhtpRequest) -> String {
-    request
-        .headers
-        .get("X-Real-IP")
-        .or_else(|| {
-            request.headers.get("X-Forwarded-For").and_then(|f| {
-                f.split(',').next().map(|s| s.trim().to_string())
-            })
-        })
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn extract_user_agent(request: &ZhtpRequest) -> String {
-    request
-        .headers
-        .get("User-Agent")
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 #[cfg(test)]
