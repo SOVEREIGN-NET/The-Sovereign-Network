@@ -496,4 +496,203 @@ mod tests {
         assert!(recovered.has_claimed(&[255u8; 32], 100));
         assert_eq!(recovered.get_distributed(100), 256);
     }
+
+    // ========================================================================
+    // PHASE 6 PERFORMANCE BENCHMARKS
+    // ========================================================================
+    // These tests verify performance requirements from the plan:
+    // - 1000 citizens processed in <5 seconds
+    // - Serialization/deserialization overhead acceptable
+
+    #[test]
+    fn test_performance_process_1000_citizens() {
+        // Benchmark: Process 1000 unique citizens claiming in epoch 100
+        // Requirement: <5 seconds total (from plan)
+        let mut state = KernelState::new();
+
+        let start = std::time::Instant::now();
+
+        // Process 1000 citizens (simulate epochs 0-9 with 100 each for diversity)
+        for epoch in 0..10 {
+            for i in 0..100 {
+                let mut citizen_id = [0u8; 32];
+                citizen_id[0] = epoch as u8;
+                citizen_id[1] = (i / 256) as u8;
+                citizen_id[2] = (i % 256) as u8;
+
+                state.mark_claimed(citizen_id, epoch);
+                state.add_distributed(epoch, 1_000).unwrap();
+                state.record_success();
+            }
+        }
+
+        let elapsed = start.elapsed();
+
+        // Verify all processed (10 epochs * 100 claims/epoch = 1000 claims, 1000 SOV each)
+        assert_eq!(state.stats.total_claims_processed, 1000);
+        assert_eq!(state.stats.total_sov_distributed, 1_000_000); // 1000 * 1000
+
+        // Performance requirement: must complete in under 5 seconds
+        // (tests typically run much faster - expecting <100ms)
+        assert!(
+            elapsed.as_secs() < 5,
+            "Processing 1000 citizens took {:.2}s, limit is 5s",
+            elapsed.as_secs_f64()
+        );
+
+        println!(
+            "✓ Performance: 1000 citizens processed in {:.3}ms",
+            elapsed.as_secs_f64() * 1000.0
+        );
+    }
+
+    #[test]
+    fn test_performance_serialization() {
+        // Benchmark: Serialization of large state (1000 citizens)
+        let mut state = KernelState::new();
+
+        // Build large state
+        for i in 0..1000 {
+            let mut citizen_id = [0u8; 32];
+            citizen_id[0] = (i / 65536) as u8;
+            citizen_id[1] = (i / 256) as u8;
+            citizen_id[2] = (i % 256) as u8;
+            state.mark_claimed(citizen_id, 100);
+            state.add_distributed(100, 1).unwrap();
+        }
+
+        // Benchmark serialization
+        let start = std::time::Instant::now();
+        let bytes = state.to_bytes().expect("serialize").clone();
+        let serialize_time = start.elapsed();
+
+        // Benchmark deserialization
+        let start = std::time::Instant::now();
+        let _recovered = KernelState::from_bytes(&bytes).expect("deserialize");
+        let deserialize_time = start.elapsed();
+
+        // Verify size is reasonable (should be <100KB for 1000 entries)
+        let size_kb = bytes.len() as f64 / 1024.0;
+
+        assert!(
+            size_kb < 100.0,
+            "Serialized state size {:.1}KB exceeds limit",
+            size_kb
+        );
+
+        println!(
+            "✓ Serialization performance: {:?} to serialize, {:?} to deserialize ({:.1}KB)",
+            serialize_time, deserialize_time, size_kb
+        );
+    }
+
+    #[test]
+    fn test_performance_dedup_lookup() {
+        // Benchmark: Dedup lookups are fast (critical path)
+        let mut state = KernelState::new();
+
+        // Setup: Mark 1000 citizens as claimed
+        for i in 0..1000 {
+            let mut citizen_id = [0u8; 32];
+            citizen_id[0] = (i / 65536) as u8;
+            citizen_id[1] = (i / 256) as u8;
+            citizen_id[2] = (i % 256) as u8;
+            state.mark_claimed(citizen_id, 100);
+        }
+
+        // Benchmark: Lookup each citizen 1000 times (1M total lookups)
+        let start = std::time::Instant::now();
+        for _ in 0..1000 {
+            for i in 0..1000 {
+                let mut citizen_id = [0u8; 32];
+                citizen_id[0] = (i / 65536) as u8;
+                citizen_id[1] = (i / 256) as u8;
+                citizen_id[2] = (i % 256) as u8;
+                assert!(state.has_claimed(&citizen_id, 100));
+            }
+        }
+        let elapsed = start.elapsed();
+
+        // 1M lookups should complete very fast (<1 second)
+        assert!(
+            elapsed.as_secs_f64() < 1.0,
+            "1M dedup lookups took {:.3}s",
+            elapsed.as_secs_f64()
+        );
+
+        println!(
+            "✓ Dedup performance: 1M lookups in {:.3}ms",
+            elapsed.as_secs_f64() * 1000.0
+        );
+    }
+
+    #[test]
+    fn test_performance_pool_tracking() {
+        // Benchmark: Pool capacity checks for all citizens
+        let state = KernelState::new();
+
+        let start = std::time::Instant::now();
+
+        // Simulate 100 epochs with varying loads
+        for epoch in 0..100 {
+            for amount in [10_000, 50_000, 100_000, 200_000, 500_000].iter() {
+                // Try to add different amounts
+                let _ = state.check_pool_capacity(epoch, *amount);
+            }
+        }
+
+        let elapsed = start.elapsed();
+
+        // Should be very fast (<10ms for 500 checks)
+        assert!(
+            elapsed.as_millis() < 100,
+            "Pool tracking checks took {}ms",
+            elapsed.as_millis()
+        );
+
+        println!(
+            "✓ Pool tracking: 500 checks in {:.2}ms",
+            elapsed.as_secs_f64() * 1000.0
+        );
+    }
+
+    #[test]
+    fn test_performance_epoch_scale() {
+        // Benchmark: Multiple epochs with accumulated data
+        // Simulates realistic scenario: system runs for weeks with many epochs
+        let mut state = KernelState::new();
+
+        let start = std::time::Instant::now();
+
+        // Simulate 52 weeks of data (1 epoch per week)
+        for week in 0..52 {
+            for citizen in 0..100 {
+                let mut citizen_id = [0u8; 32];
+                citizen_id[0] = week as u8;
+                citizen_id[1] = citizen as u8;
+                state.mark_claimed(citizen_id, week);
+                state.add_distributed(week, 1_000).unwrap();
+            }
+        }
+
+        // Serialize (simulating end-of-epoch save)
+        let bytes = state.to_bytes().expect("serialize");
+
+        // Deserialize (simulating recovery or load)
+        let _recovered = KernelState::from_bytes(&bytes).expect("deserialize");
+
+        let elapsed = start.elapsed();
+
+        // Should handle year+ of data efficiently (<500ms total)
+        assert!(
+            elapsed.as_millis() < 500,
+            "Year-scale data handling took {}ms",
+            elapsed.as_millis()
+        );
+
+        println!(
+            "✓ Multi-epoch scale: 52 weeks * 100 citizens processed in {:.2}ms",
+            elapsed.as_secs_f64() * 1000.0
+        );
+    }
 }
