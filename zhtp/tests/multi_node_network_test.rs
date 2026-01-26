@@ -25,13 +25,42 @@ async fn test_multi_node_network_shared() -> Result<()> {
     run_shared_multi_node_network_test().await
 }
 
-            let discovery = UnifiedDiscoveryService::new(
-                peer_id,
-const TEST_TIMEOUT: Duration = Duration::from_secs(15);
-const DISCOVERY_WAIT_TIME: Duration = Duration::from_secs(2);
+// Example deduplication for a multi-node test:
+#[test]
+fn test_five_node_network_formation_sync() -> Result<()> {
+    let nodes = [
+        ("node-1", [0x11; 64]),
+        ("node-2", [0x22; 64]),
+        ("node-3", [0x33; 64]),
+        ("node-4", [0x44; 64]),
+        ("node-5", [0x55; 64]),
+    ];
+    let identities = create_test_identities(&nodes, create_test_identity);
+    assert_eq!(identities.len(), 5, "All 5 nodes should be created");
+    Ok(())
+}
 
-mod common;
-use common_network_test::run_shared_multi_node_network_test;
+/// Test 3: NodeId Stability Across Restart (Two-Node Scenario)
+///
+/// Scenario: Alice and Bob connect. Alice is restarted. Verify:
+/// - Alice's NodeId remains unchanged after restart
+/// - Bob's DHT still contains Alice's entry
+/// - Reconnection happens automatically
+#[tokio::test(flavor = "multi_thread")]
+async fn test_two_node_nodeid_stability_across_restart() -> Result<()> {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        // Create Alice with stable seed
+        let alice_seed = [0xAA; 64];
+        let alice_device = "laptop";
+
+        let alice_before = create_test_identity(alice_device, alice_seed)?;
+
+        // Create Bob
+        let bob_seed = [0xBB; 64];
+        let bob = create_test_identity("desktop", bob_seed)?;
+
+        // Simulate restart: Create Alice again with same seed
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let alice_after = create_test_identity(alice_device, alice_seed)?;
 #[tokio::test]
 async fn test_multi_node_network_shared() -> Result<()> {

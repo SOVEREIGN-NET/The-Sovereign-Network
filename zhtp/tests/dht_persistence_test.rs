@@ -2,12 +2,11 @@
 //!
 //! Goal: Verify DHT routing tables rebuild correctly after network restart
 //! with deterministic NodeIds.
-//!
-//! Test Scenarios:
-//! - All nodes maintain same NodeIds after restart
-//! - DHT routing tables repopulate with same entries
-//! - Network converges within 30 seconds
-//! - All nodes can communicate after restart
+
+use anyhow::Result;
+use std::time::Duration;
+mod common;
+use common_network_test::{DhtEntry, DhtRoutingState, run_shared_dht_persistence_test, create_test_identities, build_dht_states, populate_dht_peers, assert_dht_peer_counts};
 
 use anyhow::Result;
 <<<<<<< HEAD
@@ -37,64 +36,6 @@ async fn test_dht_persistence_shared() -> Result<()> {
 #[tokio::test]
 async fn test_dht_persistence_shared() -> Result<()> {
     run_shared_dht_persistence_test().await
-}
->>>>>>> parent of 4502129 (Revert "Refactor: update test files to use shared logic in common_network_test.rs")
-#[test]
-fn test_three_node_dht_bootstrap() -> Result<()> {
-    // Phase 1: Create three nodes with distinct seeds
-    let nodes = [
-        ("alice-dht-001", [0xAA; 64]),
-        ("bob-dht-001", [0xBB; 64]),
-        ("charlie-dht-001", [0xCC; 64]),
-    ];
-
-    let mut identities = Vec::new();
-    let mut dht_states = Vec::new();
-
-    for (device, seed) in &nodes {
-        let identity = create_test_identity(device, *seed)?;
-        let mut dht = DhtRoutingState::new(identity.node_id.clone());
-        dht.set_convergence_cycle(0);
-        identities.push(identity);
-        dht_states.push(dht);
-    }
-
-    // Phase 2: Simulate DHT peer discovery
-    for i in 0..identities.len() {
-        for j in 0..identities.len() {
-            if i != j {
-                let peer_node_id = identities[j].node_id.clone();
-                let peer_uuid = Uuid::from_slice(&peer_node_id.as_bytes()[..16])?;
-                dht_states[i].add_peer(peer_node_id, peer_uuid, 0);
-            }
-        }
-    }
-
-    // Phase 3: Verify DHT tables populated
-    for (i, dht) in dht_states.iter().enumerate() {
-        assert_eq!(
-            dht.peer_count(),
-            2,
-            "Node {} should have 2 peers (other 2 nodes)",
-            i
-        );
-    }
-
-    // Phase 4: Verify all nodes can see each other
-    for i in 0..identities.len() {
-        for j in 0..identities.len() {
-            if i != j {
-                assert!(
-                    dht_states[i].has_peer(&identities[j].node_id),
-                    "Node {} should know about Node {}",
-                    i,
-                    j
-                );
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Test 2: DHT Persistence Across Single Node Restart
