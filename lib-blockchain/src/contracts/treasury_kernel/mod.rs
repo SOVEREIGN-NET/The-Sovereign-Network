@@ -22,6 +22,7 @@
 
 pub mod types;
 pub mod state;
+pub mod validation;
 
 pub use types::{KernelState, RejectionReason, KernelStats};
 
