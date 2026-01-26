@@ -97,7 +97,10 @@ pub use dao_registry::{DAORegistry, DAOEntry, derive_dao_id};
 #[cfg(feature = "contracts")]
 pub use dev_grants::{DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement, ProposalStatus, Error as DevGrantsError};
 #[cfg(feature = "contracts")]
-pub use ubi_distribution::{UbiDistributor, MonthIndex, Error as UbiError};
+pub use ubi_distribution::{
+    UbiDistributor, MonthIndex, EpochIndex, Error as UbiError,
+    UbiClaimRecorded, UbiDistributed, UbiPoolStatus, UbiClaimRejected,
+};
 #[cfg(feature = "contracts")]
 pub use sov_swap::{
     SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError,
@@ -112,8 +115,7 @@ pub use governance::{
 };
 #[cfg(feature = "contracts")]
 pub use treasury_kernel::{
-    TreasuryKernel, KernelState, RejectionReason, UbiClaimRecorded,
-    UbiDistributed, UbiClaimRejected, UbiPoolStatus, KernelStats, KernelConfig,
+    TreasuryKernel, KernelState, RejectionReason, KernelStats, KernelConfig,
 };
 #[cfg(feature = "contracts")]
 pub use economics::{
