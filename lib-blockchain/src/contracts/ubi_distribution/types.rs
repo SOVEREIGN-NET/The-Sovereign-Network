@@ -279,7 +279,7 @@ impl fmt::Display for UbiPoolStatus {
 /// - `timestamp`: u64 - when rejection was recorded
 ///
 /// # Reason Codes
-/// - 1 = NotAirCitizen (citizen_id not in CitizenRegistry)
+/// - 1 = NotACitizen (citizen_id not in CitizenRegistry)
 /// - 2 = AlreadyRevoked (citizen.revoked == true)
 /// - 3 = AlreadyClaimedEpoch (already_claimed[citizen][epoch] == true)
 /// - 4 = PoolExhausted (total_distributed >= 1,000,000)
