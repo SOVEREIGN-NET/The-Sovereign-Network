@@ -62,7 +62,8 @@ impl CycleDetector {
 
     /// Find all cycles in a call graph
     ///
-    /// Uses depth-first search to identify all cycles
+    /// Uses depth-first search to identify all cycles. Only tracks real call edges
+    /// in the recursion stack (no synthetic placeholders).
     pub fn find_all_cycles(edges: &[CallEdge]) -> Result<Vec<CallCycle>> {
         let mut graph: HashMap<ContractId, Vec<(ContractId, String)>> = HashMap::new();
 
@@ -76,7 +77,8 @@ impl CycleDetector {
 
         let mut cycles = Vec::new();
         let mut visited = HashSet::new();
-        let mut rec_stack = Vec::new();
+        let mut visiting = HashSet::new();
+        let mut rec_stack: Vec<(ContractId, ContractId, String)> = Vec::new();
 
         // Run DFS from each node that hasn't been visited
         for &start_node in graph.keys() {
@@ -85,6 +87,7 @@ impl CycleDetector {
                     start_node,
                     &graph,
                     &mut visited,
+                    &mut visiting,
                     &mut rec_stack,
                     &mut cycles,
                 );
@@ -95,28 +98,41 @@ impl CycleDetector {
     }
 
     /// DFS helper for cycle detection
+    ///
+    /// Tracks only real call edges in rec_stack: (caller, callee, method).
+    /// No synthetic entries or placeholders - the stack exactly mirrors the call path.
     fn dfs_find_cycles(
         node: ContractId,
         graph: &HashMap<ContractId, Vec<(ContractId, String)>>,
         visited: &mut HashSet<ContractId>,
-        rec_stack: &mut Vec<(ContractId, String)>,
+        visiting: &mut HashSet<ContractId>,
+        rec_stack: &mut Vec<(ContractId, ContractId, String)>,
         cycles: &mut Vec<CallCycle>,
     ) {
         visited.insert(node);
-        // Add current node to recursion stack with placeholder method (we're entering from parent)
-        rec_stack.push((node, "visit".to_string()));
+        visiting.insert(node);
 
         if let Some(neighbors) = graph.get(&node) {
             for (neighbor, method) in neighbors {
-                // Check if neighbor is in current recursion path (potential cycle)
-                if rec_stack.iter().any(|(c, _)| c == neighbor) {
-                    // Found a cycle - extract path from cycle start to current
-                    let cycle_start = rec_stack
+                if visiting.contains(neighbor) {
+                    // Back-edge detected - we have a cycle.
+                    // Find where neighbor appears as a callee in the stack.
+                    // If not found, neighbor is the root node of this DFS tree.
+                    let cycle_start_idx = rec_stack
                         .iter()
-                        .position(|(c, _)| c == neighbor)
-                        .unwrap();
-                    let mut cycle_path = rec_stack[cycle_start..].to_vec();
-                    cycle_path.push((*neighbor, method.clone()));
+                        .position(|(_, callee, _)| callee == neighbor)
+                        .unwrap_or(0);
+
+                    // Extract the cycle: all edges from cycle_start to end, plus the back-edge
+                    let mut cycle_edges: Vec<(ContractId, ContractId, String)> =
+                        rec_stack[cycle_start_idx..].to_vec();
+                    cycle_edges.push((node, *neighbor, method.clone()));
+
+                    // Convert to (ContractId, String) format for CallCycle
+                    let cycle_path: Vec<(ContractId, String)> = cycle_edges
+                        .iter()
+                        .map(|(_, callee, method)| (*callee, method.clone()))
+                        .collect();
 
                     let cycle = CallCycle {
                         cycle_length: cycle_path.len(),
@@ -127,13 +143,17 @@ impl CycleDetector {
                         cycles.push(cycle);
                     }
                 } else if !visited.contains(neighbor) {
-                    // Not visited yet - continue DFS
-                    Self::dfs_find_cycles(*neighbor, graph, visited, rec_stack, cycles);
+                    // Not visited yet - add the real call edge to stack and recurse
+                    rec_stack.push((node, *neighbor, method.clone()));
+                    Self::dfs_find_cycles(
+                        *neighbor, graph, visited, visiting, rec_stack, cycles,
+                    );
+                    rec_stack.pop();
                 }
             }
         }
 
-        rec_stack.pop();
+        visiting.remove(&node);
     }
 
     /// Check if a specific path would create a cycle
@@ -426,8 +446,8 @@ mod tests {
         let edges = vec![CallEdge::new([1u8; 32], [1u8; 32], "m".to_string())];
 
         let cycles = CycleDetector::find_all_cycles(&edges).unwrap();
-        // Self-loop may be detected as a cycle
-        assert!(cycles.len() >= 0); // Behavior depends on DFS implementation
+        // Self-loop is detected as a cycle (back-edge to self)
+        assert!(!cycles.is_empty());
     }
 
     #[test]
